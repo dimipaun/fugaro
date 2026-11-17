@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -149,6 +150,106 @@ func TestSystemPromptIsUnchangedWithAnImageRate(t *testing.T) {
 		base := SystemPrompt(PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}, "")
 		if got != base {
 			t.Errorf("%s: the brief is not the one every run had before the image rule:\n%s", c.name, got)
+		}
+	}
+}
+
+// TestCheckpointPromptCarriesTheRunsOwnWork: the checkpoint call is a fresh
+// session with no tools and no checkout of its own, so what the run had done
+// reaches it only through the prompt — and the three fields it answers land in
+// the record and the draft pull request a person reads to decide whether the run
+// is worth continuing (T7.3, D329). The commits the run made and the paths it
+// changed are therefore in the prompt, and the two ways a list can be empty are
+// not the same: a list the runner read and found empty is answered "none", which
+// is a fact the answer may rest on, and a list it could not read is left out
+// rather than reported as a run that had done nothing.
+//
+// Mutation (drop the checkpointWorkSection call): the facts assertion fails.
+// Mutation (render a nil list as "none"): the unread case gains the word and its
+// assertion fails.
+func TestCheckpointPromptCarriesTheRunsOwnWork(t *testing.T) {
+	h := runstore.Halt{Reason: runstore.HaltStageBudget, Detail: "implement stage budget"}
+	withWork := checkpointPromptFor("Add a feature", "implement", h,
+		[]string{"Add the feature", "Fix the tests"}, []string{"feature.txt", "runner.go"})
+	for _, want := range []string{
+		"Commits it made, newest first:", "- Add the feature\n- Fix the tests\n",
+		"Paths it changed:", "- feature.txt\n- runner.go\n",
+	} {
+		if !strings.Contains(withWork, want) {
+			t.Errorf("the checkpoint prompt does not carry %q:\n%s", want, withWork)
+		}
+	}
+	none := checkpointPromptFor("Add a feature", "implement", h, []string{}, []string{})
+	for _, want := range []string{"Commits it made, newest first: none.", "Paths it changed: none."} {
+		if !strings.Contains(none, want) {
+			t.Errorf("a run with no work of its own is not answered %q:\n%s", want, none)
+		}
+	}
+	unread := checkpointPromptFor("Add a feature", "implement", h, nil, nil)
+	if strings.Contains(unread, "What this run itself had done") || strings.Contains(unread, "none.") {
+		t.Errorf("a read that could not be made is reported as a run that had done nothing:\n%s", unread)
+	}
+}
+
+// TestCheckpointPromptBoundsTheRunsOwnWork: a run that made a hundred commits or
+// changed a thousand paths may not spend the checkpoint call's input bound on
+// the list of them, so both lists are capped and each item is clipped; what did
+// not fit is named, since a list that stopped silently would read as the whole
+// of the run's work. Each item is also folded onto one line: a path may hold a
+// newline, and a line of its own would let the branch's own content pass for a
+// section of this prompt.
+//
+// Mutation (drop the cap loop, or the trailing count): the count assertion
+// fails. Mutation (render the path whole, or through safetext.Text rather than
+// OneLine): the clip and the one-line assertion fail.
+func TestCheckpointPromptBoundsTheRunsOwnWork(t *testing.T) {
+	h := runstore.Halt{Reason: runstore.HaltStageBudget}
+	commits := make([]string, checkpointCommitsShown+3)
+	for i := range commits {
+		commits[i] = fmt.Sprintf("commit %d", i)
+	}
+	long := strings.Repeat("x", checkpointItemRunes+50)
+	got := checkpointPromptFor("Add a feature", "implement", h, commits, []string{"a\nb.txt", long})
+	if n := strings.Count(got, "\n- commit "); n != checkpointCommitsShown {
+		t.Errorf("the prompt carries %d commits, want the bound %d", n, checkpointCommitsShown)
+	}
+	if !strings.Contains(got, "3 commits not shown.") {
+		t.Errorf("the prompt does not name the commits it left out:\n%s", got)
+	}
+	if !strings.Contains(got, "- a?b.txt\n") {
+		t.Errorf("a path holding a newline is not folded onto one line (safetext.OneLine):\n%s", got)
+	}
+	if strings.Contains(got, long) {
+		t.Errorf("an item longer than %d runes was not clipped:\n%s", checkpointItemRunes, got)
+	}
+}
+
+// TestBinaryCapWordsStatesACapTheRunEnforces: the size the brief gives is the
+// one finalize compares a file against (stray.go's binaryRefusal), so a cap
+// that is not a whole unit of its spelling is stated in bytes rather than
+// rounded. fmtBytes is the artifact cap's spelling and rounds to the nearest
+// unit — a 1600000-byte cap reads "2 MiB" — and a coder that trusts that number
+// writes an asset the refusal turns down, which is the draft the clause exists
+// to prevent. A cap that is a whole unit keeps fmtBytes' words, so no brief
+// that reads well today changes.
+//
+// Mutation (return fmtBytes(maxBytes) here): the three non-round cases fail,
+// each naming a size the run does not admit.
+func TestBinaryCapWordsStatesACapTheRunEnforces(t *testing.T) {
+	for _, c := range []struct {
+		bytes int64
+		want  string
+	}{
+		{1600000, "1600000 bytes"},
+		{1536, "1536 bytes"},
+		{1500, "1500 bytes"},
+		{999, "999 bytes"},
+		{1048576, "1 MiB"},
+		{2097152, "2 MiB"},
+		{2048, "2 KiB"},
+	} {
+		if got := binaryCapWords(c.bytes); got != c.want {
+			t.Errorf("binaryCapWords(%d) = %q, want %q", c.bytes, got, c.want)
 		}
 	}
 }

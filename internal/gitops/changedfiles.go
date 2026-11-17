@@ -18,7 +18,11 @@ import (
 // and the add it is (--no-renames), because a path that moved is a path two
 // runs can collide on. --no-ext-diff and --no-textconv keep the operator's
 // own git config out of it, and --end-of-options keeps a ref name from being
-// read as one.
+// read as one. Replacement refs are ignored as OwnCommits ignores them: a
+// refs/replace/<sha> planted in the checkout the agent writes would otherwise
+// decide which paths this read reports, and the overlap comparison built on
+// them (a run's record against another's) would be that traversal's answer
+// rather than the run's own paths.
 //
 // since is checked the way checkRange checks it — a full commit SHA or a
 // plain ref name, never something git could read as an option or a revision
@@ -28,7 +32,7 @@ func (r *Repo) ChangedFiles(ctx context.Context, since string) ([]string, error)
 	if !IsFullSHA(since) && !plainRef(since) {
 		return nil, fmt.Errorf("refusing to read the changed paths since %q: not a full commit SHA or a plain ref name", since)
 	}
-	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", since+"...HEAD")
+	out, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--end-of-options", since+"...HEAD")
 	if err != nil {
 		return nil, err
 	}

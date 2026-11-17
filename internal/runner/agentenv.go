@@ -403,14 +403,28 @@ func (r *run) stagePins(stage string) map[string]string {
 	if !r.gatewayOn() || r.stageAccount(stage) != "" {
 		return nil
 	}
-	role := stageRole(stage)
-	a := r.cfg.Agent
 	model, bg := r.stageModel(stage), r.backgroundModel()
-	pins := agent.PinVars(model, bg, a.MaxOutputFor(role))
+	pins := agent.PinVars(model, bg, r.stageMaxOutput(stage))
 	if r.stageServedByProvider(model, bg) {
 		maps.Copy(pins, agent.ProviderRouteVars())
 	}
 	return pins
+}
+
+// stageMaxOutput is the stage's per-call output limit: the role slot's own
+// (config.Agent.MaxOutputFor), except for the checkpoint stage, whose answer is
+// three labelled lines and whose limit is the small figure the gateway admits
+// its one call at (checkpoint_stage.go).
+//
+// It is one mapping because two readers have to agree: the pin Claude Code is
+// given in its environment and the limit the gateway refuses a call over are
+// the same number, and a stage pinned above the limit it is enforced at would
+// have every call refused (stagePins, stageSpec).
+func (r *run) stageMaxOutput(stage string) int64 {
+	if stage == checkpointStageName {
+		return checkpointMaxOutputTokens
+	}
+	return r.cfg.Agent.MaxOutputFor(stageRole(stage))
 }
 
 // stageServedByProvider reports whether a stage whose model and background are
@@ -562,24 +576,29 @@ func (r *run) writeManagedSettings(stage string, pins map[string]string) error {
 		}
 	}
 	write, deny := agent.WriteManagedSettings, agent.DenyRules(true, r.denyBinaryReads(stage))
-	if r.review || stage == stageTriage {
-		// A review-mode run's stage reads a pull request's own head, so the
-		// settings it is launched under are the review posture (D894(a)):
-		// managed hooks only, no project MCP server, and setting sources
-		// from the user and managed levels alone. A coding run's own stages
-		// — its in-loop review rounds included — keep the file they had, and
-		// the triage judge is the one stage of such a run that joins the
-		// review-mode one here: it reads a round's findings and must touch
-		// nothing, so no hook of the checkout it was shown text from runs
-		// while it reads (F25).
+	if r.review || stage == stageTriage || r.replay != "" {
+		// A review-mode run's stage reads a pull request's own head, and a
+		// reviewer arm's one stage reads another run's patch applied to this
+		// checkout (abreplay.go, B1.2), so the settings both are launched
+		// under are the review posture (D894(a)): managed hooks only, no
+		// project MCP server, and setting sources from the user and managed
+		// levels alone. A coding run's own stages — its in-loop review rounds
+		// included — keep the file they had, and the triage judge is the one
+		// stage of such a run that joins the review-mode one here: it reads a
+		// round's findings and must touch nothing, so no hook of the checkout
+		// it was shown text from runs while it reads (F25).
 		write = agent.WriteReviewManagedSettings
-		if r.reviewJob() {
+		if r.reviewJob() || r.replay != "" {
 			// The independent review job is the one review stage that runs
 			// the head's own code (the mutation check) and reads nothing of
 			// its own repository, so it is the one that loses the tools that
 			// would run or write anything (D891(a)). A coding run's own
 			// review rounds, and `fugaro run --pr N --recipe review-only`,
-			// are the repository's own run and keep them.
+			// are the repository's own run and keep them. The replay arm
+			// joins the job and not the run: its checkout is the champion's
+			// patch, so the arm's one review is all it has to do there, and
+			// a shell over that checkout is what the fence refuses a patch
+			// into (B1.2, "the reviewer's read-only tool set").
 			deny = append(deny, agent.ReviewJobDenyRules()...)
 		}
 		if gw == nil {

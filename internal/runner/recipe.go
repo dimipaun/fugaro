@@ -140,21 +140,43 @@ const runDigestRecipe = "run-digest"
 // spent nothing (Check 136's run 20261114-135057-7d42).
 const runDigestReviewerMaxOutput int64 = 32000
 
-// applyRecipeOutputLimit tightens the per-call output bound a recipe's review
-// buys, and reports whether it dropped a larger bound the run had asked for. It
-// only ever tightens, so a repository or a project that reserves less for its
-// reviewer than the recipe does keeps its own figure. It runs beside ApplyRoles
-// and before the policy merge, so the bound is the one the file layer carries
-// into it: the merge reads the limits off the configuration as it stands, the
-// way it reads the role mapping's aliased value.
+// applyRecipeOutputLimit tightens the per-call output bound one of the two
+// recipes that carry one buys, and reports whether it dropped a larger bound
+// the run had asked for. It only ever tightens, so a repository or a project
+// that reserves less than the recipe does keeps its own figure. It runs beside
+// ApplyRoles and before the policy merge, so the bound is the one the file
+// layer carries into it: the merge reads the limits off the configuration as it
+// stands, the way it reads the role mapping's aliased value.
+//
+// The bound is written into the slot the recipe's own stage READS, which is the
+// two recipes' difference: a report run's stage is a review, so its bound is
+// the reviewer's, while the diagnose stage is a stage whose role is the coder's
+// (config.StageRole knows the review stages only) — so the tier's bound belongs
+// on the coder's slot, or the reservation the gateway holds for the diagnosis,
+// which is read off the same slot, would stay the model's own maximum. A
+// diagnosis's coder slot is read by nothing else: the recipe's one step is the
+// diagnose step.
+//
+// The diagnose arm is keyed on the step rather than on the recipe's name, the
+// way the digest arm is: the bound is D2407's tier bound, and a repository's
+// own recipe holding the step is a diagnosis by the same argument — one small
+// question about one failure — wherever it got its name.
 func applyRecipeOutputLimit(a *config.Agent, rcp *recipe.Recipe) (capped bool) {
-	if rcp.Name != runDigestRecipe {
-		return false
+	switch {
+	case rcp.Name == runDigestRecipe:
+		if n := a.MaxOutputTokens.Reviewer; n > 0 && n <= runDigestReviewerMaxOutput {
+			return false
+		}
+		capped = a.MaxOutputTokens.Reviewer > runDigestReviewerMaxOutput
+		a.MaxOutputTokens.Reviewer = runDigestReviewerMaxOutput
+		return capped
+	case recipe.UsesDiagnose(rcp):
+		if n := a.MaxOutputTokens.Coder; n > 0 && n <= recipe.TroubleshootReviewerMaxOutput {
+			return false
+		}
+		capped = a.MaxOutputTokens.Coder > recipe.TroubleshootReviewerMaxOutput
+		a.MaxOutputTokens.Coder = recipe.TroubleshootReviewerMaxOutput
+		return capped
 	}
-	if n := a.MaxOutputTokens.Reviewer; n > 0 && n <= runDigestReviewerMaxOutput {
-		return false
-	}
-	capped = a.MaxOutputTokens.Reviewer > runDigestReviewerMaxOutput
-	a.MaxOutputTokens.Reviewer = runDigestReviewerMaxOutput
-	return capped
+	return false
 }

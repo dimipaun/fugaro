@@ -2403,7 +2403,7 @@ var runAccountGrants = setOf(
 	// var.launchers (the design's eleventh never-rule: that list is what the
 	// Firebase root binds roles/firebasedatabase.viewer with, an IAM read that
 	// bypasses the Realtime Database rules). Its reach is therefore here one
-	// grant at a time, and none of the five reaches fugaro/managed.json:
+	// grant at a time, and none of the six reaches fugaro/managed.json:
 	//
 	//   - the launcher project role (fugaroLauncher) is metadata: run.jobs.get,
 	//     run.jobs.list, run.executions.get/list/cancel, run.operations.get and
@@ -2433,7 +2433,20 @@ var runAccountGrants = setOf(
 	//     JOB's own account, whose grants this list already holds above, and
 	//     overrides change a run's arguments rather than its identity — the
 	//     orchestrator is never the account a job runs as. The role holds no
-	//     run.jobs.create/update/delete, so it cannot change the job it starts.
+	//     run.jobs.create/update/delete, so it cannot change the job it starts;
+	//   - and the per-secret accessor P5.1e adds (the mobile design's section
+	//     4.2 and its section 4.7 step 2b): the third copy of a pairing's MAC
+	//     key — the tag is a symmetric HMAC, so the consumer that verifies one
+	//     holds the key the phone signs with — in the installation's own
+	//     container `fugaro-orch-pairing`, one version per pairing, written by
+	//     `fugaro pair` and destroyed by `fugaro pair revoke`. The grant is the
+	//     SECRET row and not the project row, and the role reads the VALUE of a
+	//     container that already exists: no storage permission at all, nothing
+	//     that grants a role, no actAs and no token minting. The target is a
+	//     Secret Manager container and not the runs bucket — fugaro/managed.json
+	//     is an object at that bucket's root, which this reaches no more than the
+	//     two list permissions above do — and the container holds pairing keys
+	//     and nothing else.
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroLauncher" | project=var.project | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=run.executions.cancel,run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get,secretmanager.secrets.list,secretmanager.versions.list`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
@@ -2459,6 +2472,7 @@ var runAccountGrants = setOf(
 	// orchestrator's own account — whose five rows are the block above — so
 	// nothing here widens what any run credential can reach.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.orchestrator.service | google_service_account.scheduler.member | for_each= | perms=`,
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.pairing_key[0].secret_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 )
 
 // setOf is a set of strings.

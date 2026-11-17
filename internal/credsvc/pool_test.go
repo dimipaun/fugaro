@@ -677,16 +677,17 @@ func TestPublishedPoolOrderReachesTheService(t *testing.T) {
 // TestRunnerPathMemberIsNotOfferedToTheService is MC19's seam, and the reason a
 // crossing pool is harmless on this path: a node may list a member of the path
 // this service does not serve — an OpenRouter key, whose value is mounted in the
-// job that spends it (D1634) — and the reader still accepts that pool, because
-// the refusal that splits a crossing pool is the write door's
-// (config.ValidatePoolPaths, MC20) and converging a node an earlier release
-// published is MC21's migration (the activation plan's row 43). So this service
-// is where the crossing is answered for a call, and it answers it by not
-// offering the member at all: the pool's own service-path member serves, and the
-// runner path's is not in the candidate list. internal/projectpolicy's
-// TestTheNodeReadsACrossPathPoolUntilItsSplitLands is the reader's half of the
-// staging, and TestOpenRouterAndVertexMembersNeverReachCredsvc is what this
-// service ANSWERS such a pool (MC6).
+// job that spends it (D1634). The reader refuses such a pool now: the refusal
+// that splits a crossing pool is the write door's (config.ValidatePoolPaths) and
+// a published node's read's (ValidatePublishedPools, MC20), and converging a
+// node an earlier release published is MC21's migration (the activation plan's
+// row 43). So the crossing this test offers is rebuilt below from a node the
+// reader accepts. This service is where the crossing is answered for a call, and
+// it answers it by not offering the member at all: the pool's own service-path
+// member serves, and the runner path's is not in the candidate list.
+// internal/projectpolicy's TestTheNodeRefusesACrossPathPool is the reader's
+// half, and TestOpenRouterAndVertexMembersNeverReachCredsvc is what this service
+// ANSWERS such a pool (MC6).
 //
 // The fixture's bundle holds a model credential NAMED after the member, so that
 // the member's path is the only thing that can keep it out of the offering: a

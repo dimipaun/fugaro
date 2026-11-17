@@ -116,6 +116,17 @@ type entitlementGrant struct {
 // is read-before-write and refuses a document read after one the same transaction
 // has written (docstore's ErrReadAfterWrite), so the candidates and the workspace
 // are read together and the writes follow them.
+//
+// A grant that names an id the store already holds is **answered** and not
+// rewritten. The id is derived from the merchant's transaction (P4.2's
+// `purchaseLicenceID`), so a delivery the merchant makes again after a failure
+// downstream of the grant — the subscription's write, the origin, the record
+// that names the licence, the notice — reaches this with the record the first
+// delivery already wrote. Rewriting it would reset a licence the money has since
+// taken back (a refund in that window revokes it, and the event is processed, so
+// nothing revokes it a second time) or a licence the customer has since bound
+// (BoundAt and RebindableAt are dropped, and the portal serves it as unbound
+// again). Neither is a grant: the record is there, so what this answers is it.
 func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) (WireEntitlement, error) {
 	row, known := DefaultPolicy(grant.Row)
 	if !known {
@@ -123,6 +134,16 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 	}
 	var granted WireEntitlement
 	err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		if grant.ID != "" {
+			held, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, grant.ID)
+			if err != nil {
+				return err
+			}
+			if present {
+				granted = held
+				return nil
+			}
+		}
 		superseding, err := s.supersededBy(ctx, tx, grant, row)
 		if err != nil {
 			return err

@@ -154,10 +154,12 @@ func TestOrchestratorTurnedOffPlansAsTheGoldenDoes(t *testing.T) {
 }
 
 // TestOrchestratorGrantsAreTheDesignsTableRows is section 4.3 held as the plan:
-// the rows the opt-in adds are the account, the launcher's project role, the
-// runs bucket's conditioned write and its unconditioned read, the token-minter
-// role on the signer, and the job runner's role on each of the installation's
-// own jobs — and the plan does not move in any other way.
+// the rows the opt-in adds are the account, the pairing key's container and its
+// one reader (P5.1e — the copy section 6 rule 5 states as the exception a
+// symmetric tag forces), the launcher's project role, the runs bucket's
+// conditioned write and its unconditioned read, the token-minter role on the
+// signer, and the job runner's role on each of the installation's own jobs. The
+// plan does not move in any other way.
 //
 // Two of its claims are the ones a comment cannot make. The first is that the
 // member and the role the root spells out are the ones the same plan creates:
@@ -183,6 +185,8 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 
 	const (
 		accountAddr = "module.installation.google_service_account.orchestrator[0]"
+		secretAddr  = "module.installation.google_secret_manager_secret.pairing_key[0]"
+		accessAddr  = "module.installation.google_secret_manager_secret_iam_member.orchestrator_pairing_key[0]"
 		launcherRow = "module.installation.google_project_iam_member.orchestrator_launcher[0]"
 		writeRow    = "module.installation.google_storage_bucket_iam_member.orchestrator_runs_launcher[0]"
 		readRow     = "module.installation.google_storage_bucket_iam_member.orchestrator_runs_reader[0]"
@@ -196,16 +200,17 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		invokerAddr = "module.installation.google_cloud_run_v2_service_iam_member.orchestrator_invoker[0]"
 		tickAddr    = "module.installation.google_cloud_scheduler_job.orchestrator_tick[0]"
 	)
-	want := []string{accountAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr}
+	want := []string{accountAddr, secretAddr, accessAddr, launcherRow, writeRow, readRow, minterRow, serviceAddr, invokerAddr, tickAddr}
 	for key := range spec.ProjectJobs {
 		want = append(want, `google_cloud_run_v2_job_iam_member.orchestrator_runner["`+key+`"]`)
 	}
 	sort.Strings(want)
 
-	// The plan's own rows: the account and its four bindings, one binding per
-	// project job, and nothing beside them. A row missing is a launch or a mint
-	// the resident orchestrator cannot make; a row added is a grant with no row
-	// in the design's table.
+	// The plan's own rows: the account, the pairing key's container and its one
+	// reader, one binding per project job, and nothing beside them. A row
+	// missing is a launch, a mint or a copy of the pairing key the resident
+	// orchestrator cannot make; a row added is a grant with no row in the
+	// design's table.
 	if extra := missing(addresses(on), append(addresses(off), want...)); len(extra) > 0 {
 		t.Errorf("the opt-in adds %v, which section 4.3's table does not have: the table is the whole of what this account may hold", extra)
 	}
@@ -236,10 +241,25 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		{launcherRow, "member", member},
 		{launcherRow, "role", "projects/" + spec.Project + "/roles/" + customRoleID(t, on, "launcher")},
 		{minterRow, "role", "projects/" + fp + "/roles/fugaroTokenMinter"},
+		{accessAddr, "member", member},
+		{accessAddr, "role", "roles/secretmanager.secretAccessor"},
+		{accessAddr, "secret_id", OrchestratorPairingSecretID},
+		{secretAddr, "secret_id", OrchestratorPairingSecretID},
 	} {
 		if got := str(on[c.addr].After[c.key]); got != c.want {
 			t.Errorf("%s: %s is %q, want %q — the root writes the name out rather than reading it off the resource it names, so the two are one name only if they are equal here", c.addr, c.key, got, c.want)
 		}
+	}
+	// The container's ownership marks, and the label it must NOT carry: a
+	// fugaro_secret label would make `fugaro update`'s discovery read this
+	// container as one of the project's logical secrets and plan the same
+	// secret ID twice (credentials.tf's own reason).
+	labels, _ := on[secretAddr].After["labels"].(map[string]any)
+	if str(labels["fugaro"]) != "managed" || str(labels["fugaro_project"]) != spec.FugaroProject {
+		t.Errorf("%s: labels are %v, want fugaro=managed and fugaro_project=%s — the two marks that make the container recognizably this installation's", secretAddr, labels, spec.FugaroProject)
+	}
+	if _, ok := labels["fugaro_secret"]; ok {
+		t.Errorf("%s carries fugaro_secret: this container is one version per pairing with two writers and neither of them Terraform, so discovery must not read it as one of the project's logical secrets", secretAddr)
 	}
 	for key := range spec.ProjectJobs {
 		addr := `google_cloud_run_v2_job_iam_member.orchestrator_runner["` + key + `"]`
@@ -265,6 +285,7 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		{writeRow, "roles/storage.objectUser", gcp.LauncherBucketConditionTitle, gcp.LauncherBucketCondition(spec.RunsBucket)},
 		{readRow, "roles/storage.objectViewer", "", ""},
 		{minterRow, "projects/" + fp + "/roles/fugaroTokenMinter", "", ""},
+		{accessAddr, "roles/secretmanager.secretAccessor", "", ""},
 	} {
 		rc, ok := on[c.addr]
 		if !ok {
@@ -278,7 +299,7 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		}
 		title, expr := conditionStrings(rc)
 		if title != c.cond || expr != c.expr {
-			t.Errorf("%s: the binding's condition is (%q, %q), want (%q, %q): the write is fenced by the launchers' own condition and the read is fenced by nothing, because listing the bucket needs storage.objects.list and an object-name condition cannot grant it", c.addr, title, expr, c.cond, c.expr)
+			t.Errorf("%s: the binding's condition is (%q, %q), want (%q, %q): the write is fenced by the launchers' own condition and the other rows are fenced by nothing — the read because listing the bucket needs storage.objects.list and an object-name condition cannot grant it, and the two assignments because the resources they name are already the narrowest the row can express", c.addr, title, expr, c.cond, c.expr)
 		}
 	}
 	if got := str(on[writeRow].After["bucket"]); got != spec.RunsBucket {

@@ -42,6 +42,17 @@ expect_absent() {
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
 }
+expect_same() { # got want what
+  [ "$1" = "$2" ] || fail "$3: expected '$2', got '$1'"
+}
+# na_of BLOCK: the keys of the block's `N/A — not part of this mode` rows, in the
+# order it printed them, space-separated and with a trailing space (so an empty
+# reading and a reading of the wrong rows are both visible to expect_same). The
+# keys are what say the N/A rows are EXACTLY the ones the run's mode never
+# records: a key the run would have recorded reads `FAIL — not reached`.
+na_of() { # na_of BLOCK
+  printf '%s\n' "$1" | sed -n 's/^FACT \([a-z-]*\): N\/A — not part of this mode.*$/\1/p' | tr '\n' ' '
+}
 
 # One run id base for the whole test file, so a case that asserts on a run id and
 # the run the check launches cannot disagree. It carries today's UTC date and a
@@ -1587,6 +1598,15 @@ DOCTOR_EOF
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a grant doctor could not judge: the runs are launched"
 }
 
+# The block's own key list is printed whatever happened, and a key no fact
+# carries used to read `FAIL — not reached` — true of a row the run would have
+# recorded had it not stopped, and false of one this mode NEVER records: a
+# default (proxy) run reads the working run's rows and never Check 192's six
+# (`jobs`, `mount`, `accessor`, `doctor`, `run-still-works`, `plain-repo`), nor
+# `dry-run`, which only a --dry-run plan writes. Seven rows read as a failed
+# check on 2026-11-17 and hid the ones that were measured, so each mode now
+# names its own rows and print_block prints those as N/A: neither a pass nor a
+# failure, and no verdict at all — the exit code counts a FAIL alone.
 test_happy_path() {
   local dir=$work/happy
   prepare "$dir"
@@ -1660,6 +1680,38 @@ test_happy_path() {
   expect_absent "$out" "FAKE-ACCESS-TOKEN" "happy path: the access token is not in the block"
   expect_absent "$err" "FAKE-ACCESS-TOKEN" "happy path: the access token is not on stderr"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "--project=fugaro-dev" "happy path: every gcloud call names the installation's project"
+  # Every row this mode never records reads N/A, and NOTHING else does: the rows
+  # the run measured read their own verdict, so the key list above is the whole
+  # of it — a row the run would have recorded has to keep reading `not reached`
+  # when the run stops (the case below), never N/A.
+  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works plain-repo " \
+    "happy path: exactly the rows this mode never records read N/A"
+  expect_contains "$out" "N/A — not part of this mode (proxy)" "happy path: the N/A row names the mode it is not part of"
+  expect_absent "$out" "N/A — not part of this mode (flip)" "happy path: no row claims another mode"
+  expect_absent "$out" "FAIL — not reached" "happy path: no row reads as one the run stopped before"
+  expect_contains "$out" "CHECK 191 RESULT END (exit 0)" "happy path: the N/A rows move no exit code"
+}
+
+# A run that STOPS early is the case the `FAIL — not reached` wording is for, and
+# the mode's own list must not take it away: the guard below stops the check
+# before anything is launched, so every row the proxy mode records was never
+# reached and reads so — while the rows this mode never records keep reading N/A
+# (they were not reached either, but they were never going to be).
+test_a_stopped_run_still_reads_not_reached() {
+  local dir=$work/stopped key
+  prepare "$dir"
+  run_check "$dir" "$script" CHECK191_RUN_ID=20200101-010101
+  expect_status "$status" 1 "a stopped run: a guard stopped the check"
+  expect_contains "$out" "FACT aborted: FAIL" "a stopped run: the block names the stop"
+  expect_contains "$err" "must be today's UTC date and a time" "a stopped run: the guard that stopped it is the run-id base"
+  for key in proxied account-admitted run-launch run-outcome refusal-merge review-run ended-identity; do
+    expect_contains "$out" "FACT $key: FAIL — not reached" \
+      "a stopped run: $key is a row this mode records and the run stopped before it"
+  done
+  expect_absent "$out" "FACT proxied: N/A" "a stopped run: a row this mode records never reads N/A"
+  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works plain-repo " \
+    "a stopped run: the N/A rows are still exactly the ones this mode never records"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a stopped run: no run was launched"
 }
 
 test_a_run_that_did_not_succeed_is_a_failure() {
@@ -2196,6 +2248,16 @@ test_after_flip_happy_path() {
   expect_contains "$out" "opened pull request #42" "after-flip: the proxied repository's row carries its pull request"
   expect_contains "$out" "opened pull request #43" "after-flip: the plain repository's row carries its pull request"
   expect_absent "$(cat "$dir/logs/curl.calls")" "PUT" "after-flip: no outcome node is written"
+  # Check 192 reads the flip's six keys and none of Check 191's: the same
+  # print_block serves both, so the rows this mode never records — Check 191's
+  # measured ones and the `dry-run` marker — read N/A rather than `FAIL — not
+  # reached`, which would read as a check that stopped (fourteen rows did).
+  expect_same "$(na_of "$out")" \
+    "dry-run proxied account-admitted run-launch run-outcome refusal-other-repository refusal-other-ref refusal-tag-ref refusal-ref-delete refusal-other-pull-request refusal-merge refusal-workspaces review-run ended-identity " \
+    "after-flip: exactly the rows this mode never records read N/A"
+  expect_contains "$out" "N/A — not part of this mode (flip)" "after-flip: the N/A row names the mode it is not part of"
+  expect_absent "$out" "N/A — not part of this mode (proxy)" "after-flip: no row claims another mode"
+  expect_absent "$out" "FAIL — not reached" "after-flip: no row reads as one the run stopped before"
 }
 
 test_after_flip_a_job_that_still_mounts_the_token_is_a_failure() {
@@ -2349,6 +2411,7 @@ t test_doctor_s_catch_all_unreadable_arm_is_unmeasured
 t test_a_doctor_row_the_reading_does_not_place_is_unmeasured
 t test_doctor_s_row_is_context_and_never_the_decision
 t test_happy_path
+t test_a_stopped_run_still_reads_not_reached
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
 t test_a_refusal_that_was_not_audited_is_a_failure

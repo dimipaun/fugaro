@@ -92,6 +92,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	}
 	b.WriteString(triageStatusLine(rec))
 	b.WriteString(stageTable(rec))
+	b.WriteString(verifyTable(rec))
 	if rec.Outcome == runstore.OutcomeArtifacts {
 		b.WriteString(artifactsSection(rec))
 	}
@@ -168,6 +169,94 @@ func stageTable(rec *runstore.Record) string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// verifyTable is the report's table of the run's verify records: one row per
+// `fugaro verify` invocation, in the order the run made them, under the stage
+// table. The stage table folds every verification into the stage that ran it,
+// so a reader of the report alone cannot say how much of the run went to
+// building and testing — the fact the owner asked for on 2026-11-17.
+//
+// A count is what the wrapper read out of the JUnit reports, and only a test
+// run reads any: a build or lint row counts zero, and a test run that found no
+// report at all carries the wrapper's warning and zero counts too. Both leave
+// the cell empty — "0 tests" over a suite nobody counted is the false reading
+// stageTable's "—" exists to refuse.
+//
+// The footer gives the time all the records add up to beside the run's own wall
+// clock, so a reader can see whether making the suite faster is worth anything
+// (verifyTimeLine). "" for a record carrying no verify records, which is every
+// run that never called the wrapper and every review class run.
+func verifyTable(rec *runstore.Record) string {
+	if len(rec.Verify) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("| Verify | Head | Result | Tests | Duration |\n|---|---|---|---|---|\n")
+	total := 0.0
+	for _, v := range rec.Verify {
+		state := "passed"
+		if !v.Passed {
+			state = "failed"
+		}
+		count := ""
+		if v.Tests > 0 {
+			count = Plural(v.Tests, "test")
+		}
+		// The kind and the head are text a record states, and a record is a
+		// file inside the container the agent works in: inlineText is what
+		// keeps a hand-written one from ending the cell, the row or the report
+		// with a line of its own (the artifact table's rule, tableCode).
+		fmt.Fprintf(&b, "| %s | %s | %s (exit %d) | %s | %s |\n",
+			inlineText(string(v.Kind)), tableCode(inlineText(shortSHA(v.HeadSHA))),
+			state, v.ExitCode, count, secsText(v.DurationS))
+		total += v.DurationS
+	}
+	b.WriteString("\n")
+	b.WriteString(verifyTimeLine(rec, total))
+	return b.String()
+}
+
+// verifyTimeLine is the line under the verify table: what the run's
+// verifications add up to, and the share of the run's wall clock that is. It is
+// the one figure neither table gives, since the stage table's rows cannot be
+// added up to reach it — each of them times a stage its verifications sit
+// inside, and the run's own clock also covers finalize.
+//
+// The share is left out rather than guessed when the record states no clock at
+// all (wallClockSeconds): a rebase run records no stage and has no finished_at
+// yet, so its total stands alone rather than over a zero.
+func verifyTimeLine(rec *runstore.Record, total float64) string {
+	line := "**Verify time:** " + secsText(total)
+	if wall := wallClockSeconds(rec); wall > 0 {
+		line += fmt.Sprintf(", %.0f%% of the run's %s wall clock", 100*total/wall, secsText(wall))
+	}
+	return line + "\n\n"
+}
+
+// wallClockSeconds is the run's elapsed time as its record states it: what
+// StartedAt and FinishedAt span, or, when the record's ends do not state one,
+// the sum of its stages. The report is written at the end of a run whose
+// finished_at is stamped only after finalize, so a report rendered from the
+// live record carries no ends and the stages are the whole of the clock it has
+// (chainSeconds weighs the same pair). 0 for a record stating neither, which is
+// a fixture read on its own; the footer then prints no share rather than divide
+// by it.
+func wallClockSeconds(rec *runstore.Record) float64 {
+	var stages float64
+	for _, s := range rec.Stages {
+		if s.DurationS > 0 {
+			stages += s.DurationS
+		}
+	}
+	var elapsed float64
+	if rec.FinishedAt != nil {
+		elapsed = rec.FinishedAt.Sub(rec.StartedAt).Seconds()
+	}
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return max(elapsed, stages)
 }
 
 // triageStatusLine is the one line the report carries above its stage table

@@ -437,7 +437,7 @@ above, stand unchanged.
 
 **Amended 2026-11-04, and this is the one amendment that is NOT the recommendation.** Finding
 **H1**: a device token is a **custom token** — uid `m~…`, claim `mu` = uid
-(`internal/budget/token/device.go:176` `MintDevice`; `internal/cli/pair.go:353` writes the device
+(`internal/budget/token/device.go:176` `MintDevice`; `internal/cli/pair.go:355` writes the device
 node) — and **every launcher and operator holds `signJwt` on the project's signer**
 (`deploy/terraform/gcp/modules/firebase/iam.tf:35-41`) and can read `config/admin/devices` through
 `roles/firebasedatabase.viewer` (`:44-50`). So **any launcher can mint a device token and sign in as

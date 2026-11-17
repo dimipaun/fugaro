@@ -163,8 +163,10 @@ type run struct {
 	// cfgRes is how cfg was resolved: the layer each key cfg carries came
 	// from (resolveConfig, set beside cfg). It is read to name the layer the
 	// run's own timeouts.stage came from, which is the source of the bound a
-	// dropped governance.stage_timeout is recorded against (T7.6); nothing
-	// else reads it, and it is nil only for a run that resolved no config.
+	// dropped governance.stage_timeout is recorded against (T7.6), and to tell
+	// a workflow's own `commands.reports` from the defaults filled in behind it
+	// (bootstrap, verify.Settings.ReportsDeclared); it is nil only for a run
+	// that resolved no config.
 	cfgRes *config.Resolution
 	// providers are r.d.Providers with the project layer's claude_models
 	// merged in (config.ApplyClaudeClaims), set once in resolveConfig --
@@ -203,6 +205,13 @@ type run struct {
 	// model call and no implement stage (digest.go, T3.2). Set once at
 	// bootstrap, from the recipe the run resolved.
 	digest bool
+	// diagnose is whether the resolved recipe's one step is the diagnose
+	// step (recipe.UsesDiagnose, T-TC3): a cloud diagnosis, whose one model
+	// stage the runner runs in commands.render's place — the bundle it reads
+	// and the answer it writes are its own work, and no command of the
+	// repository's runs at all (diagnose.go, T-TC4, D2402). Set once at
+	// bootstrap, from the recipe the run resolved.
+	diagnose bool
 	// rebase is whether the resolved recipe's one step is the rebase step
 	// (recipe.UsesRebase, E5): the run puts its branch on its base, resolves
 	// the conflicts, runs the workflow's tests again and pushes — with no
@@ -274,6 +283,16 @@ type run struct {
 	// the Firebase identity it is read with, so the node is read once, decoded
 	// once and its token taken once (projectpolicy.go).
 	projPolicy policyRead
+	// routedClaude is the switch applyRouting applied to this run's pins, nil
+	// when it applied none (no switch, or a state with nothing to act on: the
+	// gateway off, via direct, via auto under a Vertex run or with an Anthropic
+	// key in the job). A pin written after that loop — a replay arm's
+	// challenger, which can only be written once the levels are resolved — is
+	// routed through this (routeModel), because a pin the switch names has to
+	// name the route's own ID wherever it is written: the run would otherwise
+	// carry two spellings of one model, and the gateway would have no route for
+	// the one the arm's stage pins (abreplay.go's applyReplayLevel).
+	routedClaude *config.RoutingClaude
 	// job is the identity this run adopted from the Cloud Run job it is in,
 	// computed and matched in admissionCheck (projectjob.go, plan task 3.3):
 	// the (profile, provider, account) the job's own name was computed from.
@@ -327,7 +346,14 @@ type run struct {
 	// governance block it ignores has been written: the line is about the
 	// build, so a run says it once however many stages it has (guarded by mu).
 	ignoredGovernanceSaid bool
-	stageExtra            func(stage string) (violations []string, tokens int64)
+	// checkpointCall is whether the halt this run ended on left a checkpoint
+	// report for the stopping agent to answer, which is what the checkpoint
+	// stage runs for (governance_hook.go, checkpoint_stage.go, T7.3). It is
+	// set only by a stage hook's own decision, so a stop no checkpoint call
+	// may follow — a stage's own timeout, a cap, the review-scope stop —
+	// leaves it false (guarded by mu).
+	checkpointCall bool
+	stageExtra     func(stage string) (violations []string, tokens int64)
 	// sess is the run's session with the budget backend; nil when the run
 	// has none. frozen is set when the agent loop is over, after which a
 	// halt from the backend changes nothing. Both guarded by mu.
@@ -485,6 +511,12 @@ type run struct {
 	// plan is derived from (applyChallenger); the routing switch rewrites it
 	// with the run's own pins (pinSlots). Empty for every other run.
 	championCoder string
+	// replay is the review level a reviewer arm replays (abreplay.go, D728),
+	// empty for every other run: a challenger whose pair varies a review slot
+	// runs no coding loop at all — it reviews the champion's recorded patch at
+	// this level with the challenger model and publishes nothing (B1.2). It is
+	// set at bootstrap, before anything reads a model, and never cleared.
+	replay policy.Level
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -505,6 +537,13 @@ type run struct {
 	// narrowText is narrowSummary's line, read once at finalize for both the
 	// status section and the report.
 	narrowText string
+	// binariesAdmitted are the binaries this run added at a path the project's
+	// policy admits, both readings together, sorted (stray.go's
+	// admittedBinaries). The two checks fill it at finalize and the pull
+	// request's status section reports it, so a reader knows an unreadable file
+	// is in the diff (D993); it is empty for a run that added none, which is
+	// every run whose task was not an asset.
+	binariesAdmitted []string
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -829,9 +868,23 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		r.runEvaluateMode(runCtx)
 	case r.review:
 		r.runReviewMode(runCtx)
+	case r.replay != "":
+		// A pair at a review slot's challenger (abreplay.go, D728): one review
+		// of the champion's recorded patch and nothing else — no implement, no
+		// fix, no test and no push. A review run is never a challenger arm
+		// (readArm), so this arm is only ever reached by a run of its own.
+		r.runReviewReplay(runCtx)
 	default:
 		r.runAgentLoop(runCtx)
 	}
+	// The stop's own last call, before anything that cannot make one: a
+	// governance halt asks the stopping agent for the three fields of its
+	// checkpoint report, from a fresh session, and the answers go into the
+	// report the halt left (checkpoint_stage.go, T7.3). It runs after the mode
+	// loop, which is the moment the stopped stage's agent process is gone, and
+	// before freezeHalts and closeGateway, which it needs a live gateway to
+	// make its call through.
+	r.checkpointStage(runCtx)
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
@@ -2795,26 +2848,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
-	// The diagnose step is a model stage this build's runner does not execute
-	// yet (T-TC4 lands it), and artifactMode runs the recipe's plan stage, if
-	// it has one, and then always commands.render (artifact.go) — so a run of
-	// a recipe holding the step would run the repository's render command in
-	// the step's place and end succeeded/artifacts having diagnosed nothing:
-	// no error, and no answer either. The catalog's troubleshoot names
+	// The diagnose step is a model stage, and it stands in commands.render's
+	// place rather than beside it (D2402): a recipe holding the step is
+	// mode: artifact like the digest recipes, but what it delivers is the
+	// answer the model wrote into out/, not the output of a command the
+	// repository wrote. Marked here, right after the recipe is resolved and
+	// before any stage, and dispatched in artifactMode in place of the render
+	// (artifact.go): a run that rendered instead would run the repository's
+	// render command in the step's place and end succeeded/artifacts having
+	// diagnosed nothing — the catalog's troubleshoot names
 	// out/diagnosis.md and out/diagnosis.json, which no repository's render
-	// writes, so its own run would even end with an empty artifact set.
-	// Refused here, right after the recipe is resolved and before any stage,
-	// the way the digest step was refused until T3.2 dispatched it, and for
-	// the reason internal/recipe's RegisterStepKind gives: a step the parser
-	// accepts and the run drops may never happen. The launcher's image gate
-	// cannot make this refusal yet — the *Since constant for the step is
-	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
-	// way out: no release's runner runs the stage yet, so a refreshed job image
-	// would refuse the recipe again, and the release that runs it is T-TC4's to
-	// carry — not a step a person is sent to take here.
-	if recipe.UsesDiagnose(rcp) {
-		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
-	}
+	// writes, so its run would even end with an empty artifact set. The
+	// launcher's image gate refuses a diagnosis launch against a release
+	// image that predates the step (T-TC6's *Since constant,
+	// internal/cli/recipes_skew.go); this is the arm the resolved recipe
+	// decides.
+	r.diagnose = recipe.UsesDiagnose(rcp)
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
 	// nothing and it opens no pull request — what it delivers is a branch put
@@ -2874,6 +2923,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
+	// The review-class marker is the diagnosis's, and a diagnosis is the one
+	// run the review-only variant carries without being a review (docs/
+	// troubleshoot-cloud D2411): task.Spec.ReviewClass is what checkJobClass
+	// and checkProjectReviewJobAccount read, so a task carrying it is admitted
+	// to that container and its model calls take the credentials service's
+	// review class (reviewClassRun, gateway.go). The step that makes a run a
+	// diagnosis is the diagnose one, and task.Validate cannot see it — it pins
+	// the field to mode: artifact and no more — so a mode: artifact spec naming
+	// a render recipe would run that recipe's stages in the variant's container,
+	// its model calls served by the class's credential rather than its own
+	// account's, and so past the allow_repos that bounds the latter. Refused
+	// before any stage, keyed on the RESOLVED recipe and not on what the task
+	// claims, because a repository recipe read by name at this run's base is the
+	// recipe that would run.
+	case spec.ReviewClass && !recipe.UsesDiagnose(rcp):
+		return fmt.Errorf("recipe %s holds no diagnose step, and this task claims the review class (review_class): that marker admits a run to the review-only job variant, whose container mounts no App key and no Claude token and whose model calls the credentials service serves as the review class's, and the only run of it that is not a review is the diagnosis the diagnose step runs. The run stops before any stage", rrec.Name)
 	}
 	// A follow-up continues a pull request: it inherits that PR's branch
 	// and base, pushes to the branch and reports on the PR. A mode:
@@ -2984,8 +3049,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// configuration into the file layer it merges, so a bound written after it
 	// would move the pin without the record or the policy ever seeing it.
 	if applyRecipeOutputLimit(&cfg.Agent, rcp) {
-		r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
-			"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+		if r.diagnose {
+			r.d.Log.Info("agent.max_output_tokens.coder capped: the diagnose stage reserves at the recipe's bound",
+				"coder", cfg.Agent.MaxOutputTokens.Coder)
+		} else {
+			r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
+				"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+		}
 	}
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	// The arm's coder model, after the recipe's own role mapping and before
@@ -3041,6 +3111,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
+	}
+	// The reviewer arm's own model, after the policy has resolved every level
+	// (resolveLevels, inside resolvePolicy) and before checkBudget judges the
+	// pins: the challenger is the slot level's reviewer, so it is written into
+	// that level's block and judged as agent.levels.lN.model, the path the
+	// run's allow-list, price table and provider policy read for a level's own
+	// model (checkLevels, levelModelPath) — and the path the stage itself
+	// reads it from (stageModel). Written after the resolution rather than
+	// before it: the resolution is what says which levels run at all, and a
+	// level the run does not run has no stage for a replay to be.
+	if r.replay != "" {
+		if err := r.applyReplayLevel(); err != nil {
+			return err
+		}
 	}
 	// The tier the task carries and the expectation the policy just resolved
 	// for it (tier.go). Here, and not earlier: the expectation is the run's
@@ -3217,6 +3301,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
 		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test, Lint: wf.Commands.Lint,
 		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
+		// Whether the workflow declared these reports or they are
+		// config.DefaultReports filled in: a test run that then finds no report
+		// of a workflow that declared none has no globs to name
+		// (verify.Settings.ReportsDeclared).
+		ReportsDeclared: r.cfgRes != nil &&
+			r.cfgRes.SourceOf("workflows."+r.rec.Workflow+".commands.reports") != config.SourceDefault,
 		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
@@ -3624,6 +3714,12 @@ func (r *run) systemPromptData() PromptData {
 		ContextRepos: r.contextRepoLines(),
 		NoWorkflows:  r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
 		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
+		// The paths the project admits a binary at, and the cap it holds one
+		// to, are the run's resolved policy: a coder that has to add an asset
+		// is told where before it writes one (D992). An empty list leaves the
+		// clause out (prompts.go's binariesRule), and the cap is the effective
+		// one, so a project that wrote none is named the shipped bound.
+		BinariesAllow: r.policy.BinariesAllow, BinariesMaxBytes: r.binaryCap(),
 		// The brief is the coder's, and "implement" is one of its stages: the
 		// answer is the coder's own model, never a review stage's, which is
 		// why denyBinaryReads' review half cannot reach it (D2014).
@@ -3949,6 +4045,12 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
+		// The review-scope stop is asked before the round's call and never
+		// after it (T7.3): a reviewer about to be handed a range covering files
+		// this run never changed is a round the run must not buy at all.
+		if !r.beforeReview(ctx, "review") {
+			return false
+		}
 		// The loop counts the review rounds it starts, across every enabled
 		// level: it is what the time half of the stop rule asks before it
 		// fires (stopNow), so a run whose first stage ate its budget still
@@ -4097,6 +4199,11 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
+			return false
+		}
+		// Asked exactly as seniorLoop asks it, and for the same reason: level
+		// 3's round reads the same range, so a moved one stops it here (T7.3).
+		if !r.beforeReview(ctx, stageAdversarial) {
 			return false
 		}
 		// Counted exactly as seniorLoop counts it, and never per level: the
@@ -4426,6 +4533,12 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// stop is the run's, not one level's).
 			return r.firstLineStop(sessionID)
 		}
+		// The review-scope stop, asked before the round's call like the two
+		// outer loops' (T7.3). It is not the stop rule's time half, so it is
+		// not firstLineStop: a governance stop has already recorded itself.
+		if !r.beforeReview(ctx, "review_first") {
+			return sessionID, false
+		}
 		// Counted as seniorLoop counts its rounds: the stop's guard and its
 		// time half read the run's review rounds, never one level's.
 		r.reviewRoundsRun++
@@ -4688,11 +4801,14 @@ type stageOpts struct {
 	// sets per attempt and not a decision stageOnce makes on its own.
 	RetryTransient bool
 	// Dir is the working directory the stage's agent runs in, "" for the
-	// run's own checkout — which is every stage but one. The triage judge
+	// run's own checkout — which is every stage but three. The triage judge
 	// runs in a directory of its own that holds nothing of the run
 	// (triage_stage.go): the brief is text, and a stage with the artifact
 	// under review in reach is what the empty tool list and the empty
-	// setting sources are there to prevent (F25).
+	// setting sources are there to prevent (F25). The diagnose stage runs in
+	// the source tree the job fetched for it (diagnose.go): that tree is what
+	// it reads, and the run's own checkout holds the repository the failed
+	// command ran in, which is not what a diagnosis of Fugaro reads.
 	Dir string
 	// Ordinal is which of the run's triage rounds this stage's call serves: the
 	// triage stage is the one today, and it reaches the record on each of the
@@ -5135,7 +5251,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.beginGatewayStage(name)
 		done := make(chan struct{})
 		watching.Add(1)
-		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		go func() { defer watching.Done(); r.watchHalt(stageCtx, done, name) }()
 		if p := r.sidecarProc(); p != nil {
 			// The sidecar is watched with the same shape and for the same
 			// reason, and it can only be here with the gateway: a sidecar
@@ -5214,7 +5330,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.mu.Unlock()
 	}
 	if r.gw != nil && !direct {
-		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
+		r.recordGatewayStageCost(ctx, name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 	} else if direct {
 		r.recordAccountStageCost(name, res.CostUSD)
 	} else {
@@ -5804,7 +5920,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// same draft a failed run leaves — the work pushed, the pull request open,
 	// the reason naming the file. That is what makes it actionable; a run that
 	// returned here would put nothing on the branch and open nothing.
-	strays, err := r.strayArtifacts(ctx)
+	strays, admitted, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
@@ -5821,7 +5937,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// other refusal here. Returning the error instead would leave the person
 	// with nothing at all: no branch, no pull request, and a run whose work the
 	// agent did and nobody can see.
-	added, err := r.committedBinaries(ctx)
+	added, committedAdmitted, err := r.committedBinaries(ctx)
 	unread := ""
 	if err != nil {
 		unread = r.redact(err.Error())
@@ -5830,6 +5946,13 @@ func (r *run) finalize(ctx context.Context) error {
 	if len(strays) > 0 || len(added) > 0 || unread != "" {
 		r.fail(strayRefusal(strays, added, unread))
 	}
+	// The other answer of the two readings: the binaries the run added at a
+	// path the project's list admits, which the pull request's status section
+	// names so a reader knows an unreadable file is in the diff (D993,
+	// prflow.go's binariesPart). It is read here, where the two readings are,
+	// and read once: the section is written later, and no part of it may go
+	// looking through the run's diff of its own.
+	r.binariesAdmitted = admittedBinaries(admitted, committedAdmitted)
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
@@ -5960,6 +6083,25 @@ func (r *run) finalize(ctx context.Context) error {
 		dec = blockedDecision(reason, haltClass(halt.Reason))
 	}
 	ready, reason, class := dec.Ready, dec.Reason, dec.Class
+	// The hold a change set puts on its members (D614, F15): a member run
+	// never flips its own pull request ready, because the set's pull requests
+	// go ready together and the step that flips them is the set's own (D3). It
+	// is applied here — after every cause the run named for itself above, and
+	// before the pull request is created or updated below — so the member's
+	// pull request is opened, or kept, a draft, no reviewer is requested for
+	// it (settlePR applies them to a ready pull request only), and the answer
+	// the run earned becomes the verdict its member record carries for the set
+	// to read rather than the outcome of its own pull request.
+	//
+	// A follow-up carries the same block as the run it continues (the launcher
+	// writes it into the task), so the hold binds a follow-up too and no
+	// `fugaro run --pr N` is a way around it (F15).
+	held := false
+	verdict := ""
+	if r.spec.ChangeSet != nil && ready {
+		held, verdict = true, runstore.VerdictShip
+		ready, reason = false, changeSetHoldReason(r.spec.ChangeSet)
+	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
 	if err := r.refreshGitAuth(ctx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid))); err != nil {
@@ -6094,6 +6236,14 @@ func (r *run) finalize(ctx context.Context) error {
 	switch {
 	case ready:
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeReady, "", reason)
+	case held:
+		// The hold is the only thing keeping this pull request a draft: the
+		// run's work is done, its tests passed and its review shipped, so it
+		// is a succeeded run — what turns it ready is the set's own step
+		// (D3), not a second run of this repository — and its outcome is the
+		// draft its pull request carries. The class is empty, as every
+		// succeeded ending's is.
+		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeDraft, "", reason)
 	case halt != nil:
 		r.rec.Halt = halt
 		r.recordEnd(runstore.StatusHalted, runstore.OutcomeDraft, haltClass(halt.Reason), reason)
@@ -6104,6 +6254,14 @@ func (r *run) finalize(ctx context.Context) error {
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeDraft, class, reason)
 	}
+	// The verdict joins the member's record once the ending is known — here
+	// and not at the hold above — so what the set's step reads is the ending
+	// this run reached. Every ending that gets this far writes it, the empty
+	// word included, which is what clears a `ship` an earlier attempt at the
+	// same pull request left behind; an ending that returns above this line (a
+	// push that failed, a pull request closed during the run) writes nothing
+	// and leaves the last word about this pull request standing.
+	r.recordChangeSetVerdict(ctx, pr, verdict)
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)

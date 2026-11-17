@@ -336,6 +336,21 @@ func TestReadmeOpenRouterSetup(t *testing.T) {
 	if !strings.Contains(section, "deploys a route that sets either") {
 		t.Error("the README OpenRouter section does not say fugaro update --repo deploys a route that sets require_zdr or price_policy: catalogShipped is true, so the switches are deployable and the section has to say so")
 	}
+	// What a route that sets neither key keeps is the code's default, and the
+	// default is the dearest end since D2644 (PricePolicySet): a reader who
+	// leaves `price_policy` out gets dearest-end reservations and the "cannot
+	// hold" halts, so a section promising the cheap end is wrong about what
+	// the run does. The expectation is read off the accessor, so the sentence
+	// and the code cannot part again.
+	if got := (config.ModelProvider{}).PricePolicySet(); got != config.PricePolicyHighest {
+		t.Fatalf("an unset price_policy is %q in the code, not %q: this test's expectation is stale", got, config.PricePolicyHighest)
+	}
+	if !strings.Contains(section, "`price_policy: "+config.PricePolicyHighest+"`") {
+		t.Errorf("the README OpenRouter section does not state the default a route that sets neither key keeps: an unset price_policy is %s (PricePolicySet, D2644)", config.PricePolicyHighest)
+	}
+	if strings.Contains(section, "price_policy: "+config.PricePolicyCheapest) {
+		t.Errorf("the README OpenRouter section still tells a reader that leaving price_policy out keeps the cheap end, which an unset field does not (its default is %s)", config.PricePolicyHighest)
+	}
 
 	// The section states how narrow the catalog is, so a reader knows a model
 	// it does not cover is refused rather than guessed. The count is the

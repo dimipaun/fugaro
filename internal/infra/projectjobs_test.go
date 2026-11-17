@@ -1853,7 +1853,7 @@ profiles:
 }
 
 // TestNoSecretValueReadUnderInternal: no code under internal/ reads a secret
-// *value* except two places, each named below with what it is. The Claude
+// *value* except the places named below, each with what it is. The Claude
 // OAuth token reaches a run by the platform's own mount and never through
 // Fugaro's deployer or launcher: the deployer names the secret, the module
 // mounts it, and neither of those two ever holds the value.
@@ -1880,6 +1880,19 @@ profiles:
 // the process — but it is a read, so it is on the list by name rather than
 // left to be discovered.
 //
+// The fourth is the one read under internal/ whose value is Fugaro's own
+// secret rather than a credential a run is served (mobile plan task P5.1e):
+// `internal/mailbox/keychain/cloud.go` reads the installation's pairing-key
+// container, because the tag over a paired phone's messages is a symmetric
+// HMAC and the consumer that verifies one holds the key the phone signs with
+// (the mobile orchestrator design's section 4.2) — the third copy of that key,
+// in the installation's own project. It reads the installation's OWN container
+// and every version of it, since the uid a pairing's key belongs to is inside
+// the version's payload: the whole set is what a pass verifies with. What it
+// never does is write a secret's value into a log, an error or a refusal, and
+// SECURITY.md, D111 and Global Constraint 4 carry the note that records the
+// widening in the same change.
+//
 // Mutation (run, restore): read the account's token in the deployer or the
 // launcher (any `sm.Access(...)` outside the files below) — the scan fails
 // with the file that did it. The other spellings a read can take are held by
@@ -1903,6 +1916,7 @@ var secretValueReadAllowed = map[string]string{
 	"cli/githubapp.go":          "the GitHub App key pre-check of init and doctor",
 	"credsvc/bundle.go":         "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
 	"credsvc/dynamicsecrets.go": "the per-secret containers of the dynamic-delivery grammar (D1931): a credential a person rotated is read ahead of the bundle's entry for it (R6), by exact name and never by listing, and a read that fails refuses the call rather than serving the bundle's older value (D143)",
+	"mailbox/keychain/cloud.go": "the installation's own pairing-key container (mobile plan task P5.1e, the mobile orchestrator design's section 4.2): a paired phone's tag is a symmetric HMAC, so the consumer that verifies one holds the key the phone signs with, and the version's own payload carries which device it is for (P5.1e's third copy, revoked by `fugaro pair revoke` destroying the version)",
 }
 
 // secretValueReadNames are the reads, by the API each one is spelled with: the
