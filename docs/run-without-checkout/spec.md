@@ -57,7 +57,7 @@ not its job, not its messages, not its cost.
 | --- | --- | --- | --- |
 | 1 | The checkout's **object database** at the ref: `git cat-file blob <at>:fugaro.yaml`, the reader `checkoutFugaroYAMLAtRef` already is, promoted from the auth axis to the whole document | A checkout of the repository exists in the working directory (so `checkoutRoot` names one), and the ref's commit carries the file — even when the working tree has another branch checked out, or the file is not in the tree at all | One local `git` call, no network, no credential |
 | 2 | The **job the run being continued recorded**: `runstore.Launch.Job` from the run's own `launch.json`, backfilled from `result.json`'s execution when the CLI died before writing one — `existingLaunch` (`internal/cli/run.go`) already does exactly this backfill | `--retry`, and a follow-up (`--pr`) whose previous run has a launch record | One object read in the runs bucket, which the command already makes |
-| 3 | The **forge**: `fugaro.yaml` at `spec.Ref` of `spec.Repo`, read with a read-only installation token the installation's **credentials service** mints for the operator as a person (§5) | A human session, no checkout of the repository anywhere, the installation has opted into the credentials service, and the repository's provider is one a shared job serves (`infra.SharedJobProvider`, today `github`) | One credentials-service call — audited, and answered only for a repository the installation holds — and one API call |
+| 3 | The **forge**: `fugaro.yaml` at `spec.Ref` of `spec.Repo`, read with a read-only installation token the installation's **credentials service** mints for the operator as a person (§5) | A human session, no checkout of the repository anywhere, the installation has opted into the credentials service, and the repository's provider is one a shared job serves (`infra.SharedJobProvider`, which admits both providers since docs/shared-jobs-default's I1) | One credentials-service call — audited, and answered only for a repository the installation holds — and one API call |
 | — | **The refusal**, in the shape #1477 gives it, naming the cause and the way out (§7) | None of the three answers | — |
 
 Two rules hold the order together.
@@ -70,13 +70,16 @@ has nothing to do with the console: `checkoutParse` returns `nil` both when ther
 leaves the result zero). An operator in a checkout of `X`, on a branch whose tree predates the file,
 is told today (by the merged refusal) to "run it from `X`'s checkout" — which is where they are.
 
-**Source 3 is the last resort and only where a shared job is possible at all.** For a repository
-whose provider no shared job serves, there is nothing to learn: step 4 above keeps the
-per-repository job for every Bitbucket repository whatever its `fugaro.yaml` says, and the
-repository's provider is known without a checkout — `repoSlug` has already refused the launch if the
-local config does not name it. So the launch without a checkout proceeds on the per-repository job
-with **no read and no credential**, and that is not a guess: it is the same answer the checkout path
-gives for the same repository. (Narrowing, D901.)
+**Source 3 is the last resort, and the narrowing that stood beside it is empty on this tree.** For a
+repository whose provider no shared job serves there is nothing to learn: step 4 above keeps the
+per-repository job whatever the repository's `fugaro.yaml` says, and the provider is known without a
+checkout — `repoSlug` has already refused the launch if the local config does not name it — so such a
+launch proceeds on the per-repository job with **no read and no credential**, which is the same answer
+the checkout path gives for the same repository. **No provider that predicate separates is left to
+reach it**: `infra.SharedJobProvider` admits `bitbucket` beside `github` since docs/shared-jobs-default's
+I1, so a Bitbucket launch is no longer the case this paragraph describes — one without a checkout
+makes the read — and the shape stands only for a provider a later list does not serve. (Narrowing,
+D901.)
 
 **Source 3 is also bounded by the installation's own opt-in, and that is the cost of the owner's answer
 to D902.** The credentials service ships dormant — an installation opts in with `fugaro update
@@ -345,7 +348,7 @@ own identity can make through the installation's credentials service, or with th
 | --- | --- | --- |
 | From `X`'s checkout, `fugaro.yaml` in the tree | decided from the tree | same |
 | From `X`'s checkout, tree has no file, ref does | refused, one way out and it is where the operator is | decided from the checkout's objects at the ref |
-| Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | per-repository job — no shared Bitbucket job exists |
+| Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | decided by the read through the service, at the ref: the provider narrowing this row recorded is empty since docs/shared-jobs-default's I1 admitted `bitbucket` to the list a shared job serves (where the read cannot be made, the refusal of the row below stands) |
 | Anywhere, no checkout of `X`, GitHub, profiles published, human session, installation has a credentials service | refused | decided by the read through the service, at the ref |
 | The same, installation has **no** credentials service | refused | refused, unchanged, naming the checkout |
 | The same, the service is there but its mint cannot read a file (not redeployed after A0) | refused | refused, naming the service and the redeploy |

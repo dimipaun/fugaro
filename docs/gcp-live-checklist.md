@@ -13422,8 +13422,10 @@ S3's runner reaches git only through it (`internal/runner`'s `TestSharedBitbucke
 and **the two that put such a job in the deployer's hands have landed since this was written**:
 docs/shared-jobs-default's **I1** (`internal/infra`'s `sharedJobProviders` admits `bitbucket` beside
 `github`) and its **S5** (**`fugaro update` writes the default profile a shared Bitbucket job is
-deployed from**). What is still owed is **a deployment that lets a shared job's account reach the
-credentials service at all** — which is two facts, and both of them are absent.
+deployed from**). What is still owed is **the service's own admission of the class** — the
+`FUGARO_SHARED_JOB_ACCOUNTS` table below, rendered by no module — and not the front door: **B5.2 has
+shipped**, and the shared job account's `roles/run.invoker` on the credentials service is written by
+`deploy/terraform/gcp/modules/project/sa.tf`.
 
 The first is the one to know before step 5: the service's shared class is its table of
 `FUGARO_SHARED_JOB_ACCOUNTS` rows, nothing under `deploy/terraform/` renders that name
@@ -13434,23 +13436,24 @@ whole class** — the caller falls through to the per-repository table and is re
 the runs of step 5 would be refused by the service before they cloned anything, on a job that holds no
 credential to fall back on.
 
-The second is the one to know before step 6, and it is the *earlier* of the two a caller meets: the
-deployment owes the shared job's service account **`roles/run.invoker` on the credentials service**,
-and `deploy/terraform/gcp/modules/project` writes no such member on any profile's account — the
-per-repository path's grant lives in `deploy/terraform/gcp/modules/workflow/sa.tf` (D135), and
-docs/secrets-brokering is where the project module gets its own — task **B5.2**, which names "the
-shared job account's `roles/run.invoker` on the service" among its parts and has not shipped. The
-service is IAM-only (its front end states `invoker_iam_disabled = false` and no `allUsers` member is
-written anywhere), so a caller without that bit is refused **403 by Cloud Run's own front end**,
-before the container starts — the request never reaches the proxy, the pairing or the allow-list step
-6 is about. An owner who lands I1, S5 and the table's rendering and launches anyway meets that 403
-first; it is **not** this section's refusal, and it is not a pass of step 6.
+**The second was the front door, and it has shipped.** The shared job's service account holds
+**`roles/run.invoker` on the credentials service**: `deploy/terraform/gcp/modules/project/sa.tf`
+writes exactly that one member — the job's own account, on that one service, for a profile the
+service serves — where the per-repository path's grant is
+`deploy/terraform/gcp/modules/workflow/sa.tf`'s (D135), and task **B5.2** is the change that landed
+it. The service is IAM-only (its front end states `invoker_iam_disabled = false` and no `allUsers`
+member is written anywhere), so the grant is what lets a request into the container at all; a caller
+that arrives without a row in the class's table is then refused by **the service's own
+authenticator**, and not by Cloud Run's front end. The bare **403** this paragraph used to say you
+meet first is therefore no longer the refusal to expect here: what stops the runs of steps 5 and 6 is
+the empty class table above, and that is **not** this section's refusal and not a pass of step 6
+either.
 
-So what a shared Bitbucket job lacks today is not the provider list or the profile it is deployed
-from — both landed — but the two facts above, and their consequence is the **403** of steps 5 and 6:
-the job's runs have no service to reach, which is why neither step can read the refusal this check is
-for until both have landed. Run this section once both have landed, and read the documents that say
-so as of 2026-11-16 — [git-providers.md](git-providers.md) and [project-layer.md](project-layer.md).
+So what a shared Bitbucket job lacks today is not the provider list, the profile it is deployed from
+or the grant that lets its account into the service — all three landed — but the class's own table,
+and its consequence is that the runs of steps 5 and 6 are refused by the service before they clone
+anything: neither step can read the refusal this check is for until that table is rendered. Run this
+section once it has, and read the documents that say so as of 2026-11-16 — [git-providers.md](git-providers.md) and [project-layer.md](project-layer.md).
 
 **What the check settles** (**D460**–**D462**, **D466**, **D2302**; and F11 and F12 of the
 [reconciliation](bitbucket-workspace-token/reconciliation-secrets-brokering.md)): the shape a shared
@@ -13527,10 +13530,10 @@ and a fake deployment, and the deployer's refusal is a plan, not a project.
    far as cloning, committing, pushing and opening its pull request, and that the push lands on a
    job with no `bitbucket-token` in it is the reading: the credential on the wire is the service's,
    paired to the repository the run's own profile admits. A run that never reached its clone has
-   skipped the reading rather than passed it, and the case to tell apart at once is a run halted by
-   a **403** — that is Cloud Run's front end refusing a caller without `roles/run.invoker`, the
-   missing grant the paragraph above names, and it says nothing about this profile: the service was
-   never asked.
+   skipped the reading rather than passed it, and the case to tell apart at once is a run halted
+   **without the allow-list having been asked at all** — with the class's table empty (above) the
+   service refuses every shared run of its own accord, and a bare Cloud Run **403** would be the
+   grant rather than the table: neither says anything about this profile.
 6. **The third repository, refused at the proxy.** Now launch a run of the repository that is not in
    the allow-list, by hand and against the same shared job — `fugaro run --repo <owner/name>`, with
    that repository already on the published node, which is what makes the run resolve the shared job
@@ -13542,11 +13545,10 @@ and a fake deployment, and the deployer's refusal is a plan, not a project.
    the refusal before you record it, because two different refusals end a run here and only one of
    them is this step's.** The one this step is about is the **service's own**, after the pairing:
    its words name the repository and the identity it resolved, it is answered by the proxy's code
-   with the audit line a refusal is recorded as, and it is the allow-list doing its job. The other
-   is **Cloud Run's front end**, a bare **403** with no repository in it — an account that holds no
-   `roles/run.invoker` on the service, or one the service's own table does not admit at all, is
-   stopped there before the container runs, so the request never reaches the proxy, the pairing or
-   the block. That 403 is the state the paragraph above describes, not a reading: **record it as
+   with the audit line a refusal is recorded as, and it is the allow-list doing its job. The other is
+   the run stopped **before the allow-list is reached at all** — the class's empty table refusing it
+   at the service's own authenticator (the paragraph above), or, on an installation whose job carries
+   no grant, a bare Cloud Run **403** with no repository in it. Neither is a reading: **record it as
    this step not having run**, not as the refusal, because a check recorded on it would claim the
    allow-list held when nothing of the allow-list was ever asked. Record the refusal's own words
    and the run's final row. **This is the step to be sure of**: if that run clones, the allow-list
