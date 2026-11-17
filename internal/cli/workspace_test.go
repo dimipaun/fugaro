@@ -452,10 +452,13 @@ func TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
 	_, aurora, owner := workspaceOwnerHome(t)
 	auroraBefore, ownerBefore := readFileString(t, aurora), readFileString(t, owner)
 
-	out, _, err := execute(t, workspaceMemberAddArgs("--repo", "owner/repo-a", "--repo", "owner/repo-b")...)
-	if err != nil {
-		t.Fatalf("workspace member add: %v\n%s", err, out)
-	}
+	// The edit lands and this returns the chain's own answer, which in this
+	// fixture is D1563's sentence and a non-zero exit: the workspace's own
+	// project has no Firebase backend here to publish its record in, and its
+	// grant is confirmed only by a name typed at a terminal
+	// (workspaceAssertSavedNotLive holds both below). What this test reads the
+	// file for is the write, which happened either way.
+	out, _, chainErr := execute(t, workspaceMemberAddArgs("--repo", "owner/repo-a", "--repo", "owner/repo-b")...)
 	if got := readFileString(t, aurora); got != auroraBefore {
 		t.Errorf("member add wrote the member's own config:\n%s", got)
 	}
@@ -492,9 +495,7 @@ func TestMemberAddWritesTheOwnersHalfInTheWorkspacesOwnConfig(t *testing.T) {
 	if strings.Join(got.Repos, ",") != strings.Join(want.Repos, ",") {
 		t.Errorf("repos = %v, want %v", got.Repos, want.Repos)
 	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not hand off to fugaro update:\n%s", out)
-	}
+	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 }
 
 // TestMemberAddReplacesTheEntryItAlreadyDeclares: a member the table already
@@ -523,10 +524,10 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 		"--fp", "aurora",
 		"--exchange-url", "https://exchange.example.com/v2",
 		"--repo", "owner/repo-new"}
-	out, _, err := execute(t, ours...)
-	if err != nil {
-		t.Fatalf("workspace member add: %v\n%s", err, out)
-	}
+	// The replaced entry is the write, and it lands either way; what this
+	// returns is the chain's answer about the two steps that make it live
+	// (workspaceAssertSavedNotLive at the end of this test).
+	out, _, chainErr := execute(t, ours...)
 	after := readFileString(t, owner)
 	// Nothing the replaced entry carried survives it: not the retired account,
 	// not the account that was still live, not the repository.
@@ -568,6 +569,7 @@ func TestMemberAddReplacesTheEntryItAlreadyDeclares(t *testing.T) {
 	if readFileString(t, owner) != before {
 		t.Errorf("a repeated declaration rewrote the file:\n%s", readFileString(t, owner))
 	}
+	workspaceAssertSavedNotLive(t, "workspace member add", out, chainErr)
 }
 
 // TestMemberAddRefusesToDeclareADatabaseURL: the member's database is derived
@@ -607,8 +609,13 @@ func TestMemberAddWritesNoRunsBucket(t *testing.T) {
 	if after := readFileString(t, owner); after != before {
 		t.Errorf("the refusal wrote the file:\n%s", after)
 	}
-	if _, _, err := execute(t, workspaceMemberAddArgs()...); err != nil {
-		t.Fatalf("workspace member add: %v", err)
+	// The entry lands (the assertions below read it back). The chain ends with
+	// the owner's two steps owed in this fixture, which is D1563's sentence in
+	// out and a non-zero exit beside it — TestWorkspaceMemberAddAsksNothing
+	// holds that answer, and a refusal of the write is what this fails on.
+	out, _, err := execute(t, workspaceMemberAddArgs()...)
+	if err != nil && !strings.Contains(out, "saved, not live yet") {
+		t.Fatalf("workspace member add: %v\n%s", err, out)
 	}
 	// Only the entry, not the whole file: the config's own runs_bucket is the
 	// installation's, and it is none of this table's business.
@@ -631,19 +638,23 @@ func TestMemberAddWritesNoRunsBucket(t *testing.T) {
 func TestMemberRmRemovesTheEntryAndTheEmptyTable(t *testing.T) {
 	_, _, owner := workspaceOwnerHome(t)
 	before := readFileString(t, owner)
-	if _, _, err := execute(t, workspaceMemberAddArgs()...); err != nil {
-		t.Fatalf("workspace member add: %v", err)
+	out, _, err := execute(t, workspaceMemberAddArgs()...)
+	// As above: the entry lands, and the chain's own answer about the owner's
+	// two steps is the sentence in out rather than a refusal here.
+	if err != nil && !strings.Contains(out, "saved, not live yet") {
+		t.Fatalf("workspace member add: %v\n%s", err, out)
 	}
-	out, _, err := execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
+	out, _, err = execute(t, "workspace", "member", "rm", "workspace-alpha", "aurora")
 	if err != nil {
 		t.Fatalf("workspace member rm: %v\n%s", err, out)
 	}
 	if after := readFileString(t, owner); after != before {
 		t.Errorf("the removal did not restore the file:\n--- before\n%s--- after\n%s", before, after)
 	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not hand off to fugaro update:\n%s", out)
-	}
+	// The last member removed leaves a config that declares no workspace of its
+	// own, so both stages behind the removal skip and the change is live the
+	// moment the file is written (workspaceAssertNoSecondCommand's own reason).
+	workspaceAssertNoSecondCommand(t, "workspace member rm", out, "workspace-alpha", "ws-gcp")
 }
 
 // TestMemberRmRefusesAnUndeclaredMember: nothing to remove is a refusal and not
