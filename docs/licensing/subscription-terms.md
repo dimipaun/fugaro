@@ -17,11 +17,13 @@ closed its review round (task S8.4), so the plan's one revision of the Terms, he
 counsel answers, is made here. It applies what the round leaves settled: an individual acting other
 than as a consumer is an organisation of one (section 1.3, ruling T15); the Licensor issues License
 Keys by hand until the Key Service is live, and issues the next License Key for a Paid Plan 30 days
-before the current one expires (section 6.3, rulings T13 and T26); and a License Key cannot be
-revoked, so it keeps working until it expires after a refund (sections 6.3 and 6.4, ruling T25).
-Section 7.1 already carries the coordinator as part of the Software, the owner's ruling D531 of
-2026-10-29. The items of the plan's S0.4 list that no answer on file states are not applied, and
-item 9 of the list at the end of this file names them.
+before the current one expires (section 6.3, rulings T13 and T26). Section 7.1 already carries the
+coordinator as part of the Software, the owner's ruling D531 of 2026-10-29. **The refund text is not
+touched here:** ruling T25's "no revocation" was overturned on 2026-11-11 and 2026-11-13 (D2131 and
+D2147: a refund or a chargeback revokes the keys of the licence), and the Terms' refund and "no
+revocation" text is counsel's, under licence-key-v2 task K0.1, which no agent edits. The items of
+the plan's S0.4 list that no answer on file states are not applied, and item 9 of the list at the
+end of this file names them.
 
 **How to read it.** Parts A to G are the agreement text, as counsel wrote it, with Markdown for
 counsel's formatting. The two figures first held back are in the text: the late-payment interest
@@ -285,10 +287,7 @@ it does to one the Key Service issues:
 Confidential Information. The Customer shall not share a License Key with anyone other than its
 Users, alter it, or circumvent its verification. The Customer acknowledges that, because
 verification is offline, the Licensor relies on these Terms, and not on technical controls, to
-enforce User Seat limits, and that a License Key cannot be revoked: it keeps working until it
-expires, including after the Licensor refunds the Fees under section 15 (Refunds). Where a
-Customer's Subscription ends before its License Key expires, section 9 (After the Subscription
-ends) governs the Customer's use of that License Key.
+enforce User Seat limits.
 
 ## 7. Customer Data and Privacy
 

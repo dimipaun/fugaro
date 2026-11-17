@@ -3,7 +3,7 @@
 
 # Fugaro Subscription Terms
 
-Approved by counsel. Dated 2026-10-28.
+Approved by counsel. Dated 2026-10-28. Revised 2026-11-17.
 
 # Part A. General
 
@@ -259,10 +259,7 @@ it does to one the Key Service issues:
 Confidential Information. The Customer shall not share a License Key with anyone other than its
 Users, alter it, or circumvent its verification. The Customer acknowledges that, because
 verification is offline, the Licensor relies on these Terms, and not on technical controls, to
-enforce User Seat limits, and that a License Key cannot be revoked: it keeps working until it
-expires, including after the Licensor refunds the Fees under section 15 (Refunds). Where a
-Customer's Subscription ends before its License Key expires, section 9 (After the Subscription
-ends) governs the Customer's use of that License Key.
+enforce User Seat limits.
 
 ## 7. Customer Data and Privacy
 

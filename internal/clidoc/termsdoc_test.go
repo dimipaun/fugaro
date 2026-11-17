@@ -61,6 +61,42 @@ func TestWebsiteTermsPageOnlyCutsText(t *testing.T) {
 	}
 }
 
+// The page carries the revision date, because section 29.1 amends the
+// agreement "by publishing a new dated version": a reader at the URL the
+// licence pins has to be able to tell which revision they are accepting, and
+// the source's own note is cut from the page.
+func TestWebsiteTermsPageCarriesTheRevisionDate(t *testing.T) {
+	source, err := os.ReadFile("../../" + termsSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revised := termsRevised.FindStringSubmatch(string(source))
+	if revised == nil {
+		t.Fatalf("%s carries no '**Revised YYYY-MM-DD' paragraph: the page then cannot say which revision of the agreement a reader accepts", termsSource)
+	}
+	page, err := renderTermsPage(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimPrefix(string(page), termsHeaderBlock), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("%s has no status line: %q", termsPage, lines)
+	}
+	if status := lines[2]; !strings.Contains(status, "Revised "+revised[1]) {
+		t.Errorf("%s is what %s generates, and its status line %q does not carry the revision %s", termsPage, termsSource, status, revised[1])
+	}
+
+	// A source with no revision renders none: a date the source does not state
+	// would be this generator inventing a version.
+	plain, err := renderTermsPage([]byte("# T\n\nwritten 2026-10-27\n\n## 1. A\n\nText.\n\n## 34. Z\n\nEnd.\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), "Revised") {
+		t.Errorf("a source with no revision renders one: %q", strings.TrimPrefix(string(plain), termsHeaderBlock))
+	}
+}
+
 func TestWebsiteTermsPageRefusesAnUnknownNote(t *testing.T) {
 	src := "# T\n\nwritten 2026-10-27\n\n## 1. A\n\nText. (Note for counsel - a new shape.)\n\n## 34. Z\n\nEnd.\n\n---\n\n## Questions for the owner\n"
 	if _, err := renderTermsPage([]byte(src)); err == nil {
