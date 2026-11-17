@@ -363,12 +363,19 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// nothing of a challenger's reaches the developer (shadow.go's own note) —
 	// which is why this is a call to the champion's check and not a second
 	// enforcement point with an answer of its own.
+	//
+	// A reading that fails is refused here exactly as the champion refuses it,
+	// and not returned as an error: the two arms' records have to say the same
+	// thing about the same work (D555), and the champion's own finalize refuses
+	// the run and carries on (runner.go).
 	added, err := r.committedBinaries(ctx)
+	unread := ""
 	if err != nil {
-		return fmt.Errorf("reading the run's own diff for binaries it added: %w", err)
+		unread = r.redact(err.Error())
+		r.d.Log.Error("reading the run's own diff for binaries it added failed; the arm is refused for it", "err", unread)
 	}
-	if len(strays) > 0 || len(added) > 0 {
-		r.fail(strayRefusal(strays, added))
+	if len(strays) > 0 || len(added) > 0 || unread != "" {
+		r.fail(strayRefusal(strays, added, unread))
 	}
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {

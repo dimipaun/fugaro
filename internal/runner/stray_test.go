@@ -1,6 +1,8 @@
 package runner_test
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -622,5 +625,119 @@ func TestTheChallengerArmIsChecked(t *testing.T) {
 	}
 	if remoteHasBranch(t, arm.harness) {
 		t.Error("the refused arm pushed its branch")
+	}
+}
+
+// lateNul is a file the rule still calls text: twelve thousand bytes of the
+// run's own words with a single NUL at offset 9000, past the binaryScanBytes
+// window. The rule's premise is git's own test — a NUL in the *first* 8000
+// bytes is what makes a file unreadable (spec.md §2.4, and §9's attack row for
+// this exact shape) — so a file whose only NUL sits past the window is text by
+// the rule, and every reading of it answers on the window rather than on the
+// file's length.
+func lateNul(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	b := bytes.Repeat([]byte{'x'}, 12000)
+	copy(b, "the run's own words, at length\n")
+	b[9000] = 0
+	if err := os.WriteFile(filepath.Join(req.Dir, name), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// selfCommitLateNul is that file committed by the agent itself, so the row the
+// committed reading gets is an `A` whose bytes the rule has to read.
+func selfCommitLateNul(t *testing.T, req agent.Request, name string) {
+	t.Helper()
+	lateNul(t, req, name)
+	shell(t, req, "git add -A && git commit -qm \"Add the run's notes\"")
+}
+
+// TestBothReadingsOfTheRuleReadTheSameWindow: the two readings are one
+// predicate (spec.md §4.3), so the file a reading refuses has to be the file
+// the other one refuses, and the window is where that starts: both read the
+// first binaryScanBytes of the bytes the branch carries — the working tree's
+// file for the untracked reading (readHead), the blob the row adds for the
+// committed one — and a NUL past that window is text to both.
+//
+// The committed half is the one that was wrong: it read the path's whole diff,
+// which is a rendering of the file rather than the file (headers and `+`
+// prefixes put the file's own bytes at other offsets), so a NUL git itself
+// calls past the window was found in the diff and the run was refused for a
+// file the untracked reading commits without a word.
+func TestBothReadingsOfTheRuleReadTheSameWindow(t *testing.T) {
+	const path = "notes.txt"
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err := b.run(t, implementCommitting(path, selfCommitLateNul), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("the committed reading: record = status %s, outcome %s, reason %q; want the ordinary ending: the file's only NUL is past the window the rule reads", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if !slices.Contains(branchFiles(t, b.harness, rec.Branch), path) {
+		t.Errorf("the committed reading: the branch does not carry the file: %v", branchFiles(t, b.harness, rec.Branch))
+	}
+	left := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	rec, err = left.run(t, implementLeaving(path, lateNul), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Reason != "uncommitted changes were committed at finalize, after the last verified test run" {
+		t.Fatalf("the untracked reading: reason = %q; want the ordinary leftover-commit reason, not a refusal", rec.Reason)
+	}
+	if !slices.Contains(branchFiles(t, left.harness, rec.Branch), path) {
+		t.Errorf("the untracked reading: the branch does not carry the file finalize committed: %v", branchFiles(t, left.harness, rec.Branch))
+	}
+}
+
+// TestAnUnreadableCommittedReadingRefusesButStillShips: the reading of the
+// run's own commits failing is a refusal and not a stop, which is the shape
+// every other failure at this point of a run has (runner.go's note over the
+// two binary checks). Refused rather than passed, because a run whose commits
+// were never read is a run whose binaries nobody looked for; and shipped all
+// the same, because a git read that failed is not a reason to throw away work
+// the agent did: the branch carries it and the pull request is open, with the
+// draft and the reason telling a person what happened.
+//
+// The failure is injected at the raw reading of the run's own diff, which is
+// the read the check cannot do without (session_export_test.go's seam).
+func TestAnUnreadableCommittedReadingRefusesButStillShips(t *testing.T) {
+	b := policyRun(t, gwConfig(t, ""), "off", "", binariesNode(`"website/public/**"`, "1048576"))
+	runner.FailSessionGit(t, func(args []string) bool {
+		return len(args) > 0 && args[0] == "diff" && slices.Contains(args, "--raw")
+	}, errors.New("the object store could not be read"))
+	rec, err := b.run(t, committing(func(*testing.T, agent.Request) {}), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: nothing read what the run's own commits added", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{"could not read the run's own diff", "the object store could not be read"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	if !slices.Contains(branchFiles(t, b.harness, rec.Branch), "feature.txt") {
+		t.Errorf("the branch does not carry the run's own work: %v", branchFiles(t, b.harness, rec.Branch))
+	}
+	if n := len(b.harness.provider.State.PRs); n != 1 {
+		t.Errorf("the run opened %d pull requests; want the one a refusal leaves: the refusal is not a stop", n)
+	}
+	// A challenger arm reads the rule the same way (shadow.go), so the same
+	// fault has to be the same refusal there: an arm whose record said something
+	// else about the same work — here, that the run ended in an infrastructure
+	// error — is a pair a scorer reads as two runs (D555).
+	arm, _ := armGW(t, armCfg(t), "50", challengerModel, armLayer)
+	arec, err := arm.run(t, committing(func(*testing.T, agent.Request) {}), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if arec.Status != runstore.StatusFailed || arec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("the arm: record = status %s, outcome %s, reason %q; want the arm failed with nothing published", arec.Status, arec.Outcome, arec.Reason)
+	}
+	if !strings.Contains(arec.Reason, "could not read the run's own diff") {
+		t.Errorf("the arm's reason = %q; want it to name the reading that failed, as the champion's does", arec.Reason)
 	}
 }

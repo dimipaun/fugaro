@@ -133,38 +133,41 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 	// own answer: that answer is the checkout's to make, and one committed
 	// .gitattributes line (`test_dup_case2 diff`) makes numstat count a
 	// payload's lines and report it as text, which is the widening D986 exists
-	// to stop. Every path git called text is therefore read again, the way the
-	// review input re-checks the diff it carries (reviewinput.go's
-	// reviewTextDiff). A path git called binary is left as it is: that answer
-	// refuses more rather than less, and a repository that marks its own text
-	// file binary has refused its own file.
+	// to stop. Every path git called text is therefore read again, and what is
+	// read is the head of the blob the row adds — the bytes the branch carries,
+	// which is the same window the untracked reading takes of the file in the
+	// tree (blobCarriesBytes). A path git called binary is left as it is: that
+	// answer refuses more rather than less, and a repository that marks its own
+	// text file binary has refused its own file.
 	//
-	// A typechange is read on its own new bytes instead, whatever git answered:
+	// A typechange is read whatever git answered, and the read is the add's:
 	// numstat's counts for a `T` row cover the side the range *removes* as well
 	// as the side it adds, so a base holding binary bytes answers "binary" for a
-	// path the range replaced with a symlink, and the path is refused for bytes
-	// that are on their way out rather than for the path name that arrived. What
-	// is refused is what the branch carries, so the new blob is read — and a
-	// gitlink carries no bytes at all, whatever numstat says of the pair.
+	// path the range replaced with a symlink — and what the branch carries there
+	// is the path name that arrived, not the bytes on their way out.
+	//
+	// A gitlink is the row with nothing to read at all: its entry holds a commit
+	// id where a blob would be, so it is text by the reading and refused by
+	// nothing, whatever numstat says of the pair and whatever letter the row
+	// carries. This is answered before the bytes are asked for, since there are
+	// none: `git cat-file blob` on a commit id is not a read that succeeds.
 	for _, c := range added {
-		switch {
-		case c.status != statusTypeChanged:
-			if b, named := binary[c.path]; named && !b {
-				carries, err := diffCarriesBytes(ctx, r.repo, rng, c.path)
-				if err != nil {
-					return nil, err
-				}
-				binary[c.path] = carries
-			}
-		case c.newMode == modeGitlink:
+		if c.newMode == modeGitlink {
 			binary[c.path] = false
-		default:
-			carries, err := blobCarriesBytes(ctx, r.repo, c.newBlob)
-			if err != nil {
-				return nil, err
-			}
-			binary[c.path] = carries
+			continue
 		}
+		if b, named := binary[c.path]; !named || (b && c.status != statusTypeChanged) {
+			// Unnamed is a row the numstat reading never paired, which the caller
+			// refuses rather than trusting a path nothing read; named binary on a
+			// row that is not a typechange is git's own answer, which refuses
+			// more rather than less.
+			continue
+		}
+		carries, err := blobCarriesBytes(ctx, r.repo, c.newBlob)
+		if err != nil {
+			return nil, err
+		}
+		binary[c.path] = carries
 	}
 	sized := make([]string, 0, len(added))
 	for _, c := range added {
@@ -290,43 +293,27 @@ func addsBytes(status byte) bool {
 	return status == statusAdded || status == statusTypeChanged
 }
 
-// diffCarriesBytes reports whether the range's own diff of path carries a byte
-// git would not print as text: a NUL, the test the untracked reading makes of
-// the file in the tree (readHead) and the review input makes of the diff it
-// carries (reviewinput.go's reviewTextDiff).
-//
-// The path's own diff is what is read, and not the blob: the answer the rule
-// needs is about the bytes the range added, the same reading the rest of this
-// file works from. --no-textconv and --no-ext-diff so no filter the checkout
-// configures can answer in the file's place, and the path is passed as a
-// literal so a name that is pathspec magic is a name.
-func diffCarriesBytes(ctx context.Context, repo *gitops.Repo, rng, path string) (bool, error) {
-	out, err := sessionGit(ctx, repo, "--literal-pathspecs", "diff",
-		"--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
-		"--end-of-options", rng, "--", path)
-	if err != nil {
-		return false, err
-	}
-	return strings.ContainsRune(out, 0), nil
-}
-
 // blobCarriesBytes reports whether a blob's own bytes are ones a reviewer
-// cannot read: a NUL in the first binaryScanBytes, which is git's own test and
-// the window both other readings use (readHead of the file in the tree, and
-// reviewinput.go's reviewTextDiff of the diff it carries).
+// cannot read: a NUL in the first binaryScanBytes. That window is git's own
+// test of a file and the rule's premise (spec.md §2.4), and it is the one the
+// untracked reading takes of the file in the tree (readHead). One window, both
+// readings, so a file is text or it is not, whichever way the run put it on the
+// branch.
 //
-// The blob is read rather than its path's diff, because the reading is about one
-// side of a row: a typechange's diff carries the bytes the range removes beside
-// the ones it adds, and the answer wanted here is about what arrives.
+// The blob's head is read rather than the path's own diff, for two reasons.
+// What the rule asks about is the bytes the branch carries, which are the
+// object git itself tests; a diff is a rendering of them, whose headers and
+// `+` prefixes put the file's own bytes at other offsets, and whose `T` rows
+// carry the side the range removes beside the side it adds. And a diff per
+// added text path, buffered whole, is a read whose cost is the file's — for a
+// payload claimed as text, which is exactly what this re-read is for — where
+// the blob's head is bounded by the window the answer is in.
 func blobCarriesBytes(ctx context.Context, repo *gitops.Repo, blob string) (bool, error) {
-	out, err := sessionGit(ctx, repo, "cat-file", "blob", "--end-of-options", blob)
+	out, err := sessionGitHead(ctx, repo, binaryScanBytes, "cat-file", "blob", "--end-of-options", blob)
 	if err != nil {
 		return false, err
 	}
-	if len(out) > binaryScanBytes {
-		out = out[:binaryScanBytes]
-	}
-	return strings.ContainsRune(out, 0), nil
+	return bytes.IndexByte(out, 0) >= 0, nil
 }
 
 // binaryRefusal is why the project's binary rule refuses a file of size bytes
@@ -407,7 +394,13 @@ func readHead(path string, n int) ([]byte, error) {
 // commit, so the branch does not carry it, while what the run's own commits
 // added is already on the branch, because the run does not rewrite the agent's
 // history (D989) and a person has to delete the file.
-func strayRefusal(untracked, committed []strayArtifact) string {
+//
+// unread is the third thing a refusal can be about, and it is not a path: the
+// run's own commits could not be read at all, so which binaries they added is
+// unknown rather than none. Its clause is its own because there is no list of
+// paths to give, and there is no rule sentence after it either — nothing was
+// refused against binaries.allow, the reading itself is what failed.
+func strayRefusal(untracked, committed []strayArtifact, unread string) string {
 	var parts []string
 	if len(untracked) > 0 {
 		parts = append(parts, "finalize refused to commit what the run left untracked, so the branch does not carry it: "+
@@ -416,6 +409,12 @@ func strayRefusal(untracked, committed []strayArtifact) string {
 	if len(committed) > 0 {
 		parts = append(parts, "finalize refused the run over what its own commits added, which the branch carries all the same, because the run does not rewrite the commits the agent made: "+
 			artifactsWithWhy(committed))
+	}
+	if unread != "" {
+		parts = append(parts, "finalize could not read the run's own diff, so whether its commits added a binary is unknown rather than answered, and the run is refused rather than passed: "+unread)
+	}
+	if len(untracked)+len(committed) == 0 {
+		return strings.Join(parts, "; ")
 	}
 	return strings.Join(parts, "; ") +
 		"; a binary is admitted by the project's binaries.allow, at the paths it names and within its cap, and what it does not admit is a build's artifact rather than the run's work"

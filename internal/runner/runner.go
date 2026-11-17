@@ -5627,12 +5627,22 @@ func (r *run) finalize(ctx context.Context) error {
 	// commit finalize makes would carry it (stray.go, spec.md §4.2, D997). Both
 	// are answers of one predicate, and a run refused by both is refused once,
 	// with both lists named.
+	//
+	// A reading that fails is one of those answers and not an error out of
+	// finalize: a run whose own commits nothing read is refused rather than
+	// passed — the check is the last thing between a payload and the branch —
+	// and refusing it is not a stop, which is what the note above says of every
+	// other refusal here. Returning the error instead would leave the person
+	// with nothing at all: no branch, no pull request, and a run whose work the
+	// agent did and nobody can see.
 	added, err := r.committedBinaries(ctx)
+	unread := ""
 	if err != nil {
-		return fmt.Errorf("reading the run's own diff for binaries it added: %w", err)
+		unread = r.redact(err.Error())
+		r.d.Log.Error("reading the run's own diff for binaries it added failed; the run is refused for it", "err", unread)
 	}
-	if len(strays) > 0 || len(added) > 0 {
-		r.fail(strayRefusal(strays, added))
+	if len(strays) > 0 || len(added) > 0 || unread != "" {
+		r.fail(strayRefusal(strays, added, unread))
 	}
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {

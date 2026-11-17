@@ -249,17 +249,58 @@ type restored struct {
 // that diffs as a run which added nothing, while the commit the branch really
 // carries holds what the rule is looking for.
 var sessionGit = func(ctx context.Context, repo *gitops.Repo, args ...string) (string, error) {
+	var stdout bytes.Buffer
+	if err := sessionGitOut(ctx, repo, &stdout, args...); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// sessionGitHead is sessionGit for a read whose answer is in a file's head and
+// whose output can be the whole of a file: at most n bytes are kept, and every
+// byte is still read (see headWriter).
+func sessionGitHead(ctx context.Context, repo *gitops.Repo, n int, args ...string) ([]byte, error) {
+	stdout := &headWriter{n: n}
+	if err := sessionGitOut(ctx, repo, stdout, args...); err != nil {
+		return nil, err
+	}
+	return stdout.buf, nil
+}
+
+// sessionGitOut runs one read-only git command in repo with its stdout going
+// to out — every session read goes through here, so every one of them passes
+// --no-replace-objects and reports a failure the same way.
+func sessionGitOut(ctx context.Context, repo *gitops.Repo, out io.Writer, args ...string) error {
 	args = append([]string{"--no-replace-objects"}, args...)
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repo.Dir
 	cmd.Env = repo.Environ()
 	cmd.WaitDelay = 5 * time.Second
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	var stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = out, &stderr
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return nil
+}
+
+// headWriter keeps the first n bytes written to it and drops the rest, while
+// reporting every write as taken: git writing a file's whole content must be
+// read to the end, or it ends up blocked on a full pipe with nobody reading.
+type headWriter struct {
+	buf []byte
+	n   int
+}
+
+func (w *headWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	if room := w.n - len(w.buf); room > 0 {
+		if room < n {
+			p = p[:room]
+		}
+		w.buf = append(w.buf, p...)
+	}
+	return n, nil
 }
 
 // restoreSession puts the previous run's saved session (prev) in place
