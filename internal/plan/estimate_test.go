@@ -218,6 +218,24 @@ func TestMissingCostHistoryMakesUnknown(t *testing.T) {
 	if got := estimateBasis(t, got, "b"); got != estimate.BasisSeed {
 		t.Errorf("b's basis = %q, want %q: no run of large has been paid for", got, estimate.BasisSeed)
 	}
+
+	// The side of the same rule a plan's own mode is on: a history with no
+	// group for that mode answers from the tier alone, so the figures and the
+	// cost step are the tier's own — a thin (tier, mode) sample makes a plan's
+	// cost narrower rather than unknown — and the node's basis says which of the
+	// two answered (D2713).
+	byTier := estGroup(tier.Medium, [3]float64{10, 20, 30}, [3]float64{1, 2, 3})
+	byTier.Rigor = ""
+	got, err = EstimatePlan(estDoc(estNode("a", tier.Medium)), estTable(byTier), nil, 1, rigor.Pro, estimateAt)
+	if err != nil {
+		t.Fatalf("a plan whose mode has no group was refused: %v", err)
+	}
+	if got := estimateBasis(t, got, "a"); got != estimate.BasisTier {
+		t.Errorf("a's basis = %q, want %q: no run of medium resolved the plan's mode", got, estimate.BasisTier)
+	}
+	if want := estRange(1, 3); got.CostUSD == nil || *got.CostUSD != want {
+		t.Errorf("a plan answered by its tier alone: cost_usd = %v, want %+v (the tier's own median costs)", got.CostUSD, want)
+	}
 }
 
 // TestUntieredNodeAssumedMedium: `tier` is optional on a node (D2711) and a

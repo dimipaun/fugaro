@@ -198,14 +198,16 @@ func EstimatePlan(doc Document, table *estimate.Table, state map[string]NodeProg
 	for _, n := range doc.Nodes {
 		// What the history says about this task's tier. A task the plan gave no
 		// tier is asked about medium all the same — the estimate has to put a
-		// figure somewhere — and its basis says that is what happened.
-		tr, basis := AssumedTier, BasisAssumed
+		// figure somewhere — and its basis is this read's own word rather than
+		// the sample's, so that a reader sees that nothing named the tier (D2722).
+		tr := AssumedTier
 		if n.Tier != nil {
 			tr = *n.Tier
 		}
 		answer := table.Answer(tr, mode)
-		if n.Tier != nil {
-			basis = answer.Basis
+		basis := answer.Basis
+		if n.Tier == nil {
+			basis = BasisAssumed
 		}
 		nodes = append(nodes, EstimateNode{ID: n.ID, Basis: basis})
 
