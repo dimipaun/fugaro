@@ -39,21 +39,21 @@ import (
 // the write landed therefore finds the item cancelled — the ladder reads no
 // further rungs for it — and still files nothing twice, because the split item's
 // name is derived from the item's id (G4).
-func (s BeyondSeams) split(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error) {
+func (s BeyondSeams) split(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (LadderAct, error) {
 	now, ok := s.Now()
 	if !ok {
-		return false, ErrNoServerTime
+		return LadderIdle, ErrNoServerTime
 	}
 	st, err := s.Node.State(ctx)
 	if err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	if cur, ok := st.Item(item.ID); ok {
 		item = cur
 	}
 	mr, err := s.Read.MergeAt(ctx, item, read.HeadSHA)
 	if err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	out := splitOutcome(mr)
 	moved := ladderReached(item) != step.Rung
@@ -71,12 +71,12 @@ func (s BeyondSeams) split(ctx context.Context, item WorkItem, step escalation.S
 		ops = append(ops, newItemOp(splitID(item.ID), splitTitle(item), splitBrief(item, scope), item))
 	}
 	if err := s.Node.Apply(ctx, ops); err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	line := "escalation: " + ladderMove(step, reason, item.RunID) + " " + mergeLine(out)
 	entry := Entry{Subject: item.ID, Transition: mergeTransition(step.Rung, out.Kind, read.HeadSHA), Text: line}
 	if err := s.Log.Append(ctx, entry); err != nil {
-		return false, err
+		return LadderIdle, err
 	}
 	if moved {
 		// The rung starts no run, so the comment names the item's own run:
@@ -92,7 +92,7 @@ func (s BeyondSeams) split(ctx context.Context, item WorkItem, step escalation.S
 	// Rung 4 always moves: the item is stopped and the scope is filed or asked
 	// for, which is the whole of what the rung is, and the item a cycle reads
 	// after it is one the ladder reads no further rungs for.
-	return true, nil
+	return LadderMoved, nil
 }
 
 // splitOutcome is rung 4's outcome: the same kind either way — the item is

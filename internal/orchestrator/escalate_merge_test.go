@@ -75,10 +75,14 @@ type mergeStub struct {
 	// its outcome line lost sets it to that line's transition: appendErr refuses
 	// every line, which would refuse the marker before the host was ever asked.
 	appendErrOn string
-	launched    []orchestrator.LadderRequest
-	comments    []string
-	lines       []orchestrator.Entry
-	written     map[string]bool
+	// now is the harness's clock, which every line is stamped with as a real log
+	// stamps one: BeyondLog.LoggedAt answers the stamp back, and the bound on a
+	// retried wait is read from it (boundRetry). Nil leaves the stamps zero.
+	now      func() time.Time
+	launched []orchestrator.LadderRequest
+	comments []string
+	lines    []orchestrator.Entry
+	written  map[string]bool
 }
 
 func newMergeStub(t *testing.T) *mergeStub {
@@ -109,6 +113,9 @@ func (m *mergeStub) Append(_ context.Context, e orchestrator.Entry) error {
 	if m.appendErrOn != "" && e.Transition == m.appendErrOn {
 		return errors.New("the log would not take this line")
 	}
+	if m.now != nil && e.At.IsZero() {
+		e.At = m.now()
+	}
 	m.lines = append(m.lines, e)
 	m.written[orchestrator.EntryID(e.Subject, e.Transition)] = true
 	return nil
@@ -119,6 +126,22 @@ func (m *mergeStub) Logged(_ context.Context, id string) (bool, error) {
 		return false, m.loggedErr
 	}
 	return m.written[id], nil
+}
+
+// LoggedAt is when a line was written, read off the latest entry under the id —
+// what a log that patches by key holds. It is the read the bound on a retried
+// wait is made of, and a nil clock stamps nothing, so a test that does not move
+// the clock reads a zero time rather than a fabricated one.
+func (m *mergeStub) LoggedAt(_ context.Context, id string) (time.Time, bool, error) {
+	if m.loggedErr != nil {
+		return time.Time{}, false, m.loggedErr
+	}
+	for i := len(m.lines) - 1; i >= 0; i-- {
+		if orchestrator.EntryID(m.lines[i].Subject, m.lines[i].Transition) == id {
+			return m.lines[i].At, true, nil
+		}
+	}
+	return time.Time{}, false, nil
 }
 
 // line is the one line a test expects under one transition, and it fails when
@@ -136,6 +159,25 @@ func (m *mergeStub) line(transition string) orchestrator.Entry {
 		m.t.Fatalf("the log carries %d lines under %q, and one outcome writes one: %+v", len(found), transition, m.lines)
 	}
 	return found[0]
+}
+
+// lastLine is the most recent line under a transition, for a head the hook
+// wrote more than once: the transition names the rung, the kind and the head,
+// and not the cycle, so a rung 3 that waits on something moving writes the same
+// id again next cycle and the log keeps the later line. A refusal is read
+// through this one and a move through line, because a move happens once.
+func (m *mergeStub) lastLine(transition string) orchestrator.Entry {
+	m.t.Helper()
+	var found []orchestrator.Entry
+	for _, e := range m.lines {
+		if e.Transition == transition {
+			found = append(found, e)
+		}
+	}
+	if len(found) == 0 {
+		m.t.Fatalf("the log carries no line under %q: %+v", transition, m.lines)
+	}
+	return found[len(found)-1]
 }
 
 // mergeHostStub is MergeHost as a test sets it: the pull request and the checks
@@ -285,7 +327,20 @@ func newBeyondHarness(t *testing.T, now time.Time, runs []string, items ...orche
 		Now:     clockAt(now),
 		Mint:    mint.mint,
 	}
+	m.stub.now = func() time.Time { return m.now }
 	return m
+}
+
+// setClock moves the harness's clock, and everything that reads it with it: the
+// hook's own reading of the server's time (BeyondSeams.Now), the stamp the node's
+// writes carry and the one the log's lines carry. A test that walks a bound
+// forward has to move all three, or the hook writes a line stamped now and reads
+// the age of one stamped an hour ago off a clock that never moved.
+func (m *beyondHarness) setClock(at time.Time) {
+	m.t.Helper()
+	m.now = at
+	m.seams.Now = clockAt(at)
+	m.seams.Node = &storeNode{t: m.t, node: m.node, now: at}
 }
 
 // act drives one entry of the hook, as E10a's ladder does: the item looked up
@@ -484,7 +539,9 @@ func mergeYes() runstore.MergeJudge {
 // mergePass is a reading every clause of D1245's gate passes on: a run that
 // ended at the judged head, a routine path set the host reports for that head,
 // green CI, no finding in either of the two reads the gate makes, a scored
-// review of that head and the judge's yes.
+// review of that head and the judge's yes. Both answers are read and not only
+// their runs (Scored, JudgeScored): a reading that named the two runs without
+// their verdicts is a head nothing has answered at yet, which the gate waits on.
 func mergePass(head string) orchestrator.MergeReading {
 	return orchestrator.MergeReading{
 		Read:           true,
@@ -496,6 +553,7 @@ func mergePass(head string) orchestrator.MergeReading {
 		ReviewRun:      mergeReviewRun,
 		Scored:         true,
 		JudgeRun:       mergeJudgeRun,
+		JudgeScored:    true,
 		Verdict:        mergeYes(),
 	}
 }
@@ -593,29 +651,38 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		m.stub.line("ladder-r3-merged-" + headA[:8])
 	})
 
+	// A refusal on a reading that has stopped moving is a person's question, and
+	// one on a reading that is still moving is not (MergeOutcome.Retry): the two
+	// transient rows below are asserted with waitedOut, and every other row with
+	// refusedAt, which is the difference this table exists to pin.
 	for _, tc := range []struct {
-		name string
-		code string
-		drop func(*orchestrator.MergeReading, *mergeHostStub)
+		name      string
+		code      string
+		transient bool
+		drop      func(*orchestrator.MergeReading, *mergeHostStub)
 	}{
 		{
 			"a run that has not ended",
 			string(orchestrator.GateRunRunning),
+			true,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.Status = runstore.StatusRunning },
 		},
 		{
 			"a record that pushed another commit",
 			string(orchestrator.GateHeadUnpushed),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.PushedHead = headB },
 		},
 		{
 			"a record with no changed-path set",
 			string(orchestrator.ReasonPathsMissing),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.ChangedFiles = nil },
 		},
 		{
 			"a changed-path set nobody bounded",
 			string(orchestrator.ReasonPathsTruncated),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Record.ChangedFiles = &runstore.ChangedFiles{Paths: []string{"docs/status.md"}, Total: 500}
 			},
@@ -623,6 +690,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a run that changed nothing",
 			string(orchestrator.ReasonNoCommits),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Record.ChangedFiles = runstore.NewChangedFiles(nil)
 			},
@@ -630,6 +698,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a path outside the routine allowlist",
 			string(orchestrator.GatePathsNotRoutine),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Paths = runstore.NewChangedFiles([]string{mergeSecurityPath})
 			},
@@ -637,23 +706,62 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a path set nobody read from the host",
 			string(orchestrator.GatePathsUncorroborated),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Paths = nil },
 		},
 		{
 			"a host path set nobody bounded",
 			string(orchestrator.ReasonPathsTruncated),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Paths = &runstore.ChangedFiles{Paths: []string{mergeRoutinePath}, Total: 500}
 			},
 		},
 		{
-			"CI nobody could read",
+			// Checks still queued or running: the commit has no answer yet,
+			// and a later cycle reads what they said. This is the one CI
+			// refusal that is a wait, and it is the reading that moves.
+			"checks that have not concluded",
 			string(orchestrator.ReasonCIUnknown),
+			true,
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
+				h.checks = []gitprov.CheckRun{{Status: "in_progress"}}
+			},
+		},
+		{
+			// F25's case, and the reason a reading is not a wait: a repository
+			// that runs no CI reports no checks at all, and no later cycle
+			// reports any either.
+			"no checks reported at all",
+			string(orchestrator.ReasonCIUnknown),
+			false,
 			func(_ *orchestrator.MergeReading, h *mergeHostStub) { h.checks = nil },
+		},
+		{
+			"a check that finished with nothing readable",
+			string(orchestrator.ReasonCIUnknown),
+			false,
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
+				h.checks = []gitprov.CheckRun{{Status: "completed"}}
+			},
+		},
+		{
+			// A status this code does not place as movement, and the case the
+			// reading has to fail towards a person on: GitHub's "waiting" is a
+			// deployment approval nobody has answered, so no cycle of the
+			// daemon's moves it and asking the item's question is what a person
+			// who approves the deployment is there for.
+			"a check waiting on a person",
+			string(orchestrator.ReasonCIUnknown),
+			false,
+			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
+				h.checks = []gitprov.CheckRun{{Status: "waiting"}}
+			},
 		},
 		{
 			"CI that failed",
 			string(orchestrator.GateCIRed),
+			false,
 			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
 				h.checks = []gitprov.CheckRun{{Status: "completed", Conclusion: "failure"}}
 			},
@@ -661,6 +769,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a critical finding",
 			string(orchestrator.ReasonCriticalFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: "docs/status.md", Key: mergeFinding}}
 			},
@@ -668,6 +777,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a high finding in a security path",
 			string(orchestrator.ReasonSecurityHighFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: "internal/gateway/proxy.go", Key: mergeFinding}}
 			},
@@ -675,11 +785,13 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"findings nobody could read",
 			string(orchestrator.ReasonFindingsAbsent),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Findings.Read = orchestrator.FindingsAbsent },
 		},
 		{
 			"a critical finding in the review at this head",
 			string(orchestrator.ReasonCriticalFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: mergeRoutinePath, Key: mergeFinding}}
 			},
@@ -687,6 +799,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a high finding in a security path, in the review at this head",
 			string(orchestrator.ReasonSecurityHighFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeSecurityPath, Key: mergeFinding}}
 			},
@@ -694,6 +807,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"review findings nobody could read",
 			string(orchestrator.ReasonFindingsAbsent),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.ReviewFindings.Read = orchestrator.FindingsAbsent
 			},
@@ -701,7 +815,19 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a record nobody can place",
 			string(orchestrator.ReasonRecordUnreadable),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.Status = runstore.Status("invented") },
+		},
+		{
+			// The review at this head is recorded and carried no score, and
+			// D2043 allows one review per head: no later cycle produces
+			// another, so this is a person's and not a wait — where the same
+			// review still on its way (ReviewRun empty, its line written) is
+			// TestR3RebasedHeadNeedsScoredReview's waitedOut.
+			"a review of this head that carried no score",
+			string(orchestrator.GateReviewSpent),
+			false,
+			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Scored = false },
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -711,6 +837,10 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 			m.reader.reads["wi-1"] = read
 			m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
 
+			if tc.transient {
+				waitedOut(t, m, headA, "ladder-r3-wait-"+headA[:8], tc.code)
+				return
+			}
 			refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], tc.code)
 		})
 	}
@@ -724,7 +854,7 @@ func refusedAt(t *testing.T, m *beyondHarness, head, transition, code string) {
 	if len(m.host.merged) != 0 {
 		t.Fatalf("the host merged %v, and the gate refused this head", m.host.merged)
 	}
-	line := m.stub.line(transition)
+	line := m.stub.lastLine(transition)
 	if !strings.Contains(line.Text, code) {
 		t.Fatalf("the line reads %q, and %q is the code this refusal is recorded under", line.Text, code)
 	}
@@ -733,6 +863,36 @@ func refusedAt(t *testing.T, m *beyondHarness, head, transition, code string) {
 	}
 	if m.item("wi-1").Phase == orchestrator.PhaseCancelled {
 		t.Fatalf("the item was cancelled, and a rung 3 that cannot merge waits for a person")
+	}
+}
+
+// waitedOut is the outcome of a rung 3 refused on something still moving: the
+// same nothing merged and the same line under the head's own name, and no
+// question and no notification, because the wait is retried next cycle
+// (MergeOutcome.Retry) and the reading may well have changed by then.
+//
+// Mutation: raise the question for these too and a wait on a run that has not
+// ended spends the item's one question, which is what the veto test below
+// catches — the judge's refusal then reaches nobody.
+func waitedOut(t *testing.T, m *beyondHarness, head, transition, code string) {
+	t.Helper()
+	if len(m.host.merged) != 0 {
+		t.Fatalf("the host merged %v, and the gate refused this head", m.host.merged)
+	}
+	line := m.stub.lastLine(transition)
+	if !strings.Contains(line.Text, code) {
+		t.Fatalf("the line reads %q, and %q is the code this refusal is recorded under", line.Text, code)
+	}
+	if d, ok := m.state().Decision("wi-1-escalation"); ok {
+		t.Fatalf("the cycle asked a person %q, and a wait on something still moving is retried, not asked", d.Question)
+	}
+	for _, n := range m.sink.got {
+		if n.Kind == orchestrator.NotifyDecisionNeeded {
+			t.Fatalf("the cycle said %q, and a wait on something still moving asks nobody", n.Line())
+		}
+	}
+	if m.item("wi-1").Phase == orchestrator.PhaseCancelled {
+		t.Fatalf("the item was cancelled, and a rung 3 that cannot merge waits rather than stopping")
 	}
 }
 
@@ -1564,6 +1724,177 @@ func TestR3JudgeAbsentIsVeto(t *testing.T) {
 	}
 }
 
+// TestR3AJudgeThatHasNotAnsweredIsAWait is the judge's half of the lag the
+// review clause retries, and D2037's other side. The cycle after a judge launch
+// reads a judge that has not spoken yet, and a veto read into that spends the
+// item's one question on a judge that is still reading: the block the question
+// was being kept for then reaches no person at all. D2044's absent verdict is a
+// judge that has stopped speaking, and not one that has not answered yet.
+//
+// Both readings a caller can make of that window are here: the cycle that does
+// not see the judge's run yet, and the cycle that sees the run with no answer out
+// of it (JudgeScored). Each is a wait — nothing merged, no question, no second
+// judge — and the verdict that arrives after them is what the question carries.
+//
+// Mutation: drop the !JudgeScored arm from the gate and both waiting cycles raise
+// the item's question as a veto with none of the judge's words in it, so the
+// judge's answer in the last cycle reaches nobody.
+func TestR3AJudgeThatHasNotAnsweredIsAWait(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now, mergeJudgeRun)
+	waiting := "ladder-r3-wait-" + headA[:8]
+
+	// A scored head no judge has read: rung 3's second run is asked for and the
+	// log carries the line that records it.
+	unjudged := mergePass(headA)
+	unjudged.JudgeRun, unjudged.JudgeScored, unjudged.Verdict = "", false, runstore.MergeJudge{}
+	m.reader.reads["wi-1"] = unjudged
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	if len(m.stub.launched) != 1 || m.stub.launched[0].Recipe != orchestrator.RecipeMergeJudge {
+		t.Fatalf("the ladder launched %+v, and a head D2043's review passed and no judge read is one judge run", m.stub.launched)
+	}
+	m.stub.line("ladder-r3-judge-" + headA[:8])
+
+	// The cycle after it: the launch is recorded and the judge's run is not in
+	// the reading yet.
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	waitedOut(t, m, headA, waiting, string(orchestrator.GateJudgeSpent))
+	if len(m.stub.launched) != 1 {
+		t.Fatalf("the ladder launched %+v, and one judge per head is the bound", m.stub.launched[1:])
+	}
+
+	// A cycle later with the run recorded and no answer read out of it: the same
+	// wait, which is what a caller that sees the run and not its answer says.
+	unanswered := mergePass(headA)
+	unanswered.JudgeScored, unanswered.Verdict = false, runstore.MergeJudge{}
+	m.reader.reads["wi-1"] = unanswered
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	waitedOut(t, m, headA, waiting, string(orchestrator.GateJudgeSpent))
+
+	// The judge answered, and the question the two waits left unspent is the one
+	// its own words go into (D2037).
+	read := mergePass(headA)
+	read.Verdict = runstore.MergeJudge{
+		Verdict: runstore.MergeJudgeBlocked,
+		Reason:  "the retry buries the failure",
+		Blocker: "the retry swallows the error",
+		Model:   "test-judge",
+	}
+	m.reader.reads["wi-1"] = read
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	refusedAt(t, m, headA, waiting, string(orchestrator.GateJudgeVeto))
+	q := m.question("wi-1").Question
+	if !strings.Contains(q, "the retry swallows the error") || !strings.Contains(q, "the retry buries the failure") {
+		t.Fatalf("the question reads %q, and the judge's own answer is what a person reads", q)
+	}
+}
+
+// TestR3PendingCIThatTurnsIntoAVetoAsksAPerson is the debt E10b left: a wait on
+// checks that have not concluded is retried and asks nobody, so the item's one
+// question is still unspent when the checks arrive and the judge's veto does —
+// and the veto is the one thing here a person has to read (D2037). A question
+// raised for the first cycle would spend it on a wait nobody could act on: the
+// veto would then have nobody to reach, and a question about checks still
+// running would sit open over a head the ladder was never going to land.
+//
+// Mutation: raise the question for a transient wait as well (drop the !out.Retry
+// guard in merge) and the second cycle below leaves the node with no question
+// carrying the judge's words, and the first cycle with one.
+func TestR3PendingCIThatTurnsIntoAVetoAsksAPerson(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.host.checks = []gitprov.CheckRun{{Status: "in_progress"}}
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	waitedOut(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.ReasonCIUnknown))
+
+	read := mergePass(headA)
+	read.Verdict = runstore.MergeJudge{
+		Verdict: runstore.MergeJudgeBlocked,
+		Reason:  "the retry buries the failure",
+		Blocker: "the retry swallows the error",
+	}
+	m.reader.reads["wi-1"] = read
+	m.host.checks = mergeGreen()
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateJudgeVeto))
+	q := m.question("wi-1").Question
+	if !strings.Contains(q, "the retry buries the failure") || !strings.Contains(q, "the retry swallows the error") {
+		t.Fatalf("the question reads %q, and whoever reads it reads the judge (D2037)", q)
+	}
+	if got := m.sink.got; len(got) != 1 || got[0].Kind != orchestrator.NotifyDecisionNeeded {
+		t.Fatalf("the tick said %+v, and the veto is the one thing it has to say", got)
+	}
+}
+
+// TestR3AWaitThatNeverMovesAsksAPerson is the other half of the retry, and the
+// debt the retry itself left: a reading can look like movement and never move, so
+// the cycles that retry one are bounded (boundRetry) and the item's question is
+// what a person gets once the bound is past.
+//
+// The reading here is a commit status stuck at "pending" — a job that died
+// before it posted anything, which no cycle of the daemon's ever changes — and it
+// is retried while the bound holds: nothing merged and no question, with the line
+// the bound is read from written once, at the first cycle's stamp. Past the
+// window the same reading is a person's: the question names the item, carries the
+// code the wait is recorded under, and a cycle after it asks nothing more.
+//
+// Mutation: take the bound out (retry every cycle, which is all the gate says)
+// and the third act below writes its line and asks nobody — the item cycles for
+// ever, and the only thing that would ever trip over it is the daemon's breaker,
+// which pauses every spawn and names no item (D1228).
+func TestR3AWaitThatNeverMovesAsksAPerson(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.host.checks = []gitprov.CheckRun{{Status: "pending"}}
+
+	waited := "ladder-r3-wait-" + headA[:8]
+	retried := "ladder-r3-retry-" + headA[:8]
+	act := func() {
+		t.Helper()
+		m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+	}
+
+	act()
+	waitedOut(t, m, headA, waited, string(orchestrator.ReasonCIUnknown))
+	began := m.stub.line(retried)
+	if !began.At.Equal(now) {
+		t.Fatalf("the line the bound is read from is stamped %v, and the first cycle that retried the wait wrote it", began.At)
+	}
+	if !strings.Contains(began.Text, string(orchestrator.ReasonCIUnknown)) {
+		t.Fatalf("the line reads %q, and whoever reads it reads what the wait was on", began.Text)
+	}
+
+	// A cycle later, and still inside the window: the same wait, and still not a
+	// person's. The stamp is not rewritten, which is what makes it the start.
+	m.setClock(now.Add(time.Minute))
+	act()
+	waitedOut(t, m, headA, waited, string(orchestrator.ReasonCIUnknown))
+	if again := m.stub.line(retried); !again.At.Equal(now) {
+		t.Fatalf("the stamp moved to %v, and a bound read off a moving stamp is never reached", again.At)
+	}
+
+	// Past the window the reading is one that has stopped moving as far as the
+	// ladder is concerned, and the wait is a person's like any other refusal.
+	m.setClock(now.Add(7 * time.Hour))
+	act()
+	refusedAt(t, m, headA, waited, string(orchestrator.ReasonCIUnknown))
+	if q := m.question("wi-1").Question; !strings.Contains(q, "wi-1") {
+		t.Fatalf("the question reads %q, and the person it goes to reads which item the daemon is stuck on", q)
+	}
+
+	// The item has one question, and the cycle after it adds nothing.
+	told := len(m.sink.got)
+	m.setClock(now.Add(8 * time.Hour))
+	act()
+	if got := m.sink.got[told:]; len(got) != 0 {
+		t.Fatalf("the cycle said %+v, and the question the wait became was already asked", got)
+	}
+}
+
 // TestR3RebasedHeadNeedsScoredReview is D2043 and G13: a head only a rebase run
 // has touched is an agent's own work, so rung 3 covers it with a review-only run
 // at that head before it may merge — one such run per head — and the merge waits
@@ -1595,7 +1926,7 @@ func TestR3RebasedHeadNeedsScoredReview(t *testing.T) {
 	if len(m.stub.launched) != 1 {
 		t.Fatalf("the ladder launched %+v, and one review per head is the bound D2043 states", m.stub.launched[1:])
 	}
-	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateReviewSpent))
+	waitedOut(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateReviewSpent))
 
 	read = mergePass(headA)
 	m.reader.reads["wi-1"] = read
@@ -2130,6 +2461,83 @@ func TestR3HookCyclesDoNotTripTheBreaker(t *testing.T) {
 	}
 	if orchestrator.BreakerOpen(m.state(), now) {
 		t.Fatalf("three cycles the hook acted on asked a person to look at a ladder that is working: %+v", m.state().Decisions)
+	}
+}
+
+// TestR3AWaitOnSomethingMovingIsACycleInFlight is the half of the bound that has
+// to hold before the bound is ever reached: a cycle whose only work was retrying
+// a wait walked nothing and asked nobody, so read as a cycle that did nothing it
+// is a cycle the breaker counts — three of those in a row reach the threshold,
+// the pause stops the plan and the ladder for the whole node while naming no
+// item, and the hook is not entered again at all, so the question the bound is
+// for is never asked (D1228).
+//
+// The reading is a commit status stuck at "pending": five cycles of it, every one
+// in flight and none of them the breaker's, and past the window the same reading
+// is a refusal — the item's own question, which is what a wait that never moves
+// owes a person.
+//
+// Mutation: take Report.Waited out of outcome and the third cycle below leaves the
+// breaker's question on the node and the hook frozen for every cycle after it, so
+// the question the bound promises is never asked.
+func TestR3AWaitOnSomethingMovingIsACycleInFlight(t *testing.T) {
+	now := o6Now()
+	m := newBeyondHarness(t, now, nil, beyondItem("wi-1", r3Ledger(now, headA, 2)))
+	m.reader.reads["wi-1"] = mergePass(headA)
+	m.host.head, m.host.checks = headA, []gitprov.CheckRun{{Status: "pending"}}
+
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
+		"wi-1": reading(rigor.POC, 4*time.Hour, headA),
+	}}
+	seams := l.seams(escalation.DefaultThresholds())
+	// The hook is taken off the seams at every cycle rather than bound to them
+	// once: the test walks the harness's clock, and setClock replaces the seams'
+	// own.
+	seams.Beyond = func(ctx context.Context, item orchestrator.WorkItem, step escalation.Step, reason escalation.Reason, read orchestrator.LadderReading) (orchestrator.LadderAct, error) {
+		return m.seams.Beyond()(ctx, item, step, reason, read)
+	}
+	var breaker orchestrator.Breaker
+	tick := &orchestrator.Tick{
+		Store:    m.node,
+		Runs:     ladderNoRuns{},
+		Launcher: &o6Launcher{},
+		Mint:     func(time.Time) (string, error) { return mergeRun, nil },
+		Caps:     o6Caps(),
+		Now:      clockAt(now),
+		Ladder:   seams,
+		Notifier: m.sink,
+		Breaker:  &breaker,
+	}
+	step := func() orchestrator.Report {
+		t.Helper()
+		tick.Now = clockAt(m.now)
+		rep, err := tick.Step(context.Background())
+		if err != nil {
+			t.Fatalf("the cycle ended as %v, and a wait is not a failure", err)
+		}
+		return rep
+	}
+
+	// The threshold's own number of cycles and two more, every one of them a wait
+	// the hook retried: nothing merged, nobody asked, and no pause.
+	for i := range orchestrator.BreakerThreshold + 2 {
+		rep := step()
+		if rep.Outcome != orchestrator.CycleInFlight || rep.Waited != 1 || rep.Escalated != 0 {
+			t.Fatalf("cycle %d reports %+v, and a cycle that retried a wait is waiting on something still going", i+1, rep)
+		}
+	}
+	if orchestrator.BreakerOpen(m.state(), now) {
+		t.Fatalf("cycles that only waited paused the node over a daemon that is waiting: %+v", m.state().Decisions)
+	}
+
+	// Past the window the reading has stopped moving as far as the ladder is
+	// concerned, and what the wait became is the item's own question.
+	m.setClock(now.Add(7 * time.Hour))
+	if rep := step(); rep.Outcome != orchestrator.CycleEmpty {
+		t.Fatalf("the cycle past the bound reports %+v, and a refusal a person has to read is not work", rep)
+	}
+	if q := m.question("wi-1").Question; !strings.Contains(q, "wi-1") {
+		t.Fatalf("the question reads %q, and the person it goes to reads which item the daemon is stuck on", q)
 	}
 }
 

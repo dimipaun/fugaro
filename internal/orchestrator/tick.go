@@ -153,8 +153,17 @@ type Report struct {
 	// started for, and a rung recorded for the hook the rungs past rung 2
 	// attach through. The floor, rung 1, is not a move — the item's own loop
 	// is what resumes it — and neither is an item the ladder asked a person
-	// about.
+	// about, nor a wait a hook retried (Waited).
 	Escalated int
+	// Waited is how many waits the cycle retried: a rung 3 hook that read a
+	// reading still moving and left the item where it stands for the next cycle
+	// to read again (LadderWaiting, MergeOutcome.Retry). It is not a move and
+	// it is not a question — nothing was launched, landed or asked — and it is
+	// what keeps such a cycle from being read as one that did nothing: the
+	// daemon is waiting on something the reading says is going, and three of
+	// those in a row would reach the breaker's threshold and pause the node over
+	// a wait the item's own question ends (D1228, mergeRetryWindow).
+	Waited int
 	// Decided is how many judgements the cycle made: the cases it handed the
 	// decision agent and had answered. It is one a cycle at most (the decide
 	// step is one call per cycle by design).
@@ -620,6 +629,13 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // them would raise the pause that refuses the very launch the merge is for
 // (D2705).
 //
+// A rung 3 hook that retried a wait is that same reading again (Waited): the
+// checks it read had not concluded, or the run it read had not ended, and the
+// cycle's news is something still going rather than nothing. The wait is not
+// left to the breaker to end — the item's own question is what a wait that never
+// ends owes a person, and the breaker names no item (boundRetry,
+// mergeRetryWindow).
+//
 // A judgement counts as work when it landed — Decided is the case the agent
 // answered and the patch it landed is committed — and a cycle whose only news
 // is a call is read by what the call came to: a call that failed or answered
@@ -631,7 +647,7 @@ func (c *cycle) outcome() CycleOutcome {
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
-	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }):
+	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }) || c.rep.Waited > 0:
 		return CycleInFlight
 	}
 	return CycleEmpty
