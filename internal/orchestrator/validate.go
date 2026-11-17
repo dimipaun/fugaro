@@ -556,6 +556,7 @@ func ValidatePatch(p Patch) error {
 var opPayloads = map[OpKind]string{
 	OpWorkItemUpsert:  "work_item",
 	OpWorkItemApprove: "approve",
+	OpPlanApprove:     "plan_approve",
 	OpWorkItemArchive: "archive",
 	OpDecisionAdd:     "decision",
 	OpDecisionResolve: "resolve",
@@ -575,6 +576,7 @@ func validateOp(op Op) error {
 	}{
 		{"work_item", op.WorkItem != nil},
 		{"approve", op.Approve != nil},
+		{"plan_approve", op.PlanApprove != nil},
 		{"archive", op.Archive != nil},
 		{"decision", op.Decision != nil},
 		{"resolve", op.Resolve != nil},
@@ -605,6 +607,24 @@ func validateOp(op Op) error {
 		}
 		if !DigestKnown(op.Approve.SpecDigest) {
 			return fmt.Errorf("%w: an approval carries the digest of the spec the person read", ErrInvalid)
+		}
+	case OpPlanApprove:
+		if _, ok := planApproveNode(op.PlanApprove.Node); !ok {
+			return fmt.Errorf("%w: the plan %q is not a plan folder or the backlog", ErrInvalid, safetext.OneLine(op.PlanApprove.Node))
+		}
+		if len(op.PlanApprove.Items) == 0 {
+			return fmt.Errorf("%w: a plan approval carries the items it approves", ErrInvalid)
+		}
+		if len(op.PlanApprove.Items) > MaxPlanApproveItems {
+			return fmt.Errorf("%w: %d items, at most %d", ErrTooLarge, len(op.PlanApprove.Items), MaxPlanApproveItems)
+		}
+		for _, it := range op.PlanApprove.Items {
+			if !idRE.MatchString(it.ID) {
+				return fmt.Errorf("%w: the approved item id %q is not a name", ErrInvalid, safetext.OneLine(it.ID))
+			}
+			if !DigestKnown(it.Digest) {
+				return fmt.Errorf("%w: an approval carries the digest of the spec the person read, and %q carries none", ErrInvalid, safetext.OneLine(it.ID))
+			}
 		}
 	case OpWorkItemArchive:
 		if !idRE.MatchString(op.Archive.ID) {
