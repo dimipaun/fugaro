@@ -64,6 +64,20 @@ var layerSteps = map[string]string{
 	LayerEnv:     "",
 }
 
+// LayerStage is the stage layer names, and false for a layer this build's
+// vocabulary does not hold. A layer answering "" names no stage and is a
+// declaration of its own — the change is live as written — which is a different
+// answer from the false here.
+//
+// It is exported for the census that holds the vocabulary and the rows to each
+// other (TestEverySettingKeyDeclaresItsSteps, internal/cli): a row carrying a
+// layer this map does not hold would otherwise be a write that silently owes
+// nothing.
+func LayerStage(layer string) (string, bool) {
+	stage, ok := layerSteps[layer]
+	return stage, ok
+}
+
 // KeySteps is the follow-up steps key's own row declares, in no order of their
 // own (the runner orders them), and false for a key no row answers for. It is
 // what a write of the key owes for the key being what it is; the layer the
@@ -81,7 +95,8 @@ func KeySteps(key string) ([]string, bool) {
 	}
 	var stages []string
 	for _, layer := range row.Layers {
-		if stage := layerSteps[layer]; stage != "" && !slices.Contains(stages, stage) {
+		stage, _ := LayerStage(layer)
+		if stage != "" && !slices.Contains(stages, stage) {
 			stages = append(stages, stage)
 		}
 	}
