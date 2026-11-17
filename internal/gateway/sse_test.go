@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 type seenEvent struct{ name, data string }
@@ -181,6 +183,52 @@ func TestUsageAccNullCostNotReported(t *testing.T) {
 		if a.hasReported != want {
 			t.Errorf("cost %s: hasReported %v, want %v", raw, a.hasReported, want)
 		}
+	}
+}
+
+// TestProviderCostKeepsLargest: a provider route keeps the largest cost any
+// event of a call reported, as it keeps the largest of every token count
+// (F22): the figures a stream repeats are cumulative, and a later event that
+// names less must not talk the call's charge down. The Claude route has no
+// report to settle on, so its cost is the last one the response carried, as
+// it was before this task. An unusable figure -- a null, a negative, one
+// past the bound -- is no figure at all, and cannot displace one that is.
+func TestProviderCostKeepsLargest(t *testing.T) {
+	merge := func(provider bool, costs ...string) usageAcc {
+		a := usageAcc{provider: provider}
+		for _, c := range costs {
+			u := wireUsage{Cost: []byte(c)}
+			a.merge(&u)
+		}
+		return a
+	}
+	for _, c := range []struct {
+		name     string
+		provider bool
+		costs    []string
+		want     pricing.Micros
+		wantAny  bool
+	}{
+		{"provider keeps the dearest, later", true, []string{"0.002", "0.001"}, 2_000, true},
+		{"provider keeps the dearest, earlier", true, []string{"0.001", "0.002"}, 2_000, true},
+		{"provider: a null cannot displace a figure", true, []string{"0.002", "null"}, 2_000, true},
+		{"provider: a negative cannot displace a figure", true, []string{"0.002", "-1"}, 2_000, true},
+		{"provider: a malformed figure cannot displace one", true, []string{"0.002", "1e999"}, 2_000, true},
+		{"provider: zero is a figure", true, []string{"0.002", "0"}, 2_000, true},
+		{"claude route keeps the last", false, []string{"0.002", "0.001"}, 1_000, true},
+		{"claude route keeps the last, dearer", false, []string{"0.001", "0.002"}, 2_000, true},
+		{"claude route: a null leaves the last figure", false, []string{"0.002", "null"}, 2_000, true},
+		{"no figure at all", true, nil, 0, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a := merge(c.provider, c.costs...)
+			if a.hasReported != c.wantAny {
+				t.Fatalf("hasReported %v, want %v", a.hasReported, c.wantAny)
+			}
+			if a.reported != c.want {
+				t.Errorf("reported %d, want %d", a.reported, c.want)
+			}
+		})
 	}
 }
 
