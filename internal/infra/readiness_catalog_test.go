@@ -373,3 +373,14 @@ func TestImageCatalogGateIsShipped(t *testing.T) {
 		t.Fatal("imageCatalogShipped is false: readiness holds back every job a catalog entry gives its image to, in every release")
 	}
 }
+
+// TestImageContextGateIsShipped pins the context gate's own shipped state, for
+// the reason the catalog gate's test above states: the both-ways test asks the
+// gate through contextReadiness's seam, so a constant left false in the code
+// that ships would hold back every job whose entry names a context and no test
+// would say so. 0.26.0 is the release that carries the member.
+func TestImageContextGateIsShipped(t *testing.T) {
+	if !imageContextShipped {
+		t.Fatal("imageContextShipped is false: readiness holds back every job whose catalog entry names a context, in every release")
+	}
+}
