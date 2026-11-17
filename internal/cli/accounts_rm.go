@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/api/googleapi"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -67,7 +68,16 @@ import (
 type accountsRmOptions struct {
 	profile string
 	yes     bool
+	// noApply is --no-apply (D1565): the change is written — the declaration
+	// goes and the secret with it — and the steps that make it live are saved
+	// for `fugaro apply` instead of run here.
+	noApply *bool
 }
+
+// accountsRmDoor is this command's own name, for the run its chain opens: the
+// door the run is filed and printed under, so every line a person reads names
+// the command they ran (modelsAddDoor's reason).
+const accountsRmDoor = "accounts rm"
 
 func newAccountsRmCmd() *cobra.Command {
 	var o accountsRmOptions
@@ -101,7 +111,8 @@ reaches.
 
 Then it converges, in the same command and after that one sentence: the
 policy node the account was published in, the job set and this checkout's
-repository root, through the stages fugaro update runs.
+repository root, through the stages fugaro update runs. With --no-apply the
+removal is saved and that converge is owed, and fugaro apply runs it later.
 
 If the delete fails after the config was written, the config is put back the
 way it was and the command stops: an account whose declaration is gone while
@@ -119,6 +130,7 @@ carries.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time)")
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
@@ -269,7 +281,24 @@ func runAccountsRm(cmd *cobra.Command, name string, o accountsRmOptions) error {
 			return err
 		}
 	}
-	return accountsRmConverge(cmd.Context(), cmd, after, next, sel.Path, plan, secret)
+	// The change's own follow-up (AP6), recorded after the delete and before the
+	// converge: what the record remembers is the steps that make the removal
+	// live, so it is written once nothing can roll the removal back — a delete
+	// that failed puts the config the way it was (accountsRmDelete) and leaves
+	// nothing owed — and before a converge that is minutes of Terraform.
+	names, err := chainSteps(accountsRmChanges())
+	if err != nil {
+		return err
+	}
+	queued, err := chainSave(lc, accountsRmChanges(), names)
+	if err != nil {
+		return err
+	}
+	if *o.noApply {
+		chainSavedLine(cmd.OutOrStdout(), names)
+		return nil
+	}
+	return accountsRmConverge(cmd.Context(), cmd, after, next, sel.Path, plan, secret, queued, names)
 }
 
 // accountsRmResolve reads the config as it is and answers what this run
@@ -1148,23 +1177,47 @@ func accountsRmRestore(cmd *cobra.Command, path string, wrote, back []byte, name
 // accountsRmConverge is spec §4 step 3: the same publish and deploy as add,
 // through add's own runner over the registered stages, so the job the account
 // owned is gone from the installation and the node no longer names it.
-func accountsRmConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, wrote []byte, path string, plan accountsRmPlan, secret string) error {
+//
+// It is also where the removal's own chain is settled (AP6). The record was
+// written before this run, with the steps the change owes (runAccountsRm's own
+// chainSave), and what this returns is the command's answer about them: the
+// steps the stages answered are cleared, and a step the run did not finish
+// keeps its entry, prints D1563's sentence and makes the command exit non-zero.
+// A stage that FAILED ends the run here instead, with the record holding every
+// step: the change is saved and nothing about it is live, which is what the
+// sentence beside the stage's own error says.
+func accountsRmConverge(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, wrote []byte, path string, plan accountsRmPlan, secret string, queued *apply.Pending, names []string) error {
 	// The removal's own account (CL7a), filed under the removal's own name: the
 	// block below is stdout, so the run's steps go to stderr, which is where
 	// this command's converge already accounted for itself.
 	run := stepRunFor(cmd, "accounts-rm", cmd.ErrOrStderr())
 	defer run.close()
-	stages, err := accountsAddRunStages(ctx, cmd, run, after, path, wrote, "accounts rm")
+	stages, err := accountsAddRunStages(ctx, cmd, run, lc, path, wrote, "accounts rm")
 	if err != nil {
+		// The steps this command wrote to the record are still owed, every one
+		// of them, and the sentence that finishes them goes beside the stage's
+		// own error: a person who reads only the error line would re-run this
+		// command, and the record would read as a removal nobody remembers.
+		applyKeptLine(cmd.OutOrStdout(), names)
 		return err
 	}
 	// The publish line is read off the node and never off the derivation the
 	// write announced: the derivation is what the publish would write, and a
 	// block that claimed the node had dropped the account without reading it
 	// would be the one sentence this command may not print.
-	allow, carried, why := accountsRmNode(ctx, after, plan.name)
-	accountsRmReport(cmd, after, stages, plan, secret, allow, carried, why)
-	return nil
+	allow, carried, why := accountsRmNode(ctx, lc, plan.name)
+	accountsRmReport(cmd, lc, stages, plan, secret, allow, carried, why)
+	return chainSettle(cmd, lc, path, queued, names, stages)
+}
+
+// accountsRmChanges is the change `accounts rm` makes, as apply's table is
+// keyed: a model account of this project. One row, whichever half of the
+// removal a run makes — the entry, the declaration, its secret and its job are
+// one change to the installation, and the steps that make it live are the
+// policy node, the deployed job set and this checkout's repository root
+// (ResourceAccount's own comment).
+func accountsRmChanges() []apply.Change {
+	return []apply.Change{{Kind: apply.Resource, Key: apply.ResourceAccount}}
 }
 
 // accountsRmNode reads accounts.<name> back off the published node. It is
