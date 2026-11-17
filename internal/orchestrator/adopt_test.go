@@ -71,6 +71,35 @@ func modeRun(runID, mode string) orchestrator.RunInFlight {
 	return r
 }
 
+// ladderRun is one run in flight of the escalation ladder's own recipes: a run
+// of an item already on the node, whose record carries the recipe and — like
+// every code-change run — no mode at all.
+func ladderRun(runID, ladderRecipe string) orchestrator.RunInFlight {
+	r := adoptRun(runID, "")
+	r.Recipe = ladderRecipe
+	return r
+}
+
+// seededNode is a database holding the state the caller hands in, written
+// through the node a person's own patch writes through, plus the node adoption
+// is then run over: a fresh fake whose Date header answers with the test's
+// instant, and a lease the daemon holds.
+func seededNode(t *testing.T, at time.Time, s orchestrator.State) (*gcpfake.RTDB, *orchestrator.Node) {
+	t.Helper()
+	ctx := context.Background()
+	f := gcpfake.NewRTDB(t)
+	f.SetClock(func() time.Time { return at })
+	plain := mustNode(t, rtdbClient(t, f), nil)
+	_, etag, err := plain.Load(ctx)
+	if err != nil {
+		t.Fatalf("reading the empty node: %v", err)
+	}
+	if err := plain.Save(ctx, s, etag); err != nil {
+		t.Fatalf("seeding the node with the test's state: %v", err)
+	}
+	return f, adoptNode(t, f, at, &stubLease{held: true})
+}
+
 // adoptNode is the node adoption writes through: a fresh database whose Date
 // header answers with the test's instant, which is the only clock adoption
 // stamps with (D1230), and the lease the caller names.
@@ -253,6 +282,86 @@ func TestAdoptSkipsReviewAndArtifactRuns(t *testing.T) {
 	if len(s.Facts) != 0 {
 		t.Fatalf("the node carries %d facts, and a run the daemon does not adopt is not one it left out", len(s.Facts))
 	}
+}
+
+// TestAdoptLeavesLadderRunsToTheirItems is the bound the ladder's own runs put
+// on adoption: a rebase and the one stronger pass are runs of an item the node
+// already carries, and the id of one is the ledger's and never the item's
+// (Escalation.RunID, E12). Adoption takes neither of the two ways one can be in
+// flight at start-up — the ledger that names it, and the recipe that says what
+// it is — because a second item for work that already has one sits running for
+// good: no runner reports on it, nothing folds it, and the rung that could
+// merge it is refused for it (D2702).
+//
+// Mutation: filter on the mode alone and a rebase in flight becomes an item of
+// its own, counted against the node's budget and the plan's.
+func TestAdoptLeavesLadderRunsToTheirItems(t *testing.T) {
+	now := o6Now()
+	const attempt = "20261107-090000-abcd"
+
+	// seed is a node whose one item the ladder has already moved: its own run is
+	// the attempt's, and the run its move spent is the ledger's.
+	seed := func(t *testing.T, ladderRunID string) *orchestrator.State {
+		t.Helper()
+		w, its := spentOn(t, "wi-1", now, rebased(now, headA, 1))
+		w.RunID, w.Escalation.RunID = attempt, ladderRunID
+		s := stack(t, now, []orchestrator.WorkItem{w}, its)
+		return &s
+	}
+
+	t.Run("the ledger names the run", func(t *testing.T) {
+		// The run is an ordinary code-change run by its recipe, and the recipe
+		// is not what claims it: the block beside the item is, so a rung whose
+		// run this release cannot recognise by name is covered too.
+		_, node := seededNode(t, now, *seed(t, runA))
+		lister := &adoptLister{runs: []orchestrator.RunInFlight{adoptRun(runA, ""), adoptRun(runB, "")}}
+
+		n, err := orchestrator.Adopt(context.Background(), lister, node)
+
+		if err != nil || n != 1 {
+			t.Fatalf("adoption wrote %d items and answered %v", n, err)
+		}
+		s := nodeState(t, node)
+		if _, ok := s.Item(runA); ok {
+			t.Fatalf("the state node carries an item for %q, a run the ledger of wi-1 already names", runA)
+		}
+		if w := itemAt(t, s, runB); !w.Adopted {
+			t.Fatalf("the run nothing names reads %+v, and adoption still takes a code change in flight", w)
+		}
+		if len(s.Facts) != 0 {
+			t.Fatalf("the state node carries the facts %v, and a ladder run is not one the daemon left out", s.Facts)
+		}
+	})
+
+	t.Run("the recipe says what it is", func(t *testing.T) {
+		// A ladder run a crash left with the launch and not the ledger: no
+		// block names it, so the recipe is the whole of the evidence that it
+		// belongs to an item that is already there.
+		_, node := seededNode(t, now, *seed(t, ""))
+		lister := &adoptLister{runs: []orchestrator.RunInFlight{
+			ladderRun(runA, orchestrator.RecipeRebase),
+			ladderRun(runB, orchestrator.RecipeEscalate),
+			adoptRun(runC, ""),
+		}}
+
+		n, err := orchestrator.Adopt(context.Background(), lister, node)
+
+		if err != nil || n != 1 {
+			t.Fatalf("adoption wrote %d items and answered %v", n, err)
+		}
+		s := nodeState(t, node)
+		for _, id := range []string{runA, runB} {
+			if _, ok := s.Item(id); ok {
+				t.Fatalf("the state node carries an item for %q, a ladder run of an item that already stands", id)
+			}
+		}
+		if w := itemAt(t, s, runC); !w.Adopted {
+			t.Fatalf("the run nothing names reads %+v, and adoption still takes a code change in flight", w)
+		}
+		if len(s.Facts) != 0 {
+			t.Fatalf("the state node carries the facts %v, and a ladder run is not one the daemon left out", s.Facts)
+		}
+	})
 }
 
 // TestAdoptedItemNeverMergesUnapproved is D2702's merge rule: the rung that

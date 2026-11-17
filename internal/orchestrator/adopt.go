@@ -101,7 +101,9 @@ type RunInFlight struct {
 	// (task.TitleLine).
 	Title string
 	// Recipe is the recipe the run's loop came from, a name of the catalog
-	// (recipe.NameRE).
+	// (recipe.NameRE). It is what tells a ladder run in flight from a code
+	// change the project launched: the two recipes the ladder starts
+	// (RecipeRebase, RecipeEscalate) are left where they are (codeChangeRuns).
 	Recipe string
 	// RigorTier is the expectation tier the run was dispatched at — one of
 	// internal/tier's four, from the run record's `tier` — and not the run's
@@ -223,15 +225,29 @@ func Adopt(ctx context.Context, lister RunLister, node *Node) (int, error) {
 // so an item for one would be an item nothing folds and nothing launches. An
 // evaluation is the same shape and is left the same way: a mode the catalog has
 // that is neither the implement mode nor the empty one a spec that names none
-// carries is a run that is not a code change. What
-// is left out here is named nowhere: a run id that is not one (task.ValidRunID)
-// cannot be an item's id at all (idRE), which makes it a lister's bug rather
-// than a run in flight, and a fact naming it would be a fact carrying whatever
-// the bug carried.
+// carries is a run that is not a code change.
+//
+// The ladder's own runs are left the same way, and for the sharper reason: a
+// rebase and the one stronger pass are runs of an item this node already
+// carries, and the id of one is the ledger's and never the item's
+// (Escalation.RunID, E12). A ladder run declares no mode, so it reads as an
+// implement run, and nothing claims its id — a second item for work that
+// already has one, sitting running with an intent no runner ever reports on and
+// no rung that could merge it. The claim (adoption.read) covers the ladder run
+// whose move has landed; this covers the one a crash left with the launch and
+// not the ledger.
+//
+// What is left out here is named nowhere: a run id that is not one
+// (task.ValidRunID) cannot be an item's id at all (idRE), which makes it a
+// lister's bug rather than a run in flight, and a fact naming it would be a
+// fact carrying whatever the bug carried.
 func codeChangeRuns(found []RunInFlight) []RunInFlight {
 	out := make([]RunInFlight, 0, len(found))
 	for _, r := range found {
 		if r.Mode != "" && r.Mode != recipe.ModeImplement {
+			continue
+		}
+		if ladderRecipe(r.Recipe) {
 			continue
 		}
 		if !task.ValidRunID(r.RunID) {
@@ -242,6 +258,13 @@ func codeChangeRuns(found []RunInFlight) []RunInFlight {
 	slices.SortFunc(out, func(a, b RunInFlight) int { return strings.Compare(a.RunID, b.RunID) })
 	return out
 }
+
+// ladderRecipe reports whether a run is one the escalation ladder started: rung
+// 0's rebase or the one stronger pass of rung 2, the two recipes this release's
+// ladder launches (ladderOuter). What it is for is adoption's own bound and not
+// the ladder's: a run of either is a run of an item already on the node, so
+// there is never an item for adoption to write.
+func ladderRecipe(name string) bool { return name == RecipeRebase || name == RecipeEscalate }
 
 // adoptNow is the server's clock as adoption stamps with it (D1230). The store
 // is asked rather than the machine because a stamp under this subtree is the
@@ -302,7 +325,8 @@ type adoptPlan struct {
 }
 
 // read reads every node the runs name, plus the state node, and remembers which
-// run ids the items of those nodes already carry.
+// run ids the items of those nodes already carry: their own, the run each is
+// going, and the ladder run an item's ledger names (claimed).
 func (a *adoption) read(ctx context.Context, runs []RunInFlight) error {
 	shards := []Shard{ShardState}
 	for _, r := range runs {
@@ -324,6 +348,14 @@ func (a *adoption) read(ctx context.Context, runs []RunInFlight) error {
 			}
 			if w.RunID != "" {
 				a.claimed[w.RunID] = true
+			}
+			// A ladder run is the ledger's and not the item's: its id is
+			// written to the block beside the item (Escalation.RunID, E12) and
+			// never to the item's own run_id, so what claims it is this. Left
+			// out, a rebase or a stronger pass in flight at start-up would be
+			// adopted as a second item for an item that already stands.
+			if w.Escalation != nil && w.Escalation.RunID != "" {
+				a.claimed[w.Escalation.RunID] = true
 			}
 		}
 	}
