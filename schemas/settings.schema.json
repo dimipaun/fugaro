@@ -1403,6 +1403,12 @@
         "registry_host": {
           "default": "unset = none: no image has been pinned yet"
         },
+        "reports_commit.dir": {
+          "default": "unset = docs/fugaro-reviews: the report layout's own folder, which a designation that names no folder commits into (D960)"
+        },
+        "reports_commit.repo": {
+          "default": "unset = none: the project commits no report anywhere, and a written empty block is how the owner takes a designation away"
+        },
         "repos.*.base_branch": {
           "default": "unset = the project's base_branch"
         },

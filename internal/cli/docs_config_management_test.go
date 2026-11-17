@@ -262,8 +262,15 @@ const (
 // the Layer stage that writes it into the project layer (D900), and its owner is
 // `setup` — the door whose run is asked the question and writes the answer down,
 // and whose Layer stage clears the key — so the generic path carries none of it.
+//
+// R14 of docs/periodic-reviews/ is the last mover, by two rows and by none: the
+// local project config gains the `reports_commit` block, the one repository a
+// report run may commit into and the folder inside it (D2750, D2751), and both
+// rows name the `project` family — `fugaro project policy publish` is the door
+// that carries the block onto the node, which is where a report run reads it —
+// so the generic path carries neither.
 const (
-	cfmRegistryRows   = 481
+	cfmRegistryRows   = 483
 	cfmAllowlistNamed = 118
 )
 
