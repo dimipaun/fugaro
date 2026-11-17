@@ -66,6 +66,14 @@ var secretReaderExceptions = []struct {
 			"internal/credsvc/dynamicsecrets.go",
 			"internal/cli/credentials_serve.go",
 			"deploy/terraform/gcp/modules/installation/credentials.tf google_secret_manager_secret_iam_member.credentials_bundle",
+			// D2074's per-container grants, in a REPOSITORY root: one
+			// secretAccessor for the service's account on each secret
+			// container that repository's job mounts, so the service can read
+			// back the container a run asks it for (B3.4). The same account
+			// and the same role as the bundle's grant above, and a different
+			// decision — the module holds the set to the job's mounts
+			// (deploy/terraform's TestServiceWorkflowSecretGrantsMatchTheJobsMounts).
+			"deploy/terraform/gcp/modules/workflow/sa.tf google_secret_manager_secret_iam_member.service",
 		},
 	},
 	{id: "E8", keys: []string{"internal/cli/creds.go", "internal/cli/doctor_brokering.go"}},
@@ -136,6 +144,16 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/intake.tf google_project_iam_member.intake_lister",
 		},
 	},
+	// The installation's resident orchestrator (mobile plan task P5.1b, the
+	// mobile orchestrator design's section 4.3): the same fugaroLauncher role
+	// E10's launchers hold, granted to the installation's own account instead of
+	// to the people on the list — names, labels and
+	// version counts, and no way to a value, because the role carries the two
+	// list permissions and not secretmanager.versions.access.
+	{
+		id:   "E28",
+		keys: []string{"deploy/terraform/gcp/modules/installation/orchestrator.tf google_project_iam_member.orchestrator_launcher"},
+	},
 	// The enrolment view (repos-management RE0, `internal/cli/repos_view.go`):
 	// the fourth member of the group's reads that answers "what is this
 	// repository made of". It reads the same four things doctor's rotation
@@ -156,7 +174,7 @@ var secretReaderExceptions = []struct {
 	// would cover the four (secretmanager.secretVersionManager and
 	// secretmanager.viewer) also carry create, delete, destroy, enable, disable
 	// and getIamPolicy on the container, none of which the job calls.
-	{id: "E28", keys: []string{"deploy/terraform/gcp/modules/installation/licence.tf google_secret_manager_secret_iam_member.licence_renewal"}},
+	{id: "E29", keys: []string{"deploy/terraform/gcp/modules/installation/licence.tf google_secret_manager_secret_iam_member.licence_renewal"}},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it

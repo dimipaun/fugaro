@@ -77,7 +77,10 @@ const workflowSecretsBudget = 90 * time.Second
 // job's environment or through this call.
 func (r *run) fetchWorkflowSecrets(ctx context.Context, wf config.Workflow) error {
 	var missing []string
-	for _, s := range wf.Secrets {
+	// A repository-level secret the job does not mount has no value anywhere
+	// (D2313): asking the service for it would refuse every run of a
+	// repository the ruling brings up.
+	for _, s := range r.declaredSecrets(wf) {
 		if envLookup(r.d.Env, s.Env) == "" {
 			missing = append(missing, s.Env)
 		}

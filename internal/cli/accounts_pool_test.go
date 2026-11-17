@@ -510,15 +510,15 @@ pools:
       - router-one
 `
 
-// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the staging this refusal ships
-// under, and the reason it is the write door's rule and not the readers': a
-// config 0.25.0 wrote may hold a pool naming a member of each half, and nothing
-// in this release may refuse it. The read loads the config through the very
-// path `fugaro update` loads it through, so a read that prints is an
-// installation that still works — and it renders the pool with both halves and
-// the boundary its failover is left at rather than hiding a pool the person
-// wrote. The step that splits such a pool into one pool per half is MC21's, and
-// it ships in the same release as this rule (activation plan row 43).
+// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the reason the rule is the write
+// door's and not the config load's: a config 0.25.0 wrote may hold a pool naming
+// a member of each half, and this read must not refuse it. The read loads the
+// config through the very path `fugaro update` loads it through, so a read that
+// prints is an installation that still works — and it renders the pool with both
+// halves and the boundary its failover is left at rather than hiding a pool the
+// person wrote. It stays true after MC21: the split is written by the update's
+// own migration (derivePathPools, on every write of the file) and never by a
+// read, so a config that has not been through an update yet is still read.
 func TestPoolLsReadsAPoolAnEarlierReleaseWrote(t *testing.T) {
 	accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsCrossingPools)
 

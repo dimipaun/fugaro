@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
@@ -370,7 +371,19 @@ func accountsAddRules(name, profile string, beyond []string, claude bool, typ st
 // one in applySettingsEdit and the one on the no-change path — are what put an
 // agent's session here, and both of them are lifted only by an admission from a
 // project the gate read as managed (initflow.GateStandsIn).
-func accountsAddTokenStep(name string) error {
+//
+// typ is the run's resolved type (accountsAddSecretType), and it decides two
+// nouns and nothing else. A name the config declares a key credential takes its
+// value from its provider under the credential's own derived secret; calling
+// that value a token and the name a Claude account would send the session
+// looking for a container this run never had (accountsAddSecretName). The shape
+// is the same either way — what was not stored, and the one next step — and the
+// token's own wording is unchanged for the accounts that do have one.
+func accountsAddTokenStep(name, typ string) error {
+	if config.KeyCredentialType(typ) {
+		return userErr("No key was stored for credential %s: a session may write the declaration, and never the key.\nRun this in your own terminal, not in an agent session.",
+			pluginwire.Printable(name))
+	}
 	return userErr("No token was stored for Claude account %s: a session may write the declaration, and never the token.\nRun this in your own terminal, not in an agent session.",
 		pluginwire.Printable(name))
 }

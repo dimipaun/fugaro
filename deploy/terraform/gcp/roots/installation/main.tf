@@ -57,6 +57,7 @@ module "installation" {
   intake                    = var.intake
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
+  orchestrator              = var.orchestrator
 }
 
 # The shared project jobs (design docs/design/project-centric.md §4.1): one
@@ -127,5 +128,52 @@ module "project_review" {
 
   # As module.project above: the bucket grant waits for the installation that
   # creates the bucket it names.
+  depends_on = [module.installation]
+}
+
+# The resident orchestrator's launch grant (mobile plan task P5.1b; the
+# design's section 4.3, the run.jobs.run and run.jobs.runWithOverrides row).
+# It is the only row of that table this root can carry and the installation
+# module cannot: the account starts the installation's own project jobs, which
+# this root creates and the module never sees. The role is the same
+# names.role_ids.job_runner the project module hands each job's launchers
+# above, so the two grants of that role name one role.
+#
+# The two attributes are written out rather than read off the resources they
+# name, and for the reason orchestrator.tf's header gives at length:
+# module.installation.role_ids.job_runner and module.installation.orchestrator
+# are both COMPUTED (a custom role's name and a service account's email), so
+# reading them would reach the plan as unknown, and internal/infra/tf's cover
+# reads a grant's role and its principal off the plan — unknown, the role is one
+# no reader can name and the member is one whose kind is unknowable, which is
+# what the design's eleventh never-rule exists to keep this account out of. The
+# role is the ID literal and not `${var.names.role_ids.job_runner}` for the
+# reason state_read.tf's and orchestrator.tf's own role literals give: a
+# project's custom role named in a binding is named by its ID, and
+# internal/infra's TestOrchestratorGrantsAreTheDesignsTableRows pins the literal
+# to the role_id of the role the same plan creates, so a drift between this
+# spelling and the tfvars' fails rather than binding a role that does not exist.
+#
+# for_each is empty for an installation that has not opted in, which is what
+# keeps the whole table off: a null var.orchestrator creates no account, no
+# binding in this file and nothing in the module, so the plan of an
+# installation that never asked for a resident orchestrator is byte for byte
+# the plan it had before this block existed.
+#
+# Nothing narrower than the job is offered, and nothing wider: the design's
+# table grants this role on the installation's jobs and the account may start
+# any of them, which is what a launch is — the env, the mounts and the
+# credential are the job's own. What the role withholds is the job's
+# lifecycle: it can neither create, update nor delete one, so the account
+# cannot change what a launch would run.
+resource "google_cloud_run_v2_job_iam_member" "orchestrator_runner" {
+  for_each = var.orchestrator == null ? {} : var.project_jobs
+
+  project  = var.project
+  location = var.region
+  name     = module.project[each.key].job
+  role     = "projects/${var.project}/roles/fugaroJobRunner"
+  member   = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+
   depends_on = [module.installation]
 }

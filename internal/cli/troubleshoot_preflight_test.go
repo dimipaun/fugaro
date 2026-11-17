@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -178,7 +179,7 @@ func TestTroubleshootPreflightRefusesWhatTheLaunchRefuses(t *testing.T) {
 		{
 			name: "a policy that does not admit the repository",
 			setup: func(t *testing.T, f *launchBudgetFixture) *task.Spec {
-				publishPolicy(t, f, `{"version":5,"allow_repos":["github/acme/other"]}`)
+				publishPolicy(t, f, `{"version":9,"allow_repos":["github/acme/other"]}`)
 				return nil
 			},
 			want: []string{"the project's policy does not admit github/acme/app"},
@@ -314,5 +315,69 @@ func removeBucketFile(t *testing.T, f *cloudFixture, key string) {
 	path := filepath.Join(f.dir, "runs", filepath.FromSlash(key))
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The cloud tier's decline (T-TC2, D2401): the one line a person reads when the
+// cloud diagnosis is the tier that declined, and the tier the document records
+// for what is left.
+
+// TestTroubleshootDeclineNamesTheTierAndTheReason: the line says which tier
+// declined, carries the gate's reason, and says what follows it. The value the
+// document's tier field carries is pinned here as well: a reader outside this
+// binary (the console, the history) tells the tiers apart by it, so it is a word
+// that cannot drift.
+func TestTroubleshootDeclineNamesTheTierAndTheReason(t *testing.T) {
+	reason := errors.New("the launch path refused it: the job image is older than the published policy")
+	line := troubleshootDeclineCloud(reason)
+	for _, want := range []string{
+		"the cloud diagnosis is not available",
+		reason.Error(),
+		"evidence follows",
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the decline does not say %q: %q", want, line)
+		}
+	}
+	if troubleshootTierEvidence != "evidence" {
+		t.Errorf("the tier the document records for a declined cloud diagnosis is %q, want %q", troubleshootTierEvidence, "evidence")
+	}
+}
+
+// TestTroubleshootDeclineKeepsTheGateSentence: the reason is the gate's own
+// sentence, quoted and not reworded. A stale job image's refusal is read out of
+// the pre-flight itself, so the two are tied together: whatever the gate says —
+// the command that fixes it among it — is what a person reads, and a paraphrase
+// here would fail the moment the gate's wording moved.
+func TestTroubleshootDeclineKeepsTheGateSentence(t *testing.T) {
+	f := preflightFixture(t, "off")
+	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:0.1.0")
+	err := runPreflight(t, f, preflightSpec())
+	if err == nil {
+		t.Fatal("the pre-flight admitted a stale job image")
+	}
+	line := troubleshootDeclineCloud(err)
+	if !strings.Contains(line, err.Error()) {
+		t.Fatalf("the decline reworded the gate's sentence:\ngate:    %v\ndecline: %s", err, line)
+	}
+	for _, fix := range []string{"fugaro update", "in your own terminal window"} {
+		if !strings.Contains(line, fix) {
+			t.Errorf("the fix the gate names does not survive verbatim, %q is not in: %s", fix, line)
+		}
+	}
+}
+
+// TestTroubleshootDeclinePrintsOneLine: the whole decline is one line, so that
+// no terminal wraps a newline into a second sentence of its own. A reason that
+// carries a newline is the case that matters — a gate sentence is one line
+// today, and the decline must not be the thing that hands the printer two.
+func TestTroubleshootDeclinePrintsOneLine(t *testing.T) {
+	line := troubleshootDeclineCloud(errors.New("the launch path refused it\nand this is a second line nobody wrote"))
+	if strings.ContainsAny(line, "\r\n") {
+		t.Fatalf("the decline is more than one line: %q", line)
+	}
+	if !strings.Contains(line, "the launch path refused it") {
+		t.Fatalf("the decline dropped the reason: %q", line)
 	}
 }

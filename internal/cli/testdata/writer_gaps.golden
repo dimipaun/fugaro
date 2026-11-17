@@ -213,10 +213,15 @@ routing.claude.via
 secret_expires
 secret_rotation_days
 security.patterns
+stages.plan.claude_account
+stages.review_first.claude_account
+subscription_spread
+verifier_accounts
 workflow_secrets.CONFORMANCE.allow_data_to
 workflow_secrets.CONFORMANCE.proxy
 workflows.web.base
 workflows.web.cache
+workflows.web.checkout
 workflows.web.commands.reports
 workflows.web.commands.rerun_failed
 workflows.web.dockerfile

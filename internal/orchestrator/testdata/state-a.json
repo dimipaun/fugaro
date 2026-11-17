@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "rev": 12,
   "agent_id": "orchestrator-a",
   "role": "orchestrator",
@@ -24,6 +24,8 @@
       "attempts": 1,
       "note": "the run is in its review round",
       "escalation": {
+        "repo": "owner/repo",
+        "run_id": "20261107-074500-5c0d",
         "rung": "R2",
         "entered_at": "2026-11-07T07:45:00Z",
         "outer_attempts": 2,

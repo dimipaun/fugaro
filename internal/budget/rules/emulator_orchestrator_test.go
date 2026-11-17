@@ -51,11 +51,16 @@ package rules
 // name check reads out of the generated paths).
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/escalation"
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -103,7 +108,9 @@ func orchestratorInTemplate(t *testing.T) map[string]any {
 
 // TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople: the subtree is read by
 // the signed-in person (the `USER` macro, the same reader the coordinator's
-// state has) and by nobody the rules evaluate as a client token.
+// state has) and by nobody the rules evaluate as a client token — E12's
+// reports-job read (F27) is the one grant under it, it is on the escalation
+// block alone, and the loop below requires it to be exactly that.
 func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 	node := orchestratorInTemplate(t)
 	// The read is the explicit `USER` grant, not an inherited one: D1241's
@@ -127,16 +134,26 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 	if v, has := generated[".write"]; !has || v != false {
 		t.Errorf("generated /%s .write = %v, want false", PathOrchestrator, v)
 	}
-	// Nothing beneath it may carry a grant of its own: the subtree is one node
-	// whose read cascades, and a child with a rule is the shape a widening hides
-	// in.
+	// Nothing beneath it may carry a grant of its own except E12's, which is
+	// named and required here: the subtree is one node whose read cascades, and
+	// a child with a rule is the shape a widening hides in. The reports job's
+	// read of the escalation block (F27) is the one grant under it — on exactly
+	// one node, for the reports job's claim alone — so a second grant, the same
+	// grant moved one node up, and the same grant widened to another identity
+	// each fail here.
 	for path, attrs := range generatedPaths(t) {
 		if !strings.HasPrefix(path, PathOrchestrator+"/") {
 			continue
 		}
+		if path == escalationLedgerPath {
+			if len(attrs) != 1 || attrs[".read"] != reportsJobClaim {
+				t.Errorf("generated /%s = %v, want exactly the reports job's read (%q): E12's grant is the one rule under this subtree", path, attrs, reportsJobClaim)
+			}
+			continue
+		}
 		for _, attr := range []string{".read", ".write"} {
 			if v, has := attrs[attr]; has {
-				t.Errorf("generated /%s carries %s = %v, under a subtree whose single grant is its own .read", path, attr, v)
+				t.Errorf("generated /%s carries %s = %v, under a subtree whose only grants are its own .read and E12's escalation read", path, attr, v)
 			}
 		}
 	}
@@ -184,6 +201,101 @@ func TestOrchestratorSubtreeIsReadableOnlyBySignedInPeople(t *testing.T) {
 		h.mustReadDenied(h.consumer(mbAlice), p)
 		h.mustReadDenied(h.pairing(pairUid), p)
 	}
+}
+
+// TestOrchestratorReportsJobReadsEscalationOnly: E12's grant (F27), proved
+// against the rules engine rather than against the document alone — the admit
+// case and the refuse cases both, on the path the reports job really reads.
+//
+// The read is granted to a custom-token claim, and the claim's null guard is
+// the difference between the escalation block's read and the whole subtree's:
+// where /fugaro/project is absent, the equality alone compares null to null and
+// admits any signed-in client, which is why the last case deletes the node and
+// demands the refusal of a token that carries no rj claim.
+//
+// The block the job reads is the document the daemon writes, and the admit case
+// decodes it as this build's ledger with the two names the loss of the item
+// above it made necessary (repo, run_id). What the job does with them — the
+// digest's item and the chain behind it — is TestEscalationItemFromTheReportsJobRead,
+// which needs no emulator.
+func TestOrchestratorReportsJobReadsEscalationOnly(t *testing.T) {
+	const (
+		orchItem       = orchState + "/work_items/w1"
+		orchEscalation = orchItem + "/escalation"
+		ledgerRepo     = "owner/repo"
+		ledgerRun      = "20261116-090000-abcd"
+	)
+	h := newHarness(t)
+	h.seed(leased(2 * usd))
+	h.set(orchState, map[string]any{"schemaVersion": 1, "phase": "idle"})
+	h.set(orchItem, map[string]any{"state": "escalated"})
+	h.set(orchEscalation, map[string]any{
+		"repo": ledgerRepo, "run_id": ledgerRun,
+		"rung": "R3", "entered_at": "2026-11-16T09:00:00Z", "outer_attempts": 2,
+		"transitions": []map[string]any{
+			{"to": "R0", "reason": "rebase", "at": "2026-11-16T08:00:00Z"},
+			{"from": "R0", "to": "R3", "reason": "age", "at": "2026-11-16T09:00:00Z"},
+		},
+	})
+
+	// The read the design grants, and the node it is granted on: the ledger's
+	// escalation block of a work item, which is where the ladder's record of the
+	// rungs it climbed lives.
+	job := h.reportsJob(projectID)
+	h.mustRead(job, orchEscalation)
+
+	// And the block the read returns is a ledger this build reads, with the two
+	// names a reader that cannot reach the item beside it needs: the repository
+	// its per-repository report is about, and the run its chain is found by.
+	var raw json.RawMessage
+	if _, err := job.Get(context.Background(), orchEscalation, &raw); err != nil {
+		t.Fatalf("read /%s: %v", orchEscalation, err)
+	}
+	var block orchestrator.Escalation
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&block); err != nil {
+		t.Fatalf("the block the reports job read is not a ledger this build reads: %v\n%s", err, raw)
+	}
+	if block.Repo != ledgerRepo || block.RunID != ledgerRun {
+		t.Fatalf("the block the reports job read is on %q and names the run %q, want %q and %q", block.Repo, block.RunID, ledgerRepo, ledgerRun)
+	}
+	if block.Rung != escalation.Rung("R3") || len(block.Transitions) != 2 {
+		t.Fatalf("the block came back as rung %q with %d transitions", block.Rung, len(block.Transitions))
+	}
+
+	// And nothing else of the database. The work items and the state node above
+	// the block are the widening this test exists for — a read there reaches
+	// every work item's every field — and the caps family is a positive control
+	// of the other kind: a node that holds data and that the identities the
+	// rules do admit read, refused to this one.
+	for _, p := range []string{
+		PathOrchestrator,
+		PathOrchestrator + "/" + orchID,
+		orchState,
+		orchState + "/work_items",
+		orchItem,
+		budget.PathCapsGlobal,
+	} {
+		h.mustReadDenied(job, p)
+	}
+
+	// The claim is this installation's: a token minted for another one is
+	// refused, and so is a client that carries no rj claim at all — this is the
+	// state a token is in before the job's mint exists (E12 ships the grant and
+	// not the mint), and it is refused for the guard's reason and not the
+	// equality's.
+	h.mustReadDenied(h.reportsJob("another-installation"), orchEscalation)
+	h.mustReadDenied(h.as(claims{uid: "no-claims", fp: "-"}), orchEscalation)
+
+	// And the guard itself, at the one state where it is the only thing between
+	// a signed-in client and the block: an installation whose /fugaro/project
+	// was never written (the generation-0 state check 82 documents), where a
+	// claim-less equality is null == null. Both a client with no rj and the
+	// reports job's own token are refused there.
+	h.adminDo(http.MethodDelete, "fugaro/project", nil)
+	h.mustReadDenied(h.as(claims{uid: "no-claims", fp: "-"}), orchEscalation)
+	h.mustReadDenied(h.reportsJob(projectID), orchEscalation)
 }
 
 // TestOrchestratorRefusesEveryTokenWriter: the write is `false` for every

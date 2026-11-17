@@ -115,6 +115,38 @@ func TestStageBoundArtifactIsOneModelStage(t *testing.T) {
 	}
 }
 
+// TestStageBoundDiagnoseCountsItsModelStage: a diagnose step is a model stage
+// where a render is a runner command, so the one artifact shape that holds it
+// beside a plan starts two and the bound says two. The render arm above errs
+// high on the other side (a render-only recipe is still one), and this arm is
+// what keeps the bound from erring low for the shape the diagnose step adds: a
+// ceiling that counted one for a two-stage run would reserve half the money
+// the run can spend.
+func TestStageBoundDiagnoseCountsItsModelStage(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		steps string
+		want  int
+	}{
+		{"diagnose alone", "steps:\n  - diagnose: {}\n", 1},
+		{"plan then diagnose", "steps:\n  - plan: {}\n  - diagnose: {}\n", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, ps := Parse([]byte(artifactHead + artifactOutputs + tc.steps))
+			if len(ps) != 0 {
+				t.Fatalf("problems: %s", ProblemsText(ps))
+			}
+			// The knobs move nothing: neither shape holds a loop, so the
+			// bound is the same at their largest values as at zero.
+			for _, knobs := range [][2]int{{0, 0}, {3, 10}} {
+				if got := StageBound(r, knobs[0], knobs[1], n3Default); got != tc.want {
+					t.Fatalf("bound at f=%d, n=%d = %d, want %d", knobs[0], knobs[1], got, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestStageBoundDigestHasNoImplementStage: a digest recipe's first step is
 // the runner's own work -- it writes the run reports the repository is
 // missing with no model call -- so a run of it starts no implement stage,

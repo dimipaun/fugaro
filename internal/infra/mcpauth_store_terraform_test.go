@@ -263,6 +263,17 @@ func installationPlanFor(t *testing.T, spec InstallationSpec, dropModule ...stri
 // document rather than about the rows these tests pick out of it.
 func installationPlan(t *testing.T, spec InstallationSpec, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
 	t.Helper()
+	return installationPlanWith(t, spec, nil, dropModule...)
+}
+
+// installationPlanWith is installationPlan with tfvars keys added to the ones
+// InstallationVars writes, which is how a test plans an installation that is
+// opted into something the CLI has no writer for yet: the key is written here
+// and nowhere else, exactly as an operator's own hand-edited tfvars would carry
+// it, so the plan is of the module rather than of a spec field this release
+// does not have.
+func installationPlanWith(t *testing.T, spec InstallationSpec, extra map[string]any, dropModule ...string) (*tf.Plan, map[string]plannedResource) {
+	t.Helper()
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
@@ -270,6 +281,18 @@ func installationPlan(t *testing.T, spec InstallationSpec, dropModule ...string)
 	vars, err := InstallationVars(spec)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(extra) != 0 {
+		doc := map[string]any{}
+		if err := json.Unmarshal(vars, &doc); err != nil {
+			t.Fatal(err)
+		}
+		for k, v := range extra {
+			doc[k] = v
+		}
+		if vars, err = json.Marshal(doc); err != nil {
+			t.Fatal(err)
+		}
 	}
 	dir := t.TempDir()
 	writeTree(t, dir)

@@ -702,3 +702,22 @@ variable "managed_deployer_scoped" {
   default     = false
   nullable    = false
 }
+
+variable "orchestrator" {
+  description = "The resident orchestrator's own identity (mobile plan task P5.1b; docs/mobile/design/always-on-orchestrator.md section 4.3): one service account per installation and exactly the grants the design's table lists, assembled one binding at a time. OFF by default (null) — an installation that has not opted in plans exactly what it planned before this file existed, which is what makes the update carrying it a no-op for every installation that has not asked for a resident orchestrator. account_id is the account's ID, fixed by internal/infra's OrchestratorAccountID so that `fugaro doctor` can find the account by the name the design gives it. firebase_project and signer_account_id are the token-minter row's two names and are on this variable rather than derived from var.coordinator: that row is bound on the FIREBASE root's signer account, in that root's project, where the fugaroTokenMinter role is declared (modules/firebase/iam.tf), and the ID is the one internal/infra hands the Firebase root (FirebaseVars' SignerAccountID, the firebase module's names.signer_account_id), so this file composes the signer's address from the same ID the account is created with, the way scheduler.tf composes its own account's. The variable has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one, which is also the release that must order this root's token-minter binding behind the Firebase root (orchestrator.tf states the ordering)."
+  type = object({
+    account_id        = string
+    firebase_project  = string
+    signer_account_id = string
+  })
+  default = null
+
+  validation {
+    condition = var.orchestrator == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.orchestrator.account_id)) &&
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.orchestrator.firebase_project)) &&
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.orchestrator.signer_account_id))
+    )
+    error_message = "orchestrator needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter) for the installation's own account, the Firebase project the signer account lives in, and the signer account's own ID on that project — the token-minter grant is bound on that account, in that project, which is where the role it names exists."
+  }
+}

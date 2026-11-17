@@ -1341,10 +1341,10 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 
 	// The accounts are named in exactly the blocks the plan allows, so a new one
 	// has to be argued for rather than added: the minter's in its own service and
-	// the one grant, the API's in its own service and the three reaches above.
-	// A resource outside that list naming any of them is an identity taken where
-	// it was not meant to go; the outputs name them, and a value handed out is
-	// not a reach.
+	// the one grant, the API's in its own service, the seed job that runs that
+	// program once, and the reaches above. A resource outside that list naming any
+	// of them is an identity taken where it was not meant to go; the outputs name
+	// them, and a value handed out is not a reach.
 	referrers := map[string]map[string]string{
 		"google_service_account.minter.": {
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "minter"`):          "the service that runs as it",
@@ -1352,6 +1352,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		},
 		"google_service_account.api.": {
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service" "api"`):                           "the service that runs as it",
+			tfNames(servicesRoot, `resource "google_cloud_run_v2_job" "seed"`):                              "the job that runs the same program once, to write the operations organisation (P0.5): the seed builds the API's service and so reads the store, the secrets and the handover key the API's account holds — running it as the minter's account, or as one of its own, would be a second identity inside the boundary §3.3 draws around those four",
 			tfNames(servicesRoot, `resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`): "the one identity allowed to call the minter",
 			tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the one identity allowed to decrypt a handover",
 			tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the one identity allowed to read the portal's documents",
@@ -1578,8 +1579,8 @@ func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 		}
 		tfAttrsAre(t, token, job.what, []struct{ attr, value string }{
 			{"service_account_email", "google_service_account.scheduler.email"},
-			{"audience", "google_cloud_run_v2_service.api.uri"},
-		}, "the API verifies the scheduler's OIDC token by account AND audience (P1.3, F33), so the token is minted for the scheduler's own account and for the API's URL: any other audience is a token the API refuses, and any other account is one its list does not carry")
+			{"audience", "local.api_url"},
+		}, "the API verifies the scheduler's OIDC token by account AND audience (P1.3, F33), so the token is minted for the scheduler's own account and for the API's URL: any other account is one its list does not carry, and any other audience is a token the API refuses — which is why the audience is `local.api_url` and not the target's own `uri` just above: the two are different strings for one service (Cloud Run answers with its assigned hash form under `.a.run.app`), and the API compares the claim exactly (TestTheSchedulerMintsTheAudienceTheAPIVerifies holds the pair to one value)")
 	}
 
 	// And that those two are the whole of the tree's schedules, which is what makes
@@ -1624,6 +1625,73 @@ func TestOnlyTheAPIInvokesTheMinter(t *testing.T) {
 	} {
 		if got := tfDefaultLiteral(tfVarBlock(t, servicesRoot, d.name)); got != "true" {
 			t.Errorf("services/'s %s default reads as %q, want \"true\":\nthe job's pause is this variable, so a default of false is both jobs firing on the next apply — %s, so the call answers 404 and mails nothing — and a variable with no default stops the apply until an operator names a value", d.name, got, d.why)
+		}
+	}
+}
+
+// tfLineValues answers every value a file assigns to a name at the head of its
+// own line, in the order the file writes them — a name written as a prefix of
+// another one is not it, and the `=` has to be on the same line.
+//
+// It is a line read rather than tfAttr's block read on purpose: the two values
+// the scheduler check below holds equal sit at two different depths — one an
+// attribute of `local.api_env`'s object, the other an attribute of an
+// `oidc_token` block nested inside an `http_target` — so a helper that walked
+// the nesting would pin the shape of both files as well as the one value they
+// have to agree on.
+func tfLineValues(src, name string) []string {
+	var out []string
+	for _, line := range strings.Split(src, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), name)
+		if !ok {
+			continue
+		}
+		rest, ok = strings.CutPrefix(strings.TrimSpace(rest), "=")
+		if !ok {
+			continue
+		}
+		out = append(out, strings.TrimSpace(rest))
+	}
+	return out
+}
+
+// TestTheSchedulerMintsTheAudienceTheAPIVerifies: the audience the scheduled
+// calls' OIDC tokens are minted for and the audience the API compares those
+// tokens against are ONE value, and the same expression decides both.
+//
+// They are not the same string by accident, and not interchangeable: the API
+// compares the claim exactly (portalauth.go's SchedulerVerifier, whose audience
+// is FUGARO_SCHEDULER_AUDIENCE), while the URL the jobs post to is the service's
+// assigned `uri` — `<service>-<hash>-<code>` under `.a.run.app`. Minting for the
+// target's own attribute is therefore minting for a string the API refuses, and
+// what makes that failure hard to find is when it surfaces: the jobs are created
+// PAUSED (P1.5) and the routes they call belong to P6.3 and P7.1, so an apply
+// that reads as a success is followed months later by a statement month that
+// silently mails nothing.
+//
+// The mutations this fails on: either job's audience minted for
+// `google_cloud_run_v2_service.api.uri` (the value a reader would reach for
+// first, since it is the block's own target), a literal URL in either place,
+// which is a second copy of a derived value, and FUGARO_SCHEDULER_AUDIENCE moved
+// to a different local.
+func TestTheSchedulerMintsTheAudienceTheAPIVerifies(t *testing.T) {
+	main := tfSource(t, filepath.Join(servicesRoot, "main.tf"))
+	want := tfLineValues(main, "FUGARO_SCHEDULER_AUDIENCE")
+	if len(want) != 1 {
+		t.Fatalf("services/main.tf sets FUGARO_SCHEDULER_AUDIENCE %d times, want exactly one: it is the value the API compares every scheduled token's audience against, so a second assignment is one of the two reading as the answer while the other is what an apply writes", len(want))
+	}
+	apiAudience := want[0]
+	if !strings.HasPrefix(apiAudience, "local.") {
+		t.Errorf("services/main.tf sets FUGARO_SCHEDULER_AUDIENCE to %q, want a reference to a local: a URL written out here is a second copy of a value this root derives, and the copy is the half that goes stale — the audience is the API's own URL as main.tf's locals derive it", apiAudience)
+	}
+
+	minted := tfLineValues(tfSource(t, filepath.Join(servicesRoot, "scheduler.tf")), "audience")
+	if len(minted) < 2 {
+		t.Errorf("services/scheduler.tf mints %d audiences, want both scheduled calls': a job whose oidc_token names no audience is one minted for a default nobody here read, and the API refuses it", len(minted))
+	}
+	for i, got := range minted {
+		if got != apiAudience {
+			t.Errorf("services/scheduler.tf's audience %d is %q, and services/main.tf gives the API %q: the API compares the claim exactly (portalauth.go's SchedulerVerifier), so a token minted for anything else is every scheduled call refused — the two are one value and this is the check that holds them equal", i+1, got, apiAudience)
 		}
 	}
 }

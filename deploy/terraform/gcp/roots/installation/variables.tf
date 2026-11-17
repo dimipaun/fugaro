@@ -433,3 +433,19 @@ variable "project_review_jobs" {
   default  = {}
   nullable = false
 }
+
+variable "orchestrator" {
+  type = object({
+    account_id        = string
+    firebase_project  = string
+    signer_account_id = string
+  })
+  # The resident orchestrator's own identity (mobile plan task P5.1b), OFF by
+  # default: null creates nothing, so an installation that has not opted in
+  # plans exactly what it planned before the module file existed, and every
+  # `fugaro update` that carries it is a no-op for that installation. All three
+  # fields are computed by internal/infra (the module's type is the same
+  # object, and its validation is the one that holds them to their shape, so
+  # this root declares the value and decides nothing about it).
+  default = null
+}
