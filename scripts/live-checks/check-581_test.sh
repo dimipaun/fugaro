@@ -446,7 +446,31 @@ test_xtrace_refused() {
   run_check "$dir" -- -x
   expect_status "$status" 1 "bash -x"
   expect_contains "$err" "this shell is tracing" "bash -x: the guard names what it refuses"
+  expect_contains "$out" "No image was promoted by this run" "bash -x: the restore row does not claim a build that never ran"
   assert_no_build "$dir" "bash -x"
+}
+
+test_a_large_catalog_is_summarised() {
+  local dir=$work/big-catalog
+  prepare "$dir"
+  python3 - "$dir/json/catalog.json" <<'PY'
+import json
+import sys
+
+entries = [{"name": "web", "tags": ["node"], "default": True,
+            "source": "dockerfile acme/sandbox:.fugaro/web.Dockerfile",
+            "digest": "sha256:1111111111"}]
+for i in range(9):
+    entries.append({"name": "extra%d" % i, "tags": ["tag%d" % i], "default": False,
+                    "source": "inline", "digest": "sha256:%064d" % i})
+with open(sys.argv[1], "w", encoding="utf-8") as fh:
+    json.dump({"project": "fugaro-chk581-test", "entries": entries}, fh)
+PY
+  run_check "$dir"
+  expect_status "$status" 0 "a large catalog"
+  expect_contains "$out" "has 10 catalog entries" "a large catalog: the count is the whole catalog"
+  expect_contains "$out" "and 2 more" "a large catalog: the list of names is capped"
+  expect_absent "$out" "extra8(" "a large catalog: entries past the cap are not printed"
 }
 
 test_a_coding_agents_session_is_refused() {
@@ -791,6 +815,7 @@ t test_a_coding_agents_session_is_refused
 t test_belong_is_refused_by_name
 t test_a_project_naming_belong_stops_the_check
 t test_an_empty_catalog_is_a_finding
+t test_a_large_catalog_is_summarised
 t test_a_catalog_that_cannot_be_read_is_not_measured
 t test_a_map_with_no_entry_over_two_repositories_is_a_finding
 t test_a_map_that_cannot_be_read_is_not_measured

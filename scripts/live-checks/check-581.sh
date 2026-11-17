@@ -53,10 +53,11 @@
 # Usage:      bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>
 #             bash scripts/live-checks/check-581.sh --sandbox <path> --dry-run
 #             bash scripts/live-checks/check-581.sh --sandbox <path> --entry <catalog entry>
+#             bash scripts/live-checks/check-581.sh --sandbox <path> --checkout <the entry's own repository>
 #             bash scripts/live-checks/check-581.sh --help
 # Needs:      bash, mktemp, python3 (the `--json` documents are read with it),
-#             awk, sort, gcloud (authenticated as YOU: read `run jobs` builds
-#             through `gcloud builds describe`) and fugaro (the installed
+#             awk, sort, gcloud (authenticated as YOU: the build's own steps are
+#             read with `gcloud builds describe`) and fugaro (the installed
 #             release: the build this check drives is the one you have).
 # Where:      your own machine and the **sandbox project** (`fugaro-dev`) and the
 #             **sandbox repository** only. A project or region naming belong is
@@ -171,8 +172,6 @@ ENTRY_REPOS=""
 ENTRY_DIGEST_BEFORE=""
 MAP_REPOS=""
 BUILD_ID=""
-BUILD_STATUS=0
-BUILD_TIMED_OUT=no
 NOTE_REPOS=""
 BUILT=no
 CATALOG_OK=no
@@ -427,12 +426,18 @@ step_catalog() {
   # is empty is a finding about the project, and one that was never read is a row
   # this check could not measure.
   CATALOG_OK=yes
-  local count names=""
+  local count names="" shown=0 extra=0
   count=$(field "$SCRATCH/catalog.txt" count)
   while IFS=$'\t' read -r kind name isdefault tags source digest; do
     [ "$kind" = entry ] || continue
+    if [ "$shown" -ge 8 ]; then
+      extra=$((extra + 1))
+      continue
+    fi
     names="${names:+$names, }${name}(tags=${tags:-none},digest=${digest:-none})"
+    shown=$((shown + 1))
   done <"$SCRATCH/catalog.txt"
+  [ "$extra" -eq 0 ] || names="$names, and $extra more"
   if [ "${count:-0}" = 0 ]; then
     fact catalog FAIL "the project ${PROJECT} has no catalog entry: this check builds one entry the project's map puts two repositories on, and a project with no catalog has none. The default catalog entry is written by fugaro update (the base-image entry, R1), and the fugaro:images skill proposes the rest in your own session"
     return 0
@@ -559,7 +564,7 @@ step_baked() {
     unmeasured baked "no build ran, so there is no note to read: the row above says why"
     return 0
   fi
-  local text note missing="" named=""
+  local text note missing=""
   text=$(cat "$SCRATCH/build.out" "$SCRATCH/build.err" 2>/dev/null || true)
   note=$(printf '%s\n' "$text" | sed -n 's/.*bakes the checkouts of \(.*\), so the image carries.*/\1/p' | head -n 1)
   if [ -z "$note" ]; then
@@ -584,7 +589,6 @@ step_baked() {
   local repo
   while IFS= read -r repo; do
     [ -n "$repo" ] || continue
-    named="${named:+$named, }$repo"
     case ",$NOTE_REPOS," in
     *",$repo,"*) ;;
     *) missing="${missing:+$missing, }$repo" ;;
@@ -680,7 +684,12 @@ restore() {
     RESTORE_NOTE="this was a dry run: nothing was created, nothing was run and no command was given to fugaro or gcloud"
     return 0
   fi
-  RESTORE_NOTE="this check wrote no catalog entry, no mapping and no switch, launched no run and opened no pull request. It ran one Cloud Build of ${ENTRY:-an entry} (billable) and that build promoted the entry's image — latest moved to the digest it made, which is what 'fugaro image build' does on any day and is not the check's to undo. The scratch directory held the commands' output"
+  local untouched="this check wrote no catalog entry, no mapping and no switch, launched no run and opened no pull request."
+  if [ "$BUILT" = yes ]; then
+    RESTORE_NOTE="$untouched It ran one Cloud Build of ${ENTRY} (billable) and that build promoted the entry's image — latest moved to the digest it made, which is what 'fugaro image build' does on any day and is not the check's to undo. The scratch directory held the commands' output"
+  else
+    RESTORE_NOTE="$untouched No image was promoted by this run — a build that was refused, failed or never started moves nothing — so there is nothing here to undo. The scratch directory held the commands' output"
+  fi
 }
 
 cleanup() {
