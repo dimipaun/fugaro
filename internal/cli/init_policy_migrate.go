@@ -337,7 +337,8 @@ func policyMigrationForIn(ctx context.Context, lc *localcfg.Config, configPath s
 // `lc.Triage != nil`), and the block's own emptiness where the publisher hands
 // the node's member back for a config that states none (the crafts family,
 // whose three members are compared by publishedCraftCredentials,
-// publishedCraftPools and publishedCrafts).
+// publishedCraftPools and publishedCrafts, and the cascade and the grades N4
+// merges beside them, whose guards are credentialsStated and Empty).
 func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	var out []string
 	if lc.ImageCatalogEffective(nil) != nil {
@@ -395,6 +396,25 @@ func firstPublishNodeOnlyMembers(lc *localcfg.Config) []string {
 	}
 	if lc.Crafts != (config.Crafts{}) {
 		out = append(out, "the crafts")
+	}
+	// The cascade and the model grades are the crafts' own case (N4, D2607): the
+	// credentials service reads the cascade off the published node — its
+	// fallback, its threshold and D142's two controls — and a rung reads its
+	// model and its access there (runner/policy.go), so a project whose config
+	// states either and which has never published a node has left the owner's
+	// own statement in a file no run reads. The publish's own drift rows close
+	// that gap for a project that already holds a node; only this list closes it
+	// for one that holds none, and without the entry the stage reports there is
+	// nothing to do, which is the second command the HARD RULE forbids. Each is
+	// asked of the publisher's guard for it, the crafts family's rule one block
+	// up: a cascade block written with every member absent is no statement
+	// (credentialsStated, publishedCredentials' own guard), and a grades block
+	// stating no grade is none either (Empty, publishedModelGrades').
+	if credentialsStated(lc.CredentialCascade) {
+		out = append(out, "the credential cascade")
+	}
+	if lc.ModelGrades != nil && !lc.ModelGrades.Empty() {
+		out = append(out, "the model grades")
 	}
 	return out
 }

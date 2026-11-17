@@ -1,13 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/orchestrator-output.schema.json",
-  "title": "fugaro orchestrator --json documents (ls, state, events, patch)",
-  "description": "The four documents `fugaro orchestrator ls`, `state`, `events` and `patch` print with --json (the stateless-orchestrator plan's O5 and the cli-output-console-graph plan's CG4, D1223, D1358). They are the CLI's own contract with whatever reads them — the console, a session, a script — and they are additives-only under version 1: a field never changes meaning, a new one is added, and a renamed one is a new version. The state document carries the generated summary rather than the raw state, because the summary is what the state model itself calls the state as a person or a session reads it and it is capped (internal/orchestrator.Summarize), so a consumer that reads it pays a bounded cost whatever the node grew to; `rev` is the revision the node was at, which is the `base_rev` a patch built from that read carries. The listing document is the orchestrators an installation has, and it is the one that reads two things rather than one: the database's subtree and this machine's cached briefs. The events document is the audit log in the order the server stamped it, oldest first, and it is what `internal/orchestrator.Entry` marshals: the id and the stamp are the log's own, derived on append and never by the caller. The patch document reports the write that landed — which class of actor made it among them. That class is `session` or `person` and never `daemon` or `decision-agent`: no flag, environment variable or field of the document makes the CLI act as either (G1), so this enum is the fence written down. Every timestamp field the commands format themselves is second-precision UTC RFC 3339 — state's and patch's, and the listing's `updated_at` and `cached_at`; the audit's own stamps are too, because internal/orchestrator.audit's Append truncates them (stamp). The brief and the event texts carry stored text, already cleaned and, for the brief, fenced by the summary that generated it (G3).",
+  "title": "fugaro orchestrator --json documents (ls, state, events, patch, plan_import)",
+  "description": "The five documents `fugaro orchestrator ls`, `state`, `events`, `patch` and `import --plan` print with --json (the stateless-orchestrator plan's O5 and the cli-output-console-graph plan's CG4, D1223, D1358). They are the CLI's own contract with whatever reads them — the console, a session, a script — and they are additives-only under version 1: a field never changes meaning, a new one is added, and a renamed one is a new version. The state document carries the generated summary rather than the raw state, because the summary is what the state model itself calls the state as a person or a session reads it and it is capped (internal/orchestrator.Summarize), so a consumer that reads it pays a bounded cost whatever the node grew to; `rev` is the revision the node was at, which is the `base_rev` a patch built from that read carries. The listing document is the orchestrators an installation has, and it is the one that reads two things rather than one: the database's subtree and this machine's cached briefs. The events document is the audit log in the order the server stamped it, oldest first, and it is what `internal/orchestrator.Entry` marshals: the id and the stamp are the log's own, derived on append and never by the caller. The patch document reports the write that landed — which class of actor made it among them. That class is `session` or `person` and never `daemon` or `decision-agent`: no flag, environment variable or field of the document makes the CLI act as either (G1), so this enum is the fence written down. Every timestamp field the commands format themselves is second-precision UTC RFC 3339 — state's and patch's, and the listing's `updated_at` and `cached_at`; the audit's own stamps are too, because internal/orchestrator.audit's Append truncates them (stamp). The brief and the event texts carry stored text, already cleaned and, for the brief, fenced by the summary that generated it (G3).",
   "oneOf": [
     { "$ref": "#/$defs/ls" },
     { "$ref": "#/$defs/state" },
     { "$ref": "#/$defs/events" },
-    { "$ref": "#/$defs/patch" }
+    { "$ref": "#/$defs/patch" },
+    { "$ref": "#/$defs/plan_import" }
   ],
   "$defs": {
     "version": {
@@ -177,6 +178,59 @@
           "minimum": 1,
           "maximum": 64,
           "description": "How many ops the document carried. The bounds are internal/orchestrator.ValidatePatch's: a patch with no op would change nothing, and one over MaxOps is refused."
+        }
+      }
+    },
+    "plan_import": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "kind", "id", "plan", "commit", "rev", "ops", "items"],
+      "properties": {
+        "version": { "$ref": "#/$defs/version" },
+        "kind": { "const": "plan_import" },
+        "id": { "$ref": "#/$defs/id" },
+        "plan": {
+          "type": "string",
+          "description": "The plan's name: its folder under docs/, which is the node's own name in the orchestrator's plan shard and the spec every item the import writes carries. The pattern is internal/orchestrator's spec name rule.",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,43}$"
+        },
+        "commit": {
+          "type": "string",
+          "description": "The commit the plan stands at, which every brief the import wrote pins beside the hash of its task's section (D2737). internal/orchestrator's headRE.",
+          "pattern": "^[0-9a-f]{7,64}$"
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The revision the plan's node stands at when the import is done. Unlike the patch document's, 0 is allowed: an import that writes no op is not a write, so it reports the node as it found it — which is 0 for a plan whose node has never been written."
+        },
+        "ops": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 64,
+          "description": "How many ops this import wrote, which is zero for a re-import of an unchanged plan (D2745). The upper bound is internal/orchestrator.MaxOps, the most a patch carries."
+        },
+        "items": {
+          "type": "array",
+          "description": "Every task of the graph in the graph's own order, each with the id its item stands under in the node and the digest of the spec it stands for. This is the list `plan_approve` takes and the reason the document exists: the import lands as a session and approves nothing, so a person approves these items from this list (D2706).",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "digest"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The work item's id in the plan's node, which is the graph's node id everywhere but where the daemon had already adopted a run for that task: an adopted item keeps its own id and the import links to it rather than writing a second item (D2746). The pattern is internal/orchestrator's idRE, which is also why a plan whose tasks are numbered with a dot cannot be imported (F37).",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+              },
+              "digest": {
+                "type": "string",
+                "description": "The item's spec digest, the same value internal/orchestrator.SpecDigest computes and the one an approval binds.",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            }
+          }
         }
       }
     }
