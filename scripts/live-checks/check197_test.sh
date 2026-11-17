@@ -94,6 +94,31 @@ outside = repos[1] if len(repos) > 1 else ""
 profile = os.environ.get("FAKE_PROFILE", "sandbox")
 shared_job = os.environ.get("FAKE_SHARED_JOB", "fugaro-p-sandbox-github-0123456789abcdef")
 perrepo_job = os.environ.get("FAKE_PERREPO_JOB", "acme-app-0123456789abcdef")
+# The rest of the profile's own allow_repos list, beyond the repository this
+# check runs in: the real refusal prints the WHOLE list, joined with ", "
+# (projectpolicy.AdmissionRefusal), on the launcher's ONE stderr line, and a
+# sandbox profile admits several repositories. The length is the point: with
+# this list the stop sentence sits past the DISPLAY_CUT characters the check
+# shows of a refusal, so the row tells a reading of the line's head from a
+# reading of the whole line (see the launch branch below).
+DISPLAY_CUT = 400
+PROFILE_ALLOW_MORE = ["github/acme/fugaro-sandbox-daemon",
+                      "github/acme/fugaro-sandbox-images",
+                      "github/acme/fugaro-sandbox-mobile",
+                      "github/acme/fugaro-sandbox-website"]
+
+
+def profile_allow(widened=False):
+    """The profile's own allow_repos list, in the ONE spelling both halves of
+    this fake print: the policy document (`project policy show`) and the
+    refusal a launch outside the profile gets. They are the same list on a real
+    installation — profileAdmissionRefusal reads it off the policy it publishes
+    — so a fake whose refusal named another list would test a refusal no
+    installation makes."""
+    allow = ["github/%s" % (repos[0] if repos else "")] + PROFILE_ALLOW_MORE
+    if widened:
+        allow = allow + ["github/%s" % outside]
+    return allow
 
 with open(os.path.join(LOG, "fugaro.calls"), "a") as fh:
     fh.write("fugaro " + " ".join(sys.argv[1:]) + "\n")
@@ -172,11 +197,30 @@ elif args[:1] == ["run"]:
             record_run(repo, rid, shared_job)
             print(json.dumps({"run_id": rid, "repo": repo, "status": "queued"}))
             sys.exit(0)
-        sys.stderr.write(
-            'fugaro: the job profile "%s" does not admit %s: its allow_repos is github/%s, and a profile\'s own list can only narrow the project\'s enrollment, never widen it.\n'
-            % (profile, repo, repos[0] if repos else ""))
-        if mode != "outside-no-stop-line":
-            sys.stderr.write("The launch stops before any execution exists.\n")
+        # The launcher's own line, spelled as internal/cli prints it
+        # (profileAdmissionRefusal -> projectpolicy.AdmissionRefusal, then
+        # safetext.PrintFailure's "fugaro:" prefix): ONE line carrying the
+        # profile's whole allow_repos list, the remedy and, last, the sentence
+        # that says no execution exists.
+        stop = "" if mode == "outside-no-stop-line" else ". The launch stops before any execution exists"
+        line = ('fugaro: the job profile "%s" does not admit github/%s: its allow_repos is %s, '
+                "and a profile's own list can only narrow the project's enrollment, never widen it. "
+                "The project's owner adds the repository to the profile's list, or removes the "
+                "profile's list so the project's applies, and publishes the policy again%s"
+                % (profile, repo, ", ".join(profile_allow()), stop))
+        # The check reads the refusal from the WHOLE stderr and shows only its
+        # first DISPLAY_CUT characters (check197.sh's last_lines), so a fake
+        # whose refusal fits inside the cut — or that put the stop sentence on a
+        # line of its own — would let a reading of the head pass as a reading of
+        # the whole line, which is the defect this fake exists to catch.
+        if len(line) <= DISPLAY_CUT:
+            sys.stderr.write(
+                "fugaro: this fake's refusal is %d characters, no longer than the check's "
+                "%d-character display cut: lengthen the profile's allow_repos list, or the test "
+                "can no longer tell a reading of the whole line from a reading of its head\n"
+                % (len(line), DISPLAY_CUT))
+            sys.exit(3)
+        sys.stderr.write(line + "\n")
         sys.exit(1)
     job = perrepo_job if mode == "run-on-per-repo-job" else shared_job
     record_run(repo, rid, job)
@@ -224,9 +268,7 @@ elif args[:1] == ["project"] and args[1:2] == ["policy"]:
     prof = {"provider": "bitbucket" if mode == "other-provider" else "github",
             "cpu": "2", "memory": "4Gi", "timeout_class": "standard",
             "secrets": ["anthropic-api-key"],
-            "allow_repos": ["github/%s" % (repos[0] if repos else "")]
-            if mode != "profile-widens" else
-            ["github/%s" % (repos[0] if repos else ""), "github/%s" % outside],
+            "allow_repos": profile_allow(mode == "profile-widens"),
             "claude_accounts": []}
     profiles = {profile: prof}
     if mode == "no-profiles":

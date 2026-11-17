@@ -1254,12 +1254,19 @@ step_outside() {
   fugaro run --repo "$OUTSIDE" --project fugaro --run-id "$rid" \
     --title "Check 197: outside" \
     --task-file "$task" --json >"$SCRATCH/run-outside.json" 2>"$SCRATCH/run-outside.err" || rc=$?
+  # The refusal is read from the WHOLE stderr file and sent is what is shown:
+  # the launcher prints it as ONE line (profileAdmissionRefusal, then
+  # safetext.PrintFailure's "fugaro:" prefix) of the profile's whole allow_repos
+  # list, the remedy and the stop sentence last, and on a real sandbox that line
+  # runs past the 400 characters last_lines cuts its display to. Reading the cut
+  # as if it were the refusal would answer "the stop sentence is missing" for a
+  # launch that was refused correctly, and the gate run would end 2.
   sent=$(last_lines "$SCRATCH/run-outside.err" 6)
   if [ "$rc" -eq 0 ]; then
     fact outside-profile FAIL "the launcher LAUNCHED a run of ${OUTSIDE} (run id ${rid}) — a repository outside the profile '${PROFILE}' — and reached Cloud Run with it: the profile's own allow_repos is the gate that says which repositories a shared job serves, and a repository outside it was admitted to the job anyway. Read 'fugaro runs ls --repo ${OUTSIDE}' and ${OUTSIDE}'s own fugaro.yaml (the profile it selects) before anything else"
     return 0
   fi
-  if ! printf '%s' "$sent" | grep -q "the job profile \"${PROFILE}\" does not admit"; then
+  if ! grep -q "the job profile \"${PROFILE}\" does not admit" "$SCRATCH/run-outside.err" 2>/dev/null; then
     # Not a FAIL: the launch was refused, and the sentence is not the profile's
     # own — it could be the project's gate, another launch's claim, a missing
     # checkout. Which gate answered is not this row's question, and a row that
@@ -1268,7 +1275,7 @@ step_outside() {
     unmeasured outside-profile "the launch of ${OUTSIDE} (run id ${rid}) was refused and the refusal does NOT carry the profile's own sentence ('the job profile \"${PROFILE}\" does not admit …'), so which gate refused it is not measured: 'fugaro run' exited ${rc} and printed: ${sent}. Read that sentence and ${OUTSIDE}'s own fugaro.yaml — the repository must SELECT the profile '${PROFILE}' for this row to be about the profile's admission gate at all"
     return 0
   fi
-  if ! printf '%s' "$sent" | grep -q "The launch stops before any execution exists"; then
+  if ! grep -q "The launch stops before any execution exists" "$SCRATCH/run-outside.err" 2>/dev/null; then
     unmeasured outside-profile "the launch of ${OUTSIDE} was refused with the profile's own sentence, and the refusal does NOT carry the launcher's own line that it stops before any execution exists: 'fugaro run' exited ${rc} and printed: ${sent}. Read it and run this check again"
     return 0
   fi
