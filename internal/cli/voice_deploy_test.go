@@ -2,6 +2,8 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,6 +76,44 @@ func seedVoiceService(t *testing.T, r *imagesRig, image string) {
 		t.Fatal(err)
 	}
 }
+
+// voiceServiceOutputs is credentialsOutputs with the third service the same
+// module publishes: the hop, which the installation root's outputs carry as
+// voice_service while var.voice_service is not null (outputs.tf) and as null
+// while it is.
+//
+// It is a helper of its own and not a member of credentialsOutputs, because
+// the two documents say different things: an installation whose outputs name
+// the hop is one that opted in — the output exists exactly while the variable
+// does — and every rig that reads the outputs for the credentials service alone
+// is a rig whose installation has no hop. credentialsOutputs is those, and the
+// opt-in's own tests say so themselves (seedVoiceService for a machine that
+// holds the block, this one for a machine that has lost it).
+//
+// The URL is published and nothing reads it back: the hop's callers mint their
+// ID tokens for the installation's Firebase project, so there is no audience
+// fill and no second apply for it (VoiceServiceSpec).
+func voiceServiceOutputs(t *testing.T, r *imagesRig) {
+	t.Helper()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+		"voice_service":       voiceServiceOutput(),
+	})}
+	r.save(t)
+}
+
+// voiceServiceOutput is the hop as the installation root's outputs carry it:
+// the name, the region and the URL, with no image — the module publishes what
+// Cloud Run assigned, and the image a revision runs is the installation's own
+// tfvars' business.
+func voiceServiceOutput() map[string]any {
+	return map[string]any{"name": infra.VoiceServiceName, "region": "us-east5", "url": voiceServiceURL}
+}
+
+// voiceServiceURL is the URL the hop's output carries in these tests, in the
+// shape Cloud Run assigns. Nothing in this tree reads it.
+const voiceServiceURL = "https://fugaro-voice-123456789012.us-east5.run.app"
 
 // TestUpdateLeavesTheVoiceHopOffOnAnInstallationThatNeverOptedIn is the
 // opt-in's own half: the run that deploys the credentials service on an
@@ -355,5 +395,127 @@ func TestUpdateMovesTheVoiceHopWhoseCredentialsImageIsCurrent(t *testing.T) {
 	}
 	if got := voiceServiceEntry(t, r)["image"]; got != r.credentialsRef() {
 		t.Errorf("voice_service.image = %v after the second update, want %s: the hop's move is not a key the next run undoes", got, r.credentialsRef())
+	}
+}
+
+// TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars is the opt-in read from the
+// installation's own state rather than from this machine's copy of it.
+//
+// The block lives in ONE machine's workdir tfvars
+// ($XDG_STATE_HOME/fugaro/terraform/<project>/installation, infra.Workdir), and
+// every run rewrites that file from a spec that never holds the key — so the
+// carry that keeps an opted-in installation's hop (CarriedVoiceService) reads a
+// document only the machine that wrote it has. The owner's second machine of
+// the same installation holds none, and neither does any machine whose state
+// directory was lost, and the run there carried nothing: prepare wrote a
+// document with no block, and voice.tf's count — which reads var.voice_service —
+// planned the hop's service, its account, its one role binding and its public
+// invoker binding away. The guard refuses that delete, so the failure the owner
+// meets is the HARD RULE's own: `fugaro update`, the one documented command,
+// stops converging on an installation nobody asked it to change. It is also
+// SECURITY.md's sentence about this very hop ("an installation runs one only if
+// it asks for it, and `fugaro update` then deploys and keeps it") read on the
+// machine the sentence does not hold on.
+//
+// What the run reads instead is shared state: the module publishes the hop as
+// the `voice_service` output, which exists exactly while the variable does, so
+// the installation's own outputs — decoded a few lines above the plan whose
+// document they have to be on disk for — are where the opt-in is derived from
+// (init.go's keepVoiceHop).
+//
+// The machine's document is deleted before the run, and that is the second
+// machine exactly: PrepareWorkdir snapshots the file into Workdir.PrevVars
+// before it rebuilds the tree, so a file that is not there is a run with
+// nothing to carry. Everything else about the run is the ordinary one: the
+// credentials-service stage composes the service's block from this machine's
+// config and this release's pin (deployCredentialsService), and the hop's block
+// is composed off that same reference, because the three services are one pin
+// of one image.
+//
+// Mutation (run, restore): drop the keepVoiceHop call from installRoot and this
+// fails at the first apply's assertion — the document the installation root's
+// apply reads carries no voice_service, which is the plan of the hop's own
+// destruction, and on an installation whose state still holds the hop the guard
+// is what stops the run instead.
+func TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.voice[0]", "update"))
+	voiceServiceOutputs(t, r)
+	// This machine holds no document at all, which is the second machine and
+	// the lost state directory both: PrepareWorkdir finds nothing to snapshot
+	// into Workdir.PrevVars, so the run has nothing to carry the block from.
+	// The rig writes one only when a test seeds one (seedCredentialsService,
+	// seedVoiceService), and this one seeds none.
+	if _, err := os.Stat(filepath.Join(r.root(), infra.VarsFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the rig's machine holds an installation document (%v), so this test is not the machine it means to be: %v", err, r.root())
+	}
+	applies := r.captureApplies(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one fugaro update from a machine holding no document of the installation failed: %v\n%s", err, s)
+	}
+	ran := capturedApplies(t, applies, "installation")
+	if len(ran) == 0 {
+		t.Fatalf("the update applied the installation root not at all, so nothing read the document this test is about:\n%s", s)
+	}
+	for i, doc := range ran {
+		voice, _ := doc["voice_service"].(map[string]any)
+		if voice == nil {
+			t.Fatalf("the installation root's apply %d ran with no voice_service block on an installation whose own state has a hop: the block is the opt-in and the output is what the installation recorded it as, so a run that reads only this machine's document plans the hop's service, its account, its public invoker binding and its state read away — and the guard refuses that delete, which leaves the one documented command unable to converge\n%v", i+1, doc)
+		}
+	}
+	// The block is the three members the module's variable takes, and the image
+	// is this release's pin: the same reference the two services beside it were
+	// just deployed with, which is what makes the hop's revision one that can
+	// serve (`voice serve` is a subcommand of that same binary).
+	voice := voiceServiceEntry(t, r)
+	for k, want := range map[string]any{
+		"account_id": infra.VoiceAccountID,
+		"service":    infra.VoiceServiceName,
+		"image":      r.credentialsRef(),
+	} {
+		if voice[k] != want {
+			t.Errorf("voice_service.%s = %v after one update from a machine with no document, want %v\n%s", k, voice[k], want, s)
+		}
+	}
+	if len(voice) != 3 {
+		t.Errorf("voice_service carries %d members (%v), want the three the module's variable takes\n%s", len(voice), voice, s)
+	}
+	svc := credentialsServiceEntry(t, r)
+	intake, _ := r.tfvars(t)["intake"].(map[string]any)
+	if intake == nil {
+		t.Fatalf("the run left the hop with no intake beside it: %v", r.tfvars(t))
+	}
+	for name, got := range map[string]any{"credentials_service": svc["image"], "intake": intake["image"]} {
+		if got != voice["image"] {
+			t.Errorf("%s.image = %v and voice_service.image = %v: the three are one image and one resolve\n%s", name, got, voice["image"], s)
+		}
+	}
+	if r.resolveCalls != 1 {
+		t.Errorf("resolve calls %d after one update, want 1: the hop's pin is the run's own resolve, not a second registry read", r.resolveCalls)
+	}
+
+	// And a SECOND update writes nothing, which is the same machine one run
+	// later: the block the first run composed is now this machine's document,
+	// and the carry keeps it from there.
+	before := len(r.ran(t, "apply"))
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.setPlanAt(t, "installation")
+	r.setPlan(t)
+	out, errOut, err = executeStdin(t, "", "update")
+	s = out + errOut
+	if err != nil {
+		t.Fatalf("the second update of a converged installation failed: %v\n%s", err, s)
+	}
+	if after := len(r.ran(t, "apply")); after != before {
+		t.Errorf("the second update applied %d time(s): a run after a converged update has nothing left to do\n%s", after-before, s)
+	}
+	if !strings.Contains(s, "No changes") {
+		t.Errorf("the second update does not report a converged installation:\n%s", s)
+	}
+	if got := voiceServiceEntry(t, r)["image"]; got != r.credentialsRef() {
+		t.Errorf("voice_service.image = %v after the second update, want %s: the block the run composed from the installation's own state is not a key the next run drops", got, r.credentialsRef())
 	}
 }
