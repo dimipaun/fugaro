@@ -64,7 +64,7 @@ func recordSpec(t *testing.T) gcp.CatalogBuildSpec {
 			SHA256:       strings.Repeat("b", 64),
 		},
 		Context: "ci/", ContextCommit: strings.Repeat("e", 40), ContextSHA256: strings.Repeat("f", 64),
-		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		ServiceAccount: gcp.BuildIdentityEmail("proj-1234"),
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://fugaro-runs-proj-1234",
 		Selftest:       []byte(`{"skip_verify":true,"tools":"critical"}`),
@@ -461,7 +461,7 @@ func recordPrebuiltSpec(t *testing.T) gcp.CatalogBuildSpec {
 	return gcp.CatalogBuildSpec{
 		Entry: "node22", Slug: slug,
 		Prebuilt:       "docker.io/library/node:22",
-		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		ServiceAccount: gcp.BuildIdentityEmail("proj-1234"),
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://fugaro-runs-proj-1234",
 		Selftest:       []byte(`{"tools_only":true,"tools":"critical"}`),

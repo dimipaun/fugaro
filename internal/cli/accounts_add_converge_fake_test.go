@@ -1,9 +1,7 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,51 +202,6 @@ func (r *addRig) add(t *testing.T, name string, args ...string) (string, string)
 		t.Fatalf("accounts add %s: %v\nstdout:\n%s\nstderr:\n%s", name, err, out, errOut)
 	}
 	return out, errOut
-}
-
-// addTyped is add for a run whose publish loosens the shared node: a key
-// credential's declaration puts craft_credentials and an accounts entry on it,
-// which a publish confirms by the project's own name typed at a terminal (D846,
-// and no flag stands in). The name follows the value on the same input because
-// the value is read at the hidden prompt first and the publish comes after the
-// store.
-//
-// A piece of input per read: over a string the value read (to EOF, as on a
-// pipe) would take the typed name with it, where on a terminal each read returns
-// only the line typed for it.
-func (r *addRig) addTyped(t *testing.T, name string, args ...string) (string, string) {
-	t.Helper()
-	fakeTerminal(t)
-	argv := append([]string{"accounts", "add", name}, args...)
-	cmd := NewRootCmd()
-	var outBuf, errBuf bytes.Buffer
-	cmd.SetIn(&inputPerRead{pieces: []string{addToken() + "\n", initProjectName + "\n"}})
-	cmd.SetOut(&outBuf)
-	cmd.SetErr(&errBuf)
-	cmd.SetArgs(NormalizeArgs(argv))
-	err := cmd.Execute()
-	out, errOut := outBuf.String(), errBuf.String()
-	if err != nil {
-		t.Fatalf("accounts add %s: %v\nstdout:\n%s\nstderr:\n%s", name, err, out, errOut)
-	}
-	return out, errOut
-}
-
-// inputPerRead hands out its pieces one at a time, each ended by an EOF, so a
-// reader that reads to EOF takes one piece and the next reader takes the next.
-type inputPerRead struct{ pieces []string }
-
-func (in *inputPerRead) Read(p []byte) (int, error) {
-	if len(in.pieces) == 0 {
-		return 0, io.EOF
-	}
-	if in.pieces[0] == "" {
-		in.pieces = in.pieces[1:]
-		return 0, io.EOF
-	}
-	n := copy(p, in.pieces[0])
-	in.pieces[0] = in.pieces[0][n:]
-	return n, nil
 }
 
 // addLocal is the local config the command left behind, decoded strictly: the

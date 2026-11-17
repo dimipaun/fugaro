@@ -1228,8 +1228,12 @@ func TestUpdatePolicyPublishSkipsTheDatabaseTheRulesStageSkips(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if st.State != initflow.Skipped || st.Detail != policyNoDBReason {
-			t.Errorf("a project with no budget backend is %s %q, want the skip of a project with no node to read", st.State, st.Detail)
+		// Undone is the half a caller settling the record reads: the skip
+		// published nothing, so the step it was run for stays owed rather than
+		// being cleared as answered (applyAnswered).
+		if st.State != initflow.Skipped || st.Detail != policyNoDBReason || !st.Undone {
+			t.Errorf("a project with no budget backend is %s %q (undone=%v), want the skip of a project with no node to read, with the step left owed",
+				st.State, st.Detail, st.Undone)
 		}
 		if _, err := h.apply(t, true); err != nil {
 			t.Errorf("the skip is an error: %v", err)
@@ -2111,7 +2115,7 @@ func TestRecordPublishedGenerationFoldsAnEmptyAllowList(t *testing.T) {
 	payload := []byte(fmt.Sprintf(`{"version":%d,"allow_repos":[]}`, projectpolicy.Version))
 	f.db.Set(projectpolicy.PathShared(), map[string]any{"version": projectpolicy.Version})
 
-	if err := recordPublishedGeneration(t.Context(), io.Discard, db, lc, f.path, payload); err != nil {
+	if err := recordPublishedGeneration(t.Context(), io.Discard, db, lc, f.path, payload, nil); err != nil {
 		t.Fatalf("the record was refused for a member the database drops: %v", err)
 	}
 	if gen, want := recordedGeneration(t, f), nodeETag(t, f); gen != want {

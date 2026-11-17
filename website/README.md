@@ -1333,7 +1333,7 @@ added or removed without this sentence moving fails there:
     The ceiling is a ceiling, not a floor — a page with no lead region is a page D188's
     definition does not describe, and this gate says nothing about how much a page's first
     section should say.
-  - **Words per page:** 1564 words. Every word a reader sees inside `main` — command blocks
+  - **Words per page:** 2175 words. Every word a reader sees inside `main` — command blocks
     and code spans included, since the ceiling is a claim about the page rather than about
     its prose — counted by `budget.mjs`'s own reader, which reads a page the way
     `test/lib/html.mjs`'s `textOf` does (a script or style body is not text, an image's
@@ -1369,8 +1369,8 @@ added or removed without this sentence moving fails there:
     **The number is no longer D188's own, and it is derived rather than picked.** The
     privacy statement is the page the App Store and Play listings link as a privacy policy,
     so it carries the software as well as the site and is the one page that is not the
-    site's pitch; the number is that page's own count on the gates' own build — **1251
-    words** — plus 25 %, rounded up, which is **1564**. The count moved ten times since
+    site's pitch; the number is that page's own count on the gates' own build — **1740
+    words** — plus 25 %, rounded up, which is **2175**. The count moved twelve times since
     G2.3: the campaign section took the page 988 → 1030, the owner's ruling of 2026-10-29 on
     the banner's wording — one question, worded for everything the site may load, with the
     refusal's reach stated in the consent card — took it 1030 → 1144, G2.4's sentence
@@ -1387,7 +1387,13 @@ added or removed without this sentence moving fails there:
     images beside its frames, took it 1175 → 1196, and the consent card's paragraph on the
     banner's Cookie Settings panel (the owner's request of 2026-11-08), which says the
     switches answer one question each and are set from what the browser holds, took it
-    1196 → 1251.
+    1196 → 1251, and the key sign-up card (subscriptions plan Task S7.3, the owner's approval of
+    2026-11-16), which states what the key request page's three forms take, that they post to the
+    licence service rather than to this host, how long the service keeps what it takes and that
+    the merchant of record receives a buyer's data, took it 1251 → 1644, and the review of that
+    card, which named what the drop does not reach — the request a person decides on is kept with
+    the address, the text and the repository URLs it carried, and the owner is mailed it when it
+    reaches the queue — took it 1644 → 1740.
     `budget.mjs`'s
     `wordsCeilingFailures` holds the derivation to the built page the way the same file
     holds the byte budgets to theirs, so a sentence added there re-derives this line in the
@@ -1568,7 +1574,7 @@ added or removed without this sentence moving fails there:
   the stylesheet, and watches the named refusal come back.
   Each of those rules was then mutation-proved the other way: removed from the function, with the
   refusal it names watched failing.
-- `test/privacy.mjs` — the privacy statement's software part, and the eight rules that keep it
+- `test/privacy.mjs` — the privacy statement's software part, and the nine rules that keep it
   honest (the owner's request of 2026-10-19; the app's reporting is always on by the owner's
   ruling of the same day, with no switch inside the app). The page is the one the App Store and Play
   listings link as a privacy policy, so it now says what the CLI, the console and the phone app
@@ -1613,15 +1619,30 @@ added or removed without this sentence moving fails there:
     endpoint for THIS repository, a 24-hour cache) and from the two switches `internal/cli` and
     `internal/localcfg` define, so a page that stops naming a switch, a check pointed at another
     repository or a shorter cache each fails;
-  - **the host the project operates** — no production source under `cmd/`, `internal/`,
-    `console/src/`, `mobile/src/` or `shared/` may name the site's canonical host, since the page
-    says the software talks "to nothing the Fugaro project operates". Every exception is recorded
-    in the test by name rather than inferred from a filter, and there are three: a Go test whose
-    fixtures test the boundary rule itself, and two console files — `onboarding.ts`, which holds
-    the console's own link to the project's website (a URL handed to the reader's own browser and
-    never a request the console makes), and `window.ts`, which carries only the host in
-    `ALLOWED_EXTERNAL_HOSTS` so that link may open — neither of which may carry a request call of
-    its own;
+  - **the hosts the project operates** — no production source under `cmd/`, `internal/`,
+    `console/src/`, `mobile/src/`, `shared/` or `ee/` may name the site's canonical host, since
+    the page says the software talks "to nothing the Fugaro project operates except the licence
+    service". Every exception is recorded in the test by name rather than inferred from a filter:
+    a Go test whose fixtures test the boundary rule itself; two console files and the app's
+    notice — `onboarding.ts`, which holds the console's own link to the project's website (a URL
+    handed to the reader's own browser and never a request the console makes), `window.ts`, which
+    carries only the host in `ALLOWED_EXTERNAL_HOSTS` so that link may open, and
+    `mobile/src/telemetry/notice.js`, which holds the privacy page's URL — none of which may
+    carry a request call of its own; the two `ee/` directories the scan does not read at all,
+    because they are a service's own code rather than a client of one (`ee/keyservice/`, the key
+    service, and `ee/portal/`, the licence site's own web app), which is the one exemption that
+    is a directory rather than a path; and the one source that really does reach the service,
+    `ee/register/licence.go`, whose `licenceServerURL` is what the page's restated sentence names
+    — the sentence and the source are held to each other, so neither can move alone; and
+  - **the key sign-up** — the statement's card for the page a person asks a licence key on,
+    read against the things that make it true (S7.3, the owner's approval of 2026-11-16): the
+    forms' own fields on the built page (a field the page gained and the statement does not
+    state, and a sentence about a field the forms have dropped, are both refused), counsel's
+    list of what the Key Service collects in `docs/licensing/subscription-terms.md` §7.5(b), the
+    merchant of record's own line in the design's §7.3 (`Paddle`, D442), and `ee/keyservice`'s
+    code, which is where "and for how long" is a fact — the store's rule that a dead
+    application's address, domain and repository URLs go, and the function that carries it out;
+    and
   - **the contact route and no address** — the contact section links the issue tracker and
     `SECURITY.md`'s reporting route and nothing else, and the page carries no e-mail address, by
     the owner's ruling that there is no address to publish; and

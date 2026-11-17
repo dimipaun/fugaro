@@ -1578,6 +1578,54 @@ func checkCatalogEntrySince(ctx context.Context, env *cloudEnv, b *blobx.Bucket,
 	return nil
 }
 
+// diagnoseSince is the first fugaro release whose runner executes the diagnose
+// step, the cloud diagnosis's own stage (docs/troubleshoot-cloud D2402): it
+// reads the bundle a launcher left under the run's own prefix and writes the
+// two files the troubleshoot recipe's outputs block names. It is the release
+// that first carries the step, so an image built from a base older than it has
+// no diagnose in its version 1 step list at all and refuses the whole recipe
+// as "is not a step type" — at bootstrap, with the launch already paid for —
+// which is what the cloud tier's pre-flight exists to turn into a refusal at
+// the person's terminal, naming this release and fugaro update (D2401, F18).
+// docs/recipes.md's bullet for the step names it, the way the digest bullet
+// names digestSince, and the value is verified against the tag actually cut
+// the way every *Since here is.
+const diagnoseSince = "0.26.0"
+
+// diagnoseSubject and diagnoseKnows are this gate's two names in the family's
+// sentence: what is refused (the cloud diagnosis the tier was about to launch)
+// and what its job image has to know (the step the recipe it runs holds). The
+// refusal carries no alt: the tier has no other way out to offer — the step is
+// what a diagnosis is, and the evidence-only path a refused tier leaves is the
+// decline's own sentence (troubleshootDeclineCloud), not this gate's.
+const (
+	diagnoseSubject = "a cloud diagnosis"
+	diagnoseKnows   = "the diagnose step (the cloud diagnosis's own stage)"
+)
+
+// checkDiagnoseImage refuses a cloud diagnosis whose job image's runner cannot
+// execute the diagnose step: the tier's launch runs the catalog recipe
+// troubleshoot on the review-only variant, whose runner would refuse the whole
+// recipe at bootstrap, after the container was started and the bundle
+// uploaded, and no job image is in that state on purpose.
+//
+// It is asked by name rather than by the launch's own block for the same
+// reason the review variant's two gates are (F8, D2401): the block's recipe
+// gate judges the recipe text a task carries (recipeSinceFor), and the task a
+// diagnosis carries names the catalog entry rather than embedding its text —
+// the entry is the CLI's own file, which that gate never reads — so the step's
+// release is asked here or not at all. Judged from the deployed job's build
+// record, as every checkImageSince gate's is.
+func checkDiagnoseImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	return checkImageSince(ctx, env, slug, spec, kind, diagnoseSince, diagnoseSubject, diagnoseKnows, "", warn)
+}
+
+// checkCloneDiagnoseImage is checkDiagnoseImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneDiagnoseImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	return checkCloneImageSince(lc, spec, diagnoseSince, diagnoseSubject, diagnoseKnows, "", warn)
+}
+
 // releaseOf is ref's release version, through baseRefReleaseRE (a release
 // base image of one of config.Bases, <host and path>/fugaro-<kind>:<X.Y.Z>,
 // with an optional digest), and whether it matched at all: a dev build, a
@@ -2018,7 +2066,66 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // owner's own, with no flag that lifts it — and the same would go for
 // `run --pr --recipe review-only` and for a recipe picked by --recipe pick.
 // A request that costs a launch is worse than one a launch cannot honour.
+//
+// The resolution itself is launchReviewLevels', beside this one, which a
+// planner reads the levels of the same run through (api.go's
+// Cloud.ReviewLevels): a reviewer arm outside the core decides which model to
+// run by what the run will run, and an answer resolved a second way there
+// would be that planner's reading of these rules rather than the run's own.
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool, warn io.Writer) (string, error) {
+	res := launchResolve(ctx, env, spec, cfg, rcp, warn)
+	levels, floor, raised, err := res.levels, res.floor, res.raised, res.err
+	if err != nil {
+		// Nothing is asked of the image and no task is written: the launch is
+		// the resolution's to refuse, and a refusal carries no levels to read
+		// an ask off (config.ResolveLevels answers with the zero Levels).
+		// Refusing here rather than leaving it to the run's bootstrap is what
+		// G2 means by "never launches", and the alternative is a job paid for
+		// a run whose first act is to refuse the task it was given.
+		if raised {
+			// The refusal is config's own (a level a layer turns off under the
+			// floor, a model the allow-list does not name): what this adds is
+			// that the request is why the level was resolved at all, so a
+			// reader is not left looking for a floor nobody set.
+			subject, _ := securityRequestNames(securityRequestSources(spec, cfg))
+			return "", userErr("the run's request for the strongest review (%s) turns review level 3 on, and its review levels do not resolve: %v", subject, err)
+		}
+		return "", userErr("%v", err)
+	}
+	if res.craftErr != nil {
+		return "", res.craftErr
+	}
+	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+}
+
+// launchResolution is launchReviewLevels' answer plus the verdict of the model
+// half's checks on the crafts the run reads, which only the launch gate acts
+// on: a planner asking what the run will run is not a launch to refuse.
+type launchResolution struct {
+	levels   config.Levels
+	floor    []policy.Level
+	raised   bool
+	err      error
+	craftErr error
+}
+
+func launchReviewLevels(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, warn io.Writer) (config.Levels, []policy.Level, bool, error) {
+	r := launchResolve(ctx, env, spec, cfg, rcp, warn)
+	return r.levels, r.floor, r.raised, r.err
+}
+
+// launchResolve is that resolution alone, so the gate and a planner that
+// has to know what the run it is planning will run ask one call the same
+// question: the levels themselves, the floor they resolved under (the
+// published policy's, before any force below), whether the run's request for
+// the strongest review is what raised review level 3, and the resolution's own
+// refusal. The last of the three is what the gate words its refusal with: only
+// a level the request raised may be reported as refused because of it.
+//
+// A cloud with no project config (CloudOverBucket) has no database to read a
+// policy node from and no provider table: it resolves with no floor and no
+// providers rather than reaching for the config it does not have.
+func launchResolve(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, warn io.Writer) launchResolution {
 	rigorCfg := cfg.RigorConfig()
 	req := rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}
 	mode := rigor.Resolve(rigorCfg, req).Mode
@@ -2029,13 +2136,17 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	// run, so the two cannot disagree about which model a craft runs).
 	var node *projectpolicy.Policy
 	var foundNode bool
-	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
-		node, foundNode = p, true
-		// The same two rows the run's own resolution reads: a request that
-		// takes the run off the axis leaves the floor of the mode the layers
-		// resolved in force beside hotfix's (D8, LF5), and a note resolved
-		// against one row would say the launch's levels differ from the run's.
-		floor = policy.FloorFor(p.ReviewFloor, mode, rigor.LayersMode(rigorCfg, req, ""))
+	var providers map[string]config.ModelProvider
+	if lc := env.lc; lc != nil {
+		providers = lc.Providers
+		if p, found, err := env.policy.read(ctx, lc); err == nil && found && p != nil {
+			node, foundNode = p, true
+			// The same two rows the run's own resolution reads: a request that
+			// takes the run off the axis leaves the floor of the mode the layers
+			// resolved in force beside hotfix's (D8, LF5), and a note resolved
+			// against one row would say the launch's levels differ from the run's.
+			floor = policy.FloorFor(p.ReviewFloor, mode, rigor.LayersMode(rigorCfg, req, ""))
+		}
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)
 	if (fromTask || fromSwitch) && rcp != nil && rcp.Mode == recipe.ModeReview {
@@ -2049,12 +2160,12 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	// defaults both arrive, and the published node — so a craft model the run
 	// would be refused for is refused here, before a task is written.
 	cr := craftsOf(launchCraftLayers(cfg, node, foundNode))
-	claimed := env.lc.Providers
+	claimed := providers
 	if _, c, _ := layerRoutes(env.lc, cfg.Layer, spec.Repo); c != nil {
 		claimed = c
 	}
 	in := config.LevelInputs{
-		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: env.lc.Providers,
+		Config: cfg, Mode: mode, Floor: floor, Task: spec.ReviewLevels, Recipe: rcp, Providers: providers,
 		CraftModels: cr.models,
 	}
 	// The crafts the run reads, asked before the levels are resolved because the
@@ -2071,50 +2182,36 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 		in.Config, in.Task = securityRequestRaiseOnly(cfg, spec.ReviewLevels)
 	}
 	levels, _, err := config.ResolveLevels(in)
-	if err != nil {
-		// Nothing is asked of the image and no task is written: the launch is
-		// the resolution's to refuse, and a refusal carries no levels to read
-		// an ask off (config.ResolveLevels answers with the zero Levels).
-		// Refusing here rather than leaving it to the run's bootstrap is what
-		// G2 means by "never launches", and the alternative is a job paid for
-		// a run whose first act is to refuse the task it was given.
-		if fromTask || fromSwitch {
-			// The refusal is config's own (a level a layer turns off under the
-			// floor, a model the allow-list does not name): what this adds is
-			// that the request is why the level was resolved at all, so a
-			// reader is not left looking for a floor nobody set.
-			subject, _ := securityRequestNames(fromTask, fromSwitch)
-			return "", userErr("the run's request for the strongest review (%s) turns review level 3 on, and its review levels do not resolve: %v", subject, err)
+	var craftErr error
+	if err == nil {
+		// The model half's own checks (MC14, D1665): the allow-list, the route, the
+		// price and the access, each at the key of the document that wrote the
+		// craft's model. It is the verdict `fugaro validate` prints, from the same
+		// function, and the one the run's bootstrap reaches through the slots MC12
+		// writes — so a configuration that cannot be served stops the launch here,
+		// where the task is not yet written and no job is paid for.
+		//
+		// The crafts judged are the ones this run reads (launchCraftsRead), not
+		// every craft the layers resolve: the sentence below says the run refuses
+		// the same configuration, and a craft whose level the run's own layers left
+		// off reaches no slot at all, so the run neither runs it nor refuses it.
+		//
+		// The documents the access half is judged against are the installation's own
+		// (env.lc's credentials, pools and accounts) and not the node's, which is
+		// where the crafts were resolved from: they are the owner's writes (F12,
+		// D1628) and the node is that config published, so a name the node carries
+		// is a name this config holds — and this is the read slipCredentialNames
+		// makes for the same half, for the same reason.
+		if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject, read); len(ps) > 0 {
+			lines := make([]string, 0, len(ps))
+			for _, p := range ps {
+				lines = append(lines, p.String())
+			}
+			craftErr = userErr("the crafts this run would resolve cannot be served: %s; the run this launch would start refuses the same configuration at bootstrap, so the launch is refused before any execution exists",
+				strings.Join(lines, "; "))
 		}
-		return "", userErr("%v", err)
 	}
-	// The model half's own checks (MC14, D1665): the allow-list, the route, the
-	// price and the access, each at the key of the document that wrote the
-	// craft's model. It is the verdict `fugaro validate` prints, from the same
-	// function, and the one the run's bootstrap reaches through the slots MC12
-	// writes — so a configuration that cannot be served stops the launch here,
-	// where the task is not yet written and no job is paid for.
-	//
-	// The crafts judged are the ones this run reads (launchCraftsRead), not
-	// every craft the layers resolve: the sentence below says the run refuses
-	// the same configuration, and a craft whose level the run's own layers left
-	// off reaches no slot at all, so the run neither runs it nor refuses it.
-	//
-	// The documents the access half is judged against are the installation's own
-	// (env.lc's credentials, pools and accounts) and not the node's, which is
-	// where the crafts were resolved from: they are the owner's writes (F12,
-	// D1628) and the node is that config published, so a name the node carries
-	// is a name this config holds — and this is the read slipCredentialNames
-	// makes for the same half, for the same reason.
-	if ps := craftModelProblems(cfg, env.lc, spec.Repo, claimed, launchFileSubject, read); len(ps) > 0 {
-		lines := make([]string, 0, len(ps))
-		for _, p := range ps {
-			lines = append(lines, p.String())
-		}
-		return "", userErr("the crafts this run would resolve cannot be served: %s; the run this launch would start refuses the same configuration at bootstrap, so the launch is refused before any execution exists",
-			strings.Join(lines, "; "))
-	}
-	return reviewLevelsAsk(levels, spec.ReviewLevels, cfg, floor, recipeUnknown), nil
+	return launchResolution{levels: levels, floor: floor, raised: fromTask || fromSwitch, err: err, craftErr: craftErr}
 }
 
 // launchCraftsRead is the crafts whose model the run this launch resolved
@@ -2661,28 +2758,36 @@ func triageSubject(repo string, written *bool) (subject, alt string) {
 // a review slot, would run the whole task on the challenger's coder model —
 // publish: none keeps it harmless, and it is still a paid run of the entire
 // loop where the pair means one review, which is the "refuses too late"
-// failure proxySince's comment describes. It names 0.24.0, the CLI minor after
-// the untagged 0.23.0, the release the replay is expected in: that release does
-// not exist yet, so no image is at or past it, and the gate refuses every
-// launch that would need the replay until the release carrying it is cut.
-// docs/release.md's Before-you-tag list verifies the number against the release
-// that actually carries B1.2, the way it does for the other *Since constants.
+// failure proxySince's comment describes. The field's release and the replay's
+// are different releases, and 0.24.0 and 0.25.0 are the proof: both are tagged,
+// both carry the task's ab.slot and the pair rules that read it
+// (task.AB.EffectiveSlot), and neither release's internal/runner has the replay
+// at all (B1.2, the replay's own task) — so a gate naming either one admits
+// exactly the run this constant exists to refuse.
 //
-// The launch that reads it is the reviewer arm's own (B1.4, ee/ab): it writes
-// `ab.slot` and `ab.champion_run` onto the challenger once the champion's patch
-// exists, and it asks this gate first, exactly as the pair launch (A3.3) asks
-// its own gate before writing an `ab` block at all.
-const slotSince = "0.24.0"
+// It names 0.26.0, the release this work ships in (docs/release-streams.yaml
+// has 0.25.0 current and Wombat 0.26.0 next) and the release the replay ships
+// in when B1.2 lands in it: that one is not tagged yet, so docs/release.md's
+// Before-you-tag list verifies the number against the tag actually cut, the way
+// it does for the other *Since constants.
+//
+// The launch that reads it is a task that carries `ab.slot` itself, replayed or
+// hand-written (B1.1, B1.4). The workflow's own ask for a reviewer arm
+// (workflows.<name>.ab.reviewer_arm, config.WorkflowAB) is a different key in a
+// different file, and an older runner dies while decoding that file rather than
+// while replaying a slot, so it is gated by workflowABSince and not here.
+const slotSince = "0.26.0"
 
 // slotKnows names, for the image gates' messages, what the job image's runner
 // has to know: the pair's slot and the champion run the replay reads.
 const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
 
 // slotAsk is what a launch asks of its job image's runner about the pair's
-// slot, in the terms the refusal names, and "" when it asks nothing: a task
-// with no `ab` block, and one whose block names no slot at all, are launches
-// every release runs identically — the second is the coder pair A1.1 already
-// wrote, which B1.1 reads as coder without a key.
+// slot, in the terms the refusal names, and "" when it asks nothing: the task's
+// own `ab.slot`, replayed or hand-written, which is what B1.1 declared this gate
+// for. A task with no `ab` block, and one whose block names no slot at all, ask
+// nothing: the second is the coder pair A1.1 already wrote, which B1.1 reads as
+// coder without a key.
 //
 // The gate is written on the key's presence and not on its value: a slot a
 // launcher spells out is written by the release whose runner acts on slots, and
@@ -2690,8 +2795,14 @@ const slotKnows = "the A/B pair's slot (ab.slot, ab.champion_run)"
 // all. A coder pair — the pair A3.3 samples — writes neither key, so this gate
 // is never the one that refuses it: that launch is judged by the `ab` field's
 // own gate (A3.3).
+//
+// A workflow's ask for an A/B reviewer arm is not asked here even though the
+// champion's launch is where it is judged: the ask is a key of the file the job
+// decodes rather than a field of the task, and it is refused by the config
+// reader rather than by the runner's slot handling, so it has an ask of its own
+// (workflowABSince, checkWorkflowABImage).
 func slotAsk(spec *task.Spec) string {
-	if spec.AB == nil || spec.AB.Slot == "" {
+	if spec == nil || spec.AB == nil || spec.AB.Slot == "" {
 		return ""
 	}
 	return fmt.Sprintf("the task's ab.slot (%s)", spec.AB.Slot)
@@ -2715,6 +2826,163 @@ func checkCloneSlotImage(lc *localcfg.Config, spec *task.Spec, subject string, w
 		return nil
 	}
 	return checkCloneImageSince(lc, spec, slotSince, subject, slotKnows, "", warn)
+}
+
+// workflowABSince is the first fugaro release whose config reader knows a
+// workflow's own ab: block (fugaro.yaml's workflows.<name>.ab,
+// config.WorkflowAB): the key a workflow asks its A/B reviewer arm with (the
+// owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12). A runner
+// built from an older image decodes fugaro.yaml with KnownFields, so the key
+// alone refuses the whole file at bootstrap — the champion's own launch, the
+// last moment a job image whose runner cannot carry the arm is still refusable
+// before the job is paid for, dies there whatever the key says, an explicit
+// null included (workflowABNames).
+//
+// It is a constant of its own and not slotSince, because the two keys are
+// different kinds of thing: the ask is the repository's file, read by the job's
+// config reader before anything runs, while the slot is the task the launcher
+// writes and is read by the runner's review stage. A release can carry one and
+// not the other, and 0.25.0 is why the two cannot share a number: it is tagged,
+// it carries the task's `ab.slot` (task.AB.Slot) and the pair rules that read
+// it, and it has no config.WorkflowAB, so a slotSince gate would admit it and
+// the paid job would die at bootstrap on `field ab not found in type
+// config.Workflow`. The two constants name the same release today only because
+// neither key's behaviour is in a tagged release yet.
+//
+// It names 0.26.0, the release this work ships in — docs/release-streams.yaml
+// has 0.25.0 current and Wombat 0.26.0 next — which is not tagged yet, so
+// docs/release.md's Before-you-tag list verifies the number against the tag
+// actually cut, the way it does for the other *Since constants.
+const workflowABSince = "0.26.0"
+
+// workflowABKnows names, for the image gates' messages, what the job image's
+// runner has to know. The message reads "needs a job image whose runner knows
+// <this>".
+const workflowABKnows = "a workflow's ab: block (workflows.<name>.ab)"
+
+// workflowABNames is the workflows of the configuration the run will read that
+// write an ab: block, sorted, and the whole of what the three gates below judge.
+//
+// Every one of them is named and not only the workflow the task selects:
+// fugaro.yaml is decoded whole, so a sibling workflow's ab: block is exactly as
+// fatal to an older runner as the selected one's — the file that fails to decode
+// is the whole file, and the job dies before it reads which workflow it runs.
+//
+// It reads the key being written and not the block it holds: the text's own
+// answer (Config.RepoWorkflowABSet, setsWorkflowAB) is what a runner older than
+// workflowABSince refuses, and an explicit null (`ab:`, which decodes to no
+// block at all) is one line to that decoder — the reason setsSecurity is a
+// presence read for security:. The decoded block is the second half of the
+// union, and not a second question: a configuration this process built in
+// memory rather than parsed (launchLayerConfig's empty one, a caller's own) has
+// no text to read, and the block it carries is the only answer there is.
+func workflowABNames(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	wrote := map[string]bool{}
+	for _, name := range cfg.RepoWorkflowABSet {
+		wrote[name] = true
+	}
+	for name, wf := range cfg.Workflows {
+		if wf.AB != nil {
+			wrote[name] = true
+		}
+	}
+	if len(wrote) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(wrote))
+	for name := range wrote {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// workflowABSubject names, for the gates' messages, the keys that wrote the
+// block and the way out their author has. The way out is the block itself rather
+// than the image's age, because the block is the repository's own line: removing
+// it costs the ask, and a job image that predates the key runs no reviewer arm
+// whatever the file says, so a file that asks for none is refused nothing.
+func workflowABSubject(repo string, names []string) (subject, alt string) {
+	keys := make([]string, 0, len(names))
+	for _, name := range names {
+		keys = append(keys, "workflows."+name+".ab")
+	}
+	return "fugaro.yaml's " + strings.Join(keys, ", ") + " of " + repo,
+		"remove the ab: block from fugaro.yaml (or from each workflow named): a job image that predates the key runs no reviewer arm at all, so the file that asks for none is refused nothing"
+}
+
+// workflowABImageWarnings warns, once per workflow that writes the block, that a
+// configuration which asks for an A/B reviewer arm needs every job image on
+// workflowABSince. It is validate's half of checkWorkflowABImage, and a warning
+// rather than a Problem for triageImageWarnings' reason: the file is valid, and
+// what has to move is the installation's image, which is why both ways to move
+// one are named. One Problem per key, because each block is a separate line an
+// operator removes.
+func workflowABImageWarnings(c *config.Config) []config.Problem {
+	var ps []config.Problem
+	for _, name := range workflowABNames(c) {
+		ps = append(ps, config.Problem{Path: "workflows." + name + ".ab", Message: "this file's workflows." + name + ".ab needs fugaro " + workflowABSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"})
+	}
+	return ps
+}
+
+// refuseWorkflowABSkew refuses fugaro update --repo, before any cloud effect,
+// when the configuration the checkout resolves writes a workflow's ab: block and
+// the installation's base image predates workflowABSince — a runner built from it
+// decodes fugaro.yaml with KnownFields and refuses the run at bootstrap on a key
+// it does not know. It is the half checkWorkflowABImage cannot be: a launch from
+// outside a checkout reads no fugaro.yaml at all, so the key the run will find
+// once it has one is judged here, by the operator's own converge
+// (refuseTriageSkew's shape and its reason). The states of ref are read as
+// refuseRigorSkew reads them: no base image passes, one that is not a release
+// only warns.
+func refuseWorkflowABSkew(repo string, cfg *config.Config, ref string, warn io.Writer) error {
+	names := workflowABNames(cfg)
+	if len(names) == 0 {
+		return nil
+	}
+	subject, alt := workflowABSubject(repo, names)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the key is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, workflowABSince):
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on a key it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, workflowABKnows, workflowABSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// checkWorkflowABImage refuses a launch whose job image runs a fugaro older than
+// workflowABSince while the configuration the run will read writes a workflow's
+// ab: key, at any value: that runner decodes fugaro.yaml with KnownFields, so the
+// key alone kills the run at bootstrap. The judge is the build record's base_ref,
+// as every checkImageSince gate's is, and cfg is the file the run will read —
+// nil, a launch that could not read one, gated by nothing, as triageSources' nil
+// is.
+func checkWorkflowABImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
+	names := workflowABNames(cfg)
+	if len(names) == 0 {
+		return nil
+	}
+	subject, alt := workflowABSubject(spec.Repo, names)
+	return checkImageSince(ctx, env, slug, spec, kind, workflowABSince, subject, workflowABKnows, "; or "+alt, warn)
+}
+
+// checkCloneWorkflowABImage is checkWorkflowABImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneWorkflowABImage(lc *localcfg.Config, spec *task.Spec, cfg *config.Config, warn io.Writer) error {
+	names := workflowABNames(cfg)
+	if len(names) == 0 {
+		return nil
+	}
+	subject, alt := workflowABSubject(spec.Repo, names)
+	return checkCloneImageSince(lc, spec, workflowABSince, subject, workflowABKnows, "; or "+alt, warn)
 }
 
 // triageSources reports, for the launch's triageSince gate, whether the
@@ -3632,7 +3900,7 @@ func checkCloneJobsImage(ctx context.Context, env *cloudEnv, spec *task.Spec, wa
 // It names 0.24.0, the release this work ships in ("Uakari": docs/release-streams.yaml
 // has 0.23.0 current and Uakari 0.24.0 next), which is not tagged yet: the
 // release that tags it holds this number to the tag it cuts, as it does for
-// slotSince's 0.24.0 and jobsSince's 0.22.0. docs/release.md ("Before you tag")
+// slotSince's 0.26.0 and jobsSince's 0.22.0. docs/release.md ("Before you tag")
 // has the checklist verify it.
 const modelGradesSince = "0.24.0"
 

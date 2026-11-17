@@ -101,11 +101,14 @@ awk -F'\t' '$2 !~ /\// {print}' "$work/tests.tsv" > "$work/toplevel.tsv"
 # reader opens, and the wait scan needs the body. Names are the file's own
 # `func TestX(` lines, so a test under the root is found without compiling
 # anything. Two files may declare the same test name (docs tests do): the first
-# file in the scan's own order wins, which the header says out loud rather than
-# fanning one row out into one per declaring file.
+# file in the scan's own order wins rather than fanning one row out into one per
+# declaring file, and the scan is sorted so that "first" is the same file on
+# every machine: `find` hands paths back in whatever order the filesystem keeps
+# them, which is not an order a report a person compares run to run can rest on.
 : > "$work/files.tsv"
 if [ "$source_root" != "-" ] && [ -d "$source_root" ]; then
   find "$source_root" -name '*_test.go' -type f -print0 \
+    | LC_ALL=C sort -z \
     | xargs -0 -r awk '
         /^func (Test|Example|Benchmark)[A-Za-z0-9_]*\(/ {
           name = $2

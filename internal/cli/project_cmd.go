@@ -448,7 +448,7 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 			// nothing would leave the operator's next config edit refused against
 			// the node this very command just wrote, with a re-seed offered as the
 			// way out that would revert the edit.
-			if err := recordPublishedGeneration(ctx, out, db, lc, configPath, body); err != nil {
+			if err := recordPublishedGeneration(ctx, out, db, lc, configPath, body, pol); err != nil {
 				return err
 			}
 			return nil
@@ -1391,44 +1391,60 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 	// typed copy is what the diff reads (printPolicyDiff's kept line) and what
 	// the node is built from.
 	var publishedBinaries *projectpolicy.Binaries
+	var publishedCascade *projectpolicy.Credentials
+	var publishedGrades *config.ModelGrades
 	if old != nil {
 		publishedBinaries = old.Binaries
+		publishedCascade = old.Credentials
+		publishedGrades = old.ModelGrades
 	}
 	pol.Binaries = lc.BinariesEffective(publishedBinaries)
+	// The credentials block — the cascade's fallback, its threshold, its
+	// backoff and D142's two controls (D152, D153) — is the operator's own
+	// statement, and from this release the local config carries it
+	// (CredentialCascade, D2607, F5, F6), so a publish MERGES the two: the
+	// members the file states are this machine's, the members it leaves out are
+	// the node's, and a file that says nothing about the block keeps it whole.
+	// What the merge must never do is drop a member nobody wrote about: the
+	// block is what decides whether a run may spend the project's money at all,
+	// so a publish that wrote a node without its fallback would put a project
+	// back on oauth-only for `fallback: auto` with an enforce cap, silently,
+	// from a machine whose config merely predates the key.
+	//
+	// The merge is written here and not inside the `old != nil` guard below
+	// because the block's source is now the file as much as the node: a first
+	// publish writes what the file states (publishedCredentials).
+	pol.Credentials = publishedCredentials(lc, publishedCascade)
+	// The merged block is held to the block's own rules, because the merge can
+	// hand back one neither side held while each side was validated alone: the
+	// file at load (localcfg.validate) and the node at decode
+	// (publishedPolicyOf), and the backoff pair's rule is about the EFFECTIVE
+	// pair, an absent member being its default (ValidCredentials, D153). A file
+	// that writes only `backoff.cap: 1h` is valid beside a node holding
+	// `backoff.initial: 2h`, and the merge of the two is a cap below the initial
+	// — a schedule that never doubles. Left to the node's decode, the operator
+	// would meet it on the next `fugaro update`, in a sentence that names
+	// neither the key they wrote nor the member that came from the node; asked
+	// here, both halves are still in hand and the refusal names the file's key.
+	// A config that states no block is not asked: what it hands back is the
+	// node's own block, which the decode already read.
+	if credentialsStated(lc.CredentialCascade) {
+		if err := projectpolicy.ValidCredentials(pol.Credentials, "credential_cascade"); err != nil {
+			return nil, false, userErr("the credential_cascade block this project's local config states, merged with the members the published node holds, is not one the cascade can use: %v. A member the file leaves out is the node's (D2607), and the rules are asked of the block as the cascade would use it — an absent member being its default — so a member that is valid on its own can be refused beside one the node holds: write the member in the file too, or remove the one you wrote", err)
+		}
+	}
+	// The model grades are merged for the cascade's reason (E2, D2039, D2607):
+	// they are the project's own choice of the model each rung runs, the local
+	// config carries them from this release (ModelGrades), and the node's block
+	// is the only one a rung reads — so a publish that wrote a node without the
+	// grades the file does not state would take the project's choice of model
+	// away from the ladder, silently, on a machine whose config merely predates
+	// the key. Before this member was modelled the same node was *refused*
+	// rather than rewritten (publishedPolicyOf's unknown-key refusal,
+	// "publishing would drop them"), so a drop here would be a loosening this
+	// release introduced.
+	pol.ModelGrades = publishedModelGrades(lc, publishedGrades)
 	if old != nil {
-		// The credentials block is kept too, and for the same reason plus a
-		// stronger one: D153 makes every member of it operator-written policy
-		// (the cascade's fallback, its threshold, its backoff and D142's two
-		// controls), so a publish is not where any of them is decided and a
-		// publish that dropped the block would put a project back on the defaults
-		// it never chose — for `fallback: auto` with an enforce cap, silently back
-		// onto oauth-only. The node is the only place the block exists.
-		//
-		// Copied as the typed value, where clone_urls and routing are also
-		// patched in as document members (policyNodeBytes): the block is strict
-		// inside, so a member this Fugaro does not model is refused by
-		// publishedPolicyOf before a publish gets here, and what this assignment
-		// re-encodes is therefore the whole of the operator's block.
-		pol.Credentials = old.Credentials
-		// The model grades are kept for the binaries member's reason, and they
-		// are the sharper case of it: no key of this release's config states
-		// them on the node — the project layer's defaults.model_grades is what
-		// the merge reads (internal/policy) and this publisher writes nothing
-		// from it — so the node's block is the only one, and a publish that
-		// wrote a node without it would take the project's choice of model away
-		// from the ladder — silently, since no rung reads a grade in this
-		// release yet. Before this member was modelled the same
-		// node was *refused* rather than rewritten (publishedPolicyOf's
-		// unknown-key refusal, "publishing would drop them"), so a drop here
-		// would be a loosening this release introduced.
-		//
-		// The typed copy is the whole of it, the credentials block's reading
-		// rather than the binaries one: the block is strict inside
-		// (decodeModelGrades), so a member this Fugaro does not model, or a
-		// grade its rules refuse, is refused by publishedPolicyOf before a
-		// publish gets here. It is what the diff reads (printPolicyDiff's kept
-		// line) and what the node is built from.
-		pol.ModelGrades = old.ModelGrades
 		// The daemon's switch and the project's issue adapter are kept for the
 		// model grades' reason (R1 of docs/orchestrator-graph-estimates, D2701,
 		// D2733, D2739): no key of this machine's config states either — the
@@ -1476,8 +1492,11 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 // is NOT in the merge is a removal: a definition the node holds and the file
 // does not mention stays, because the node is what a run resolves a craft
 // against, and a pool that disappeared because one machine's file happened to
-// be silent would take a grant away with no refusal and no line (the removal of
-// a published definition is the explicit unset's; docs/config-ownership, A1).
+// be silent would take a grant away with no refusal and no line. A removal is
+// the explicit unset's (D2607, F22): a name in this file's node_removals is the
+// one statement that takes a definition out of the node (removedNames), and it
+// is written by the command that removed it rather than inferred from a
+// silence.
 //
 // The one thing that can make the node unreadable is refused here rather than
 // left to the writer's own check: a credential and a pool share one namespace
@@ -1502,7 +1521,8 @@ func craftMembersForPublish(lc *localcfg.Config, old *projectpolicy.Policy) ([]c
 // so a file that changes the type is an edit like any other.
 func publishedCraftCredentials(lc *localcfg.Config, old *projectpolicy.Policy) []config.Credential {
 	node := craftCredentialsOf(old)
-	if len(lc.Credentials) == 0 {
+	removed := nameSet(removedNames(lc).CraftCredentials)
+	if len(lc.Credentials) == 0 && len(removed) == 0 {
 		return node
 	}
 	out := slices.Clone(lc.Credentials)
@@ -1514,6 +1534,14 @@ func publishedCraftCredentials(lc *localcfg.Config, old *projectpolicy.Policy) [
 		if !stated[c.Name] {
 			out = append(out, c)
 		}
+	}
+	out = slices.DeleteFunc(out, func(c config.Credential) bool { return removed[c.Name] })
+	if len(out) == 0 {
+		// A block this publish emptied is no block: the database keeps no member
+		// for an empty list, so returning the empty slice would leave a publish
+		// reporting a difference against the node it just wrote on every run
+		// after it (the HARD RULE's own loss).
+		return nil
 	}
 	return out
 }
@@ -1544,7 +1572,8 @@ func publishedCraftCredentials(lc *localcfg.Config, old *projectpolicy.Policy) [
 // access resolves to that credential, and the line says which name it was.
 func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds []config.Credential) ([]config.Pool, []string) {
 	node := craftPoolsOf(old)
-	if len(lc.Pools) == 0 {
+	removed := nameSet(removedNames(lc).Pools)
+	if len(lc.Pools) == 0 && len(removed) == 0 {
 		return node, nil
 	}
 	var out []config.Pool
@@ -1552,6 +1581,14 @@ func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds [
 	stated := make(map[string]bool, len(lc.Pools))
 	for _, p := range lc.Pools {
 		stated[p.Name] = true
+		if removed[p.Name] {
+			// The name is this file's own removal (D2607, F22): the pool is
+			// gone from the node, and a definition the file still states for it
+			// is the file contradicting its own record — the removal wins,
+			// because it is the statement about the node and the definition is
+			// what the command that wrote the record dropped already.
+			continue
+		}
 		q, held := craftPoolNamed(old, p.Name)
 		pub := p
 		// The marker is never the config's (D2608), so it starts cleared and is
@@ -1583,7 +1620,7 @@ func publishedCraftPools(lc *localcfg.Config, old *projectpolicy.Policy, creds [
 		out = append(out, pub)
 	}
 	for _, q := range node {
-		if !stated[q.Name] {
+		if !stated[q.Name] && !removed[q.Name] {
 			out = append(out, q)
 		}
 	}
@@ -1634,11 +1671,19 @@ func craftNamespaceClash(creds []config.Credential, pools []config.Pool) string 
 // it keeps the node's exactly as a file that writes nothing does.
 func publishedCrafts(lc *localcfg.Config, old *projectpolicy.Policy) *config.Crafts {
 	node := policyCraftsOf(old)
-	if lc.Crafts == (config.Crafts{}) {
+	removed := nameSet(removedNames(lc).Crafts)
+	if lc.Crafts == (config.Crafts{}) && len(removed) == 0 {
 		return node
 	}
 	out := config.Crafts{}
 	for _, name := range config.CraftNames {
+		if removed[name] {
+			// The craft is this file's own removal (D2607, F22), the pool
+			// removal's rule one block over: the node stops stating it, and
+			// whatever the file says about it beside the record is dropped with
+			// it.
+			continue
+		}
 		c := lc.Crafts.Of(name)
 		if node != nil {
 			q := node.Of(name)
@@ -1651,12 +1696,22 @@ func publishedCrafts(lc *localcfg.Config, old *projectpolicy.Policy) *config.Cra
 		}
 		out = withCraft(out, name, c)
 	}
+	if out == (config.Crafts{}) {
+		// Every craft of the block is gone, so the block is: a node that
+		// carried an empty crafts member would be one this Fugaro reads back as
+		// no member at all (decodeCraftMembers' rule), and the publish would go
+		// on reporting the difference it cannot close.
+		return nil
+	}
 	return &out
 }
 
 // withCraft is the block with one craft written into it. The crafts are a
-// struct of four fields rather than a map (config.Crafts says why), so the name
-// is the only way in.
+// struct of five fields rather than a map (config.Crafts says why), so the name
+// is the only way in — and every name of config.CraftNames is one case here,
+// which is what a craft the operator writes being published at all depends on
+// (the list and this switch are one enumeration, and the merge-judge craft is
+// as much a member of the block as the four the runner's stages name).
 func withCraft(c config.Crafts, name string, craft config.Craft) config.Crafts {
 	switch name {
 	case config.CraftCoder:
@@ -1667,8 +1722,163 @@ func withCraft(c config.Crafts, name string, craft config.Craft) config.Crafts {
 		c.SeniorReview = craft
 	case config.CraftSecurityReview:
 		c.SecurityReview = craft
+	case config.CraftMergeJudge:
+		c.MergeJudge = craft
 	}
 	return c
+}
+
+// publishedCredentials is the credentials block the node is written with: the
+// cascade this machine's config states, merged into the node's own member by
+// member (D2607, F5, F6).
+//
+// The merge is the craft members' rule and the binaries block's, one block
+// over: a config that states nothing keeps the node's block whole — the
+// carrier's pointer is what says which of the two this file is
+// (CredentialCascade), and a block written with every member absent is no
+// statement at all (credentialsStated), the crafts block's own rule — and a
+// config that states the block wins member by member, because a file that
+// writes `wait_threshold` has said nothing about the fallback and a publish
+// that read the silence as "the default" would put a project back on
+// oauth-only for a block nobody meant to change.
+//
+// The block's own type is carried rather than a value per key, and the two
+// pointer members are why: a written `false` for
+// stop_after_exhaustion_per_window and a written 0 for concurrency_per_token
+// are values (D142) and not absent members, and only the pointer tells the two
+// apart. The block is strict inside (projectpolicy.ValidCredentials, asked of
+// the carrier at load and of the node's own document by publishedPolicyOf), so
+// a member this Fugaro does not model never reaches here.
+func publishedCredentials(lc *localcfg.Config, node *projectpolicy.Credentials) *projectpolicy.Credentials {
+	if !credentialsStated(lc.CredentialCascade) {
+		return node
+	}
+	out := *lc.CredentialCascade
+	if node != nil {
+		if out.Fallback == "" {
+			out.Fallback = node.Fallback
+		}
+		if out.WaitThreshold == "" {
+			out.WaitThreshold = node.WaitThreshold
+		}
+		switch {
+		case out.Backoff == nil:
+			out.Backoff = node.Backoff
+		case node.Backoff != nil:
+			// The file states the block, so its members are the file's and the
+			// node's fill only what it leaves out. The copy is the file's own,
+			// which is what keeps this merge from writing into the node it is
+			// merging over.
+			b := *out.Backoff
+			if b.Initial == "" {
+				b.Initial = node.Backoff.Initial
+			}
+			if b.Cap == "" {
+				b.Cap = node.Backoff.Cap
+			}
+			out.Backoff = &b
+		}
+		if out.StopAfterExhaustionPerWindow == nil {
+			out.StopAfterExhaustionPerWindow = node.StopAfterExhaustionPerWindow
+		}
+		if out.ConcurrencyPerToken == nil {
+			out.ConcurrencyPerToken = node.ConcurrencyPerToken
+		}
+	}
+	return &out
+}
+
+// credentialsStated is whether a cascade block states a member at all, one
+// level down included: a block written with every member absent — and a
+// `backoff:` written with both of its own absent — is no statement, the crafts
+// block's rule ("a block that sets no craft is no block"). It is what keeps a
+// publish from writing an empty member: the database keeps none for an empty
+// object, so a publish that wrote one would report a difference against the
+// node it just wrote on every run after it (the HARD RULE's own loss).
+func credentialsStated(c *projectpolicy.Credentials) bool {
+	if c == nil {
+		return false
+	}
+	if c.Backoff != nil && (c.Backoff.Initial != "" || c.Backoff.Cap != "") {
+		return true
+	}
+	return c.Fallback != "" || c.WaitThreshold != "" ||
+		c.StopAfterExhaustionPerWindow != nil || c.ConcurrencyPerToken != nil
+}
+
+// publishedModelGrades is the model_grades block the node is written with: the
+// grades this machine's config states, merged into the node's own grade by
+// grade and half by half (D2607, E2).
+//
+// The merge is publishedCrafts' exactly: a config that states no grade keeps
+// the node's block, a grade the config writes wins the halves it writes and
+// takes the node's for the half it leaves out — a grade's model and its access
+// are the independent pair a craft carries (config.ModelGrades) — and a grade
+// the config does not write is the node's. A block the config writes that sets
+// no grade is no block (config.ModelGrades.Empty), the crafts block's rule
+// again, so an installation whose config predates the key publishes the node's
+// grades exactly as they were.
+func publishedModelGrades(lc *localcfg.Config, node *config.ModelGrades) *config.ModelGrades {
+	if lc.ModelGrades == nil || lc.ModelGrades.Empty() {
+		return node
+	}
+	out := config.ModelGrades{}
+	for _, name := range config.GradeNames {
+		c := lc.ModelGrades.Of(name)
+		if node != nil {
+			q := node.Of(name)
+			if c.Model == "" {
+				c.Model = q.Model
+			}
+			if c.Access == "" {
+				c.Access = q.Access
+			}
+		}
+		if c == (config.Craft{}) {
+			continue
+		}
+		out = withGrade(out, name, c)
+	}
+	if out.Empty() {
+		return node
+	}
+	return &out
+}
+
+// withGrade is the grades block with one grade written into it, withCraft's
+// shape and its reason: the block is a struct rather than a map, so the name is
+// the only way in.
+func withGrade(g config.ModelGrades, name string, grade config.Craft) config.ModelGrades {
+	switch name {
+	case config.GradeStrong:
+		g.Strong = &grade
+	case config.GradeStrongest:
+		g.Strongest = &grade
+	}
+	return g
+}
+
+// removedNames is this machine's explicit-unset record as a value, so a config
+// that holds none — the state of every installation until a removal command
+// writes one — reads as a record that names nothing.
+func removedNames(lc *localcfg.Config) localcfg.NodeRemovals {
+	if lc == nil || lc.NodeRemovals == nil {
+		return localcfg.NodeRemovals{}
+	}
+	return *lc.NodeRemovals
+}
+
+// nameSet is a list of names as a set, which is how a removal record is read:
+// the question asked of it is always "is this name one of them".
+func nameSet(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(names))
+	for _, name := range names {
+		out[name] = true
+	}
+	return out
 }
 
 // craftCredentialsOf, craftPoolsOf and craftsOf are the node's own three
@@ -2110,14 +2320,16 @@ func checkPolicyBytes(raw []byte) error {
 	p, found, err := projectpolicy.Decode(raw)
 	switch {
 	case err != nil:
-		// The credentials member, when the refusal names one, can only have come
-		// from the published node: nothing in this release writes a credentials
-		// block (the project layer refuses the key, and the local config has no
-		// field for it), so the block is the carry-over. That matters to the
+		// The credentials member, when the refusal names one, is the block this
+		// machine's own file is the carrier of (credential_cascade, D2607) as the
+		// publisher merged it with the members the node holds — or, for a config
+		// that states no block, the published node's own. That matters to the
 		// operator because 'fugaro validate' — which the sentence sends them to
-		// for everything else — cannot remove it: the way out is the node itself,
-		// or a fresh policy. (Security review m-1.)
-		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'. When the refusal names a credentials member, the block is the one carried over from the published node, which no CLI writes or removes in this release: remove that member from the node by hand, or publish with --delete to drop the policy and write a fresh one", err)
+		// for everything else — reads a repository's fugaro.yaml and the project
+		// config, not this key: a block the file states is fixed in the file,
+		// while a block only the node holds has no local key to fix, and its ways
+		// out are the node itself or a fresh policy. (Security review m-1.)
+		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written (%v): check the values it is built from — the budget block, the providers' models, model_prices, the profiles and the allow-list — with 'fugaro validate'. When the refusal names a credentials member, the block is this machine's own: the credential_cascade key its local config states, merged with the members the published node holds — or, when the file states no block, the node's own, which no local key reaches. Write the member in your own file ('fugaro validate' reads a repository's fugaro.yaml, not this key); when the file states no block there is no key to write, and the ways out are removing that member from the node by hand, or publishing with --delete to drop the policy and write a fresh one", err)
 	case !found || p == nil:
 		return userErr("the policy this Fugaro would write is one it cannot read back, so nothing was written: check the values it is built from with 'fugaro validate'")
 	}
@@ -2569,15 +2781,22 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 		}
 	}
 	// The credentials block is operator-written policy about spending (D152,
-	// D153, D142) and no command of this release writes one, so a publish keeps
-	// it — which is a fact the operator reading this diff has to be told, the
-	// way the clone URLs' line tells them: a block that vanished here would
-	// silently put a project back on oauth-only (or back on the defaults it
-	// never chose), and the node is the only place it exists. The members
-	// printed are the ones the node *writes*; a member it leaves out is its
-	// default, and the line does not invent it.
+	// D153, D142), and the local config is its carrier from this release on
+	// (D2607): a file that states it writes the block it states and keeps the
+	// node's members for the rest, and a file that says nothing keeps the
+	// node's whole — which is a fact the operator reading this diff has to be
+	// told, the way the clone URLs' line tells them, because a block that
+	// vanished here would silently put a project back on oauth-only (or back on
+	// the defaults it never chose). The two readings are printed apart: `kept`
+	// is the node's own block standing as it was, and a written one is named as
+	// the statement it is. The members printed are the ones the block *writes*;
+	// a member it leaves out is its default, and the line does not invent it.
 	if new.Credentials != nil {
-		fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
+		if credentialsStated(lc.CredentialCascade) {
+			fmt.Fprintf(out, "  credentials: %s\n", credentialsText(new.Credentials))
+		} else {
+			fmt.Fprintf(out, "  credentials kept: %s\n", credentialsText(new.Credentials))
+		}
 	}
 	// The binaries block is the owner's grant of the paths a run may add a
 	// binary at and of the cap it is held to, and the local config is where the
@@ -2592,13 +2811,20 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 		fmt.Fprintf(out, "  binaries kept: %s\n", binariesText(new.Binaries))
 	}
 	// The model grades are the project's own choice of model for the ladder's
-	// rungs, and no key of this release's config writes them onto the node
-	// (buildProjectPolicy), so a publish keeps them — a fact the operator
+	// rungs, and the local config is their carrier from this release on
+	// (ModelGrades, D2607), so the line reads the credentials block's two ways:
+	// a file that states a grade writes it and keeps the node's for the rest,
+	// and a file that says nothing keeps the node's block — a fact the operator
 	// reading this diff has to be told, the way the clone URLs' line tells
-	// them: the block is unchanged, so no +/- line above mentions it, and an
-	// operator who hand-wrote a grade would read that silence as "it is gone".
+	// them, since the block is then unchanged and no +/- line above mentions
+	// it, and an operator who hand-wrote a grade would read that silence as "it
+	// is gone".
 	if new.ModelGrades != nil {
-		fmt.Fprintf(out, "  model_grades kept: %s\n", modelGradesText(new.ModelGrades))
+		if lc.ModelGrades != nil && !lc.ModelGrades.Empty() {
+			fmt.Fprintf(out, "  model_grades: %s\n", modelGradesText(new.ModelGrades))
+		} else {
+			fmt.Fprintf(out, "  model_grades kept: %s\n", modelGradesText(new.ModelGrades))
+		}
 	}
 	// The daemon's switch and the project's issue adapter are kept too (R1 of
 	// docs/orchestrator-graph-estimates, D2701, D2733), and the operator reading
