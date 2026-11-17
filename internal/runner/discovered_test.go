@@ -80,6 +80,26 @@ func TestDiscoveredFileCopiedIntoRecord(t *testing.T) {
 	if !reflect.DeepEqual(rec.Discovered, d) {
 		t.Fatalf("the run's own record carries %+v and the stored one %+v", rec.Discovered, d)
 	}
+
+	// A file an earlier execution left in the state directory is not this
+	// run's note, even though the directory is operator-chosen and outlives
+	// one run: bootstrap clears Fugaro's own entries there (clearStateDir), so
+	// this run — which writes none — records none rather than another's.
+	h = newHarness(t, "", nil)
+	if err := os.MkdirAll(h.deps.StateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(h.deps.StateDir, discoveredName)
+	if err := os.WriteFile(stale, []byte(`{"blocks":[{"plan_task":"X0","reason":"left by an earlier execution"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec, err = h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Discovered != nil {
+		t.Fatalf("the record carries %+v, want nothing: it is the note an earlier execution left in the state directory", rec.Discovered)
+	}
 }
 
 // TestDiscoveredFileInCheckoutIgnored: a file of that name inside the checkout
