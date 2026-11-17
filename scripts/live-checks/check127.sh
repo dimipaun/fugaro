@@ -119,9 +119,19 @@ stop() {
 }
 
 FACTS_FILE=""
+FACTS_EARLY=""
+# A row recorded before the scratch directory exists is kept here and written
+# into the facts file the moment there is one: the guards over what you typed run
+# before anything is created, and a guard that passed is a row of the block like
+# any other.
 fact() { # fact KEY PASS|FAIL|INFO "detail"
-  [ -n "$FACTS_FILE" ] || return 0
-  printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$FACTS_FILE"
+  local row
+  row=$(printf '%s|%s|%s' "$1" "$2" "$3")
+  if [ -n "$FACTS_FILE" ]; then
+    printf '%s\n' "$row" >>"$FACTS_FILE"
+  else
+    FACTS_EARLY="${FACTS_EARLY}${row}"$'\n'
+  fi
 }
 
 # unmeasured KEY "detail": a row that WAS asked for and could not be read — a
@@ -185,8 +195,11 @@ SCRATCH_REMOVED=no
 KEEP_SCRATCH=${CHECK127_KEEP_SCRATCH:-}
 PRINTED=""
 FACTS_CAPTURED=""
-FACTS_AT_DRY_RUN=""
 DRY_RUN=no
+HELPED=no
+# Yes once the steps are about to run: before that, a step's row is not one that
+# was "not reached", it is one that was never going to be asked for.
+STEPS_STARTED=no
 
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk127.XXXXXXXX") || die "Check 127 cannot make a scratch directory"
@@ -194,6 +207,7 @@ scratch_up() {
   : >"$SCRATCH/$SCRATCH_MARKER"
   FACTS_FILE="$SCRATCH/facts"
   : >"$FACTS_FILE"
+  [ -z "$FACTS_EARLY" ] || printf '%s' "$FACTS_EARLY" >>"$FACTS_FILE"
   UNMEASURED_FILE="$SCRATCH/unmeasured"
   : >"$UNMEASURED_FILE"
   # A scratch directory inside a work tree could be committed by accident, and
@@ -208,7 +222,7 @@ scratch_up() {
 # managed to do in SCRATCH_REMOVED, and a `$(cleanup)` would throw that answer
 # away with the subshell.
 cleanup() {
-  FACTS_CAPTURED=$(cat "$FACTS_FILE" 2>/dev/null || true)
+  FACTS_CAPTURED="${FACTS_EARLY}$(cat "$FACTS_FILE" 2>/dev/null || true)"
   remove_scratch
 }
 
@@ -236,6 +250,9 @@ finish() {
   local status=$?
   trap - EXIT ERR
   cleanup
+  # --help printed the usage on its own and read nothing: it is not a run, so it
+  # gets no block and no verdict.
+  if [ "$HELPED" = yes ]; then exit 0; fi
   local facts=$FACTS_CAPTURED
   if [ -n "$ABORT_REASON" ] && ! printf '%s' "$facts" | grep -q '^aborted|'; then
     facts="${facts}"$'\n'"aborted|FAIL|$ABORT_REASON"
@@ -252,7 +269,7 @@ finish() {
     if [ "$status" -eq 0 ] || [ "$status" -eq 1 ]; then status=2; fi
   fi
   if [ "$DRY_RUN" = yes ]; then
-    facts="${FACTS_AT_DRY_RUN}"$'\n'"dry-run|INFO|nothing was run: this is the plan, step by step, and no fugaro, git or gh call was made"$'\n'"restore|PASS|nothing was created: a dry run makes no scratch directory and reaches nothing"
+    facts="${facts}"$'\n'"dry-run|INFO|nothing was run: this is the plan, step by step, and no fugaro, git or gh call was made"$'\n'"restore|PASS|nothing was created: a dry run makes no scratch directory and reaches nothing"
   fi
   local restore=PASS
   if [ "$DRY_RUN" != yes ]; then
@@ -376,6 +393,7 @@ guard_typed() {
   guard_belong "$SANDBOX" "$RUN_REF" "$CRITICAL_REF" "$HOTFIX_REF" "$FLOOR_PATH" \
     "$CHECKOUT2" "$RUN2_REF" "$REF_RUN" "$REF" "$AREAS_REF" "$ITEM_PR" "$ITEM_PR2" "$RECIPE"
   guard_belong "$CHECKOUT2"
+  fact belong PASS "nothing you gave this check names 'belong', the owner's own installation or repository"
 }
 
 # ------------------------------------------------------------------ the steps
@@ -412,7 +430,7 @@ step_installation() {
     owner "fugaro config show --json did not answer in $SANDBOX: the steps that read the config in force will say so"
   fi
   fact installation PASS "the sandbox checkout belongs to the $NAME installation ($PROJECT, $REGION), and its runs are read there"
-  fact sandbox PASS "the repository is $REPO, at $SANDBOX, and nothing this check was given or read names 'belong' ($BELONG_SEEN)"
+  fact sandbox PASS "the repository is $REPO, at $SANDBOX, and neither it nor any other value this check was given or read names 'belong'"
 }
 
 # config_key KEY FILE — a value and the layer it came from, out of a `fugaro
@@ -751,6 +769,7 @@ step_two_repos() {
 step_ref() {
   if [ -z "$REF_RUN" ]; then
     yours ref-revision "step 7, --ref at a branch whose rigor: disagrees with the base branch's: launch it with 'fugaro run --repo $REPO --ref <branch> --task-file <task> --json' and run this check again with --ref-run <slug>/<run-id> --ref <branch>"
+    yours ref-branch "step 7's second half: it is read by this check once --ref-run and --ref are given"
     return 0
   fi
   run_row ref "$REF_RUN" || {
@@ -798,6 +817,7 @@ step_ref() {
 step_areas() {
   if [ -z "$AREAS_REF" ]; then
     yours areas "step 8, a run whose diff matches two areas: launch it with 'fugaro run --repo $REPO --path <path-a> --path <path-b> --task-file <task> --json' and run this check again with --areas-run <slug>/<run-id>"
+    yours areas-round "step 8's second half: it is read by this check once --areas-run is given"
     return 0
   fi
   run_row areas "$AREAS_REF" || {
@@ -939,6 +959,7 @@ step_item_pr() {
 step_item_branches() {
   if [ -z "$ITEM_PR2" ]; then
     yours item-branches "step 11, two branches filing an item on the same day: run this check again with --item-pr <N> --item-pr2 <M>, with the sandbox checkout at the base branch that carries both merges"
+    yours item-branches-index "step 11's index: it is read by this check once --item-pr2 is given"
     return 0
   fi
   need gh "step 11 reads two pull requests through gh"
@@ -971,7 +992,6 @@ step_item_branches() {
   # copied into the scratch and regenerated there, and the bytes are compared
   # with the index the checkout holds.
   local dir
-  local dir
   dir=$(backlog_dir)
   local here
   here=$(git -C "$SANDBOX" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -983,11 +1003,11 @@ step_item_branches() {
   [ -d "$SANDBOX/$dir" ] || stop "$SANDBOX has no $dir folder, so there is no backlog to reconcile"
   cp -R "$SANDBOX/$dir" "$SCRATCH/backlog-copy" || die "Check 127 cannot copy $dir into its scratch directory"
   if ! run_in "$SANDBOX" "$SCRATCH/index.json" fugaro backlog index --dir "$SCRATCH/backlog-copy"; then
-    unmeasured item-branches "fugaro backlog index did not answer on a copy of $dir, so whether the index in $SANDBOX is current cannot be read"
+    unmeasured item-branches-index "fugaro backlog index did not answer on a copy of $dir, so whether the index in $SANDBOX is current cannot be read"
     return 0
   fi
   if [ "$(reader same "$SCRATCH/backlog-copy/README.md" "$SANDBOX/$dir/README.md" 2>/dev/null || echo different)" != same ]; then
-    fact item-branches FAIL "regenerating the index on a copy of $dir changes it: the index at $SANDBOX/$dir/README.md is NOT what the item files beside it say, so whoever merged second did not reconcile it — 'fugaro backlog index' is the one command that does (D28), and the diff is in the copy the check left in its scratch"
+    fact item-branches-index FAIL "regenerating the index on a copy of $dir changes it: the index at $SANDBOX/$dir/README.md is NOT what the item files beside it say, so whoever merged second did not reconcile it — 'fugaro backlog index' is the one command that does (D28), and the diff is in the copy the check left in its scratch"
     return 1
   fi
   local count
@@ -1016,7 +1036,9 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
       printf 'FACT %s: %s — %s\n' "$key" \
         "$(printf '%s' "$line" | cut -d'|' -f2)" \
         "$(printf '%s' "$line" | cut -d'|' -f3-)" >&3
-    else
+    elif [ "$STEPS_STARTED" = yes ]; then
+      # The steps began and this one did not finish: the row belongs in the
+      # block as one that was NOT measured.
       printf 'FACT %s: FAIL — not reached (the run stopped before this step)\n' "$key" >&3
     fi
     printed="$printed"$'\n'"$key"
@@ -1153,6 +1175,8 @@ parse_args() {
       ;;
     -h | --help)
       usage
+      HELPED=yes
+      PRINTED=1
       exit 0
       ;;
     *)
@@ -1206,7 +1230,6 @@ main() {
   guard_typed
   REPO_PLAN=$(repo_from_url "$(git -C "$SANDBOX" remote get-url origin 2>/dev/null || echo "<the checkout's origin>")")
   if [ "$DRY_RUN" = yes ]; then
-    FACTS_AT_DRY_RUN="belong|PASS|nothing this check was given names 'belong': ${BELONG_SEEN:-nothing}"$'\n'"agent-session|PASS|this shell carries no coding-agent marker, so the check was started by a person"
     print_plan
     REACHED_END=yes
     trap - ERR
@@ -1231,6 +1254,7 @@ main() {
   write_reader
   guard_xtrace
   guard_belong "$BELONG_SEEN"
+  STEPS_STARTED=yes
   step_installation
   step_poc || true
   step_critical || true
@@ -1465,10 +1489,14 @@ def cmd_pr():
 
 
 def cmd_pritems(dirpath):
-    doc = load()
+    """The item files out of the `pr` lines this reads on stdin, not a document:
+    the caller hands it the answer `cmd_pr` printed, so that the two readings of
+    one pull request cannot disagree about what it touches."""
     prefix = dirpath.rstrip("/") + "/"
-    for f in (doc.get("files") or []):
-        p = f.get("path") or ""
+    for raw in sys.stdin.read().splitlines():
+        if not raw.startswith("path="):
+            continue
+        p = raw[len("path="):]
         if p.startswith(prefix) and p.endswith(".md") and not p.endswith("/README.md"):
             line("path", p)
 
