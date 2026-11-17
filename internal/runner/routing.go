@@ -168,20 +168,48 @@ func (r *run) applyRouting(pp *projectpolicy.Policy, found bool) error {
 		}
 		return fmt.Errorf("the project's routing switch is not usable: %s", strings.Join(msgs, "; "))
 	}
+	// The switch is recorded before it is applied, and it is the switch this run
+	// carries and acted on: a write that lands after this one — a replay arm's
+	// challenger, which can only be written once the levels are resolved
+	// (abreplay.go's applyReplayLevel) — routes through it rather than reading
+	// the ladder a second time, and a run that applied no switch leaves this nil
+	// and that write unrouted, exactly as every pin here is.
+	r.routedClaude = sw
 	for _, p := range r.pinSlots() {
 		model := p.get()
-		if model == "" || !sw.Names(model) {
-			continue // the list is the opt-in: an ID it does not name is untouched
+		sent, err := r.routeModel(model)
+		if err != nil {
+			return err
 		}
-		route, sent, ok := config.RoutingClaudeFor(sw, model, r.modelProviders())
-		if !ok || route == config.RouteDirect || sent == model {
-			// CheckRouting passed, so this is the belt to its braces: the
-			// switch asked for a route and there is none to take.
-			return fmt.Errorf("routing.claude names %s, and this run cannot resolve its route: the switch routes nothing rather than sending the call direct (D1b)", model)
+		if sent != model {
+			p.set(sent)
 		}
-		p.set(sent)
 	}
 	return nil
+}
+
+// routeModel is the switch's rewrite of one model: the ID its calls are sent
+// and charged under, which is the model itself when the switch does not name it
+// — the list is the opt-in (D1a) — and the run's own refusal when the switch
+// names one it cannot resolve, rather than a call sent direct (D1b).
+//
+// It is applyRouting's own per-pin resolution, and it is here rather than
+// repeated where the last pin is written: the resolution is what makes every
+// consumer of a model agree (applyRouting), and a second implementation of it
+// would let one pin name the route's own ID while another named the canonical
+// one — the divergence Review Focus 11's mutation is.
+func (r *run) routeModel(model string) (string, error) {
+	sw := r.routedClaude
+	if model == "" || sw == nil || !sw.Names(model) {
+		return model, nil
+	}
+	route, sent, ok := config.RoutingClaudeFor(sw, model, r.modelProviders())
+	if !ok || route == config.RouteDirect || sent == model {
+		// CheckRouting passed, so this is the belt to its braces: the switch
+		// asked for a route and there is none to take.
+		return "", fmt.Errorf("routing.claude names %s, and this run cannot resolve its route: the switch routes nothing rather than sending the call direct (D1b)", model)
+	}
+	return sent, nil
 }
 
 // applyGrade moves the run onto the model grade its task named
@@ -830,8 +858,16 @@ func stageCraft(stage string) string {
 }
 
 // stageModel is the model a stage runs: the level's own model when the stage
-// runs a review level a layer named one for, and the role slot's otherwise.
+// runs a review level a layer named one for, the diagnose stage's own key when
+// the stage is a cloud diagnosis, and the role slot's otherwise.
 func (r *run) stageModel(stage string) string {
+	if stage == stageDiagnose {
+		// D2403: the cloud diagnosis runs the key the local tier reads, so the
+		// same question gets the same model either way. It is read here rather
+		// than through a role slot for the reason diagnoseModel gives, and it
+		// is the model the gateway's stage set admits and prices.
+		return r.diagnoseModel()
+	}
 	if level, ok := stageLevel(stage); ok {
 		if m := r.levelModel(level); m != "" {
 			return m
@@ -934,7 +970,7 @@ func resolvedLevel(levels config.Levels, level policy.Level) config.ResolvedLeve
 // a plain membership test, while the list that bounds this run is
 // config.CheckAllowed's, which admits a route ID where the switch routes the
 // model to it and names the key the owner wrote — the run's own pins by their
-// paths and a level's own model as agent.levels.lN.model (checkLevels,
+// paths and a level's own model as agent.levels.lN.model (checkModels,
 // levelModelPath). A list filled in here would refuse a level model before
 // checkBudget judged it, and refuse it by a rule that does not know the run's
 // routes: the routed level model this run may use would be reported as one it

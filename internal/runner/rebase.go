@@ -44,11 +44,16 @@ func (r *run) rebaseStep(ctx context.Context) {
 	}
 	err = r.repo.Rebase(ctx, base)
 	for resolves := 0; errors.Is(err, gitops.ErrRebaseConflict); resolves++ {
+		// The paths are read before anything moves them — the abort below is
+		// what takes the conflict out of the checkout, and the reason names
+		// what nobody resolved — and they are recorded as met (E2, D2710):
+		// this branch met another task's work on a path, which is the sign
+		// the graph the two were launched from was missing an edge between
+		// them, whether or not a stage goes on to resolve it.
+		paths := r.unmergedPaths(ctx)
+		r.noteConflictPaths(paths)
 		if resolves >= rebaseResolves {
-			// The paths are read before the abort: it is the abort that takes
-			// the conflict out of the checkout, and the reason names what
-			// nobody resolved.
-			conflicts := conflicted(r.unmergedPaths(ctx))
+			conflicts := conflicted(paths)
 			r.abortRebase(ctx)
 			r.endRebase(ctx, runstore.StatusFailed, failure.Unclassified, fmt.Sprintf(
 				"rebasing %s onto origin/%s still conflicts%s after %d resolutions: the branch was left as it was and nothing was pushed",

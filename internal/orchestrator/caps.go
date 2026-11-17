@@ -41,14 +41,25 @@ type Caps struct {
 
 // Counts is what the committed intents say has been spent: the runs still in
 // flight, and the attempts committed in the windows the caps count over. It is
-// derived from the state and the server time and never kept in memory, so a
-// daemon that has just started counts what the node says rather than what it
+// derived from the states and the server time and never kept in memory, so a
+// daemon that has just started counts what the nodes say rather than what it
 // saw.
 type Counts struct {
 	Running int
 	Minute  int
 	Hour    int
 	Day     int
+}
+
+// Plus is one reading of the caps added to another: one node's counts beside
+// another's. It is what a project's count is made of (CountsOfAll).
+func (c Counts) Plus(o Counts) Counts {
+	return Counts{
+		Running: c.Running + o.Running,
+		Minute:  c.Minute + o.Minute,
+		Hour:    c.Hour + o.Hour,
+		Day:     c.Day + o.Day,
+	}
 }
 
 // CountsOf derives the counts from the intents a state carries. An intent is
@@ -81,9 +92,26 @@ func CountsOf(s State, now time.Time) Counts {
 	return c
 }
 
+// CountsOfAll derives the counts from every node of one project's subtree: its
+// state node and, beside it, one node per imported plan and the standing
+// backlog (D2735). D2743 counts max_running and the spawn caps over the whole
+// project and never per node — a plan's node is one daemon's work like the
+// state node is, and an allowance each node counted alone would multiply by
+// however many plans the project imported. One node's reading is what it always
+// was: the sum of one state is that state's own counts.
+func CountsOfAll(states []State, now time.Time) Counts {
+	var c Counts
+	for _, s := range states {
+		c = c.Plus(CountsOf(s, now))
+	}
+	return c
+}
+
 // Room reports whether one more run may start beside the ones this cycle has
 // already planned. Every cap has to hold, and the planned runs count against
-// all of them: a cycle plans a list, and it is the list the caps bound.
+// all of them: a cycle plans a list, and it is the list the caps bound. planned
+// is that list's length so far, and a cycle that works several nodes counts it
+// across all of them (D2743) the way it counts the intents.
 func (c Counts) Room(caps Caps, planned int) bool {
 	return c.Running+planned+1 <= caps.MaxRunning &&
 		planned+1 <= caps.MaxPerCycle &&

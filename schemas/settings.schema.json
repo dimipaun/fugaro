@@ -1539,6 +1539,9 @@
         "workflow_secrets.*.proxy": {
           "default": "unset = none: refused, D1275"
         },
+        "workflows.*.ab.reviewer_arm": {
+          "default": "unset = none: the workflow asks for no A/B reviewer arm"
+        },
         "workflows.*.base": {
           "default": "unset = none; the key was removed in 0.7.0"
         },

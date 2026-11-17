@@ -41,10 +41,15 @@ const (
 	// nobody has answered — the breaker's, in this slice — so the daemon has
 	// stopped starting what the question holds back.
 	NotifyDecisionNeeded Kind = "decision-needed"
+	// NotifyMergedNeedsReview is a merge the escalation ladder made under its
+	// gate for an item whose ceiling is Pro's or Hotfix's, which is the one
+	// ceiling that merges and tells somebody (D2030): the work landed without
+	// a person reading it, and the line says how much it left behind.
+	NotifyMergedNeedsReview Kind = "merged-needs-review"
 )
 
 // Kinds is the whole vocabulary.
-var Kinds = []Kind{NotifyRunFinished, NotifyDecisionNeeded}
+var Kinds = []Kind{NotifyRunFinished, NotifyDecisionNeeded, NotifyMergedNeedsReview}
 
 // Notification is one thing a tick says. Subject is the id the event is
 // about — the run's id, or the decision's — and Text is the line a person

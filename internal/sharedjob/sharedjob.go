@@ -1,9 +1,9 @@
 // Package sharedjob is the contract a Bitbucket shared job is built against
 // (plan C1, slice bb-shared-jobs). It declares the shapes the sides of that
-// work are written against while they are written in parallel, and nothing
-// that behaves: the stubs (stub.go) return a shape and decide nothing, the
-// sides replace the calls they make and not the shapes, and the integration
-// task I1 deletes the stubs once the sides are wired.
+// work were written against while they were written in parallel. The sides are
+// wired now (I1), so the stubs the parallel work ran against are gone and
+// nothing here behaves: it holds the shapes a side owes or reads, and a shape
+// an empty or zero field could decide is written to fail closed.
 //
 // The four sides, and the shape each one owes or reads:
 //

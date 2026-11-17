@@ -463,6 +463,11 @@ var censusOutputDirs = []string{
 	"dist",
 	".firebase",
 	"secrets",
+	// .gitignore: the JUnit reports `commands.test` writes through
+	// internal/verify/gotestjunit, which `fugaro verify test` reads back for the
+	// run record's counts (.gitignore says why they are ignored and never
+	// committed).
+	"reports",
 }
 
 // censusOutputNames are ignored by name at any depth.
@@ -1054,6 +1059,10 @@ var censusIgnored = []struct {
 	{".gitignore", "/fugaro", "fugaro", true, ""},
 	{".gitignore", "/clidoc", "clidoc", true, ""},
 	{".gitignore", "*.exe", "fugaro.exe", true, ""},
+	// The JUnit reports this repository's own test command writes, one per
+	// `go test` invocation it runs (fugaro.yaml, internal/verify/gotestjunit):
+	// a run's own output, never source text.
+	{".gitignore", "/reports/", "reports/tree.xml", false, ""},
 	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false, ""},

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -101,6 +102,33 @@ func TestStagePinsProviderRouteVars(t *testing.T) {
 	r.spend = Spend{Mode: "off"}
 	if pins := r.stagePins("implement"); pins != nil {
 		t.Errorf("gateway off: pins = %+v, want nil", pins)
+	}
+}
+
+// TestCheckpointStageKeepsItsOwnOutputLimit: the checkpoint stage's per-call
+// output limit is the small figure its three labelled lines need and not the
+// coder slot's own (checkpoint_stage.go, checkpointMaxOutputTokens), and it is
+// one figure for both readers of the mapping: the pin Claude Code is launched
+// with (stagePins) and the limit the gateway refuses a call over (stageSpec).
+// A stage pinned above the limit it is enforced at would have every call
+// refused, which is why the two read stageMaxOutput rather than each their own
+// slot — and the checkpoint stage is the one stage whose slot is not its
+// role's.
+func TestCheckpointStageKeepsItsOwnOutputLimit(t *testing.T) {
+	r := stagePinsRun(t, "claude-sonnet-5-5", "claude-opus-5", "")
+	r.cfg.Agent.MaxOutputTokens = config.RoleTokens{Coder: 4096, Reviewer: 8192}
+
+	if got := r.stageMaxOutput("implement"); got != 4096 {
+		t.Errorf("implement's per-call output limit = %d, want the coder slot's own 4096", got)
+	}
+	if got := r.stageMaxOutput(checkpointStageName); got != checkpointMaxOutputTokens {
+		t.Errorf("the checkpoint stage's per-call output limit = %d, want %d: the answer is three labelled lines, not a stage's output",
+			got, checkpointMaxOutputTokens)
+	}
+	pins := r.stagePins(checkpointStageName)
+	if got := pins["CLAUDE_CODE_MAX_OUTPUT_TOKENS"]; got != strconv.Itoa(checkpointMaxOutputTokens) {
+		t.Errorf("the checkpoint stage's output pin = %q, want %d: the figure Claude Code is pinned to and the figure the gateway refuses a call over are one",
+			got, checkpointMaxOutputTokens)
 	}
 }
 

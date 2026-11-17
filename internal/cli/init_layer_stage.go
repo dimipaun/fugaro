@@ -125,6 +125,12 @@ type layerPlan struct {
 	// skip is a sentence for a state with nothing to do that is worth saying,
 	// and it is the stage's whole answer then.
 	skip string
+	// skipUndone says the skip above is not "nothing to do": the bucket this
+	// run would publish into could not be read, so whether anything is owed is
+	// unknown rather than nothing, and the step this stage was run for stays
+	// owed (initflow.Status.Undone). The other skip — no local layer file and
+	// no published object — is nothing to do and leaves this false.
+	skipUndone bool
 	// seed: there is no local file and the project has published one.
 	seed bool
 	// publish: the local file is there and differs from the published object.
@@ -310,6 +316,10 @@ func layerPlanFor(ctx context.Context, lc *localcfg.Config, mode rigor.Mode) (*l
 			return p, nil
 		}
 		p.skip = fmt.Sprintf("the project layer's bucket (%s) could not be read, so this run leaves the project layer and its local layer file as they are: %s", p.url, oneLineCLI(rerr.Error()))
+		// Nothing of this stage was decided, so nothing of it is answered: a
+		// step run for this stage stays owed until a run reads the bucket
+		// (Check's Undone).
+		p.skipUndone = true
 		return p, nil
 	case exists:
 		p.published, p.pubExists, p.gen = data, true, gen
@@ -447,7 +457,9 @@ func readPublishedLayer(ctx context.Context, lc *localcfg.Config, url string) (d
 }
 
 // Check reports where the project layer and its local file stand. A bucket it
-// cannot read is a skip with the reason, never a failed run.
+// cannot read is a skip with the reason, never a failed run — and one that
+// leaves the step this stage was run for owed, because nothing was decided
+// (Undone).
 func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	p, err := s.plan(ctx)
 	if err != nil {
@@ -455,7 +467,7 @@ func (s *layerStage) Check(ctx context.Context) (initflow.Status, error) {
 	}
 	switch {
 	case p.skip != "":
-		return initflow.Status{State: initflow.Skipped, Detail: p.skip}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: p.skip, Undone: p.skipUndone}, nil
 	case p.rigor != nil && p.pubSkip != "":
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the wizard's rigor answer (%s) is written into %s: this run writes it and leaves the project layer unpublished, because %s. The next step for the unpublished layer is %s", p.rigor.mode, p.path, p.pubSkip, selfCommand()+" update")}, nil
 	case p.rigor != nil:

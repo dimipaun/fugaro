@@ -83,7 +83,14 @@ import (
 // and the tool log is the child's own. Checks 500 and 501 drive a fake `gcloud`
 // and a fake `fugaro` that logs every call with the directory it was made in, so
 // a case says both what the check measured and that no image was built, no
-// `fugaro update` was answered for the owner and no run was launched. Checks 520
+// `fugaro update` was answered for the owner and no run was launched. Check 581
+// drives those same two fakes over the multi-repository catalog build: a fake
+// `fugaro` that answers `version`, `doctor --json`, `image ls --json`, `image
+// survey --json` and `image build`, printing the submitted line and the bake
+// note the real one prints and marking the entry as built so the second catalog
+// read is the one after it, and a fake `gcloud` that serves the build's own
+// steps -- so a case can bend the map, the note and the steps and say what the
+// check made of each. Checks 520
 // and 521 drive the same two fakes over the vision-model work: a fake `fugaro`
 // whose `doctor --json` carries the `vision-coder` sentence the premise is read
 // from, whose `run --json` launches the run the check follows, whose `runs ls
@@ -298,12 +305,29 @@ import (
 // account, a run or a log view naming belong, a read that fails, hangs or
 // answers something that is not a document, a record naming no execution, a
 // record and a listing that disagree about the execution, a doctor that exits 1
+// (an answer, #2719) and one that does not answer at all.
 // (an answer, #2719) and one that does not answer at all. Check 127's fakes are
 // a fake `fugaro`, a fake `git` and a fake `gh`, each answering out of the
 // case's own documents and logging every call: the check reads a sandbox
 // repository's runs, its config and its pull requests and launches nothing, so
 // a case says which repository each read named and that the backlog index was
 // regenerated in a copy rather than in the checkout.
+// Check 197's fakes are a fake `fugaro` -- a published policy whose one
+// GitHub profile admits one sandbox repository, a `run` that RECORDS the run it
+// was asked for and refuses a repository outside that profile with the
+// launcher's own sentence, and a `runs ls` whose rows carry the execution the
+// job is read out of -- and a fake `gcloud` that serves the job list (a SHARED
+// job of the profile beside the per-repository job a run lands on when its
+// repository selects no profile, with a mode each for a mount that is still
+// there, a named account's token, a plain value, a provider key, a Bitbucket
+// job and a job whose env does not name the service), one job's or one
+// execution's own spec, and the Cloud Logging read whose filter carries the run
+// id and whose lines are the service's own `credsvc: audit` lines, so a case
+// says what served a run, under which verified account, with which credential,
+// tier and purpose, and what a run's own execution kept across a re-apply. Its
+// Bitbucket half is the plan's own "(after D2079)": a case that names no
+// Bitbucket repository, or one no shared Bitbucket job serves, reads those rows
+// as INFO and the run still ends 0.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -326,6 +350,7 @@ var liveCheckScripts = []struct {
 	{"check191.sh", "check191_test.sh"},
 	{"check193.sh", "check193_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check197.sh", "check197_test.sh"},
 	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
@@ -345,6 +370,7 @@ var liveCheckScripts = []struct {
 	{"check-410.sh", "check-410_test.sh"},
 	{"check-500.sh", "check-500_test.sh"},
 	{"check-501.sh", "check-501_test.sh"},
+	{"check-581.sh", "check-581_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
 	{"check-c0.sh", "check-c0_test.sh"},
