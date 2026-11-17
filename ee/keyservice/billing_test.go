@@ -26,8 +26,11 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -580,5 +583,76 @@ func TestAnotherOrgsSubscriptionIsRefused(t *testing.T) {
 
 	if len(f.paddle.seats) != 0 || f.paddle.customerID != "" {
 		t.Errorf("the merchant was reached for a workspace that is not the caller's: %v seats, customer %q", f.paddle.seats, f.paddle.customerID)
+	}
+}
+
+// TestCancelSubscriptionsOfEndsTheOrgsRunningOnes is P2.4's cancellation as this
+// area holds it (billing.go's `cancelSubscriptionsOf`): every subscription one
+// organisation holds is ended at the merchant, and nothing else is. The three
+// things a deletion must not get wrong are all here — another organisation's
+// subscription is not this organisation's to end, one already cancelled is not
+// ended a second time, and a merchant that fails on one does not stop the rest,
+// which is what a deletion that left the others charging a customer who is gone
+// would be.
+//
+// The record is left where it stands: a store marked cancelled here would be a
+// subscription this service ended without Paddle having said so, and the
+// merchant's own cancellation event is what moves it (P4.2).
+func TestCancelSubscriptionsOfEndsTheOrgsRunningOnes(t *testing.T) {
+	f := newCheckoutFixture(t)
+	ctx := context.Background()
+	org, _ := f.payingWorkspace(t, billingSeats)
+	// The second subscription of the same organisation is the one that is there
+	// to be ended beside the first, and the two below are the two it must not
+	// touch: the one a cancellation was already recorded for, and another
+	// organisation's.
+	f.paidWorkspace(t, org.ID, "ws-2", secondProject, "sub-dana-2", 1, f.now.Add(20*24*time.Hour), false)
+	f.paidWorkspace(t, org.ID, "ws-3", lapsedProject, "sub-dana-gone", 1, f.now.Add(6*24*time.Hour), true)
+	erin := f.seededOrganisation("org-erin", "Erin Ltd", orgTypeCustomer, erinUID, erinEmail, roleOwner)
+	f.paidWorkspace(t, erin.ID, "ws-erin", "erin-portal-4821", "sub-erin", 1, f.now.Add(20*24*time.Hour), false)
+
+	running := []string{"sub-dana", "sub-dana-2"}
+	if err := f.svc.cancelSubscriptionsOf(ctx, org.ID); err != nil {
+		t.Fatalf("cancelling the subscriptions of %s answered %v, want nothing: the merchant took both", org.ID, err)
+	}
+	asked := append([]string(nil), f.paddle.cancelled...)
+	slices.Sort(asked)
+	if !slices.Equal(asked, running) {
+		t.Errorf("the merchant was asked to cancel %v, want exactly %v: a subscription another organisation holds and one a cancellation was already recorded for are not this organisation's to end",
+			asked, running)
+	}
+	for _, id := range running {
+		held, present, err := f.store.Subscription(ctx, id)
+		if err != nil || !present {
+			t.Fatalf("reading the subscription %s back: %v (present %t)", id, err, present)
+		}
+		if held.Cancelled {
+			t.Errorf("the record of %s reads cancelled, and this path writes no record: the merchant's own cancellation event is what moves it", id)
+		}
+	}
+
+	// A merchant that refuses does not stop the rest: every subscription is
+	// attempted and the failures are joined, because a deletion that stopped at
+	// the first would leave the others charging a customer who is gone, and what
+	// a caller can do with the answer is finish by hand the ones it names.
+	f.paddle.err = errors.New("the merchant of record is unreachable")
+	refused := f.svc.cancelSubscriptionsOf(ctx, org.ID)
+	if refused == nil {
+		t.Fatal("a merchant that refused both cancellations answered nothing, want the two failures joined")
+	}
+	if !errors.Is(refused, f.paddle.err) {
+		t.Errorf("the answer %q does not name the merchant's own failure, so a caller cannot read what the failure was", refused)
+	}
+	for _, id := range running {
+		// The whole phrase and not the id alone: "sub-dana" is a prefix of
+		// "sub-dana-2", so an answer naming only the second would carry the first
+		// as a substring and a case reading for the id would call that covered.
+		if !strings.Contains(refused.Error(), "cancel the subscription "+id+": ") {
+			t.Errorf("the answer %q does not name %s, so a caller cannot finish that subscription by hand", refused, id)
+		}
+	}
+	if len(f.paddle.cancelled) != 2*len(running) {
+		t.Errorf("the merchant was asked to cancel %v across the refused pass, want one attempt per subscription (%d): a failure on one must not stop the rest",
+			f.paddle.cancelled[len(running):], len(running))
 	}
 }
