@@ -925,7 +925,12 @@ func TestAProviderKeyTheServiceCannotReadRefuses(t *testing.T) {
 // and none may hold a byte of the key.
 func TestTheValueIsInNoDocumentTheRunRecordCarries(t *testing.T) {
 	r := newAddRig(t)
-	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
+	// addTyped and not add: declaring an anthropic credential puts
+	// craft_credentials on the shared node, and a publish that loosens it is the
+	// project's own name typed at a terminal (D846), which a rig whose command
+	// carries no terminal is refused at the policy step (it is the one
+	// TestAccountsAddAnthropicKey, above, stands at).
+	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
 	value := addToken()
 	// The documents below are worth scanning only because they are the ones a
 	// run about this credential decodes: the config declares it, so the node and
