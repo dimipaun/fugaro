@@ -418,7 +418,8 @@ func originHost(origin string) string {
 // to the branch the project happens to use today, and no later project-level
 // change would reach it. The rest is read from the project — the App ID the
 // project's other GitHub repositories are onboarded with, and the account they
-// name — or carried as the entry already has it.
+// name where that account covers this repository — or carried as the entry
+// already has it.
 func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName string, plan reposEnrolment, provider string, cfg *config.Config) (localcfg.Repo, string, error) {
 	next := plan.entryNow
 	next.Provider = provider
@@ -482,11 +483,16 @@ func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName str
 		}
 		next.GitHubAppID = appID
 	}
+	var accountNote string
 	if len(next.ClaudeAccounts) == 0 {
-		next.ClaudeAccounts = projectClaudeAccounts(lc, ownerName)
+		next.ClaudeAccounts, accountNote = projectClaudeAccounts(lc, ownerName, provider)
 	}
 	next = reposEntryMerge(plan.entryNow, next, plan.entryKnown)
-	return next, reposEntryWhy(plan.entryNow, next, plan.entryKnown, ownerName), nil
+	why := reposEntryWhy(plan.entryNow, next, plan.entryKnown, ownerName)
+	if accountNote != "" {
+		why += " — " + accountNote
+	}
+	return next, why, nil
 }
 
 // reposViewWorkflowNames is the names of the workflows a row carries, in the
@@ -520,8 +526,22 @@ func projectGitHubAppID(lc *localcfg.Config, ownerName string) (string, bool) {
 // projectClaudeAccounts is the account the project's other repositories name,
 // and only when there is exactly one to read: none or several is not an answer
 // this command may pick, and an entry that names none is the ordinary state —
-// its runs are served by its profile's accounts.
-func projectClaudeAccounts(lc *localcfg.Config, ownerName string) []string {
+// its runs are served by its profile's accounts. The second return is the plan's
+// line for an account that is left out, empty where there is nothing to leave.
+//
+// An account is copied only where it covers the repository being enrolled. The
+// entry written here is a source of the published accounts block, and the
+// publish refuses a repository entry naming an account whose own list does not
+// reach it (projectpolicy deriveRepoAccounts → repoAccountCovers): an account's
+// list is the bound on where its token may be read (D3), so a repository the
+// account does not cover is one the operator said the token is not for. That
+// refusal lands after the one confirmation and after this entry, the image
+// mapping and the allow-list entry are written, which leaves the enrolment half
+// done and a file every later publish — `fugaro update`'s included — fails on
+// until somebody repairs it by hand. So the account is left out instead, and the
+// plan says which one and why: an entry that names no account is the ordinary
+// state, and the repository's runs are then served by its profile's accounts.
+func projectClaudeAccounts(lc *localcfg.Config, ownerName, provider string) ([]string, string) {
 	accounts := map[string]bool{}
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
 		if sameRepoName(name, ownerName) {
@@ -532,9 +552,28 @@ func projectClaudeAccounts(lc *localcfg.Config, ownerName string) []string {
 		}
 	}
 	if len(accounts) != 1 {
-		return nil
+		return nil, ""
 	}
-	return slices.Sorted(maps.Keys(accounts))
+	ref := slices.Sorted(maps.Keys(accounts))[0]
+	if !repoAccountCovered(lc, provider, ownerName, ref) {
+		return nil, fmt.Sprintf("claude_accounts left out, because the account %s the project's other repositories name does not reach %s: an account serves only the repositories its own list names, so an entry here that named it would be refused by the publish. This entry names no account, and its runs are served by its profile's accounts",
+			pluginwire.Printable(ref), pluginwire.Printable(ownerName))
+	}
+	return []string{ref}, ""
+}
+
+// repoAccountCovered asks whether the publish would accept an entry for repo
+// that names ref — the question this command has to answer before it writes that
+// entry — by putting exactly that entry to the publish's own derivation
+// (DeriveAccounts, through the same repos map the local config builds). The rule
+// is the publish's, and a second reading of it here could come to answer
+// differently from the publish it is meant to anticipate; the provider is the
+// entry's, since an accounts entry is provider-qualified and the derivation
+// refuses one without it.
+func repoAccountCovered(lc *localcfg.Config, provider, repo, ref string) bool {
+	_, err := projectpolicy.DeriveAccounts(nil, lc.ClaudeAccounts, lc.ProjectSecrets,
+		map[string]projectpolicy.RepoAccount{repo: {Provider: provider, Accounts: []string{ref}}})
+	return err == nil
 }
 
 // sameRepoName reports whether two config keys name the same repository, one

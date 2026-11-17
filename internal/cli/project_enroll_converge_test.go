@@ -59,6 +59,42 @@ image_catalog:
       source: { kind: inline, inline: "FROM scratch\n" }
 `
 
+// enrolRigLocalScopedAccount is enrolRigLocal with the project's other
+// repository served by a named account whose own allow_data_to names that
+// repository and nothing else: the shape `fugaro accounts add --repos
+// owner/repo-a` leaves, where the account's list is the bound on where its token
+// may be read.
+const enrolRigLocalScopedAccount = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: fugaro-runs-proj-1234
+registry: us-east5-docker.pkg.dev/proj-1234/fugaro
+build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }
+user: test@example.com
+base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }
+profiles:
+  standard:
+    provider: github
+    cpu: 2
+    memory: 8Gi
+    timeout_class: 6h
+    allow_repos:
+      - github/owner/repo-a
+repos:
+  owner/repo-a: { provider: github, github_app_id: "12345", workflows: [web], claude_accounts: [work] }
+image_catalog:
+  entries:
+    - name: base
+      tags: [node]
+      default: true
+      source: { kind: inline, inline: "FROM scratch\n" }
+claude_accounts:
+  work:
+    allow_data_to:
+      - owner/repo-a
+`
+
 // enrolCheckoutYAML is the repository's own statement: the provider and the
 // workflow selection the converge reads and is forbidden to guess.
 const enrolCheckoutYAML = `version: 1
@@ -326,6 +362,70 @@ func TestProjectReposAddLeavesAPlainUpdateNothingToWrite(t *testing.T) {
 	}
 	if got := r.cfgText(t); got != settled {
 		t.Errorf("the second update rewrote the local config:\n--- before\n%s\n--- after\n%s", settled, got)
+	}
+}
+
+// TestProjectReposAddLeavesOutAnAccountThatDoesNotCoverTheRepository is the
+// state no fixture had, and the one `fugaro accounts add --repos owner/repo-a`
+// leaves behind: the project's other repository is served by a named account
+// whose own list names that repository alone.
+//
+// The account's list is the bound on where its token may be read (D3), so an
+// entry for another repository that named it is one the publish refuses
+// (projectpolicy deriveRepoAccounts → repoAccountCovers) — and that refusal
+// lands after the one confirmation and after this machine's entry, the image
+// mapping and the allow-list entry are written, which leaves the enrolment half
+// done and every later publish, `fugaro update`'s included, failing on the file
+// until somebody repairs it by hand. The account is therefore never guessed onto
+// this repository: the entry names none, the plan says which account was left
+// out and why, and the update after it converges — which is the assertion that
+// the file this command wrote is one the publish accepts.
+func TestProjectReposAddLeavesOutAnAccountThatDoesNotCoverTheRepository(t *testing.T) {
+	r := enrolRigOver(t, enrolRigLocalScopedAccount)
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s beside an account scoped to owner/repo-a: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	entry := r.addLocal(t).Repos[enrolRepo]
+	if len(entry.ClaudeAccounts) != 0 {
+		t.Errorf("repos[%s].claude_accounts = %v, want none: the account the project's other repository names does not cover this one, and an entry that named it is what the publish refuses", enrolRepo, entry.ClaudeAccounts)
+	}
+	if !strings.Contains(out, "claude_accounts left out") || !strings.Contains(out, "work") {
+		t.Errorf("the plan does not say which account was left out and why:\n%s", out)
+	}
+	// The publish landed with the entry as written: the node carries this
+	// repository's admission and its mapping, so no refusal of the accounts
+	// block stopped it.
+	if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) {
+		t.Errorf("allow_repos = %v, want %s on it: the publish did not land", p.AllowRepos, enrolEntry)
+	}
+	if got := r.policy(t).ImageMap[enrolEntry]; got != "base" {
+		t.Errorf("the published image_map[%s] = %q, want the entry this enrolment wrote: the publish did not land", enrolEntry, got)
+	}
+
+	// The repository's own credential, stored here the way `project sync`
+	// stores it and TestProjectReposAddLeavesAPlainUpdateNothingToWrite does:
+	// an update that stopped on that step would report the step it leaves
+	// rather than converge over the file this command wrote.
+	slug := mustSlug("github", enrolRepo)
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{config.GitHubAppKeySecret, "claude-oauth-token"} {
+		r.sm.Seed(gcp.SecretID(slug, name), map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name,
+		}, []byte(addToken()))
+	}
+	before, node := r.addLocal(t), r.nodeText(t)
+	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("a plain fugaro update over the installation the enrolment converged: %v\nstderr:\n%s", err, errOut)
+	}
+	if got := r.addLocal(t); !reflect.DeepEqual(got, before) {
+		t.Errorf("the update after the enrolment changed the local config:\n--- before\n%+v\n--- after\n%+v", before, got)
+	}
+	if got := r.nodeText(t); got != node {
+		t.Errorf("the update after the enrolment rewrote the published node:\n--- before\n%s\n--- after\n%s", node, got)
 	}
 }
 
