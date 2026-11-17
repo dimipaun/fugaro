@@ -29,6 +29,18 @@ import (
 // own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
 // so a case can say what served a run, what the run declared and what it was
 // served instead), fake `gcloud`, `fugaro`
+// and `curl` for Check 194 (194's fake `gcloud` holds two sandbox repositories'
+// Cloud Run jobs, each mounting the installation's project-wide secret
+// container of a workflow secret, carrying an account of its own and answering
+// the check's Cloud Logging reads with the credentials service's own
+// `credsvc: audit` lines -- and it evaluates the IAM policy of one of those
+// containers, so a case can say what an account holds an accessor on; its fake
+// credentials service behind a fake `curl` serves the two
+// `creds/workflowsecrets` records -- the one that lists the repository under
+// test and the one that admits the whole workspace -- and refuses every write,
+// so a case says both records' container ids, what a run was served, what
+// another repository's job was refused and that no record ever carried a
+// value), fake `gcloud`, `fugaro`
 // and `curl` for Check 195 (a small project whose service and account appear and
 // disappear, whose IAM policy names what was granted to it, and whose build ends
 // the way its own step's line says), a fake `gcloud` that
@@ -320,6 +332,7 @@ var liveCheckScripts = []struct {
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
 	{"check193.sh", "check193_test.sh"},
+	{"check194.sh", "check194_test.sh"},
 	{"check195.sh", "check195_test.sh"},
 	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
@@ -431,7 +444,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 174 items on one runner and under a minute each; a split that
+// The suite is 195 items on one runner and under a minute each; a split that
 // dropped one, ran one twice or fell back to everything would show up as a
 // green run that tested less, which is the failure this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
