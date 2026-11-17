@@ -249,6 +249,66 @@ func TestPlanImportBriefPinsCommitAndSectionHash(t *testing.T) {
 	}
 }
 
+// TestPlanSectionDigestReadsThroughAFence: a plan shows commands, and a shell
+// comment in one is a `#` at column 0. Read as a heading it ends the task's
+// section, and the digest then covers only the text above the fence — so an
+// edit below it leaves the digest standing still. That is a brief pinning text
+// the run is not working from (F49), and it is what D2745's re-import rule
+// reads as an unchanged section and leaves alone: the fix is refused, the stale
+// approval holds, and the run works from the plan as it stood before the edit.
+//
+// Mutation: drop the fence tracking from planSection, and the post-fence edit
+// below leaves the digest unchanged, while B's section is still found.
+func TestPlanSectionDigestReadsThroughAFence(t *testing.T) {
+	const (
+		above = "### A: build the thing\n\nRun it:\n\n```sh\n# configure the thing\n"
+		below = "export THING=1\n```\n\n- **Acceptance**: A builds.\n"
+	)
+	doc := "# The demo plan\n\nProse.\n\n" + above + below + "\n### B: use the thing\n\nDo B.\n"
+	sum := sha256.Sum256([]byte(above + below))
+	whole := "sha256:" + hex.EncodeToString(sum[:])
+
+	got, ok := orchestrator.PlanSectionDigest(doc, "A")
+	if !ok {
+		t.Fatal("A's section was not found")
+	}
+	if got != whole {
+		t.Errorf("the section hashes to %s, and the section a reader sees — the fence and its comment included — hashes to %s", got, whole)
+	}
+	cut := sha256.Sum256([]byte("### A: build the thing\n\nRun it:\n\n```sh\n"))
+	if got == "sha256:"+hex.EncodeToString(cut[:]) {
+		t.Error("the digest covers the section only down to the fence: the `#` inside it was read as a heading")
+	}
+
+	// The edit that has to move the digest: what is below the fence.
+	edited := strings.Replace(doc, "A builds.", "A builds, and the fence is not the end of the section.", 1)
+	next, ok := orchestrator.PlanSectionDigest(edited, "A")
+	if !ok {
+		t.Fatal("A's section was not found in the edited plan")
+	}
+	if next == got {
+		t.Error("an edit below the fence left the digest unchanged, so the brief pins text nobody is working from")
+	}
+
+	// And the fence does not swallow the document: the plan's next task still
+	// has a section, and it is not the one the fence is in.
+	b, ok := orchestrator.PlanSectionDigest(doc, "B")
+	if !ok {
+		t.Fatal("B's section was not found: the fence ran to the end of the document")
+	}
+	if b == got {
+		t.Error("B's section hashed as A's")
+	}
+
+	// A tilde fence is a fence too: the `#` in this one is inside it, so the
+	// section runs to the end of the task and not to the fence's opening.
+	tildes := "### A: do\n\n~~~\n# not a heading\n~~~\n\nEnd.\n\n## Next\n"
+	tail := sha256.Sum256([]byte("### A: do\n\n~~~\n# not a heading\n~~~\n\nEnd.\n"))
+	if d, ok := orchestrator.PlanSectionDigest(tildes, "A"); !ok || d != "sha256:"+hex.EncodeToString(tail[:]) {
+		t.Errorf("the section of the tilde-fenced plan hashes to %q (%v), and a reader's section hashes to sha256:%s", d, ok, hex.EncodeToString(tail[:]))
+	}
+}
+
 // TestPlanImportLinksAdoptedItemAndRewritesEdges is D2746: the daemon adopts a
 // run in flight as an item keyed by `<plan>/<task>` before any session imports
 // the plan, and the import meets that item rather than writing a second one
