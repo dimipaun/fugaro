@@ -4482,6 +4482,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateModelGrades(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// A workflow's ab: block is the same kind of break, on workflowABSince:
+	// it is a key of fugaro.yaml's workflows: map, which every release decodes
+	// whole and strictly, so the runner that refuses it dies at bootstrap.
+	if err := r.gateWorkflowAB(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		// The ceiling and the keys the layer would clamp are the run's own
 		// account of what it is about to apply, not the step's line: with a
@@ -5135,6 +5141,24 @@ func (r *initRun) gateModelGrades(o *initOptions, repo string, lc *localcfg.Conf
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseModelGradesSkew(repo, cfg.RepoModelGradesSet, cfg.Layer.SetsModelGrades(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateWorkflowAB is fugaro update --repo's gate for workflowABSince:
+// refuseWorkflowABSkew, with gateRigor's escapes and for its reason, and
+// gateTriage's one-file shape: a workflow's ab: block is fugaro.yaml's alone
+// (config.WorkflowAB), and the project layer's Profile carries no ab member, so
+// there is no layer half here the way gateModelGrades has one — a layer that
+// wrote the key would be refused by the layer's own loader before any image is
+// judged.
+func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseWorkflowABSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
