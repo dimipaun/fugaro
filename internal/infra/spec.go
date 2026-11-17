@@ -2318,11 +2318,11 @@ func (rs RepoSpec) Addresses() []string {
 // proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
 // the second way a mount comes to be held: a name config.ProxiedGitSecretNames
 // lists is the credentials service's for a repository the published node
-// admits with proxy: true (B1.8, D500), and for that repository alone — the
-// same name in another repository's spec, proxied false, keeps its accessor
-// (G9). It is a parameter rather than a read of the spec so that this function
-// stays the one statement of the module's rule, and so that the rule is
-// visible where it is called.
+// admits with proxy: true (B1.8, B1.13 part two, D500), and for that
+// repository alone — the same name in another repository's spec, proxied
+// false, keeps its accessor (G9). It is a parameter rather than a read of the
+// spec so that this function stays the one statement of the module's rule, and
+// so that the rule is visible where it is called.
 //
 // It is the same question modules/workflow/sa.tf's job_secret_names asks, one
 // mount at a time, and it is written the same way — a name survives if ANY
@@ -2347,6 +2347,32 @@ func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
 		held = true
 	}
 	return held
+}
+
+// DropsBitbucketToken reports whether this root's plan takes the Bitbucket
+// token away from the repository's jobs: the job's mount of it (Readiness's
+// drop, and the module's job_mounts with it) and its account's secretAccessor
+// on it (the mirror in Addresses, and modules/workflow/sa.tf beside it).
+//
+// It is Readiness's own two conditions, stated once for a caller that has to
+// decide BEFORE a plan runs: `fugaro update` refuses the drop while the
+// credentials service's bundle holds no token to fetch instead (B1.13 part
+// two, the owner's ruling O8, internal/cli's update_proxied.go), and a second
+// statement of the condition there would be a second answer about one plan —
+// the state where the gate answers false and the apply drops the mount is
+// exactly the one the ruling forbids. The name is read from
+// config.ProxiedGitSecretNames, so a list that stopped naming the token
+// answers false here as it drops nothing there.
+//
+// The drop is pinned where the plan makes it (spec_test.go's
+// TestFilledProxiedListDropsMountAndAccessor, its empty-list counterfactual
+// TestEmptyProxiedListKeepsTheMountAndAccessor and
+// TestFilledProxiedListKeepsNonProxiedRepositories), and
+// TestDropsBitbucketTokenIsTheDropThePlanMakes holds this answer to that drop
+// on the same fixtures, so the two cannot part company without a test failing.
+func (rs RepoSpec) DropsBitbucketToken() bool {
+	return rs.Installation.CredentialsService != nil && rs.BitbucketProxied &&
+		slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
 }
 
 // serviceReadsSecret reports whether the credentials service's own account is
