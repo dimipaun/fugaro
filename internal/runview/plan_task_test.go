@@ -126,6 +126,15 @@ var planTaskReaders = map[string]string{
 	// a run to its node with. Neither decides anything with it.
 	"internal/orchestrator/launch.go":       "carries the item's plan task into the launch spec (Spec.PlanTask, SpecOf), where the launcher reads it",
 	"internal/cli/orchestrator_launcher.go": "passes the item's plan task into the command's own launch resolution, which records it in the task and in launch.json",
+	// The import of a plan's graph (D2704): it writes the id as an item's
+	// plan_task, and matches on it so an item the daemon adopted for the same
+	// task is linked rather than duplicated (D2746). What the match decides is
+	// which item of the plan's own node an edge names, and both sides are items
+	// already in that node -- the adopted one written by the daemon from a
+	// launch record, the one this import would write arriving unapproved -- so
+	// nothing is admitted, budgeted or granted by it, and it refuses rather
+	// than guesses when one plan task stands under two items.
+	"internal/orchestrator/planimport.go": "writes a plan's task id as an item's plan_task, and matches on it to link an adopted item rather than duplicate it (D2746)",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

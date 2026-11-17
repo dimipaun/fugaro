@@ -379,6 +379,17 @@ var jsonCases = map[string]jsonCase{
 			return []string{"orchestrator", "ls"}
 		},
 	},
+	"orchestrator import": {
+		run: func(t *testing.T) []string {
+			newOrchestratorFixture(t)
+			// The plan path reads a graph in a checkout and the plan itself at
+			// HEAD, so the rig is a real checkout with a real commit rather
+			// than a fixture directory: the graph the import answers about is
+			// the one committed there.
+			t.Chdir(planImportCheckout(t, planImportGraph, planImportPlanMD))
+			return []string{"orchestrator", "import", "--plan", "docs/demo"}
+		},
+	},
 	"orchestrator patch": {
 		run: func(t *testing.T) []string {
 			f := newOrchestratorFixture(t)
