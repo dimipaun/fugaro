@@ -8047,7 +8047,7 @@ paste a push token, a service-account key, an ID token or a MAC key.**
 **Restore.** The check's own effects are the phone's and the installation's, and they are yours to keep or 
 undo:
 
-- **The pairing** — unpair the phone with `fugaro pair revoke`, which deletes the device node and the push 
+- **The pairing** — unpair the phone with `fugaro pair revoke --uid <uid>`, which deletes the device node and the push 
 node together (§3.4); or re-pair if you are keeping push.
 - **The push node's contents** — the sender's ledger and any orphaned `push/$uid` are inert and get reaped; 
 delete any leftover by hand over IAM if you want it gone now.
