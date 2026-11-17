@@ -628,6 +628,46 @@ func TestUncoveredSubmoduleNamesTheRepo(t *testing.T) {
 	}
 }
 
+// TestForeignSubmoduleIsLeftUnrouted: a submodule on another host -- a public
+// GitHub one inside a Bitbucket repository, which is a shape repositories do
+// carry -- is left exactly as .gitmodules declares it, and the run goes on.
+// The insteadOf rewrite the run's environment carries names this execution's
+// forwarder for bitbucket.org alone, so git fetches that submodule anonymously,
+// exactly as it would without this run; refusing it instead would stop every
+// proxied run of a repository that declares one, which the plan's acceptance
+// does not ask for (it owes a refusal for a Bitbucket repository the run's
+// access does not cover, and that is the sibling below).
+//
+// Mutation (run, restored): refuse a remote whose host is not bitbucket.org's
+// in nestedEndpoint -- the run stops on this repository's submodule and this
+// fails on the refusal.
+func TestForeignSubmoduleIsLeftUnrouted(t *testing.T) {
+	r, repo := nestedRun(t, map[string]string{
+		"lib":     "../lib.git",
+		"foreign": "https://github.com/other/thing.git",
+	}, []string{"bitbucket/acme/*"})
+	ctx := context.Background()
+	if err := r.routeLFSEndpoint(ctx); err != nil {
+		t.Fatalf("pointing the LFS endpoint: %v", err)
+	}
+	nestedCheckoutOut(t, repo)
+	if err := r.routeNestedFetches(ctx); err != nil {
+		t.Fatalf("routing the nested fetches of a checkout carrying another host's submodule: %v", err)
+	}
+	// The Bitbucket sibling is routed, so a run that routed nothing at all is
+	// not what this passes on.
+	want := strings.TrimSuffix(r.forward.URL(), "/") + "/acme/lib.git"
+	if got := testutil.Git(t, repo.Dir, "config", "--get", "submodule.lib.url"); got != want {
+		t.Errorf("submodule.lib.url = %q, want the forwarder's endpoint %q", got, want)
+	}
+	// And the foreign one is not: no URL of this execution's is written for it,
+	// which is what leaves git fetching it from github.com as the repository
+	// declared.
+	if got := testutil.Git(t, repo.Dir, "config", "--list"); strings.Contains(got, "submodule.foreign.url") {
+		t.Errorf("a submodule on another host was routed:\n%s", got)
+	}
+}
+
 // TestLFSEndpointStaysOffWithoutAForwarder: a run with no forwarder -- every
 // per-repository job, which holds its own Bitbucket token -- points nothing at
 // all. No lfs.url is written, so git-lfs keeps deriving the endpoint the job's

@@ -2157,8 +2157,8 @@ func (r *run) routeLFSEndpoint(ctx context.Context) error {
 	if err != nil || !routed {
 		return err
 	}
-	endpoint, err := r.nestedEndpoint(ctx, "the origin of this checkout", origin)
-	if err != nil {
+	endpoint, routed, err := r.nestedEndpoint(ctx, "the origin of this checkout", origin)
+	if err != nil || !routed {
 		return err
 	}
 	return r.repo.PointLFSAt(ctx, strings.TrimSuffix(endpoint, "/")+"/info/lfs")
@@ -2177,12 +2177,14 @@ func (r *run) routeLFSEndpoint(ctx context.Context) error {
 // moving it after the checkout costs the route nothing: the LFS endpoint is the
 // half that has to be written first (routeLFSEndpoint).
 //
-// What it writes is the checkout's own configuration and never a tracked file
-// (gitops' PointSubmoduleAt): submodule.<name>.url outranks what .gitmodules
-// declares, and `git submodule init` writes it and never overwrites it. A route
-// written into a tracked file would be a change of the run's own making in the
-// work it commits, and the route belongs to this execution alone: the
-// endpoint's port dies with it, and the next execution routes its own.
+// Only the submodules on bitbucket.org are routed: a submodule of another host
+// is left exactly as .gitmodules declares it, for the reasons nestedEndpoint
+// gives. What it writes is the checkout's own configuration and never a tracked
+// file (gitops' PointSubmoduleAt): submodule.<name>.url outranks what
+// .gitmodules declares, and `git submodule init` writes it and never overwrites
+// it. A route written into a tracked file would be a change of the run's own
+// making in the work it commits, and the route belongs to this execution alone:
+// the endpoint's port dies with it, and the next execution routes its own.
 func (r *run) routeNestedFetches(ctx context.Context) error {
 	if _, routed, err := r.routedOrigin(ctx); err != nil || !routed {
 		return err
@@ -2194,9 +2196,12 @@ func (r *run) routeNestedFetches(ctx context.Context) error {
 	for _, sub := range subs {
 		// The name is the repository's own text (.gitmodules is untrusted
 		// content), and it is the subject of a refusal an operator reads.
-		endpoint, err := r.nestedEndpoint(ctx, fmt.Sprintf("the submodule %s of %s", safetext.OneLine(sub.Name), r.spec.Repo), sub.URL)
+		endpoint, routed, err := r.nestedEndpoint(ctx, fmt.Sprintf("the submodule %s of %s", safetext.OneLine(sub.Name), r.spec.Repo), sub.URL)
 		if err != nil {
 			return err
+		}
+		if !routed {
+			continue
 		}
 		if err := r.repo.PointSubmoduleAt(ctx, sub.Name, endpoint); err != nil {
 			return err
@@ -2208,27 +2213,36 @@ func (r *run) routeNestedFetches(ctx context.Context) error {
 // nestedEndpoint is the endpoint this execution's forwarder serves remote at:
 // the forwarder's own URL with remote's path on it, which is the URL the
 // insteadOf rewrite credentialVars installs lands every bitbucket.org URL on
-// (forwarderRemote is this same endpoint for the run's own repository).
+// (forwarderRemote is this same endpoint for the run's own repository). routed
+// is false for a remote this run's route is not for — one on another host, or
+// one git parses no host out of at all — and the caller leaves that remote
+// exactly as the repository declared it.
+//
+// Only bitbucket.org is routed because the insteadOf rewrite names bitbucket.org
+// and nothing else: a submodule on another host — a public GitHub one inside a
+// Bitbucket repository, a shape repositories do carry — is fetched anonymously
+// by git exactly as it would be without this run, and this run withholds no
+// credential from it (a shared Bitbucket job holds none for that host either,
+// D2302, which is why nothing here needs one). Refusing it would stop every
+// proxied run of a repository that declares one; what this run owes a refusal
+// for is a Bitbucket repository its own access does not cover.
 //
 // what names the thing that declared the URL and is the subject of every
 // refusal below, so the operator reads which submodule to edit. A nested fetch
-// this run may not make is refused rather than routed: a URL that names no
-// repository a run can fetch, a host this run does not reach at all, and a
-// Bitbucket repository the published block does not cover. Each has its own
-// fix, and the service would refuse the same fetch a moment later with a class
-// rather than a repository name (G7) — after the agent had started, which is
-// what makes the sentence here worth having.
+// of bitbucket.org this run may not make is refused rather than routed: a URL
+// whose path does not name a repository the forwarder can serve, and a
+// repository the published block does not cover. Each has its own fix, and the
+// service would refuse the same fetch a moment later with a class rather than a
+// repository name (G7) — after the agent had started, which is what makes the
+// sentence here worth having.
 //
 // The refusals never quote a remote as it was written: a URL a repository
 // declares may carry a credential of its own, and remoteDisplay is what drops
 // one.
-func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (string, error) {
+func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (endpoint string, routed bool, err error) {
 	host, repoPath, ok := gitprov.SplitRemote(remote)
-	if !ok {
-		return "", fmt.Errorf("%s names %s, which is not a URL a repository is fetched from: a nested fetch is made through this run's forwarder, and a URL with no repository in it is one the forwarder cannot serve. Give it a URL git can resolve — a relative one, which git resolves against this checkout's own remote, is the shape almost every repository writes — and launch the run again", what, remoteDisplay(remote))
-	}
-	if gitprov.KindForHost(host) != gitprov.KindBitbucket {
-		return "", fmt.Errorf("%s names %s, which is on %s: this run's git and LFS traffic reaches bitbucket.org through the installation's credentials service, and it holds no credential for another host — a shared Bitbucket job mounts no token at all (D2302). A submodule or an LFS object of another host cannot be fetched by this run, so it stops here instead of failing part way through a fetch. Point it at its Bitbucket repository, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote), safetext.OneLine(host))
+	if !ok || gitprov.KindForHost(host) != gitprov.KindBitbucket {
+		return "", false, nil
 	}
 	repo := gitprov.TrimRepoPath(repoPath)
 	// The repository as the policy spells it, which is what the block's
@@ -2237,16 +2251,16 @@ func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (string, 
 	// matches nothing.
 	canonical, err := projectpolicy.Canonical(gitprov.KindBitbucket, repo)
 	if err != nil {
-		return "", fmt.Errorf("%s names %s, which does not name a Bitbucket repository as owner/name: a nested fetch is made through this run's forwarder, whose path is the repository it serves, and a path that is not one cannot be served. Point it at the repository it is, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote))
+		return "", false, fmt.Errorf("%s names %s, which does not name a Bitbucket repository as owner/name: a nested fetch is made through this run's forwarder, whose path is the repository it serves, and a path that is not one cannot be served. Point it at the repository it is, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote))
 	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if !found || p == nil || p.BitbucketToken == nil || !projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical) {
-		return "", fmt.Errorf("%s is the repository %s, which this run's Bitbucket access does not cover: a submodule's fetch and an LFS object's reach bitbucket.org through the installation's credentials service, which serves a repository only when the published policy's bitbucket_token.allow_repos covers it (the block is derived at publish time from project_secrets.%s.allow_data_to). Add the repository with 'fugaro secrets allow %s %s', then run 'fugaro update', which publishes the widened list. The run stops before the agent starts and before any git credential is requested", what, canonical, config.BitbucketSecret, config.BitbucketSecret, repo)
+		return "", false, fmt.Errorf("%s is the repository %s, which this run's Bitbucket access does not cover: a submodule's fetch and an LFS object's reach bitbucket.org through the installation's credentials service, which serves a repository only when the published policy's bitbucket_token.allow_repos covers it (the block is derived at publish time from project_secrets.%s.allow_data_to). Add the repository with 'fugaro secrets allow %s %s', then run 'fugaro update', which publishes the widened list. The run stops before the agent starts and before any git credential is requested", what, canonical, config.BitbucketSecret, config.BitbucketSecret, repo)
 	}
-	return strings.TrimSuffix(r.forward.URL(), "/") + "/" + repo, nil
+	return strings.TrimSuffix(r.forward.URL(), "/") + "/" + repo, true, nil
 }
 
 // originURL returns the checkout's origin URL, or the remote it will be
