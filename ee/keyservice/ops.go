@@ -214,6 +214,15 @@ var (
 	// installation runs was minted for another, and nothing here can tell which
 	// of the two the customer meant.
 	errOperationsDestinationBound = errors.New("keyservice: that workspace is bound to another Firebase project")
+	// errOperationsWorkspaceRelicensed is a transfer whose source workspace
+	// named another licence by the time the transaction that moves the project
+	// ran: the key list the request read is that other licence's, and the
+	// withdrawal this act owes (F29) is not the one it is holding. The act is
+	// refused rather than made without it — a transfer that moves the id and
+	// withdraws nothing leaves the key of the licence the workspace holds now
+	// live on a project the customer no longer holds — and a request sent again
+	// is decided on the licence the workspace holds then.
+	errOperationsWorkspaceRelicensed = errors.New("keyservice: the workspace holds another licence than the one this transfer was decided on")
 	// errOperationsNoHandover is a key with no handover open, which is a key
 	// whose window has already closed as well as one that never had one.
 	errOperationsNoHandover = errors.New("keyservice: no handover is open for that key")
@@ -1085,13 +1094,21 @@ func (s *Service) operationsTransfer(ctx context.Context, actor Caller, asked Wi
 		// workspace re-bound to another licence between the read above and this
 		// write is a workspace whose key list is that other licence's, and
 		// withdrawing it here would reach the keys of a licence this transfer has
-		// nothing to do with. What is revoked is the list only while the
-		// workspace still names the licence it was read for.
-		revoking := replacing
-		if source.EntitlementID == nil || heldSource.EntitlementID == nil || *source.EntitlementID != *heldSource.EntitlementID {
-			revoking = nil
+		// nothing to do with. The act is refused instead of made without its
+		// withdrawal: moving the id and withdrawing nothing leaves the key of the
+		// licence the workspace holds now live on a project the customer no
+		// longer holds, and a request sent again is decided on the licence the
+		// workspace holds then. A licence on neither side is the same state read
+		// twice — a workspace with no licence of its own — and not one that
+		// moved.
+		licenceMoved := (source.EntitlementID == nil) != (heldSource.EntitlementID == nil)
+		if !licenceMoved && source.EntitlementID != nil {
+			licenceMoved = *source.EntitlementID != *heldSource.EntitlementID
 		}
-		if err := s.revokeProjectKeys(ctx, tx, revoking, now); err != nil {
+		if licenceMoved {
+			return errOperationsWorkspaceRelicensed
+		}
+		if err := s.revokeProjectKeys(ctx, tx, replacing, now); err != nil {
 			return err
 		}
 		heldSource.ProjectID = nil

@@ -1434,19 +1434,23 @@ func (d *transferGap) Update(ctx context.Context, fn func(context.Context, Tx) e
 	return d.Docs.Update(ctx, fn)
 }
 
-// TestProjectTransferWithdrawsOnlyTheLicenceItRead: the key list a transfer
-// withdraws belongs to the licence the source workspace named when the transfer
-// was decided, and the workspace's own licence is read again in the transaction
-// that moves the project id.
+// TestProjectTransferRefusesAWorkspaceRelicensedInTheWindow: the key list a
+// transfer withdraws belongs to the licence the source workspace named when the
+// transfer was decided, and the workspace's own licence is read again in the
+// transaction that moves the project id.
 //
 // A workspace re-bound to another licence in the window between that read and
 // that write is a workspace whose keys are the other licence's: the list the
-// request is holding is stale, and withdrawing it reaches the keys of a licence
-// this transfer has nothing to do with — a licence the customer may be running
-// somewhere else, killed by an act that never named it (F29). What must not
-// happen is the wrong licence's keys going out; what the operator asked for —
-// the project id moving — is still what the act does.
-func TestProjectTransferWithdrawsOnlyTheLicenceItRead(t *testing.T) {
+// request is holding is stale, and withdrawing it would reach the keys of a
+// licence this transfer has nothing to do with — a licence the customer may be
+// running somewhere else, killed by an act that never named it (F29). The
+// request is refused rather than made without its withdrawal, because the
+// licence the workspace holds now minted its own key for this project id, and a
+// transfer that moved the id while withdrawing nothing would leave that key live
+// on a project the customer no longer holds. The refusal is a conflict: a
+// request sent again is decided on the licence the workspace holds then, and
+// withdraws that one's list.
+func TestProjectTransferRefusesAWorkspaceRelicensedInTheWindow(t *testing.T) {
 	var gap *transferGap
 	f := newFixtureWith(t, Production, func(f *fixture) {
 		gap = &transferGap{Docs: f.docs}
@@ -1478,8 +1482,11 @@ func TestProjectTransferWithdrawsOnlyTheLicenceItRead(t *testing.T) {
 	})
 
 	rec := f.apiAsCaller(http.MethodPost, apiOpsProjectTransfersPath, transferBody(t, opsProject, opsFreeWS, "null"))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("the transfer answered %d (%s), want it made", rec.Code, rec.Body)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the transfer answered %d (%s), want the refusal: the workspace took another licence while the request was in flight", rec.Code, rec.Body)
+	}
+	if code := refusal(f, rec); code != "workspace_relicensed" {
+		t.Errorf("the refusal carries the code %q, want workspace_relicensed", code)
 	}
 	if _, withdrawn, err := f.store.Revocation(context.Background(), opsKeyID); err != nil || withdrawn {
 		t.Errorf("the key %s is on §8's list (withdrawn=%v err=%v): it is the key of the licence the workspace no longer holds, and the transfer withdrew the list it read before its transaction", opsKeyID, withdrawn, err)
@@ -1487,11 +1494,11 @@ func TestProjectTransferWithdrawsOnlyTheLicenceItRead(t *testing.T) {
 	if got := f.revocations(); len(got) != 0 {
 		t.Errorf("§8's list holds %+v, want no entry: no key the transfer read belongs to the licence the workspace holds now", got)
 	}
-	if moved, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsFreeWS); moved.ProjectID == nil || *moved.ProjectID != opsProject {
-		t.Errorf("the destination is %+v, want it holding %q: the move itself is what the operator asked for", moved, opsProject)
+	if moved, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsFreeWS); moved.ProjectID != nil {
+		t.Errorf("the destination is %+v, want it holding nothing: the act was refused rather than made without its withdrawal", moved)
 	}
-	if source, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsBoundWS); source.ProjectID != nil {
-		t.Errorf("the source workspace is %+v, want it unbound", source)
+	if source, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsBoundWS); source.ProjectID == nil || *source.ProjectID != opsProject {
+		t.Errorf("the source workspace is %+v, want it still holding %q: the id moves with the withdrawal of the licence the workspace holds, and neither happened", source, opsProject)
 	}
 }
 
