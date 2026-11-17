@@ -344,14 +344,20 @@ def job_doc(name, kind="shared"):
         # served from, as the deployment mounts it (config.ModelSecretEnvs and
         # the derived Secret Manager ID behind it — never the logical name,
         # which is what a reading that matched by prefix would need to see).
+        # The reference is written the way `gcloud run jobs list` answers it,
+        # run/v1's valueFrom.secretKeyRef.name: a fake in the v2 spelling would
+        # let a reader that knows only that spelling pass every case here while
+        # reading no mount of a real job.
         envs.append({"name": "ANTHROPIC_API_KEY",
-                     "valueSource": {"secretKeyRef": {
-                         "secret": secret_id(name, "anthropic-api-key"),
-                         "version": "latest"}}})
+                     "valueFrom": {"secretKeyRef": {
+                         "name": secret_id(name, "anthropic-api-key"),
+                         "key": "latest"}}})
     if mode == "mounted-account" and kind == "shared":
         # The other shape a real job is fed from: a NAMED Claude account's own
         # container, whose logical name carries the account after the token's
-        # (config.ClaudeOAuthTokenPrefix, `claude-oauth-token-<account>`).
+        # (config.ClaudeOAuthTokenPrefix, `claude-oauth-token-<account>`) — and
+        # the one case left in run/v2's spelling (valueSource.secretKeyRef
+        # .secret), so both spellings the reader knows are exercised.
         envs.append({"name": "CLAUDE_CODE_OAUTH_TOKEN",
                      "valueSource": {"secretKeyRef": {
                          "secret": secret_id(name, "claude-oauth-token-work"),
@@ -363,7 +369,7 @@ def job_doc(name, kind="shared"):
         envs.append({"name": "ANTHROPIC_API_KEY", "value": "not-a-real-key"})
     if mode == "provider-key" and kind == "shared":
         envs.append({"name": "FUGARO_PROVIDER_KEY_OPENROUTER",
-                     "valueSource": {"secretKeyRef": {"secret": "openrouter-key-abcdef", "key": "latest"}}})
+                     "valueFrom": {"secretKeyRef": {"name": "openrouter-key-abcdef", "key": "latest"}}})
     if mode == "bitbucket-token-mount" and kind == "bitbucket":
         envs.append({"name": "FUGARO_BITBUCKET_TOKEN", "value": "not-a-real-token"})
     return {"apiVersion": "run.googleapis.com/v1", "kind": "Job",
@@ -403,10 +409,13 @@ def execution_doc(name):
             {"name": "FUGARO_CREDENTIALS_SERVICE_URL",
              "value": "https://fugaro-credentials-fake-ue.a.run.app"}]
     if mode != "execution-no-mount":
+        # run/v1's spelling again (`gcloud run jobs executions describe`
+        # answers the v1 Execution): the mount a run created before the
+        # re-apply kept, which the U9 row has to find on this execution.
         envs.append({"name": "ANTHROPIC_API_KEY",
-                     "valueSource": {"secretKeyRef": {
-                         "secret": secret_id(shared_job, "anthropic-api-key"),
-                         "version": "latest"}}})
+                     "valueFrom": {"secretKeyRef": {
+                         "name": secret_id(shared_job, "anthropic-api-key"),
+                         "key": "latest"}}})
     return {"apiVersion": "run.googleapis.com/v1", "kind": "Execution",
             "metadata": {"name": name, "updateTime": os.environ.get("FAKE_JOB_UPDATE", "2026-11-16T09:00:00Z")},
             "spec": {"template": {"spec": {"containers": [{"name": "workflow", "env": envs}]}}}}

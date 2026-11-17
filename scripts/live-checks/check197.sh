@@ -487,15 +487,26 @@ def mounts_of(containers):
 
     The env name binds the mount and the secret it points at is the DERIVED
     Secret Manager ID (the deployment mounts var.secrets[env.value]), so the two
-    are read together: an env whose valueSource names one of the model secrets
-    is a mount, whatever the variable is called, and a variable named
-    ANTHROPIC_API_KEY that carries a plain value is one too."""
+    are read together: an env whose SECRET REFERENCE names one of the model
+    secrets is a mount, whatever the variable is called, and a variable named
+    ANTHROPIC_API_KEY that carries a plain value is one too.
+
+    The reference is read in BOTH spellings the APIs carry it in, because
+    `gcloud run jobs list` and `describe` answer the v1 Job and Execution
+    documents while the v2 spelling is the other one the same mount is written
+    in: run/v1's EnvVar names the secret valueFrom.secretKeyRef.name
+    (google.golang.org/api's run/v1 EnvVarSource) and run/v2's
+    GoogleCloudRunV2EnvVar names the same secret valueSource.secretKeyRef.secret.
+    A reader that knew the v2 spelling only would see every mount of a real job
+    as a plain variable: this check's central flip row would read PASS on a
+    shared job that still holds the model credential."""
     out = []
     for c in containers:
         for name, e in env(c).items():
-            src = (e.get("valueSource") or {})
-            ref = ((src.get("secretKeyRef") or {}).get("secret")
-                   or (src.get("secretKeyRef") or {}).get("name") or "")
+            ref = ((e.get("valueFrom") or {}).get("secretKeyRef") or {}).get("name") or ""
+            if not ref:
+                ref = (((e.get("valueSource") or {}).get("secretKeyRef") or {}).get("secret")
+                       or ((e.get("valueSource") or {}).get("secretKeyRef") or {}).get("name") or "")
             base = ref.split(":")[-1].split("/")[-1]
             named = model_container(base)
             if named or (name in MODEL_ENVS and (e.get("value") or "")):

@@ -47,7 +47,7 @@ and what its restore removes. Read those before you start. This file is the comm
   a job, an execution and Cloud Logging, and nothing is minted.
 - **One throwaway run** in the GitHub sandbox repository (two with `--after-flip`), one refused launch in
   the repository outside the profile, and in the `--after-flip` mode a **run of that repository that is
-  still going** when you re-apply, named in `CHECK197_INFLIGHT`. Each run writes one line to `CHK197.md`,
+  still going** when the flipping `fugaro update` runs, named in `CHECK197_INFLIGHT`. Each run writes one line to `CHK197.md`,
   commits it, pushes a branch and opens a pull request — so each takes as long as a run of that
   repository takes (about 30–40 minutes). **Wall clock, not money**: nothing is created in the project,
   and every model call of those runs is answered by the credentials service, which is the subject.
@@ -57,11 +57,11 @@ and what its restore removes. Read those before you start. This file is the comm
   those four rows read **INFO** ("not applicable"), never FAIL: the plan itself makes this half
   "(after D2079)", and a run that measures the GitHub half perfectly ends `0` with this half reading that
   it is not deployed. As soon as the job is there, they are criteria like any other.
-- **For `--after-flip`: the run that was going across the re-apply** (`CHECK197_INFLIGHT`). The check
-  requires it to have started **before** the shared job was last updated (the job's own `updateTime`,
-  which is the moment `fugaro update` rewrote it) and to have finished with a pull request; a run that
-  started after the re-apply is refused rather than read, because it was launched by the template the
-  re-apply wrote and its mount says nothing about **U9**. The service's own lines for that run are not
+- **For `--after-flip`: the run that was going across the flipping `fugaro update`** (`CHECK197_INFLIGHT`).
+  The check requires it to have started **before** the shared job was last updated (the job's own
+  `updateTime`, which is the moment that one `fugaro update` rewrote it) and to have finished with a pull
+  request; a run that started after the update is refused rather than read, because it was launched by the
+  template the update wrote and its mount says nothing about **U9**. The service's own lines for that run are not
   this row's reading: the flip keeps `FUGARO_CREDENTIALS_SERVICE_URL` on the job (D2072), so a run of a
   shared job reaches the service before and after it.
 
@@ -104,9 +104,27 @@ and what its restore removes. Read those before you start. This file is the comm
    refusal of the repository outside the profile, and no token, no key and no credential value: the check
    redacts credential-shaped text and never prints one.
 
-3. **After the flip, with a run in flight.** From the sandbox checkout: `fugaro update` (the release that
-   carries B5.7), then `fugaro update` again **while a run of the repository is going** so the shared job
-   is re-applied across it, then:
+3. **After the flip, with a run in flight.** The order matters and it is two commands, not three: the run
+   is launched on the **pre-flip** installation — the one below, which is what step 2 ran against — and
+   the **one** flipping `fugaro update` (the release that carries B5.7) happens **while that run is
+   going**, so the shared job's last update lands after the run started and the execution the run is
+   living in keeps the spec it was created with (**U9**). Do not upgrade first and re-apply again after:
+   the flip's own update is the one that must land across the run, and a second `fugaro update` on the
+   already-flipped installation leaves the job unchanged — its `updateTime` does not move — so a run
+   launched after it started after the job's last update and the check refuses it by name instead of
+   reading the retention. So, from the sandbox checkout on the pre-flip installation:
+
+   ```sh
+   fugaro run <the sandbox repository>        # note the run id it prints
+   ```
+
+   and then, while that run is going:
+
+   ```sh
+   fugaro update                              # the one command that flips: B5.7's release
+   ```
+
+   Then, once the update has finished (the run may still be going, which is the row's subject):
 
    ```sh
    CHECK197_REPO=<owner>/<repository> CHECK197_OUTSIDE=<owner>/<outside> \
