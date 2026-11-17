@@ -1957,12 +1957,12 @@ type accountPlan struct {
 	held    map[string]bool
 }
 
-// serviceAccountsPlan is the installation module's three service accounts as a
+// serviceAccountsPlan is the installation module's four service accounts as a
 // plan carries them, which the google_cloud_run_v2_service case reads: the
 // credentials service's (D146), the secrets intake's (D1931, DS2.2) and the
 // voice hop's (P5.3.3) and the resident orchestrator's (mobile plan task P5.1c).
 //
-// They are three and not one because the three services run as three different
+// They are four and not one because the four services run as four different
 // identities: a check that admitted either of the first two for the others
 // would let a plan run the intake's container as the account that reads every
 // model credential in the bundle — the account the intake's own roles
@@ -1982,7 +1982,7 @@ type serviceAccountsPlan struct {
 	orchestrator accountPlan
 }
 
-// planServiceAccounts reads the three accounts out of a plan. Every change
+// planServiceAccounts reads the four accounts out of a plan. Every change
 // counts, a no-op included: an unchanged account is one the plan holds and the
 // service it runs keeps naming, which is the shape of every plan after the one
 // that created the service.
@@ -3665,7 +3665,7 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 			}
 		}
 	case "google_cloud_run_v2_service":
-		// The installation module's three services are three shapes, and which
+		// The installation module's four services are four shapes, and which
 		// rules a change is held to is the resource the plan names and nothing
 		// an editor of the variables can reach: intake.tf hardcodes the
 		// intake's account, its args and its environment names, so the change
@@ -4129,8 +4129,8 @@ func (c Cover) intakeAccount(a map[string]any, unk any, pre string, plans servic
 // module (P5.3.3): the plan's own google_service_account.voice[0], which
 // voice.tf writes into the template and which the same rules hold.
 //
-// It is a check of its own for the same reason the intake's is, and the stakes
-// are the highest of the three: the hop's service is the one anyone on the
+// It is a check of its own for the same reason the intake's is, and its stakes
+// are its own: the hop's service is the one anyone on the
 // internet may call (voice.tf's allUsers binding), so a plan that ran its
 // container as the credentials service's account would put every model
 // credential of the bundle behind a public endpoint whose handler verifies a
@@ -4139,7 +4139,7 @@ func (c Cover) voiceAccount(a map[string]any, unk any, pre string, plans service
 	return c.accountFrom(a, unk, pre, plans.voice, "the voice hop", voiceAccountResource)
 }
 
-// orchestratorAccount is the same check on the third service of the module
+// orchestratorAccount is the same check on the fourth service of the module
 // (mobile plan task P5.1c): the plan's own google_service_account.
 // orchestrator[0], which orchestrator.tf writes into the template and which the
 // same rules hold.
@@ -4262,7 +4262,7 @@ func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any,
 //
 //   - the argv. The hop runs the credentials service's own image — the released
 //     binary, one pin — and that image's default command is `credentials
-//     serve`, so voice.tf tells the three services apart by `args = ["voice",
+//     serve`, so voice.tf tells the four services apart by `args = ["voice",
 //     "serve"]`. A change whose args are not exactly that pair is refused in
 //     both directions: none would serve the credentials service's routes from
 //     the hop's own ADDRESS, as the account that reads the whole database
@@ -4271,7 +4271,7 @@ func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any,
 //     services': the image's entrypoint is the binary.
 //   - the account, which is the hop's own google_service_account.voice[0]
 //     (voiceAccount) and never a sibling's, for the reason voiceAccount
-//     states: this is the one service of the three anyone may call.
+//     states: this is the one service of the module's four anyone may call.
 //   - the two scaling blocks. The hop is the one service of the tree that must
 //     stay at ZERO minimum instances: it has no warm path worth paying for (a
 //     phone calls it when it speaks, and a cold start is a second), and a

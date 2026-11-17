@@ -1839,7 +1839,7 @@ func orchestratorTick(uri, audience, email string) ResourceChange {
 // that is not a job's, and it is held to the credentials service's rules plus
 // the two that make it this service: its args, and the account it runs as.
 //
-// The account rule is this one's own and the strictest of the three: this
+// The account rule is this one's own and the strictest of the four: this
 // identity holds iam.serviceAccounts.signJwt on the installation's budget
 // signer (design §4.3, E4), so running either of the other two services' images
 // as it — or this image as another account — is a pairing section 4.3's table
