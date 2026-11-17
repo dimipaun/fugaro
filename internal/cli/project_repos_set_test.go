@@ -197,11 +197,16 @@ func TestProjectReposSetRefusesAnUnknownProfile(t *testing.T) {
 func TestSettingsSetReposScalarWritesTheReposBlock(t *testing.T) {
 	settingsWriteHomeWith(t, projectReposLocalConfig)
 
-	out, _, err := execute(t, "settings", "set", "repos.acme/app.base_branch", "release")
+	// --no-apply, because this test's subject is the write and not the chain
+	// (composite AP5, D1565): the entry's own key is a `repos.*` one, so the
+	// write owes the policy stage, and this fixture's project carries a github
+	// job profile with no App ID recorded, which is a step this machine cannot
+	// run. The file the write landed in is what is asserted below either way.
+	out, _, err := execute(t, "settings", "set", "repos.acme/app.base_branch", "release", "--no-apply")
 	if err != nil {
 		t.Fatalf("settings set repos.acme/app.base_branch: %v\n%s", err, out)
 	}
-	out, _, err = execute(t, "settings", "set", "repos.acme/app.workflows", "--add", "docs")
+	out, _, err = execute(t, "settings", "set", "repos.acme/app.workflows", "--add", "docs", "--no-apply")
 	if err != nil {
 		t.Fatalf("settings set repos.acme/app.workflows --add: %v\n%s", err, out)
 	}

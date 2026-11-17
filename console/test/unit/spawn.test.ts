@@ -1834,8 +1834,8 @@ describe('the spawn table and the argv it builds', () => {
     // steps*, which is what the console's own chain (`apply.pending` and the
     // `fugaro apply` that follows it) is for. **The table is the spelling and
     // not the argv**: the write's word goes out only for a plan whose
-    // `noApply` answers for it (`SETTINGS_EDIT_PHASE_WORD_GATES`, unset
-    // `NO_APPLY_CLI_FLOOR`), which the two cases above drive from both sides. A
+    // `noApply` answers for it (`SETTINGS_EDIT_PHASE_WORD_GATES`, read
+    // against `NO_APPLY_CLI_FLOOR`), which the two cases above drive from both sides. A
     // fourth phase, a write phase that lost the word, or a word on the dry run
     // fails here.
     expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
