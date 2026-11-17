@@ -227,7 +227,7 @@ func ReadAnswer(text, nonce string, secrets []string) (Answer, error) {
 
 // promptBody is the prompt without the guide. It is separate because the rules
 // it states have to be its own: a rule the guide alone carries is a rule a
-// diagnosis repeats only by accident (TestPromptStatesThatLogTextIsData fails
+// diagnosis repeats only by accident (TestPromptStatesThatEvidenceIsData fails
 // when the trust boundary is dropped here, though the guide still has it).
 func promptBody(e Evidence) string {
 	var b strings.Builder
@@ -263,8 +263,10 @@ func promptBundleBody(e Evidence, parts []BundleText) string {
 	}
 	fmt.Fprintf(&b, "The source tree at that version, read-only: %s\n", oneLine(e.SourceDir))
 
-	fmt.Fprintf(&b, "\nThe evidence follows, between %s and %s: every part of it, exactly as the collector wrote it.\n\n",
-		EvidenceOpen(e.Nonce), EvidenceClose(e.Nonce))
+	// The fences are written once, where the evidence is: naming them here as
+	// well would put the fence's own words in the prompt twice, and a reader
+	// (or a test) that counted them could not tell which pair is the evidence's.
+	b.WriteString("\nThe evidence follows, fenced on both sides: every part of it, exactly as the collector wrote it.\n\n")
 	b.WriteString(EvidenceOpen(e.Nonce) + "\n")
 	for _, p := range parts {
 		// The heading is outside the fence and the name is Fugaro's own
