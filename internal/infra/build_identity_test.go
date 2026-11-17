@@ -18,13 +18,14 @@ import (
 // buildIdentityPlan is the installation fixture planned for real with the
 // credentials service ON, read as the four facts these tests are about: the
 // plan's rows by address, the credentials service's own container environment,
-// the project and the identity's address.
+// the project, the identity's address and the installation's operator roster.
 //
-// The fixture is credentialsLC — the installation internal/infra/tf's
+// The fixture is credentialsLC with the operator roster
+// buildIdentityOperatorsLC — the installation internal/infra/tf's
 // installation-credentials golden is made from, in this package's spelling —
 // and the plan is a real `terraform plan` of the embedded tree (no Google API
 // is read: a fresh create plan of the installation root touches none), which
-// is what makes the account, the grant and the environment below the module's
+// is what makes the account, the grants and the environment below the module's
 // own and not a second spelling of it in Go.
 type buildIdentityPlan struct {
 	rows    map[string]plannedResource
@@ -32,14 +33,27 @@ type buildIdentityPlan struct {
 	project string
 	// address is the identity's email — what a Cloud Build request names a
 	// build's account by — and member is the same address in the IAM spelling
-	// a grant's own field carries.
-	address string
-	member  string
+	// a grant's own field carries. operators are the installation's operator
+	// members, the principals the module hands actAs on the identity.
+	address   string
+	member    string
+	operators []string
 }
+
+// buildIdentityOperatorsLC is the operator roster the fixture adds, in the
+// shape a real installation's document carries it: the terraform block's
+// `admins` list is what internal/infra's spec builder fills var.operators from
+// (internal/localcfg's Terraform comment — a version-1 document's `operators`
+// key is this list under its old name), and an operator is who submits a
+// manual catalog build. The golden tfvars fixture names the same person
+// (internal/infra/testdata/installation-credentials.tfvars.json), which is the
+// plan testdata/golden/installation-credentials.plan.json holds.
+const buildIdentityOperatorsLC = `terraform: {admins: ["user:person-1@example.com"]}
+`
 
 func newBuildIdentityPlan(t *testing.T) buildIdentityPlan {
 	t.Helper()
-	lc := credentialsLC(t)
+	lc := parseLC(t, m4LocalConfig+m5Additions+credentialsBudgetLC+buildIdentityOperatorsLC)
 	spec, err := Installation(lc, InstallOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -60,11 +74,12 @@ func newBuildIdentityPlan(t *testing.T) buildIdentityPlan {
 	}
 	address := BuildIdentityEmail(lc.GCPProject)
 	return buildIdentityPlan{
-		rows:    rows,
-		env:     credentialsServiceEnv(t, svcRow),
-		project: lc.GCPProject,
-		address: address,
-		member:  "serviceAccount:" + address,
+		rows:      rows,
+		env:       credentialsServiceEnv(t, svcRow),
+		project:   lc.GCPProject,
+		address:   address,
+		member:    "serviceAccount:" + address,
+		operators: spec.Operators,
 	}
 }
 
@@ -117,11 +132,13 @@ func credentialsServiceEnv(t *testing.T, svc plannedResource) map[string]string 
 //
 // The last assertion is the task's other half — "the account holds no write
 // role on any repository registry but the project's own" — read against the
-// plan rather than against the module's text: the three resources naming the
-// identity as a member are its invoker grant on the credentials service and
-// B6's writer and tag mover on the ONE shared registry, which is the whole of
-// what a catalog build is handed. A fourth would be a widening neither task's
-// review announced.
+// plan rather than against the module's text: the resources naming the
+// identity as a member are its invoker grant on the credentials service, B6's
+// writer and tag mover on the ONE shared registry, the one project-level role
+// its own step logs need, and the operators' actAs on it (which names the
+// account in service_account_id rather than as its member), which is the
+// whole of what a catalog build is handed. A further one would be a widening
+// neither task's review announced.
 func TestProjectHasOneBuildIdentity(t *testing.T) {
 	p := newBuildIdentityPlan(t)
 	const addr = "module.installation.google_service_account.build_identity[0]"
@@ -169,9 +186,14 @@ func TestProjectHasOneBuildIdentity(t *testing.T) {
 		"module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover[0]",
 		"module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_writer[0]",
 		"module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]",
+		"module.installation.google_project_iam_member.build_identity_log_writer[0]",
 	}
+	for _, op := range p.operators {
+		want = append(want, "module.installation.google_service_account_iam_member.operator_build_identity[\""+op+"\"]")
+	}
+	slices.Sort(want)
 	if !slices.Equal(grants, want) {
-		t.Errorf("the plan grants the build identity %v, want exactly %v: its reach is the credentials service's invoker bit, the shared registry's writer and tag mover, and the reader on the two registries a build's own steps pull from, so a further role here would be a widening nobody announced", grants, want)
+		t.Errorf("the plan grants the build identity %v, want exactly %v: its reach is the credentials service's invoker bit, the shared registry's writer and tag mover, the reader on the two registries a build's own steps pull from, the one project-level role its own step logs need and the operators' actAs on it, so a further role here would be a widening nobody announced", grants, want)
 	}
 }
 
@@ -349,6 +371,56 @@ func TestCatalogCheckActsAsTheBuildIdentity(t *testing.T) {
 	}
 }
 
+// The operators' actAs on the identity (B6, D2301): `fugaro image build
+// <entry>` submits its build AS the project's identity
+// (internal/cli/image_build_catalog.go names BuildIdentityEmail), and Cloud
+// Build refuses a caller that holds no iam.serviceAccounts.actAs on the
+// account the build runs as — so without this grant every manual catalog
+// build fails with PERMISSION_DENIED at CreateBuild and the nightly check's
+// rebuilds are the only ones that can run. It is the repository root's own
+// grant one account over (modules/repo/build.tf's operator_build, which holds
+// the same role on that repository's build account until M2 retires the root).
+//
+// Read whole — the role, the account acted as, the absence of a condition —
+// and read as a SET, one instance per operator and no member the installation
+// does not list: an actAs handed to one further principal is a person who may
+// run a build as the project.
+func TestOperatorsActAsTheBuildIdentity(t *testing.T) {
+	p := newBuildIdentityPlan(t)
+	if len(p.operators) == 0 {
+		t.Fatal("the fixture lists no operators, so the grant below has no subject: the installation B6 is about is one an operator submits a catalog build in")
+	}
+	const prefix = "module.installation.google_service_account_iam_member.operator_build_identity["
+	wantAccount := "projects/" + p.project + "/serviceAccounts/" + p.address
+	var members []string
+	for addr, row := range p.rows {
+		if !strings.HasPrefix(addr, prefix) {
+			continue
+		}
+		if row.Type != "google_service_account_iam_member" {
+			t.Errorf("%s is a %s, want the service-account IAM member: actAs is what Cloud Build checks for the account a build names", addr, row.Type)
+			continue
+		}
+		if got, _ := row.After["role"].(string); got != "roles/iam.serviceAccountUser" {
+			t.Errorf("%s grants %q, want roles/iam.serviceAccountUser: the actAs bit on the ONE account a catalog build runs as", addr, got)
+		}
+		if got, _ := row.After["service_account_id"].(string); got != wantAccount {
+			t.Errorf("%s acts as %q, want the literal path %q: a computed account (or a repository's own build account, which M2 destroys with its root) is one the cover refuses to read and a build of a retired repository could not run as", addr, got, wantAccount)
+		}
+		if conds, _ := row.After["condition"].([]any); len(conds) > 0 {
+			t.Errorf("%s carries a condition (%v): every operator submits as the same project account, and the role is the whole of what admission needs", addr, conds)
+		}
+		member, _ := row.After["member"].(string)
+		members = append(members, member)
+	}
+	slices.Sort(members)
+	want := slices.Clone(p.operators)
+	slices.Sort(want)
+	if !slices.Equal(members, want) {
+		t.Errorf("the plan hands actAs on the build identity to %v, want exactly the installation's operators %v: one more member is a principal that may run a catalog build as the project, and one fewer is an operator whose own `fugaro image build` is refused", members, want)
+	}
+}
+
 // The grant survives M2's retirement of every repository root, which is the
 // whole reason B6 moved it: the account is the installation's and the grant is
 // in the installation module, so the root that is destroyed carries neither.
@@ -404,11 +476,20 @@ func TestCatalogCheckGrantSurvivesRetiringARepoRoot(t *testing.T) {
 // credential of one repository each, which the build's own pin, record and
 // clone steps make as the account it runs as (a code review of this diff
 // found those three missing: a catalog build whose identity holds none of the
-// runs bucket or Secret Manager fails on the first of them it reaches).
+// runs bucket or Secret Manager fails on the first of them it reaches); and
+// the ONE project-level role it holds, roles/logging.logWriter, without which
+// a build that names a user-specified service account is refused or loses
+// every step log (the per-repository build account held it too).
 // Reader is the whole of it on the two registries: neither is written by a
 // build, and a write role for this identity on a repository's own registry
 // would be the per-repository account's reach, which this task deliberately
 // does not carry over.
+//
+// What is NOT enumerated here is the actAs other principals hold ON the
+// identity — the catalog check's and the operators' — which names it in
+// service_account_id rather than as the grant's member: those are grants of
+// somebody else's reach, and TestCatalogCheckActsAsTheBuildIdentity and
+// TestOperatorsActAsTheBuildIdentity read them.
 func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 	p := newCatalogCheckIdentityPlan(t)
 	shared, ok := p.rows["module.installation.google_artifact_registry_repository.shared"]
@@ -426,6 +507,7 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		baseReader = "module.installation.google_artifact_registry_repository_iam_member.build_identity_base_reader[0]"
 		ghcrReader = "module.installation.google_artifact_registry_repository_iam_member.build_identity_ghcr_reader[0]"
 		defsRead   = "module.installation.google_storage_bucket_iam_member.build_identity_definitions[0]"
+		logWriter  = "module.installation.google_project_iam_member.build_identity_log_writer[0]"
 	)
 	recordsAddr := func(slug string) string {
 		return "module.installation.google_storage_bucket_iam_member.build_identity_records[\"" + slug + "\"]"
@@ -454,6 +536,7 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		baseReader: "roles/artifactregistry.reader",
 		ghcrReader: "roles/artifactregistry.reader",
 		defsRead:   "roles/storage.objectViewer",
+		logWriter:  "roles/logging.logWriter",
 	}
 	for _, r := range p.repos {
 		want[recordsAddr(r.Slug)] = "roles/storage.objectUser"
@@ -462,7 +545,7 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		}
 	}
 	if !maps.Equal(got, want) {
-		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, the two readers are the registries a build's own steps pull from, and the definitions read, the records write and the provider credential of one repository each are what a catalog build's own steps make as the account it runs as — a further grant here would be a reach this task did not carry over", got, want)
+		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, the two readers are the registries a build's own steps pull from, the definitions read, the records write and the provider credential of one repository each are what a catalog build's own steps make as the account it runs as, and logging.logWriter is the one project-level role its own step logs need — a further grant here would be a reach this task did not carry over", got, want)
 	}
 	for _, addr := range []string{writer, tagMover} {
 		row, ok := p.rows[addr]

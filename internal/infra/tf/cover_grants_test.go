@@ -357,8 +357,9 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 	// the invoker bit on the credentials service, the writer and tag-mover
 	// pair on the shared registry, the reader on the two registries a build
 	// pulls from, the bucket's read of the copied definitions and write of one
-	// repository's record, and the provider credential a build clones with
-	// (B6), and no role of any other row.
+	// repository's record, the provider credential a build clones with, the
+	// one project-level role its own step logs need (B6), and no role of any
+	// other row.
 	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
 		typ, role, member string
@@ -415,6 +416,15 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{bkt, "roles/storage.objectViewer", buildIdentity, true},
 		{bkt, "roles/storage.objectUser", buildIdentity, true},
 		{secret, "roles/secretmanager.secretAccessor", buildIdentity, true},
+		// The one project-level role the identity holds, and the one cell of
+		// that row it shares with an account of Fugaro's own beside the
+		// credentials service's datastore role: a build that names a
+		// user-specified service account is written to Cloud Logging as that
+		// account, so a catalog build without it is refused or loses every step
+		// log (catalog.go submits with Logging: CLOUD_LOGGING_ONLY). The
+		// per-repository build account this identity replaces held the same
+		// role at the same level.
+		{project, "roles/logging.logWriter", buildIdentity, true},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -910,6 +920,14 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 			"roles/artifactregistry.writer": true,
 			customKey + "fugaroTagMover":    true,
 		},
+		// The one project-level role, and the only place this account reaches
+		// outside a resource of its own: Cloud Logging writes a build's step
+		// logs as the account the build runs as, so a catalog build — which
+		// submits with Logging: CLOUD_LOGGING_ONLY — needs logging.logWriter,
+		// and the role is project-wide because Cloud Logging offers the write
+		// no narrower. It is what the per-repository build account held too
+		// (modules/repo/build.tf's `build` row), moved here with the account.
+		"google_project_iam_member": {"roles/logging.logWriter": true},
 		// The runs bucket and the provider credentials a catalog build's own
 		// steps reach, which the same review found missing after the build
 		// moved onto this identity: the definitions its pin step reads

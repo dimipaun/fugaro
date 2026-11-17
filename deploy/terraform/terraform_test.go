@@ -1750,12 +1750,15 @@ var (
 	// expression worth admitting by name here rather than by shape.
 	// google_service_account.build_identity[0] is the project's build identity
 	// (B5, D2301): the one account a shared repository's catalog build runs as,
-	// created beside the credentials service and holding exactly one row —
-	// roles/run.invoker on that service (build_identity.tf) — which is also why
-	// the module renders its email into the service's build class rather than
-	// spelling an address in Go. Its reach is that row and nothing wider: no
-	// role on any repository's registry, and no other grant in this tree names
-	// it.
+	// created beside the credentials service. Its reach is the credentials
+	// service's invoker bit, the writer and tag mover on the ONE shared
+	// registry, the reader on the two registries a build's own steps pull
+	// from, the definitions read, one record write and one provider-credential
+	// accessor per repository of the catalog check's input, and the one
+	// project-level role a build's own step logs need (roles/logging.logWriter,
+	// B6) — no role on any repository's own registry, and nothing wider. The
+	// module also renders its email into the service's build class rather than
+	// spelling an address in Go.
 	// var.workspace_service_account is the member's own workspace_pin's
 	// account, and the Firebase root's one grant to it is the read-only
 	// database role (modules/firebase/workspace_access.tf, W7). It is the ONE

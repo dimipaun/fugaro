@@ -1999,7 +1999,7 @@ var runAccountGrants = setOf(
 	// none is a write path to the marker. What the identity deliberately does
 	// NOT hold is the reader on the SHARED registry (its write already reads
 	// what it pushes) or any role on a repository's own registry. Their five
-	// rows are the top half of its reach here; the three below are the rest.
+	// rows are the top half of its reach here; the rows below are the rest.
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "projects/${var.project}/roles/fugaroTagMover" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=artifactregistry.tags.delete`,
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.base.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
@@ -2039,8 +2039,8 @@ var runAccountGrants = setOf(
 	// project's one build account rather than a repository's. actAs on ONE
 	// account is not actAs on the project and not a role on anything: it lets
 	// the job mint that account's token and submit a build that names it, so
-	// what the check reaches through it is exactly that account's eight rows
-	// above — and it reaches them already, holding cloudbuild.builds.create. The target is
+	// what the check reaches through it is exactly that account's rows above —
+	// and it reaches them already, holding cloudbuild.builds.create. The target is
 	// the literal path of the identity this module creates (a computed
 	// service_account_id is a grant internal/infra/tf's cover cannot read), and
 	// the member is the module's own catalog check account.
@@ -2050,6 +2050,34 @@ var runAccountGrants = setOf(
 	// when M2 retires it; this row is the one that survives, which is why B6
 	// moved it into the installation module.
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | google_service_account.catalog_check[0].member | for_each= | perms=`,
+	// Reviewed for B6's third review, and these are the identity's last two:
+	// the operators' actAs on it, which is what makes a MANUAL catalog build
+	// possible — `fugaro image build <entry>` submits as the identity
+	// (internal/cli/image_build_catalog.go names BuildIdentityEmail), and Cloud
+	// Build refuses a caller holding no iam.serviceAccounts.actAs on the
+	// account the build runs as, so without this row every operator's build
+	// fails with PERMISSION_DENIED at CreateBuild. It is the repository root's
+	// own operator_build one account over, and the same kind of grant as the
+	// check's row above: actAs on ONE account, whose reach it therefore adds
+	// nothing to — it lets a listed operator mint that account's token and
+	// submit a build naming it, and an operator already holds the runs bucket's
+	// own grants.
+	//
+	// The second is the one project-level role the identity holds, and the
+	// reason it has to: Cloud Build writes a build's step logs as the account
+	// the build runs as, and a catalog build submits with
+	// Logging: CLOUD_LOGGING_ONLY (internal/backend/gcp/catalog.go), so an
+	// account without logging.logWriter either has the build refused or loses
+	// every step log — the log an operator reads when a nightly rebuild fails.
+	// It is the project level because Cloud Logging offers the write no
+	// narrower, it is the role the per-repository build account this identity
+	// replaces held at the same level (modules/repo/build.tf's `build` row,
+	// whose own key is further down this list), and what it grants is
+	// appending log entries: no storage permission, nothing that grants a
+	// role, no actAs, no token minting and no read of any log — so it is not a
+	// write path to the marker.
+	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
+	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose

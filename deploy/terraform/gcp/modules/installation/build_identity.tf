@@ -38,8 +38,20 @@
 #     var.catalog_check's repositories and the conditions that input carries:
 #     the repositories whose catalog entries this project builds, which is
 #     nobody else's.
+#   - roles/logging.logWriter at the project, without which a build that names
+#     a user-specified service account is refused or loses its step logs
+#     (modules/repo/build.tf's `build` row held it too). It is the ONE
+#     project-level role here, and the narrowest form the reach has: Cloud
+#     Logging offers the write per project, and what it grants is appending
+#     entries.
 #
-# Nothing wider than that. No role on any repository's own registry, no
+# The one grant below that is not the account's own reach is the operators'
+# actAs on it (google_service_account_iam_member.operator_build_identity): a
+# build a person submits has to name the account it runs as, and Cloud Build
+# refuses a caller without iam.serviceAccounts.actAs on that account — the
+# same grant modules/repo/build.tf's operator_build made per repository.
+#
+# Nothing wider than that. No role on any repository's own registry, no other
 # project-level role, no bucket-wide prefix, no secret beyond the credentials a
 # build of this project's catalog clones with: the records grants are one
 # repository's builds/<slug>/catalog/ each and never a project-wide builds/
@@ -236,4 +248,48 @@ resource "google_secret_manager_secret_iam_member" "build_identity_git_secret" {
   secret_id = each.value.git_secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.build_identity[0].member
+}
+
+# A build that names a user-specified service account is written to Cloud
+# Logging as that account, and one without roles/logging.logWriter either
+# has its build refused or loses every step log (catalog.go submits with
+# Logging: CLOUD_LOGGING_ONLY). The per-repository build account this
+# identity replaces held the role at the project (modules/repo/build.tf's
+# `build` row, log_writer), and a catalog build cannot run without it: the
+# whole point of a nightly rebuild is the log an operator reads when it
+# fails.
+#
+# Project level, and that is the narrowest form the role has: Cloud
+# Logging's write permission is not offered per log or per stream, and the
+# only reach it gives is appending log entries (no read, no actAs, no way
+# to a role, no storage permission), so it is not a path to anything the
+# identity does not already write.
+resource "google_project_iam_member" "build_identity_log_writer" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project = var.project
+  role    = "roles/logging.logWriter"
+  member  = google_service_account.build_identity[0].member
+}
+
+# The operators' actAs on the identity, which is what makes a manual
+# `fugaro image build <entry>` possible: the CLI submits the build as the
+# identity (internal/cli/image_build_catalog.go names BuildIdentityEmail),
+# and Cloud Build requires the caller to hold iam.serviceAccounts.actAs on
+# the account the build runs as. Until B6 that grant was per repository
+# (modules/repo/build.tf's operator_build, on that repository's own build
+# account) and dies with the root at M2; without it here every operator's
+# catalog build is refused with PERMISSION_DENIED at CreateBuild, and the
+# nightly check's is the only one that could run.
+#
+# The account is a LITERAL path and not google_service_account
+# .build_identity[0].name, for the reason catalogcheck.tf's own actAs gives:
+# a grant whose account is computed is one internal/infra/tf's cover refuses
+# to read.
+resource "google_service_account_iam_member" "operator_build_identity" {
+  for_each = local.credentials_service_on ? toset(var.operators) : toset([])
+
+  service_account_id = "projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = each.value
 }

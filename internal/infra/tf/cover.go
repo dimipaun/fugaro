@@ -252,16 +252,23 @@ var grantRules = map[string]map[string]who{
 		// so the row is here rather than in that type's, and it names the
 		// credentials account alone — a job account holding a project-wide
 		// secretAccessor is precisely what DS2.2 exists to stop.
-		"roles/secretmanager.secretAccessor":      toCredentials,
-		"roles/aiplatform.user":                   toAccounts,
-		"roles/batch.agentReporter":               toAccounts,
-		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
-		"roles/datastore.user":                    toAccounts,
-		"roles/datastore.viewer":                  toPeople,
-		"roles/firebaseauth.admin":                toAccounts,
-		"roles/firebasedatabase.admin":            toPeople | toAccounts | toCoordinator,
-		"roles/firebasedatabase.viewer":           toPeople,
-		"roles/logging.logWriter":                 toAccounts,
+		"roles/secretmanager.secretAccessor": toCredentials,
+		"roles/aiplatform.user":              toAccounts,
+		"roles/batch.agentReporter":          toAccounts,
+		"roles/batch.jobsEditor":             toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
+		"roles/datastore.user":               toAccounts,
+		"roles/datastore.viewer":             toPeople,
+		"roles/firebaseauth.admin":           toAccounts,
+		"roles/firebasedatabase.admin":       toPeople | toAccounts | toCoordinator,
+		"roles/firebasedatabase.viewer":      toPeople,
+		// logging.logWriter's toBuildIdentity is what a catalog build's own
+		// step logs need (B6): a build that names a user-specified service
+		// account is written to Cloud Logging as that account, and the role
+		// is project-wide because Cloud Logging offers the write no narrower
+		// — appending entries, and nothing else. The per-repository build
+		// account the identity replaces held the same role at the same level
+		// (modules/repo/build.tf's `build` row).
+		"roles/logging.logWriter":                 toAccounts | toBuildIdentity,
 		"roles/serviceusage.serviceUsageConsumer": toPeople | toAccounts,
 	},
 	"google_service_account_iam_member": {
@@ -274,7 +281,17 @@ var grantRules = map[string]map[string]who{
 		// for any uid is one the review has to see classified, not one a
 		// widened toAccounts row would quietly accept.
 		customKey + "fugaroTokenMinter": toPeople | toOrchestrator,
-		"roles/iam.serviceAccountUser":  toPeople | toAccounts,
+		// The operators' actAs on the accounts a build runs as. Two module
+		// sites hold it now: the per-repository build account
+		// (modules/repo/build.tf's operator_build, on google_service_account
+		// .build) and — since B6 moved the catalog build onto the project's
+		// build identity — that identity (modules/installation/
+		// build_identity.tf's operator_build_identity, on the literal account
+		// path). Both are people acting as an account of the installation's
+		// own, which is this row's own kind; the account the role is on is
+		// what the module's literal spelling pins, since this table sees only
+		// the member.
+		"roles/iam.serviceAccountUser": toPeople | toAccounts,
 		// D75's one-time impersonation setup: the operators, and nobody else,
 		// may assume the deployer account. On an account, for people — the
 		// grant that makes the managed apply possible and the only grant of
