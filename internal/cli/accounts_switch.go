@@ -313,7 +313,7 @@ func accountsSwitchRefusals(lc *localcfg.Config, from, to string) error {
 	if slices.ContainsFunc(lc.Pools, func(p config.Pool) bool { return slices.Contains(p.Members, from) }) {
 		return userErr("pools.%s.members names %s, and a switch moves the account-choice keys alone: the pool would still spend %s after the switch, whatever the keys say, because a pool's members are the pool's own — declare the pool again without it (`%s`), then run this switch again; nothing was written",
 			accountsSwitchPoolNaming(lc, from), pluginwire.Printable(from), pluginwire.Printable(from),
-			accountsPoolAddCommand(accountsSwitchPoolNaming(lc, from), accountsSwitchMembersWithout(lc, from), ""))
+			accountsPoolAddCommand(accountsSwitchPoolNaming(lc, from), accountsSwitchMembersWithout(lc, from), accountsPoolWriteOptions{}))
 	}
 	// TO is a declaration this file already holds, never "default": the default
 	// account is the unsuffixed secret, which no claude_accounts entry declares
