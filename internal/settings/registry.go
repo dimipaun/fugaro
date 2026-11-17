@@ -1194,6 +1194,32 @@ var localRows = []Row{
 	locLocal("binaries.allow", "none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there", "project", docBinaryAllow),
 	locLocal("binaries.max_bytes", "2097152 (2 MiB): the largest a single added file may be, and a project may lower it", "project", docBinaryAllow),
 
+	// The reports_commit block is the owner's designation of the one repository
+	// a report run may commit into and of the folder inside it (D2750, D2751;
+	// periodic-reviews plan task R14), and one row per member for the catalog's
+	// reason: a settings read names the leaf a value came from, and the two
+	// members are what the designation is. Both rows are local-only for the
+	// binaries block's reason and one more of their own: the block is carried
+	// onto the policy node, which is what a report run reads it from, so a
+	// launcher who could write it into the runs bucket's shared file would be
+	// choosing the repository every teammate's reports land in — a place their
+	// own runs would then write to and read from — and the file is where a
+	// prompt-injected checkout writes besides (Shared nils it, and
+	// sharedForbidden refuses the key).
+	//
+	// The owner is the project family because `fugaro project policy publish`
+	// — the publish `fugaro update` runs, both of them the single
+	// buildProjectPolicy — is the door that carries the block onto the node,
+	// and because no generic write reaches these leaves: a repository is held
+	// to task.CanonicalRepo's form and the folder to
+	// projectpolicy.ValidReportsCommitDir's, which are checks no scalar write
+	// can make. The default of `dir` is the node's own
+	// (projectpolicy.DefaultReportsCommitDir), because a block that designates
+	// a repository and names no folder commits into the folder the reports
+	// already live in (D960).
+	locLocal("reports_commit.repo", "none: the project commits no report anywhere, and a written empty block is how the owner takes a designation away", "project", docPeriodicReviews),
+	locLocal("reports_commit.dir", "docs/fugaro-reviews: the report layout's own folder, which a designation that names no folder commits into (D960)", "project", docPeriodicReviews),
+
 	// The node-only blocks' local carriers (config-ownership plan task N1,
 	// D2607, F22, F23): the cascade, and the record that states an explicit
 	// unset. One row per member for the catalog's reason — a settings read

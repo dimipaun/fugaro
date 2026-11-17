@@ -197,6 +197,8 @@ providers.conformance.price_policy
 providers.conformance.require_zdr
 providers.conformance.route_fee_pct
 providers.conformance.secret
+reports_commit.dir
+reports_commit.repo
 repos.acme/web.claude_accounts
 repos.acme/web.credentials_service_ready
 repos.acme/web.vertex
