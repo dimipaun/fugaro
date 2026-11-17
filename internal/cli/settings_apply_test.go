@@ -30,6 +30,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/settings"
 )
 
@@ -277,35 +278,36 @@ func settingsStagesOfLayers(layers []string) []string {
 // TestCapKeysRefusedInAnAgentSessionEvenWithNoApply is D1576, the fence F13
 // asks for: in a coding agent's session a cap write the chain would publish is
 // refused — with and without --no-apply, so a later owner `fugaro apply` never
-// publishes a raise an agent queued — in the words `budget set` refuses in, and
-// with the command line the owner runs themselves.
+// publishes a raise an agent queued — and nothing of it is left behind: no
+// write, no queued step.
 //
-// The cases are the class and its two edges, keyed by what states the ceiling:
+// Which control refuses is the installation's own, and each case names the one
+// it expects, because the class is wider than any single fence and the sentence
+// the session reads is what tells them apart:
 //
-//   - A cap whose ceiling nothing states (`budget.per_run_usd` at the local
-//     layer, `governance.review_ratio` at the project layer): nothing can
-//     compare the write, so it is not classified as a widening at all — and it
-//     is exactly the write that may raise the cap. This is F13's hole, and the
-//     managed installation is where it stood: the gate admits a non-Typed write
-//     in a managed project's session, so before this fence the write landed and
-//     the chain published it to every run. Both installations are checked — the
-//     managed one, where the gate would otherwise admit, and the ordinary one —
-//     because the fence is asked before the gate is read.
+//   - An unmanaged installation's session (`budget.per_run_usd` at the local
+//     layer, `governance.review_ratio` at the project layer) has no marks to
+//     read, so the chain's own fence answers with `budget set`'s refusal
+//     (settingsChainCapFence, D1552/D1576) — or the project layer file's own
+//     reserved-run sentence, which is asked first and refuses `governance.*`
+//     whatever the registry says (settingsLayerReservedGate, D1175).
+//   - A managed project's session reads the gate's refusal and carries its
+//     record: today the allowlist and the reserved runs refuse every cap key
+//     before the fence is reached, and the fence is the answer for the day the
+//     gate stops refusing the class (D1545's audit-only gate, which is the state
+//     F13 is about). The record is what tells the two apart here, and a test
+//     that only read the error could never tell them.
 //   - A cap whose ceiling a file states (`agent.max_budget_usd` in a checkout
-//     that carries 10): the widening fence compares the write and refuses the
-//     raise, as it did before this task. The class is one behaviour and the
-//     sentence above does not replace it.
+//     that carries 10) is the widening fence's, as it was before this task: the
+//     class is one behaviour and the fence above does not replace it.
 //   - A cap whose only layer is a checkout's (`agent.max_run_tokens`): the class
 //     stops there. No step of this machine's publishes it (D1564), so the write
 //     lands with the sentence every repo-layer write ends on. The fence is not
 //     wider than the rule it enforces.
-//
-// Nothing is written, nothing is queued and nothing is recorded by the refused
-// ones: an agent's session cannot leave a raise behind for an owner's `fugaro
-// apply` to publish.
 func TestCapKeysRefusedInAnAgentSessionEvenWithNoApply(t *testing.T) {
-	// ordinary, managed and checkout are the three installations the cases need,
-	// each returning the file the write would land on.
+	// ordinary, managed, projectLayer and checkout are the four installations
+	// the cases need, each returning the file the write would land on and what
+	// to read back about it afterwards.
 	ordinary := func(t *testing.T) (string, func(*testing.T)) {
 		t.Helper()
 		_, localPath := settingsWriteHome(t)
@@ -315,13 +317,10 @@ func TestCapKeysRefusedInAnAgentSessionEvenWithNoApply(t *testing.T) {
 		t.Helper()
 		r := newSettingsManagedRig(t, settingsMarksManaged)
 		r.managedRunsBucket(t)
-		// The gate's own record: a refused write is attempted, so nothing is
-		// filed, and a test that only read the error could never tell an
-		// admitted write's empty document from no write at all.
 		return os.Getenv("FUGARO_CONFIG"), func(t *testing.T) {
 			t.Helper()
-			if recs := r.audits(t); len(recs) != 0 {
-				t.Errorf("the refused write filed %+v, want nothing", recs)
+			if recs := r.audits(t); len(recs) != 1 || recs[0].Verdict != managedmode.AuditRefused {
+				t.Errorf("the refused write filed %+v, want the one refused record the gate writes", recs)
 			}
 		}
 	}
@@ -341,39 +340,47 @@ func TestCapKeysRefusedInAnAgentSessionEvenWithNoApply(t *testing.T) {
 		key   string
 		args  []string
 		setup func(*testing.T) (string, func(*testing.T))
-		// lands says the write is admitted — the class does not reach it — and
-		// the command ends on the D1564 sentence instead of a refusal.
+		// control is the sentence the session reads, and "" says the write is
+		// admitted — the class does not reach it — and ends on the D1564
+		// sentence instead.
+		control string
+		// lands says the write is admitted and the file carries it afterwards.
 		lands bool
-		// owner says the refusal has to be the fence's own sentence, which is
-		// the one this task adds, rather than the widening fence's.
-		owner bool
+		// command says the refusal names the invocation the owner runs
+		// themselves. The chain's own fence and the write path's do; the gate's
+		// refusal and the layer document's are rules of those doors and name no
+		// command (D1025, D1175).
+		command bool
 	}{
 		{
-			name:  "a cap nothing states, in a managed project's session",
-			key:   "budget.per_run_usd",
-			args:  []string{"budget.per_run_usd", "500", "--layer", "local"},
-			setup: managed,
-			owner: true,
+			name:    "a cap nothing states, in an ordinary installation",
+			key:     "budget.per_run_usd",
+			args:    []string{"budget.per_run_usd", "500", "--layer", "local"},
+			setup:   ordinary,
+			control: "is the owner's own step",
+			command: true,
 		},
 		{
-			name:  "a cap nothing states, in an ordinary installation",
-			key:   "budget.per_run_usd",
-			args:  []string{"budget.per_run_usd", "500", "--layer", "local"},
-			setup: ordinary,
-			owner: true,
+			name:    "a cap nothing states, in a managed project's session",
+			key:     "budget.per_run_usd",
+			args:    []string{"budget.per_run_usd", "500", "--layer", "local"},
+			setup:   managed,
+			control: "is a key no coding agent's session writes",
 		},
 		{
-			name:  "a cap nothing states at the project layer",
-			key:   "governance.review_ratio",
-			args:  []string{"governance.review_ratio", "20", "--layer", "project"},
-			setup: projectLayer,
-			owner: true,
+			name:    "a cap nothing states at the project layer",
+			key:     "governance.review_ratio",
+			args:    []string{"governance.review_ratio", "20", "--layer", "project"},
+			setup:   projectLayer,
+			control: "is a key no coding agent's session writes",
 		},
 		{
-			name:  "a cap the checkout's own file states",
-			key:   "agent.max_budget_usd",
-			args:  []string{"agent.max_budget_usd", "500", "--layer", "repo"},
-			setup: checkout,
+			name:    "a cap the checkout's own file states",
+			key:     "agent.max_budget_usd",
+			args:    []string{"agent.max_budget_usd", "500", "--layer", "repo"},
+			setup:   checkout,
+			control: "refusing to write",
+			command: true,
 		},
 		{
 			name:  "a cap only a checkout carries, which no step publishes",
@@ -420,14 +427,11 @@ func TestCapKeysRefusedInAnAgentSessionEvenWithNoApply(t *testing.T) {
 					t.Errorf("exit %d, want %d (a user error: nothing was attempted)", ExitCode(err), ExitUserError)
 				}
 				got := ErrorText(err)
-				if !strings.Contains(got, agentMarkers[0]) {
-					t.Errorf("the refusal does not name the session's marker: %q", got)
+				if !strings.Contains(got, tc.control) {
+					t.Errorf("the refusal is not the control this case expects (%q): %q", tc.control, got)
 				}
-				if !strings.Contains(got, "fugaro settings set "+tc.key) {
-					t.Errorf("the refusal does not name the command the owner runs: %q", got)
-				}
-				if tc.owner != strings.Contains(got, "is the owner's own step") {
-					t.Errorf("the refusal is not the cap fence's own sentence (owner step: %v): %q", tc.owner, got)
+				if tc.command != strings.Contains(got, "fugaro settings set "+tc.key) {
+					t.Errorf("the refusal names the owner's command: %v, want %v: %q", !tc.command, tc.command, got)
 				}
 				if after := readFileString(t, path); after != before {
 					t.Errorf("the refused write changed %s:\n%s", path, after)

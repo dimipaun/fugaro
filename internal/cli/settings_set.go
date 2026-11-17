@@ -2369,17 +2369,6 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		// dry run must not classify it as a widening either.
 		typed, why = false, ""
 	}
-	// The cap fence, before the sentence and before a byte is written, and for
-	// a dry run exactly as for a write: a dry run answers for the write, so it
-	// is refused wherever the write would be (D1106, and the widening fence
-	// above holds the same line). It is asked of the row the edit is classified
-	// as — the leaf key of an entry write — because that is the key whose
-	// ceiling the write moves.
-	if changed {
-		if err := settingsChainCapFence(cmd, checked.Key, base, settingsWriteCommand("set", key, value, o, target.layer), writersTableStore(target.layer)); err != nil {
-			return err
-		}
-	}
 	// The rigor block is the one entry write the pure class above cannot always
 	// reach: only `default` has a row of its own to be classified as
 	// (settingsRigorFloorKey), and `areas` — the rules that are floors over a
@@ -2435,6 +2424,28 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	// whose marks prove nothing keeps.
 	if err := settingsLayerGate(cmd, target, o, key, old, newData); err != nil {
 		return err
+	}
+	// The cap fence, after the gate and after the layer document's own refusals
+	// and never instead of them (D1576): a write those controls refuse keeps
+	// their sentence and, in a managed project, the gate's own record, and this
+	// fence answers for the writes nothing else refuses — which is the whole of
+	// what it is for. F13 is the case: today the gate refuses the class (its
+	// allowlist holds neither `budget.*` nor `agent.max_*`, and refuses what it
+	// does not hold), so the sentence a session reads there is the gate's; the
+	// day D1545 makes that gate audit-only nothing refuses it, and without this
+	// fence the write would land and the chain would publish a raise every run of
+	// the project then lives under.
+	//
+	// It is before a byte is written and before the confirmation --ask puts back,
+	// and for a dry run exactly as for a write: a dry run answers for the write,
+	// so it is refused wherever the write would be (D1106, and the widening fence
+	// above holds the same line). It is asked of the row the edit is classified as
+	// — the leaf key of an entry write — because that is the key whose ceiling the
+	// write moves.
+	if changed {
+		if err := settingsChainCapFence(cmd, checked.Key, base, settingsWriteCommand("set", key, value, o, target.layer), writersTableStore(target.layer)); err != nil {
+			return err
+		}
 	}
 	// --ask, once the marks are read: the sentence it prints, or the refusal
 	// that stops the run before a byte is written (managed_ask.go). It is
@@ -2667,6 +2678,17 @@ func settingsChain(cmd *cobra.Command, lc *localcfg.Config, sel localcfg.Selecti
 // live once merged, D1564), and the base must be unreadable (a cap the layers
 // above do state is classified by the widening fence, which refuses a raise and
 // allows a tightening, and a tightening is what a session may do).
+//
+// It is asked after the managed gate and after the layer document's own
+// refusals, and never instead of them (the caller says where and why): a key
+// those already refuse — `governance.*` and `budget.*` are the reserved runs as
+// well as ceilings — keeps the sentence and the record of the control that
+// refused it, and this fence is the answer for the rest. It holds where the gate
+// admits and where there is no gate at all, which is what makes it a rule of its
+// own rather than one read off the gate's verdict: an unmanaged installation's
+// session has no marks to read and is refused here, and a managed project's
+// session is refused here as soon as the gate stops refusing the class (D1545's
+// audit-only gate, which is the state F13 is about).
 //
 // The refusal is raiseOwnerOnly's — the same one `budget set` answers with
 // (D1542) — and the command it names is this invocation with the layer it

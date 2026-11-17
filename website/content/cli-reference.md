@@ -9135,7 +9135,13 @@ schemas/settings-write.schema.json describes, which is what a caller that draws
 an edit reads. --dry-run takes no bare --json (the two answer different
 questions).
 
-Every write ends with one line: next: fugaro update.
+A write runs the steps its key declares: the published policy node for a key
+the machine's own config carries, the project layer file for a project-layer
+key, and nothing at all for a write into a checkout's fugaro.yaml — that file
+is live once the change is merged, and no step here can make it live before
+then. A step that fails leaves the change saved and the step pending and exits
+non-zero. --no-apply saves the change and runs none of the steps: `fugaro apply`
+runs them later.
 
 Usage: `fugaro settings set KEY VALUE`
 
@@ -9152,6 +9158,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
 | `--remove-entry` | stringArray | `[]` | no | remove one entry from a map or an object list (the member's name, or the key field's value) |
@@ -9187,7 +9194,13 @@ terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes. --dry-run takes no bare --json
 (the two answer different questions).
 
-Every write ends with one line: next: fugaro update.
+A removal runs the steps its key declares, exactly as writing one does: the
+published policy node for a key the machine's own config carries, the project
+layer file for a project-layer key, and nothing at all for a checkout's
+fugaro.yaml — that file is live once the change is merged, and no step here can
+make it live before then. A step that fails leaves the change saved and the
+step pending and exits non-zero. --no-apply saves the change and runs none of
+the steps: `fugaro apply` runs them later.
 
 Usage: `fugaro settings unset KEY`
 
@@ -9202,6 +9215,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout) |
 
