@@ -663,7 +663,11 @@ func (r *Repo) PointSubmoduleAt(ctx context.Context, name, url string) error {
 // PointLFSAt points this checkout's LFS endpoint at url: lfs.url, the key
 // git-lfs reads in preference to the endpoint it derives from the remote, so
 // the smudge, clean and process filters a `git lfs install` left configured
-// fetch this checkout's objects from there.
+// fetch this checkout's objects from there. The checkout's own configuration
+// also outranks a .lfsconfig the repository commits — measured with
+// `git lfs env` against a checkout carrying both (git-lfs 3.6.1: it reports
+// the local lfs.url) — which is the other reason the route is written here
+// and not into a file the repository's own content decides.
 func (r *Repo) PointLFSAt(ctx context.Context, url string) error {
 	_, err := r.git(ctx, "config", "lfs.url", url)
 	return err

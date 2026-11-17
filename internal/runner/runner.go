@@ -2147,7 +2147,9 @@ func (r *run) routeNestedFetches(ctx context.Context) error {
 		return err
 	}
 	for _, sub := range subs {
-		endpoint, err := r.nestedEndpoint(ctx, fmt.Sprintf("the submodule %s of %s", sub.Name, r.spec.Repo), sub.URL)
+		// The name is the repository's own text (.gitmodules is untrusted
+		// content), and it is the subject of a refusal an operator reads.
+		endpoint, err := r.nestedEndpoint(ctx, fmt.Sprintf("the submodule %s of %s", safetext.OneLine(sub.Name), r.spec.Repo), sub.URL)
 		if err != nil {
 			return err
 		}
