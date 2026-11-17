@@ -50,7 +50,8 @@ type Tick struct {
 	// them, folds each one's finished runs into its items and plans launches
 	// from each, under the caps counted over all of them at once: max_running
 	// and the spawn caps are one project's allowance and never one per node
-	// (D2743).
+	// (D2743) — and under the daemon's pause, which any of them carrying an
+	// unanswered question puts on all of them.
 	//
 	// A nil or empty slice is the state node alone, which is the daemon this
 	// package had before there were nodes beside it: nothing about that daemon
@@ -245,9 +246,10 @@ type node struct {
 //
 // A cycle works one node at a time, and the loop in run moves it from node to
 // node: state, etag, fresh and the refusal below are always the node at `at`,
-// which is what every step reads and commits to. What is not one node's is the
-// plan's tally (planned): the caps are counted over all of them and the
-// launches of all of them spend one allowance (D2743).
+// which is what every step reads and commits to. What is not one node's is what
+// the whole project is planned under: the caps are counted over all of them and
+// the launches of all of them spend one allowance (counts and planned, D2743),
+// and the pause that stops the daemon is the one any of them carries (paused).
 type cycle struct {
 	tick *Tick
 	rep  Report
@@ -275,6 +277,14 @@ type cycle struct {
 	// planned is how many launches this cycle has decided, counted over every
 	// node it works: one project's allowance, not one per node (D2743).
 	planned int
+	// paused is the daemon's pause as the cycle plans: the question a tripped
+	// breaker or a workspace's refusal raised and nobody has answered yet. It
+	// is read over every node the cycle works for the reason the counts are —
+	// the question is written to the state node whatever node the run behind it
+	// belonged to, so a plan node or the backlog reading its own state would
+	// find no pause and start work into the refusal the pause was raised for
+	// (O19, D2022 (a)).
+	paused bool
 }
 
 // bind makes the node at i the one this cycle is working on.
@@ -426,6 +436,13 @@ func (c *cycle) run(ctx context.Context) error {
 	// twice (D2743). Every fold has landed by now, so a run that ended in this
 	// cycle is what this reading leaves out.
 	c.counts = CountsOfAll(c.states(), c.now)
+	// And the pause is read with them, over the same nodes: the question that
+	// stops the daemon is on the state node whatever node the run behind it
+	// belonged to, so a plan node or the backlog that read the pause off its own
+	// state would keep launching into the refusal it was raised for (O19,
+	// D2022 (a)) — and a workspace's refusal folded above is one this same cycle
+	// has to stop on, which is why the reading is here and not at the load.
+	c.paused = c.anyNode(func(s State) bool { return BreakerOpen(s, c.now) })
 	if err := c.carry(ctx, view); err != nil {
 		return c.settled(err)
 	}
@@ -558,12 +575,14 @@ func (c *cycle) writeFold(ctx context.Context, base State, folded int, ops []Op,
 // between them (D2743) — the state node is planned first, and the plan and
 // backlog nodes get what it left. The counts and the tally meet exactly once:
 // what the nodes held when the cycle read them (counts) and what this cycle has
-// decided since (planned), never the same launch in both. The first action that
-// cannot be carried out ends the cycle — what it left is what the starter
-// committed before it, and the next tick re-derives the rest.
+// decided since (planned), never the same launch in both. The pause is the
+// daemon's rather than the node's (paused), so a node whose own state carries
+// no question still plans nothing while one stands anywhere in the project.
+// The first action that cannot be carried out ends the cycle — what it left is
+// what the starter committed before it, and the next tick re-derives the rest.
 func (c *cycle) carry(ctx context.Context, view RunView) error {
 	starter := Starter{Launcher: c.tick.Launcher, Commit: c.commit, Mint: c.tick.Mint}
-	actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned)
+	actions, planned := planNode(c.state, view, c.tick.Caps, c.now, c.counts, c.planned, c.paused)
 	c.planned = planned
 	for _, a := range actions {
 		next, err := starter.Start(ctx, c.state, a, c.now)

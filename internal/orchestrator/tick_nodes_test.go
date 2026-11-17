@@ -452,6 +452,110 @@ func TestAFinishedRunInAPlanNodeFoldsThere(t *testing.T) {
 	}
 }
 
+// TestTheDaemonsPauseHoldsEveryNode: the question that stops the daemon is the
+// state node's whatever node the run behind it belonged to, so a cycle that
+// plans from the nodes beside it has to read the pause over all of them — a
+// plan node or the backlog that read it off its own state would find none and
+// start work into the refusal it was raised for (O19, D2022 (a)).
+//
+// Both questions are the same pause (BreakerOpen): the one a workspace's
+// refusal raises on the cycle it lands, and the one a tripped breaker leaves
+// behind. A cycle that folded a refusal raises it in the fold — before it plans
+// anything — so the nodes beside it are held in that same cycle.
+//
+// Mutation: read the pause off the node being planned (planNode's own state,
+// where it lived while the daemon had one node) and the plan's item is launched
+// in the cycle the workspace refusal was folded, and again while the state
+// node's question stands unanswered.
+func TestTheDaemonsPauseHoldsEveryNode(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	const refusedRun = "20261107-090000-abcd"
+
+	t.Run("a refusal folded this cycle holds the nodes beside it", func(t *testing.T) {
+		workspaceClaims(t)
+		// The refusal ends wi-1 and holds wi-2, which is the state node's own
+		// launch: two run ids, so a cycle that launched from either node has
+		// minted one.
+		s, _ := workspaceQueue(t, now, refusedRun)
+		h := newHarness(t, s, now, "20261107-090001-beef", "20261107-090001-cafe")
+		h.tick.Breaker = &orchestrator.Breaker{}
+		plan := h.withShard(t, orchestrator.PlanShard(planFolder), readyNode(t, now, "wi-plan", approvedAt))
+		h.reader.reports = []orchestrator.RunReport{workspaceRefusedRun(refusedRun, "stop")}
+
+		rep := h.step()
+		if rep.Folded != 1 {
+			t.Fatalf("the cycle folded %d run(s) where the refused one reported", rep.Folded)
+		}
+		if rep.Carried != 0 {
+			t.Fatalf("the cycle carried %d action(s) in the cycle it folded the workspace's refusal", rep.Carried)
+		}
+		if got := h.launcher.started; len(got) != 0 {
+			t.Fatalf("the cycle started %v, and the pause a workspace's refusal raises stops every node of the project", got)
+		}
+		got := shardState(t, plan)
+		if w, ok := got.Item("wi-plan"); !ok || w.Phase != orchestrator.PhaseQueued || w.RunID != "" {
+			t.Errorf("the plan node's item reads back as %+v, and nothing may start it while the pause stands", w)
+		}
+		if n := len(got.Intents); n != 0 {
+			t.Errorf("the plan node recorded %d attempt(s) in a cycle that started nothing", n)
+		}
+		if !orchestrator.BreakerOpen(h.state(), now) {
+			t.Error("the cycle folded the refusal and left the daemon without the pause that stops it")
+		}
+	})
+
+	t.Run("a standing question holds the nodes beside it", func(t *testing.T) {
+		// The same two ready nodes twice: once with the state node carrying the
+		// question a tripped breaker left and once with nothing on it. The
+		// launches in the second are what says the first was held by the pause
+		// and not by the fixture.
+		open := func(t *testing.T, s orchestrator.State, runs ...string) (*harness, *orchestrator.Node) {
+			t.Helper()
+			h := newHarness(t, s, now, runs...)
+			return h, h.withShard(t, orchestrator.PlanShard(planFolder), readyNode(t, now, "wi-plan", approvedAt))
+		}
+
+		held, plan := open(t, breakerQuestion(t, readyNode(t, now, "wi-main", approvedAt), now),
+			"20261107-120001-aaaa", "20261107-120001-bbbb")
+		if rep := held.step(); rep.Carried != 0 {
+			t.Fatalf("the cycle carried %d action(s) while the state node's question stands unanswered", rep.Carried)
+		}
+		if got := held.launcher.started; len(got) != 0 {
+			t.Fatalf("the cycle started %v, and the pause a tripped breaker raised stops the whole project", got)
+		}
+		got := shardState(t, plan)
+		if w, ok := got.Item("wi-plan"); !ok || w.Phase != orchestrator.PhaseQueued || w.RunID != "" {
+			t.Errorf("the plan node's item reads back as %+v, and nothing may start it while the pause stands", w)
+		}
+		if n := len(got.Intents); n != 0 {
+			t.Errorf("the plan node recorded %d attempt(s) while the daemon was paused", n)
+		}
+
+		control, controlPlan := open(t, readyNode(t, now, "wi-main", approvedAt),
+			"20261107-120001-cccc", "20261107-120001-dddd")
+		if rep := control.step(); rep.Carried != 2 {
+			t.Fatalf("the same two nodes with nothing on the state node carried %d action(s)", rep.Carried)
+		}
+		if w, ok := shardState(t, controlPlan).Item("wi-plan"); !ok || w.RunID != "20261107-120001-dddd" {
+			t.Errorf("the plan node's item reads back as %+v, and the same node launched with no pause standing", w)
+		}
+	})
+}
+
+// breakerQuestion is the state node carrying the question a tripped breaker
+// left and nobody has answered: the pause a plan refuses over, added the way
+// the daemon's own loop adds it (BreakerDecisionID's prefix is the daemon's to
+// write, patch.go's applyDecisionAdd).
+func breakerQuestion(t *testing.T, s orchestrator.State, now time.Time) orchestrator.State {
+	t.Helper()
+	return o6Apply(t, s, orchestrator.Op{Op: orchestrator.OpDecisionAdd, Decision: &orchestrator.DecisionOp{
+		ID:        orchestrator.BreakerDecisionID + "-" + now.UTC().Format("20060102T150405Z"),
+		Question:  "The orchestrator has ended three cycles in a row without starting or finishing anything. What should it do?",
+		WaitingOn: orchestrator.OnPerson,
+	}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+}
+
 // unreadableStore is a node whose document will not load — what a corrupted or
 // half-written one looks like from the cycle's side — and whose writes are
 // counted, so a test can say that nothing landed on it.
