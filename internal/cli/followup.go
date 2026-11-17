@@ -56,6 +56,14 @@ type prChain struct {
 	// back on: --no-compression sets it, and nothing clears it.
 	CompressionOff bool
 	Recipe         *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// ChangeSet is the previous run's change set (task.Spec.ChangeSet), when
+	// it was launched in one: a follow-up carries it, so the hold the set puts
+	// on every member's pull request binds the follow-up too (D614, F15) — a
+	// follow-up that dropped the block would flip ready the very pull request
+	// its set keeps a draft. It is the block as the previous run's task holds
+	// it, members and all: membership is fixed at the set's launch (D642), so
+	// a follow-up joins the set it finds rather than naming one of its own.
+	ChangeSet *task.ChangeSet
 	// PrevReport is whether the previous run's task carried a manifest
 	// (task.Spec.DigestRuns), and so whether the recipe this follow-up
 	// inherits is a report recipe: a manifest is accepted under no other
@@ -183,6 +191,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	c.OAuthToken = prev.OAuthToken
 	c.CompressionOff = prev.CompressionOff
 	c.Recipe = prev.Recipe
+	c.ChangeSet = prev.ChangeSet
 	c.Title = prev.Title
 	c.PrevReport = len(prev.DigestRuns) > 0
 	// The previous run's record, read once for the two things only it knows:
@@ -903,8 +912,8 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		PlanTask:       o.planTask,
 		CompressionOff: c.CompressionOff,
 		Branch:         c.Branch, PR: o.pr[0], PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp,
-		OwnerRuled: o.ownerRuled,
-		Rigor:      mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
+		OwnerRuled: o.ownerRuled, ChangeSet: c.ChangeSet,
+		Rigor: mode, Paths: o.paths, Tier: cmp.Or(tier.Tier(o.tier), c.Tier)}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}

@@ -29,8 +29,10 @@ type Status string
 
 const (
 	StatusRunning Status = "running"
-	// StatusSucceeded is a ready PR, or (outcome none, Record.Gate "clean")
-	// a check gate that found nothing to fix, so no PR was ever needed.
+	// StatusSucceeded is a ready PR, or a change set's member whose work is
+	// done and whose PR the set's hold leaves a draft until its siblings
+	// ship (outcome draft, D614), or (outcome none, Record.Gate "clean") a
+	// check gate that found nothing to fix, so no PR was ever needed.
 	StatusSucceeded Status = "succeeded"
 	// StatusFailed is a draft PR exists, or (outcome none) review mode
 	// refusing a pull request before checkout (no PR of its own ever
