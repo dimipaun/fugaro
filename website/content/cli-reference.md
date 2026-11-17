@@ -3691,18 +3691,25 @@ Subcommands:
 Add an image catalog entry to this machine's project config
 
 Add a named image to the project's image catalog, in this machine's project
-config: the copy fugaro update publishes to the project's policy node
-(image_catalog). The entry's source is a Dockerfile in one of the project's
-repositories (--dockerfile owner/name:path, with --branch), a Dockerfile
-written out here (--inline <file>), or an image that already exists
-(--image <ref>), and its tags are what a repository's needs: is matched
-against. The three are one entry's alternatives and are refused together
-rather than resolved.
+config: the copy the project's policy node serves (image_catalog). The entry's
+source is a Dockerfile in one of the project's repositories (--dockerfile
+owner/name:path, with --branch), a Dockerfile written out here (--inline
+<file>), or an image that already exists (--image <ref>), and its tags are
+what a repository's needs: is matched against. The three are one entry's
+alternatives and are refused together rather than resolved.
 
-Nothing is built and nothing is published here: fugaro image build <name>
-builds the entry's image, and fugaro update publishes the catalog. --default
-marks the entry a job whose repositories name no needs runs; a catalog marks
-one entry, or none.
+The entry is added and made live by this one command: its image is built,
+the repository it is read out of is redeployed and the catalog is published,
+so no further command is needed. --no-apply saves the entry and leaves those
+steps to fugaro apply. --default marks the entry a job whose repositories
+name no needs runs; a catalog marks one entry, or none.
+
+In a coding agent's session --inline, --image, --default and --branch are
+refused: the first three define executable content the project's jobs run,
+and --branch reads an entry's Dockerfile from a branch no review here has
+vouched for, which a session may have pushed itself. --dockerfile alone is
+allowed there as it is anywhere else: it reads the project's own repository
+at its base branch, where the file was committed and reviewed.
 
 Usage: `fugaro image add <name>`
 
@@ -3710,7 +3717,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch) |
+| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch; a coding agent's session is refused it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
 | `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |
@@ -3719,6 +3726,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--image` | string | "" | no | a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is |
 | `--inline` | string | "" | no | a file whose contents are the entry's Dockerfile |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--tags` | stringSlice | `[]` | no | the tags the image provides (node, postgres, redis, firebase-emulator, docker); comma-separated or repeated |
@@ -4068,11 +4076,16 @@ the entry — because a workflow names it (image_name:), because the
 project's image_map gives it to the repository, or because the tag-cover
 rule picks it for the tags the workflow needs — since that job would then
 be on an image no catalog describes. Point the repository at another entry
-first (image_name: in its fugaro.yaml, or fugaro image map set), run
-fugaro update, and remove the entry after.
+first (image_name: in its fugaro.yaml, or fugaro image map set), then
+remove the entry.
+
+The removal is made live by this one command: the repository whose job ran
+the entry is redeployed and the catalog is published without it, so no
+further command is needed. --no-apply saves the removal and leaves those
+steps to fugaro apply.
 
 Nothing is deleted from the registry: the entry's built image stays where
-it is, and the next fugaro update publishes the catalog without the entry.
+it is.
 
 Usage: `fugaro image rm <name>`
 
@@ -4083,6 +4096,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
