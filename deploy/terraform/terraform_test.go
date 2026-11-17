@@ -271,12 +271,15 @@ func TestNoProjectLevelSecretAccessor(t *testing.T) {
 	})
 }
 
-// The tag mover role lets a repository's build move an existing tag, which
-// needs artifactregistry.tags.delete, and nothing more: no version or
-// package delete. It is granted on the build account's two registries and
-// nowhere else — its own, and the installation's shared one, where a shared
+// The tag mover role lets a build move an existing tag, which needs
+// artifactregistry.tags.delete, and nothing more: no version or package
+// delete. It is granted on a registry and nowhere else — a repository's build
+// account on its own and on the installation's shared one, where a shared
 // image is promoted and a catalog image's content tag (the definition's own
-// sha256) is moved again on a rebuild — never on the project.
+// sha256) is moved again on a rebuild, and, since B6, the project's build
+// identity on that same shared registry, because the catalog build that moves
+// a content tag runs as the project and not as a repository whose root may be
+// gone (D2301) — never on the project.
 func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 	roles, grants := 0, 0
 	walk(t, func(path string, b []byte) {
@@ -300,37 +303,59 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 		}
 		for _, typ := range []string{"google_project_iam_member", "google_artifact_registry_repository_iam_member"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
-				if !strings.Contains(blk.body, "tag_mover") {
+				// The role is named two ways: the repository module reads it
+				// from the installation's own role_ids, and the installation
+				// module spells the literal path its own apply is planned
+				// against (a computed role reaches the plan as unknown).
+				if !strings.Contains(blk.body, "tag_mover") && !strings.Contains(blk.body, "fugaroTagMover") {
 					continue
 				}
 				grants++
 				if typ != "google_artifact_registry_repository_iam_member" {
-					t.Errorf("%s: %s grants the tag mover role through %s: it is a repository-level grant, on the build account's own registries", path, blk.name, typ)
+					t.Errorf("%s: %s grants the tag mover role through %s: it is a registry-level grant, on the build account's own registries", path, blk.name, typ)
 					continue
 				}
-				// The member is the repository's own build account either way:
-				// an account the module creates, never a person, a job account
-				// or another repository's build.
-				if !hasAttr(blk.body, "member", "google_service_account.build.member") {
-					t.Errorf("%s: %s grants the tag mover to a member that is not the repository's own build account", path, blk.name)
-				}
 				switch path {
-				case "gcp/modules/repo/build.tf":
-					if !hasAttr(blk.body, "repository", "google_artifact_registry_repository.images.repository_id") {
-						t.Errorf("%s: %s must grant the tag mover on the repository's own registry", path, blk.name)
+				case "gcp/modules/installation/build_identity.tf":
+					// B6: the project's build identity holds it on the shared
+					// registry, which is the role the per-repository build
+					// account held there until this task — a catalog build
+					// moves the moving latest and the definition's sha256 tag
+					// of an entry whose repository root may be gone (D2301).
+					if blk.name != "google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover" {
+						t.Errorf("%s: %s grants the tag mover in the installation module and is not B6's one grant of it (build_identity_shared_tag_mover)", path, blk.name)
 					}
-				case "gcp/modules/repo/registry.tf":
-					if !hasAttr(blk.body, "repository", "var.installation.shared_registry") {
+					if !hasAttr(blk.body, "member", "google_service_account.build_identity[0].member") {
+						t.Errorf("%s: %s grants the tag mover to a member that is not the project's build identity", path, blk.name)
+					}
+					if !hasAttr(blk.body, "repository", "google_artifact_registry_repository.shared.repository_id") {
 						t.Errorf("%s: %s must grant the tag mover on the installation's shared registry", path, blk.name)
 					}
 				default:
-					t.Errorf("%s: %s grants the tag mover role on neither the repository's own registry nor the installation's shared one", path, blk.name)
+					// The member is the repository's own build account: an
+					// account the module creates, never a person, a job
+					// account or another repository's build.
+					if !hasAttr(blk.body, "member", "google_service_account.build.member") {
+						t.Errorf("%s: %s grants the tag mover to a member that is not the repository's own build account", path, blk.name)
+					}
+					switch path {
+					case "gcp/modules/repo/build.tf":
+						if !hasAttr(blk.body, "repository", "google_artifact_registry_repository.images.repository_id") {
+							t.Errorf("%s: %s must grant the tag mover on the repository's own registry", path, blk.name)
+						}
+					case "gcp/modules/repo/registry.tf":
+						if !hasAttr(blk.body, "repository", "var.installation.shared_registry") {
+							t.Errorf("%s: %s must grant the tag mover on the installation's shared registry", path, blk.name)
+						}
+					default:
+						t.Errorf("%s: %s grants the tag mover role on neither the repository's own registry nor the installation's shared one", path, blk.name)
+					}
 				}
 			}
 		}
 	})
-	if roles != 1 || grants != 2 {
-		t.Errorf("found %d tag mover roles and %d grants, want 1 role and 2 grants (the repository's own registry, modules/repo/build.tf, and the installation's shared one, modules/repo/registry.tf)", roles, grants)
+	if roles != 1 || grants != 3 {
+		t.Errorf("found %d tag mover roles and %d grants, want 1 role and 3 grants (the repository's own registry, modules/repo/build.tf; the installation's shared one, modules/repo/registry.tf; and, since B6, the project's build identity on that same shared registry, modules/installation/build_identity.tf)", roles, grants)
 	}
 }
 
@@ -506,20 +531,37 @@ func TestSharedRegistryRepoIDMatchesTheModule(t *testing.T) {
 		t.Errorf("found %d google_artifact_registry_repository.shared blocks in %s, want exactly 1", found, path)
 	}
 
-	// The installation module grants nobody on it: its writer is each
-	// repository's build account and its readers are each repository's job
-	// accounts, granted by that repository's own root. A member here would be
-	// a grant to that principal on every repository's shared images at once.
+	// The installation module grants exactly ONE principal on it, and that is
+	// B6's move: the project's build identity, which a catalog build runs as
+	// and which no repository's root creates (it outlives them all, D2301).
+	// Two grants and no third, and the member of both is that account.
+	//
+	// The rule the assertion used to state whole is unchanged for everybody
+	// else: a per-repository principal here — a repository's build account, or
+	// its job accounts — would be a grant to it on every repository's shared
+	// images at once, which is why its writer and readers are granted by that
+	// repository's own root (modules/repo/registry.tf).
+	installGrants := 0
 	walk(t, func(p string, b []byte) {
 		if !strings.HasPrefix(p, "gcp/modules/installation/") {
 			return
 		}
 		for _, blk := range resourceBlocks(t, p, b, "google_artifact_registry_repository_iam_member") {
-			if strings.Contains(blk.body, "repository.shared") || strings.Contains(blk.body, gcp.SharedRegistryRepoID()) {
-				t.Errorf("%s: %s grants a member on the shared registry: it is granted per repository, by that repository's root (modules/repo/registry.tf)", p, blk.name)
+			if !strings.Contains(blk.body, "repository.shared") && !strings.Contains(blk.body, gcp.SharedRegistryRepoID()) {
+				continue
+			}
+			installGrants++
+			if !hasAttr(blk.body, "member", "google_service_account.build_identity[0].member") {
+				t.Errorf("%s: %s grants a member on the shared registry that is not the project's build identity: the per-repository principals are granted there by their own repository's root (modules/repo/registry.tf), and a grant to one of them here would reach every repository's shared images at once", p, blk.name)
+			}
+			if !hasAttr(blk.body, "count", "local.credentials_service_on ? 1 : 0") {
+				t.Errorf("%s: %s is not gated on the credentials service: the registry reach belongs to the account a catalog build runs as, and an installation that runs none plans neither", p, blk.name)
 			}
 		}
 	})
+	if installGrants != 2 {
+		t.Errorf("found %d grants on the shared registry in the installation module, want 2 (the project's build identity's writer and tag mover, B6): a third is a reach nobody classified", installGrants)
+	}
 }
 
 // Destroying the Terraform config must never turn off an API the project
