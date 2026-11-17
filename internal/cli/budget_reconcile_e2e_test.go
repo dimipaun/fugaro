@@ -34,10 +34,10 @@ var runnerSpendGolden = filepath.Join("..", "runner", "testdata", "spend_accurac
 //     (0.0021 and 0.0004) and one reporting none, on a route with a 10% fee;
 //   - the table's row for the model bands those two calls at 0.00027 to
 //     0.00272, with no fee in the band, so it compares with the report;
-//   - the charge is the table's own price for all three, which is what the
-//     ledger settles while SA2.1's rule is not in the tree (see the plan).
+//   - the charge is what the ledger settles under SA2.1: the provider's own cost
+//     for the two calls that report one, and the policy's price for the third.
 const (
-	spendChargeUSD   = 0.000447
+	spendChargeUSD   = 0.004246
 	spendReportedUSD = 0.0025
 	spendTableLoUSD  = 0.00027
 	spendTableHiUSD  = 0.00272
