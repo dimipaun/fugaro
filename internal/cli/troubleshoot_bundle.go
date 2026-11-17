@@ -287,8 +287,13 @@ func troubleshootDeleteBundle(ctx context.Context, s *runstore.Store, warn io.Wr
 		}
 	}
 	if len(left) > 0 {
+		// oneLine on the names for the same reason the line above applies it to
+		// the error: they were read back out of the run's bucket, and the
+		// manifest's own refusals leave a name free to hold an escape sequence a
+		// job that rewrote its own manifest could aim at this terminal
+		// (task.InputNameProblem refuses a NUL and a newline, not an ESC).
 		fmt.Fprintf(warn, "note: the diagnosis bundle in run %s was not removed in full: %s could not be deleted, and the run's own expiry will collect them\n",
-			shortRef(s), strings.Join(left, ", "))
+			shortRef(s), oneLine(strings.Join(left, ", ")))
 	}
 }
 
