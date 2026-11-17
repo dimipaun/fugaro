@@ -1689,39 +1689,45 @@ spawn yet**: it is the data behind the backlog screen (CLI 0.11.0), and the
 section is here so the screen that follows has a shape read off the code rather
 than assumed from a design.
 
-It is read-only, and in the strongest sense this document uses: the rows come
-from the Markdown item files under the folder `--dir` names (`docs/backlog/` by
-default), never from a network, a database, a credential or an installation,
-and `list` **writes nothing at all**. The command that writes is
-`fugaro backlog index`, and it is not in the console's set: it rewrites the
-folder's own `README.md`, which is derived state a pull request regenerates
-rather than merges (rigor modes D26–D28).
+**The backlog it reads is the project's own work list, in the project's
+database** (the orchestrator graph estimates plan, B1, D2715): the spec-less
+work items of the orchestrator's backlog node, `orchestrator/<project>/backlog`
+(D2735), together with the spec-less items a session queued in the project's
+state node — the same list to a reader, which is why one document carries both
+and says in each row which of the two nodes it came from. An item that carries
+a spec belongs to the plan that spec names and is not in this document.
+`docs/backlog/`, the Markdown folder the backlog was before it became the work
+items, is history (D2716): the command that reads it is `fugaro backlog index`,
+which is not in the console's set — it rewrites the folder's own `README.md`,
+which is derived state a pull request regenerates rather than merges (rigor
+modes D26–D28).
 
-| Field | Type | omitempty | Availability state |
-|---|---|---|---|
-| `dir` | string | no | the folder the items were read from, exactly as `--dir` named it (`docs/backlog` by default). The document echoes the argument rather than resolving it, so a screen can show which folder it is looking at |
-| `items` | `[]backlogRow` | no | `[]` when the folder holds no item. One row per item, in the index's own order — sorted by `id`, which is to say by the day the item was filed |
-| `open` | int | no | the open items' count: the first figure of the index's count line |
-| `closed` | int | no | the closed items' count: the second figure |
-| `dropped` | int | no | the dropped items' count: the third figure. The three are the index's own figures, so a screen's totals and the Markdown's count line cannot disagree |
-
-`backlogRow` is one item as the index lists it. The names are the index's own
-columns, so the Markdown and the document cannot drift apart about what a row
-says.
+**It is a cloud read, and `list` writes nothing at all.** Both nodes are read
+with the operator's own credential, in the selected project, so this command
+carries the cloud flags every other cloud read carries (§5.1 rule 6's argv
+shape, §8): the console must pass `--project <name>` on every spawn. Nothing
+here is authorised by an item's text, and no row is a URL a screen may link.
 
 | Field | Type | omitempty | Note |
 |---|---|---|---|
-| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two pull requests filing at once mint two ids rather than one conflict. It is also the first two segments of the file's name, so an id resolves to a file without a lookup |
-| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
-| `mode` | string | no | the resolved mode the filing run ran under; `"none"` for an item a person filed by hand, which is not a mode the CLI knows — it is the absence of one |
-| `area` | string | no | the matched areas, strictest first, comma-separated; `"project"` or `"repo"` for an item about a whole layer |
-| `status` | string | no | `"open"`, `"closed"` or `"dropped"` — the three words the format allows and no fourth |
-| `filed_by` | string | no | the filing run's launcher, or the login of the person who filed it by hand. **Untrusted display text**, like `title` |
-| `filed_in` | string | no | `"run:<run id>"`, `"pr:<number>"` or `"hand"`. The third is a person's filing, which has no run and no recorded pull request behind it and says so rather than spelling a run id nobody minted |
-| `date` | string | no | the item's own `date` field, a UTC day (`YYYY-MM-DD`), never a timestamp and never a clock read at render time — so the same folder renders to the same bytes |
-| `path` | string | no | the file the row was read from, `<dir>/<id>-<slug>.md`. It is a path in the checkout the CLI was run in, not a URL: a screen must not link it as one |
+| `version` | int | no | the document's version, `1` (`backlogOutputVersion`): a field's meaning never changes inside one, and a rename is a new version |
+| `kind` | string | no | `"backlog"`, the document's own name — what a screen switches on when it holds a document it did not ask for |
+| `project` | string | no | the project the two nodes were read in, as this machine's config names it (the newest `--project` value, the selected one or the name minted from the project ID, §8). It is the name a screen shows, not an ID |
+| `waiting` | int | no | how many of the rows no person has approved: a filed item arrives queued and unapproved and **nothing runs it until a person approves it** (D2717), so this is the figure a screen shows as the work waiting on the person. It counts rows, and it is a count of the document rather than a second reading |
+| `items` | `[]backlogRow` | no | `[]` when neither node holds a spec-less item — never absent and never `null`, so a screen renders an empty backlog without a second guess. One row per item, sorted by `id`, which is to say by the day the item was filed |
 
-**Flags** (`newBacklogListCmd`): `--dir`, `--json`.
+`backlogRow` is one item of the listing.
+
+| Field | Type | omitempty | Note |
+|---|---|---|---|
+| `id` | string | no | the item's id: the day it was filed (`YYYYMMDD`) and a two-digit sequence that day, so two filers a moment apart mint two ids rather than one overwriting the other. `fugaro backlog add` mints it from the ids the node already holds, and the same id names the item everywhere — a person's approval of it included |
+| `title` | string | no | the filer's own words, one line. **Untrusted display text**: a filer writes it, nothing is authorised by it, and a screen renders it as text |
+| `phase` | string | no | the item's phase, spelled as the state model spells it (`queued` for every item filed by `fugaro backlog add`, and one of the later phases for an item a run has moved). It is the item's own record, never a phase derived from a run this read did not look at |
+| `repo` | string | no | the repository the item is about, `owner/name`, as the item carries it |
+| `node` | string | no | `"backlog"` or `"state"`: which node of the project's own subtree the row was read from (`orchestrator.BacklogNode` or `orchestrator.StateNode`). A screen may group by it, and it is the one fact that tells a row filed into the backlog from one a session queued in the main node |
+| `approved` | bool | no | whether a person has approved the item (D2717). **It is the person's own word and not a property of the text**: an unapproved item is one nothing will run, and a screen must not read this as "will run later" |
+
+**Flags** (`newBacklogListCmd`): `--json`, plus the cloud flags.
 
 ### 6.12 `fugaro plan status --json` (**the CLI release after 0.11.4**)
 
