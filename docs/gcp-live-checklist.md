@@ -13907,8 +13907,14 @@ step needs a credential typed.
 3. **T7's half, which is the HARD RULE's own carve-out.** Take that machine to a release that changes the unit's **template**, run
    **`fugaro update` and nothing else**, and confirm the unit file is re-rendered, the service reloaded and the daemon running under
    it — and that a **second** `fugaro update` writes nothing and reloads nothing, so a repeated update is quiet.
-4. **The boundary.** `fugaro update` never **installs** a unit (that is `fugaro setup`'s and `fugaro orchestrator install`'s), and the
-   unit's step asks for a typed confirmation, which no flag covers and an agent-marker run never writes.
+4. **The boundary, as D2700 moved it.** `fugaro update` **installs** the login unit on a machine that has none — D2700 of
+   [`docs/orchestrator-graph-estimates/reconciliation.md`](orchestrator-graph-estimates/reconciliation.md), the owner's answer of
+   2026-11-16, which supersedes T7's "never installs" — and re-renders an installed one as before; `fugaro orchestrator install`
+   stays the explicit command for a machine that wants the first one written deliberately. Nothing is typed at that step either
+   way: the plan line the run prints at the person's own terminal is the whole of what is shown. The write happens only where a
+   person is at the terminal — a coding agent's session writes no unit and says so in one line, and the person's own next terminal
+   `fugaro update` installs it — and a machine with neither launchd nor a systemd user unit gets one line and the update still
+   succeeds.
 
 **Run it:** `bash scripts/live-checks/check301.sh start`, then the one thing it prints (the reboot) and
 `bash scripts/live-checks/check301.sh after-reboot`, `bash scripts/live-checks/check301.sh upgrade` and
@@ -13942,8 +13948,9 @@ never the sandbox from an agent's session: **no agent runs any step of it**.
 1. **Before anything starts.** The spend caps and the kill switch tested **first**, and the scripts' **launching stopped** (their
    watching may stay). The two share no launch key — the claim is per run id — so scripts and daemon both launching the same work
    would **double-launch** it. This is the one thing this check must not get wrong.
-2. **The cutover.** The daemon started, and then: one finished run, one dependency-driven launch, one notification. **FACT:** each of
-   the three, named, with the run it was about.
+2. **The cutover.** The daemon started — the login unit `fugaro update` installs on a machine that has none (**D2700**, which
+   supersedes T7's "never installs one"), so one command at your own terminal is what puts it there without a word typed — and then:
+   one finished run, one dependency-driven launch, one notification. **FACT:** each of the three, named, with the run it was about.
 3. **The 14 days.** The scripts stay on disk for 14 days (T1's answer). Their launching stays stopped for that window.
 4. **The manual rollback, at any point inside the window.** `fugaro orchestrator uninstall`, then the sweep, the watcher and the queue
    scripts re-armed, and one launch seen through them. **No rollback command exists**, so those steps are the whole rollback — and the
