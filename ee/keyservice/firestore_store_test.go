@@ -19,6 +19,7 @@ package keyservice
 // stores and so can only hold what they agree on.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"slices"
@@ -324,8 +325,8 @@ func testHandoverWindow(t *testing.T, open func(t *testing.T) Store) {
 	store := open(t)
 	held := Handover{
 		KeyID: "fgk_1", SecretHash: freshDigest(t),
-		Key: "fgk_2", RenewalSecret: "secret-issued-as-the-test-runs",
-		Until: issuedAt.Add(24 * time.Hour),
+		Sealed: []byte(sealerMarker + "fgk_2\nsecret-issued-as-the-test-runs"),
+		Until:  issuedAt.Add(24 * time.Hour),
 	}
 	if err := store.SaveHandover(ctx, held, issuedAt); err != nil {
 		t.Fatalf("SaveHandover = %v", err)
@@ -334,13 +335,13 @@ func testHandoverWindow(t *testing.T, open func(t *testing.T) Store) {
 	if err != nil || !found {
 		t.Fatalf("Handover inside the window = (%v, %v), want the rotation", found, err)
 	}
-	if inside.Key != held.Key || inside.SecretHash != held.SecretHash {
+	if !bytes.Equal(inside.Sealed, held.Sealed) || inside.SecretHash != held.SecretHash {
 		t.Errorf("the handover came back as %+v, want %+v", inside, held)
 	}
 	if expired, found, err := store.Handover(ctx, "fgk_1", held.Until); err != nil || found {
-		t.Errorf("Handover at the instant the window closes = (%+v, %v), want it answered as absent: the window is what the promise bounds the successor's key and secret by", expired, err)
+		t.Errorf("Handover at the instant the window closes = (%+v, %v), want it answered as absent: the window is what the promise bounds the successor's bundle by", expired, err)
 	}
-	if err := store.SaveHandover(ctx, Handover{Key: "fgk_3"}, issuedAt); !errors.Is(err, ErrHandoverUnnamed) {
+	if err := store.SaveHandover(ctx, Handover{Sealed: []byte("fgk_3")}, issuedAt); !errors.Is(err, ErrHandoverUnnamed) {
 		t.Errorf("SaveHandover with no key_id = %v, want ErrHandoverUnnamed: an entry under the empty id would answer for every key nobody named, and this one answers with a key", err)
 	}
 }
@@ -377,11 +378,12 @@ func testTrialOnce(t *testing.T, open func(t *testing.T) Store) {
 
 // TestTheDocStoreDropsAnExpiredHandover is the one thing the suite above cannot
 // see: that the store stops *holding* a handover once its window has closed.
-// What a handover holds is a successor's key and its renewal secret, so a
-// durable store that answered "absent" and kept the record would be the growing
-// list of live credentials store.go's Handover refuses — and the answer through
-// the interface is the same either way, which is why this reads the document
-// store the records are actually kept in.
+// What a handover holds is a successor's sealed bundle — key material, whatever
+// the sealer made of it (D2182 as amended, F3) — so a durable store that
+// answered "absent" and kept the record would be the growing list of credentials
+// store.go's Handover refuses, and the answer through the interface is the same
+// either way, which is why this reads the document store the records are
+// actually kept in.
 //
 // The sweep runs before the write and before the read, as store.go's memory
 // store runs it, so a record the write that follows is the next call's to
@@ -392,8 +394,8 @@ func TestTheDocStoreDropsAnExpiredHandover(t *testing.T) {
 	store := NewDocStore(db)
 	live := Handover{
 		KeyID: "fgk_1", SecretHash: freshDigest(t),
-		Key: "fgk_2", RenewalSecret: "secret-issued-as-the-test-runs",
-		Until: issuedAt.Add(24 * time.Hour),
+		Sealed: []byte(sealerMarker + "fgk_2\nsecret-issued-as-the-test-runs"),
+		Until:  issuedAt.Add(24 * time.Hour),
 	}
 	if err := store.SaveHandover(ctx, live, issuedAt); err != nil {
 		t.Fatalf("SaveHandover = %v", err)
@@ -406,8 +408,8 @@ func TestTheDocStoreDropsAnExpiredHandover(t *testing.T) {
 	// instance whose clock is behind leaves behind.
 	stale := Handover{
 		KeyID: "fgk_9", SecretHash: freshDigest(t),
-		Key: "fgk_10", RenewalSecret: "another-secret-issued-as-the-test-runs",
-		Until: issuedAt,
+		Sealed: []byte(sealerMarker + "fgk_10\nanother-secret-issued-as-the-test-runs"),
+		Until:  issuedAt,
 	}
 	if err := store.SaveHandover(ctx, stale, issuedAt); err != nil {
 		t.Fatalf("SaveHandover of a window that had already closed = %v", err)
@@ -418,8 +420,8 @@ func TestTheDocStoreDropsAnExpiredHandover(t *testing.T) {
 	// and secret, which is the one thing a handover exists to answer with.
 	next := Handover{
 		KeyID: "fgk_20", SecretHash: freshDigest(t),
-		Key: "fgk_21", RenewalSecret: "a-third-secret-issued-as-the-test-runs",
-		Until: live.Until,
+		Sealed: []byte(sealerMarker + "fgk_21\na-third-secret-issued-as-the-test-runs"),
+		Until:  live.Until,
 	}
 	if err := store.SaveHandover(ctx, next, issuedAt); err != nil {
 		t.Fatalf("SaveHandover = %v", err)
