@@ -80,6 +80,13 @@ func newRevealFixtureOn(t *testing.T, row, projectID string) *revealFixture {
 	if !found {
 		t.Fatalf("the store holds no licence %s after binding it", held.ID)
 	}
+	// The fixture's own instant is a second past the binding's, because the
+	// store's "the licence's newest key" is taken by the instant it was issued
+	// and a tie is broken by key id (newestIssuance): a reveal asked for in the
+	// second a binding happened is one whose predecessor the store cannot say,
+	// and no case here is about that.
+	f.advance(time.Second)
+	f.actsAs(danaUID, danaEmail, signInGoogle)
 	return &revealFixture{
 		bindingFixture: f,
 		org:            org,
@@ -187,7 +194,7 @@ func TestRevealRotatesTheSecret(t *testing.T) {
 		t.Errorf("the reveal answered the renewal secret %q, want a fresh one: a rotation is what makes the old secret spent",
 			bundle.RenewalSecret)
 	}
-	if got := f.secretOf(t, bundle.KeyID); got != bundle.RenewalSecret {
+	if got := f.secretOf(t, bundle.Key); got != bundle.RenewalSecret {
 		t.Errorf("the mint answered the secret %q and the bundle carries %q, want the one secret the holder is shown",
 			got, bundle.RenewalSecret)
 	}
@@ -241,8 +248,15 @@ func TestRevealRotatesTheSecret(t *testing.T) {
 	if handover.SecretHash != digest(old.RenewalSecret) {
 		t.Errorf("the handover is held against %q, want the digest of the secret that earned it", handover.SecretHash)
 	}
-	if bytes.Contains(handover.Sealed, []byte(bundle.Key)) || bytes.Contains(handover.Sealed, []byte(bundle.RenewalSecret)) {
-		t.Error("the handover the reveal wrote holds the successor's bundle in the clear (D2182 as amended, F3)")
+	// What the record holds is what the sealer answered and nothing else: the
+	// spy's seal is transparent by design, so this case cannot say the ciphertext
+	// hides its plaintext — it says the sealed bytes went in as they were
+	// answered, which is the half that keeps a second, readable copy of a live
+	// key out of the store (P3.6's own case pins the same for the rotation
+	// `/renew` leaves).
+	if want := append([]byte(sealerMarker), handoverBundle(bundle.Key, bundle.RenewalSecret)...); !bytes.Equal(handover.Sealed, want) {
+		t.Errorf("the handover the reveal wrote is %d byte(s), want the %d the sealer answered (D2182 as amended, F3)",
+			len(handover.Sealed), len(want))
 	}
 	opened, err := f.sealer.Open(context.Background(), handover.Sealed)
 	if err != nil {
