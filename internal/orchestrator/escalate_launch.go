@@ -240,6 +240,19 @@ func (c *cycle) ladderItem(ctx context.Context, id string, blocked map[string]bo
 	if step.Refuse {
 		return c.askLadder(ctx, w, ladderRefusedQuestion(w))
 	}
+	if adoptedMergeRefused(w, step.Rung) {
+		// The rung the decision named merges the pull request, and the item is
+		// one the daemon adopted at start-up and nobody has approved (D2702).
+		// Its run is somebody else's launch — a session's, or a person's — and
+		// the ladder's own two launch rungs already refuse an item no approval
+		// covers (ladderOuter); this is the other half of the same rule: a
+		// merge is the one move nobody can take back, and the person who would
+		// be shown the findings has never seen the work. The item is left
+		// exactly where it is, and stays there until a person approves it —
+		// D2721's fact about the plan is what asks for that, and the cycle
+		// after their approval walks the same rung again.
+		return nil
+	}
 	if !ladderEnterable(step.Rung, ladderReached(w)) {
 		// A rung the item is at or past is a rung it has spent (G4), and the
 		// rung it is at is the one a move is written over.
@@ -247,6 +260,26 @@ func (c *cycle) ladderItem(ctx context.Context, id string, blocked map[string]bo
 	}
 	return c.ladderAct(ctx, w, step, reason, read)
 }
+
+// adoptedMergeRefused reports whether the rung the decision named is one the
+// ladder may not enter for an item the daemon adopted at start-up (D2702). It
+// holds until a person approves the item: the approval is the thing they have
+// not given, and the one the item carries after they have is what the same
+// questions as any other item's are asked of (ladderCoveredAt, D2042).
+func adoptedMergeRefused(w WorkItem, rung escalation.Rung) bool {
+	if !w.Adopted || !ladderMerges(rung) {
+		return false
+	}
+	_, approved := ladderCoveredAt(w)
+	return !approved
+}
+
+// ladderMerges reports whether entering a rung merges the item's pull request.
+// Rung 3 is the merge with follow-ups and the only one: rung 4 keeps the branch
+// and splits the blocker into smaller tasks (D1246), rung 0's rebase is
+// reviewed before anything merges (D2043), and rungs 1 and 2 start no run that
+// merges at all.
+func ladderMerges(rung escalation.Rung) bool { return rung == escalation.R3 }
 
 // ladderEnterable reports whether an item at rung at may enter the rung the
 // decision named. The rungs move forward and never back: a move to a rung the
