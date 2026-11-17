@@ -126,7 +126,16 @@ func voiceServiceOutputs(t *testing.T, r *imagesRig) {
 // Cloud Run assigned, and the image a revision runs is the installation's own
 // tfvars' business.
 func voiceServiceOutput() map[string]any {
-	return map[string]any{"name": infra.VoiceServiceName, "region": "us-east5", "url": voiceServiceURL}
+	return voiceServiceOutputNamed(infra.VoiceServiceName)
+}
+
+// voiceServiceOutputNamed is the same document for an installation whose hop
+// service is named something other than the constant: the module's variable
+// takes any Cloud Run name (variables.tf), so the name in the output is the
+// installation's own fact. The account ID is not — that one the variable holds
+// to infra.VoiceAccountID — which is why only the name is a parameter here.
+func voiceServiceOutputNamed(name string) map[string]any {
+	return map[string]any{"name": name, "region": "us-east5", "url": voiceServiceURL}
 }
 
 // voiceServiceURL is the URL the hop's output carries in these tests, in the
@@ -535,6 +544,80 @@ func TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars(t *testing.T) {
 	}
 	if got := voiceServiceEntry(t, r)["image"]; got != r.credentialsRef() {
 		t.Errorf("voice_service.image = %v after the second update, want %s: the block the run composed from the installation's own state is not a key the next run drops", got, r.credentialsRef())
+	}
+}
+
+// TestUpdateKeepsTheVoiceHopUnderTheInstallationsOwnServiceName is the other
+// half of what a run composes a lost block out of, and it is the service's NAME
+// rather than its account: the module's variable takes any Cloud Run name
+// (variables.tf), so an installation that named its hop service something else
+// holds that name in its own state, and the output the run reads back carries
+// it (outputs.tf publishes google_cloud_run_v2_service.voice[0].name).
+//
+// Composing the constant instead would plan a REPLACE of that service: a Cloud
+// Run service's name is a force-new attribute, so a document naming
+// fugaro-voice where the state holds another name is a change that destroys the
+// service the installation has — and the guard refuses every replace unless its
+// address is named on --allow-delete (tf.Guard), which is the HARD RULE failing
+// again on an installation nobody asked the run to change, this time one that
+// named its hop service rather than one that lost its document
+// (TestUpdateKeepsTheVoiceHopOnAMachineWithNoTfvars is that one).
+//
+// The account's ID is the constant, on the other side of the same question: the
+// module's variable accepts no other (variables.tf), because the cover
+// classifies the account's one project grant by that literal (internal/infra/tf's
+// isVoiceMember), so an installation cannot be holding a different one and the
+// run has none to read back.
+//
+// Mutation (run, restore): put infra.VoiceServiceName back into keepVoiceHop's
+// Service member, and this fails at the first apply's assertion with the name
+// the document would have replaced the installation's service with.
+func TestUpdateKeepsTheVoiceHopUnderTheInstallationsOwnServiceName(t *testing.T) {
+	r := credentialsRig(t)
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.voice[0]", "update"))
+	named := infra.VoiceServiceName + "-eu"
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+		"voice_service":       voiceServiceOutputNamed(named),
+	})}
+	r.save(t)
+	// The second machine, as in the test above: nothing here holds a document
+	// of the installation, so the run has nothing to carry the block from.
+	if _, err := os.Stat(filepath.Join(r.root(), infra.VarsFile)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the rig's machine holds an installation document (%v), so this test is not the machine it means to be: %v", err, r.root())
+	}
+	applies := r.captureApplies(t)
+
+	out, errOut, err := executeStdin(t, "", "update")
+	s := out + errOut
+	if err != nil {
+		t.Fatalf("one fugaro update from a machine holding no document of an installation whose hop service is named %s failed: %v\n%s", named, err, s)
+	}
+	ran := capturedApplies(t, applies, "installation")
+	if len(ran) == 0 {
+		t.Fatalf("the update applied the installation root not at all, so nothing read the document this test is about:\n%s", s)
+	}
+	for i, doc := range ran {
+		voice, _ := doc["voice_service"].(map[string]any)
+		if voice == nil {
+			t.Fatalf("the installation root's apply %d ran with no voice_service block on an installation whose own state has a hop: the block is the opt-in, so this document plans the hop's service, its account, its public invoker binding and its state read away\n%v", i+1, doc)
+		}
+		if voice["service"] != named {
+			t.Fatalf("the installation root's apply %d ran with voice_service.service = %v, want the installation's own %s: the name is a force-new attribute of the Cloud Run service, so this document is the plan that REPLACES the hop's service — a delete the guard refuses, which leaves the one documented command unable to converge on an installation nobody asked it to change\n%s", i+1, voice["service"], named, s)
+		}
+	}
+	// The three members the module's variable takes, on the installation's own
+	// name and this release's pin.
+	voice := voiceServiceEntry(t, r)
+	for k, want := range map[string]any{
+		"account_id": infra.VoiceAccountID,
+		"service":    named,
+		"image":      r.credentialsRef(),
+	} {
+		if voice[k] != want {
+			t.Errorf("voice_service.%s = %v after one update from a machine with no document, want %v\n%s", k, voice[k], want, s)
+		}
 	}
 }
 

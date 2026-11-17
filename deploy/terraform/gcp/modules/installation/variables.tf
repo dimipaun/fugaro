@@ -651,7 +651,7 @@ variable "intake" {
 }
 
 variable "voice_service" {
-  description = "The voice hop (P5.3.3, design docs/mobile/design/voice-evaluation-switch.md §4.4): the installation's own Cloud Run service that a paired phone calls before its speech reaches a provider. It verifies the phone's Firebase Auth ID token for a device uid of D165's `m~` family, checks that the device's node config/admin/devices/$uid still exists (D166; revocation is the node's deletion) and enforces the project's voice policy node. OFF by default (null), and the block itself IS the opt-in: `fugaro update` writes and carries the other two services' blocks on every installation, and it never writes this one — an installation that never wrote it gets no hop, no account and no invoker binding, and is exactly what it was before the hop existed. account_id and service are the account's ID and the Cloud Run service's name; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this account reads the whole database instance and the repository grants roles/artifactregistry.writer to every operator (iam.tf). What the process is CONFIGURED with is not here: the Firebase project whose ID tokens it verifies and the database whose device nodes and policy it reads are credentials_service's own two members (firebase_project, rtdb_url), which voice.tf reads, because the two blocks describe one installation and a second copy could be pulled apart by a hand edit. There is deliberately no url member either, and that is the one real difference from credentials_service and intake: this service's audience is the Firebase project and not its own URL, so nothing has to read a URL back from this module's output and no second apply exists for it."
+  description = "The voice hop (P5.3.3, design docs/mobile/design/voice-evaluation-switch.md §4.4): the installation's own Cloud Run service that a paired phone calls before its speech reaches a provider. It verifies the phone's Firebase Auth ID token for a device uid of D165's `m~` family, checks that the device's node config/admin/devices/$uid still exists (D166; revocation is the node's deletion) and enforces the project's voice policy node. OFF by default (null), and the block itself IS the opt-in: `fugaro update` writes and carries the other two services' blocks on every installation, and it never writes this one — an installation that never wrote it gets no hop, no account and no invoker binding, and is exactly what it was before the hop existed. account_id is the account's ID, fixed by internal/infra's VoiceAccountID rather than a per-installation choice (the cover classifies the state-read grant's member by that one literal, internal/infra/tf's isVoiceMember, and `fugaro update` re-composes a lost block from it); service is the Cloud Run service's name, and it IS the installation's own — the name is a force-new attribute of the Cloud Run service, so an installation that renamed it keeps its name through every later update; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this account reads the whole database instance and the repository grants roles/artifactregistry.writer to every operator (iam.tf). What the process is CONFIGURED with is not here: the Firebase project whose ID tokens it verifies and the database whose device nodes and policy it reads are credentials_service's own two members (firebase_project, rtdb_url), which voice.tf reads, because the two blocks describe one installation and a second copy could be pulled apart by a hand edit. There is deliberately no url member either, and that is the one real difference from credentials_service and intake: this service's audience is the Firebase project and not its own URL, so nothing has to read a URL back from this module's output and no second apply exists for it."
   type = object({
     account_id = string
     service    = string
@@ -663,13 +663,22 @@ variable "voice_service" {
   # and for its reason: an operator can push a tag, and the account this
   # process runs as holds the instance-wide read of the installation's
   # database.
+  #
+  # The account ID is a literal and not a pattern, unlike the other two
+  # services' (D1931's intake admits any valid account ID and any Cloud Run
+  # name): internal/infra creates this account under one ID and re-composes a
+  # lost block from it (internal/cli/init.go's keepVoiceHop), and the cover
+  # classifies the account's one project grant by that same ID
+  # (internal/infra/tf's isVoiceMember), so a second ID here would be an account
+  # whose state-read binding the cover does not know and a hop the next `fugaro
+  # update` would create twice.
   validation {
     condition = var.voice_service == null ? true : (
-      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.voice_service.account_id)) &&
+      var.voice_service.account_id == "fugaro-voice" &&
       can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.voice_service.service)) &&
       can(regex("^[A-Za-z0-9][A-Za-z0-9._/@:-]*@sha256:[0-9a-f]{64}$", var.voice_service.image))
     )
-    error_message = "voice_service needs a service account ID (6-30 characters of a-z, 0-9 and -, starting with a letter), a Cloud Run service name, and an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag)."
+    error_message = "voice_service needs the account ID fugaro-voice — the ID internal/infra creates the account under and the cover classifies its state-read grant by, so it is not a per-installation choice — a Cloud Run service name, and an image pinned by digest (an image reference ending in @sha256: and 64 lower-case hex digits — never a tag: an operator can push a tag)."
   }
 }
 

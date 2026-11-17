@@ -277,9 +277,13 @@ variable "intake" {
 
 # The voice hop (P5.3.3, design docs/mobile/design/voice-evaluation-switch.md
 # §4.4): the third service this installation MAY run, beside the credentials
-# service and the intake, and the one a phone calls. account_id and service are
-# its own account's ID and the Cloud Run service's name, image is the released
-# binary's digest pin. The block IS the opt-in, and the installation writes it:
+# service and the intake, and the one a phone calls. account_id is its own
+# account's ID, fixed by internal/infra's VoiceAccountID rather than a choice of
+# the installation (the module's validation accepts no other, and the cover
+# classifies the account's database grant by that literal); service is the Cloud
+# Run service's name and IS the installation's own, since a name is a force-new
+# attribute of the service; image is the released binary's digest pin. The block
+# IS the opt-in, and the installation writes it:
 # `fugaro update` deploys the other two services on every installation and never
 # writes this one, so an installation that never wrote the block gets no hop at
 # all — no account, no service and no invoker binding — and an installation that

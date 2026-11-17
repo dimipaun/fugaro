@@ -3376,6 +3376,18 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 // that deploys no service at all: an agent's session, a development build, or
 // an installation whose config cannot carry one) gets no block and is told so,
 // because a revision needs an image and this run has none to compose one with.
+//
+// The service's name is the installation's own, read out of the output that
+// says it has a hop at all, and not the constant: the module's variable takes
+// any Cloud Run name, and the name is a force-new attribute of
+// google_cloud_run_v2_service, so composing the default would plan a replace of
+// a service that is named something else — a delete the guard refuses (tf.Guard
+// refuses every replace unless its address is named on --allow-delete), which
+// is the one documented command failing to converge on an installation nobody
+// asked it to change, this time on a machine that named its hop service. The
+// account's ID is the constant, and it can be: it is not a choice the module's
+// variable accepts (variables.tf), which is what keeps the account's one grant
+// the one the cover classifies (internal/infra/tf's isVoiceMember).
 func (r *initRun) keepVoiceHop(wd *infra.Workdir, prior infra.InstallationOutputs, havePrior bool) error {
 	if !havePrior || prior.VoiceService == nil {
 		return nil
@@ -3401,7 +3413,7 @@ func (r *initRun) keepVoiceHop(wd *infra.Workdir, prior infra.InstallationOutput
 	}
 	next, err := infra.SetVoiceService(doc, infra.VoiceServiceSpec{
 		AccountID: infra.VoiceAccountID,
-		Service:   infra.VoiceServiceName,
+		Service:   prior.VoiceService.Name,
 		Image:     image,
 	})
 	if err != nil {

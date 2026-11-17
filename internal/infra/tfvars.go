@@ -419,12 +419,12 @@ type IntakeSpec struct {
 // VoiceServiceSpec is the installation root's var.voice_service (P5.3.3): the
 // voice hop's own account and Cloud Run service, and the image it runs.
 //
-// One release, one pin, three services: the hop is a subcommand of the
+// One release, one pin, four services: the hop is a subcommand of the
 // released binary (`voice serve`, internal/cli), so its image is the same
 // digest-pinned reference the credentials service's block and the intake's
 // carry and no resolve of its own — the module's own container sets the args
 // that pick the subcommand and no command of its own, which is how the one
-// image serves all three.
+// image serves all four.
 //
 // There is deliberately no URL member, and that is the one real difference
 // from both of them: the hop's callers are phones, whose ID tokens are minted
@@ -533,17 +533,23 @@ const (
 	IntakeServiceName = "fugaro-intake"
 	// VoiceAccountID and VoiceServiceName are the voice hop's own two names
 	// (P5.3.3): the account that verifies a phone's ID token and reads the one
-	// database, and the Cloud Run service that runs it. The service's name is
-	// what the hop's hostname is built from, and a phone paired against that
-	// address reaches the same service across a re-apply, so it is one literal
-	// and not a per-installation choice. internal/infra/tf's VoiceAccountID is
-	// the same literal on the cover's side, which is what lets the cover hold
-	// the account the plan creates for it.
+	// database, and the Cloud Run service that runs it. internal/infra/tf's
+	// VoiceAccountID is the same literal on the cover's side, which is what lets
+	// the cover hold the account the plan creates for it, and the module's
+	// variable accepts no other (variables.tf): an account ID is a fact of the
+	// configuration rather than of the apply, the way VerifierAccountID is.
 	//
-	// Nothing in Go reads an address back for it: the one service of the three
-	// whose callers mint their ID tokens for the Firebase project rather than
-	// for the service's own URL (VoiceServiceSpec), so the hop is the one that
-	// carries no url member.
+	// The SERVICE's name is the installation's own and only the default here:
+	// the module's variable takes any Cloud Run name, so an installation that
+	// wrote another one keeps it — the name is a force-new attribute, and a run
+	// that composed this constant over it would plan a replace the guard
+	// refuses (internal/cli's keepVoiceHop reads the name back out of the
+	// module's own output, VoiceService.Name).
+	//
+	// Nothing in Go reads an address back for it: the one service of the
+	// module's four whose callers mint their ID tokens for the Firebase project
+	// rather than for the service's own URL (VoiceServiceSpec), so the hop is
+	// the one that carries no url member.
 	//
 	// fugaro- is not reserved against these: that prefix is reserved by the
 	// *job* listings (HistoryJob), and a Cloud Run service is not one of them
