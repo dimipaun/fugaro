@@ -5455,9 +5455,10 @@ compares with its own before it hands over to a new release.
 
 It is idempotent: a unit that is already there is re-rendered from this
 release's template and the service restarted, which is also what `fugaro
-update` does to an installed unit (and `fugaro update` never installs
-one). It writes no state and migrates none: the daemon's own start-up
-does that.
+update` does to an installed unit. `fugaro update` writes the unit on a
+machine that has none too, at your own terminal and asking nothing, so no
+release needs this command as an operator step. It writes no state and
+migrates none: the daemon's own start-up does that.
 
 A unit is code that runs at every login, so this command asks you to type
 the word install at a real terminal, has no flag that stands in for it,
