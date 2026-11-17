@@ -188,12 +188,16 @@ elif args[:1] == ["project"] and args[1:2] == ["policy"]:
         sys.exit(1)
     proxy_repo = os.environ.get("FAKE_PROXY_REPO", repos[1] if len(repos) > 1 else "")
     allow = ["bitbucket/" + proxy_repo] if proxy_repo else []
-    print(json.dumps({"policy": {
-        "version": 9,
-        "budget": {"mode": "off" if mode == "mode-off" else "observe"},
-        "allow_repos": ["bitbucket/%s/*" % (repos[0].split("/")[0] if repos else "acme")],
-        "bitbucket_token": {"allow_repos": allow,
-                            "proxy": mode != "no-proxy"}}}))
+    policy = {"version": 9,
+              "allow_repos": ["bitbucket/%s/*" % (repos[0].split("/")[0] if repos else "acme")],
+              "bitbucket_token": {"allow_repos": allow,
+                                  "proxy": mode != "no-proxy"}}
+    # A policy that carries no budget block at all: what a `show` on an
+    # installation with nothing published answers, and the shape whose absent
+    # mode must never read as one that is not off (D2071's third leg).
+    if mode != "policy-no-mode":
+        policy["budget"] = {"mode": "off" if mode == "mode-off" else "observe"}
+    print(json.dumps({"policy": policy}))
 else:
     sys.stderr.write("fugaro: unknown command: %s\n" % " ".join(args))
     sys.exit(2)
@@ -342,6 +346,13 @@ elif sub == ("run", "jobs", "describe"):
         sys.stderr.write("ERROR: (gcloud) run.jobs.get: the job %s was not found\n" % want)
         sys.exit(1)
 elif sub == ("logging", "read"):
+    if mode == "log-fails":
+        # A log read that does not answer at all: no line of any run's is in the
+        # file it writes, which is NOT the same thing as the service having
+        # written none — the distinction the U9 row and the served rows are read
+        # against.
+        sys.stderr.write("ERROR: (gcloud) logging.read was refused: the caller does not have permission to read the log\n")
+        sys.exit(1)
     filt = positionals[2] if len(positionals) > 2 else ""
     m = re.search(r'jsonPayload\.run="([^"]*)"', filt)
     rid = m.group(1) if m else ""
@@ -720,6 +731,40 @@ test_a_budget_mode_of_off_is_a_failure() {
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "mode off: no run was launched"
 }
 
+# `fugaro project policy show --json` failing is not a policy that is not off:
+# the read leaves an empty document, the reader answers `mode=None` for it, and
+# a row that read that as "not off" would PASS D2071's third leg on a mode
+# nobody read — while the two throwaway runs below it would be launched on a
+# switch nobody settled.
+test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured() {
+  local dir=$work/policyfail
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=policy-fails
+  expect_status "$status" 2 "a failed policy read: the check could not measure"
+  expect_contains "$out" "FACT switch: FAIL — both repositories are on the switch" \
+    "a failed policy read: the row carries the reason itself"
+  expect_contains "$out" "fugaro project policy show --project fugaro --json' exited 1" \
+    "a failed policy read: the row names the command that failed"
+  expect_contains "$out" "the published policy could not be read" \
+    "a failed policy read: the row carries what fugaro printed"
+  expect_absent "$out" "FACT switch: PASS" "a failed policy read: the leg is never a pass"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "a failed policy read: no run was launched"
+}
+
+# The same leg one step further in: the command answered, and the document it
+# printed carries no budget block at all. `None` is not a mode that is not off,
+# so the leg is unmeasured and never a PASS on a value nobody published.
+test_a_policy_with_no_budget_mode_leaves_the_switch_unmeasured() {
+  local dir=$work/policynomode
+  prepare "$dir"
+  run193 "$dir" FAKE_FUGARO_MODE=policy-no-mode
+  expect_status "$status" 2 "no budget mode: the check could not measure"
+  expect_contains "$out" "FACT switch: FAIL" "no budget mode: the row is a FAIL and never a pass"
+  expect_contains "$out" "carries no budget mode" "no budget mode: the row says why"
+  expect_absent "$out" "the published budget mode is 'None'" "no budget mode: None never reaches a PASS"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "run --repo" "no budget mode: no run was launched"
+}
+
 # The record is the boundary every row below is read against (D2070 (a)): a
 # pair of repositories whose records are not one api-key and one oauth is a pair
 # this check cannot read its rows against, and a repository recorded `cascade`
@@ -845,6 +890,31 @@ test_a_run_served_the_wrong_credential_is_a_failure() {
   expect_contains "$out" "FACT served-api-key: FAIL" "wrong credential: the row"
   expect_contains "$out" "no line of this run names the paid key" "wrong credential: the row says why"
   expect_contains "$out" "FACT served-oauth: PASS" "wrong credential: the other repository is unaffected"
+}
+
+# A `gcloud logging read` that did not answer is not the service having written
+# no line: the file the read writes is empty either way, and a row that took the
+# empty file for the service's silence would FAIL a run whose lines it never
+# read. The three rows that read those lines — the two the run is served from
+# and the account it declared — are rows this check could not measure (exit 2),
+# and never a report about the credentials service.
+test_a_log_read_that_failed_leaves_the_served_rows_unmeasured() {
+  local dir=$work/logfail
+  prepare "$dir"
+  run193 "$dir" FAKE_GCLOUD_MODE=log-fails
+  expect_status "$status" 2 "a failed log read: the check could not measure"
+  expect_contains "$out" "FACT audited-api-key: FAIL — the service's own lines for the run" \
+    "a failed log read: the audited row carries the reason itself"
+  expect_contains "$out" "gcloud logging read' exited 1" "a failed log read: the row names the read that failed"
+  expect_contains "$out" "the caller does not have permission to read the log" \
+    "a failed log read: the row carries what gcloud printed"
+  expect_contains "$out" "FACT served-api-key: FAIL — the service's own lines for the run" \
+    "a failed log read: the row it would have decided is unmeasured too"
+  expect_contains "$out" "FACT declared-account: FAIL — the service's own lines for the run" \
+    "a failed log read: the account row is unmeasured and not the boundary reported as broken"
+  expect_absent "$out" "no served line of its own names that account" \
+    "a failed log read: nothing is read as the boundary not holding"
+  expect_absent "$out" "FACT inflight-mount" "a failed log read: the rows of the other mode are not in this block"
 }
 
 # The oauth half of the boundary: the service narrows a call to the account that
@@ -1057,6 +1127,25 @@ test_an_inflight_run_the_service_answered_is_a_failure() {
   expect_contains "$out" "reached into a run that was already going" "in flight, served: the row says why"
 }
 
+# U9's whole reading is the service's NOT writing a line for the run, so the
+# reading is only taken off a log this check actually read: a `gcloud logging
+# read` that did not answer leaves no line either, and a row that took that for
+# the service's silence would PASS the flip's central row on a log nobody saw.
+test_a_log_read_that_failed_leaves_the_u9_row_unmeasured() {
+  local dir=$work/inflightlog
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    FAKE_GCLOUD_MODE=log-fails \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
+  expect_status "$status" 2 "U9, a failed log read: the check could not measure"
+  expect_contains "$out" "FACT inflight-run: PASS" "U9, a failed log read: the rows above it still hold"
+  expect_contains "$out" "FACT inflight-mount: FAIL — the service's own lines for the run" \
+    "U9, a failed log read: the row carries the reason itself"
+  expect_contains "$out" "U9's reading is the absence of a line" "U9, a failed log read: the row says what it could not show"
+  expect_absent "$out" "FACT inflight-mount: PASS" "U9, a failed log read: the absent line is never read as U9"
+}
+
 # A run that started AFTER the re-apply is not the U9 case at all — it was
 # launched by the template the re-apply wrote — so its mount must not be read as
 # the one a run in flight kept.
@@ -1153,6 +1242,8 @@ t test_xtrace_is_refused
 t test_the_repos_guard
 t test_a_repository_off_the_switch_is_a_failure
 t test_a_budget_mode_of_off_is_a_failure
+t test_a_policy_that_could_not_be_read_leaves_the_switch_unmeasured
+t test_a_policy_with_no_budget_mode_leaves_the_switch_unmeasured
 t test_a_pair_that_is_not_one_api_key_and_one_oauth_stops
 t test_a_record_that_is_not_there_is_unmeasured
 t test_a_record_that_could_not_be_read_names_the_status_and_the_path
@@ -1160,6 +1251,7 @@ t test_a_job_without_the_repo_label_leaves_the_record_unmeasured
 t test_the_happy_path
 t test_the_happy_path_with_the_scratch_directory_kept
 t test_a_run_served_the_wrong_credential_is_a_failure
+t test_a_log_read_that_failed_leaves_the_served_rows_unmeasured
 t test_a_second_account_served_is_a_failure
 t test_a_served_account_the_run_never_declared_is_a_failure
 t test_a_line_naming_an_account_the_record_does_not_name_is_a_failure
@@ -1171,6 +1263,7 @@ t test_after_flip_refuses_a_job_that_still_mounts_the_model_credential
 t test_after_flip_refuses_a_job_that_still_mounts_an_accounts_token
 t test_after_flip_passes_when_no_job_mounts_a_model_credential
 t test_an_inflight_run_the_service_answered_is_a_failure
+t test_a_log_read_that_failed_leaves_the_u9_row_unmeasured
 t test_a_run_that_started_after_the_reapply_is_not_the_u9_case
 t test_a_run_that_did_not_finish_is_a_failure
 t test_a_development_build_is_a_failure

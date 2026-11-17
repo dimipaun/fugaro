@@ -903,19 +903,46 @@ launch_err() { cat "$SCRATCH/launch-err" 2>/dev/null || true; }
 # until at least one line of this run's own is in the file or LOG_WAIT_SECONDS
 # is up, and the answer the caller reads is the last one taken. A run whose
 # lines are empty after the wait is itself a reading, and the callers say so
-# rather than treating it as "nothing happened".
+# rather than treating it as "nothing happened" — but only a read that ANSWERED
+# is a reading: `gcloud logging read` exiting non-zero (no permission on the
+# log, an expired session, a network answer) leaves OUT empty or half written,
+# and a caller that took that for the service's silence would read the absent
+# line as the answer it is looking for. The two rows that live off an absent
+# line are the flip's U9 row (`inflight-mount`: no line of the run's own is
+# exactly what U9 says) and, in the switch mode, the two `served-*` rows, so a
+# failed read taken for silence would PASS the check on nothing. check-c39.sh
+# (sign-line) and check420.sh/check421.sh (pool) each report their own failed
+# log and policy reads as unmeasured for the same reason.
+#
+# So the function distinguishes the two: it returns 0 only when the last read
+# answered, and 1 when it did not, writing the row text for it beside the file
+# it is about (OUT.unread) — where the rows that read OUT find it (audit_unread)
+# and say they could not measure, rather than reading a file nobody wrote.
 audit_read() {
-  local rid=$1 out=$2 waited=0 filter
+  local rid=$1 out=$2 waited=0 filter rc=0
   filter='resource.type="cloud_run_revision" resource.labels.service_name="fugaro-credentials" jsonPayload.run="'"$rid"'"'
   while :; do
+    rc=0
     gcloud logging read "$filter" --project="$P" --freshness="$LOG_AGE" \
-      --limit="$LOG_LIMIT" --format=json >"$out" 2>"$SCRATCH/audit.err" || true
-    if reader audit "$out" "$rid" | grep -qE '^(audit|refused)='; then return 0; fi
-    if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then return 0; fi
+      --limit="$LOG_LIMIT" --format=json >"$out" 2>"$SCRATCH/audit.err" || rc=$?
+    if [ "$rc" -eq 0 ] && reader audit "$out" "$rid" | grep -qE '^(audit|refused)='; then return 0; fi
+    if [ "$waited" -ge "$LOG_WAIT_SECONDS" ]; then
+      [ "$rc" -eq 0 ] || {
+        printf '%s' "the service's own lines for the run (${rid}) could not be read: 'gcloud logging read' exited ${rc} and printed: $(last_lines "$SCRATCH/audit.err"). Every row read off those lines is read off what the service wrote for that run, and a read that did not answer is NOT the service having written no line: nothing here says whether that run was served or not served. Read the log yourself ('gcloud logging read' with that run's id, and 'gcloud logging read --help' for the filter above) and run this check again" >"$out.unread"
+        return 1
+      }
+      return 0
+    fi
     sleep "$LOG_POLL_SECONDS"
     waited=$((waited + LOG_POLL_SECONDS))
   done
 }
+
+# audit_unread OUT: the row text for a lines file whose read did not answer, or
+# nothing at all when the read answered — a read that answered and found no line
+# of the run's own IS the service's silence, which is a reading and not a failed
+# read (audit_read).
+audit_unread() { cat "$1.unread" 2>/dev/null || true; }
 
 # audit_served FILE RID: how many of the run's lines are the one status that is
 # not a refusal — a credential answered, which is what the route writes for a
@@ -1017,13 +1044,38 @@ step_switch() {
     fi
     say "${repo}: $(field_of urls "$got") of ${n} job(s) carry the credentials service's URL"
   done
-  got=$(fugaro project policy show --project fugaro --json 2>"$SCRATCH/policy.err" || true)
+  # The read's own status and never `|| true`: a failed read leaves an empty
+  # document, the reader answers `mode=None` for it, and `None` is not `off` —
+  # so the row below would PASS D2071's third leg on a mode nobody read. A
+  # switch row read off a policy this check never got is a PASS on nothing, and
+  # the rows below it (and, in the flip mode, the two throwaway runs) would be
+  # rows about a state nobody settled. check420.sh and check421.sh treat this
+  # same call as one their rows could not be measured from; check191.sh as a
+  # FAIL. Here it is the switch that is not measured, and the runs wait.
+  local mode rc=0
+  got=$(fugaro project policy show --project fugaro --json 2>"$SCRATCH/policy.err") || rc=$?
   printf '%s\n' "$got" >"$SCRATCH/policy.json"
-  local mode
+  if [ "$rc" -ne 0 ]; then
+    unmeasured switch "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL), and 'fugaro project policy show --project fugaro --json' exited ${rc}: $(last_lines "$SCRATCH/policy.err"). D2071's third leg — the published budget mode, which 'update' reads and which must not be off — is NOT measured by that read, and the runs below are not launched on a switch nobody settled. Read the policy yourself ('fugaro project policy show --project fugaro --json') and run this check again"
+    SWITCH_STOP=yes
+    return 0
+  fi
   mode=$(reader policy "$SCRATCH/policy.json" "$REPO_ONE" | sed -n 's/^mode=//p')
   case "$mode" in
   off)
     fact switch FAIL "the installation's budget mode is 'off' and both repositories are switched: the mode is read at 'fugaro update', and a switched repository whose mode is off is one whose jobs hold no mount and whose runs have nothing to be served from. Raise it ('fugaro project policy publish', observe or enforce) and run this check again"
+    SWITCH_STOP=yes
+    return 0
+    ;;
+  # A mode the document does not carry: the reader answers `None` for a policy
+  # with no budget block — an installation with nothing published, a document
+  # read from a `show` that printed no policy — and `-` for an empty one. A row
+  # that read either as "not off" would PASS this leg on a value nobody
+  # published, which is the same mistake as the failed read above, one step
+  # further in. Every other value that reaches here IS a published mode, and it
+  # is `off` above that the row is about.
+  None|-|'')
+    unmeasured switch "both repositories are on the switch (a job of each carries FUGARO_CREDENTIALS_SERVICE_URL), and the policy 'fugaro project policy show --project fugaro --json' printed carries no budget mode (the mode reads '${mode:-<none>}'), so D2071's third leg — the mode 'update' reads, which must not be off — is NOT measured: a mode the document does not carry is not a mode that is not off. Publish the project policy so it carries one ('fugaro project policy publish', observe or enforce) and run this check again"
     SWITCH_STOP=yes
     return 0
     ;;
@@ -1116,8 +1168,16 @@ step_run() { # step_run REPO AUTH LABEL FACTKEY
     fact "run-$auth" FAIL "the ${auth} run (${rid}) of ${repo} ended '${status}' and no pull request was opened: $(field_of halt_detail "$row")$(field_of reason "$row") — on a repository on the switch every model call of that run is answered by the credentials service, so a run that could not finish is the service not serving it. Read 'fugaro runs show ${rid} --repo ${repo}' and the service's own lines for it, then run this check again"
     ;;
   esac
-  audit_read "$rid" "$SCRATCH/audit-$label.json"
   lines=$SCRATCH/audit-$label.json
+  # Both rows below are read off the service's own lines for this run, so a read
+  # that did not answer leaves them unmeasured rather than FAILed: the run's own
+  # row above already carries why it ended as it did, and nothing here is a
+  # finding about the credentials service (audit_read).
+  if ! audit_read "$rid" "$lines"; then
+    unmeasured "audited-$auth" "$(audit_unread "$lines")"
+    unmeasured "$key" "$(audit_unread "$lines")"
+    return 0
+  fi
   served=$(audit_served "$lines" "$rid")
   named=$(audit_named "$lines" "$rid")
   local note=""
@@ -1209,6 +1269,15 @@ step_declared_account() {
     unmeasured declared-account "the oauth run (${rid}) of ${OAUTH_REPO} was never launched, so it left no lines of its own and the account the service served it is not read here: the launch's own row above says why it never launched. The row is read off that run's own audit lines and never off a call this check makes"
     return 0
   fi
+  # The file that IS there but was never read: a `gcloud logging read` that did
+  # not answer leaves it empty, and the arm below would take that emptiness for
+  # "no served line of its own names that account" — the boundary reported as
+  # broken on the strength of a read that never happened. It is the same
+  # distinction the guard above makes, one step further in (audit_read).
+  if [ -f "$lines.unread" ]; then
+    unmeasured declared-account "$(audit_unread "$lines")"
+    return 0
+  fi
   named=$(audit_named "$lines" "$rid")
   # The accounts the run's own tier-A lines name, and then the ones of those that
   # are not the declared account: the service may only ever serve it the account
@@ -1274,6 +1343,13 @@ step_proxy() {
     return 0
   fi
   lines=$SCRATCH/audit-$label.json
+  # The row is read off the run's own lines, so a read that did not answer is a
+  # row this check cannot measure and never a repository whose push did not
+  # reach the service (audit_read).
+  if [ -f "$lines.unread" ]; then
+    unmeasured proxy "$(audit_unread "$lines")"
+    return 0
+  fi
   # A run's own git traffic that the service forwarded is one line of the
   # purposes GIT_PURPOSES names, and the credential on it is the bundle's
   # Bitbucket token: a push is one such request (internal/credsvc/audit.go,
@@ -1411,8 +1487,15 @@ step_inflight() {
     return 0
   fi
   fact inflight-run PASS "the run named by CHECK193_INFLIGHT (${rid}) started at ${started_at}, before ${INFLIGHT_REPO}'s jobs were last updated ($(field_of update "$got"), job $(field_of job "$got")), and still finished: status=$(field_of status "$row"), outcome=$(field_of outcome "$row"), pull request $(field_of pr "$row"), pushed=$(field_of pushed "$row")"
-  audit_read "$rid" "$SCRATCH/audit-inflight.json"
   lines=$SCRATCH/audit-inflight.json
+  # U9's whole reading is the service's NOT writing a line for this run, so a
+  # `gcloud logging read` that did not answer must never be taken for that: the
+  # absent line would be read as the pass the row exists to take, on a log the
+  # check never saw (audit_read).
+  if ! audit_read "$rid" "$lines"; then
+    unmeasured inflight-mount "$(audit_unread "$lines") — U9's reading is the absence of a line of that run's own, which a read that did not answer cannot show"
+    return 0
+  fi
   served=$(audit_served "$lines" "$rid")
   if [ "${served:-0}" -ge 1 ]; then
     fact inflight-mount FAIL "the run ${rid} was in flight across the re-apply and the credentials service wrote ${served} line(s) of its own ($(audit_named "$lines" "$rid" | tr '\n' ' ')): an execution created before the re-apply carries no FUGARO_CREDENTIALS_SERVICE_URL, so no call of it can reach the service — a line of its own means the re-apply reached into a run that was already going, which is the one thing U9 says cannot happen"
