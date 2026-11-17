@@ -44,8 +44,11 @@ const (
 	mergeRun = "20261107-090000-abcd"
 	// mergeReviewRun and mergeJudgeRun are the two rung 3 runs of a head that
 	// is covered: the review D2043 requires and the judge whose answer may veto.
-	mergeReviewRun = "20261107-100000-revw"
-	mergeJudgeRun  = "20261107-110000-judg"
+	// They are run ids and not names, because the ledger the hook writes names
+	// the run its move launched and the state admits a block only under a run id:
+	// a mint that returned anything else would have the whole write refused.
+	mergeReviewRun = "20261107-100000-a1b2"
+	mergeJudgeRun  = "20261107-110000-c3d4"
 	// mergePR is the pull request every reading here belongs to.
 	mergePR = 7
 	// mergeFinding is a finding key of the shape the tree writes (runstore's
@@ -1726,7 +1729,10 @@ func TestR3TickReentersTheRung(t *testing.T) {
 // without deciding anything (G5).
 //
 // Mutation: drop the re-read from ladderBeyond and the first cycle below ends as
-// "state moved" with no question about wi-2 on the node.
+// "state moved" with no question about wi-2 on the node; write the ledger's
+// block without the two names a reader outside the daemon joins on and it reads
+// empty after the move, where the item says the repository and the launched
+// review it should carry.
 func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
 	now := o6Now()
 	m := newMergeHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
@@ -1777,6 +1783,14 @@ func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
 	if e := m.item("wi-1").Escalation; e == nil || e.OuterAttempts != 3 {
 		t.Fatalf("the ledger reads %+v, and the review the hook launched is one ladder run", e)
 	}
+	// And the two names the reports job's read filters and joins on are the ones
+	// the move writes: the block is replaced whole and not patched, so a block
+	// written without them leaves the item in no repository's section and the
+	// chain's run — its pull request, hours and cost — behind it (E12, F27).
+	if w := m.item("wi-1"); w.Escalation.Repo != w.Repo || w.Escalation.RunID != mergeReviewRun {
+		t.Fatalf("the ledger names %q and the run %q; the item it sits on says %q, and the review this move launched is %q",
+			w.Escalation.Repo, w.Escalation.RunID, w.Repo, mergeReviewRun)
+	}
 	m.stub.line("ladder-r3-review-" + headA[:8])
 
 	// The sequence goes on from there: the next cycle judges the head the
@@ -1800,7 +1814,9 @@ func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
 // hook left on the node: the item stopped, and the scope it filed beside it.
 //
 // Mutation: drop the re-read from ladderBeyond and the cycle ends as "state
-// moved" with the split's items on the node and no question about wi-2.
+// moved" with the split's items on the node and no question about wi-2; leave
+// the two names off the block mergeLedgerOp writes and they read empty after the
+// split, where the item the block sits on still names both.
 func TestR4CycleWritesAfterTheHooksWrite(t *testing.T) {
 	now := o6Now()
 	m := newMergeHarness(t, now, nil,
@@ -1843,6 +1859,13 @@ func TestR4CycleWritesAfterTheHooksWrite(t *testing.T) {
 	}
 	if w := m.item("wi-1"); w.Phase != orchestrator.PhaseCancelled || w.Escalation == nil || w.Escalation.Rung != escalation.R4 {
 		t.Fatalf("the item reads %+v, and the churn the ladder read is rung 4's", w)
+	}
+	// The split starts no run, so the block names the item's own run — and the
+	// repository the reports job's digest filters on is still the item's, the
+	// move having replaced the whole block.
+	if w := m.item("wi-1"); w.Escalation.Repo != w.Repo || w.Escalation.RunID != w.RunID {
+		t.Fatalf("the ledger names %q and the run %q; the item it sits on says %q and %q",
+			w.Escalation.Repo, w.Escalation.RunID, w.Repo, w.RunID)
 	}
 	split, ok := m.state().Item("wi-1-split")
 	if !ok {

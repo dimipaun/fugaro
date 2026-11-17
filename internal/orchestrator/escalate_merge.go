@@ -731,7 +731,7 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 
 	moved := ladderReached(item) != step.Rung
 	var ops []Op
-	if op, ok := mergeLedgerOp(item, step, reason, in.Head, launched, moved, now); ok {
+	if op, ok := mergeLedgerOp(item, step, reason, in.Head, runID, launched, moved, now); ok {
 		ops = append(ops, op)
 	}
 	switch out.Kind {
@@ -927,7 +927,14 @@ func mergeLandingTransition(head string) string {
 // the ladder spends six runs at most, so a ledger at that cap was written by
 // something else, and a cycle that kept adding one would fail on the write every
 // time instead of leaving the item to a person who can read it.
-func mergeLedgerOp(item WorkItem, step escalation.Step, reason escalation.Reason, head string, launched, moved bool, now time.Time) (Op, bool) {
+//
+// The whole block is replaced rather than patched, so the two names a reader
+// outside the daemon filters and joins on — the item's repository and the run
+// this move was about — are written here from the item and the move, exactly as
+// ladderRecord writes them: read off the block they stand on instead, a move
+// would empty them, and the item would drop out of its repository's digest with
+// the chain's run behind it.
+func mergeLedgerOp(item WorkItem, step escalation.Step, reason escalation.Reason, head, runID string, launched, moved bool, now time.Time) (Op, bool) {
 	if !moved && !launched {
 		return Op{}, false
 	}
@@ -936,6 +943,8 @@ func mergeLedgerOp(item WorkItem, step escalation.Step, reason escalation.Reason
 		held = *item.Escalation
 	}
 	next := Escalation{
+		Repo:          item.Repo,
+		RunID:         runID,
 		Rung:          held.Rung,
 		EnteredAt:     held.EnteredAt,
 		OuterAttempts: held.OuterAttempts,

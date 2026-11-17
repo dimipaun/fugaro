@@ -58,7 +58,7 @@ func (s MergeSeams) split(ctx context.Context, item WorkItem, step escalation.St
 	out := splitOutcome(mr)
 	moved := ladderReached(item) != step.Rung
 	var ops []Op
-	if op, ok := mergeLedgerOp(item, step, reason, read.HeadSHA, false, moved, now); ok {
+	if op, ok := mergeLedgerOp(item, step, reason, read.HeadSHA, item.RunID, false, moved, now); ok {
 		ops = append(ops, op)
 	}
 	ops = append(ops, cancelItemOp(item.ID))
