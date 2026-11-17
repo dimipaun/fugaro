@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -225,6 +226,54 @@ func TestLeaseTopUpAndRelease(t *testing.T) {
 	}
 	if out := b.outcome(); out == nil || out["status"] != "succeeded" {
 		t.Fatalf("outcome = %v", out)
+	}
+}
+
+// TestBudgetSessionWritesTheDeployedLeaves (F27, SA5.1): the run's budget
+// session learns the installation's deployed rules generation at bootstrap --
+// the marker fugaro update writes, read through projectpolicy and handed to
+// budget.Config -- and writes the day counter's spend-accuracy leaves only
+// where that document grants them. Realtime Database applies a stage report's
+// multi-path update atomically, so one leaf the deployed document lacks
+// refuses the whole report and the stage fails (F10): an installation whose
+// rules are one generation behind writes exactly the leaves it always wrote.
+func TestBudgetSessionWritesTheDeployedLeaves(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// marker is the deployed generation, or 0 for a node to leave absent.
+		marker int
+		leaf   bool
+	}{
+		{"the deployed generation", projectpolicy.RulesVersion, true},
+		{"one generation behind", projectpolicy.RulesVersion - 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(2)...)
+			if tc.marker > 0 {
+				b.db.Set(projectpolicy.PathRulesMarker(), tc.marker)
+			}
+			var st []int
+			rec, err := b.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}), review("ship", 0))
+			if err != nil || rec.Status != runstore.StatusSucceeded {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			base := budget.PathByModel(b.day(), repoSlug, sonnet)
+			if got := b.num(base + "/micros"); got != 80_000 {
+				t.Fatalf("micros = %d, want the stage's two $0.04 calls", got)
+			}
+			// The tokens the stage's calls reported sit beside its dollars
+			// (F9, F25): 4,000 output tokens per call.
+			if got := b.num(base + "/out"); got != 8_000 {
+				t.Fatalf("out = %d, want the 4000 output tokens of each call", got)
+			}
+			v := b.db.Value(base + "/notional")
+			if (v != nil) != tc.leaf {
+				t.Fatalf("notional = %#v with the marker at %d, want the leaf written: %v (RS8), the deployment is what decides (F10)", v, tc.marker, tc.leaf)
+			}
+			if tc.leaf && b.num(base+"/notional") != 0 {
+				t.Fatalf("notional = %d, want the 0 of a model nobody served on tier A", b.num(base+"/notional"))
+			}
+		})
 	}
 }
 
