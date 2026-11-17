@@ -165,18 +165,37 @@ func TestNeverSecretValueRefuses(t *testing.T) {
 	}
 }
 
-// TestNeverBelongRefusesTheFamily is rule 6 (F31): the name and the family
-// around it, and nothing else.
+// TestNeverBelongRefusesTheFamily is rule 6 (F31): the owner's own
+// installation, in every spelling the tree's other guards know it by, and
+// nothing else.
+//
+// The spellings are the two sides the rule is judged on. The word inside a
+// longer name is the direction that fails closed and is what catches the
+// project owner's installation is actually read from, `fugaro-belong`
+// (check-lc4's own guard is a substring test "on purpose"); `edge-devel-dimi`
+// carries the word nowhere at all, and `belong` was a name before it became a
+// project id, so both are named here the way
+// internal/backend/batch's outOfBoundsFloor names them.
 func TestNeverBelongRefusesTheFamily(t *testing.T) {
-	for _, refused := range []string{"belong", "belong-sandbox", "belong-2"} {
+	for _, refused := range []string{
+		"belong", "belong-sandbox", "belong-2", "Belong",
+		"fugaro-belong", "my-fugaro-belong", "sandbox-belong",
+		"edge-devel-dimi", "EDGE-DEVEL-DIMI", " edge-devel-dimi ",
+	} {
 		refusal := refusalOf(t, orchestrator.NeverBelong(refused))
 		if refusal.Rule.Number != 6 {
 			t.Errorf("%q is refused by rule %d, and the owner's own installation is section 6's rule 6", refused, refusal.Rule.Number)
 		}
 	}
-	for _, admitted := range []string{"fugaro-sandbox", "belonging", "", "sandbox-belong"} {
+	// The two ids are matched exactly and not by prefix, which is
+	// outOfBoundsFloor's own reason for doing the same: a project whose id
+	// merely begins with one of them is another project, and refusing it would
+	// refuse a project nobody named. The empty name is admitted here too — a
+	// name nobody set is the caller's own check (orchestratorServiceConfig),
+	// not a spelling of this rule.
+	for _, admitted := range []string{"fugaro-sandbox", "aurora", "edge-devel-dimi-staging", ""} {
 		if err := orchestrator.NeverBelong(admitted); err != nil {
-			t.Errorf("%q is not the belong family, and the rule refuses it: %v", admitted, err)
+			t.Errorf("%q is not the owner's own installation, and the rule refuses it: %v", admitted, err)
 		}
 	}
 }

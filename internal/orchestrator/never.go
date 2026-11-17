@@ -217,22 +217,57 @@ func NeverSecretValue(name string) error {
 	return refuse(5, "reading the value of secret "+name+": this process lists secrets and versions and reads no payload")
 }
 
-// neverBelongFamily is the project name F31 fences, and the family around it:
-// a sandbox or a fixture named after it is refused too (check 302 refuses
-// `belong | belong-*` by name).
+// neverBelong is the word F31 fences, and it is judged INSIDE a name rather
+// than as a whole one, because the owner's own installation is not spelled the
+// same way in the projects it is made of: it was created under the name
+// `belong`, its resources run in the GCP project `edge-devel-dimi` and its
+// database is the Firebase project `fugaro-belong` (docs/design/
+// m9-budget-and-dashboard.md, D19). scripts/live-checks/check-lc4.sh's own
+// guard is a substring test for that reason and says so, and
+// docs/gcp-live-checklist.md's belongs() refuses `*belong*` beside the one id
+// that carries the word nowhere.
 const neverBelong = "belong"
+
+// neverBelongInstallations are the two ids the installation itself answers to,
+// neither of which reads as the word above. They are matched EXACTLY the way
+// internal/backend/batch's outOfBoundsFloor matches them, and for its reason: a
+// project whose id merely begins with one of the two is another project, so
+// `edge-devel-dimi-staging` is not refused here — while every id that mentions
+// the word, `fugaro-belong` and any name built around it, is refused by the
+// substring above rather than by this list.
+var neverBelongInstallations = []string{"edge-devel-dimi", "fugaro-belong"}
 
 // NeverBelong is rule 6: never `belong`.
 //
 // A predicate over a NAME rather than a wall, because the rule is about what
 // the resident orchestrator may be pointed at: `belong` is the owner's own
 // installation, and no target, fixture or test name of this work may be it
-// (F31). It answers nil for any name that is not that family.
+// (F31). It is judged in the direction that fails closed — a name that merely
+// mentions the word is refused too — and it answers nil only for a name that is
+// neither the word, nor inside a longer one, nor one of the two ids the
+// installation itself answers to.
 func NeverBelong(name string) error {
-	if name == neverBelong || strings.HasPrefix(name, neverBelong+"-") {
-		return refuse(6, "the project name "+name+", which is the owner's own installation (F31): the resident orchestrator is a sandbox or a fixture installation and never belong")
+	if !isTheOwnersInstallation(name) {
+		return nil
 	}
-	return nil
+	return refuse(6, "the project name "+name+", which is the owner's own installation (F31: `belong`, whose resources are in `edge-devel-dimi` and whose database is `fugaro-belong`): the resident orchestrator is a sandbox or a fixture installation and never the owner's own")
+}
+
+// isTheOwnersInstallation judges a name the way the tree's other guards do: the
+// word anywhere in it, the two ids the installation itself answers to, and a
+// capital or a stray space, which Google's own API and reap.go's outOfBounds
+// treat as the same project.
+func isTheOwnersInstallation(name string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(name))
+	if strings.Contains(lowered, neverBelong) {
+		return true
+	}
+	for _, id := range neverBelongInstallations {
+		if lowered == id {
+			return true
+		}
+	}
+	return false
 }
 
 // NeverUnverified is rule 7: never act on an unverified message.

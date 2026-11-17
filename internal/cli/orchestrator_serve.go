@@ -226,13 +226,16 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 		return orchestratorConfig{}, userErr("the resident orchestrator needs %s in its environment: it is the installation's Firebase project, which the database it reads belongs to, and a process that does not know which installation it is serving acts on no node at all", envFirebaseFP)
 	}
 	// Rule 6 is about the INSTALLATION and not about one of its names, so it is
-	// held to both names this deployment is made of: `belong`'s Firebase
-	// project is the owner's own database whatever this revision's own project
-	// is called, and the database URL below is named after the Firebase project
-	// (rule 10's check reads the two back to each other), so the one name here
-	// covers the URL as well. A deployment that named only its GCP project
-	// outside the family and its database inside it would otherwise read and
-	// act on the owner's own node — the thing F31 fences.
+	// held to both names this deployment is made of: the owner's own database
+	// is whatever the installation's own project is called, and the database
+	// URL below is named after the Firebase project (rule 10's check reads the
+	// two back to each other), so the one name here covers the URL as well. A
+	// deployment that named only its GCP project outside the rule and its
+	// database inside it would otherwise read and act on the owner's own node —
+	// the thing F31 fences. The names the rule is judged on are the owner's
+	// installation's own and not only the word: `fugaro-belong` is the Firebase
+	// project it reads and `edge-devel-dimi` the GCP project its resources are
+	// in, and never.go refuses both.
 	if err := orchestrator.NeverBelong(fb); err != nil {
 		return orchestratorConfig{}, userErr("the resident orchestrator will not serve this installation: %v", err)
 	}

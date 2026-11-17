@@ -142,12 +142,19 @@ func TestOrchestratorServiceConfigRefusesWhatItCannotKnow(t *testing.T) {
 // at the owner's own project refuses to start rather than serving it.
 //
 // The rule is about the INSTALLATION and not about one of its names, so both
-// names this deployment is made of are held to it. The second case is the one
-// that costs something to get wrong and is refused by the Firebase project
-// alone: its own project is a sandbox's and the database it reads is `belong`'s,
-// so the deployment would read and act on the owner's own node — and the URL
-// agrees with the Firebase project it is named after, so rule 10 has nothing to
-// say about it and rule 6 is the whole of the refusal.
+// names this deployment is made of are held to it, and the installation is
+// spelled both ways the tree's other guards spell it: the word inside a longer
+// id, and the two ids that carry no word at all (`edge-devel-dimi`, the GCP
+// project its resources are in; `fugaro-belong`, the Firebase project — and
+// therefore the database — it is read from).
+//
+// The two cases that cost something to get wrong are refused by ONE of the two
+// names and are the ones the first version of this check let through: a
+// deployment whose own project is the owner's and whose Firebase project is a
+// sandbox's, and one whose own project is a sandbox's and whose database is the
+// owner's — the URL agreeing with the Firebase project it is named after in
+// both, so rule 10 has nothing to say about them and rule 6 is the whole of the
+// refusal.
 func TestOrchestratorServiceConfigRefusesBelong(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -175,6 +182,30 @@ func TestOrchestratorServiceConfigRefusesBelong(t *testing.T) {
 				envProject:    "fugaro-sandbox",
 				envFirebaseFP: "belong-sandbox",
 				envRTDBURL:    "https://belong-sandbox-default-rtdb.firebaseio.com",
+			},
+		},
+		{
+			// The owner's installation spelled without its own name anywhere:
+			// `edge-devel-dimi` is the GCP project belong's resources are in,
+			// and a deployment that named only that one would otherwise serve
+			// the installation F31 fences (internal/backend/batch's
+			// outOfBoundsFloor names the same two ids).
+			name: "the installation's own project, which does not carry its name",
+			env: map[string]string{
+				envProject:    "edge-devel-dimi",
+				envFirebaseFP: "aurora",
+				envRTDBURL:    "https://aurora-default-rtdb.firebaseio.com",
+			},
+		},
+		{
+			// And the same installation read by its database, whose Firebase
+			// project is `fugaro-belong` and whose own project is the sandbox's
+			// — the direction the first version of this check let through.
+			name: "only the firebase project is the installation's",
+			env: map[string]string{
+				envProject:    "fugaro-sandbox",
+				envFirebaseFP: "fugaro-belong",
+				envRTDBURL:    "https://fugaro-belong-default-rtdb.firebaseio.com",
 			},
 		},
 	} {
