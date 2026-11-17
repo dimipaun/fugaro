@@ -4,6 +4,10 @@ package infra
 
 import (
 	"encoding/json"
+	"io/fs"
+	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -111,11 +115,11 @@ func credentialsServiceEnv(t *testing.T, svc plannedResource) map[string]string 
 //
 // The last assertion is the task's other half — "the account holds no write
 // role on any repository registry but the project's own" — read against the
-// plan rather than against the module's text: the ONE change naming the
-// identity is its invoker grant on the credentials service. The registry reach
-// a catalog build needs to push is B6's, and it is added to the same file; a
-// grant that reached a registry here would be a widening this task's review
-// did not announce.
+// plan rather than against the module's text: the three resources naming the
+// identity as a member are its invoker grant on the credentials service and
+// B6's writer and tag mover on the ONE shared registry, which is the whole of
+// what a catalog build is handed. A fourth would be a widening neither task's
+// review announced.
 func TestProjectHasOneBuildIdentity(t *testing.T) {
 	p := newBuildIdentityPlan(t)
 	const addr = "module.installation.google_service_account.build_identity[0]"
@@ -156,8 +160,14 @@ func TestProjectHasOneBuildIdentity(t *testing.T) {
 	if len(accounts) != 1 {
 		t.Errorf("the plan creates %v as the project's build identity, want exactly one account (%s): a second one is a second identity for the same catalog", accounts, BuildIdentityAccountID)
 	}
-	if want := []string{"module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]"}; !slices.Equal(grants, want) {
-		t.Errorf("the plan grants the build identity %v, want exactly %v: its reach is the credentials service's invoker bit and nothing else in this task, so a registry role here would be a widening nobody announced", grants, want)
+	slices.Sort(grants)
+	want := []string{
+		"module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover[0]",
+		"module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_writer[0]",
+		"module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]",
+	}
+	if !slices.Equal(grants, want) {
+		t.Errorf("the plan grants the build identity %v, want exactly %v: its reach is the credentials service's invoker bit and the shared registry's writer and tag mover, so a further role here would be a widening nobody announced", grants, want)
 	}
 }
 
@@ -228,5 +238,203 @@ func TestBuildIdentityIsRenderedIntoTheServicesEnvironment(t *testing.T) {
 	}
 	if want := []string{p.address}; !slices.Equal(got, want) {
 		t.Errorf("FUGARO_BUILD_ACCOUNTS is %v, want %v: the class is the account this plan creates, and one per project — the installation's per-repository job accounts are FUGARO_JOB_ACCOUNTS' and are not a build identity", got, want)
+	}
+}
+
+// catalogCheckIdentityPlan is the installation that both runs the credentials
+// service and publishes a catalog — the only shape in which the catalog
+// check's actAs on the project's build identity exists (the account and the
+// grant are gated on the service, the job on catalog_check) — planned for
+// real: the plan's rows by address, the project, and the two accounts' own
+// spellings.
+type catalogCheckIdentityPlan struct {
+	rows    map[string]plannedResource
+	project string
+	// identity and check are the two accounts' addresses; the *Member fields
+	// are the same addresses in the IAM spelling a grant's own field carries.
+	identity, identityMember string
+	check, checkMember       string
+}
+
+func newCatalogCheckIdentityPlan(t *testing.T) catalogCheckIdentityPlan {
+	t.Helper()
+	// catalogCheckInstallLC is the catalog-check fixture and credentialsBudgetLC
+	// is what makes Credentials write the service's key (the Firebase project
+	// and the two facts it refuses the environment without), so the planned
+	// installation is the one the acceptance is about: a project that publishes
+	// a catalog AND runs the build route.
+	lc := parseLC(t, catalogCheckInstallLC(false)+credentialsBudgetLC)
+	spec, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := Credentials(lc, credsVarsImage(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.CredentialsService = &svc
+	if spec.CatalogCheck == nil {
+		t.Fatal("the fixture plans no catalog check job (D1148), so the actAs below has no subject")
+	}
+	rows := installationPlanFor(t, spec)
+	checkRow, ok := rows["module.installation.google_service_account.catalog_check[0]"]
+	if !ok {
+		t.Fatalf("the plan creates no catalog check account, so the fixture is not the installation these tests are about")
+	}
+	check, _ := checkRow.After["email"].(string)
+	if check == "" {
+		t.Fatalf("%s has no email: %v", checkRow.Address, checkRow.After)
+	}
+	identity := BuildIdentityEmail(lc.GCPProject)
+	return catalogCheckIdentityPlan{
+		rows:           rows,
+		project:        lc.GCPProject,
+		identity:       identity,
+		identityMember: "serviceAccount:" + identity,
+		check:          check,
+		checkMember:    "serviceAccount:" + check,
+	}
+}
+
+// The catalog check's actAs on the build identity (B6, D2301): the job's
+// account may mint the project's build identity's token and submit a build
+// naming it, which is what makes every rebuild the nightly check fires run as
+// the project rather than as the repository the entry belongs to. It is the
+// repository root's own grant one account over (modules/repo/catalogcheck.tf,
+// which holds the same role on that repository's build account until M2).
+//
+// Read whole — the role, the member, the account acted as, and the absence of
+// a condition — because "actAs on the identity" is the whole of what the grant
+// is: a member that is another account, a role that is not the actAs bit, or a
+// condition fencing it to one entry's build would each be a different fact
+// with the same name.
+func TestCatalogCheckActsAsTheBuildIdentity(t *testing.T) {
+	p := newCatalogCheckIdentityPlan(t)
+	const addr = "module.installation.google_service_account_iam_member.catalog_check_build_identity[0]"
+	g, ok := p.rows[addr]
+	if !ok {
+		t.Fatalf("the plan carries no %s: the job submits every rebuild as an account it may not act as, and Cloud Build refuses each one", addr)
+	}
+	if g.Type != "google_service_account_iam_member" {
+		t.Fatalf("%s is a %s, want the service-account IAM member", addr, g.Type)
+	}
+	if got, _ := g.After["role"].(string); got != "roles/iam.serviceAccountUser" {
+		t.Errorf("%s grants %q, want roles/iam.serviceAccountUser: the actAs bit on the ONE account, which is the whole of what submission as it needs", addr, got)
+	}
+	if got, _ := g.After["member"].(string); got != p.checkMember {
+		t.Errorf("%s grants to %q, want %q — the catalog check account this same plan creates", addr, got, p.checkMember)
+	}
+	if got, _ := g.After["service_account_id"].(string); got != "projects/"+p.project+"/serviceAccounts/"+p.identity {
+		t.Errorf("%s acts as %q, want the literal path of %s in %s: a repository's build account here would be the account M2 retires with the repository's root, and a build of an entry whose repository is gone would run as nobody", addr, got, p.identity, p.project)
+	}
+	if conds, _ := g.After["condition"].([]any); len(conds) > 0 {
+		t.Errorf("%s carries a condition (%v): every entry of every repository is rebuilt as the same project account, and one condition per entry would be one grant per entry", addr, conds)
+	}
+	// The account acted as is the plan's own: a grant naming an address the same
+	// plan does not create would be an actAs on another installation's identity.
+	if _, ok := p.rows["module.installation.google_service_account.build_identity[0]"]; !ok {
+		t.Error("the plan grants actAs on the build identity and creates none: the fixture is not the installation B6 is about")
+	}
+}
+
+// The grant survives M2's retirement of every repository root, which is the
+// whole reason B6 moved it: the account is the installation's and the grant is
+// in the installation module, so the root that is destroyed carries neither.
+//
+// The plan's own address is the first half (module.installation...); this is
+// the second, read over the tree the root is made of: NOTHING under a
+// repository root, or under the module it embeds, may name the identity — a
+// grant, a variable or a member naming it there would be a fact that dies with
+// the root while the nightly check keeps firing builds.
+func TestCatalogCheckGrantSurvivesRetiringARepoRoot(t *testing.T) {
+	p := newCatalogCheckIdentityPlan(t)
+	const addr = "module.installation.google_service_account_iam_member.catalog_check_build_identity[0]"
+	if _, ok := p.rows[addr]; !ok {
+		t.Fatalf("the plan carries no %s, so there is no installation-side grant to survive anything: the actAs is in a repository root and dies with it", addr)
+	}
+	for _, dir := range []string{
+		"../../deploy/terraform/gcp/roots/repo",
+		"../../deploy/terraform/gcp/modules/repo",
+	} {
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".tf") {
+				return nil
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(b), BuildIdentityAccountID) {
+				t.Errorf("%s names %s: the repository root (and the module it embeds) is retired with M2, and whatever names the project's build identity there is destroyed with it — the actAs belongs to the installation module, which outlives every repository", path, BuildIdentityAccountID)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The identity's whole reach (B6's "nothing wider"), read off the plan: every
+// resource that names it as a MEMBER is a grant TO it, and there are exactly
+// three — the invoker bit on the credentials service and the writer and tag
+// mover on the installation's ONE shared registry, which are the two roles the
+// per-repository build account held there (modules/repo/registry.tf) and the
+// two a catalog push needs. Both are on that registry alone: the base
+// registry, the ghcr remote and a repository's own registry are read or
+// written by other accounts, and a role for this one on any of them would be
+// the per-repository account's reach, which this task deliberately does not
+// carry over.
+func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
+	p := newCatalogCheckIdentityPlan(t)
+	shared, ok := p.rows["module.installation.google_artifact_registry_repository.shared"]
+	if !ok {
+		t.Fatal("the plan creates no shared registry, so the two roles below have no target: the fixture is not the installation B6 is about")
+	}
+	registry, _ := shared.After["repository_id"].(string)
+	if registry == "" {
+		t.Fatalf("%s has no repository_id: %v", shared.Address, shared.After)
+	}
+	const (
+		writer   = "module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_writer[0]"
+		tagMover = "module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover[0]"
+		invoker  = "module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]"
+	)
+	got := map[string]string{}
+	for addr, row := range p.rows {
+		// The account's own row carries the same member (the provider renders
+		// it), and it is not a grant: what is enumerated here is every kind of
+		// IAM resource the plan holds naming the identity as its holder.
+		if !strings.HasSuffix(row.Type, "_iam_member") {
+			continue
+		}
+		if member, _ := row.After["member"].(string); member != p.identityMember {
+			continue
+		}
+		role, _ := row.After["role"].(string)
+		got[addr] = role
+	}
+	want := map[string]string{
+		invoker:  "roles/run.invoker",
+		writer:   "roles/artifactregistry.writer",
+		tagMover: "projects/" + p.project + "/roles/" + RoleTagMover,
+	}
+	if !maps.Equal(got, want) {
+		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, and a fourth grant would be a reach this task did not carry over", got, want)
+	}
+	for _, addr := range []string{writer, tagMover} {
+		row, ok := p.rows[addr]
+		if !ok {
+			t.Fatalf("the plan carries no %s, so a catalog build of an entry pushes nothing", addr)
+		}
+		if r, _ := row.After["repository"].(string); r != registry {
+			t.Errorf("%s grants on repository %q, want the shared registry %q: every catalog image lands there (D1152), and a role on a repository's own registry, on the base image registry or on the ghcr remote is the per-repository account's reach and not this identity's", addr, r, registry)
+		}
+		if r, _ := row.After["project"].(string); r != p.project {
+			t.Errorf("%s grants in project %q, want %q", addr, r, p.project)
+		}
 	}
 }
