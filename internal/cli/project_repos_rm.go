@@ -499,6 +499,15 @@ func reposRemovalKept(plan reposRemoval) string {
 // behaviour stood on was that `--forget` is the last step and this command is
 // not it.
 //
+// The sequence is not one-way, and the sentence says so rather than leaving the
+// operator to find the repository's jobs back: step 1 is an apply of a root
+// that still declares the workflow jobs, the check job and its schedule, so
+// over a repository this command has just un-enrolled it recreates all of them
+// and writes the `repos:` entry back (init.go's Repository stage, which
+// rebuilds the entry from the checkout's spec and republishes the shared
+// config). Only step 3's destroy takes them away again, and the state this
+// command keeps is what that destroy plans from.
+//
 // It names the sequence rather than a verb because there is no verb: the retire
 // path's API-delete half (RetireSplit's api group, JobDeleteLabels) covers Cloud
 // Run jobs and nothing else, and its apply half is `fugaro update`'s own flow,
@@ -511,7 +520,7 @@ func reposRemovalOffboarding(plan reposRemoval) string {
 	if plan.stateBucket != "" {
 		state = "the repository's Terraform state under gs://" + plan.stateBucket + "/" + infra.RepoStatePrefix(plan.slug) + "/"
 	}
-	return fmt.Sprintf("it keeps %s and the repository root's own IAM members — the grants of %s's job accounts and of its build account, on the project, on the runs bucket, on its secrets and on its image registry. Neither is this command's to take away: the state is what an apply of that root plans from, and the grants are members only such an apply deletes, so both go with the sequence docs/how-to/offboarding.md lays out — step 1 `fugaro update --repo --allow-job-delete` lowers the jobs' deletion protection, step 3's destroy takes the job accounts, the build account and their grants, and step 4 `fugaro update --repo --forget` removes the state itself",
+	return fmt.Sprintf("it keeps %s and the repository root's own IAM members — the grants of %s's job accounts and of its build account, on the project, on the runs bucket, on its secrets and on its image registry. Neither is this command's to take away: the state is what an apply of that root plans from, and the grants are members only such an apply deletes, so both go with the sequence docs/how-to/offboarding.md lays out — and that sequence builds the repository's jobs back before it destroys them: step 1 `fugaro update --repo --allow-job-delete` lowers the jobs' deletion protection and, because the root still declares the workflow jobs, the check job and its daily check schedule, it recreates all of them over a state this command has left standing, and writes the repository's repos: entry back into this machine's config; step 3's destroy takes the jobs, the schedule, the job accounts, the build account and their grants away again; and step 4 `fugaro update --repo --forget` removes the state itself",
 		state, pluginwire.Printable(plan.ownerName))
 }
 

@@ -527,14 +527,29 @@ func TestReposRmNamesTheDocumentedOffboardingForWhatItKeeps(t *testing.T) {
 			t.Errorf("%v\n%s", err, sentence)
 		}
 	}
+	// The sequence is not one-way, and both halves have to say so rather than
+	// leave the operator to find the repository's jobs back: step 1 is an apply
+	// of a root that still declares the workflow jobs, the check job and its
+	// schedule, so over a repository this command has just un-enrolled it
+	// recreates them and writes the `repos:` entry back, and only step 3's
+	// destroy takes them away again.
+	for _, want := range []string{"recreates", "the workflow jobs", "repos: entry"} {
+		if !strings.Contains(sentence, want) {
+			t.Errorf("the sentence does not say what the offboarding's first step does over a repository this command has un-enrolled (%q):\n%s", want, sentence)
+		}
+	}
 	// And the document is the door it says it is: the sequence it lays out ends
-	// with that command, which is what makes the pointer worth following.
+	// with that command, which is what makes the pointer worth following, and it
+	// carries the same warning about its first step.
 	doc, err := os.ReadFile("../../docs/how-to/offboarding.md")
 	if err != nil {
 		t.Fatalf("reading docs/how-to/offboarding.md, the flow the sentence names: %v", err)
 	}
 	if !strings.Contains(string(doc), "fugaro update --repo --forget") {
 		t.Errorf("the sentence names docs/how-to/offboarding.md as the flow whose last step is `fugaro update --repo --forget`, and the document does not name that step:\n%s", sentence)
+	}
+	if !strings.Contains(string(doc), "recreates") {
+		t.Errorf("the document does not say that step 1 recreates the jobs of a repository this command has un-enrolled:\n%s", sentence)
 	}
 }
 

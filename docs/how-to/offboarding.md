@@ -14,17 +14,19 @@ fugaro update --repo --allow-job-delete
 
 Its only change is `deletion_protection = false` on the repository's jobs — the workflow jobs and the check job. The flag is a variable of that apply, so the next run without it puts the protection back.
 
+**After a `fugaro project repos rm` this step is not a no-op.** That command keeps the repository's state, and the root still declares the repository's workflow jobs, its check job and its daily check schedule, so this apply **recreates all of them** — and it writes the repository's `repos:` entry back into this machine's config and republishes the shared config. Step 3 destroys the recreated jobs and schedule again, and step 4 removes the state and, as its last line says, the `repos:` entry.
+
 ## 2. Keep the secrets (**per repository**)
 
 They hold values Terraform never saw, and `prevent_destroy` refuses to destroy them. Take them out of the repository's state, so Terraform forgets them and leaves them and their values in Secret Manager. `fugaro update --repo --retire` removes the addresses the configuration no longer declares ([retiring-a-workflow.md](retiring-a-workflow.md)); a whole repository's `fugaro.yaml` still declares its secrets, so there the removal is `terraform state rm '<address>'` run by hand in the repository's working directory, outside Fugaro's guard. **Fugaro never deletes a secret or a secret version:** `gcloud secrets delete <name>` removes one if you want it gone.
 
 ## 3. Destroy the rest, by hand
 
-The repository's registry has `prevent_destroy`, so this needs the module edited first, and nothing checks the plan for you: read it line by line. The registry, its images, the job accounts, the build account and the check job and its schedule go with it. The runs bucket keeps the repository's `runs/`, `cache/` and `builds/` objects until their lifecycle rules delete them (`builds/` never expires: delete it by hand).
+The repository's registry has `prevent_destroy`, so this needs the module edited first, and nothing checks the plan for you: read it line by line. The registry, its images, the workflow jobs, the job accounts, the build account and the check job and its schedule go with it — including the jobs step 1 recreated. The runs bucket keeps the repository's `runs/`, `cache/` and `builds/` objects until their lifecycle rules delete them (`builds/` never expires: delete it by hand).
 
 ## 4. Forget what is left (**per repository**)
 
-`fugaro update --repo --forget` removes the repository from Terraform's state; it destroys nothing. Then remove the repository from the local config's `repos`.
+`fugaro update --repo --forget` removes the repository from Terraform's state; it destroys nothing. Then remove the repository from the local config's `repos` — including the entry step 1 wrote back.
 
 ## The two lists the repository is still on
 
