@@ -246,6 +246,9 @@ func Validate(c *Config) []Problem {
 		if w.JobProfile != "" && !ProjectNameRE.MatchString(w.JobProfile) {
 			add(p+".job_profile", "must be a job profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit (it names a profile of the project policy)")
 		}
+		// The workflow's own ask for an A/B reviewer arm: a review level or
+		// nothing, and never the coder (ab.go).
+		ps = append(ps, validateWorkflowAB(p+".ab", w.AB)...)
 		if w.Base != "" {
 			add(p+".base", legacyBaseMessage, MigrationDoc)
 		}

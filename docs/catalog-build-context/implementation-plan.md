@@ -324,20 +324,26 @@ that describes behaviour, CB1 alone for the gate half. **Reviewer tier:** standa
 
 - **Files:** `internal/infra/readiness.go`, `internal/infra/readiness_catalog_test.go`,
   `docs/project-image-catalog/context-design.md`, `docs/gcp-live-checklist.md`. **4 files.**
-- **Interfaces:** a `var imageContextShipped = false` beside `imageCatalogShipped`, flipped by the
-  release that first writes a node carrying `context` (F22, D1403), and the `Readiness` branch that
-  reads it: a workflow whose entry carries a context is refused on an installation whose base image
-  predates that release, with the sentence naming the version, the way `imageCatalogShipped`'s refusal
-  does. The second half is the fold-in **D1408** asks for: if the owner answers "fold into
+- **Interfaces:** a `var imageContextShipped` beside `imageCatalogShipped`, false while no release reads
+  the member and flipped by the release that first writes — and reads — a node carrying `context` (F22,
+  D1403), and the `Readiness` branch that reads it: a workflow whose entry carries a context is refused
+  on an installation whose base image predates that release, with the refusal naming the entry, the key
+  and `fugaro update`. **It landed `true` in 0.26.0**, the release that carries the member, in the commit
+  that says so in its notes (D1403's flip, and §5 below is the record of what shipped). The second half
+  is the fold-in **D1408** asks for: if the owner answers "fold into
   `docs/project-image-catalog/context-design.md`", this task carries this folder's findings into that
   amendment's own series (G/A/O/C) and leaves this folder as the reading that fed it; if the owner
   answers "stand beside", the same task writes the one-line pointer in each direction and nothing
   else. **It is the same task either way**, because both answers are a documentation change in the
   same release and neither is a code path.
 - **Tests:** `TestReadinessRefusesAContextEntryBeforeTheGateIsFlipped` (the gate off → the workflow is
-  refused with the version sentence; the gate on → it is not), and
+  refused with the refusal naming the entry, the key and `fugaro update`; the gate on → it is not), and
   `TestReadinessDoesNotRefuseAnEntryWithNoContext` (the same installation, an entry with no context,
-  deployed — the gate must not touch entries the feature does not apply to). Then the docs tests:
+  deployed — the gate must not touch entries the feature does not apply to). Both ask the gate through
+  `contextReadiness`'s seam and so set it themselves, which is why the shipped state is pinned beside
+  them: `TestImageContextGateIsShipped` (issue 1659's lesson — 0.17.0 was tagged with the catalog gate
+  still `false`, and a test that sets a gate both ways never notices one that ships flipped wrong).
+  Then the docs tests:
   `go test ./internal/cli/ -run Docs -count=1`, which is the only way to know whether any pinned
   sentence, anchor or count moved.
 - **Red step:** `TestReadinessRefusesAContextEntryBeforeTheGateIsFlipped` fails on the gate: there is
@@ -394,37 +400,58 @@ name a second command, a deletion or a manual repair:
 
 > **### For operators**
 >
-> Run `fugaro update`. It rebuilds the installation's base image and the catalog images whose entry
-> changed shape, and it asks before it starts those builds. An entry that names no `context:` is built
-> exactly as before and its image is not rebuilt. A runner older than this release refuses a project
-> whose catalog carries a `context:` with a message naming the version it needs, rather than building
-> an entry whose context it would silently ignore.
+> Run `fugaro update`. It rebuilds the installation's base image and the catalog images of the checkout
+> it runs in whose recorded base predates this release, and it asks nothing. An entry that names no
+> `context:` is built exactly as before and its image is not rebuilt. A job image older than this
+> release stops a run at bootstrap on the version sentence the node's own version prints, rather than
+> meeting the member as a key it would silently ignore, and the same command moves the image.
 
-**The gate the release that first writes the key flips, and where it is.** `internal/infra/readiness.go`'s
-`imageContextShipped` is **false**, and it is the gate D1403 requires: a job whose catalog entry names
-a `context:` is held back, with a refusal naming the entry and `fugaro update`, because a runner older
-than the release that reads the member meets it as an unknown source key and refuses the whole
-published node — failing the project's runs rather than its catalog. The release that first reads the
-member (CB2/CB3) flips it in the same commit that says so in its notes, exactly as `imageCatalogShipped`
-was flipped; until it does, nothing in this work may be published to a runner that predates it. **This
-half landed with the key rather than with CB5**, because a `main` carrying the member and not the gate
-is one release away from that failure: the plan's own dependency table already had CB5's gate half
-depending on **CB1 alone**.
+**What shipped, and it differs from the draft above in one word.** The draft said the update "asks
+before it starts those builds"; it asks nothing, and cannot: the catalog rebuilds are a Cloud Build
+bounded by the banner it prints, its lease and — in a managed project — the gate's verdict, and
+`fugaro update` asks no question in any of its stages (the hard rule, and `catalogOutcome`'s own
+comment). The sentence the release actually carries is 0.26.0's `### For operators` step 12, which
+names the version sentence as the runner prints it (`the project policy is version 9; this Fugaro
+understands version 7; refresh the runner image (fugaro update)`) rather than a version written here:
+the member reaches a runner inside the published node, and what refuses a job image older than the
+release that reads it is that node's version, not an image-age gate this feature would have to invent.
+`fugaro image refresh` is named beside `fugaro update` for a workflow's own derived image.
+
+**The gate the release that first writes the key flips, and where it is.** Both
+`imageContextShipped` constants — `internal/infra/readiness.go`'s `var` and
+`internal/cli/recipes_skew.go`'s `const` — are **`true` as of 0.26.0**, the release that carries the
+member: readiness's is the gate D1403 requires, which held back a job whose catalog entry names a
+`context:` with a refusal naming the entry, the key and `fugaro update`, because a runner older than
+the release that reads the member meets it as an unknown source key and refuses the whole published
+node — failing the project's runs rather than its catalog — and the CLI's is the same fact at the
+publish door. Both were flipped in one commit whose notes say the release, exactly as
+`imageCatalogShipped` was flipped, and each half is pinned by a test beside the both-ways one
+(`TestImageContextGateIsShipped` beside `TestReadinessRefusesAContextEntryBeforeTheGateIsFlipped`,
+`TestPolicyContextRefusalHoldsTheGateBothWays` for the CLI's): 0.17.0 was tagged with the catalog's
+gate still `false` (issue 1659), and a both-ways test asks the gate through its own seam and would
+never notice. **Both halves landed with the key rather than with CB5**, because a `main` carrying the
+member and not the gate is one release away from that failure: the plan's own dependency table already
+had CB5's gate half depending on **CB1 alone**.
 
 **The gate has a second half, and the key landed with that too.** Readiness holds back the
 *deployment*; the published **node** is the other way the member reaches a runner, and both doors that
 write it — `fugaro update`'s policy stage and `fugaro project policy publish` — build it through one
 function (`internal/cli`'s `policyNodeForPublish`). `internal/cli/recipes_skew.go`'s
-`imageContextShipped` is infra's constant at this release, and `policyContextRefusal` refuses that
-build when the node about to be published carries a `context:`, naming the entry and the way out. It
-judges the node and not the local config, because a config silent about the catalog keeps the
-published one, so the member can reach those bytes from either side. The two constants are one fact
-and move in the same commit as the flip. **CB5's interface list above names readiness's branch alone**,
-and the plan's file counts with it; a gate that only stopped the deploy would leave `fugaro update`
-free to publish the node D1403 is about, which is why this half landed here.
+`imageContextShipped` is infra's constant at this release, and `policyContextRefusal` refused that
+build while it was `false`, when the node about to be published carried a `context:`, naming the entry
+and the way out. It judges the node and not the local config, because a config silent about the catalog
+keeps the published one, so the member can reach those bytes from either side. The two constants are
+one fact and moved in the same commit as the flip. **CB5's interface list above names readiness's
+branch alone**, and the plan's file counts with it; a gate that only stopped the deploy would leave
+`fugaro update` free to publish the node D1403 is about, which is why this half landed here.
 
 **Check 292 is not a gate on the release and does not move the slot.** It is the evidence the owner
-runs on a real installation, and it is the last thing this work owes, not the first.
+runs on a real installation, and it is the last thing this work owes, not the first. The flip does not
+change that, and it is what makes the check runnable at all: the register's own paragraph for it
+(`docs/gcp-live-checklist.md`, Check 292) says the check can only be run from a CLI at or after the
+release that flips the gate — 0.26.0 — and that a run met by the older refusal is a run on the release
+behind. It is therefore **still owner-run, still NOT RUN** here, and 0.26.0 is the release it is run
+after.
 
 ## 6. Check 292 — the live check (owner-run, NOT RUN)
 

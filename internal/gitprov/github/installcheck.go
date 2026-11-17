@@ -16,7 +16,9 @@ import (
 )
 
 // What the GitHub App must grant (design §6.1) is what Fugaro's tokens ask
-// for: a run's (tokenPermissions) and an image build's (buildTokenPermissions).
+// for: a run's (tokenPermissions), an image build's (buildTokenPermissions) and
+// the credentials service's issue route (issueTokenPermissions, whose write no
+// run's token carries — the service performs the issue acts itself).
 // An installation that lacks one fails a run or a build only when it first
 // asks, long after init; CheckInstallation reads what the installation grants
 // so init and doctor can say so first.
@@ -25,11 +27,12 @@ import (
 var permissionLevels = map[string]int{"": 0, "read": 1, "write": 2, "admin": 3}
 
 // RequiredPermissions is the least the installation must grant: the union of
-// what a run's token and an image build's token ask for, the higher level where
-// both name a permission. A copy the caller may keep.
+// what a run's token, an image build's token and the credentials service's
+// issue route ask for, the higher level where two or more name one permission.
+// A copy the caller may keep.
 func RequiredPermissions() map[string]string {
 	need := map[string]string{}
-	for _, perms := range []map[string]string{tokenPermissions, buildTokenPermissions} {
+	for _, perms := range []map[string]string{tokenPermissions, buildTokenPermissions, issueTokenPermissions} {
 		for name, level := range perms {
 			if permissionLevels[level] > permissionLevels[need[name]] {
 				need[name] = level
@@ -82,7 +85,7 @@ type PermissionGap struct {
 	Have string // what the installation grants; "" for none
 }
 
-// Display is the gap as the App settings page names it: "Issues: Read".
+// Display is the gap as the App settings page names it: "Issues: Write".
 func (g PermissionGap) Display() string { return displayName(g.Name) + ": " + displayLevel(g.Want) }
 
 // Fix is the exact change: add it (or raise it), then accept the new

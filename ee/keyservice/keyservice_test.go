@@ -421,6 +421,10 @@ type signInSpy struct {
 	caller Caller
 	err    error
 	tokens []string
+	// now is the clock the freshness rule is measured against, which is the
+	// fixture's (f.clock): a case that moves the clock moves a sign-in out of
+	// its window with it.
+	now func() time.Time
 }
 
 func (s *signInSpy) Verify(_ context.Context, idToken string) (Caller, error) {
@@ -439,6 +443,18 @@ func (s *signInSpy) Verify(_ context.Context, idToken string) (Caller, error) {
 // test sets to be somebody else.
 func (s *signInSpy) RequireSSO(caller Caller, rule SSORule) error {
 	return ssoRefuses(signInOf(caller), rule)
+}
+
+// FreshWithin is the rule for the same reason RequireSSO is: the fixture's seam
+// applies P1.3's own implementation (freshSignIn), so a case that reads a
+// refusal reads the rule a deployment would apply rather than a stub that agrees
+// with the route.
+func (s *signInSpy) FreshWithin(caller Caller, within time.Duration) error {
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	return freshSignIn(signInOf(caller), within, now())
 }
 
 // paddleSpy is the merchant of record in a test: what it answers and what it was
@@ -611,7 +627,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 	f.docs = newDocsSpy(f.store)
 	f.signIn = &signInSpy{caller: Caller{
 		UID: "uid-1", Email: ownerAccount, Provider: "google.com", AuthTime: f.now,
-	}}
+	}, now: f.clock}
 	f.paddle = &paddleSpy{
 		transaction: Transaction{ID: "txn-1", CustomerID: "ctm-1"},
 		portalURL:   "https://paddle.example/portal",

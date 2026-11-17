@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	managedmode "github.com/dimipaun/fugaro/internal/managed"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rigor"
 )
@@ -463,6 +464,19 @@ func (e *initEngine) cover() tf.Cover {
 	if b := e.r.o.billingAccount; b != "" {
 		c.Billing = []string{b}
 	}
+	// The licence renewal job's container: the one grant the cover reads a
+	// target for (tf.Cover.LicenceRenewalSecret, licenceSecretGrant). It is read
+	// off the RUN, where installRoot's licenceJob records the block the plan at
+	// hand is written from, and not off e.spec.Licence: that completion happens
+	// on installRoot's COPY of the spec (it takes the spec by value), so the
+	// engine's own spec still carries what internal/infra's door filled in —
+	// which says nothing about whether this installation deploys the licence
+	// job, the question licenceJob answers and the plan under review follows.
+	// Nil is the installation that deploys no licence job, and then every
+	// binding to this account is one the plan's own module never wrote.
+	if e.r.licence != nil {
+		c.LicenceRenewalSecret = e.r.licence.RenewalSecret
+	}
 	if fp := e.r.o.firebase; fp != "" && fp != e.r.gcpProject {
 		if ok, _ := e.firebaseVerified(e.r.ctx()); ok {
 			c.Projects = append(c.Projects, fp)
@@ -893,16 +907,27 @@ func (c stepCover) NotCoveredSplit(p *tf.Plan, imports []tf.ImportKey) (integrit
 	return c.split(p, imports)
 }
 
-// coverOf is the cover of one step of this run, or one that refuses: a run
-// whose review was never built has no cover for any root, and the reasons are
-// empty in that case because there is no plan to ask about — an answer the gate
-// must not read as "nothing to refuse".
+// coverOf is the cover of one step of this run: the review's own where the run
+// has a review, the run's own where the door has no review screen at all
+// (initRun.cover), and one that refuses otherwise.
+//
+// A run whose review was never built has no cover for any root, and the reasons
+// are empty in that case because there is no plan to ask about — an answer the
+// gate must not read as "nothing to refuse". The door with no review screen is
+// the one case that is not a mistake: `fugaro apply` converges the installation
+// as it is and never builds a review (a chain asks nothing), so its steps are
+// judged by the cover the review would have printed — the run's own, the same
+// value the review screen reads — and it is a value the door has, not one it
+// lost.
 //
 // which and the split are taken together, and both off the review's own cover:
 // a constructor that took one without the other is how a step's whole answer
 // and its halves would come to be about different plans.
-func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) stepCover {
+func (r *initRun) coverOf(which func(*tf.Plan, []tf.ImportKey) []string) managedmode.Cover {
 	if r.review == nil || r.review.cover == nil {
+		if r.cover != nil {
+			return r.cover()
+		}
 		return stepCover{}
 	}
 	return stepCover{notCovered: which, split: r.coverSplit()}

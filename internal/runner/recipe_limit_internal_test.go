@@ -2,6 +2,7 @@ package runner
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -65,9 +66,13 @@ func TestRunDigestReviewOutputBoundOnlyTightens(t *testing.T) {
 	}
 }
 
-// TestReviewOutputBoundIsRunDigestOnly: no other recipe of the catalog carries
-// the bound, however large the repository's own reviewer slot is, and a
-// repository recipe that reuses no name of its own is not judged by it either.
+// TestReviewOutputBoundIsRunDigestOnly: run-digest is the one recipe of the
+// catalog that bounds the REVIEWER's slot, however large the repository's own
+// bound is, and a recipe that carries neither the report run's name nor the
+// diagnose step is not judged by any of the bounds. The troubleseek recipe's
+// bound is its coder slot's (TestTroubleshootDiagnoseOutputBound), so it is
+// named here: a recipe that moved the reviewer's slot as well would leave a
+// report run's own bound with a second writer.
 func TestReviewOutputBoundIsRunDigestOnly(t *testing.T) {
 	for _, name := range recipe.CatalogNames() {
 		if name == "run-digest" {
@@ -75,18 +80,108 @@ func TestReviewOutputBoundIsRunDigestOnly(t *testing.T) {
 		}
 		a := config.Agent{MaxOutputTokens: config.RoleTokens{Reviewer: config.MaxOutputTokensLimit}}
 		if capped := applyRecipeOutputLimit(&a, catalogRecipe(t, name)); capped {
-			t.Errorf("recipe %s capped the reviewer's bound", name)
+			t.Errorf("recipe %s reported a bound of the agent's own capped", name)
 		}
 		if a.MaxOutputTokens.Reviewer != config.MaxOutputTokensLimit {
 			t.Errorf("recipe %s moved the reviewer's bound to %d", name, a.MaxOutputTokens.Reviewer)
 		}
+		// The diagnose step's own bound is the coder slot's; every other recipe
+		// here writes no bound at all.
+		if name == recipe.TroubleshootRecipe {
+			continue
+		}
+		if a.MaxOutputTokens.Coder != 0 {
+			t.Errorf("recipe %s moved the coder's bound to %d", name, a.MaxOutputTokens.Coder)
+		}
 	}
-	a := config.Agent{}
+	a := config.Agent{MaxOutputTokens: config.RoleTokens{Reviewer: config.MaxOutputTokensLimit}}
 	if applyRecipeOutputLimit(&a, &recipe.Recipe{Name: "my-own"}) {
 		t.Error("a recipe of another name capped the reviewer's bound")
 	}
+	if a.MaxOutputTokens.Reviewer != config.MaxOutputTokensLimit || a.MaxOutputTokens.Coder != 0 {
+		t.Errorf("a recipe of another name moved the bounds: %+v", a.MaxOutputTokens)
+	}
+}
+
+// TestTroubleshootDiagnoseOutputBound: the troubleseek recipe bounds its
+// diagnose stage's per-call output (D2407), and the bound goes on the CODER's
+// slot — the slot config.StageRole resolves a stage that is not a review to,
+// which is what the diagnose stage's own request and the gateway's reservation
+// for it are read off — while the reviewer's slot, which no stage of a
+// diagnosis reads, is left alone.
+func TestTroubleshootDiagnoseOutputBound(t *testing.T) {
+	a := config.Agent{}
+	if capped := applyRecipeOutputLimit(&a, catalogRecipe(t, recipe.TroubleshootRecipe)); capped {
+		t.Error("an agent that wrote no limit of its own was reported as capped")
+	}
+	if a.MaxOutputTokens.Coder != recipe.TroubleshootReviewerMaxOutput {
+		t.Errorf("coder bound = %d, want the recipe's %d", a.MaxOutputTokens.Coder, recipe.TroubleshootReviewerMaxOutput)
+	}
 	if a.MaxOutputTokens.Reviewer != 0 {
-		t.Errorf("a recipe of another name set the reviewer's bound to %d", a.MaxOutputTokens.Reviewer)
+		t.Errorf("reviewer bound = %d, want the agent's own (none)", a.MaxOutputTokens.Reviewer)
+	}
+}
+
+// TestTroubleshootDiagnoseOutputBoundOnlyTightens: the recipe caps a larger
+// coder bound and leaves a smaller one alone, so a repository or project that
+// reserved less keeps its own figure, and the reviewer's slot is never moved.
+func TestTroubleshootDiagnoseOutputBoundOnlyTightens(t *testing.T) {
+	for _, tc := range []struct {
+		written int64
+		want    int64
+		capped  bool
+	}{
+		{0, recipe.TroubleshootReviewerMaxOutput, false},
+		{4000, 4000, false},
+		{recipe.TroubleshootReviewerMaxOutput, recipe.TroubleshootReviewerMaxOutput, false},
+		{recipe.TroubleshootReviewerMaxOutput + 1, recipe.TroubleshootReviewerMaxOutput, true},
+		{config.MaxOutputTokensLimit, recipe.TroubleshootReviewerMaxOutput, true},
+	} {
+		t.Run(strconv.FormatInt(tc.written, 10), func(t *testing.T) {
+			a := config.Agent{MaxOutputTokens: config.RoleTokens{Coder: tc.written, Reviewer: 8192}}
+			capped := applyRecipeOutputLimit(&a, catalogRecipe(t, recipe.TroubleshootRecipe))
+			if a.MaxOutputTokens.Coder != tc.want {
+				t.Errorf("coder bound written as %d = %d, want %d", tc.written, a.MaxOutputTokens.Coder, tc.want)
+			}
+			if capped != tc.capped {
+				t.Errorf("coder bound written as %d reported capped = %v, want %v", tc.written, capped, tc.capped)
+			}
+			if a.MaxOutputTokens.Reviewer != 8192 {
+				t.Errorf("coder bound written as %d moved the reviewer's to %d", tc.written, a.MaxOutputTokens.Reviewer)
+			}
+		})
+	}
+}
+
+// TestDiagnoseStepBoundIsKeyedOnTheStep: the bound follows the step rather than
+// the recipe's name, the way the report run's follows its name: a repository's
+// own recipe holding the diagnose step is one small question about one failure
+// by the same argument, wherever it got its name, and a recipe whose name is
+// the troubleseek one but whose steps hold no diagnose step is not a diagnosis
+// at all.
+func TestDiagnoseStepBoundIsKeyedOnTheStep(t *testing.T) {
+	data, ok := recipe.CatalogText(recipe.TroubleshootRecipe)
+	if !ok {
+		t.Fatalf("%s is not in the catalog", recipe.TroubleshootRecipe)
+	}
+	own := strings.Replace(string(data), "name: "+recipe.TroubleshootRecipe, "name: my-diagnosis", 1)
+	rcp, problems := recipe.Parse([]byte(own))
+	if len(problems) > 0 {
+		t.Fatalf("the renamed recipe does not parse: %s", recipe.ProblemsText(problems))
+	}
+	a := config.Agent{MaxOutputTokens: config.RoleTokens{Coder: config.MaxOutputTokensLimit}}
+	if !applyRecipeOutputLimit(&a, rcp) {
+		t.Error("a repository recipe holding the diagnose step did not cap the coder's bound")
+	}
+	if a.MaxOutputTokens.Coder != recipe.TroubleshootReviewerMaxOutput {
+		t.Errorf("coder bound = %d, want the recipe's %d", a.MaxOutputTokens.Coder, recipe.TroubleshootReviewerMaxOutput)
+	}
+	b := config.Agent{MaxOutputTokens: config.RoleTokens{Coder: config.MaxOutputTokensLimit}}
+	if applyRecipeOutputLimit(&b, &recipe.Recipe{Name: recipe.TroubleshootRecipe, Steps: []recipe.Step{{Kind: recipe.StepPlan}}}) {
+		t.Error("a recipe named troubleshoot with no diagnose step was capped")
+	}
+	if b.MaxOutputTokens.Coder != config.MaxOutputTokensLimit {
+		t.Errorf("a recipe named troubleshoot with no diagnose step moved the coder's bound to %d", b.MaxOutputTokens.Coder)
 	}
 }
 

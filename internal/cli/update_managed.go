@@ -222,15 +222,26 @@ func (e *initEngine) gateRun(ctx context.Context) error {
 	return askDecide(r.w, askFlags{ask: r.o.ask}, r.gateUnderway(), r.conditions())
 }
 
-// gateable is whether this door has a gate for this run at all. A run whose own
-// arguments shape the installation rather than converge it as it is
-// (shapesTheInstallation) keeps today's confirmations whole and pays for no
-// read: what the gate would judge is a document that argument just wrote, which
-// is the one thing it must never do. --plan-only is the same answer for the
-// same kind of reason: it applies nothing, so there is nothing for the marks
-// to decide.
+// gateable is whether this door has a gate for this run at all. The two doors
+// that converge an installation as it is have one: `fugaro update`, which runs
+// the whole stage list, and `fugaro apply`, which runs the steps a management
+// command saved for later (docs/composite-commands, D1571). A chain's steps are
+// the same stages under the same gate, so a managed project's owner and a
+// coding agent's session reach them exactly as they reach update's — and the
+// refusal a project that is not managed keeps is that project's own answer, not
+// this door's.
+//
+// A run whose own arguments shape the installation rather than converge it as
+// it is (shapesTheInstallation) keeps today's confirmations whole and pays for
+// no read: what the gate would judge is a document that argument just wrote,
+// which is the one thing it must never do. --plan-only is the same answer for
+// the same kind of reason: it applies nothing, so there is nothing for the
+// marks to decide.
 func (r *initRun) gateable() bool {
-	return r.o.door == updateDoor.name && !r.o.planOnly && !r.shapesTheInstallation()
+	if r.o.planOnly || r.shapesTheInstallation() {
+		return false
+	}
+	return r.o.door == updateDoor.name || r.o.door == applyName
 }
 
 // managedStage is initflow.Options.ManagedGate: whether the stage named runs
@@ -326,7 +337,10 @@ func readUpdateGate(e *initEngine, r *initRun) *initGate {
 	}
 	env := managedGateEnv{lc: e.lc, s: c.Storage, crm: c.CRM}
 	facts := managedGateFacts{
-		Subcommand: "update",
+		// The door that ran, which is what the record's command field names: an
+		// `apply` that recorded itself as an update would tell an owner reading
+		// the audit afterwards that a command ran which did not (D1014).
+		Subcommand: r.o.doorName(),
 		// The session's own arguments as the process has them: what a reader
 		// of the record sees is the command line that ran, and this command
 		// takes no secret on one.

@@ -48,20 +48,23 @@ func pendingProjectsDir(t *testing.T, getenv func(string) string) string {
 //
 // Both halves are pinned. The shape: the members of the document, of an entry
 // and of the change are exactly the ones schemas/pending-steps.schema.json
-// declares, and none of them is a member a value could travel in. The write:
-// the document a command's entry produces, read back off disk, holds those
-// members at every level and no string but the change's subject and the
+// declares, and none of them is a member a value could travel in — the two
+// numbers the queue itself needs (`seq` and `queued`) name when an entry was
+// queued and never what was set, so they are the entry's own place in the
+// record like its binding, and a value has no member to ride in anywhere. The
+// write: the document a command's entry produces, read back off disk, holds
+// those members at every level and no string but the change's subject and the
 // entry's binding — a value has no member to ride in, and none appears in the
 // bytes either.
 func TestPendingNeverHoldsAValue(t *testing.T) {
-	want := []string{"change", "gcp_project", "project", "step"}
+	want := []string{"change", "gcp_project", "project", "queued", "step"}
 	if got := jsonMembers(t, PendingStep{}); !slices.Equal(got, want) {
 		t.Errorf("an entry's members are %v, want %v", got, want)
 	}
 	if got, want := jsonMembers(t, Change{}), []string{"key", "kind"}; !slices.Equal(got, want) {
 		t.Errorf("a change's members are %v, want %v", got, want)
 	}
-	if got, want := jsonMembers(t, Pending{}), []string{"last_apply", "steps", "version"}; !slices.Equal(got, want) {
+	if got, want := jsonMembers(t, Pending{}), []string{"last_apply", "seq", "steps", "version"}; !slices.Equal(got, want) {
 		t.Errorf("the document's members are %v, want %v", got, want)
 	}
 
@@ -79,8 +82,8 @@ func TestPendingNeverHoldsAValue(t *testing.T) {
 	// members and closes each object: a document carrying one this build does
 	// not know is refused, which is what makes the member list the whole of it.
 	schema := readSchema(t)
-	if got := schemaMembers(t, schema); !slices.Equal(got, []string{"last_apply", "steps", "version"}) {
-		t.Errorf("the schema's document members are %v, want last_apply, steps and version", got)
+	if got := schemaMembers(t, schema); !slices.Equal(got, []string{"last_apply", "seq", "steps", "version"}) {
+		t.Errorf("the schema's document members are %v, want last_apply, seq, steps and version", got)
 	}
 	if got := schemaMembers(t, schema, "properties", "steps", "items"); !slices.Equal(got, want) {
 		t.Errorf("the schema's entry members are %v, want %v", got, want)
@@ -125,7 +128,7 @@ func TestPendingNeverHoldsAValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc, entry := writtenDocument(t, data)
-	if got, want := slices.Sorted(maps.Keys(doc)), []string{"last_apply", "steps", "version"}; !slices.Equal(got, want) {
+	if got, want := slices.Sorted(maps.Keys(doc)), []string{"last_apply", "seq", "steps", "version"}; !slices.Equal(got, want) {
 		t.Errorf("the written document's members are %v, want %v", got, want)
 	}
 	if got := slices.Sorted(maps.Keys(entry)); !slices.Equal(got, want) {
@@ -440,6 +443,50 @@ func TestPendingAddKeepsOneEntryPerStep(t *testing.T) {
 	}
 }
 
+// TestPendingAddStampsEveryQueue: the same step queued twice is two entries as
+// far as a run is concerned, because the record holds the change's subject and
+// never its value (D1570) — a setting edited twice before either apply leaves
+// two changes that read the same in every member but the stamp Add gives them.
+// Without it the second change is the first entry again, and the run that read
+// it drops it as the step it answered: the change is never published and the
+// record reads as settled.
+func TestPendingAddStampsEveryQueue(t *testing.T) {
+	p := EmptyPending()
+	queued := PendingStep{
+		Step: initflow.Policy, Project: "workspace-a", GCPProject: "proj-1234",
+		Change: Change{Kind: Setting, Key: "budget.per_run_usd"},
+	}
+	p.Add(queued)
+	read := EmptyPending()
+	read.Steps = slices.Clone(p.Steps)
+
+	// The same setting, changed again while the run was going: the entry the
+	// run reads when it ends is the one it read the members of, with a stamp of
+	// its own.
+	p.Add(queued)
+	if len(p.Steps) != 1 {
+		t.Fatalf("two changes owing %s left %d entries, want one", initflow.Policy, len(p.Steps))
+	}
+	if p.Steps[0] == read.Steps[0] {
+		t.Fatalf("the re-queued entry is the entry that was read, stamp and all: %+v", p.Steps[0])
+	}
+	if p.Steps[0].Queued <= read.Steps[0].Queued {
+		t.Errorf("the re-queued entry carries sequence %d, want one after the entry it replaced (%d)",
+			p.Steps[0].Queued, read.Steps[0].Queued)
+	}
+
+	// The run settles: the entry that was read is dropped, the re-queue is not.
+	if got := p.Names(); !slices.Equal(got, []string{initflow.Policy}) {
+		t.Errorf("the run's own settle left %v, want the step queued while it was going", got)
+	}
+	settled := EmptyPending()
+	settled.Steps = slices.Clone(read.Steps)
+	settled.ClearUnchanged(read, initflow.Policy)
+	if got := settled.Names(); len(got) != 0 {
+		t.Errorf("an entry nothing re-queued survived the run: %v", got)
+	}
+}
+
 // TestPendingClearDropsOnlyTheNamedSteps: `fugaro update` clears the stages it
 // ran successfully and leaves the rest (D1567), so a clear that dropped every
 // entry, or one that dropped a step it was not asked about, would lose an owed
@@ -466,6 +513,54 @@ func TestPendingClearDropsOnlyTheNamedSteps(t *testing.T) {
 	p.Clear(CatalogBuild, initflow.Repository)
 	if got := p.Names(); len(got) != 0 {
 		t.Errorf("clearing both remaining steps left %v, want none", got)
+	}
+}
+
+// TestPendingClearUnchangedKeepsWhatWasQueuedMeanwhile: a run clears the entries
+// it read and no others (D1563). The step it answered may have been queued again
+// while it was going — the same step, a change made after its stage ran — and
+// that entry is a new thing to do: dropping it leaves the later change unrun
+// while the record reads as settled. An entry for a step the caller read nothing
+// about is not its to drop either, whatever the step.
+func TestPendingClearUnchangedKeepsWhatWasQueuedMeanwhile(t *testing.T) {
+	read := EmptyPending()
+	for _, step := range []string{initflow.Policy, initflow.Repository} {
+		read.Add(PendingStep{
+			Step: step, Project: "workspace-a", GCPProject: "proj-1234",
+			Change: Change{Kind: Setting, Key: "layer.defaults.agent.model"},
+		})
+	}
+	// What the run finds when it ends: the entry it read for the policy step was
+	// replaced by a later change, the repository step is as it was read, and a
+	// step the run never had was queued while it ran.
+	now := EmptyPending()
+	now.Add(PendingStep{
+		Step: initflow.Policy, Project: "workspace-a", GCPProject: "proj-1234",
+		Change: Change{Kind: Setting, Key: "budget.per_run_usd"},
+	})
+	// The repository entry goes in exactly as it was read — not through Add,
+	// which would stamp a fresh queue and make it a change of its own.
+	now.Steps = append(now.Steps, read.Steps[1])
+	now.Add(PendingStep{
+		Step: initflow.Layer, Project: "workspace-a", GCPProject: "proj-1234",
+		Change: Change{Kind: Setting, Key: "layer.defaults.agent.model"},
+	})
+	now.ClearUnchanged(read, initflow.Policy, initflow.Repository)
+	want := []string{initflow.Policy, initflow.Layer}
+	if got := now.Names(); !slices.Equal(got, want) {
+		t.Errorf("after the run the document owes %v, want %v: the entry queued meanwhile, and never one the run did not read", got, want)
+	}
+	// The policy entry that survived is the later change and not the one read.
+	for _, s := range now.Steps {
+		if s.Step == initflow.Policy && s.Change.Key != "budget.per_run_usd" {
+			t.Errorf("the policy entry after the run names %q, want the change queued while the run was going", s.Change.Key)
+		}
+	}
+	// A step the caller read nothing about is kept even when it is named: there
+	// is no entry of its to have answered.
+	now.ClearUnchanged(read, initflow.Layer)
+	if got := now.Names(); !slices.Equal(got, want) {
+		t.Errorf("clearing a step the caller never read left %v, want %v", got, want)
 	}
 }
 

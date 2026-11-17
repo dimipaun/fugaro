@@ -528,6 +528,44 @@ func TestSurpriseCallKeepsItsPenaltyCharge(t *testing.T) {
 	}
 }
 
+// TestSurpriseCallWithATierWarnsIfDearer: a response that named both a speed
+// the request didn't allow and a service tier the table has no multiplier for
+// is charged the surprise penalty (O6), and its tier's warning says the report
+// only floors that charge -- "if dearer" -- rather than claiming the call
+// settled on the report, which is what the tier alone would have made true
+// (D2640). The two figures differ here, so the line is checked against the
+// one the charge actually is: a call priced as a surprise never settles on
+// its report, however the tier is priced.
+func TestSurpriseCallWithATierWarnsIfDearer(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	rep := tierCostReply(t, u, "priority", "0.05")
+	rep.Events[0] = withUsage(t, rep.Events[0], map[string]any{"speed": "fast"})
+	r := feeRouted(t, 10, nil, routedStage, dsRoute, rep)
+	if resp, b := r.post(msg(dsModel, 4000, `"stream":true`)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call, stage := r.logs.lastCall(t), r.gw.EndStage()
+	want := pricing.WithFee(satMul(maxRates().Cost(u), pricing.SurpriseMultiplier), 10)
+	reported := pricing.WithFee(50_000, 10)
+	if reported == want {
+		t.Fatalf("the fixture's penalty charge %d is the report's own: the test proves nothing", want)
+	}
+	if got := pricing.Micros(num(call["charged_micros"])); got != want {
+		t.Errorf("charged %d, want the penalty charge %d rather than the report's %d", got, want, reported)
+	}
+	if call["priced_as"] != pricedSurprise {
+		t.Errorf("priced_as %v, want %q: a call priced as a surprise keeps its penalty charge", call["priced_as"], pricedSurprise)
+	}
+	if stage.Reported != 50_000 || stage.ReportedBy[dsModel] != 50_000 {
+		t.Errorf("reported %d by model %v, want the provider's 50000 recorded beside the charge", stage.Reported, stage.ReportedBy)
+	}
+	// The tier's warning may not say the call settled on the report: the
+	// multiple is the charge, and the report is only a floor under it.
+	if got, want := r.logs.tierWarnChargedAs(t), "2x the rates the call is priced at, or the provider's reported cost with the route fee if dearer"; got != want {
+		t.Errorf("charged_as %q, want %q", got, want)
+	}
+}
+
 // An unusable reported cost is not recorded and changes nothing.
 func TestReportedCostUnusableIgnored(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 2000}
@@ -644,12 +682,14 @@ func TestUnpricedTierSettlesOnTheReport(t *testing.T) {
 			if rep.Unreconciled != 0 {
 				t.Errorf("stage unreconciled %d, want 0: the charge is priced from usage either way", rep.Unreconciled)
 			}
-			// The warning names the multiple, and the report only where the
-			// record carries one: a call that reported no cost has no figure
-			// to name, and the line stops at the multiple.
+			// The warning names the multiple, and the report where the record
+			// carries one: a call that reported no cost has no figure to
+			// name and the line stops at the multiple, and a complete call
+			// that did settles on the report rather than on the multiple
+			// (D2640), so the line says that.
 			wantChargedAs := "2x the rates the call is priced at"
 			if c.cost != "" {
-				wantChargedAs += ", or the provider's reported cost with the route fee if dearer"
+				wantChargedAs += ", or the provider's reported cost with the route fee, which is what the call settled on, floored at the row's cheapest end"
 			}
 			if got := r.logs.tierWarnChargedAs(t); got != wantChargedAs {
 				t.Errorf("charged_as %q, want %q", got, wantChargedAs)
@@ -676,9 +716,19 @@ func TestUnpricedTierHugeReportStaysTheConservativeFigure(t *testing.T) {
 		t.Fatalf("the fixture's conservative charge %d already fills the reservation %d", cons, w)
 	}
 	const huge = "1000000"
-	call, rep := settleCase(t, 0, body, tierCostReply(t, u, "priority", huge))
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, tierCostReply(t, u, "priority", huge))
+	if resp, b := r.post(body); resp.StatusCode != http.StatusOK {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call, rep := r.logs.lastCall(t), r.gw.EndStage()
 	if got := pricing.Micros(num(call["charged_micros"])); got != cons {
 		t.Errorf("charged %d, want the conservative figure %d: a report past ten times the reservation is not a price", got, cons)
+	}
+	// The tier's warning names the multiple alone: a malformed report is not
+	// in the charge at all, so the line may not offer it as the figure the
+	// call settled on or floored the charge at.
+	if got, want := r.logs.tierWarnChargedAs(t), "2x the rates the call is priced at"; got != want {
+		t.Errorf("charged_as %q, want %q", got, want)
 	}
 	if rep.Used != cons || rep.Overrun != 0 {
 		t.Errorf("stage used %d overrun %d, want the conservative %d and no overrun", rep.Used, rep.Overrun, cons)
@@ -772,6 +822,12 @@ func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
 	}
 	if rep.ReportedBy[dsModel] != 4_000 {
 		t.Errorf("reported by model %v, want the report 4000 the floor was made of", rep.ReportedBy)
+	}
+	// The warning's words are the partial call's: the multiple is the charge
+	// here and the report only floors it, which is the one case left of the
+	// "if dearer" sentence a complete call no longer gets (D2640).
+	if got, want := r.logs.tierWarnChargedAs(t), "2x the rates the call is priced at, or the provider's reported cost with the route fee if dearer"; got != want {
+		t.Errorf("charged_as %q, want %q", got, want)
 	}
 }
 

@@ -625,6 +625,7 @@ func NewCoordinatorCmd() *cobra.Command {
 	cmd.AddCommand(newCoordinatorLoginCmd())
 	cmd.AddCommand(newCoordinatorLogoutCmd())
 	cmd.AddCommand(newCoordinatorRoadmapCmd())
+	cmd.AddCommand(newCoordinatorSettleCmd())
 	return cmd
 }
 

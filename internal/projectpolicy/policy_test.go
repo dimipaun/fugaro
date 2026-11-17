@@ -214,16 +214,17 @@ func TestDecodeRefusesADuplicatedTopLevelKey(t *testing.T) {
 }
 
 func TestDecodeRefusesBadVersion(t *testing.T) {
+	ahead := Version + 1
 	for name, raw := range map[string]string{
-		"no version":     `{"budget": {"mode": "observe"}}`,
-		"version 0":      `{"version": 0}`,
-		"version 10":     `{"version": 10}`,
-		"a string":       `{"version": "1"}`,
-		"a float":        `{"version": 1.5}`,
-		"a bool":         `{"version": true}`,
-		"not an object":  `[1, 2]`,
-		"a bare number":  `7`,
-		"truncated json": `{"version": 1`,
+		"no version":      `{"budget": {"mode": "observe"}}`,
+		"version 0":       `{"version": 0}`,
+		"a newer version": fmt.Sprintf(`{"version": %d}`, ahead),
+		"a string":        `{"version": "1"}`,
+		"a float":         `{"version": 1.5}`,
+		"a bool":          `{"version": true}`,
+		"not an object":   `[1, 2]`,
+		"a bare number":   `7`,
+		"truncated json":  `{"version": 1`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil {
@@ -235,8 +236,8 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 	}
 	// The version message is the shared constant, so the runner and the CLI
 	// print the same sentence.
-	_, _, err := Decode([]byte(`{"version": 10}`))
-	if err == nil || !strings.Contains(err.Error(), "policy is version 10") {
+	_, _, err := Decode([]byte(fmt.Sprintf(`{"version": %d}`, ahead)))
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("policy is version %d", ahead)) {
 		t.Errorf("the version refusal must use Skew, got %v", err)
 	}
 }
@@ -244,11 +245,11 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 // TestDecodeReadsTheDocumentedSnakeCaseKeys is the test that would have caught
 // a missing json tag: every documented key, field by field.
 func TestDecodeReadsTheDocumentedSnakeCaseKeys(t *testing.T) {
-	p, found, err := Decode([]byte(`{
-		"version": 9,
+	p, found, err := Decode([]byte(fmt.Sprintf(`{
+		"version": %d,
 		"budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"], "max_run_tokens": 250000},
 		"allow_repos": ["github/acme/*", "bitbucket/acme/app"]
-	}`))
+	}`, Version)))
 	if err != nil || !found {
 		t.Fatalf("Decode = (%v, %v, %v)", p, found, err)
 	}
@@ -779,7 +780,8 @@ func TestDecodeRefusesABadPrice(t *testing.T) {
 // rendered message, so the runner (task 1.3) prints RunnerSkew and the CLI
 // (task 1.6) CLISkew from the same error without matching on the text.
 func TestVersionErrorCarriesBothVersions(t *testing.T) {
-	_, found, err := Decode([]byte(`{"version": 10}`))
+	ahead := Version + 1
+	_, found, err := Decode([]byte(fmt.Sprintf(`{"version": %d}`, ahead)))
 	if !found {
 		t.Error("the node exists and cannot be used, so found must be true")
 	}
@@ -787,10 +789,10 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("err = %v, want a *VersionError", err)
 	}
-	if ve.Found != 10 || ve.Understood != Version {
-		t.Errorf("VersionError = %+v, want found 10 and understood %d", ve, Version)
+	if ve.Found != ahead || ve.Understood != Version {
+		t.Errorf("VersionError = %+v, want found %d and understood %d", ve, ahead, Version)
 	}
-	if got, want := err.Error(), fmt.Sprintf(Skew, 10, Version); got != want {
+	if got, want := err.Error(), fmt.Sprintf(Skew, ahead, Version); got != want {
 		t.Errorf("Error() = %q, want the shared sentence %q", got, want)
 	}
 	if got := fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood); !strings.Contains(got, "runner image") {

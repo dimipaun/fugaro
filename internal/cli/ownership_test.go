@@ -698,6 +698,58 @@ func TestOrchestratorPatchExitsTwoWhenTheDatabaseCannotBeRead(t *testing.T) {
 	}
 }
 
+// TestBacklogAddRefusesAnotherInstallationsDatabase: `fugaro backlog add` files
+// a work item into the orchestrator's backlog node, and that node is a document
+// of the same Firebase Realtime Database every budget write goes into (D2735,
+// D1220), so the filing is a writer into the budget database and asks the one
+// ownership question before it reads the node and before anything is written.
+//
+// The question is asked in the guard's own place rather than somewhere a path
+// happens to pass through: the ownership check needs the project name, and the
+// name gate beside it (checkDBProject, as the other orchestrator writers hold
+// it) answers a different question about a different fact — a database whose
+// mark is this installation's own and whose /fugaro/project names another
+// project would pass that one and still be another installation's. What is held
+// here is the question this command has to ask itself.
+func TestBacklogAddRefusesAnotherInstallationsDatabase(t *testing.T) {
+	isolateState(t)
+	f := newOrchestratorFixture(t)
+
+	// The installation's own marked database: the filing lands, and the node it
+	// leaves is the baseline the refusals below are read against — an assertion
+	// that nothing was written says nothing at all if the path never wrote.
+	if out, _, err := execute(t, addArgs()...); err != nil {
+		t.Fatalf("a filing into the installation's own marked database was refused: %v\n%s", err, out)
+	}
+	own := storedBacklogState(t, f)
+	if len(own.WorkItems) != 1 {
+		t.Fatalf("the filing left %d work items, so this test's baseline is empty and its assertions below are vacuous", len(own.WorkItems))
+	}
+
+	// Another installation's mark: the filing is refused, and the node is the one
+	// the last filing left.
+	f.db.Set(budget.PathMark, birchMark())
+	_, _, err := execute(t, addArgs("--title", "a second thing")...)
+	refusedByTheOwnershipCheck(t, "backlog add", err, "nothing was written")
+	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
+		t.Errorf("the refusal is not the shared one (the mark it found): %v", err)
+	}
+	if after := storedBacklogState(t, f); len(after.WorkItems) != len(own.WorkItems) {
+		t.Errorf("the refused filing wrote the node: %d work items, want the %d it held", len(after.WorkItems), len(own.WorkItems))
+	}
+
+	// Data and no mark at all: the other half of the same answer.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = execute(t, addArgs("--title", "a third thing")...)
+	refusedByTheOwnershipCheck(t, "backlog add", err, "nothing was written")
+	if err != nil && !strings.Contains(err.Error(), "and no Fugaro mark") {
+		t.Errorf("the refusal does not name the data and the absent mark: %v", err)
+	}
+	if after := storedBacklogState(t, f); len(after.WorkItems) != len(own.WorkItems) {
+		t.Errorf("the refused filing wrote the node: %d work items, want the %d it held", len(after.WorkItems), len(own.WorkItems))
+	}
+}
+
 // TestImageBuildRefusesAnotherInstallationsDatabase: a build's lease is a
 // writer into the budget database. It reserves a node under /buildleases/<slug>
 // and moves the day's counters before the submission (T4, D1543), so

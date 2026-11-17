@@ -133,6 +133,9 @@ func notificationBody(t *testing.T, e Event, origin string) []byte {
 	if e.Transaction != "" {
 		data["transaction_id"] = e.Transaction
 	}
+	if e.CustomerID != "" {
+		data["customer_id"] = e.CustomerID
+	}
 	if origin != "" {
 		data["origin"] = origin
 	}

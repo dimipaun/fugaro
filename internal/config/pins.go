@@ -57,7 +57,7 @@ func pins(a Agent) []pin {
 // (internal/runner/routing.go's setLevelModel), so a pin of its own for those
 // would print the coder's or the reviewer's warning once more for every level
 // of every run. This is the rule the run's own model checks already follow
-// (checkLevels, over levelAgents).
+// (checkModels, over modelAgents).
 func levelPins(a Agent) []pin {
 	pinned := a.PinnedModels()
 	var out []pin

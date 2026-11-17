@@ -408,6 +408,17 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 			// points the service at another identity fails here rather than
 			// refusing a plan the module still writes.
 			`service_account = google_service_account.credentials[0].email`},
+		// The resident orchestrator's own literals, which its two cases read
+		// (orchestratorServiceChange, orchestratorTickChange): the IAM setting
+		// that is the fence, the argv of the subcommand, the three names
+		// orchestratorServiceEnv allows, the account the template names, and
+		// the tick's route. A module edit that renamed or dropped one fails
+		// here rather than refusing a plan the module still writes.
+		"modules/installation/orchestrator.tf": {`invoker_iam_disabled = false`,
+			`args  = ["orchestrator", "serve"]`,
+			`orchestrator_tick_path = "/tick"`,
+			`"FUGARO_PROJECT"`, `"FUGARO_FIREBASE_PROJECT"`, `"FUGARO_RTDB_URL"`,
+			`service_account = google_service_account.orchestrator[0].email`},
 	}
 	for file, wants := range pins {
 		got := all[filepath.Join(root, "gcp", file)]
@@ -747,7 +758,7 @@ func TestRolePinsAreTheModules(t *testing.T) {
 	strRE := regexp.MustCompile(`"([^"]+)"`)
 	// resource name -> the role ID the modules give it (names.role_ids and the
 	// literals in history.tf and the Firebase module's names.minter_role_id).
-	ids := map[string]string{"launcher": "fugaroLauncher", "fugaro_viewer": ViewerRole, "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "workspace_read": WorkspaceReadRole, "intake_secrets": IntakeSecretsRole, "secret_lister": SecretListerRole, "catalog_lease": CatalogLeaseRole, "state_read": MCPStateReadRole}
+	ids := map[string]string{"launcher": "fugaroLauncher", "fugaro_viewer": ViewerRole, "job_runner": "fugaroJobRunner", "build_submitter": "fugaroBuildSubmitter", "tag_mover": "fugaroTagMover", "cloud_asset_reader": CloudAssetRole, "token_minter": "fugaroTokenMinter", "history": "fugaroHistory", "reaper": "fugaroReaper", "preload_builder": "fugaroPreloadBuilder", "fugaro_deployer": DeployerRole, "credentials_database": CredentialsDatabaseRole, "workspace_read": WorkspaceReadRole, "intake_secrets": IntakeSecretsRole, "secret_lister": SecretListerRole, "catalog_lease": CatalogLeaseRole, "state_read": MCPStateReadRole, "licence_renewal": LicenceRenewalRole}
 	for role, label := range deployerRoleLabel {
 		ids[label] = role
 	}
@@ -1596,6 +1607,362 @@ func TestCoverRefusesAnIntakeServiceThatIsNotTheModules(t *testing.T) {
 			t.Fatal("the credentials service running as the intake's account is covered")
 		}
 	})
+}
+
+// --- The resident orchestrator's service and its tick (P5.1c, design §4.1) -
+
+const orchestratorAccountEmail = OrchestratorAccountID + "@proj-1.iam.gserviceaccount.com"
+
+// orchestratorAccount is the account orchestrator.tf creates for the resident
+// orchestrator, the sibling of credentialsAccount and intakeAccount.
+func orchestratorAccount(acts ...string) ResourceChange {
+	r := rc("google_service_account", map[string]any{"account_id": OrchestratorAccountID}, map[string]any{}, acts...)
+	r.Address = "module.m.google_service_account.orchestrator[0]"
+	return r
+}
+
+// orchestratorService is the resident orchestrator as
+// modules/installation/orchestrator.tf writes it: one container at
+// template[0].containers[0] running the RELEASED image with the module's argv,
+// its three environment variables and the account the module creates for it.
+// The address is what tells the three services apart in the cover
+// (cloudRunServiceName), so it carries the module's own resource name.
+//
+// The argv is the whole reason this service has a case of its own: the image's
+// entrypoint is the released binary and its default command is
+// `credentials serve`, so a plan whose args are not exactly
+// ["orchestrator", "serve"] either serves one of the installation's other two
+// services from this URL — as the one identity that may mint a token for any
+// uid (the design's E4, "may mint" is "may be the phone") — or runs code
+// orchestrator.tf does not write.
+func orchestratorService(image string) ResourceChange {
+	c := map[string]any{"image": image, "command": []any{}, "args": []any{"orchestrator", "serve"}, "env": []any{
+		map[string]any{"name": "FUGARO_PROJECT", "value": "aurora", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_FIREBASE_PROJECT", "value": "aurora-fp", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_RTDB_URL", "value": "https://aurora-fp-default-rtdb.firebaseio.com", "value_source": []any{}},
+	}}
+	r := rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
+		"template": []any{map[string]any{"service_account": orchestratorAccountEmail, "containers": []any{c}}}}, map[string]any{}, "create")
+	r.Address = "module.m.google_cloud_run_v2_service.orchestrator[0]"
+	return r
+}
+
+// orchestratorServicePlan is the plan the module's own service is covered in:
+// the service and the account it runs as, which the same module creates.
+func orchestratorServicePlan(r ResourceChange) *Plan {
+	return &Plan{ResourceChanges: []ResourceChange{r, orchestratorAccount("create")}}
+}
+
+// orchestratorTickURL is the URL the module's own tick calls, as a later plan
+// reads it back out of state: the service's name, the project number Cloud Run
+// appends, this run's region, and the process's single route.
+const orchestratorTickURL = "https://fugaro-orchestrator-123456789012.us-east5.run.app" + orchestratorTickPath
+
+// orchestratorTick is the tick as orchestrator.tf writes it: a POST to the
+// service's own URL on the tick's path, authenticated with an OIDC ID token
+// whose audience is that same URL, minted by the installation's scheduler
+// account. uri and audience are the plan's values for the two; a test row that
+// passes "" for one is the apply that CREATES the service, where both are
+// computed and the plan carries no value for them.
+func orchestratorTick(uri, audience, email string) ResourceChange {
+	tok := map[string]any{"service_account_email": email}
+	unkTok := map[string]any{}
+	ht := map[string]any{"http_method": "POST", "oidc_token": []any{tok}}
+	unk := map[string]any{"oidc_token": []any{unkTok}}
+	if uri == "" {
+		unk["uri"] = true
+	} else {
+		ht["uri"] = uri
+	}
+	if audience == "" {
+		unkTok["audience"] = true
+	} else {
+		tok["audience"] = audience
+	}
+	r := rc("google_cloud_scheduler_job", map[string]any{"name": "fugaro-orchestrator-tick", "schedule": "* * * * *", "http_target": []any{ht}},
+		map[string]any{"http_target": []any{unk}}, "create")
+	r.Address = "module.m.google_cloud_scheduler_job.orchestrator_tick[0]"
+	return r
+}
+
+// The resident orchestrator's service is the third container image in the tree
+// that is not a job's, and it is held to the credentials service's rules plus
+// the two that make it this service: its args, and the account it runs as.
+//
+// The account rule is this one's own and the strictest of the three: this
+// identity holds iam.serviceAccounts.signJwt on the installation's budget
+// signer (design §4.3, E4), so running either of the other two services' images
+// as it — or this image as another account — is a pairing section 4.3's table
+// never priced. The image is held by credentialsImageOK rather than by
+// baseImageOK, for the reason that case gives and one more: modules/
+// installation/iam.tf grants roles/artifactregistry.writer on the run's own
+// base repository to every operator, and an @sha256 rule forbids REWRITING a
+// pin without forbidding CHOOSING one — an operator who pushes bytes there and
+// reads the digest back would otherwise have this process, which may be the
+// phone, run their code.
+//
+// The environment is the three names orchestrator.tf sets (the process reads no
+// fourth: internal/cli's TestOrchestratorServiceEnvIsTheDeploymentsOwn holds
+// the two lists to each other), with literal values and no value_source — an
+// environment is the one path a value could reach this process without a Secret
+// Manager read.
+//
+// Mutation (run, restore): delete the orchestratorServiceChange branch from
+// Cover.attributes — the module's own plan becomes REFUSED, which is the row
+// that pins the branch: every change at this address then falls to the
+// credentials service's case, which refuses the argv, the account and the three
+// names of this container. A test that only listed refused rows would miss it.
+func TestCoverRefusesAnOrchestratorServiceThatIsNotTheModules(t *testing.T) {
+	img := "us-east5-docker.pkg.dev/proj-1/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + strings.Repeat("a", 64)
+	svc := func() ResourceChange { return orchestratorService(img) }
+	container := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	}
+	template := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)
+	}
+	for name, tc := range map[string]struct {
+		change  func() ResourceChange
+		covered bool
+	}{
+		"as the module writes it": {svc, true},
+		// The identities may not swap, in either direction: the other two
+		// services' accounts are refused here, and this one's is refused at
+		// their addresses.
+		"the credentials service's own account": {func() ResourceChange {
+			r := svc()
+			template(r)["service_account"] = credentialsAccountEmail
+			return r
+		}, false},
+		"the intake's own account": {func() ResourceChange {
+			r := svc()
+			template(r)["service_account"] = intakeAccountEmail
+			return r
+		}, false},
+		"an account this plan does not create": {func() ResourceChange {
+			r := svc()
+			template(r)["service_account"] = "fugaro-orch@other.iam.gserviceaccount.com"
+			return r
+		}, false},
+		// The argv, which is what makes this service the resident orchestrator:
+		// without it the container serves the credentials service's routes from
+		// this URL as the account that may mint a token for any uid.
+		"no args at all, as the credentials service's container": {func() ResourceChange {
+			r := svc()
+			delete(container(r), "args")
+			return r
+		}, false},
+		"the credentials service's own command": {func() ResourceChange {
+			r := svc()
+			container(r)["args"] = []any{"credentials", "serve"}
+			return r
+		}, false},
+		"the intake's own command": {func() ResourceChange {
+			r := svc()
+			container(r)["args"] = []any{"intake", "serve"}
+			return r
+		}, false},
+		"a command the module does not set": {func() ResourceChange {
+			r := svc()
+			container(r)["command"] = []any{"/bin/sh", "-c"}
+			return r
+		}, false},
+		"args that are not known": {func() ResourceChange {
+			r := svc()
+			delete(container(r), "args")
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"args": true}}}}}
+			return r
+		}, false},
+		// The environment, which is a list of three and nothing else.
+		"an environment the module does not set": {func() ResourceChange {
+			r := svc()
+			c := container(r)
+			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_JOB_ACCOUNTS", "value": "[]"})
+			return r
+		}, false},
+		"an environment whose value comes from a source": {func() ResourceChange {
+			r := svc()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_RTDB_URL",
+				"value_source": []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle"}}}}}}
+			return r
+		}, false},
+		"an environment list that is not known": {func() ResourceChange {
+			r := svc()
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"env": true}}}}}
+			return r
+		}, false},
+		// The image: a subcommand of the released binary has no image of its
+		// own, and the run's own base repository is the one an operator can
+		// write to.
+		"an image outside the pin": {func() ResourceChange {
+			r := svc()
+			container(r)["image"] = "us-east5-docker.pkg.dev/proj-1/fugaro-base/fugaro-base:1.2.3@sha256:" + strings.Repeat("a", 64)
+			return r
+		}, false},
+		"an image under another owner": {func() ResourceChange {
+			r := svc()
+			container(r)["image"] = "us-east5-docker.pkg.dev/proj-1/fugaro-ghcr/someone-else/fugaro-base:1.2.3@sha256:" + strings.Repeat("a", 64)
+			return r
+		}, false},
+		"an image that is not known": {func() ResourceChange {
+			r := svc()
+			delete(container(r), "image")
+			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"image": true}}}}}
+			return r
+		}, false},
+		"no container": {func() ResourceChange {
+			r := svc()
+			r.Change.After["template"] = []any{map[string]any{}}
+			return r
+		}, false},
+		"IAM turned off": {func() ResourceChange {
+			r := svc()
+			r.Change.After["invoker_iam_disabled"] = true
+			return r
+		}, false},
+		"IAM not stated": {func() ResourceChange {
+			r := svc()
+			delete(r.Change.After, "invoker_iam_disabled")
+			return r
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := orchestratorServicePlan(tc.change())
+			if got := testCover.NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+	// The plan the module writes after the one that created the service: the
+	// account is a no-op and the service keeps naming it, which is every later
+	// plan and must stay covered.
+	t.Run("the account unchanged and the service still naming it", func(t *testing.T) {
+		p := &Plan{ResourceChanges: []ResourceChange{svc(), orchestratorAccount("no-op")}}
+		if got := testCover.NotCovered(p, nil); len(got) != 0 {
+			t.Fatalf("NotCovered = %q, want covered: the account is the plan's own, unchanged", got)
+		}
+	})
+}
+
+// The tick that wakes the resident orchestrator is the tree's one scheduler job
+// that calls a run.app URL, and it is checked by rules of its own rather than
+// by the run API's: this job starts nothing, it wakes a service that is already
+// deployed, and the front end admits the call only when the ID token's audience
+// is that service's own URL.
+//
+// Both arms of the URL rule are rows below, because both are real plans: the
+// URI is a computed attribute of the service resource, so the apply that
+// creates the service carries no value for it and every later plan reads it
+// back out of state. The unknown arm is not vacuous — it requires a service
+// created in the same module — and the known arm reads the URL apart: https, the
+// run.app domain of this run's region, the service's own name, and the tick's
+// path with nothing after it.
+//
+// Mutation (run, restore): delete the oidc_token arm from the
+// google_cloud_scheduler_job case — every row below then falls to the run API's
+// rules, where the module's own tick is REFUSED (its URI is a run.app URL and
+// not a job of run.googleapis.com), which is the row that pins the arm.
+func TestCoverRefusesAnOrchestratorTickThatIsNotTheModules(t *testing.T) {
+	const sched = "fugaro-scheduler@proj-1.iam.gserviceaccount.com"
+	svc := func() ResourceChange {
+		return orchestratorService("us-east5-docker.pkg.dev/proj-1/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + strings.Repeat("a", 64))
+	}
+	// create is the plan of the apply that creates the service: the tick's URL
+	// and its audience are both computed there, and the module's own service is
+	// created with them.
+	create := func() *Plan {
+		return &Plan{ResourceChanges: []ResourceChange{orchestratorTick("", "", sched), svc(), orchestratorAccount("create")}}
+	}
+	later := func(r ResourceChange) *Plan { return &Plan{ResourceChanges: []ResourceChange{r}} }
+	for name, tc := range map[string]struct {
+		plan    func() *Plan
+		covered bool
+	}{
+		"the apply that creates the service": {create, true},
+		"a later apply, the URL read back":   {func() *Plan { return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, sched)) }, true},
+		// The URL: a tick pointed anywhere else runs, fails and logs every
+		// minute forever, which is a service nobody measures.
+		"another host": {func() *Plan {
+			return later(orchestratorTick("https://evil.example"+orchestratorTickPath, "https://evil.example"+orchestratorTickPath, sched))
+		}, false},
+		"another region": {func() *Plan {
+			u := "https://fugaro-orchestrator-123456789012.us-east4.run.app" + orchestratorTickPath
+			return later(orchestratorTick(u, u, sched))
+		}, false},
+		// The region has to be a label of its own: a host that merely ends in
+		// the same words is not this region's service URL.
+		"a host that only ends in the region's words": {func() *Plan {
+			return later(orchestratorTick("https://evil-us-east5.run.app"+orchestratorTickPath, "https://evil-us-east5.run.app"+orchestratorTickPath, sched))
+		}, false},
+		// ... and the host has to be <service>-<project number>: a run.app URL
+		// that names no project is not a service URL at all. Which SERVICE it
+		// names is not read here — the number is a fact only the deployment
+		// has, and the tie to the module's own service is held by its
+		// expression (see orchestratorTickURI) — so what this arm bounds is the
+		// region, the domain and the path.
+		"a run.app URL with no project number": {func() *Plan {
+			u := "https://fugaro-orchestrator.us-east5.run.app" + orchestratorTickPath
+			return later(orchestratorTick(u, u, sched))
+		}, false},
+		"the service's root and not the tick's path": {func() *Plan {
+			u := "https://fugaro-orchestrator-123456789012.us-east5.run.app"
+			return later(orchestratorTick(u, u, sched))
+		}, false},
+		"the tick's path with something after it": {func() *Plan {
+			u := orchestratorTickURL + "/later"
+			return later(orchestratorTick(u, u, sched))
+		}, false},
+		"the tick's path with a query": {func() *Plan {
+			u := orchestratorTickURL + "?x=1"
+			return later(orchestratorTick(u, u, sched))
+		}, false},
+		"the run API's own URL, with an ID token": {func() *Plan {
+			u := "https://run.googleapis.com/v2/projects/proj-1/locations/us-east5/jobs/fugarohist:run"
+			return later(orchestratorTick(u, u, sched))
+		}, false},
+		"no URL that is not known and no service created with it": {func() *Plan {
+			return later(orchestratorTick("", "", sched))
+		}, false},
+		// The token. An audience of anything but the URL it calls is not
+		// admitted by Cloud Run's front end, so the job would fail every minute
+		// with nothing in the installation's own records to say why.
+		"an audience that is not the URL it calls": {func() *Plan {
+			return later(orchestratorTick(orchestratorTickURL, "https://fugaro-orchestrator-123456789012.us-east5.run.app", sched))
+		}, false},
+		"an audience that is not known while the URL is": {func() *Plan {
+			return later(orchestratorTick(orchestratorTickURL, "", sched))
+		}, false},
+		"a caller that is not a Fugaro account": {func() *Plan {
+			return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, "evil@proj-1.iam.gserviceaccount.com"))
+		}, false},
+		"a caller of another project": {func() *Plan {
+			return later(orchestratorTick(orchestratorTickURL, orchestratorTickURL, "fugaro-scheduler@other.iam.gserviceaccount.com"))
+		}, false},
+		"a caller that is not known and no account created with it": {func() *Plan {
+			r := orchestratorTick(orchestratorTickURL, orchestratorTickURL, "")
+			ht := r.Change.After["http_target"].([]any)[0].(map[string]any)
+			ht["oidc_token"].([]any)[0].(map[string]any)["service_account_email"] = "computed later"
+			r.Change.AfterUnknown = map[string]any{"http_target": []any{map[string]any{"oidc_token": []any{map[string]any{"service_account_email": true}}}}}
+			return later(r)
+		}, false},
+		// The two token kinds are not interchangeable: an OAuth access token is
+		// what every other tick in the tree carries, and Cloud Run refuses it
+		// before the container runs, so this row is refused by the run API's
+		// own rules rather than by this case's.
+		"an OAuth access token to a service URL": {func() *Plan {
+			r := rc("google_cloud_scheduler_job", map[string]any{"name": "fugaro-orchestrator-tick",
+				"http_target": []any{map[string]any{"http_method": "POST", "uri": orchestratorTickURL,
+					"oauth_token": []any{map[string]any{"service_account_email": sched}}}}}, map[string]any{}, "create")
+			r.Address = "module.m.google_cloud_scheduler_job.orchestrator_tick[0]"
+			return later(r)
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := testCover.NotCovered(tc.plan(), nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
 }
 
 // --- The deployer account of D75 (Task 1.5) -------------------------------
