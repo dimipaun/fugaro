@@ -1235,20 +1235,26 @@ step_verify() {
 # a job that still carried one — out of a container or as a plain value — is a
 # repository the flip has not reached.
 #
-# The credentials service's URL is the other half of the same row and it fails
-# the other way round: the flip takes the MOUNTS and keeps the URL (B3.8: a
-# switched repository's runs still reach the service, and this fetch is one of
-# the calls that needs it), so a job with no mount and no URL is a run that would
-# fetch nothing and start with the variable empty.
+# The credentials service's URL is deliberately NOT read off these jobs, and it
+# is not a reading this row may take: the flip takes the MOUNTS and keeps the URL
+# (B3.8), but the URL is a LAUNCH-time entry — internal/cli's
+# credentialsServiceLaunchEnv hands it to the backend and the backend writes it
+# into the EXECUTION's container overrides (internal/backend/gcp's Launch) — so
+# no job template of a repository carries it, and the check job of one carries
+# only the platform's own five names (internal/infra's platformEnv). A row that
+# demanded it on every job would FAIL a correct installation. What the URL is FOR
+# — a switched run still reaching the service — is read where it is: a run whose
+# job holds neither variable finished all the same with both values, which is the
+# step_served row below, and a run launched without the address would meet an
+# empty variable at its own verify.
 step_nomounts() {
-  local got n urls carried
+  local got n carried
   if [ "$JOBS_OK" != yes ]; then
     unmeasured no-mounts "${JOBS_WHY}. Nothing about the mounts is settled by it"
     return 0
   fi
   got=$(reader jobs "$SCRATCH/jobs.json" "$REPO" "$ENV_ONE,$ENV_TWO")
   n=$(field_of jobs "$got")
-  urls=$(field_of urls "$got")
   carried=$(field_of carried "$got")
   if [ "${n:-0}" -lt 1 ]; then
     unmeasured no-mounts "no job of ${REPO} carries its FUGARO_REMOTE in 'gcloud run jobs list', so there is no job whose mounts could be read: run 'fugaro update --repo' in ${REPO} and this check again"
@@ -1258,11 +1264,7 @@ step_nomounts() {
     fact no-mounts FAIL "${n} job(s) of ${REPO} carry its remote, and ${carried} of them still hand a run a variable the flip should have taken: $(printf '%s\n' "$got" | grep -E '^(mount|present)=' | tr '\n' ' ' | sed 's/ *$//'). After the flip no job of a switched repository holds one (B3.8: the class 'workflow' joins the classes the service serves, and the mount goes with it — the value comes out of the record's container through the service instead). Run 'fugaro update' and 'fugaro update --repo' in ${REPO}, then this check again"
     return 0
   fi
-  if [ "${urls:-0}" -ne "$n" ]; then
-    fact no-mounts FAIL "${n} job(s) of ${REPO} carry its remote and only ${urls} of them carry FUGARO_CREDENTIALS_SERVICE_URL. The flip takes the mounts and KEEPS the URL (B3.8: the fetch of a switched repository's workflow secrets is a call to that service, and a job with no mount and no URL is a run that would fetch nothing and start with the variable empty — the state this check exists to catch). Run 'fugaro update --repo' in ${REPO} and this check again"
-    return 0
-  fi
-  fact no-mounts PASS "${n} job(s) of ${REPO} carry its remote, none of them hands a run ${ENV_ONE} or ${ENV_TWO} in any form, and every one of them still carries FUGARO_CREDENTIALS_SERVICE_URL (B3.8: the mount goes, the URL stays)"
+  fact no-mounts PASS "${n} job(s) of ${REPO} carry its remote and none of them hands a run ${ENV_ONE} or ${ENV_TWO} in any form (B3.8: the class 'workflow' joins the classes the service serves, and the mount goes with it — the value comes out of the record's container through the service instead). The address a run reaches the service at is not read here: it is a launch-time entry on the run's own execution and never on a job template, and the served row below reads a fetch that could only have been made with it"
 }
 
 # step_served: the flip's second row — a run whose job mounts neither variable
@@ -1622,7 +1624,7 @@ print_plan() {
   say "  [local] the record's shape: version and workflows, per entry env and id, and no key this release does not model (a member that could hold a value is a FAIL, G18)"
   say "  [local] its containers: a project container of this installation ('fugaro-project-<installation>-<name>-<16 hex>', the installation here being ${INSTALL:-unread}) for ${ENV_ONE} and for ${ENV_TWO}, and never a repository's own container (D2313)"
   if [ "$MODE" = flip ]; then
-    say "  [local] no job of ${REPO} hands a run ${ENV_ONE} or ${ENV_TWO} in any form, and every one of them still carries FUGARO_CREDENTIALS_SERVICE_URL (B3.8: the mount goes, the URL stays)"
+    say "  [local] no job of ${REPO} hands a run ${ENV_ONE} or ${ENV_TWO} in any form (B3.8: the mount goes with the flip; the address a run reaches the service at is a launch-time entry on the run's own execution, never on a job template, and is not read here)"
     say "  [network, read only] gcloud secrets get-iam-policy <each container the record names> --project=${P} --format=json  (no binding lists the account the run's job runs as as a secretAccessor, D2074)"
     say "  [network, read only] fugaro runs ls --repo ${REPO} --no-cache --json, for CHECK194_INFLIGHT  (that run's row: terminal, succeeded, started before the job's own updateTime, and the execution it names)"
     say "  [network, read only] gcloud run jobs executions describe <that execution> --project=${P} --region=${L} --format=json  (its OWN container spec, which is the one it was created with: it still reads both variables out of the record's containers while the template the flip wrote reads none, U9)"

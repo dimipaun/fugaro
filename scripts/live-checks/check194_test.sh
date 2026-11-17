@@ -310,12 +310,15 @@ def mount(name, secret):
 
 
 def job_envs(repo):
-    """A job's own environment: its remote, the credentials service's URL (kept
-    across the flip, B3.8) and the mounts the flip takes away."""
+    """A job's own environment: its remote, and the mounts the flip takes away.
+
+    NO `FUGARO_CREDENTIALS_SERVICE_URL` here, and that is the fixture matching
+    the installation rather than a gap in it: the address is a LAUNCH-time entry
+    — internal/cli's credentialsServiceLaunchEnv hands it to the backend and the
+    backend puts it in the execution's container overrides — so a job template
+    never carries it (its `url` in `gcloud run jobs list` is `absent`), and an
+    execution does. The execution below carries it for that reason."""
     out = [{"name": "FUGARO_REMOTE", "value": "https://bitbucket.org/%s.git" % repo}]
-    if mode != "no-url":
-        out.append({"name": "FUGARO_CREDENTIALS_SERVICE_URL",
-                    "value": "https://fugaro-credentials-fake-ue.a.run.app"})
     one, two = envs_of_interest[0], envs_of_interest[1]
     still = mode == "still-mounts"
     if mode == "flipped-off":
@@ -720,7 +723,7 @@ test_dry_run() {
   # flip when the flip was not asked for.
   expect_contains "$err" "fugaro run --repo acme/sandbox-one" "dry run: the throwaway run"
   expect_contains "$err" "as a plain value" "dry run: the switch mode's own mounts row"
-  expect_absent "$err" "the mount goes, the URL stays" "dry run: the flip's rows are not the switch mode's plan"
+  expect_absent "$err" "the mount goes with the flip" "dry run: the flip's rows are not the switch mode's plan"
   expect_absent "$err" "gcloud logging read" "dry run: the service's lines are not read before the flip"
   expect_absent "$out" "fugaro run --repo" "dry run: the plan itself is not the block"
   if [ -s "$dir/logs/gcloud.calls" ]; then fail "dry run: gcloud was called"; fi
@@ -743,7 +746,8 @@ test_dry_run_flip() {
   expect_contains "$out" "MODE: flip" "dry run flip: the mode"
   expect_contains "$err" "gcloud secrets get-iam-policy" "dry run flip: the accessor read"
   expect_contains "$err" "gcloud logging read" "dry run flip: the service's own lines"
-  expect_contains "$err" "the mount goes, the URL stays" "dry run flip: the URL is kept"
+  expect_contains "$err" "the mount goes with the flip" "dry run flip: what the flip takes"
+  expect_contains "$err" "never on a job template" "dry run flip: the address is not read off a job"
   expect_contains "$err" "for CHECK194_INFLIGHT" "dry run flip: the run in flight"
   expect_contains "$err" "started before the job's own updateTime" "dry run flip: U9's arithmetic"
   expect_contains "$err" "-0198" "dry run flip: the flip's own run suffix"
@@ -1120,9 +1124,9 @@ test_a_missing_tool_stops_before_anything_is_called() {
 }
 
 # ------------------------------------------------------------ the flip, after
-# --after-flip's happy path: the mounts and the URL's own reading, the service's
-# own lines for the run it launches, the account's accessors, and the run that
-# was in flight across the re-apply.
+# --after-flip's happy path: the mounts, the service's own lines for the run it
+# launches, the account's accessors, and the run that was in flight across the
+# re-apply.
 test_after_flip_happy_path() {
   local dir=$work/flip
   prepare "$dir"
@@ -1130,7 +1134,8 @@ test_after_flip_happy_path() {
   expect_status "$status" 0 "flip: the verdict"
   expect_contains "$out" "MODE: flip" "flip: the mode in the block"
   expect_contains "$out" "FACT no-mounts: PASS" "flip: the mounts are gone"
-  expect_contains "$out" "the mount goes, the URL stays" "flip: the URL is kept"
+  expect_contains "$out" "the mount goes with it" "flip: what the flip takes"
+  expect_contains "$out" "never on a job template" "flip: the address is not read off a job"
   expect_contains "$out" "FACT served: PASS" "flip: the service's own lines"
   expect_contains "$out" "under purpose workflow-secret" "flip: the purpose"
   expect_contains "$out" "FACT no-accessors: PASS" "flip: the accessor row"
@@ -1152,8 +1157,10 @@ test_after_flip_happy_path() {
 }
 
 # A job that still hands a run either variable after the flip has not been
-# reached by it — and a job with no mount AND no URL is a run that would fetch
-# nothing and start with the variable empty.
+# reached by it. (The address the run reaches the service at is NOT this row's
+# reading and the fixture does not put one on a job: it is a launch-time entry
+# the execution carries, and a row that demanded it on the jobs would fail a
+# correct installation.)
 test_after_flip_refuses_a_job_that_still_hands_out_a_variable() {
   local dir=$work/flipstill
   prepare "$dir"
@@ -1162,16 +1169,6 @@ test_after_flip_refuses_a_job_that_still_hands_out_a_variable() {
   expect_contains "$out" "FACT no-mounts: FAIL" "still mounted: the row"
   expect_contains "$out" "still hand a run a variable the flip should have taken" "still mounted: the reason"
   expect_contains "$out" "B3.8" "still mounted: the release the flip belongs to"
-}
-
-test_after_flip_refuses_a_job_that_lost_the_service_url() {
-  local dir=$work/flipnourl
-  prepare "$dir"
-  run194 "$dir" --after-flip FAKE_FLIPPED=1 FAKE_GCLOUD_MODE=no-url CHECK194_INFLIGHT=acme-sandbox-one-inflight FAKE_INFLIGHT=acme-sandbox-one-inflight
-  expect_status "$status" 1 "no URL: the verdict"
-  expect_contains "$out" "FACT no-mounts: FAIL" "no URL: the row"
-  expect_contains "$out" "carry FUGARO_CREDENTIALS_SERVICE_URL" "no URL: the reason"
-  expect_contains "$out" "takes the mounts and KEEPS the URL" "no URL: the rule"
 }
 
 # The served row is the service's OWN lines: a run with no workflow-secret line
@@ -1364,7 +1361,6 @@ t test_never_belong
 t test_a_missing_tool_stops_before_anything_is_called
 t test_after_flip_happy_path
 t test_after_flip_refuses_a_job_that_still_hands_out_a_variable
-t test_after_flip_refuses_a_job_that_lost_the_service_url
 t test_after_flip_fails_when_a_container_the_record_names_is_not_served
 t test_after_flip_fails_when_the_run_was_served_nothing
 t test_after_flip_fails_when_the_service_only_refused

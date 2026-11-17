@@ -108,8 +108,8 @@ those before you start. This file is the commands.
   `updateTime`) and to have finished with a pull request; a run that started after the re-apply is
   refused rather than read, because it was launched by the template the re-apply wrote and its spec says
   nothing about U9. The service's own `credsvc: audit` lines for that run are **not** this row's reading:
-  the flip keeps `FUGARO_CREDENTIALS_SERVICE_URL` on the repository (B3.8), so a switched run fetches
-  from the service before and after it and has lines of its own either way.
+  the flip keeps the address a switched run is launched with (B3.8), so a run in flight across the
+  re-apply fetches from the service before and after it and has lines of its own either way.
 
 ## The steps
 
@@ -194,10 +194,15 @@ reuse a base.
   means it **is** served the other variable, and the row says so — the two entries read apart, per
   repository, is the whole point.
 - **`no-mounts`** (`--after-flip`) — no job of the repository hands a run either variable **in any
-  form** (not "fed from another container": not there at all), and every one of its jobs still carries
-  `FUGARO_CREDENTIALS_SERVICE_URL`. The flip takes the mounts and **keeps the URL** (B3.8): a job with
-  no mount and no URL is a run that would fetch nothing and start with the variable empty, which is the
-  state this row exists to catch.
+  form** (not "fed from another container": not there at all). The flip takes the mounts, and a job
+  that still carries one is a repository the flip has not reached. The address the run reaches the
+  service at is deliberately **not** part of this row: `FUGARO_CREDENTIALS_SERVICE_URL` is a
+  **launch-time** entry — `fugaro run` hands it to the backend, which puts it in the **execution's**
+  container overrides (`internal/cli`'s `credentialsServiceLaunchEnv`, `internal/backend/gcp`'s
+  `Launch`) — so no job template of a repository carries it, and the repository's own check job carries
+  no such variable in any case. What the address is for is read where it lives: the `served` row below,
+  on a run whose job held neither variable and which finished with both values, is a fetch that could
+  only have been made with it — a run launched without it meets an empty variable at its own verify.
 - **`served`** (`--after-flip`) — the run launched after the flip finished on a job that mounts
   neither variable, and the service's own `credsvc: audit` lines for that run name **both** containers
   the record names under the purpose `workflow-secret`. Those two together are the fetch: the value
