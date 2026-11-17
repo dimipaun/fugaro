@@ -49,7 +49,12 @@ import (
 type pairFixture struct {
 	db  *gcpfake.RTDB
 	iam *gcpfake.IAMCredentials
-	dir string
+	// secrets is the installation's Secret Manager, which holds the third copy
+	// of a pairing's MAC key (mobile plan task P5.1e). It starts with no
+	// container — an installation that never opted into a resident orchestrator
+	// has none — so a test that wants the copy seeds one first.
+	secrets *gcpfake.Secrets
+	dir     string
 	// keys is the OS keychain, as a Fake: M5's rule is that no test in this
 	// repository touches a real keychain, so the command's pairKeychain seam is
 	// pointed here and a test reads what the pairing stored.
@@ -73,7 +78,7 @@ var pairT0 = time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 // is missing something.
 func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)) *pairFixture {
 	t.Helper()
-	f := &pairFixture{db: gcpfake.NewRTDB(t), iam: gcpfake.NewIAMCredentials(t), dir: t.TempDir(), keys: &keychain.Fake{}}
+	f := &pairFixture{db: gcpfake.NewRTDB(t), iam: gcpfake.NewIAMCredentials(t), secrets: gcpfake.NewSecrets(t), dir: t.TempDir(), keys: &keychain.Fake{}}
 	f.iam.AddSigner(pairSigner)
 	runs := filepath.Join(f.dir, "runs")
 	if err := os.MkdirAll(runs, 0o755); err != nil {
@@ -82,7 +87,7 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
 		"bucket_url: file://" + runs + "\nuser: " + me + "\nmax_parallel: 2\n" +
 		"budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + ", token_signer: " + pairSigner + ", firebase_api_key: " + pairAPIKey + " }\n" +
-		"endpoints: { no_auth: true, iam_credentials: " + f.iam.URL + "/ }\n" +
+		"endpoints: { no_auth: true, iam_credentials: " + f.iam.URL + "/, secret_manager: " + f.secrets.URL + "/ }\n" +
 		"terraform: { operators: [user:" + pairMe + "], launchers: [user:" + pairLauncher + "] }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
 	for _, e := range edit {
