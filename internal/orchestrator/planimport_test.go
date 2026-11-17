@@ -50,9 +50,10 @@ Do B, which needs A.
 Do C.
 `
 
-// planImportNodes are the graph's nodes: A and B are sized, C is not — which is
-// every node of the nine graphs committed when this was written, and the case
-// the default tier is for.
+// planImportNodes are the graph's nodes: A and B are sized and C is not. C is
+// the case the default is for — none of the nine graphs committed when this was
+// written carries a tier at all, so every node of every one of them arrives
+// unsized.
 func planImportNodes() []orchestrator.PlanImportNode {
 	return []orchestrator.PlanImportNode{
 		{ID: "A", Title: "build the thing", Tier: "trivial"},
