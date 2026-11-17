@@ -830,8 +830,16 @@ func stageCraft(stage string) string {
 }
 
 // stageModel is the model a stage runs: the level's own model when the stage
-// runs a review level a layer named one for, and the role slot's otherwise.
+// runs a review level a layer named one for, the diagnose stage's own key when
+// the stage is a cloud diagnosis, and the role slot's otherwise.
 func (r *run) stageModel(stage string) string {
+	if stage == stageDiagnose {
+		// D2403: the cloud diagnosis runs the key the local tier reads, so the
+		// same question gets the same model either way. It is read here rather
+		// than through a role slot for the reason diagnoseModel gives, and it
+		// is the model the gateway's stage set admits and prices.
+		return r.diagnoseModel()
+	}
 	if level, ok := stageLevel(stage); ok {
 		if m := r.levelModel(level); m != "" {
 			return m
