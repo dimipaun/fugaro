@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
 
 // TestDocsMobileOrchestratorDesignIsWritten (mobile plan Task P5.1a, approved
@@ -293,6 +295,38 @@ func TestDocsMobileOrchestratorNeverListIsWhole(t *testing.T) {
 	} {
 		if !strings.Contains(list, want) {
 			t.Errorf("%s's never-list lacks %q", path, want)
+		}
+	}
+}
+
+// mobileOrchestratorNeverRuleRE reads one rule of section 6: its number and the
+// sentence the design states in bold.
+var mobileOrchestratorNeverRuleRE = regexp.MustCompile(`(?m)^([0-9]+)\. \*\*(.+?)\*\*`)
+
+// TestOrchestratorNeverRulesAreTheDesignsEleven (mobile plan Task P5.1c):
+// section 6 of the design of record is the never-list the resident
+// orchestrator's code answers with, and internal/orchestrator/never.go is that
+// list as refusals. The two are compared rule by rule and sentence by sentence,
+// so a rule added, renumbered or reworded on one side fails here rather than
+// drifts: the code half is what a path meets, the document half is what a
+// reviewer reads, and neither is the other's copy.
+func TestOrchestratorNeverRulesAreTheDesignsEleven(t *testing.T) {
+	const path = "docs/mobile/design/always-on-orchestrator.md"
+	list := docSection(t, path, readDoc(t, path), "## 6. What it must never do")
+	rules := orchestrator.NeverRules()
+	written := mobileOrchestratorNeverRuleRE.FindAllStringSubmatch(list, -1)
+	if len(written) != len(rules) {
+		t.Fatalf("%s's never-list states %d rules and internal/orchestrator/never.go carries %d: the two are one list",
+			path, len(written), len(rules))
+	}
+	for i, m := range written {
+		rule := rules[i]
+		if want := strconv.Itoa(rule.Number); m[1] != want {
+			t.Errorf("%s's rule %d is numbered %s in the code: the numbering is the design's", path, i+1, want)
+		}
+		if m[2] != rule.Never {
+			t.Errorf("%s's rule %s reads %q and the code's Rule.Never reads %q: a reworded rule is reworded in both places",
+				path, m[1], m[2], rule.Never)
 		}
 	}
 }
