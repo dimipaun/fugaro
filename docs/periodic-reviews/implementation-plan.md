@@ -811,14 +811,27 @@ reads it.
   (P8) and what `fugaro update` migrates, and a job image of the release behind is refused a
   version-10 node (`policyImageGate`, which names `fugaro image refresh`) — which is why the step is
   shape-free and why the release that ships this ships the node's migration in that same command.
-- **Files (9):** `internal/projectpolicy/reportscommit.go` (new), `internal/projectpolicy/policy.go`
+- **Files (11):** `internal/projectpolicy/reportscommit.go` (new), `internal/projectpolicy/policy.go`
   (the member), `internal/projectpolicy/version.go` (10, `VersionSince[10]`, the rationale paragraph),
   `internal/projectpolicy/migrate.go` (the one migrator and the shape-free step),
   `internal/projectpolicy/policy_test.go`, `internal/projectpolicy/version_since_test.go` (the
   constant and the release bullet), `internal/projectpolicy/migrate_test.go` (the migrator's own
-  cases), `internal/localcfg/localcfg.go` (the carrier the owner writes it in) and
-  [docs/project-layer.md](../project-layer.md) (the version-10 entry in the version history, which is
-  a pinned document and is written once here rather than by R15).
+  cases), `internal/localcfg/localcfg.go` (the carrier the owner writes it in),
+  [docs/project-layer.md](../project-layer.md) (the version-10 entry in the version history **and the
+  member's own row in the page's policy table**, which is a pinned document and is written once here
+  rather than by R15), [docs/release.md](../release.md) (the `VersionSince` bullet's new row — the
+  Before-you-tag checklist enumerates every row of the table, and
+  `TestDocsReleaseChecklistNamesEveryPolicyVersion` reads it from the table itself) and
+  `internal/cli/docs_project_layer_test.go` (**two of its pins move**: the page's version sentence,
+  `TestDocsProjectLayerStatesThePolicyVersionItShips`, and the policy table's exact key list,
+  `TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes`, which gains `reports_commit` beside
+  `profiles`).
+- **The two documents, and why they are this task's:** the page's version sentence and the release
+  checklist's bullet are both computed from the constants rather than typed, so they move the moment
+  `VersionSince[10]` exists; the policy table is the one place a new member is invisible without its
+  own row, and an operator reading what a run does with `reports_commit` has nowhere else to read it.
+  **`fugaro project policy show` prints the member with no change of its own** (it prints the node),
+  which is why no CLI file is in this list.
 - **Red step:** `TestVersionSinceCoversEveryVersion` fails on a `Version` with no `VersionSince` row
   and `TestEveryOlderVersionHasAMigratorOrARefusal` fails on a version-9 node with no migrator, which
   is what a bump without its two rows is; `TestAReportsCommitNodeWithoutTheMemberDesignatesNothing`
@@ -834,7 +847,10 @@ reads it.
   `TestFugaroYamlRefusesAReportsCommitKey`,
   `TestTheProjectLayerFileRefusesAReportsCommitKey`,
   `TestAnAgentsPublishRefusesAReportsCommitMember`,
-  `TestAPublishThatSaysNothingLeavesTheNodeAlone`.
+  `TestAPublishThatSaysNothingLeavesTheNodeAlone` — **and the three document pins this task moves**:
+  `TestDocsProjectLayerStatesThePolicyVersionItShips`,
+  `TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes` and
+  `TestDocsReleaseChecklistNamesEveryPolicyVersion` (the Docs run, not this package's command).
 - **Hermetic:** a node document written in the test, a temp checkout for the layer file, no cloud.
 - **Reviewer:** opus + mandatory independent review (the version bump changes what every installation
   reads, and the member is what decides where a project's reports may be written).
@@ -865,7 +881,9 @@ this one.
   [reconciliation.md](reconciliation.md) §7.
 - **Red step:** `TestRegistryCoversEveryConfigField` fails on the carrier field with no row, which is
   the state a new config member is in before its surface is written.
-- **Tests:** `TestRegistryCoversEveryConfigField`, `TestSettingsSchemaNamesTheReportsCommitRows`,
+- **Tests:** `TestRegistryCoversEveryConfigField`, `TestRegistryIsInKeyOrder` (the two rows are
+  inserted where their keys sort, which the registry's own test refuses otherwise),
+  `TestSettingsSchemaNamesTheReportsCommitRows`,
   and the three count pins as their own tests already read them
   (`internal/cli/docs_config_management_test.go`'s `TestDocsConfigManagement…` set).
 - **Hermetic:** a local config document written in the test, no cloud.
@@ -1451,18 +1469,24 @@ from being a formality:
   `feat(cli): runs reports --job, and the reader the rules read`.
 
 **R14 — `reports_commit` on the policy node, and version 10 (slice P).** Part I, `## R14`.
-- **Files (9):** `internal/projectpolicy/reportscommit.go` (new), `policy.go`, `version.go`,
+- **Files (11):** `internal/projectpolicy/reportscommit.go` (new), `policy.go`, `version.go`,
   `migrate.go`, `policy_test.go`, `version_since_test.go`, `migrate_test.go`,
-  `internal/localcfg/localcfg.go` and `docs/project-layer.md`. Part I states the list and what each
-  file carries; **the one that is not Go is a pinned document** — the version history's version-10
-  entry, written here rather than by R15.
+  `internal/localcfg/localcfg.go`, `docs/project-layer.md`, `docs/release.md` and
+  `internal/cli/docs_project_layer_test.go`. Part I states the list and what each file carries;
+  **three of them are pinned documents and tests, not Go** — the version history's version-10 entry
+  and the policy table's new row, the release checklist's bullet, and the two `internal/cli` pins
+  that read those documents from the constants (which is why this task's gate includes the Docs run,
+  §P10).
 - **Interfaces:** `projectpolicy.ReportsCommit{Repo, Dir}` and `validReportsCommit`,
   `Policy.ReportsCommit`, `Version = 10` with `VersionSince[10]`, the one migrator and
   `shapeFreeSteps[9] = true`.
 - **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/projectpolicy ./internal/localcfg -run
   'ReportsCommit|VersionSince|ShapeFree|Migration|Publish|ProjectLayer' -count=1` — Part I's twelve
   named tests, and the package's own existing version and migration tests are what make the two
-  red-step rows red rather than a new test written to fail.
+  red-step rows red rather than a new test written to fail — **plus the Docs run**, `GOFLAGS=-p=2 go
+  test ./internal/cli -run Docs -count=1`, where `TestDocsProjectLayerStatesThePolicyVersionItShips`,
+  `TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes` and
+  `TestDocsReleaseChecklistNamesEveryPolicyVersion` read the two documents this task moves.
 - **Depends on:** nothing of this plan; the release slot is its only outside dependency (Part I, `##
   R14`). **Red step:** `TestVersionSinceCoversEveryVersion` fails on a `Version` with no
   `VersionSince` row and `TestEveryOlderVersionHasAMigratorOrARefusal` fails on a version-9 node with
@@ -1481,7 +1505,7 @@ from being a formality:
   `binaries.*` rows' own shape — and the two keys `schemas/settings.schema.json` names.
   **`fugaro settings set` does not write them** (the generic allowlist is not widened; Open item 6).
 - **Tests, and the command:** `GOFLAGS=-p=2 go test ./internal/settings ./internal/cli -run
-  'RegistryCoversEveryConfigField|SettingsSchemaNamesTheReportsCommitRows|DocsConfigManagement'
+  'RegistryCoversEveryConfigField|RegistryIsInKeyOrder|SettingsSchemaNamesTheReportsCommitRows|DocsConfigManagement'
   -count=1`.
 - **Depends on:** R14 (the rows are its member's surface, and the carrier field has to exist for the
   coverage test to fail on it). **Red step:** `TestRegistryCoversEveryConfigField` fails on the
@@ -1824,9 +1848,10 @@ window they already know the causes of — the design's own seven-day table is o
 it, including the runs whose class the legacy reader read from `reason` (FC5). It is the one check
 that says whether the vocabulary means what the design says it means. Owner-run, **NOT RUN**.
 
-**Check 343 — the opt-in commit into the designated repository (R9's).** The owner sets
-`reports_commit` in the published project layer (`repo`, and `dir` if the reports do not go to the
-default folder), runs **one** `fugaro run --commit-reports` in the designated repository's checkout
+**Check 343 — the opt-in commit into the designated repository (R9's).** The owner names
+`reports_commit` in the owner's local project config (`repo`, and `dir` if the reports do not go to
+the default folder) and publishes it — or lets `fugaro update`'s policy stage carry it — then runs
+**one** `fugaro run --commit-reports` in the designated repository's checkout
 with the starting person's own launcher account (D2754) and reads what comes back: the pull request
 it opens carries one file per stored report under `<dir>/<slug>/<YYYY>/<key>.md`, the project
 aggregate at `<dir>/<YYYY>/<key>.md` beside them, and the index regenerated over the whole folder;
