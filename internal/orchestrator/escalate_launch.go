@@ -319,7 +319,7 @@ func (c *cycle) ladderAct(ctx context.Context, w WorkItem, step escalation.Step,
 		if err != nil {
 			return err
 		}
-		if err := c.ladderRecord(ctx, w, step, reason, head, true); err != nil {
+		if err := c.ladderRecord(ctx, w, step, reason, head, runID, true); err != nil {
 			return err
 		}
 		return c.ladderSay(ctx, w, step, reason, runID)
@@ -409,7 +409,7 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
 	if c.tick.Ladder.Beyond == nil {
 		runID := w.RunID
-		if err := c.ladderRecord(ctx, w, step, reason, "", false); err != nil {
+		if err := c.ladderRecord(ctx, w, step, reason, "", runID, false); err != nil {
 			return err
 		}
 		return c.ladderSay(ctx, w, step, reason, runID)
@@ -441,12 +441,21 @@ func (c *cycle) ladderStart(ctx context.Context, req LadderRequest) (string, err
 // whole of what the ladder changes on the node: the rung, the count of the
 // runs it has spent and the transition, and never a phase, an approval or an
 // intent.
-func (c *cycle) ladderRecord(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, head string, launched bool) error {
+//
+// runID is the run this move is about — the ladder's own where it launched one,
+// and the item's where the rung starts nothing — and it lands in the block
+// beside the item's repository. The two are what a reader that may read this
+// block and nothing above it needs (E12, F27): the repository says whose report
+// the ledger belongs in, and the run joins to the record that carries the
+// chain's pull request, hours and cost.
+func (c *cycle) ladderRecord(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, head, runID string, launched bool) error {
 	held := Escalation{}
 	if w.Escalation != nil {
 		held = *w.Escalation
 	}
 	next := Escalation{
+		Repo:          w.Repo,
+		RunID:         runID,
 		Rung:          step.Rung,
 		EnteredAt:     c.now,
 		OuterAttempts: held.OuterAttempts,

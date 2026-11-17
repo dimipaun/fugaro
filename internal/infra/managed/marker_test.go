@@ -1866,6 +1866,32 @@ var runAccountGrants = setOf(
 	// with the opt-in off (credentials_service unset, the default) the set is
 	// unchanged.
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_service_held[env] ])] | perms=`,
+	// Reviewed for D2074 (B3.3): the SAME account the row above is about, the
+	// other way round — the credentials service's own account reads each
+	// container the workflow's job still mounts, so that the value a run asks
+	// the service for (B3.4) is one the service can read at all. The set is the
+	// job's mounts and not the job's accessors: a mount whose logical name the
+	// service holds (the App key, C2.2) or that is a proxied git credential
+	// (G9) is dropped from local.job_mounts in the same plan, so the container
+	// set is the job's declared mounts exactly
+	// (TestServiceWorkflowSecretGrantsMatchTheJobsMounts holds the two sets
+	// equal, in both directions).
+	//
+	// roles/secretmanager.secretAccessor carries no storage permission, no
+	// permission to grant a role, no actAs and no token minting: it reads the
+	// VALUE of a container that already exists. The containers are
+	// var.secrets[each.value] — the repository's own workflow secrets, resolved
+	// by the operator's own update into this root's tfvars — and none of them
+	// is the runs bucket, which is a Cloud Storage bucket and not a Secret
+	// Manager secret at all, so fugaro/managed.json is not something this
+	// reaches. What it is, deliberately, is a REACH: the account that can
+	// already read the bundle can now read the workflow secrets of every
+	// repository whose root carries the switch, which is the decision (D2074,
+	// with G19 fencing the service to each repository's own job account and
+	// workflow at fetch time). The for_each is empty on an installation whose
+	// outputs carry no account, and empty while the opt-in is off, so nothing
+	// is granted where the service is not.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:
@@ -1909,6 +1935,15 @@ var runAccountGrants = setOf(
 	// the right to send a request to a Cloud Run service — and the target is
 	// the service, not a job and not the runs bucket.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
+	// ... and the same grant in the project module's own terms (B5.2): a shared
+	// project job's account invokes the credentials service its profile is
+	// served by (modules/project/sa.tf), on the profile's own switch. It is the
+	// row above in every respect — the right to send a request to that one
+	// Cloud Run service, no storage permission, nothing that grants itself a
+	// role and no actAs or token minting — to an account THIS module creates,
+	// and its target is the service and not the runs bucket. The service's own
+	// class check is what decides what the account is served (B5.1, G21).
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.job.credentials_service.name | google_service_account.job.member | for_each= | perms=`,
 	// Reviewed for CSR14 (the verifier account, D1068): the account's whole
 	// reach, and it is these two rows. The first is the job's row above again —
 	// the same role on the same service, to an account THIS module creates on
@@ -1938,6 +1973,17 @@ var runAccountGrants = setOf(
 	// the operators already hold the runs bucket's own grants, the rows above,
 	// so the impersonation adds nothing to what they can reach.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.fugaro_verifier[0].member | for_each= | perms=`,
+	// Reviewed for B5 (the project's build identity, D2301): the job's row once
+	// more — the same role on the same service, to the account THIS module
+	// creates beside it (modules/installation/build_identity.tf), which is the
+	// one identity a shared repository's catalog build runs as. roles/run.invoker
+	// carries no storage permission, no permission to grant a role, no actAs and
+	// no token minting; the target is that one Cloud Run service. The account's
+	// registry roles — the writer and tag-mover the per-repository build account
+	// held, which B6 moves onto this identity — are not written yet, so its whole
+	// reach here is this row, and it can reach neither the runs bucket's root nor
+	// any repository's registry through it.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountTokenCreator" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com" | each.value | for_each=local.credentials_service_on ? toset(var.operators) : toset([]) [local.credentials_service_on=var.credentials_service != null] | perms=`,
 	// Reviewed for M4 (the coordinator's front door): D920 makes the front
 	// door public, and this is therefore the one grant in the tree whose
@@ -2348,6 +2394,51 @@ var runAccountGrants = setOf(
 	// this tree refuses outside the Firebase module
 	// (deploy/terraform/terraform_test.go's backendRoleRE).
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroWorkspaceDatabase" | project=var.project | google_service_account.workspace.member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
+	// Reviewed for P5.1b (the installation's resident orchestrator, the mobile
+	// design's section 4.3). The account is the installation's own, it exists on
+	// no installation that has not opted in — var.orchestrator is null by
+	// default and the module counts every resource it creates on that null
+	// check, so an installation that never asked for one plans and applies
+	// exactly what it did before the file existed — and it is NEVER a member of
+	// var.launchers (the design's eleventh never-rule: that list is what the
+	// Firebase root binds roles/firebasedatabase.viewer with, an IAM read that
+	// bypasses the Realtime Database rules). Its reach is therefore here one
+	// grant at a time, and none of the five reaches fugaro/managed.json:
+	//
+	//   - the launcher project role (fugaroLauncher) is metadata: run.jobs.get,
+	//     run.jobs.list, run.executions.get/list/cancel, run.operations.get and
+	//     the two secretmanager list permissions, which are names, labels and
+	//     version counts and never a secret value. No storage permission, no
+	//     run.jobs.create/update/delete (it cannot change what a launch would
+	//     run), no IAM write of any kind (nothing that grants itself a role) and
+	//     no iam.serviceAccounts.actAs;
+	//   - the runs bucket's objectUser carries the launchers' OWN condition, the
+	//     same title and expression the launcher list's write carries, pinned in
+	//     modules/installation/orchestrator.tf by a precondition — so its
+	//     create, delete and update are runs/, tokens/ and issues/, and the
+	//     bucket's root, where the marker is, is outside every one of the
+	//     condition's prefixes;
+	//   - the runs bucket's objectViewer carries no create, no delete and no
+	//     update at all: it is the launcher's read, unconditioned because
+	//     storage.objects.list cannot be fenced by an object name (D683);
+	//   - the token-minter grant on the budget signer is
+	//     iam.serviceAccounts.signJwt on that one account, and deliberately not
+	//     roles/iam.serviceAccountTokenCreator: what it mints is a Firebase
+	//     custom token, a Realtime Database identity under the rules, never a
+	//     GCP access token as the signer. It reaches no Cloud Storage object, and
+	//     the reach itself is the one every launcher already holds — the design
+	//     states it rather than claiming a narrower one (section 4.5 E4);
+	//   - the job runner role (run.jobs.run and run.jobs.runWithOverrides) on
+	//     each of the installation's project jobs: a launch executes as the
+	//     JOB's own account, whose grants this list already holds above, and
+	//     overrides change a run's arguments rather than its identity — the
+	//     orchestrator is never the account a job runs as. The role holds no
+	//     run.jobs.create/update/delete, so it cannot change the job it starts.
+	`google_project_iam_member | "projects/${var.project}/roles/fugaroLauncher" | project=var.project | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=run.executions.cancel,run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get,secretmanager.secrets.list,secretmanager.versions.list`,
+	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
+	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
+	`google_service_account_iam_member | "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com" | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=?`,
+	`google_cloud_run_v2_job_iam_member | "projects/${var.project}/roles/fugaroJobRunner" | name=module.project[each.key].job | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each=var.orchestrator == null ? {} : var.project_jobs | perms=?`,
 )
 
 // setOf is a set of strings.

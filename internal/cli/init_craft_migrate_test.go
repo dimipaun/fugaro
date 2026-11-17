@@ -747,6 +747,302 @@ default_claude_account: team-a
 	}
 }
 
+// crossedPoolInstallation is the blocks an installation whose pool spans the two
+// halves of a run carries: the pool names oauth-two, which the credentials
+// service serves, and router-one, which the run's own gateway does, and the
+// crafts block below names that pool. It is the shape the release behind wrote
+// and read as valid, and the one this release's own config write has to converge
+// (MC20, MC21).
+//
+// The credentials are the block `fugaro accounts pool add`'s own tests use, so
+// the two halves are the seam's own pair rather than a convenient one, and the
+// pool carries everything a pool can — a strategy, an owner and an allowed user
+// — so a split has to carry them onto both halves instead of deriving fresh
+// ones.
+//
+// The blocks alone and no installation header: they are appended to a config
+// that already carries version, name and the installation's own keys (the rig's
+// and the update's own file), and a second `version:` key is a duplicate the
+// strict decode refuses. The file ends inside the pools block, so a test may
+// append a pool of its own to it, and the crafts are a separate const for the
+// same reason.
+const crossedPoolInstallation = accountsPoolCredentials + `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api/v1
+    auth: bearer
+    secret: openrouter-key
+    models: ["deepseek/*"]
+pools:
+  - name: mixed
+    strategy: round-robin
+    owner: owner@example.com
+    allowed_users: [other@example.com]
+    members: [router-one, oauth-two, oauth-one]
+`
+
+// crossedPoolCrafts is the crafts block of the fixture above, and every entry is
+// one of the rule's own cases:
+//
+//   - the coder's Claude ID goes direct, which is the credentials service's half;
+//   - the review's DeepSeek model is claimed by the openrouter entry, and a
+//     provider route is the run's own gateway;
+//   - the merge judge sets no model and follows the coder's, which is the
+//     inherited model and not the fallback below;
+//   - the senior review sets no model and follows nobody (config.CraftParent:
+//     the spec makes it required), so it is the craft the rule answers with the
+//     pool's own first member;
+//   - the security review names a credential and not a pool, so nothing
+//     repoints it.
+//
+// The pool lists the gateway's member FIRST, which is what tells the inherited
+// model and the fallback apart: the merge judge's answer is the credentials
+// service's half, and a rule that read no model would have sent it to the
+// gateway's.
+const crossedPoolCrafts = `crafts:
+  coder: { model: claude-opus-5-5, access: mixed }
+  review: { model: deepseek/deepseek-v4-flash, access: mixed }
+  merge-judge: { access: mixed }
+  senior-review: { access: mixed }
+  security-review: { access: oauth-one }
+`
+
+// poolNamed is the pool of this name, and whether the block holds one.
+func poolNamed(lc *localcfg.Config, name string) (config.Pool, bool) {
+	for _, p := range lc.Pools {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return config.Pool{}, false
+}
+
+// TestTheSplitKeepsEveryMemberAndItsOrder: each half holds the members that half
+// serves, in the order the pool listed them, and carries the pool's strategy,
+// owner and allowed users. The split is a partition of the list and not a
+// rewrite of it — a pool's listed order is what failover walks (D1632) — so a
+// half that reordered or dropped a member would send a call to a credential the
+// owner did not put there.
+//
+// The halves take the place of the pool that crossed, in the order the plan
+// names them (the credentials service's first, which is the sorted order of the
+// paths), so a reader of the block finds them where the pool was.
+func TestTheSplitKeepsEveryMemberAndItsOrder(t *testing.T) {
+	lc := parseLocalConfig(t, initConfig+crossedPoolInstallation+crossedPoolCrafts)
+	migrateCraftKeys(lc)
+
+	claude, ok := poolNamed(lc, "mixed-claude")
+	if !ok {
+		t.Fatalf("the split wrote no mixed-claude: %+v", lc.Pools)
+	}
+	provider, ok := poolNamed(lc, "mixed-provider")
+	if !ok {
+		t.Fatalf("the split wrote no mixed-provider: %+v", lc.Pools)
+	}
+	if _, ok := poolNamed(lc, "mixed"); ok {
+		t.Errorf("the pool that crossed is still in the block: %+v", lc.Pools)
+	}
+	if got, want := claude.Members, []string{"oauth-two", "oauth-one"}; !slices.Equal(got, want) {
+		t.Errorf("mixed-claude.members = %v, want %v: the service's members, in the order the pool listed them", got, want)
+	}
+	if got, want := provider.Members, []string{"router-one"}; !slices.Equal(got, want) {
+		t.Errorf("mixed-provider.members = %v, want %v: the gateway's members alone", got, want)
+	}
+	for _, half := range []config.Pool{claude, provider} {
+		if half.Owner != "owner@example.com" || half.Strategy != "round-robin" || !slices.Equal(half.AllowedUsers, []string{"other@example.com"}) {
+			t.Errorf("%s = %+v, want the pool's owner, strategy and allowed users carried onto both halves", half.Name, half)
+		}
+	}
+	var names []string
+	for _, p := range lc.Pools {
+		names = append(names, p.Name)
+	}
+	if want := []string{"mixed-claude", "mixed-provider"}; !slices.Equal(names, want) {
+		t.Errorf("the block's pools = %v, want %v: the halves stand where the pool that crossed stood", names, want)
+	}
+	// The file the split wrote has to read back: a name that collides with a
+	// credential's, or a half with no member, is a config this release refuses
+	// — and it would be this migration's own output that did it.
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back := parseLocalConfigBytes(t, data)
+	if got, ok := poolNamed(back, "mixed-claude"); !ok || !slices.Equal(got.Members, claude.Members) {
+		t.Errorf("the written config reads back as %+v, want the halves this run wrote", back.Pools)
+	}
+}
+
+// TestTheSplitRepointsOnlyTheCraftsThatNeedIt: the crafts whose access named the
+// pool follow the half their own model routes to, and every other craft keeps
+// the access it had. The half is the craft's own model and nothing else — a
+// craft that sets none follows the craft it inherits from (config.CraftParent) —
+// and a craft naming a credential, or a pool that did not cross, is left alone:
+// repointing one of those would be the migration choosing a spending path for a
+// craft that already had one.
+func TestTheSplitRepointsOnlyTheCraftsThatNeedIt(t *testing.T) {
+	lc := parseLocalConfig(t, initConfig+crossedPoolInstallation+crossedPoolCrafts)
+	migrateCraftKeys(lc)
+
+	for _, tc := range []struct{ craft, want, why string }{
+		{config.CraftCoder, "mixed-claude", "its Claude ID goes direct, which is the credentials service's half"},
+		{config.CraftReview, "mixed-provider", "the openrouter entry claims that model, and a provider route is the run's own gateway"},
+		{config.CraftMergeJudge, "mixed-claude", "it sets no model and follows the coder's"},
+		{config.CraftSeniorReview, "mixed-provider", "it follows nobody, so it keeps the half the pool's first member is on"},
+		{config.CraftSecurityReview, "oauth-one", "it named a credential and not the pool"},
+	} {
+		if got := lc.Crafts.Of(tc.craft).Access; got != tc.want {
+			t.Errorf("crafts.%s.access = %q, want %q: %s", tc.craft, got, tc.want, tc.why)
+		}
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Model; got != "claude-opus-5-5" {
+		t.Errorf("crafts.coder.model = %q, want the model the owner wrote: the split writes the access half alone", got)
+	}
+	// Every access the run leaves behind names something the file defines, which
+	// is the one thing a repointed craft could get wrong.
+	for _, name := range config.CraftNames {
+		access := lc.Crafts.Of(name).Access
+		if access == "" {
+			continue
+		}
+		if _, ok := poolNamed(lc, access); ok {
+			continue
+		}
+		if !holdsCredential(lc, access) {
+			t.Errorf("crafts.%s.access = %q, which this config defines neither as a pool nor as a credential", name, access)
+		}
+	}
+}
+
+// TestEveryCraftCanBeWrittenAnAccess is the guard under setCraftAccess's switch:
+// its callers walk config.CraftNames and write the access each craft is owed, so
+// a craft the switch has no case for is a craft whose derived access is dropped
+// without a word — which is exactly how the merge judge kept naming the pool the
+// split had just replaced (MC21). A sixth craft added to the list fails here
+// rather than in whichever migration reaches it second.
+func TestEveryCraftCanBeWrittenAnAccess(t *testing.T) {
+	var crafts config.Crafts
+	for _, name := range config.CraftNames {
+		setCraftAccess(&crafts, name, "somewhere")
+		if got := crafts.Of(name).Access; got != "somewhere" {
+			t.Errorf("setCraftAccess(%s) left access %q, want somewhere: every craft of config.CraftNames needs a case", name, got)
+		}
+	}
+}
+
+// TestASinglePathPoolIsUntouched: a pool whose members are all served by one
+// half is left where it is, name and members and all, and a craft naming it is
+// not repointed. The rule is about a pool that spans the two halves, and a
+// migration that rewrote every pool would rename pools the owner wrote and
+// repoint crafts that were already on the half their model routes to.
+func TestASinglePathPoolIsUntouched(t *testing.T) {
+	const singlePathPool = "  - { name: subs, members: [oauth-one, oauth-two] }\n"
+	const namingIt = "crafts:\n" +
+		"  coder: { model: claude-opus-5-5, access: subs }\n" +
+		"  review: { model: deepseek/deepseek-v4-flash, access: mixed }\n"
+	lc := parseLocalConfig(t, initConfig+crossedPoolInstallation+singlePathPool+namingIt)
+	migrateCraftKeys(lc)
+
+	subs, ok := poolNamed(lc, "subs")
+	if !ok {
+		t.Fatalf("the split rewrote a pool of one path away: %+v", lc.Pools)
+	}
+	if got, want := subs.Members, []string{"oauth-one", "oauth-two"}; !slices.Equal(got, want) {
+		t.Errorf("subs.members = %v, want %v: the pool is not the one that crossed", got, want)
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "subs" {
+		t.Errorf("crafts.coder.access = %q, want subs: a craft naming a pool of one path is not repointed", got)
+	}
+	if got := lc.Crafts.Of(config.CraftReview).Access; got != "mixed-provider" {
+		t.Errorf("crafts.review.access = %q, want mixed-provider: the pool that did cross is split all the same", got)
+	}
+	for _, name := range []string{"subs-claude", "subs-provider"} {
+		if _, ok := poolNamed(lc, name); ok {
+			t.Errorf("the split derived %s from a pool of one path: %+v", name, lc.Pools)
+		}
+	}
+	// The pool that did cross is split all the same, so the test is about the
+	// single-path pool and not about a migration that did nothing.
+	if _, ok := poolNamed(lc, "mixed-claude"); !ok {
+		t.Errorf("the crossed pool was not split: %+v", lc.Pools)
+	}
+}
+
+// TestUpdateSplitsACrossPathPool is MC21's own convergence test, the one
+// CLAUDE.md's HARD RULE asks of a rule that tightens a format: an installation
+// whose config carries a pool naming members of both halves reaches this release
+// with `fugaro update` alone, and the file it leaves behind is one this release
+// reads — the pool split in two, each craft on the half its own model routes to.
+//
+// Nothing else is asked of the operator: the split is part of the config write
+// the update already makes, so there is no second command for the pool and none
+// for the node the same run migrates (internal/projectpolicy's own step).
+func TestUpdateSplitsACrossPathPool(t *testing.T) {
+	r := newConvergeRig(t, v7NodeWithAccounts())
+	r.appendConfig(t, crossedPoolInstallation+crossedPoolCrafts)
+	// The keys go in before the copy the door reads is taken: the rig clears
+	// FUGARO_CONFIG, so the local config `fugaro update` reads and writes is the
+	// one this rig left in the XDG projects directory.
+	registerInstallation(t, r.initRig)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	written := parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
+	claude, ok := poolNamed(written, "mixed-claude")
+	if !ok {
+		t.Fatalf("after fugaro update the installation holds no mixed-claude: %+v", written.Pools)
+	}
+	provider, ok := poolNamed(written, "mixed-provider")
+	if !ok {
+		t.Fatalf("after fugaro update the installation holds no mixed-provider: %+v", written.Pools)
+	}
+	if !slices.Equal(claude.Members, []string{"oauth-two", "oauth-one"}) || !slices.Equal(provider.Members, []string{"router-one"}) {
+		t.Errorf("after fugaro update the halves are %v and %v, want the pool's members by the half that serves them", claude.Members, provider.Members)
+	}
+	if _, ok := poolNamed(written, "mixed"); ok {
+		t.Errorf("after fugaro update the pool that crossed is still in the file: %+v", written.Pools)
+	}
+	for _, tc := range []struct{ craft, want string }{
+		{config.CraftCoder, "mixed-claude"},
+		{config.CraftReview, "mixed-provider"},
+		{config.CraftSecurityReview, "oauth-one"},
+	} {
+		if got := written.Crafts.Of(tc.craft).Access; got != tc.want {
+			t.Errorf("after fugaro update crafts.%s.access = %q, want %q", tc.craft, got, tc.want)
+		}
+	}
+}
+
+// TestUpdateIsIdempotentForTheSplit: the file `fugaro update` leaves behind is
+// one the split has nothing left to do to, so the second update of an
+// installation says nothing and writes nothing — which is what a migration whose
+// rule reads the block it rewrites has to be, or every update would split a half
+// again and the names would grow a number apiece.
+func TestUpdateIsIdempotentForTheSplit(t *testing.T) {
+	r := newConvergeRig(t, v7NodeWithAccounts())
+	r.appendConfig(t, crossedPoolInstallation+crossedPoolCrafts)
+	registerInstallation(t, r.initRig)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	written := parseLocalConfigBytes(t, readFile(t, installationConfigPath()))
+	once, err := written.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notes := migrateCraftKeys(written); len(notes) != 0 {
+		t.Errorf("the config fugaro update wrote is not converged: %v", notes)
+	}
+	twice, err := written.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bytes and not a field of the block: a second pass that derived
+	// `mixed-claude-2` beside the half it already wrote would leave the pools
+	// reading alike to a test that compared members.
+	if !bytes.Equal(once, twice) {
+		t.Errorf("a second pass over the file fugaro update wrote changes it:\n%s", lineDiff(string(once), string(twice)))
+	}
+}
+
 // v7NodeWithAccounts is v7Node carrying the account-choice members this
 // fixture's local config states, so the policy stage's publish is a publish of
 // the verifier list alone: an account key the node does not carry is a widening

@@ -59,12 +59,15 @@ import (
 // And the writers outside this task that reach the same single write path,
 // `applySettingsEdit`, without asking are the ones whose keys live in the same
 // three files: `fugaro rigor set` (the project layer file); `fugaro workflow
-// add|rm` and `fugaro models use` (a repository's fugaro.yaml); and, in this
-// machine's own project config, `project repos set`, `project routing set`,
-// `project profile set|add|rm`, `models add|rm`, `rigor floor`, `accounts …`,
-// `secrets …`, `workspace` and `project clone-url`. RS6b covers the commands in
-// its own file list; the same list is in docs/roles-scopes/spec.md, and until
-// the rest is gated the enforcement is partial rather than complete.
+// add|rm` (a repository's fugaro.yaml); and, in this machine's own project
+// config, `project repos set`, `project routing set`, `project profile
+// set|add|rm`, `models add|rm`, `rigor floor`, `accounts …`, `secrets …`,
+// `workspace` and `project clone-url`. `fugaro models use` is not one of them:
+// it asks this gate for both the layers it writes, so a repository-scoped admin
+// is refused the project layer file there exactly as `settings set` refuses it.
+// RS6b covers the commands in its own file list; the same list is in
+// docs/roles-scopes/spec.md, and until the rest is gated the enforcement is
+// partial rather than complete.
 //
 // Who the caller is comes from the credential and never from this machine's
 // config or git (finding F21), and it is read through userCallerLookup, the one

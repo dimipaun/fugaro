@@ -1,6 +1,9 @@
 package gcp
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"errors"
 	"os"
@@ -8,12 +11,14 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 
+	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -53,11 +58,10 @@ func catalogBuildSpec(t *testing.T) CatalogBuildSpec {
 			Generation:   1712345678901234,
 			SHA256:       strings.Repeat("b", 64),
 		},
-		ServiceAccount:  BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
-		MachineType:     "E2_HIGHCPU_8",
-		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
-		Bucket:          "gs://fugaro-runs-proj-1234",
-		Selftest:        []byte(`{"skip_verify":true,"tools":"critical"}`),
+		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://fugaro-runs-proj-1234",
+		Selftest:       []byte(`{"skip_verify":true,"tools":"critical"}`),
 		// What a submitter states about the build itself: the digest of the
 		// template it would build with, which the record carries so the check
 		// sees an engine-side change (F33, D1402).
@@ -101,7 +105,7 @@ func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"prep", "credential", catalogDockerfileStepID, catalogCloneStepID, catalogPinStepID, "build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag"}
+	want := []string{"prep", "credential", catalogDockerfileStepID, catalogCloneStepID, catalogPinStepID, "build", "smoke", catalogScanStepID, "promote", catalogTagStepID, catalogRecordStepID, "untag"}
 	if ids := stepIDs(b); !slices.Equal(ids, want) {
 		t.Fatalf("steps = %v, want %v", ids, want)
 	}
@@ -140,67 +144,54 @@ func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	}
 }
 
-// TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv is the SEC property of
-// this task (D1150): an entry's build secret reaches the build the way a
-// workflow secret already does — the value is a Secret Manager version in
-// availableSecrets, the variable is in the build step's secretEnv and in
-// _SECRET_ENVS, and the step writes it into a private temporary file and
-// passes that file to BuildKit as a file secret. It is never an ENV, a
-// build argument, a layer, a step's env: or a log line; a mount that would
-// export it (BuildKit's env=) is refused by Cloud Build's docker anyway.
+// TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv is PIC4's SEC property
+// (D1150), and the name is that task's own pin — the plan and
+// docs_project_image_catalog_test.go both read it. What it asserts is the
+// stronger fact D2311 leaves in its place (B9): an entry's build is handed no
+// secret at all. The one secret the request names is the repository's provider
+// credential, which the clone step reads and no other step does; the build
+// step's secretEnv is empty, _SECRET_ENVS is empty, and the loop the step
+// reads it with passes docker no --secret — so an entry that mounts one has
+// nothing to mount, whatever its definition says. A secret is still never an
+// ENV, a build argument, a layer, a step's env: or a log line, which is what
+// the property was about: it is now never handed over at all.
 func TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	slug := catalogSlug(t)
 	var secrets []string
 	for _, sm := range b.AvailableSecrets.SecretManager {
 		secrets = append(secrets, sm.Env+"="+sm.VersionName)
 	}
 	want := []string{
 		"GIT_TOKEN=projects/proj-1234/secrets/" + s.GitSecretID + "/versions/latest",
-		"NPM_TOKEN=projects/proj-1234/secrets/" + SecretID(slug, "npm-token") + "/versions/latest",
 	}
 	if !slices.Equal(secrets, want) {
 		t.Fatalf("availableSecrets = %v, want %v", secrets, want)
 	}
 	build := step(t, b, "build")
-	if !slices.Equal(build.SecretEnv, []string{"NPM_TOKEN"}) {
-		t.Fatalf("the build step's secretEnv = %v", build.SecretEnv)
+	if len(build.SecretEnv) != 0 {
+		t.Fatalf("the build step is handed the secrets %v: a catalog build mounts none (B9, D2311), and the clone step's checkout is what the entry works on", build.SecretEnv)
 	}
-	if b.Substitutions["_SECRET_ENVS"] != "NPM_TOKEN" {
-		t.Fatalf("_SECRET_ENVS = %q", b.Substitutions["_SECRET_ENVS"])
+	if got := b.Substitutions["_SECRET_ENVS"]; got != "" {
+		t.Fatalf("_SECRET_ENVS = %q, want empty: the loop the build step reads it with would hand docker a --secret for every name in it", got)
 	}
-	// The variable name may appear in the loop the step reads
-	// _SECRET_ENVS with, and nowhere as an env: or a build argument: a
-	// secret in the step's env: is a secret in the build's environment, its
-	// log and every child process; a build argument is in the image's
-	// history.
 	script := strings.Join(build.Args, "\n")
-	for _, st := range b.Steps {
-		if slices.ContainsFunc(st.Env, func(e string) bool { return strings.HasPrefix(e, "NPM_TOKEN=") }) {
-			t.Fatalf("step %s carries the secret variable in its env: %v", st.Id, st.Env)
-		}
-		switch st.Id {
-		case "build":
-		default:
-			// Only the credential step reads another secret, and it is the
-			// provider credential, not the entry's.
-			if len(st.SecretEnv) > 0 && (st.Id != credentialStep || !slices.Equal(st.SecretEnv, []string{gitTokenEnv})) {
-				t.Fatalf("step %s mounts a secret it does not need: %v", st.Id, st.SecretEnv)
-			}
-		}
+	// B8's half of the same fact: the credential the template's build step used
+	// to mount is the checkout the clone step exports, so no argument of this
+	// request mounts the credential file either. The trap that removes it stays
+	// — it is the cleanup of a path no step of this request writes.
+	if strings.Contains(script, `--secret "id=git-credentials`) {
+		t.Fatalf("the build step still mounts the credential file as a build secret: %q", script)
 	}
-	if strings.Contains(script, "NPM_TOKEN") {
-		t.Fatalf("the build step's script names the secret variable: %q", script)
-	}
-	if !strings.Contains(script, `--secret "id=$$e,src=$$sec/$$e"`) {
-		t.Fatalf("the build step does not pass a file secret: %q", script)
-	}
+	// The loop the step reads _SECRET_ENVS with is the one place a secret name
+	// would reach docker as a build secret, and it is left with an empty list:
+	// the loop's own text stays, its file-private write stays, and neither an
+	// env: nor a build argument can carry a name, because there is none.
 	if !strings.Contains(script, "umask 077") {
-		t.Fatalf("the secret file is not written private: %q", script)
+		t.Fatalf("the secret file the loop writes is not private: %q", script)
 	}
 	if strings.Contains(script, "env=") {
 		t.Fatalf("the build step mounts a secret as an env: %q", script)
@@ -209,6 +200,19 @@ func TestCatalogBuildMountsItsSecretAsAFileNeverAnEnv(t *testing.T) {
 	// the textual substitution the request applies.
 	if strings.Contains(script, "${_SECRET_ENVS") {
 		t.Fatalf("the script holds a substitution the request would rewrite: %q", script)
+	}
+	for _, st := range b.Steps {
+		switch st.Id {
+		case "build":
+			// Nothing to check beyond above: an empty secretEnv cannot carry a
+			// name.
+		default:
+			// Only the credential step reads another secret, and it is the
+			// provider credential, not an entry's.
+			if len(st.SecretEnv) > 0 && (st.Id != credentialStep || !slices.Equal(st.SecretEnv, []string{gitTokenEnv})) {
+				t.Fatalf("step %s mounts a secret it does not need: %v", st.Id, st.SecretEnv)
+			}
+		}
 	}
 }
 
@@ -589,6 +593,394 @@ func TestCatalogBuildSelftestIsTheSmokeSpec(t *testing.T) {
 	}
 }
 
+// TestCatalogBuildStepsRunTheScanBeforePromote: the image a catalog build
+// pushed is scanned for a credential of the build's before anything would
+// promote it (B3, R2, F19). The scan is images/scan.sh --secrets — the scan CI
+// runs on the same base and derived images — and it is carried in the request,
+// base64, because a catalog build reads no checkout to run it from.
+//
+// It stands between the smoke and the promote, and it is the last thing that
+// can refuse the image: promote, the content tag and the record all work on the
+// digest the build step wrote, so an image that leaks is a build that fails
+// with the registry untouched.
+func TestCatalogBuildStepsRunTheScanBeforePromote(t *testing.T) {
+	s := catalogBuildSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := stepIDs(b)
+	scan, promote := slices.Index(ids, catalogScanStepID), slices.Index(ids, "promote")
+	if scan < 0 || promote < 0 || scan > promote {
+		t.Fatalf("the scan step is at %d and promote at %d in %v", scan, promote, ids)
+	}
+	if smoke := slices.Index(ids, "smoke"); smoke >= 0 && scan < smoke {
+		t.Errorf("the scan runs before the smoke it is scanned over: %v", ids)
+	}
+	// The scan is the script and the rules the repository's own scan runs, byte
+	// for byte, and not a second copy of the checks that could drift from it.
+	// Each is over the limit on one substitution's value, so each travels as
+	// several, joined by the step before it decodes them.
+	for _, f := range []struct {
+		substitution string
+		data         []byte
+	}{
+		{"_SCAN_B64", images.ScanScript},
+		{"_TRIVY_SECRET_B64", images.TrivySecretConfig},
+	} {
+		chunks := scanChunks(t, b.Substitutions, f.substitution)
+		if len(chunks) < 2 {
+			t.Errorf("%s travels in %d value(s), and the file is over the limit on one", f.substitution, len(chunks))
+		}
+		joined, want := strings.Join(chunks, ""), base64.StdEncoding.EncodeToString(f.data)
+		if joined != want {
+			t.Errorf("%s joins to %d bytes of base64, and the file's own encode is %d", f.substitution, len(joined), len(want))
+		}
+		decoded, err := base64.StdEncoding.DecodeString(joined)
+		if err != nil || string(decoded) != string(f.data) {
+			t.Errorf("%s does not decode to the file the binary carries: %v", f.substitution, err)
+		}
+	}
+	scanStep := step(t, b, catalogScanStepID)
+	// The image it scans is the request's own, through the substitution the
+	// build step pushed it with, and never a value the script composes.
+	if !slices.Contains(scanStep.Env, "IMAGE=${_IMAGE}") {
+		t.Errorf("the scan step does not name the image it scans: %v", scanStep.Env)
+	}
+	script := strings.Join(scanStep.Args, "\n")
+	for _, want := range []string{"--secrets", `"$$IMAGE@$$digest"`, "image-digest", "scan.sh", "trivy-secret.yaml"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("the scan step's script lacks %q: %s", want, script)
+		}
+	}
+	// --no-smoke leaves the scan in place: the flag leaves the smoke out of a
+	// build someone is debugging, and an image nobody scanned is not what it
+	// asks for.
+	noSmoke := s
+	noSmoke.NoSmoke = true
+	nb, err := CatalogBuildRequest("proj-1234", noSmoke)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := stepIDs(nb); !slices.Contains(ids, catalogScanStepID) || slices.Contains(ids, "smoke") {
+		t.Errorf("a --no-smoke build's steps are %v", ids)
+	}
+	// A smoke-only run builds nothing, so it has no image of its own to scan.
+	pb, err := CatalogBuildRequest("proj-1234", catalogPrebuiltSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(stepIDs(pb), catalogScanStepID) {
+		t.Errorf("the prebuilt run scans an image it did not build: %v", stepIDs(pb))
+	}
+
+	// The step is run, not only read: the script writes the embedded scan.sh
+	// out of the request and runs it over a faked docker, so what the subtests
+	// below assert is what the build does.
+	t.Run("a clean image is scanned and passes", func(t *testing.T) {
+		got, err := runCatalogScan(t, scanStep, b.Substitutions, scanFixture{
+			env: []string{"PATH=/usr/local/bin:/usr/bin", "LANG=C.UTF-8"},
+			files: map[string]string{
+				"etc/os-release":  "ID=debian\n",
+				"src/.git/config": "[remote \"origin\"]\n\turl = https://github.com/owner/repo.git\n",
+			},
+		}, nil)
+		if err != nil {
+			t.Fatalf("the scan refused a clean image: %v\n%s", err, got.out)
+		}
+		if call := got.call("run"); !strings.Contains(call, "aquasec/trivy") {
+			t.Errorf("the step ran no secret scan: %q", call)
+		}
+		if !strings.Contains(got.out, "scanned "+s.Image+"@"+catalogScanDigest) {
+			t.Errorf("the step did not report what it scanned:\n%s", got.out)
+		}
+	})
+
+	t.Run("an image carrying a credential fails the build", func(t *testing.T) {
+		// The token is in the image config's environment: the step fails the
+		// build with the scan's own message, so the log says which variable it
+		// was.
+		got, err := runCatalogScan(t, scanStep, b.Substitutions, scanFixture{
+			env:   []string{"BITBUCKET_TOKEN=fixture"},
+			files: map[string]string{"etc/os-release": "ID=debian\n"},
+		}, nil)
+		if err == nil {
+			t.Fatalf("the scan passed an image whose config sets a credential:\n%s", got.out)
+		}
+		if !strings.Contains(got.out, "BITBUCKET_TOKEN") {
+			t.Errorf("the failure does not name the variable:\n%s", got.out)
+		}
+	})
+
+	t.Run("a finding trivy reports fails the build", func(t *testing.T) {
+		// The layer scan is a container of its own: its exit code is the
+		// step's, so a finding Trivy reports refuses the image without this
+		// step having to read its output.
+		got, err := runCatalogScan(t, scanStep, b.Substitutions, scanFixture{
+			env:   []string{"PATH=/usr/bin"},
+			files: map[string]string{"root/.netrc": "machine github.com login fugaro password fixture\n"},
+		}, map[string]string{"FAKE_DOCKER_RUN_EXIT": "1"})
+		if err == nil {
+			t.Fatalf("the scan passed a finding Trivy reported:\n%s", got.out)
+		}
+	})
+}
+
+// scanChunks returns the values a request carries one of the leak scan's files
+// in, in order: <prefix>_1, <prefix>_2, ... — the names the step's own env:
+// declares, spelled here rather than through the code's own helper, so a
+// request that names its values something else fails the test that reads them.
+func scanChunks(t *testing.T, subs map[string]string, prefix string) []string {
+	t.Helper()
+	var chunks []string
+	for i := 1; ; i++ {
+		value, ok := subs[prefix+"_"+strconv.Itoa(i)]
+		if !ok {
+			if i == 1 {
+				t.Fatalf("the request carries no %s_1: %v", prefix, subs)
+			}
+			return chunks
+		}
+		chunks = append(chunks, value)
+	}
+}
+
+// TestCatalogBuildSubstitutionsStayUnderTheCloudBuildLimit: Cloud Build limits
+// the length of one substitution's value and its validator refuses a request
+// that breaks the limit before the build is created. Nothing here submits a
+// build, so a request over the limit would not fail this package's tests — it
+// would fail the first real catalog build, with the scan never running and no
+// entry ever built — which is why the limit is asserted on the requests
+// instead. The leak scan's two files are the only values big enough to reach
+// it (catalogScanFile), so this is what catches a payload that outgrew a single
+// substitution again.
+func TestCatalogBuildSubstitutionsStayUnderTheCloudBuildLimit(t *testing.T) {
+	s := catalogBuildSpec(t)
+	build, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prebuilt, err := CatalogBuildRequest("proj-1234", catalogPrebuiltSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, req := range []struct {
+		what string
+		b    *cloudbuild.Build
+	}{{"the catalog build", build}, {"the prebuilt run", prebuilt}} {
+		if len(req.b.Substitutions) == 0 {
+			t.Fatalf("%s carries no substitutions", req.what)
+		}
+		for name, value := range req.b.Substitutions {
+			if len(value) > catalogSubstitutionLimit {
+				t.Errorf("%s carries %s of %d bytes, and a substitution value may be %d",
+					req.what, name, len(value), catalogSubstitutionLimit)
+			}
+		}
+	}
+}
+
+// scanFixture is the image the fake docker of runCatalogScan answers for: the
+// environment its config sets, and the files its export holds.
+type scanFixture struct {
+	env   []string
+	files map[string]string
+}
+
+// catalogScanDigest is the digest the build step leaves for the scan to read:
+// what the scan runs on is that digest and not the tag it was pushed with.
+var catalogScanDigest = "sha256:" + strings.Repeat("d", 64)
+
+// catalogScanRun is one run of the scan step's script: the docker calls the
+// step made and its combined output.
+type catalogScanRun struct {
+	calls []string
+	out   string
+}
+
+// call returns the arguments of the step's first docker call whose subcommand
+// is sub, or "".
+func (r catalogScanRun) call(sub string) string {
+	for _, c := range r.calls {
+		if strings.HasPrefix(c, sub+" ") {
+			return c
+		}
+	}
+	return ""
+}
+
+// runCatalogScan runs the scan step's script the way Cloud Build would: the
+// step's own env: with its substitution placeholders resolved, a docker faked
+// on PATH that answers what the fixture holds, a workspace of the test's own
+// and the digest the build step would have left there. The script writes the
+// request's images/scan.sh and images/trivy-secret.yaml out and runs the
+// script, so the real scan is what runs here.
+func runCatalogScan(t *testing.T, st *cloudbuild.BuildStep, subs map[string]string, f scanFixture, answers map[string]string) (catalogScanRun, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("the scan step runs bash, which this machine has not: %v", err)
+	}
+	if err := exec.Command("sh", "-c", "printf '' | base64 -d").Run(); err != nil {
+		t.Skipf("the step decodes its inputs with base64 -d, which this machine's base64 has not: %v", err)
+	}
+	dir := t.TempDir()
+	bin, out, scan := filepath.Join(dir, "bin"), filepath.Join(dir, "out"), filepath.Join(dir, "scan")
+	for _, d := range []string{bin, out, scan} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(out, "image-digest"), []byte(catalogScanDigest+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rootfs := filepath.Join(dir, "rootfs.tar")
+	if err := writeScanRootfs(rootfs, f.files); err != nil {
+		t.Fatal(err)
+	}
+	// The layers the step's scan reads with docker save: one holding what the
+	// fixture ends with, which is where a file in the image as it ends came
+	// from. The layer-only case — a config a later layer deleted, which is the
+	// one the scan cannot find any other way — is images/scan_test.go's.
+	save := filepath.Join(dir, "save.tar")
+	if err := writeScanSave(save, f.files); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir, "config")
+	if err := os.WriteFile(config, []byte(strings.Join(f.env, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The fake docker answers the calls the scan makes: the container it
+	// creates, the filesystem it exports and the file it copies out of it.
+	// Everything else — the trivy container — exits what the test states.
+	fake := `#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_DOCKER_CALLS"
+case "$1" in
+  create) echo fugaro-fixture-container ;;
+  export) cat "$FAKE_DOCKER_ROOTFS" ;;
+  inspect)
+    case "$*" in
+      *RootFS.Layers*) echo 1 ;;   # the save below holds exactly one layer
+      *) cat "$FAKE_DOCKER_CONFIG" ;;
+    esac ;;
+  cp) member=${2#*:}; tar -xOf "$FAKE_DOCKER_ROOTFS" "${member#/}" > "${3:?}" ;;
+  save) cat "$FAKE_DOCKER_SAVE" > "${3:?}" ;;
+  run) exit "${FAKE_DOCKER_RUN_EXIT:-0}" ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "calls")
+	env := []string{
+		"PATH=" + bin + ":" + os.Getenv("PATH"),
+		"FAKE_DOCKER_CALLS=" + calls, "FAKE_DOCKER_ROOTFS=" + rootfs, "FAKE_DOCKER_CONFIG=" + config,
+		"FAKE_DOCKER_SAVE=" + save,
+		"OUT=" + out, "SCANDIR=" + scan, "TRIVY_CACHE_DIR=" + filepath.Join(dir, "trivy"),
+	}
+	for _, e := range st.Env {
+		switch {
+		case strings.HasPrefix(e, "OUT="), strings.HasPrefix(e, "SCANDIR="), strings.HasPrefix(e, "TRIVY_CACHE_DIR="):
+			continue
+		}
+		env = append(env, os.Expand(e, func(k string) string { return subs[k] }))
+	}
+	for k, v := range answers {
+		env = append(env, k+"="+v)
+	}
+	script := strings.ReplaceAll(st.Args[len(st.Args)-1], "$$", "$")
+	cmd := exec.Command(bash, "-c", script)
+	cmd.Env = env
+	data, err := cmd.CombinedOutput()
+	run := catalogScanRun{out: string(data)}
+	if raw, err := os.ReadFile(calls); err == nil {
+		run.calls = strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	}
+	return run, err
+}
+
+// writeScanRootfs writes the fixture's files as the tar an image's export
+// holds, so the fake docker can stream it and copy out of it.
+func writeScanRootfs(path string, files map[string]string) error {
+	tarred, err := scanFilesTar(files)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, tarred.Bytes(), 0o644)
+}
+
+// writeScanSave writes the fixture's files the way `docker save` hands them
+// over, as one layer of them: the scan walks a save's layers for a
+// .git/config, which no other read of the image can show it. The layer is a
+// compressed tar -- what a daemon holds a pulled image's layer as, and a
+// stream tar refuses to read from stdin -- inside an uncompressed outer tar,
+// beside the manifest a save also carries, so the step reads the members that
+// are layers and skips the one that is not. The fake docker above answers with
+// one layer to match, which is what the scan holds the save to.
+func writeScanSave(path string, files map[string]string) error {
+	layer, err := scanFilesTar(files)
+	if err != nil {
+		return err
+	}
+	var compressed bytes.Buffer
+	zw := gzip.NewWriter(&compressed)
+	if _, err := zw.Write(layer.Bytes()); err != nil {
+		return err
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	var out bytes.Buffer
+	tw := tar.NewWriter(&out)
+	for _, member := range []struct {
+		name string
+		body []byte
+	}{
+		{"blobs/sha256/" + strings.Repeat("e", 64), compressed.Bytes()},
+		{"manifest.json", []byte(`{"schemaVersion":2}`)},
+	} {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: member.name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(member.body)),
+		}); err != nil {
+			return err
+		}
+		if _, err := tw.Write(member.body); err != nil {
+			return err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(path, out.Bytes(), 0o644)
+}
+
+// scanFilesTar is a tar of the fixture's files, under their full paths: the
+// scan reads the names in a tar and the text of the files it picks out of one,
+// and the directory entries of a real filesystem play no part in that.
+func scanFilesTar(files map[string]string) (*bytes.Buffer, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		body := files[name]
+		if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))}); err != nil {
+			return nil, err
+		}
+		if _, err := tw.Write([]byte(body)); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return &buf, nil
+}
+
 // TestCatalogBuildHasACheckoutStepForAContextEntry: a catalog build gets one
 // step the derived build has no use for — the clone step, which checks the
 // entry's repository out at the commit the copy pinned, between the step that
@@ -609,7 +1001,7 @@ func TestCatalogBuildHasACheckoutStepForAContextEntry(t *testing.T) {
 	}
 	want := []string{
 		"prep", credentialStep, catalogDockerfileStepID, catalogCloneStepID, catalogPinStepID,
-		"build", "smoke", "promote", catalogTagStepID, catalogRecordStepID, "untag",
+		"build", "smoke", catalogScanStepID, "promote", catalogTagStepID, catalogRecordStepID, "untag",
 	}
 	if ids := stepIDs(b); !slices.Equal(ids, want) {
 		t.Fatalf("steps = %v, want %v", ids, want)
@@ -1300,7 +1692,6 @@ func TestPrebuiltEntrySmoked(t *testing.T) {
 		"a registry image":           func(s *CatalogBuildSpec) { s.Image = "us-east5-docker.pkg.dev/proj-1234/fugaro/agent:latest" },
 		"a context":                  func(s *CatalogBuildSpec) { s.Context = "." },
 		"a definition":               func(s *CatalogBuildSpec) { s.Definition = CatalogDefinition{SourceCommit: strings.Repeat("a", 40)} },
-		"workflow secrets":           func(s *CatalogBuildSpec) { s.WorkflowSecrets = []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}} },
 		"a no-smoke run":             func(s *CatalogBuildSpec) { s.NoSmoke = true },
 		"a reference with a quote":   func(s *CatalogBuildSpec) { s.Prebuilt = `docker.io/library/node:22"x` },
 		"a bucket that is not gs://": func(s *CatalogBuildSpec) { s.Bucket = "fugaro-runs-proj-1234" },

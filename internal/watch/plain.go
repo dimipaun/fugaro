@@ -95,6 +95,15 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 	if len(v.Repos) == 0 {
 		b.WriteString("\nno repository has spend, runs or a kill switch today\n")
 	}
+	// The drift is the project's, not a repository's -- one line per model,
+	// over every repository that served it -- so it is drawn after the
+	// repository blocks rather than inside one of them.
+	if len(v.Drift) > 0 {
+		b.WriteString("\n")
+		for _, d := range v.Drift {
+			fmt.Fprintf(&b, "%s %s\n", warn, driftText(d))
+		}
+	}
 	if len(ready) > 0 {
 		fmt.Fprintf(&b, "\nReady for your review (%d)\n", len(ready))
 		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
@@ -108,6 +117,20 @@ func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainO
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// driftText is one drift line: the model, what the provider reported and the
+// band it left. The window and the fact that the band covers the calls that
+// carried a report are said, because a reader who sees only this line has the
+// counters nowhere else (D2650), and the end named is the one the report left,
+// which is what Factor is a multiple of.
+func driftText(d Drift) string {
+	end := "cheapest end"
+	if d.High {
+		end = "dearest end"
+	}
+	return fmt.Sprintf("drift: %s reported %s, %.2fx the %s of the table's band %s-%s over its reported calls (today and yesterday)",
+		d.Model, USD(d.Rep), d.Factor(), end, USD(d.TLo), USD(d.THi))
 }
 
 // finishedOutcomeText is a finished run's status for the plain table: its

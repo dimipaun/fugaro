@@ -124,6 +124,7 @@ reads, the others being `logs RUN --json` (§6.2) and the graph's own live feed
 | `total` | `JSONTotal` | — | no | see below |
 | `repos` | `[]JSONRepo` | — | no | `[]` when none (BuildJSON seeds `[]JSONRepo{}`) — **empty, not unavailable** |
 | `runs` | `[]JSONRun` | — | no | `[]` when none |
+| `drift` | `[]JSONDrift` | — | **yes** | **absent when nothing drifted** — R6's alarm (`View.Drift`), one entry per model whose reported cost has left the price table's band over today and yesterday, ordered by model name (spend-accuracy SA5.7; see below) |
 | `finished` | `[]JSONFinished` | — | no | `[]` when none; **always unfiltered** (`--all`/`--keep`/`--keep-count` bound only the plain and interactive views) |
 | `ready` | `[]JSONFinished` | — | no | `[]` when none; the finished runs whose `outcome` is `ready` (`ReadyRowsOf`), unfiltered |
 | `queued_note` | string | — | **yes** | absent when the runs bucket was read; present = the bucket could not be read for queued rows, already sanitized (`JSONDoc.QueuedNote`) |
@@ -188,6 +189,32 @@ drift from it.
 | `by` | string | — | **yes** | who, when known |
 | `at` | string | RFC 3339 | **yes** | when, when known (`jsonKill`) |
 | `reason` | string | — | **yes** | why |
+
+### `JSONDrift` (`internal/watch/json.go`) — where a report left the table's band
+
+| Field | Type | Unit | omitempty | Availability state |
+|---|---|---|---|---|
+| `model` | string | — | no | the serving model, sanitized and clipped like every other database-derived string (`clean`, `internal/watch/build.go`) |
+| `reported_usd` | float64 | USD | no | measured — the cost the provider reported, summed over the calls that came back with one, **with no route fee** |
+| `table_lo_usd` | float64 | USD | no | measured — the table's charge over those same calls at the cheapest end of the tier that served them |
+| `table_hi_usd` | float64 | USD | no | measured — the same at the dearest end; equal to `table_lo_usd` for a model the catalog does not price |
+| `factor` | float64 | multiple | no | measured — `reported_usd` over the end of the band the report left: over `table_hi_usd` when `direction` is `above`, over `table_lo_usd` when it is `below`. `Drift.Factor` |
+| `direction` | string | — | no | **the closed word `above` or `below`** — which end of the band the report left (`Drift.Direction`) |
+
+The leaves are `budget.ModelUse`'s, summed per model over **today and
+yesterday**, UTC, and over **every repository** (`driftLines`,
+`internal/watch/build.go`): the counters are per UTC day, so R6's "a rolling
+day" (D2649) can only be read as those two (F30), and what is being checked is
+the price table's reading of a model, not a repository's. The band is over the
+calls that carried a report and carries no fee (D2650), which is why it is read
+against `table_lo_usd` and `table_hi_usd` rather than against one estimate. An
+entry is present only when `reported_usd` is more than **10%** above
+`table_hi_usd` or more than 10% below `table_lo_usd` (`DriftGapPercent`) for a
+model with at least **$1** of spend in the window (`DriftMinSpend`): a model
+under the floor, a day whose counters predate the leaves (nothing to compare),
+and a caller that read no previous day are all silent rather than wrong. **No
+console release draws it yet**, and the field is additive: absent, a document
+is the one every CLI before it wrote.
 
 ### `JSONRepo` (`internal/watch/json.go`)
 
@@ -924,7 +951,8 @@ either: that flag's document is the session-start nudge's, not a screen's.
 **Command:** `internal/cli/accounts.go` `newAccountsLsCmd`, indented
 (`printAccounts`). **Document:** `accountsListDoc`:
 `repo` string, `accounts` `[]string`, `complete` bool,
-`note`° (why selection failed), `states`°, `state_note`° and `aliases`°. **`complete: false` means the project config
+`note`° (why selection failed), `states`°, `state_note`°, `aliases`° and
+`credentials`°. **`complete: false` means the project config
 could not be selected — the screen renders `unavailable`, never "no
 accounts"** (the type's own doc comment is the authority). Flags: `--repo`
 (always passed explicitly), `--json`, plus the cloud flags. The **names** are
@@ -948,6 +976,21 @@ is **names only**: the block is the owner's own local file and is never publishe
 (D2090), so a screen draws it as what a launch on this machine would resolve, not
 as anything a run in the project could read.
 
+**`credentials` (the key credentials' work, MC24, D1671)** is the project
+config's `credentials` block, one object per entry: `name`, `type`, and
+`serving_path` — the half of a run that serves a credential of that type
+(`credsvc` or `runner`, `config.CredentialServingPath`), or `""` for a type
+nothing places, which the loader refuses. The block is **not** the accounts
+above and the two may not be read as one: a key credential's name is
+deliberately **dropped from `accounts`** (`config.ClaudeAccountTokenNames`), so a
+screen that wants to show what a pool may list or a craft's access may name
+reads this member and never `accounts`. It is **additive within this document's
+version** (D848), it is empty/absent on a machine with no credentials block, and
+it is **names, types and paths only — never a secret ID and never a value
+(F27)**: the entry's derived secret name (`credential-<name>-key`) is
+deliberately not carried, because the config's own read answers which half serves
+it and the store is the only thing that names a container.
+
 **`states` (CLI 0.10.0, credentials-service C1.21)** is every listed account's
 credential state, keyed by account name, and it is **absent exactly when no
 mark could be read** — then `state_note` says why (no Firebase budget backend,
@@ -965,8 +1008,9 @@ they are the same credential (`creds.Mark`'s own doc). **Names and states only
 
 The text view of the same command is the plan's column — `available`,
 `exhausted until T`, `backed off`, `broken` — and falls back to one bare name
-per line when there is no state to show, which is the shape a console that
-passes `--json` never sees.
+per line when there is no state to show, with the credentials block below it as
+one `NAME (TYPE, served by HALF)` line per entry, which is the shape a console
+that passes `--json` never sees.
 
 ### 6.5a `fugaro accounts clear NAME` — the operator's write
 
@@ -3579,6 +3623,74 @@ three arguments and nothing that stands in for them.
 **What is not in the document.** As §6.24: no database path, no node, no
 subtree, no token and no code. The move adds nothing to that list and nothing to
 the document — the request's `kind` is the only trace of which write it was.
+
+### 6.26 `fugaro project repos status [REPO] --json` — the enrolment's rows
+
+**Command:** `internal/cli/project_status.go` `newProjectReposStatusCmd` /
+`runProjectReposStatus`, with the document built as `reposStatusDoc`. Cited by
+symbol, not by line, for §6.11's reason.
+
+**It is a doctor for one repository's ENROLMENT**, which is the repos-management
+plan's RE1 and D2411: the nine facts that decide whether a run of a repository
+can start, in the order the design fixes them, each failing one naming the one
+command that puts it right. It is the verb that makes enrolment visible from the
+day it lands, so a screen does not have to parse `doctor`'s prose — doctor's
+answer about a repository is two sentences and a screen that parsed them would
+draw a wrong state silently on the next rewording (D1472, D1473).
+
+**A row is doctor's own check shape**, and the ids are doctor's own where the
+check is doctor's: `claude-accounts-stored` is that check's id, so a reader who
+has both documents in hand can see the row IS the check rather than a second
+reading of the same fact (F12). The other eight are this document's ids and they
+are stable.
+
+**The exit status is not a member.** It is nonzero when a row that blocks a
+launch fails, and zero otherwise; a `warning` or an informational row never
+changes it (D2412). A screen reads the rows and never the exit code for the
+verdict, and a row whose read did not answer is a warning rather than a failure:
+"I could not look" is not "it is broken".
+
+**It writes nothing, on every path, `--json` included** (D2412), and it reads a
+credential's PRESENCE and never a value (D2415): a container's `name`, whether
+it holds an enabled version and that version's age. No member below can hold a
+secret's value, and a screen must never expect one.
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own version (`reposStatusDocVersion`), which moves only for a member removed or retyped — this is a document the console reads, so a reused member name with a new meaning would draw a wrong figure with no error |
+| `project` | string | never | never | the installation the read was aimed at, as the project config spells it |
+| `repos` | array | never | never | one entry per repository, ordered by canonical name: the repositories this machine's config holds and the concrete names the published allow-list admits, and — for a caller that named one — that repository alone. `[]` and never null |
+
+**One repository.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `canonical` | string | never | never | `<provider>/<owner>/<name>`, the one spelling the rows and the allow-list use |
+| `enrolled` | bool | never | never | whether either half of the enrolment knows the repository: this machine's config holds it, or an allow-list entry admits it. False is "nothing enrolls it" only when `state` is `""` |
+| `state` | string | never | never | the sentence for an enrolment that **could not be decided** — the named repository is in none of the halves that were read, and a half that would have named it did not answer — and `""` when it could. Bounded text |
+| `rows` | array | never | never | the rows below: the nine of the design, in order, or the single `enrolment` row for a repository nothing enrolls. `[]` never appears — a row is always produced — and the one `enrolment` row is the whole list, so a screen never draws the nine against a repository this project does not have |
+
+**One row.** Every failing row names one command in `fix`; a passing row's
+`problem` says what was found, which is what makes the document readable rather
+than a list of booleans.
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `id` | string | never | never | the row's stable identifier. The nine are `app-installation`, `credential-version`, `claude-accounts-stored`, `image-map`, `allow-data-to`, `credentials-service-ready`, `job-and-grant`, `project-layer-copy` and `last-run`; `enrolment` is the tenth and is the answer for a repository the caller named that nothing enrolls |
+| `ok` | bool | never | never | the row's own verdict. It is a fact about the repository and never a fact about the read: a row whose read did not answer is not ok and carries `severity` `warning` |
+| `problem` | string | never | never | the row's whole sentence, whether it passed or failed. Bounded text |
+| `fix` | string | yes | never | the one command that puts a failing row right, and **absent** for a row that passes (it is `omitempty`). Every failing row writes one (F11): `secrets set` for a container with no enabled version, `image build <entry>` for an entry nothing built, `update --repo <checkout>` for a missing job, `project repos add` for a repository nothing admits. Bounded text |
+| `severity` | string | yes | never | absent for a row that blocks a launch — a failure, whether `ok` or not — `warning` for one that does not, and `info` for a row that says what was found and refuses nothing. A `warning` never changes the exit status (D2412) |
+| `skipped` | bool | yes | never | true, and present only then (`omitempty`), for a row this build did not evaluate. No row writes it today — `status` evaluates all nine — and the member is here so a reader can tell "not checked" from "checked and fine" without a document version bump if a later release adds a skip |
+
+**What is never in it.** No secret's value, on any member, and no secret's
+version data beyond whether an enabled one exists and how old it is (D2415). No
+provider API answer: whether a GitHub App is really installed on the repository
+is `doctor --check-github-app`'s own reading, made behind its flag, and the row
+says the stores this machine holds instead. No argv, no database path and no
+token.
 
 ## 7. The CLI gaps, settled against the code
 

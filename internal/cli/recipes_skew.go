@@ -167,29 +167,39 @@ func policyTooNewFix(version int) string {
 // and price_policy (price-catalog plan Task 4, design D11): a runner before
 // it decodes FUGARO_MODEL_PROVIDERS with DisallowUnknownFields
 // (internal/runner/providers.go), so a job whose value carries either key
-// fails at bootstrap with an error naming a field nobody typed. Today it
-// names a release that does not exist yet, on purpose (see catalogShipped).
-// Once the release that ships them is tagged, this constant's job becomes
+// fails at bootstrap with an error naming a field nobody typed. It names
+// 0.7.5, a release that is built and tagged and whose runner reads both keys
+// (internal/runner/providers_test.go decodes them), so this constant's job is
 // the same as recipesSince's above: docs/release.md's ("Before you tag")
 // checklist verifies it equals the release that ships them.
 const catalogSince = "0.7.5"
 
-// catalogShipped is false until the release named by catalogSince is
-// actually tagged: no fugaro release reads a route's require_zdr or
-// price_policy yet, so no runner that can exist today can run a job whose
-// value carries either key. While it is false, catalogSwitchSkew refuses
-// fugaro update --repo outright when any provider that may receive the
-// repository's code sets one — before any cloud effect, since the job it
-// would deploy carries FUGARO_MODEL_PROVIDERS — rather than judging the
-// base image (no release, of any base image, would read the key, so
-// "upgrade your base image" would not fix anything).
+// catalogShipped is true: the release named by catalogSince exists and reads
+// a route's require_zdr and price_policy, so a job whose
+// FUGARO_MODEL_PROVIDERS value carries either key can be run by a runner that
+// was built from it. It was flipped after 0.7.5 was tagged rather than in that
+// release, which is why docs/release.md's checklist line for catalogSince is
+// the one that records it had been left false — and why the two things the
+// flip makes inert are stated here rather than in that release's notes:
+//   - catalogSwitchSkew's unshipped branch (the "no fugaro release reads those
+//     route keys yet" refusal) no longer fires. A route that sets either key
+//     is judged by the installation's base image the way checkCloneImageSince
+//     judges a checkout: an image older than catalogSince is refused, naming
+//     the release and `fugaro update --base base`, a ref with no release tag
+//     (a dev build, a hand-pushed image, an --image-source mirror) is only
+//     warned about, and an installation with no base image at all passes
+//     because infra.Repo then builds the job from this release's own image;
+//   - the key really is deployable end to end: fugaro update --repo and
+//     fugaro setup --repo carry the value into the job's FUGARO_MODEL_PROVIDERS.
 //
-// Flip this to true in the same commit that bumps catalogSince to the
-// release that ships them: that one edit turns the refusal back into the
-// ordinary base-image age check (the installation's base image predating
-// catalogSince), the same shape as checkCloneImageSince's; update
-// docs/release.md's checklist line for catalogSince in that commit too.
-const catalogShipped = false
+// Both stay in the tree, behind this constant, for the same reason every other
+// shipped flag here keeps its gate: the flip is one boolean, and a test that
+// pins the shipped behavior (TestRefuseCatalogSwitches, TestGateCatalogSwitches,
+// TestInitRepoDeploysCatalogSwitches) fails the moment it is flipped back.
+// Nothing here should ever flip it back: 0.7.5 ships a runner that reads both
+// keys, and a later release that had to un-ship them would be a different
+// decision, made in its own PR.
+const catalogShipped = true
 
 // imageCatalogSince names the release that publishes — and reads — the
 // project policy node's image_catalog key (D1140, D1156): the release whose
@@ -697,6 +707,51 @@ const providerEntrySince = "0.22.0"
 // docs/release.md's ("Before you tag") list carries that reading.
 const bitbucketTokenSince = "0.24.0"
 
+// keyCredentialSince is the first fugaro release whose credentials service
+// reads the bundle's key-credential family (config.CredentialSecret,
+// config.CredentialBySecret, D1670 of docs/model-crafts, MC23): the entries
+// credential-<name>-key, each holding one declared credential's key — the
+// service-served half of the types config.CredentialServingPath answers
+// CredentialPathCredsvc for, offered to a craft's calls at the tier of a paid
+// API key exactly as the project's own Anthropic key is. It is the family's own
+// entry of the same kind as providerEntrySince above, and a constant of its own
+// for the reason that entry's comment gives: the loader refuses the WHOLE
+// document for a key it does not know, so the release a document is readable by
+// is decided by the newest entry it holds and not by one release for the
+// document.
+//
+// `fugaro creds set` is the bundle's only writer, so the guard is at that write
+// too (creds.go's refuseAnEntryTheServiceCannotRead, which judges the release
+// that SERVES the document rather than the installation's pin). It is the
+// guard's third entry and not a second writer: the runner-path key types are
+// refused at the same write and never reach the document
+// (credsKeyCredentialHalfRefusal), so no document of this release holds an
+// entry of this family that a second write path could create.
+//
+// It names 0.26.0, the release this work ships in, and it is the first constant
+// of this file whose reader has never been in a released image: MC22's
+// declaration and MC23's halves are both newer than the `v0.25.0` tag, so the
+// release before this one serves a bundle without the family and cannot read a
+// document that holds it. That is what makes 0.26.0 the answer and not 0.25.0 —
+// a constant naming a released version would clear the write that halts that
+// version's service. The test that holds providerEntrySince and
+// bitbucketTokenSince to a release at or below docs/release-streams.yaml's
+// `current` cannot be written in that form here — no release at or below that
+// `current` (the 0.25.0 tag) reads the family — so the value is verified against
+// the tag actually cut, as slotSince's and modelGradesSince's bullets record;
+// TestKeyCredentialSinceIsNotAheadOfTheReleaseThatShipsIt holds the same bound
+// one release looser while the family is unreleased (never above the stream's
+// own release or the next one), which becomes the siblings' assertion itself
+// from 0.26.0 on, and TestKeyCredentialSinceHasAReleaseBullet holds the
+// checklist's bullet.
+//
+// The direction the siblings' tests protect holds from 0.26.0 on, and it is the
+// one to watch at the next release: a value ABOVE the tag that shipped the
+// family refuses `fugaro creds set credential-<name>-key` on installations whose
+// deployed service already reads it, with `fugaro update` no remedy for them.
+// docs/release.md's ("Before you tag") list carries that reading.
+const keyCredentialSince = "0.26.0"
+
 // gitSecretIDSince is the first fugaro release whose runner reads
 // CheckJobSpec's git_secret_id (internal/infra/spec.go): the daily image
 // check job's own rebuild names the secret ID Readiness resolved, so a
@@ -997,6 +1052,31 @@ const contextReposSubject = "read-only context repositories (--context, kept by 
 // contextReposAlt is the gate's other cure: the launch can name none, where
 // the image cannot be brought forward.
 const contextReposAlt = "; or drop --context, which needs a job image whose runner reads the field before it can carry one"
+
+// changeSetSince is the release whose runner reads a task's change set
+// (task.Spec.ChangeSet, fugaro run --change-set, plan task D1). task.Parse
+// decodes with DisallowUnknownFields, so a runner older than this refuses the
+// whole task at bootstrap: the member run would die over a field it cannot
+// read, which is why the launch is gated here rather than started on such a
+// job.
+//
+// It gates the field and never the flag, exactly as contextReposSince does: a
+// launch that is in no change set writes none (the field is omitempty, so the
+// spec is byte-identical to what the previous release wrote) and is never
+// gated, while a --retry of a task that carries one is gated the same way the
+// launch that wrote it was.
+const changeSetSince = "0.26.0"
+
+// changeSetKnows is what such a runner knows, as the gate names it.
+const changeSetKnows = "the change set its task is a member of (change_set)"
+
+// changeSetSubject is what the gate says the launch carries: the flag, and
+// the stored task a --retry replays the field from.
+const changeSetSubject = "a change set (--change-set, kept by --retry and by a stored task)"
+
+// changeSetAlt is the gate's other cure: the launch can name no change set,
+// where the image cannot be brought forward.
+const changeSetAlt = "; or drop --change-set, which needs a job image whose runner reads the field before it can carry one"
 
 // authorSince is the first fugaro release whose runner reads a task's author
 // field (task.Spec.Author, the launcher's identity a launch records for the
@@ -1934,7 +2014,9 @@ func levelsBlockAsk(name string, l *config.ReviewLevels) string {
 // `run --pr --recipe review-only` and for a recipe picked by --recipe pick.
 // A request that costs a launch is worse than one a launch cannot honour.
 func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, recipeUnknown bool, warn io.Writer) (string, error) {
-	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}).Mode
+	rigorCfg := cfg.RigorConfig()
+	req := rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}
+	mode := rigor.Resolve(rigorCfg, req).Mode
 	var floor []policy.Level
 	// The node is read once for both halves of the model's own gates: its
 	// floor, and the crafts it carries, which are the project layer's answer to
@@ -1944,7 +2026,11 @@ func launchReviewLevelsAsk(ctx context.Context, env *cloudEnv, spec *task.Spec, 
 	var foundNode bool
 	if p, found, err := env.policy.read(ctx, env.lc); err == nil && found && p != nil {
 		node, foundNode = p, true
-		floor = p.ReviewFloor[mode]
+		// The same two rows the run's own resolution reads: a request that
+		// takes the run off the axis leaves the floor of the mode the layers
+		// resolved in force beside hotfix's (D8, LF5), and a note resolved
+		// against one row would say the launch's levels differ from the run's.
+		floor = policy.FloorFor(p.ReviewFloor, mode, rigor.LayersMode(rigorCfg, req, ""))
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)
 	if (fromTask || fromSwitch) && rcp != nil && rcp.Mode == recipe.ModeReview {
@@ -4285,11 +4371,13 @@ func refuseCatalogSwitches(repo string, lc *localcfg.Config, warn io.Writer) err
 
 // catalogSwitchSkew is the refusal itself: shipped false refuses every
 // provider in names, whatever the base image, because no release reads the
-// keys yet; shipped true judges the installation's base image the job is
-// built from, the way checkCloneImageSince does — a release that predates
-// catalogSince is refused, a ref that is not a release image is only warned
-// about (nothing can tell what its runner knows), and no base image at all
-// passes (infra.Repo then builds the job from this release's own image,
+// keys yet — the state catalogShipped left behind, and the reason the flag is
+// passed rather than read, so a test can still ask that half; shipped true,
+// which is what catalogShipped is, judges the installation's base image the
+// job is built from, the way checkCloneImageSince does — a release that
+// predates catalogSince is refused, a ref that is not a release image is only
+// warned about (nothing can tell what its runner knows), and no base image at
+// all passes (infra.Repo then builds the job from this release's own image,
 // which reads them). names must not be empty and is already sorted.
 func catalogSwitchSkew(repo string, names []string, ref string, shipped bool, warn io.Writer) error {
 	where := "provider " + names[0]

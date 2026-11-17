@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/task"
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
@@ -65,12 +64,11 @@ func recordSpec(t *testing.T) gcp.CatalogBuildSpec {
 			SHA256:       strings.Repeat("b", 64),
 		},
 		Context: "ci/", ContextCommit: strings.Repeat("e", 40), ContextSHA256: strings.Repeat("f", 64),
-		ServiceAccount:  gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
-		MachineType:     "E2_HIGHCPU_8",
-		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
-		Bucket:          "gs://fugaro-runs-proj-1234",
-		Selftest:        []byte(`{"skip_verify":true,"tools":"critical"}`),
-		TemplateSalt:    strings.Repeat("1", 64),
+		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		MachineType:    "E2_HIGHCPU_8",
+		Bucket:         "gs://fugaro-runs-proj-1234",
+		Selftest:       []byte(`{"skip_verify":true,"tools":"critical"}`),
+		TemplateSalt:   strings.Repeat("1", 64),
 	}
 }
 

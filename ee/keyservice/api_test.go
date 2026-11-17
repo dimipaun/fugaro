@@ -78,7 +78,9 @@ func TestAPIRoutesComeFromTheRegistry(t *testing.T) {
 	if _, known := apiRoutes.lookup(http.MethodPost, RouteWebhook); !known {
 		t.Errorf("the merchant's route is not in the API's table, want it registered beside every area's")
 	}
-	if got := f.deliver(Event{}); got.Code != http.StatusOK {
+	// The body is one this service does not act on, so the answer is the
+	// ceiling's own 200 and nothing else is claimed about it here.
+	if got := f.deliver(Event{ID: "evt-1", OccurredAt: f.now, Subscription: "sub-1"}); got.Code != http.StatusOK {
 		t.Errorf("the merchant's route answered %d, want 200: it is mounted from the table", got.Code)
 	}
 
@@ -239,11 +241,11 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 
 	// The seams no mounted route reaches are not this deployment's: a service
 	// that serves none of their doors starts without them. The merchant is not
-	// one of these any more — P4.1's checkout reaches it — so what is left here
-	// is the two seams whose areas have not landed a route yet (P1.7's handover
-	// and the scheduler's jobs).
+	// one of these any more — P4.1's checkout reaches it — and neither is the
+	// scheduler, which P7.1's reminder run reaches, so what is left here is the
+	// one seam whose area has not landed a route yet (P1.7's handover).
 	deps := *f.deps
-	deps.Sealer, deps.Scheduler = nil, nil
+	deps.Sealer = nil
 	if _, err := New(base, deps); err != nil {
 		t.Errorf("a deployment holding no seam a mounted route reaches did not start: %v", err)
 	}

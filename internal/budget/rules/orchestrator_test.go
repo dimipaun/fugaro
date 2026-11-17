@@ -22,6 +22,17 @@ package rules
 // answer has the person read this node, which O2's own test pins. A read this
 // file refused would be a read the design grants.
 //
+// E12 (F27) is the one identity admitted under the subtree since, and it is
+// named here so a later tightening does not remove it by accident: the reports
+// job reads one work item's escalation block — the ladder's ledger — through
+// its own `rj` claim, which is why RJ is absent from refusedOrchestratorClaims.
+// What this file refuses is unchanged: every identity that exists today, on
+// every node, which is what the scan below reads. E12's node is not an
+// exception to the scan but a node the scan passes, because `rj` is no run's,
+// no consumer's and no pairing session's claim; the read's own narrowness — one
+// node, no write, no rule on any node between it and the subtree's root — is
+// TestRulesReportsJobReadsEscalationOnly's.
+//
 // emulator_orchestrator_test.go (build tag firebase) proves the same claims
 // against a real rules engine; these run in the job that has no emulator, which
 // is where a rules change is read.
@@ -41,7 +52,9 @@ import (
 // and refuse under `/orchestrator/`: a run-scoped job token carries FP, FS, FR
 // and FX (the TOKEN and RUN macros), the mailbox consumer's carries MC
 // (CONSUMER), and a pairing session's carries PU (PAIRING). MU is absent on
-// purpose: it is the person, the reader D1241's answer grants.
+// purpose: it is the person, the reader D1241's answer grants. RJ is absent for
+// E12's reason (F27): it is the reports job, the one reader of the ladder's
+// escalation block, and adding it here would fail a read the design grants.
 var refusedOrchestratorClaims = []string{
 	"auth.token.fp", "auth.token.fs", "auth.token.fr", "auth.token.fx",
 	"auth.token.mc", "auth.token.pu",

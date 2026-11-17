@@ -163,6 +163,12 @@ const (
 	// the gate admitted the declaration to.
 	accountsAddRefusalToken = "No token was stored for Claude account team-a: a session may write the declaration, and never the token.\n" +
 		"Run this in your own terminal, not in an agent session."
+	// accountsAddRefusalKey is the same step for a name the config already
+	// declares a key credential: what the session may not read there is the key,
+	// under the credential's own container, and the sentence says which of the
+	// two values was not stored rather than calling a provider's key a token.
+	accountsAddRefusalKey = "No key was stored for credential team-a: a session may write the declaration, and never the key.\n" +
+		"Run this in your own terminal, not in an agent session."
 	// accountsAddRefusalCredential is the grant --type would create: creating a
 	// credential is the owner's own step (D1628), and the declaration the gate
 	// does admit is the narrower step the session can take, so the second line

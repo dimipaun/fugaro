@@ -111,6 +111,13 @@ var jsonCases = map[string]jsonCase{
 			return []string{"budget", "prices"}
 		},
 	},
+	"budget reconcile": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			return []string{"budget", "reconcile", "--from", "2026-10-12", "--to", "2026-11-16", "--repo", "acme/app"}
+		},
+	},
 	"budget show": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -308,6 +315,20 @@ var jsonCases = map[string]jsonCase{
 			return []string{"models", "ls"}
 		},
 	},
+	"escalation ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "ls"}
+		},
+	},
+	"escalation show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "show", escalationItemID}
+		},
+	},
 	"models search": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -404,6 +425,18 @@ var jsonCases = map[string]jsonCase{
 			// this run needs the block a project with a profile carries.
 			modelsWriteHomeWith(t, projectProfileExtra)
 			return []string{"project", "profile", "show"}
+		},
+	},
+	"project repos status": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The enrolment's own fixture: a published allow-list admitting one
+			// repository and the container its run mounts. The command names
+			// the repository rather than walking every one, so the pin reads
+			// the nine rows of one screen.
+			_, sm := statusFixture(t)
+			seedGitHubAppKey(t, sm)
+			return []string{"project", "repos", "status", "github/acme/app"}
 		},
 	},
 	"project routing show": {
