@@ -71,6 +71,19 @@ builds)
     echo "gcloud: unexpected builds subcommand ${2:-}" >&2
     exit 1
   fi
+  # A build is submitted to projects/<project>/locations/<region>/builds, so a
+  # describe that names no region reads the global location, and one naming
+  # another region reads a location the build is not in: either way the real
+  # gcloud answers NOT_FOUND. The fake serves the build only in the region it was
+  # submitted to, which is what pins the check's --region.
+  region=""
+  for arg in "$@"; do
+    case "$arg" in --region=*) region=${arg#--region=} ;; esac
+  done
+  if [ -z "$region" ] || [ "$region" != "${FAKE_BUILD_REGION:-us-east5}" ]; then
+    echo "ERROR: (gcloud.builds.describe) NOT_FOUND: Requested entity was not found." >&2
+    exit 1
+  fi
   case "$mode" in
   describe-fails)
     echo "ERROR: (gcloud.builds.describe) NOT_FOUND: Requested entity was not found." >&2
@@ -417,7 +430,7 @@ test_happy_path() {
   expect_contains "$calls" "image ls --json (in $dir/sandbox)" "happy path: the catalog is read through the checkout"
   expect_contains "$calls" "image survey --json (in $dir/sandbox)" "happy path: the map is read through the checkout"
   expect_contains "$calls" "image build web (in $dir/sandbox)" "happy path: the entry is built from the checkout the map names"
-  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1 --project=${project} --format=json (in $dir/sandbox)" "happy path: the build is described in the project the checkout belongs to"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1 --region=us-east5 --project=${project} --format=json (in $dir/sandbox)" "happy path: the build is described in the project and region the checkout belongs to"
   expect_absent "$calls" "--yes" "happy path: nothing is confirmed for the owner"
   expect_absent "$calls" "image map set" "happy path: the check writes no mapping"
   expect_absent "$calls" "fugaro run" "happy path: no run is launched"
@@ -747,7 +760,7 @@ test_a_build_that_cannot_be_described_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_MODE=describe-fails
   expect_status "$status" 2 "a build that cannot be described"
-  expect_contains "$out" "FACT scan: FAIL — gcloud builds describe fake-build-1 did not answer" "a build that cannot be described: the row says why"
+  expect_contains "$out" "FACT scan: FAIL — gcloud builds describe fake-build-1 --region=us-east5 did not answer" "a build that cannot be described: the row says why"
   expect_contains "$out" "FACT digest: PASS" "a build that cannot be described: the digest is still read"
 }
 
@@ -833,6 +846,33 @@ test_an_unknown_argument_is_refused() {
   expect_contains "$err" "unknown argument: --wat" "an unknown argument: the message"
 }
 
+test_the_build_is_described_in_the_region_the_project_names() {
+  local dir=$work/region
+  prepare "$dir"
+  # A project whose region is not the check's own default: a describe without
+  # --region, or one naming the wrong region, finds no build (the fake gcloud
+  # answers NOT_FOUND as the real one does), so the scan row would never be
+  # measured.
+  sed 's/"region":"us-east5"/"region":"europe-west1"/' "$dir/json/doctor.json" >"$dir/json/doctor.tmp"
+  mv "$dir/json/doctor.tmp" "$dir/json/doctor.json"
+  run_check "$dir" FAKE_BUILD_REGION=europe-west1
+  expect_status "$status" 0 "a project in another region"
+  expect_contains "$out" "belongs to ${project} (region europe-west1" "a project in another region: the region it read from the checkout"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1 --region=europe-west1 --project=${project}" "a project in another region: the build is described in that region"
+  expect_contains "$out" "FACT scan: PASS" "a project in another region: the scan is measured"
+}
+
+test_the_region_can_be_named() {
+  local dir=$work/region-knob
+  prepare "$dir"
+  # An installation whose builds run in a region of their own (localcfg's
+  # BuildRegion): the doctor document carries the project's region, so the knob
+  # is how the owner names the one the build was submitted to.
+  run_check "$dir" CHECK581_REGION=europe-west1 FAKE_BUILD_REGION=europe-west1
+  expect_status "$status" 0 "a region named with the knob"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "builds describe fake-build-1 --region=europe-west1 --project=${project}" "a region named with the knob: the build is described there"
+}
+
 # Sharding, so a Go test could run these side by side: CHECK_TEST_SHARD="i/n"
 # runs every n-th test starting at i (each case works in its own directory under
 # $work), CHECK_TEST_ONLY=name runs that one alone.
@@ -889,6 +929,8 @@ t test_a_build_that_reports_no_digest_and_a_changed_entry_is_read_from_the_chang
 t test_a_build_that_never_ends_is_not_measured
 t test_kept_scratch_is_reported
 t test_an_unknown_argument_is_refused
+t test_the_build_is_described_in_the_region_the_project_names
+t test_the_region_can_be_named
 
 if [ "$failures" -ne 0 ]; then
   echo "check-581_test.sh: $failures failure(s)" >&2

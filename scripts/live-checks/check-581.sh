@@ -34,8 +34,11 @@
 #     repository the project's map puts on it`). Every repository the map puts on
 #     the entry has to be named there, which is the outside evidence that the
 #     definition the build read carries one bake stage per repository;
-#   * the leak scan, out of the build's own steps: `gcloud builds describe`
-#     answers the step ids of the build that ran, and the row holds the scan's
+#   * the leak scan, out of the build's own steps: `gcloud builds describe`, in
+#     the region the build ran in (a build is submitted to
+#     projects/<project>/locations/<region>/builds, and a describe without a
+#     region reads the global location and finds nothing) answers the step ids of
+#     the build that ran, and the row holds the scan's
 #     step (`catalog-scan`) to being present, to standing **before** `promote`,
 #     and to having succeeded — with the build itself SUCCESS, since a scan that
 #     refused fails the build and nothing is promoted;
@@ -100,8 +103,11 @@
 # on, two at least, and says which and why), CHECK581_CHECKOUT (or --checkout:
 # the checkout the build is run from; the sandbox checkout by default, and the
 # right value when the entry's Dockerfile belongs to another repository of the
-# project), CHECK581_DRY_RUN, CHECK581_KEEP_SCRATCH, CHECK581_REGION (us-east5:
-# the guard that refuses a project or region naming belong reads it),
+# project), CHECK581_DRY_RUN, CHECK581_KEEP_SCRATCH, CHECK581_REGION (the region
+# the build is described in — the project's own region, as `fugaro doctor`
+# reports it, unless the knob names another, which is what an installation whose
+# `build.region` differs needs; the guard that refuses a project or region naming
+# belong reads it too),
 # CHECK581_DOCTOR_TIMEOUT_SECONDS (180), CHECK581_CLI_TIMEOUT_SECONDS (180) and
 # CHECK581_BUILD_TIMEOUT_SECONDS (1800).
 set -Eeuo pipefail
@@ -411,10 +417,21 @@ step_sandbox() {
     unmeasured sandbox "fugaro doctor --json answered without a project block: this check cannot say which project the sandbox checkout belongs to, and the rows below are about the project, its catalog and the build. What it printed is in $SCRATCH/doctor.out"
     return 0
   fi
-  case "$PROJECT" in
-  *belong*) stop "the checkout at $SANDBOX belongs to ${PROJECT}: this check is never run there" ;;
+  # The region the build ran in, which `gcloud builds describe` needs: a build is
+  # submitted to projects/<project>/locations/<region>/builds, and a describe
+  # without one reads the global location and finds nothing. The doctor document
+  # carries the project's region, which is the region a build runs in unless the
+  # installation names another (localcfg's BuildRegion), and CHECK581_REGION is
+  # how the owner names that one.
+  if [ -z "${CHECK581_REGION:-}" ]; then
+    local doc_region
+    doc_region=$(python3 -c 'import json,sys; print(((json.load(open(sys.argv[1])) or {}).get("project") or {}).get("region") or "")' "$SCRATCH/doctor.out" 2>/dev/null || true)
+    [ -z "$doc_region" ] || REGION=$doc_region
+  fi
+  case "${PROJECT}${REGION}" in
+  *belong*) stop "the checkout at $SANDBOX belongs to ${PROJECT} (region ${REGION}): this check is never run there" ;;
   esac
-  fact sandbox PASS "${SANDBOX} is a Fugaro repository's checkout, and it belongs to ${PROJECT}: the check builds this project's catalog entry and reads the build back from this project"
+  fact sandbox PASS "${SANDBOX} is a Fugaro repository's checkout, and it belongs to ${PROJECT} (region ${REGION}, which is where its Cloud Build builds run and what the build is described in): the check builds this project's catalog entry and reads the build back from this project"
 }
 
 # step_catalog: what the project has today, read back rather than assumed.
@@ -618,16 +635,19 @@ step_baked() {
 # the build rather than something this check can run over an image on its own: it
 # is images/scan.sh --secrets over the digest the build pushed, and it stands
 # between the smoke and the promote so an image that carries a credential of the
-# build's is refused rather than moved to latest.
+# build's is refused rather than moved to latest. The build is read in the region
+# it was submitted to — a catalog build goes to
+# projects/<project>/locations/<BuildRegion>/builds — because a `gcloud builds
+# describe` without one reads the global location and finds nothing.
 step_scan() {
   if [ "$BUILT" != yes ]; then
     unmeasured scan "no build ran, so there are no steps to read: the row above says why"
     return 0
   fi
-  say "reading the build's steps: gcloud builds describe ${BUILD_ID} --project=${PROJECT}"
-  run_bounded "$CLI_TIMEOUT" describe "$SANDBOX" gcloud builds describe "$BUILD_ID" --project="$PROJECT" --format=json
+  say "reading the build's steps: gcloud builds describe ${BUILD_ID} --region=${REGION} --project=${PROJECT}"
+  run_bounded "$CLI_TIMEOUT" describe "$SANDBOX" gcloud builds describe "$BUILD_ID" --region="$REGION" --project="$PROJECT" --format=json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
-    unmeasured scan "gcloud builds describe ${BUILD_ID} did not answer (exit ${BOUNDED_STATUS}): the scan is a step of that build and the build's own record of it is the only place it can be read. Its output is in $SCRATCH/describe.out and $SCRATCH/describe.err"
+    unmeasured scan "gcloud builds describe ${BUILD_ID} --region=${REGION} did not answer (exit ${BOUNDED_STATUS}): the scan is a step of that build and the build's own record of it is the only place it can be read. The region is the one the build was submitted to (projects/${PROJECT}/locations/${REGION}/builds, from fugaro doctor); if the installation names another one for builds, name it with CHECK581_REGION. Its output is in $SCRATCH/describe.out and $SCRATCH/describe.err"
     return 0
   fi
   if ! read_json build "$SCRATCH/describe.out" "$SCRATCH/describe.txt"; then
@@ -641,7 +661,7 @@ step_scan() {
   promote_idx=$(step_index "$SCRATCH/describe.txt" promote)
   scan_status=$(step_status "$SCRATCH/describe.txt" catalog-scan)
   if [ "$status" != SUCCESS ]; then
-    fact scan FAIL "the build ${BUILD_ID} of ${ENTRY} ended ${status:-without a status}${detail:+, its own failure detail: $(printf '%s' "$detail" | head -c 300)}: a build that failed at or after the scan is one whose image was refused rather than promoted — which is the scan working — and a build that failed before it is one the scan never reached. Read the whole build with 'gcloud builds describe ${BUILD_ID} --project=${PROJECT}' and its log with 'gcloud builds log ${BUILD_ID} --project=${PROJECT}'. The steps this check read: $(awk -F'\t' '$1 == "step" { printf "%s ", $3 }' "$SCRATCH/describe.txt")"
+    fact scan FAIL "the build ${BUILD_ID} of ${ENTRY} ended ${status:-without a status}${detail:+, its own failure detail: $(printf '%s' "$detail" | head -c 300)}: a build that failed at or after the scan is one whose image was refused rather than promoted — which is the scan working — and a build that failed before it is one the scan never reached. Read the whole build with 'gcloud builds describe ${BUILD_ID} --region=${REGION} --project=${PROJECT}' and its log with 'gcloud builds log ${BUILD_ID} --region=${REGION} --project=${PROJECT}'. The steps this check read: $(awk -F'\t' '$1 == "step" { printf "%s ", $3 }' "$SCRATCH/describe.txt")"
     return 0
   fi
   if [ -z "$scan_idx" ]; then
@@ -696,11 +716,11 @@ step_digest() {
       fact digest PASS "the entry ${ENTRY} records the digest ${reported} the build ${BUILD_ID} reported it made, read back from fugaro image ls --json: the record step, which stands after the promote the scan guards, ran for this build"
       return 0
     fi
-    fact digest FAIL "the build ${BUILD_ID} of ${ENTRY} reported the digest ${reported} and the entry records ${digest} (before this check's build: ${ENTRY_DIGEST_BEFORE:-none}): the record step is what writes the digest the build made, so an entry carrying another one is one whose record did not take this build — and what a job's record, the daily check and a rebuild compare is the digest. Read the build with 'gcloud builds log ${BUILD_ID} --project=${PROJECT}', and what fugaro image ls --json printed is in $SCRATCH/digests.out"
+    fact digest FAIL "the build ${BUILD_ID} of ${ENTRY} reported the digest ${reported} and the entry records ${digest} (before this check's build: ${ENTRY_DIGEST_BEFORE:-none}): the record step is what writes the digest the build made, so an entry carrying another one is one whose record did not take this build — and what a job's record, the daily check and a rebuild compare is the digest. Read the build with 'gcloud builds log ${BUILD_ID} --region=${REGION} --project=${PROJECT}', and what fugaro image ls --json printed is in $SCRATCH/digests.out"
     return 0
   fi
   if [ "$digest" = "${ENTRY_DIGEST_BEFORE:-}" ]; then
-    unmeasured digest "the build ${BUILD_ID} of ${ENTRY} printed no digest of its own, and the entry records the same digest it had before the build (${digest}): this check cannot tell a build that recorded the digest it made from one that recorded nothing, and the digest is the one thing the record step is for. Read the build with 'gcloud builds log ${BUILD_ID} --project=${PROJECT}'; the build's own output is in $SCRATCH/build.out and $SCRATCH/build.err"
+    unmeasured digest "the build ${BUILD_ID} of ${ENTRY} printed no digest of its own, and the entry records the same digest it had before the build (${digest}): this check cannot tell a build that recorded the digest it made from one that recorded nothing, and the digest is the one thing the record step is for. Read the build with 'gcloud builds log ${BUILD_ID} --region=${REGION} --project=${PROJECT}'; the build's own output is in $SCRATCH/build.out and $SCRATCH/build.err"
     return 0
   fi
   fact digest PASS "the entry ${ENTRY} records the digest ${digest}, where it recorded ${ENTRY_DIGEST_BEFORE:-none} before this check's build: the build ${BUILD_ID} printed no digest of its own, so the record is read from the change — the record step stands after the promote the scan guards, and it is the only thing that writes a digest there"
@@ -763,7 +783,7 @@ plan() {
   say "  [network, read-only, no clone] fugaro image survey --json — the image map the entry over two repositories is chosen from"
   say "  [network, BILLABLE] one Cloud Build — fugaro image build <the entry the map puts the most repositories on> from ${CHECKOUT}"
   say "  [read] the build's own note — the repositories it says it baked"
-  say "  [network, read, creates nothing] gcloud builds describe <build id> --project=<the project> — the build's steps: catalog-scan, before promote, and the build's status"
+  say "  [network, read, creates nothing] gcloud builds describe <build id> --region=<the region the build ran in> --project=<the project> — the build's steps: catalog-scan, before promote, and the build's status"
   say "  [read] fugaro image ls --json again — the digest the build recorded"
   fact sandbox INFO "planned: a real run measures this row; --dry-run did not"
   fact catalog INFO "planned: a real run measures this row; --dry-run did not"

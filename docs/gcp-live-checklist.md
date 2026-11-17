@@ -19011,13 +19011,18 @@ the tree: this check builds one entry and reads what the build says and what Clo
   per repository, at the per-slug path a job of that repository opens instead of cloning. A note that names
   one repository, or leaves one of the map's out, is the reading that the image a job of that repository
   starts on carries no checkout of it; a build that baked nothing says so in its own words.
-- **The scan, out of the build's own steps.** `gcloud builds describe <the build id> --project=<the project>`
-  answers the steps that ran, and the row holds `catalog-scan` to being **present**, to standing **before**
+- **The scan, out of the build's own steps.** `gcloud builds describe <the build id> --region=<the region the
+  build ran in> --project=<the project>` answers the steps that ran, and the row holds `catalog-scan` to being
+  **present**, to standing **before**
   `promote`, and to having ended **SUCCESS**, with the build itself SUCCESS. The order is the whole point
   (B3, R2; `internal/backend/gcp`'s `catalogBuildSteps`): an image carrying a git config credential, a
   `.netrc`, a credential-helper store or a token in the environment or in any layer must be refused rather
   than moved to `latest`, and a build that failed at or after the scan is the scan working — the row says
-  which, with the build's own failure detail.
+  which, with the build's own failure detail. The region is not decoration: a catalog build is submitted to
+  `projects/<project>/locations/<region>/builds`, so a describe without one reads the global location and
+  answers NOT_FOUND, and the row would never be measured. The region the check uses is the project's own, as
+  `fugaro doctor` reports it, and `CHECK581_REGION` names another one for an installation whose `build.region`
+  differs from its project region.
 - **The digest the build recorded.** `fugaro image ls --json` is read again afterwards, and the row holds the
   entry to carrying the digest **the build's own output says it made** (`built <image>@<digest>`): the record
   step stands **after** the promote, so an entry that records that digest is one whose build reached the end of
@@ -19050,7 +19055,9 @@ reported; **`2`** is the check not being able to measure (a tool missing, the ch
 that did not answer, a build that never ended, a build that reported no digest of its own and left the entry's
 digest as it was). A key the run never reached
 reads `FAIL — not reached`. The knobs are `CHECK581_DRY_RUN`, `CHECK581_KEEP_SCRATCH`, `CHECK581_SANDBOX`,
-`CHECK581_ENTRY`, `CHECK581_CHECKOUT`, `CHECK581_REGION` (us-east5), `CHECK581_DOCTOR_TIMEOUT_SECONDS` (180),
+`CHECK581_ENTRY`, `CHECK581_CHECKOUT`, `CHECK581_REGION` (the region the build is described in — the
+project's own, as `fugaro doctor` reports it, or the one an installation whose `build.region` differs names),
+`CHECK581_DOCTOR_TIMEOUT_SECONDS` (180),
 `CHECK581_CLI_TIMEOUT_SECONDS` (180) and `CHECK581_BUILD_TIMEOUT_SECONDS` (1800).
 
 **What waits on it.** Nothing gates on it: it is the outside reading of the multi-repository bake and of the
