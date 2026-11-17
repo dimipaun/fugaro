@@ -1573,6 +1573,54 @@ func checkCatalogEntrySince(ctx context.Context, env *cloudEnv, b *blobx.Bucket,
 	return nil
 }
 
+// diagnoseSince is the first fugaro release whose runner executes the diagnose
+// step, the cloud diagnosis's own stage (docs/troubleshoot-cloud D2402): it
+// reads the bundle a launcher left under the run's own prefix and writes the
+// two files the troubleshoot recipe's outputs block names. It is the release
+// that first carries the step, so an image built from a base older than it has
+// no diagnose in its version 1 step list at all and refuses the whole recipe
+// as "is not a step type" — at bootstrap, with the launch already paid for —
+// which is what the cloud tier's pre-flight exists to turn into a refusal at
+// the person's terminal, naming this release and fugaro update (D2401, F18).
+// docs/recipes.md's bullet for the step names it, the way the digest bullet
+// names digestSince, and the value is verified against the tag actually cut
+// the way every *Since here is.
+const diagnoseSince = "0.26.0"
+
+// diagnoseSubject and diagnoseKnows are this gate's two names in the family's
+// sentence: what is refused (the cloud diagnosis the tier was about to launch)
+// and what its job image has to know (the step the recipe it runs holds). The
+// refusal carries no alt: the tier has no other way out to offer — the step is
+// what a diagnosis is, and the evidence-only path a refused tier leaves is the
+// decline's own sentence (troubleshootDeclineCloud), not this gate's.
+const (
+	diagnoseSubject = "a cloud diagnosis"
+	diagnoseKnows   = "the diagnose step (the cloud diagnosis's own stage)"
+)
+
+// checkDiagnoseImage refuses a cloud diagnosis whose job image's runner cannot
+// execute the diagnose step: the tier's launch runs the catalog recipe
+// troubleshoot on the review-only variant, whose runner would refuse the whole
+// recipe at bootstrap, after the container was started and the bundle
+// uploaded, and no job image is in that state on purpose.
+//
+// It is asked by name rather than by the launch's own block for the same
+// reason the review variant's two gates are (F8, D2401): the block's recipe
+// gate judges the recipe text a task carries (recipeSinceFor), and the task a
+// diagnosis carries names the catalog entry rather than embedding its text —
+// the entry is the CLI's own file, which that gate never reads — so the step's
+// release is asked here or not at all. Judged from the deployed job's build
+// record, as every checkImageSince gate's is.
+func checkDiagnoseImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	return checkImageSince(ctx, env, slug, spec, kind, diagnoseSince, diagnoseSubject, diagnoseKnows, "", warn)
+}
+
+// checkCloneDiagnoseImage is checkDiagnoseImage for a checkout: clone
+// workflow: see checkCloneImageSince.
+func checkCloneDiagnoseImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	return checkCloneImageSince(lc, spec, diagnoseSince, diagnoseSubject, diagnoseKnows, "", warn)
+}
+
 // releaseOf is ref's release version, through baseRefReleaseRE (a release
 // base image of one of config.Bases, <host and path>/fugaro-<kind>:<X.Y.Z>,
 // with an optional digest), and whether it matched at all: a dev build, a
