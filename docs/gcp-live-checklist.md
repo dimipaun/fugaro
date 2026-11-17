@@ -20687,14 +20687,16 @@ service's lines), `git` for the one remote read that names the repository, `pyth
 document and `mktemp`. Progress goes to stderr and one `CHECK 580 RESULT` block goes to stdout at the end:
 paste that block here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is
 a measured criterion that did not hold, or a guard that stopped the check — a checkout that is not a Fugaro
-repository, an origin that is not Bitbucket, a project or path naming `belong`, a repository admitted to no
-profile or to two, a profile serving another provider or listing no `claude_accounts`, a budget mode of
-`off`, a profile with no shared Bitbucket job or one holding `FUGARO_BITBUCKET_TOKEN` or lacking the service
-URL, a run that did not succeed, push or open a pull request, a run that ran on a job that is not the
-profile's shared one, no served `git` line, or a first `forward` line naming a credential outside the
-profile's `claude_accounts`; **`2`** is the check not being able to measure (a tool missing, a sandbox that
-is not a directory, a doctor or policy read that did not answer, an unreadable job list, a launch that never
-answered or a run whose row never ended, a `gcloud logging read` that failed). A key the run never reached
+repository, an origin that names no repository or names a host that is not Bitbucket, a project or path
+naming `belong`, a repository admitted to no profile, a profile serving another provider or listing no
+`claude_accounts`, a budget mode of `off`, a profile with no shared Bitbucket job or one holding
+`FUGARO_BITBUCKET_TOKEN` or lacking the service URL, a run that did not succeed, push or open a pull
+request, a run that ran on a job that is not the profile's shared one, no served `git` line, or a first
+`forward` line naming a credential outside the profile's `claude_accounts`; **`2`** is the check not being
+able to measure (no `--sandbox` or a tool missing, a sandbox that is not a directory, a repository admitted
+to two profiles, a policy document carrying no budget mode, a doctor or policy read that did not answer, an
+unreadable job list, a launch that never answered or a run whose row never ended, a `gcloud logging read`
+that failed). A key the run never reached
 reads `FAIL — not reached`. The knobs are `CHECK580_SANDBOX` (or `--sandbox`), `CHECK580_DRY_RUN`,
 `CHECK580_KEEP_SCRATCH`, `CHECK580_RUN_ID` (the base of the run id this check mints; the four characters
 `-0580` are appended, `task.ValidRunID`'s form), `CHECK580_RUN_SECONDS` (2400), `CHECK580_POLL_SECONDS` (20),
