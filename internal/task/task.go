@@ -270,6 +270,30 @@ type Spec struct {
 	// launcher's own image gate refuses an artifact launch before this
 	// field is ever set at such a job.
 	Mode string `json:"mode,omitempty"`
+	// ReviewClass is the launcher's marker that admits a run to the
+	// review-only job variant without being a review (docs/troubleshoot-cloud
+	// D2411): the cloud tier of `fugaro troubleshoot` writes it, because the
+	// recipe that tier runs is mode: artifact (D2402) while the job it must
+	// run on is the variant whose container mounts no App key and no Claude
+	// token (D2403). The runner's own class marker is this spec's Mode alone
+	// (runClass, internal/runner/projectjob.go), so without the field such a
+	// run is a coding-class run: the variant's two doors on the credential
+	// halt it at bootstrap, and its model call would not take the review
+	// class's path through the credentials service.
+	//
+	// It never overrides the mode — a spec whose mode is review is a review
+	// whatever this field says — and Validate refuses it unless the mode is
+	// recipe.ModeArtifact, so no other launch can claim the class by setting
+	// the field alone. The real protection is that one launcher writes it: no
+	// repository's fugaro.yaml sets it and no flag does.
+	//
+	// The field is additive, and a runner before the release that reads it
+	// refuses the whole spec (Parse decodes with DisallowUnknownFields), so
+	// the launcher gates a launch that would set it on the job image — the
+	// step kind's own gate, which the recipe that needs this marker carries
+	// anyway (internal/recipe's UsesDiagnose) — rather than let it be
+	// rejected after the fact.
+	ReviewClass bool `json:"review_class,omitempty"`
 	// Rigor is the mode the run's own launcher asked for (fugaro run
 	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
 	// that may raise the mode the run's layers resolve and never lower it
@@ -1718,6 +1742,14 @@ func (s *Spec) Validate() error {
 	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate:
 	default:
 		bad("task spec: mode %q must be %s, %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate)
+	}
+	// ReviewClass is the diagnosis launch's marker and only ever rides a
+	// mode: artifact spec (the field's own comment); every other mode is
+	// either already a review class of its own or a shape no launcher writes
+	// it for, so a spec carrying it elsewhere is refused here rather than
+	// admitted to the review-only job's container by a field alone.
+	if s.ReviewClass && s.Mode != recipe.ModeArtifact {
+		bad("task spec: review_class is only for mode %s, and this spec's mode is %q", recipe.ModeArtifact, s.Mode)
 	}
 	// The entries' own shapes only. What an input NAME may be — no absolute
 	// path, no ".." element, no NUL or newline, a length limit, no duplicate

@@ -309,7 +309,8 @@ func (r *run) modelAuth() string {
 }
 
 // reviewClassRun reports whether this run's model path is the credentials
-// service's review class: the run's mode is review (r.runClass) and the job it
+// service's review class: the run is of that class (r.runClass — the task's
+// mode: review, or the review class a diagnosis's launch writes) and the job it
 // was admitted to is the review-only variant (jobTriple.Class, set where the
 // candidate was matched).
 //
@@ -331,8 +332,9 @@ func (r *run) modelAuth() string {
 // own configuration's auth — for the review job, oauth with a token its
 // container does not mount, which is a refusal and never a call on a credential
 // nobody chose.
-// A run with no task at all is not one: r.runClass reads the task's mode, and
-// a caller that has no task is asking about a run that never started.
+// A run with no task at all is not one: r.runClass reads the task's own
+// markers, and a caller that has no task is asking about a run that never
+// started.
 func (r *run) reviewClassRun() bool {
 	return r.spec != nil && r.runClass() == classReview && r.job.Class == classReview
 }
