@@ -487,6 +487,13 @@ func policyConfigPath(lc *localcfg.Config) string {
 // the project rather than the one job the entry builds — the failure D1403
 // keeps out of a published node.
 //
+// The gate is true from 0.26.0, the release that first writes and reads the
+// member, so the branch below is the record of what the release behind met
+// rather than something an operator meets today: a 0.25.0 installation's
+// `fugaro update` refuses to publish this node, and this release's publishes
+// it (the pair is one fact with internal/infra's imageContextShipped, and the
+// release's notes say which one carries it).
+//
 // The node is judged and not the local config, because the node is what the
 // older runner reads: a config silent about the catalog keeps the published
 // one, so the member can reach these bytes from either side. Both doors build
