@@ -1804,9 +1804,19 @@ export const CONSOLE_OPERATIONS = [
   // The group's writes stay where they were: `project repos add` and
   // `project repos rm` are on the never table below, and no code in this tree
   // constructs a word of either argv -- the two rows here are the group's reach
-  // and nothing more. No screen consumes the documents yet, which is the same
-  // state `craft ls` is in on the design's own table (D2413: the reach lands
-  // before the screen does).
+  // and nothing more.
+  //
+  // **No screen consumes the documents yet, and the reach still carries its
+  // whole middle.** A row here is a member of `OperationName`, and
+  // `ConsoleHandlers` maps that name to a handler one for one -- so an operation
+  // listed with no handler is a console that does not type-check and, were that
+  // suppressed, a `registerConsoleHandlers` that refuses to register the whole
+  // surface. Both are answered: `src/source/source.ts`'s `listRepos` and
+  // `reposStatus` read the two commands through `CliSource`
+  // (`src/source/cli.ts`) and over the recording `FixtureSource`
+  // (`src/source/fixture.ts`), and the e2e stub answers their argv. What is
+  // still ahead is the screen that draws them (D2413: the reach lands before
+  // the screen does).
   //
   // **Neither takes an argument**, and `repos.status`'s optional positional
   // repository is deliberately not one: the command answers for every

@@ -133,6 +133,14 @@
 #     (`policy.show`), and the two other words of the family -- `publish` and
 #     `publish --delete` -- are **writes** this console has no row for, so they
 #     are refused with the whole list rather than answered.
+#   * `project repos ls --json --project P` and `project repos status --json
+#     --project P` -- one document each, in `repos-ls.json` and
+#     `repos-status.json` beside this script, with a `<name>-delay.txt` for the
+#     same reason. These are the group's two reads and the whole of its reach
+#     (the repos-management plan's RE5, D2413; `repos.ls` and `repos.status`):
+#     no screen draws them yet, and `repos add` and `repos rm` are on the never
+#     table, so a spec that asks for one of those writes is refused with the
+#     whole list like any other word outside it.
 #
 #   * `runs summary --json [--since=<window>] --project P` -- one document per
 #     `--since`, in `runs-summary-<window>.json` beside this script, which a
@@ -198,7 +206,7 @@ refuse() {
 # failing spec's message is the only place a reader learns what it would have
 # answered.
 refuse_allowlist() {
-  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset', 'managed status --json', 'project policy show --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
+  echo "the stub fugaro answers 'version', 'config list --json', 'plan status --json', 'coordinator status --from-store --all --json', 'doctor --json', 'watch --json', 'report --json', 'budget show --json', 'models ls --json', 'settings --json', 'settings set|unset', 'managed status --json', 'project policy show --json', 'project repos ls --json', 'project repos status --json', 'runs summary --json' and 'run --task-file - --json', and was asked for '$1'" >&2
   exit 2
 }
 
@@ -527,26 +535,69 @@ case "$command" in
     # `--delete` -- is either not on this console's surface at all or a
     # **write**, so every one of them is refused with the whole list in the
     # sentence rather than answered.
-    if [ "${1:-}" != 'policy' ] || [ "${2:-}" != 'show' ] || [ "${3:-}" != '--json' ]; then
-      refuse_allowlist 'project'
-    fi
-    shift 3
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --project | --config)
-          if [ $# -lt 2 ]; then
-            refuse "'project policy show --json' was given '$1' with no value"
-          fi
-          shift 2
-          ;;
-        *)
-          refuse "'project policy show --json' was asked for '$1'"
-          ;;
-      esac
-    done
-    if ! print_seeded "${here}/policy-show.json" "${here}/policy-show-delay.txt" 'policy show'; then
-      refuse 'no policy document is seeded beside this stub'
-    fi
+    #
+    # `project repos ls --json` and `project repos status --json` are the group's
+    # two reads (the repos-management plan's RE5, D2413): one document each, in
+    # `repos-ls.json` and `repos-status.json` beside this script, which a spec
+    # writes there itself. They are the whole of what this console may ask the
+    # group -- `repos add` and `repos rm` are on the never table, so they are
+    # refused with the whole list like every other word -- and neither carries an
+    # argument: `repos status`'s optional repository is deliberately not on the
+    # spawn row, so a spec cannot ask for one either.
+    case "${1:-}" in
+      policy)
+        if [ "${2:-}" != 'show' ] || [ "${3:-}" != '--json' ]; then
+          refuse_allowlist 'project'
+        fi
+        shift 3
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --project | --config)
+              if [ $# -lt 2 ]; then
+                refuse "'project policy show --json' was given '$1' with no value"
+              fi
+              shift 2
+              ;;
+            *)
+              refuse "'project policy show --json' was asked for '$1'"
+              ;;
+          esac
+        done
+        if ! print_seeded "${here}/policy-show.json" "${here}/policy-show-delay.txt" 'policy show'; then
+          refuse 'no policy document is seeded beside this stub'
+        fi
+        ;;
+      repos)
+        verb=${2:-}
+        case "$verb" in
+          ls | status) ;;
+          *) refuse_allowlist 'project' ;;
+        esac
+        if [ "${3:-}" != '--json' ]; then
+          refuse_allowlist 'project'
+        fi
+        shift 3
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --project | --config)
+              if [ $# -lt 2 ]; then
+                refuse "'project repos $verb --json' was given '$1' with no value"
+              fi
+              shift 2
+              ;;
+            *)
+              refuse "'project repos $verb --json' was asked for '$1'"
+              ;;
+          esac
+        done
+        if ! print_seeded "${here}/repos-${verb}.json" "${here}/repos-${verb}-delay.txt" "project repos $verb"; then
+          refuse "no repos $verb document is seeded beside this stub"
+        fi
+        ;;
+      *)
+        refuse_allowlist 'project'
+        ;;
+    esac
     ;;
   settings)
     # The Project tab's third read and the console's second write (the
