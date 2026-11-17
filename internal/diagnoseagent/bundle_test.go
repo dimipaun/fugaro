@@ -102,6 +102,33 @@ func TestBundleRejectsTraversalName(t *testing.T) {
 	}
 }
 
+// The manifest is the bundle's account of itself and not one of its parts: a
+// reader downloading a part named after it would write over the list it is
+// reading, so the name is refused on both sides — the caller that asked
+// Validate and the job reading one back out of a bucket.
+func TestBundleRejectsItsOwnManifestAsAPart(t *testing.T) {
+	b := testBundle()
+	b.Parts = []BundlePart{{Name: BundleManifestName, Bytes: 1, SHA256: sha256Hex([]byte("x"))}}
+	if err := b.Validate(); err == nil {
+		t.Errorf("the manifest accepted %s as one of its own parts", BundleManifestName)
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadBundle(bytes.NewReader(data)); err == nil {
+		t.Errorf("a manifest naming %s as one of its parts was read", BundleManifestName)
+	}
+	// The name is otherwise an ordinary one, so the refusal above is the
+	// manifest rule and not the name rule happening to catch it: a part of the
+	// same shape under any other name is accepted.
+	b = testBundle()
+	b.Parts = []BundlePart{{Name: "other.json", Bytes: 1, SHA256: sha256Hex([]byte("x"))}}
+	if err := b.Validate(); err != nil {
+		t.Errorf("a manifest naming the part other.json = %v, want it accepted", err)
+	}
+}
+
 // A manifest without a digest is a bundle a job cannot check, and a manifest
 // with no parts is a diagnosis with nothing to read: both are refusals rather
 // than a reader doing the best it can.
