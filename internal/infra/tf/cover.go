@@ -344,19 +344,24 @@ var grantRules = map[string]map[string]who{
 		"roles/artifactregistry.writer": toPeople | toAccounts,
 	},
 	"google_secret_manager_secret_iam_member": {
-		// The credentials service's bundle is read by its own account
-		// (credentials.tf, the Q6 ruling), so this one row accepts the service
-		// account beside the jobs: it is the account's only Secret Manager
-		// reach. The coordinator's writer is here for the same shape
-		// (coordinator plan P5): the GitHub App's key, on the one secret its
-		// job mounts, is the reader credential P2 defines and nothing more.
+		// The credentials service's own account reads Secret Manager in two
+		// places, and this one row accepts both: its bundle, in credentials.tf
+		// (the Q6 ruling), and — D2074 — one secretAccessor per workflow secret
+		// a repository's job mounts, in modules/workflow/sa.tf, which is how
+		// the service reads the container a run asks it for (B3.4). So this
+		// row accepts the service account beside the jobs. The coordinator's
+		// writer is here for the same shape (coordinator plan P5): the GitHub
+		// App's key, on the one secret its job mounts, is the reader credential
+		// P2 defines and nothing more.
 		//
 		// What this row decides is the principal KIND and the role, and not
 		// which container: the cover reads no secret_id for this type, so a
 		// hand-edited plan that pointed one of these principals at another of
 		// the run's containers would be covered. The container is the module's
 		// own to get right and its own plan tests to hold (the installation
-		// root asserts the coordinator's one grant names the App key's secret).
+		// root asserts the coordinator's one grant names the App key's secret,
+		// and deploy/terraform's TestServiceWorkflowSecretGrantsMatchTheJobsMounts
+		// holds D2074's set to the containers the job's own env mounts).
 		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,

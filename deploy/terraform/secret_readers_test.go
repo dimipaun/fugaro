@@ -66,6 +66,14 @@ var secretReaderExceptions = []struct {
 			"internal/credsvc/dynamicsecrets.go",
 			"internal/cli/credentials_serve.go",
 			"deploy/terraform/gcp/modules/installation/credentials.tf google_secret_manager_secret_iam_member.credentials_bundle",
+			// D2074's per-container grants, in a REPOSITORY root: one
+			// secretAccessor for the service's account on each secret
+			// container that repository's job mounts, so the service can read
+			// back the container a run asks it for (B3.4). The same account
+			// and the same role as the bundle's grant above, and a different
+			// decision — the module holds the set to the job's mounts
+			// (deploy/terraform's TestServiceWorkflowSecretGrantsMatchTheJobsMounts).
+			"deploy/terraform/gcp/modules/workflow/sa.tf google_secret_manager_secret_iam_member.service",
 		},
 	},
 	{id: "E8", keys: []string{"internal/cli/creds.go", "internal/cli/doctor_brokering.go"}},

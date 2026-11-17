@@ -1740,7 +1740,15 @@ var (
 	// enter: the module's variable holds account_id to a service account id,
 	// and the project is var.project. The same expression is the row the
 	// installation root's own job-runner grant carries.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	//
+	// var.credentials_service.account is D2074's member: the credentials
+	// service's OWN account, which a workflow module grants
+	// roles/secretmanager.secretAccessor on each container its job mounts. It
+	// reaches the module as a string in the repository root's installation
+	// object, so it is read as the email it is rather than as a reference to a
+	// resource: the account belongs to the installation, and the repository
+	// root is a different apply of a different directory.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -5498,6 +5506,173 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	}
 }
 
+// The `google_secret_manager_secret_iam_member` blocks of the workflow
+// module, squashed, by Terraform name.
+func workflowSecretGrants(t *testing.T) map[string]string {
+	t.Helper()
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, g := range resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member") {
+		out[g.name] = squash(g.body)
+	}
+	return out
+}
+
+// TestServiceWorkflowSecretGrantsMatchTheJobsMounts is D2074's guard (B3.3):
+// the containers the credentials service's own account may read must be
+// exactly the containers this job's env mounts — one grant per mount, and
+// neither more nor fewer.
+//
+// Both directions are a real failure. A mount the service cannot read is a
+// fetch that fails for a run the release meant to serve (B3.4); a grant on a
+// container no job of this repository mounts is the service holding a reach
+// nothing asked it for, which is the shape D2074 chose per-container grants to
+// avoid (its rejected alternative, one project-level accessor, cannot tell a
+// workflow secret from the git token or the model secrets under the names
+// these containers carry).
+//
+// The two sets are one local in sa.tf — service_secret_names is built FROM
+// job_mounts — and this test pins that they are, which the tftest runs cannot:
+// a run plans the module with the variables it passes, so a second expression
+// that agreed on those and drifted on another shape would pass there. What
+// this test refuses is the drift: a grant written out afresh from
+// var.workflow.secret_env, or a set that outlives a mount some later task
+// drops (C2.3's App key, B1.13's proxied token, C1.20's model mounts).
+//
+// The job's own grant is the other half of the rule and is pinned here too:
+// D2074 adds a member to a container, it never moves the job's accessor to the
+// service — the job's account and the service's are two readers of the same
+// secret, which is exactly what B3.4's fetch forwards to a run.
+func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := squash(stripComments(string(b)))
+
+	// The set is the mounts' values and nothing else: the same map job.tf
+	// iterates, read here rather than recomputed. The gate is a `try`, and not
+	// the obvious `var.credentials_service == null || var.credentials_service.account == ""`:
+	// Terraform's `||` does not short-circuit before 1.12 while these modules
+	// require 1.9 (versions.tf), so the `||` form reads an attribute of a null
+	// value and fails the plan of every repository root whose switch is off.
+	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))`) {
+		t.Errorf("%s: service_secret_names must be `toset(values(local.job_mounts))` behind a `try(...) == \"\"` gate — a set built any other way can drift from the mounts it has to equal (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
+	}
+
+	grants := workflowSecretGrants(t)
+	service, ok := grants["google_secret_manager_secret_iam_member.service"]
+	if !ok {
+		t.Fatalf("%s declares no google_secret_manager_secret_iam_member.service: the credentials service's account holds no reach on a mounted container, and a run's fetch of a secret its job does not mount fails (D2074, B3.4)", path)
+	}
+	for _, want := range []string{
+		"for_each = local.service_secret_names",
+		"project = var.project",
+		"secret_id = var.secrets[each.value]",
+		`role = "roles/secretmanager.secretAccessor"`,
+		`member = "serviceAccount:${var.credentials_service.account}"`,
+	} {
+		if !strings.Contains(service, want) {
+			t.Errorf("%s: the service's grant does not hold %q — it must be a SECRET-level secretAccessor, one per mounted container, to the account the installation's outputs carry, and never a project-level accessor:\n%s", path, want, service)
+		}
+	}
+	if strings.Contains(service, "condition") {
+		t.Errorf("%s: the service's grant carries a condition. The per-container set of D2074 needs none: it names exactly the containers this job mounts, which no name-prefix fence could do (F34):\n%s", path, service)
+	}
+
+	// The job's own grant, untouched: the same set of logical names it had
+	// before D2074, still to the job's own account.
+	job, ok := grants["google_secret_manager_secret_iam_member.job"]
+	if !ok {
+		t.Fatalf("%s declares no google_secret_manager_secret_iam_member.job: D2074 adds a reader, and never at the job's expense", path)
+	}
+	for _, want := range []string{
+		"for_each = local.job_secret_names",
+		"secret_id = var.secrets[each.value]",
+		`role = "roles/secretmanager.secretAccessor"`,
+		"member = google_service_account.job.member",
+	} {
+		if !strings.Contains(job, want) {
+			t.Errorf("%s: the job's own grant does not hold %q — the per-container grants of D2074 sit beside it and change nothing about it:\n%s", path, want, job)
+		}
+	}
+}
+
+// TestNoServiceGrantWithoutTheService is the inert half of D2074 (B3.3), and
+// the reason the account is optional rather than required.
+//
+// Two states have to plan no grant at all. The obvious one is the installation
+// that has not opted in (the variable null, D147). The other is the one this
+// release's inertness rests on: an installation whose outputs were written
+// before the account existed, where `fugaro update --repo` reads the outputs
+// from state and hands a repository root a service with no account in it. A
+// required attribute would fail that root's plan — the whole upgrade is the
+// one command (CLAUDE.md's HARD RULE), so a repository nobody can converge is
+// the failure this refuses — while an empty one plans what the root planned
+// before, and the next apply of the installation fills it in (outputs.tf
+// carries it from the service's own account resource).
+//
+// Both clauses are checked here, and in the module that decides them: the
+// grant's for_each is the local, the local is empty under either, and the
+// account attribute the member is built from is optional with an empty
+// default.
+func TestNoServiceGrantWithoutTheService(t *testing.T) {
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := squash(stripComments(string(b)))
+
+	// The one grant for the service's account, and the only member string in
+	// the module that spells that account out.
+	grants := workflowSecretGrants(t)
+	service, ok := grants["google_secret_manager_secret_iam_member.service"]
+	if !ok {
+		t.Fatalf("%s declares no google_secret_manager_secret_iam_member.service (D2074)", path)
+	}
+	if !strings.Contains(service, "for_each = local.service_secret_names") {
+		t.Errorf("%s: the service's grant must be driven by service_secret_names, which is what the empty cases below empty:\n%s", path, service)
+	}
+	for name, body := range grants {
+		if name == "google_secret_manager_secret_iam_member.service" {
+			continue
+		}
+		if strings.Contains(body, "var.credentials_service.account") {
+			t.Errorf("%s: %s grants the service's account a secret too — one grant, one for_each, or an installation with no account can be given one by a path this test does not read (D2074):\n%s", path, name, body)
+		}
+	}
+
+	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([])`) {
+		t.Errorf("%s: service_secret_names must be empty BOTH while the installation has no service and while the service it names has no account in it yet — an empty for_each creates nothing, so both plans are the ones this root planned before D2074 (D147, and the outputs of an installation applied before the account existed). It is `try(...)`, not `var.credentials_service == null || ...`: `||` does not short-circuit before Terraform 1.12, and the `||` form reads an attribute of a null value, which fails the plan of every repository root whose switch is off on 1.9-1.11:\n%s", path, code)
+	}
+
+	// And the attribute itself, in the variable the repository root fills from
+	// the installation's outputs: optional, empty by default.
+	vb, err := fs.ReadFile(FS, "gcp/modules/workflow/variables.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vcode := stripComments(string(vb))
+	i := regexp.MustCompile(`(?m)^\s*variable\s+"credentials_service"\s*\{`).FindStringIndex(vcode)
+	if i == nil {
+		t.Fatalf("gcp/modules/workflow/variables.tf declares no credentials_service variable")
+	}
+	end := matchBrace(vcode, i[1]-1)
+	if end < 0 {
+		t.Fatalf("gcp/modules/workflow/variables.tf: unbalanced braces in the credentials_service variable")
+	}
+	body := vcode[i[1]:end]
+	if !strings.Contains(squash(body), "account = optional(string, \"\")") {
+		t.Errorf("gcp/modules/workflow/variables.tf: credentials_service.account must be optional with an empty default; required would fail the plan of every repository root against an installation whose outputs predate the field, which is the whole upgrade's one command (HARD RULE):\n%s", body)
+	}
+}
+
 // TestModelSecretsServedValidationMatchesGo is B2.3's mirror of the guard
 // above, for the input that decides the MODEL half of the same drop: the three
 // arms Go writes (config.ModelSecretsServedValues, from infra.ModelSecretsServed)
@@ -5807,8 +5982,8 @@ func TestCredentialsServiceIsOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(squash(stripComments(string(rb))), "credentials_service = optional(object({ name = string region = string }))") {
-		t.Error("gcp/roots/repo/variables.tf: the installation object must accept credentials_service, or the repo root cannot carry the installation's service")
+	if !strings.Contains(squash(stripComments(string(rb))), `credentials_service = optional(object({ name = string region = string account = optional(string, "") }))`) {
+		t.Error("gcp/roots/repo/variables.tf: the installation object must accept credentials_service — its name, its region and the email of the service's own account, which is the member D2074's per-container grants name — or the repo root cannot carry the installation's service")
 	}
 }
 
