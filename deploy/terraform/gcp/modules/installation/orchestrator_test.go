@@ -306,18 +306,24 @@ func TestOrchestratorServiceIsTheDesignsShape(t *testing.T) {
 	for _, need := range []string{
 		`role     = "roles/run.invoker"`,
 		`name     = var.orchestrator.service`,
-		`member   = "serviceAccount:${var.names.scheduler_service_account_id}@${var.project}.iam.gserviceaccount.com"`,
+		`member   = google_service_account.scheduler.member`,
 	} {
 		if !strings.Contains(inv, need) {
 			t.Errorf("%s: the service's invoker grant does not carry %q:\n%s", orchestratorTF, need, inv)
 		}
 	}
-	// Written out rather than read off the scheduler account's member, which is
-	// computed: internal/infra/tf's cover reads a principal's KIND off the plan
-	// member, and an unknown one is an ordinary account — the kind whose
-	// invoker rows are wider than this one.
-	if strings.Contains(inv, "google_service_account.scheduler") {
-		t.Errorf("%s: the invoker grant reads the scheduler account's own attribute, which reaches a plan unknown and is read as an ordinary account there: the member is written out from var.names (orchestrator.tf's header):\n%s", orchestratorTF, inv)
+	// The member is the scheduler account's own attribute, which is the shape
+	// the module's four other ticks give it (history.tf, coordinator.tf,
+	// reports.tf, catalogcheck.tf): the grant names the account this module
+	// makes, so the address the tick mints its token for and the one the front
+	// end admits are one name. internal/infra/tf's cover reads a principal's
+	// KIND off the plan member, and it reads an unknown one as an account of
+	// this run exactly when the module creates a service account with it
+	// (checkGrant's createsSA arm) — which a literal written from the variable
+	// here would bypass, spelling an address the module already holds as a
+	// resource.
+	if strings.Contains(inv, `member   = "serviceAccount:`) {
+		t.Errorf("%s: the invoker grant writes the member out as a literal rather than naming the scheduler account this module creates:\n%s", orchestratorTF, inv)
 	}
 	// And the orchestrator's own address is nowhere in it: this grant is to the
 	// scheduler, so it is not a row of section 4.3's table.

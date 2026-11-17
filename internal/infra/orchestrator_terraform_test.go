@@ -292,6 +292,18 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 		t.Errorf("%s: service_account_id is %q, want %q — the grant is on the signer ACCOUNT rather than on the Firebase project, which is what keeps it iam.serviceAccounts.signJwt and not a token-creator role", minterRow, got, want)
 	}
 
+	// The invoker grant's member is the installation's own scheduler account,
+	// read off the account resource the module creates rather than written out as
+	// a literal. That member is the whole of who Cloud Run's front end admits to
+	// this service, and the tick's ID token is minted as the same account, so the
+	// two spellings have to be one identity: a member that is not it is a
+	// principal that can wake the resident orchestrator and make it read this
+	// installation's node (section 4.1).
+	if got, want := str(on[invokerAddr].After["member"]),
+		"serviceAccount:"+SchedulerServiceAccountID+"@"+spec.Project+".iam.gserviceaccount.com"; got != want {
+		t.Errorf("%s: member is %q, want %q — the module's four other ticks and this one hand the grant the scheduler account's own attribute, and the ID token the tick presents is minted as that account, so any other member is either a caller Cloud Run should not admit or a tick that cannot wake the service it is pointed at", invokerAddr, got, want)
+	}
+
 	// The never-list's eleventh rule, as the plan holds it: every row naming the
 	// account is one of the table's. A grant spelled with the member and left
 	// out of the list above — the Firebase root's database read among them —

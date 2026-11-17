@@ -327,15 +327,17 @@ resource "google_cloud_run_v2_service" "orchestrator" {
 # sentence intake.tf's own invoker grant carries), so this is the whole of the
 # class: nobody else in the installation, and no person, can wake this service.
 #
-# The member is written out rather than read off google_service_account.scheduler
-# .member, for this file's own reason at the top: that attribute is computed, so
-# reading it reaches the plan as an unknown member, and the member is what
-# internal/infra/tf's cover reads a principal's kind off. Written from
-# var.names.scheduler_service_account_id it is one of internal/infra's
-# FugaroAccounts (fugaro-scheduler), which is the kind the cover's run.invoker
-# row admits — and that is also why this grant does not widen section 4.3's
-# table: it is a grant TO the scheduler, and the orchestrator account appears
-# nowhere in it.
+# The member is the scheduler account's own attribute, as it is on the four other
+# ticks this module creates (history.tf, coordinator.tf, reports.tf,
+# catalogcheck.tf): the grant names the account this module makes rather than
+# repeating its address, so the identity the tick mints its token as and the
+# identity the front end admits cannot drift apart. On a plan that creates the
+# account the attribute is unknown, and internal/infra/tf's cover reads an
+# unknown member as an account of this run exactly when the module creates a
+# service account with it (checkGrant's createsSA arm) — fugaro-scheduler is one
+# of FugaroAccounts, the kind its run.invoker row admits, and that is also why
+# this grant does not widen section 4.3's table: it is a grant TO the scheduler,
+# and the orchestrator account appears nowhere in it.
 resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
   count = local.orchestrator_on ? 1 : 0
 
@@ -343,7 +345,7 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
   location = var.region
   name     = var.orchestrator.service
   role     = "roles/run.invoker"
-  member   = "serviceAccount:${var.names.scheduler_service_account_id}@${var.project}.iam.gserviceaccount.com"
+  member   = google_service_account.scheduler.member
 
   depends_on = [google_service_account.orchestrator]
 }
