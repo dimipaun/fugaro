@@ -7,15 +7,18 @@ package keyservice
 // F40).
 //
 // Every case here starts from a reseller organisation that is **seeded** rather
-// than created, and its owner's membership with it, for one reason: the
-// organisation operations creates through `POST /api/resellers` has no member by
-// design (nothing about it is a sign-up, and the person who will own it is
-// invited the way the operations organisation's own first owner is), and the
-// invitation into a RESELLER organisation is P2.2's route with the reseller's
-// own SSO rule on it — which is a door, but one whose acceptance is a person's
-// sign-in and not this area's. What these cases are about is what a reseller and
-// operations do once the reseller's people are there, so the people are seeded
-// the way P2.2 seeds the operations organisation's (`seededOrganisation`).
+// than created, and its owner's membership with it, because the organisation
+// operations creates through `POST /api/resellers` has no member and nothing in
+// this build can put one there: P2.2's invitation route needs an owner or an
+// admin of the organisation to invite (invites.go's inviteAccess), an act
+// through the operations membership into another organisation is refused
+// whatever role it holds, and `SeedOperations` writes the operations
+// organisation only. That is a finding for the pull request and not for this
+// task: the fix is a new act — an operations route that invites the reseller
+// organisation's own first member, or a seed of its own — and it is a product
+// decision. What these cases are about is what a reseller and operations do once
+// the reseller's people are there, so the people are seeded the way P2.2 seeds
+// the operations organisation's (`seededOrganisation`).
 
 import (
 	"context"
