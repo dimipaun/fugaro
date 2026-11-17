@@ -550,11 +550,15 @@ var closedStdinNoFixture = map[string]string{
 	// node the fixture's database holds (none) and the cached briefs of the
 	// machine it runs on, which this harness does not fixture.
 	"fugaro orchestrator ls":     "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
-	"fugaro orchestrator serve":  "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro orchestrator state":  "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
 	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
 	"fugaro orchestrator import": "refuses its missing -f: a dump is one patch document, and the closed stdin is no document",
+	// The resident service's own entry point, hidden like the credentials
+	// service's and the intake's: what it would read is its three names in the
+	// environment, which the installation module sets on the container and
+	// this world leaves unset (P5.1c).
+	"fugaro orchestrator serve": "refuses without FUGARO_PROJECT in its own environment",
 	// The escalation family reads that same node for the ladder's ledger (E13).
 	// ls takes no argument, and its bare run is the whole command: the fixture's
 	// database holds no work item, so what it says is that no pull request has
