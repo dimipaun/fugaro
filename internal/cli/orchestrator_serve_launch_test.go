@@ -1,10 +1,10 @@
 package cli
 
 // This file drives P5.1d's half of the resident service: the launch requests a
-// node's own record already holds, carried out through the launcher the
-// deployment carries. The store, the route and the strictness of the node's
-// decoder are P5.1c's (orchestrator_serve_test.go); what is here is a launcher,
-// one node that holds a request, and what the pass answers and logs about it.
+// node's own record already holds, which this pass reads and starts none of. The
+// store, the route and the strictness of the node's decoder are P5.1c's
+// (orchestrator_serve_test.go); what is here is one node that holds a request,
+// and what the pass answers and logs about it.
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,8 +24,8 @@ import (
 )
 
 // residentLaunchRun is the run id the node below records: one of the shapes
-// internal/task mints, and the id a re-issue starts under — the same one, never
-// a second one.
+// internal/task mints, and the id a re-issue would start under — the same one,
+// never a second one.
 const residentLaunchRun = "20261117-050000-abcd"
 
 // residentNodeDoc is a node whose one attempt was committed and never started:
@@ -37,9 +36,8 @@ const residentLaunchRun = "20261117-050000-abcd"
 //
 // The document is written by the state's own writer, which is the opposite of
 // what the literal beside it does, and deliberately: that literal is the strict
-// decoder's test, and what is under test HERE is the launcher half. The item it
-// hands back is the one the assertions compare the launch request against.
-func residentNodeDoc(t *testing.T, at time.Time) (string, orchestrator.WorkItem) {
+// decoder's test, and what is under test HERE is the read of the requests.
+func residentNodeDoc(t *testing.T, at time.Time) string {
 	t.Helper()
 	approvalAt := at.Add(-2 * time.Hour)
 	w := orchestrator.WorkItem{
@@ -80,62 +78,47 @@ func residentNodeDoc(t *testing.T, at time.Time) (string, orchestrator.WorkItem)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(raw), w
+	return string(raw)
 }
 
-// fakeOrchestratorLauncher is the launcher half as a test drives it: the specs
-// and the run ids it was asked for, in order, and one answer a test can make a
-// refusal.
-type fakeOrchestratorLauncher struct {
-	asked  []string
-	specs  []orchestrator.Spec
-	refuse error
-}
-
-func (l *fakeOrchestratorLauncher) Launch(_ context.Context, spec orchestrator.Spec, runID string) (string, error) {
-	l.asked = append(l.asked, runID)
-	l.specs = append(l.specs, spec)
-	if l.refuse != nil {
-		return "", l.refuse
-	}
-	return runID, nil
-}
-
-// tickWithLauncher serves one tick with the launcher half the test names, and
-// fails the test if the pass reached the store's write half: this process
-// starts runs and writes no node.
-func tickWithLauncher(t *testing.T, store *fakeOrchestratorStore, launch orchestrator.Launcher) (*httptest.ResponseRecorder, string) {
+// tickWithNode serves one tick against the node the test names, and fails the
+// test if the pass reached the store's write half: this process reads a node and
+// writes none.
+func tickWithNode(t *testing.T, docs map[string]string, at time.Time) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	var log bytes.Buffer
-	srv, err := newResidentOrchestrator(orchestratorConfig{id: "aurora", db: store, launch: launch, log: runner.NewLogger(&log)})
+	store := &fakeOrchestratorStore{docs: docs, at: at}
+	srv, err := newResidentOrchestrator(orchestratorConfig{id: "aurora", db: store, log: runner.NewLogger(&log)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, orchestratorTickPath, nil))
 	if len(store.writes) != 0 {
-		t.Fatalf("the tick wrote %v: the launcher half starts a run and this pass writes no node", store.writes)
+		t.Fatalf("the tick wrote %v: this pass reads the node and writes no node", store.writes)
 	}
 	return rec, log.String()
 }
 
-// TestOrchestratorTickStartsTheNodesOwnLaunchRequest is the launcher half
-// end to end: the attempt the node records and never started is started through
-// the launcher, under the run id the record holds and with the spec the state
-// carries — the run id is the one that was committed, so a crash between the
-// intent and the start of a previous pass spends nothing that was not spent —
-// and the pass says what it did both in its answer and in its one line.
-func TestOrchestratorTickStartsTheNodesOwnLaunchRequest(t *testing.T) {
+// TestOrchestratorTickReportsTheLaunchRequestsItHolds is P5.1d's half of the
+// pass as this deployment serves it: the attempt the node records and never
+// started is READ — the run id is the one that was committed, so a crash between
+// the intent and the start of a previous pass spends nothing that was not spent
+// — and it is started by nothing here, because the one launch path is
+// `fugaro run`'s and this container is not given the names it needs (this
+// package's orchestrator_serve.go says which). What an operator gets instead is
+// the count in the answer and a line naming the item and the run: a request that
+// stands and cannot be started is a fact somebody has to act on, and "nothing to
+// do" and "nothing this process can do" are otherwise the same numbers.
+func TestOrchestratorTickReportsTheLaunchRequestsItHolds(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
-	doc, w := residentNodeDoc(t, at)
+	doc := residentNodeDoc(t, at)
 	statePath, err := orchestrator.PathState("aurora")
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &fakeOrchestratorStore{docs: map[string]string{statePath: doc}, at: at}
-	launcher := &fakeOrchestratorLauncher{}
 
-	rec, logged := tickWithLauncher(t, store, launcher)
+	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the tick answered %d (%s), and the node it read is this installation's: %s", rec.Code, rec.Body.String(), logged)
 	}
@@ -143,75 +126,14 @@ func TestOrchestratorTickStartsTheNodesOwnLaunchRequest(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 		t.Fatalf("the tick's answer is not a pass: %v (%s)", err, rec.Body.String())
 	}
-	if pass.Requests != 1 || pass.Carried != 1 || pass.Refused != 0 || pass.Left != 0 {
-		t.Errorf("the pass reads requests %d, carried %d, refused %d, left %d, and the node holds one attempt committed and never started", pass.Requests, pass.Carried, pass.Refused, pass.Left)
+	if pass.Requests != 1 || pass.Left != 0 {
+		t.Errorf("the pass reads requests %d, left %d, and the node holds one attempt committed and never started", pass.Requests, pass.Left)
 	}
-	if !slices.Equal(launcher.asked, []string{residentLaunchRun}) {
-		t.Fatalf("the launcher was asked for %v, and the node records the attempt under %q: a re-issue is the same launch and never a second one", launcher.asked, residentLaunchRun)
+	if !strings.Contains(logged, "left") || !strings.Contains(logged, residentLaunchRun) {
+		t.Errorf("the pass logged %q, and a request this deployment cannot start has to be a line naming the run", logged)
 	}
-	if launcher.specs[0] != orchestrator.SpecOf(w) {
-		t.Errorf("the launcher was handed %+v, and the state carries %+v: what a launch starts from is the spec the node holds", launcher.specs[0], orchestrator.SpecOf(w))
-	}
-	if !strings.Contains(logged, "started the launch requests it holds") {
-		t.Errorf("the pass logged %q, and a tick that started a run is not a tick that ran no step", logged)
-	}
-}
-
-// TestOrchestratorTickReportsALaunchRequestItCannotCarryOut is the deployment
-// this release can build: the launcher half is wired and carries no seam, so a
-// request is read, refused by name and counted — and the tick is still a pass.
-// That last part is the one that matters for what this service is for: the read
-// is what check 660 measures, and a launch this revision cannot make must not
-// take the service down with it. It is also the shape a deployment whose
-// launcher reaches nothing meets, which is the fact this change reports rather
-// than invents names for (this file's header).
-func TestOrchestratorTickReportsALaunchRequestItCannotCarryOut(t *testing.T) {
-	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
-	for _, tc := range []struct {
-		name   string
-		launch orchestrator.Launcher
-		want   string
-	}{
-		{
-			name:   "the deployment's launcher carries no seam",
-			launch: orchestratorResidentLauncher(),
-			want:   "the run's launch claim",
-		},
-		{
-			name:   "the launcher's own start is refused",
-			launch: &fakeOrchestratorLauncher{refuse: context.DeadlineExceeded},
-			want:   context.DeadlineExceeded.Error(),
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			doc, _ := residentNodeDoc(t, at)
-			statePath, err := orchestrator.PathState("aurora")
-			if err != nil {
-				t.Fatal(err)
-			}
-			store := &fakeOrchestratorStore{docs: map[string]string{statePath: doc}, at: at}
-
-			rec, logged := tickWithLauncher(t, store, tc.launch)
-			if rec.Code != http.StatusOK {
-				t.Fatalf("a launch that could not be carried out answered %d: the read is what this service is for", rec.Code)
-			}
-			var pass orchestratorPass
-			if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
-				t.Fatal(err)
-			}
-			if pass.Requests != 1 || pass.Carried != 0 || pass.Refused != 1 {
-				t.Errorf("the pass reads requests %d, carried %d, refused %d, and the node holds one request this launcher could not make", pass.Requests, pass.Carried, pass.Refused)
-			}
-			if !strings.Contains(logged, "was not carried out") {
-				t.Errorf("the pass logged %q, and a request it could not carry out has to be a line an operator finds", logged)
-			}
-			if !strings.Contains(logged, tc.want) {
-				t.Errorf("the pass logged %q, want the refusal to name %q: the line is where an operator learns which step their deployment does not carry", logged, tc.want)
-			}
-			if strings.Contains(logged, "started the launch requests it holds") {
-				t.Errorf("the pass logged %q, and it started nothing", logged)
-			}
-		})
+	if strings.Contains(logged, "started") {
+		t.Errorf("the pass logged %q, and it started nothing: every line this revision writes says so", logged)
 	}
 }
 
@@ -220,10 +142,10 @@ func TestOrchestratorTickReportsALaunchRequestItCannotCarryOut(t *testing.T) {
 // database as the state node, so `fugaro budget kill` stops this pass exactly
 // as it stops a run — the re-issues included, which is the rung no ceiling
 // reaches — and the field's zero value is the PERMISSIVE one, so a pass that
-// planned without reading would start runs under a switch nobody looked at.
-// The second case is the decode's own fail-closed rule, which the pass inherits
-// by reading through internal/budget: a node that is not a switch at all counts
-// as on, because the intent to stop is not lost with the reason it was written.
+// planned without reading would act under a switch nobody looked at. The second
+// case is the decode's own fail-closed rule, which the pass inherits by reading
+// through internal/budget: a node that is not a switch at all counts as on,
+// because the intent to stop is not lost with the reason it was written.
 func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
@@ -234,18 +156,13 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 		{name: "the node is not a switch", node: `"stop"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			doc, _ := residentNodeDoc(t, at)
+			doc := residentNodeDoc(t, at)
 			statePath, err := orchestrator.PathState("aurora")
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := &fakeOrchestratorStore{
-				docs: map[string]string{statePath: doc, budget.PathKillGlobal: tc.node},
-				at:   at,
-			}
-			launcher := &fakeOrchestratorLauncher{}
 
-			rec, logged := tickWithLauncher(t, store, launcher)
+			rec, logged := tickWithNode(t, map[string]string{statePath: doc, budget.PathKillGlobal: tc.node}, at)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("the tick answered %d (%s), and a stopped pass is still a pass", rec.Code, logged)
 			}
@@ -253,11 +170,8 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 				t.Fatal(err)
 			}
-			if pass.Requests != 0 || pass.Carried != 0 || pass.Left != 0 {
-				t.Errorf("the pass reads requests %d, carried %d, left %d under the switch, and a switch that is on stops every request a pass carries out", pass.Requests, pass.Carried, pass.Left)
-			}
-			if len(launcher.asked) != 0 {
-				t.Errorf("the launcher was asked for %v under the budget switch", launcher.asked)
+			if pass.Requests != 0 || pass.Left != 0 {
+				t.Errorf("the pass reads requests %d, left %d under the switch, and a switch that is on is read before any request is", pass.Requests, pass.Left)
 			}
 			if !strings.Contains(logged, "the budget switch is on") {
 				t.Errorf("the pass logged %q, and the line has to say why: \"nothing was committed\" and \"the switch is on\" are the same numbers otherwise", logged)
@@ -266,14 +180,13 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 	}
 }
 
-// TestOrchestratorTickStartsNothingForARecentAttempt is the fence around the
-// launcher half: an attempt inside its claim window may be a launch that is
-// still in flight, so the pass starts nothing and counts nothing — which is
-// what keeps a pass that cannot read the run records from spending a run's
-// launch twice.
-func TestOrchestratorTickStartsNothingForARecentAttempt(t *testing.T) {
+// TestOrchestratorTickReadsNoRequestForARecentAttempt is the fence around the
+// read: an attempt inside its claim window may be a launch that is still in
+// flight, so no request is read for it — which is what keeps a pass that cannot
+// read the run records from reporting the same attempt twice.
+func TestOrchestratorTickReadsNoRequestForARecentAttempt(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
-	doc, _ := residentNodeDoc(t, at)
+	doc := residentNodeDoc(t, at)
 	// The intent is inside the window: the record is five minutes old and the
 	// window is ten. The stamp is the one the document was written with — a
 	// whole minute, which is what makes the literal below the same string — and
@@ -288,10 +201,8 @@ func TestOrchestratorTickStartsNothingForARecentAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &fakeOrchestratorStore{docs: map[string]string{statePath: doc}, at: at}
-	launcher := &fakeOrchestratorLauncher{}
 
-	rec, logged := tickWithLauncher(t, store, launcher)
+	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the tick answered %d (%s)", rec.Code, logged)
 	}
@@ -299,22 +210,19 @@ func TestOrchestratorTickStartsNothingForARecentAttempt(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 		t.Fatal(err)
 	}
-	if pass.Requests != 0 || pass.Carried != 0 {
-		t.Errorf("the pass reads requests %d, carried %d, and the attempt is inside its claim window", pass.Requests, pass.Carried)
-	}
-	if len(launcher.asked) != 0 {
-		t.Errorf("the launcher was asked for %v inside the attempt's claim window", launcher.asked)
+	if pass.Requests != 0 {
+		t.Errorf("the pass reads requests %d, and the attempt is inside its claim window", pass.Requests)
 	}
 }
 
-// TestOrchestratorServiceConfigCarriesALauncherHalf is the wiring's own
-// requirement: the builder hands the service a launcher, and a nil one here is
-// a deployment whose every tick would read a launch request and neither start
-// it nor refuse it. The launcher a deployment can build carries no seam today
-// (orchestratorResidentLauncher, and this file's header for the three facts
-// orchestrator.tf does not set) — a refusal that names the step, which is a
-// different thing from no answer at all.
-func TestOrchestratorServiceConfigCarriesALauncherHalf(t *testing.T) {
+// TestOrchestratorServiceConfigCarriesNoLauncher is the wiring's own shape, and
+// it is the review finding this revision answers: the service is built with the
+// node and the log and NOTHING else, because the one launcher is
+// `fugaro run`'s own path (orchestrator_launcher.go) and this deployment cannot
+// give it the runs bucket, the GCP project and the region it needs. A launcher
+// built here would be a second launch path — and an empty one made every request
+// look refused while nothing could start.
+func TestOrchestratorServiceConfigCarriesNoLauncher(t *testing.T) {
 	orchestratorTest = &orchestratorWiring{tokens: func(context.Context) (oauth2.TokenSource, error) {
 		return oauth2.StaticTokenSource(&oauth2.Token{}), nil
 	}}
@@ -324,7 +232,7 @@ func TestOrchestratorServiceConfigCarriesALauncherHalf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a complete environment was refused: %v", err)
 	}
-	if cfg.launch == nil {
-		t.Fatal("the configuration carries no launcher half: every tick would read the node's launch requests and answer nothing about them")
+	if _, err := newResidentOrchestrator(cfg); err != nil {
+		t.Fatalf("the configuration does not build the service: %v", err)
 	}
 }
