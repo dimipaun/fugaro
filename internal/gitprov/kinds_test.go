@@ -58,6 +58,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/init_firebase.go":            "the Firebase init's GitHub repositories",
 	"internal/cli/init_repo_target.go":         "init's GitHub App check on the provider a repository already names",
 	"internal/cli/launch_budget.go":            "the proxied-Bitbucket read a launch makes",
+	"internal/cli/orchestrator_labels.go":      "the kind the repository an item is on is labelled through: a GitHub one is refused without the App ID the credentials service signs its write with, and a Bitbucket one gets the client whose Supported is false (D2436)",
 	"internal/cli/project_enroll.go":           "the kind `project sync --bitbucket` lists a workspace's repositories through, and the kind each listed name is canonicalised as",
 	"internal/cli/review.go":                   "the kind the App-ID gate a refusal names belongs to: the one provider whose implicit review-only job is composed only with an App ID recorded",
 	"internal/cli/project_status.go":           "the two enrolment rows only a GitHub repository has: the App installation read and the `github-app-key` container's version, which a Bitbucket repository answers with its workspace token instead",
