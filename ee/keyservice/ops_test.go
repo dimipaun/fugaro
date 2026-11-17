@@ -261,6 +261,151 @@ func TestOperationsMemberCannotMint(t *testing.T) {
 	}
 }
 
+// TestOperationsAPINeedsSSO: D2207's rule is the whole of this area's door and
+// not one route's.
+//
+// Every request here **uses** the operations membership — the reads that reach
+// across every organisation in the portal as much as the acts — so the rule
+// follows all of them, and it is applied at the gate (`operationsFor`) rather
+// than at each route: a caller the organisation admits by membership and not by
+// sign-in is refused every route of the area, and the table below is the area's
+// own routes asked for one by one, so a route added without the gate passes the
+// registry here and is refused by nothing.
+//
+// The pair with the same table on a Google sign-in is what keeps this case about
+// the sign-in: the requests are well-formed and the state they ask about is
+// there, so what refused them above is the caller and not the request.
+func TestOperationsAPINeedsSSO(t *testing.T) {
+	f := newFixture(t)
+	f.operationsOrg(roleOwner)
+	_, granted := f.operationsGround()
+	ends := jsonString(t, f.now.Add(30*24*time.Hour).UTC().Format(time.RFC3339))
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "the membership", method: http.MethodGet, path: apiOpsMembershipPath},
+		{name: "the lookup", method: http.MethodGet, path: apiOpsOrganisationsPath + "?q=Dana"},
+		{name: "the workspaces", method: http.MethodGet, path: apiOpsWorkspacesPath + "?organisation_id=" + opsCustomerID},
+		{name: "the licences", method: http.MethodGet, path: apiOpsEntitlementsPath + "?organisation_id=" + opsCustomerID},
+		{name: "the members", method: http.MethodGet, path: apiOpsMembersPath + "?organisation_id=" + opsCustomerID},
+		{name: "the keys", method: http.MethodGet, path: apiOpsKeysPath + "?workspace_id=" + opsBoundWS},
+		{name: "the queue", method: http.MethodGet, path: apiOpsEventsPath + "?state=" + ledgerParked},
+		{name: "the ledger", method: http.MethodGet, path: apiOpsLedgerPath + "?month=" + f.now.UTC().Format("2006-01")},
+		{name: "the log", method: http.MethodGet, path: apiOpsAuditPath},
+		{name: "the lists read", method: http.MethodGet, path: apiOpsListsPath},
+		{name: "a mint", method: http.MethodPost, path: apiOpsMintsPath,
+			body: f.mintBody(opsMintWS, PolicyTeamAnnual, 3, f.now.Add(30*24*time.Hour))},
+		{name: "a comp", method: http.MethodPost, path: apiOpsEntitlementActionsPath,
+			body: actionBody(t, granted.ID, "comp", "null", "null", "null")},
+		{name: "an extension", method: http.MethodPost, path: apiOpsEntitlementActionsPath,
+			body: actionBody(t, granted.ID, "extend", "null", ends, "null")},
+		{name: "a seat change", method: http.MethodPost, path: apiOpsEntitlementActionsPath,
+			body: actionBody(t, granted.ID, "seats", "5", "null", "null")},
+		{name: "a transfer", method: http.MethodPost, path: apiOpsProjectTransfersPath,
+			body: transferBody(t, opsProject, opsFreeWS, "null")},
+		{name: "a resolution", method: http.MethodPost, path: apiOpsEventResolutionsPath,
+			body: `{"id":` + jsonString(t, opsEventID) + `,"decision":"dismiss","entitlement_id":null}`},
+		{name: "the lists save", method: http.MethodPut, path: apiOpsListsPath,
+			body: `{"email_domains":["fugaro.example"],"microsoft_directories":[]}`},
+		{name: "cutting a handover short", method: http.MethodPost, path: cutPath(opsHandoverID)},
+		{name: "a revocation", method: http.MethodPost, path: apiOpsEntitlementActionsPath,
+			body: actionBody(t, granted.ID, "revoke", "null", "null", "null")},
+	}
+
+	// The sign-ins the operations organisation refuses: the email link, which is
+	// not SSO at all, Microsoft, which D2207's operations rule refuses outright
+	// because it admits Google alone, and a password sign-in, which the rule
+	// refuses with the email link's own refusal.
+	for _, provider := range []string{signInEmailLink, signInMicrosoft, "password"} {
+		t.Run("signed in with "+provider, func(t *testing.T) {
+			for _, tc := range cases {
+				f.actsAs(opsUID, opsEmail, provider)
+				rec := f.apiAsCaller(tc.method, tc.path, tc.body)
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("the %s was answered %d (%s) on a %s sign-in, want the SSO refusal", tc.name, rec.Code, rec.Body, provider)
+				}
+				if code := refusal(f, rec); code != "sso_required" {
+					t.Errorf("the refusal for the %s carries the code %q, want sso_required: the rule follows the operations membership the request uses (D2207)", tc.name, code)
+				}
+			}
+		})
+	}
+
+	// Nothing of it happened: the area is behind one gate, and a refusal that had
+	// already acted would be the refusal that costs a licence. No licence, no
+	// key, no queued request, no entry on §8's list, the project where it was,
+	// the event still parked, the handover still open, the lists unwritten — and
+	// no line in the log either, which is what makes "every action is written
+	// down" a claim about the actions that happened.
+	if minted := f.mintedKeys(); len(minted) != 0 {
+		t.Errorf("a refused caller minted %v", minted)
+	}
+	if held := f.entitlementsOfOrganisation(opsCustomerID); len(held) != 1 {
+		t.Errorf("the organisation holds %d licence(s), want the seeded one alone", len(held))
+	}
+	if queued := f.operationsQueuedRecords(); len(queued) != 0 {
+		t.Errorf("the queue holds %+v, want nothing: a request that never passed the gate was never counted", queued)
+	}
+	if got := len(f.revocations()); got != 0 {
+		t.Errorf("§8's list holds %d entry(ies), want none", got)
+	}
+	if source, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsBoundWS); source.ProjectID == nil || *source.ProjectID != opsProject {
+		t.Errorf("the project is %v on %s, want it where it was", source.ProjectID, opsBoundWS)
+	}
+	if event, _ := heldRecord[WireLedgerEvent](f, paddleEventsCollection, opsEventID); event.State != ledgerParked {
+		t.Errorf("the event is %q, want it still parked", event.State)
+	}
+	if _, open, _ := f.store.Handover(context.Background(), opsHandoverID, f.now); !open {
+		t.Error("the handover was closed by a caller the gate refused")
+	}
+	if _, written := heldRecord[WireOpsLists](f, f.cfg.TenantsCollection, opsOrgID); written {
+		t.Error("a refused caller wrote the lists")
+	}
+	if entries := f.auditEntries(); len(entries) != 0 {
+		t.Errorf("the log holds %d line(s) of a caller the gate refused, want none: a line is written for an action the caller was allowed to attempt", len(entries))
+	}
+
+	// The same table on a sign-in the rule admits: every request answers, so
+	// what refused them above is the sign-in. (Which routes are mounted at all is
+	// TestEveryOperationsActionIsAudited's, pinned against the registry.)
+	f.actsAs(opsUID, opsEmail, signInGoogle)
+	for _, tc := range cases {
+		rec := f.apiAsCaller(tc.method, tc.path, tc.body)
+		switch rec.Code {
+		case http.StatusOK, http.StatusCreated, http.StatusNoContent:
+		default:
+			t.Errorf("the %s was answered %d (%s) on a Google sign-in, want it answered: this case reads the sign-in and not the request", tc.name, rec.Code, rec.Body)
+		}
+	}
+
+	// And the rule is asked before the role is read. A member — who may not
+	// change anything at all — is refused the sign-in's own refusal while they
+	// are signed in the refused way, and the role's once they are not: the gate
+	// reads the two in that order, and the difference is a screen that tells an
+	// operations member to sign in again rather than to ask an owner.
+	f.setRole(opsOrgID, opsUID, roleMember)
+	f.actsAs(opsUID, opsEmail, signInEmailLink)
+	rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, cases[10].body)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a member signed in by email link was answered %d (%s), want the refusal", rec.Code, rec.Body)
+	}
+	if code := refusal(f, rec); code != "sso_required" {
+		t.Errorf("the refusal carries the code %q, want sso_required: the sign-in's rule is read before the role's", code)
+	}
+	f.actsAs(opsUID, opsEmail, signInGoogle)
+	rec = f.apiAsCaller(http.MethodPost, apiOpsMintsPath, cases[10].body)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("the same member on a Google sign-in was answered %d (%s), want the role's refusal", rec.Code, rec.Body)
+	}
+	if code := refusal(f, rec); code != "not_permitted" {
+		t.Errorf("the refusal carries the code %q, want not_permitted: the role is the membership's", code)
+	}
+}
+
 // TestMintNeedsAFreshSignIn: a change needs an `auth_time` from the last five
 // minutes (D2187). The window is read from the token's own instant, so a session
 // that has been open all afternoon is refused where one opened a minute ago is
