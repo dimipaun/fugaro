@@ -205,10 +205,15 @@ func (l *stageLimit) expectationStop(v gateway.StageLimitView) gateway.StageStop
 // expectation is what tier t expects a run of it to cost, in money: the figure
 // T8.2's checkpoint is taken at. Zero is no expectation — a run dispatched at
 // no tier of the vocabulary, or a tier whose figure is zero, which is the
-// absence of one and never a run expected to cost nothing (G5) — and a figure
-// above what micro-dollars can hold is the largest one, since an expectation
-// nobody can reach is what a very large one means and a wrapped figure would be
-// a threshold a run is stopped at for nothing.
+// absence of one and never a run expected to cost nothing (G5, and a NaN is
+// not above zero either).
+//
+// A figure past the largest amount a price may be is the largest threshold
+// instead: nothing can reach it, which is what an expectation that size means,
+// and it is deliberately not a wrapped figure, which would read as no threshold
+// at all or as one a run is stopped at for nothing. The bound is
+// pricing.MaxUSD, so the conversion below is the plain one for every amount a
+// run could mean.
 //
 // The dollars come off the run's own resolved governance and not a table here:
 // a repository whose layer tightened its tiers asked for that figure, and it is
@@ -218,10 +223,10 @@ func expectation(g policy.Governance, t tier.Tier) pricing.Micros {
 		return 0
 	}
 	want := g.Tiers.For(t).ExpectedUSD
-	if !(want > 0) || math.IsNaN(want) {
+	if !(want > 0) {
 		return 0
 	}
-	if math.IsInf(want, 0) || want >= float64(math.MaxInt64)/1e6 {
+	if want > pricing.MaxUSD {
 		return math.MaxInt64
 	}
 	return pricing.Micros(math.Round(want * 1e6))
