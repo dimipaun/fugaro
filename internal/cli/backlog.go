@@ -375,7 +375,12 @@ func runBacklogList(cmd *cobra.Command, o *backlogListOptions) error {
 			if src.node == orchestrator.StateNode && w.Spec != "" {
 				continue
 			}
-			if w.Approved == nil {
+			// Waiting is the unfinished work nobody has approved: a terminal item
+			// cannot be approved at all (the state model refuses an approval on a
+			// done or cancelled item), and the last few finished items stay in the
+			// node's work list, so counting them would print a figure that never
+			// clears and a person could do nothing about.
+			if w.Approved == nil && !w.Phase.Done() {
 				doc.Waiting++
 			}
 			doc.Items = append(doc.Items, backlogRow{
@@ -409,7 +414,7 @@ func runBacklogList(cmd *cobra.Command, o *backlogListOptions) error {
 		return err
 	}
 	if doc.Waiting > 0 {
-		fmt.Fprintf(w, "%d waiting for a person's approval: nothing in the backlog runs until one is approved (D2717)\n", doc.Waiting)
+		fmt.Fprintf(w, "%d waiting for a person's approval: nothing runs until one is approved, and a finished item is not waiting on anybody (D2717)\n", doc.Waiting)
 	}
 	return nil
 }
@@ -427,9 +432,10 @@ type backlogListDoc struct {
 	Version int    `json:"version"`
 	Kind    string `json:"kind"`
 	Project string `json:"project"`
-	// Waiting is the count of the items no person has approved: what a screen
-	// shows as the work waiting on the person, since an unapproved item is one
-	// nothing will run (D2717).
+	// Waiting is the count of the items no person has approved and no phase has
+	// finished: what a screen shows as the work waiting on the person, since an
+	// unapproved item is one nothing will run (D2717) and a done or cancelled one
+	// can never be approved.
 	Waiting int          `json:"waiting"`
 	Items   []backlogRow `json:"items"`
 }

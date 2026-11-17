@@ -95,6 +95,40 @@ func backlogSeed(t *testing.T, f *budgetFixture) {
 	seedOrchestratorState(t, f, workItemUpsert("session-1", "a session queued this"), planned)
 }
 
+// backlogFinished adds the two terminal items a project that has finished work
+// keeps: one done and one cancelled. A phase is the daemon's to write (G12), so
+// the actor seeding them is the daemon, and they land in the node the seed
+// above wrote — the last few finished items stay in it as a record rather than
+// being archived away.
+func backlogFinished(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	s := storedOrchestratorState(t, f)
+	done, cancelled := orchestrator.PhaseDone, orchestrator.PhaseCancelled
+	var ops []orchestrator.Op
+	for _, item := range []struct {
+		id    string
+		title string
+		phase *orchestrator.Phase
+	}{
+		{"done-1", "work that finished", &done},
+		{"done-2", "work that was dropped", &cancelled},
+	} {
+		op := workItemUpsert(item.id, item.title)
+		op.WorkItem.Phase = item.phase
+		ops = append(ops, op)
+	}
+	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: ops},
+		orchestrator.Actor{Class: orchestrator.Daemon, Name: "daemon", Now: orchestratorTestNow})
+	if err != nil {
+		t.Fatalf("seeding the finished items: %v", err)
+	}
+	raw, err := orchestrator.EncodeState(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.db.Set(orchestratorPath(t, orchestrator.StateNode), json.RawMessage(raw))
+}
+
 // TestBacklogListReadsBothNodes is B1's own test for the read: `list` prints the
 // backlog node's items and the state node's spec-less ones, and nothing that
 // carries a spec — an item with a plan is the plan's, not the backlog's
@@ -138,6 +172,63 @@ func TestBacklogListReadsBothNodes(t *testing.T) {
 	}
 	if after := backlogNodes(t, f); after != before {
 		t.Errorf("fugaro backlog list changed a node: %q, want %q", after, before)
+	}
+}
+
+// TestBacklogListDoesNotCountFinishedItemsAsWaiting: the figure the listing
+// prints is the unfinished work nobody has approved, not the node's whole work
+// list. A done or cancelled item can never be approved — the state model
+// refuses an approval on a terminal one — and the last few finished items stay
+// in the node as a record, so counting them would show a person a number that
+// never clears and that no action of theirs can change. The rows themselves
+// still carry them: they are work of this project's, and the listing reads the
+// node (D2715).
+//
+// Mutation (verified, run and restored): count a done item into the figure
+// (`w.Phase != orchestrator.PhaseDone` in place of `!w.Phase.Done()`) — this
+// fails on both checks, which read 4 rather than 3.
+func TestBacklogListDoesNotCountFinishedItemsAsWaiting(t *testing.T) {
+	isolateState(t)
+	f := newOrchestratorFixture(t)
+	backlogSeed(t, f)
+	backlogFinished(t, f)
+
+	out, _, err := execute(t, "backlog", "list")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "3 waiting for a person's approval") {
+		t.Errorf("the listing counts the finished items into the work waiting on the person:\n%s", out)
+	}
+	for _, want := range []string{"done-1", "done-2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the listing does not carry %s: a finished item stays in the node's work list, and the listing is what reads it:\n%s", want, out)
+		}
+	}
+	var doc struct {
+		Waiting int `json:"waiting"`
+		Items   []struct {
+			ID    string `json:"id"`
+			Phase string `json:"phase"`
+		} `json:"items"`
+	}
+	js, _, err := execute(t, "backlog", "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("fugaro backlog list --json printed no document: %v\n%s", err, js)
+	}
+	if doc.Waiting != 3 {
+		t.Errorf("waiting = %d, want 3: the terminal items wait on nobody, and the state model refuses the approval that would clear them", doc.Waiting)
+	}
+	if len(doc.Items) != 5 {
+		t.Fatalf("the document carries %d rows, want the five items the two nodes hold", len(doc.Items))
+	}
+	for _, row := range doc.Items {
+		if row.ID == "done-1" && row.Phase != string(orchestrator.PhaseDone) {
+			t.Errorf("the done item's phase is %q, want %q", row.Phase, orchestrator.PhaseDone)
+		}
 	}
 }
 
