@@ -34,7 +34,9 @@ and at most one automatic retry of the same approved spec — G4, O0, O6), **Q2*
 this PR first recorded, which is superseded**: `fugaro setup` installs the unit as one of its listed steps and `fugaro orchestrator install` moves it
 to the new template, so **`fugaro update` never touches the unit**; O8, O9, G11), **T7** (**the owner's ruling of 2026-11-05, not the recommendation,
 which amends Q2: `fugaro update` re-renders an installed unit when the rendered template changed, so the HARD RULE is literally true; `update` never
-installs one** — O9, G11, and reconciliation section 6), and
+installs one** — O9, G11, and reconciliation section 6; **superseded by D2700 (2026-11-16): `fugaro update` installs the login unit on a machine that has
+none**, the owner's answer recorded as D2700 in `docs/orchestrator-graph-estimates/reconciliation.md` and noted at T7's own row below, so `update` both
+re-renders an installed unit and installs a missing one), and
 **D1243** (the session-start print reads a local cache the daemon writes: O8 gains the cache writer and O10 moves to level 4). D1241 lifts O2's gate,
 D1242 gates nothing, **Q1** rules that the rollback is manual with the old scripts kept 14 days and no command built for it (O11, Check 302), Q3 names
 the notification channel, and Q4 gates slice 2 on a measured 14-day run of slice 1 — **a gate the owner waived on 2026-11-14: slice 2 is approved now,
@@ -76,8 +78,8 @@ Findings are cited as F#, decisions as D#, open tensions as T# (reconciliation s
 | D1243 | The session-start print reads a local cache the daemon writes (atomic, with a freshness stamp the print shows); `state --brief --offline` never reaches the network | O5, O8, O10 |
 | **D1244-D1247 (BF2, 2026-11-08, all the recommendation)** | The **long-run triage rule**: deterministic code, no model call; a run past the local key `orchestrator.triage_after` (**default `2h`**, refused when it is not under the run's budget) — **replaced by D2032 of `docs/outer-loop-escalation`, and the key was never built: O14's note below says how** — is triaged from the run's record, the pull request's state **and its CI state** (**a read O14 adds**) and **BF1's open-findings file** — the four outcomes are tried in one fixed order (**escalate, then recommend-only, then merge-as-is, then restart**, the fail-closed one before the two that act): **merge as-is plus a follow-up task** on a **finished** run with a **ready** (not draft) pull request, commits, green CI, **a changed-path set wholly inside the routine allowlist** and no critical finding and none high in a security path (automatic **only** then), **restart as smaller sub-tasks** on no commits, no progress while still in flight, or a finding looping across rounds, **escalate** (cancel plus a `waiting_on: person` decision) on a finding **read as** critical or a security-path one at high, and **recommend only** (nothing merged, cancelled or restarted) when an input cannot be read — no CI answer, an absent or unattributable findings file, an unknown severity, a truncated path set, an unreadable record; every triage is appended to the audit log (O3) under `<run>:triage`, and **`fugaro runs watch` prints the same triage read-only** | O14, G12 |
 | **Retry rule (2026-11-04, not the recommendation)** | **One approval covers the first attempt and at most one automatic retry of the same approved spec; a refusal (a failed `Precheck`, the kill switch, a spend cap, a validation refusal) is never retried; a second failure needs a person's new approval; the retry counts toward every cap** | O0, O6, G4 |
-| Q2 (**the owner's answer, 2026-11-04 — a different answer from the one this PR first recorded, which is superseded**) | **`fugaro setup` installs the unit** as one of its listed steps (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation: the plan line names the unit and its path), **upgrades move to `fugaro orchestrator install`**, and **`fugaro update` never touches the unit** — **amended 2026-11-05 by T7: `update` never *installs* a unit, and it does re-render and reload one already installed**; the HARD RULE carve-out it left is **T7**, now ruled | O8, O9, G11 |
-| **T7 (2026-11-05, not the recommendation; amends Q2)** | **`fugaro update` re-renders the daemon's unit when the rendered template changed, so the HARD RULE is literally true**: it only ever re-renders and reloads a unit that is **already installed** (never installs one, never creates one for a project that did not choose it), behind the same plan-and-confirm rules as every other `update` step (a managed project's gate stays, a terminal asks for the step's class); `fugaro setup` still installs the first one (Q2); `fugaro orchestrator install` stays the explicit command but no release's `### For operators` ever needs it; the daemon's self-restart and its start-up `Migrate` stay | O8, O9, G11 |
+| Q2 (**the owner's answer, 2026-11-04 — a different answer from the one this PR first recorded, which is superseded**) | **`fugaro setup` installs the unit** as one of its listed steps (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation: the plan line names the unit and its path), **upgrades move to `fugaro orchestrator install`**, and **`fugaro update` never touches the unit** — **amended 2026-11-05 by T7: `update` never *installs* a unit, and it does re-render and reload one already installed**; the HARD RULE carve-out it left is **T7**, now ruled. The "never *installs*" half of that amendment is itself **superseded by D2700 (2026-11-16)** — `update` now installs the one a machine is missing (the owner's answer of 2026-11-16 in `docs/orchestrator-graph-estimates/reconciliation.md`; T7's own row below carries the note) | O8, O9, G11 |
+| **T7 (2026-11-05, not the recommendation; amends Q2)** | **`fugaro update` re-renders the daemon's unit when the rendered template changed, so the HARD RULE is literally true**: it only ever re-renders and reloads a unit that is **already installed** (never installs one, never creates one for a project that did not choose it), behind the same plan-and-confirm rules as every other `update` step (a managed project's gate stays, a terminal asks for the step's class); `fugaro setup` still installs the first one (Q2); `fugaro orchestrator install` stays the explicit command but no release's `### For operators` ever needs it; the daemon's self-restart and its start-up `Migrate` stay. **superseded by D2700 (2026-11-16): `fugaro update` installs the login unit on a machine that has none** — the owner's answer of 2026-11-16, D2700 in `docs/orchestrator-graph-estimates/reconciliation.md` (F36 found it and D2700 supersedes it explicitly; F48 keeps the fence): so the "never installs one" above is T7's ruling as it stood and not today's boundary, the install keeps the same fence as the re-render (`PersonAtTheTerminal`; nothing is asked, and a run with no terminal, a coding agent's session or `--dry-run` writes no unit and says so in one line), and the test that held the old boundary, `TestUpdateNeverInstallsAUnit`, is `TestUpdateInstallsMissingUnit` now, built by R2 of that plan; the re-render of an installed unit is untouched | O8, O9, G11 |
 | Q3 | The macOS notification plus the owner's existing mobile push; Linux falls back to the desktop notifier. What the tree actually carries is U9: no push implementation, and the mailbox is a foreground channel | O7, O9 |
 | Q4 | Slice 2 (O12, O13) is approved only after slice 1 has run 14 days and Check 303 measured the cycle cost — **waived by the owner on 2026-11-14: slice 2 is approved now, without the 14 days and without waiting for Check 303, whose number is still measured but gates nothing; the 14 days stays only as Q1's rollback window for the old scripts and gates nothing** | O12, O13, D1228 |
 | **D2020-D2022 (2026-11-10, all the recommendation)** | Asked when O16 and O19 were made tasks: the front door reads the node through a read-only custom role (D2020 (a)), `apply_patch` is not served in this plan (D2021 (a)), O19 is a workspace's refusal pausing the queue (D2022 (a)). Each answer is what O16a, O16b and O19 are written to; reconciliation section 8 | O16a (D2021), O16b (D2020), O19 (D2022) |
@@ -111,8 +113,12 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
   still "run `fugaro update`" plus what it asks. **What the two answers put on the unit:** `fugaro setup` installs the first one as a listed step of
   its own plan (real terminal only, refused under a coding agent's marker, and in a managed project no extra confirmation — the plan line names the
   unit and its path); **`update` re-renders and reloads a unit that is already installed when the rendered template changed, and never installs one**
-  (O9) — a write to the person's own home and service manager, behind the same plan-and-confirm rules as every other `update` step; and `fugaro
-  orchestrator install` stays as the explicit command (a machine that skipped `setup`, and repair) which no release depends on. An upgraded binary
+  (O9) — a write to the person's own home and service manager, behind the same plan-and-confirm rules as every other `update` step;
+  **superseded by D2700 (2026-11-16)**: `fugaro update` installs the login unit on a machine that has none, so the "never installs one" above is the
+  ruling as it then stood, and a machine neither door has reached — a teammate's, one whose unit was removed — gets its daemon from the one command the
+  person already runs, with the re-render's own fence (a terminal; nothing is asked) and the per-project lease keeping one daemon live and the others on
+  standby (F36 and D2700 of `docs/orchestrator-graph-estimates/reconciliation.md`, and T7's row above); and `fugaro orchestrator install` stays as the
+  explicit command (a machine that skipped `setup`, and repair) which no release depends on. An upgraded binary
   reaches a running daemon **without an operator step** by the daemon itself: it
   checks the binary the unit names each tick, exits cleanly when its version **differs** from the one running (not only when it is newer: whoever can write that path already owns the login unit, so a downgrade escalates nothing), and launchd (`KeepAlive`) or systemd (`Restart=always`)
   starts the new one (O8); the state node's `schema_version` migration runs in the daemon's start-up for the same reason.
@@ -149,7 +155,7 @@ adjacent code), `.claude/rules/terraform.md` (O2 edits `internal/infra/firebased
 | G8 | The daemon and decision agents never run a gated converge or publish command, never pass `Yes` to a confirmation, and never answer a refusal with an action (D1238, F20) | O8 `TestDaemonDoesNotDependOnGatedCommands` (an import and dependency test), `TestDaemonNeverPassesYes`, O12 `TestDecisionAgentRunsWithTheAgentDenyRules` |
 | G9 | One daemon per orchestrator id by the lease; **the state compare-and-swap, not the lease, serialises intents** (a daemon that lost its lease could win a `PutIfMatch` after a re-read, so `Save` checks the lease before it writes — **amended at O3: there is no retry to re-check before, the write is conditional and single, and a 412 is `ErrStateMoved`**); a stale writer's write is refused, never forced (D1232, F5); `state`, `lease` and `audit` are **siblings** under `orchestrator/<id>` (a PUT of the parent wipes children and every heartbeat would move a shared ETag) | O3 `TestTwoDaemonsOneLease`, `TestSaveRechecksTheLeaseBeforeARetry`, `TestHeartbeatDoesNotMoveTheStateETag` |
 | G10 | A failed or empty cycle is a visible state (a `pending_decisions` item), never a silent no-op (owner lesson 22) | O6 `TestBreakerRaisesADecision`, O12 `TestEmptyCycleCountsAsFailed` |
-| G11 | A rules, policy, **state-schema** or **daemon-unit** change converges under `fugaro update` from the previous generation, with no other operator step (the HARD RULE, ruled literally true on 2026-11-05): `update` re-renders an **already installed** unit when the rendered template changed and never installs one (O9, T7), `Migrate` runs in the daemon's start-up (O8), and an upgraded binary reaches the running daemon by the daemon's own version check and clean exit, not by a command. `fugaro setup` installs the first unit (Q2) and `fugaro orchestrator install` stays the explicit command (a machine that skipped `setup`, repair), which no release depends on | O2 `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration`, O0 `TestMigrateFromThePreviousSchemaVersion`, O8 `TestMigrateRunsAtDaemonStart`, `TestDaemonRestartsWhenTheUnitBinaryDiffers`, O9 `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged`, `TestUpdateNeverInstallsAUnit`, `TestInstallRerendersAndRestartsAPreviousVersionUnit`, `TestSetupInstallsTheUnitAsAPlanStep` |
+| G11 | A rules, policy, **state-schema** or **daemon-unit** change converges under `fugaro update` from the previous generation, with no other operator step (the HARD RULE, ruled literally true on 2026-11-05): `update` re-renders an **already installed** unit when the rendered template changed and never installs one (O9, T7) — **superseded by D2700 (2026-11-16): `fugaro update` installs the login unit on a machine that has none**, so a machine with no unit converges to one under the same command (F36 and D2700 of `docs/orchestrator-graph-estimates/reconciliation.md`, and T7's row above keeps the old boundary visible) — `Migrate` runs in the daemon's start-up (O8), and an upgraded binary reaches the running daemon by the daemon's own version check and clean exit, not by a command. `fugaro setup` installs the first unit (Q2) and `fugaro orchestrator install` stays the explicit command (a machine that skipped `setup`, repair), which no release depends on | O2 `TestUpdateConvergesTheOrchestratorRulesFromThePreviousGeneration`, O0 `TestMigrateFromThePreviousSchemaVersion`, O8 `TestMigrateRunsAtDaemonStart`, `TestDaemonRestartsWhenTheUnitBinaryDiffers`, O9 `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged`, `TestUpdateNeverInstallsAUnit` (its boundary superseded by D2700; the test is `TestUpdateInstallsMissingUnit` now, R2), `TestInstallRerendersAndRestartsAPreviousVersionUnit`, `TestSetupInstallsTheUnitAsAPlanStep` |
 | G12 | The long-run triage (BF2, O14) is deterministic code with **no model call**; it merges **only** on positive evidence (commits, a **green CI read through the provider** — never a guess, and `CIUnknown` is no merge — **every changed path `Routine`**, no critical finding, none high in a security path) and **fails closed** on every missing or ambiguous input into the **recommend-only** outcome, which merges, cancels and restarts nothing; it cancels a run that made no progress instead of re-running the same spec; it escalates a finding **read as** critical or security-path-high to a person (a `waiting_on: person` decision); every triage is appended to the audit log under `<run>:triage`, and `fugaro runs watch` prints the same triage and **writes nothing** | O14 `TestTriageNeverCallsAModel`, `TestTriageMergesOnlyWithGreenCIAndANonCriticalFindingSet`, `TestTriageReadsCIThroughTheProvider`, `TestTriageFailsClosedWithoutACIAnswer`, `TestTriageNeverMergesWhileCIIsPending`, `TestTriageBlocksTheMergeOnASensitiveChangedPath`, `TestTriageNeverMergesATruncatedPathSet`, `TestTriageRecommendsOnlyWhenAnInputCannotBeRead`, `TestTriageNeverCancelsOnAnUnreadableFindingsFile`, `TestTriageFailsClosedWithoutAFindingsFile`, `TestTriageFailsClosedOnAnUnknownSeverity`, `TestTriageUsesThePathClassifierForSecurity`, `TestTriageEscalatesOnACriticalFinding`, `TestTriageRestartsOnNoProgress`, `TestTriageCancelsThroughTheCancelPath`, `TestTriageIsWrittenToTheAuditLog`, `TestRunsWatchPrintsTheTriageWithoutWriting` |
 
 **Reviewer tier.** *Security*: `security-reviewer` (Opus), a mandatory independent review, at least one mutation check, routed by changed
@@ -487,7 +493,10 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   code did not).
   **It is a write to the person's own home and their own service manager, never to a system path and never to the cloud**, and it is stated as such in
   the plan line: no root, no `sudo`, no network. **It never installs a unit**: a machine without one — a project that did not choose the daemon, or a
-  person who skipped `setup` — gets no daemon from `update`, and that is a boundary of the ruling rather than an oversight. **It follows the same
+  person who skipped `setup` — gets no daemon from `update`, and that is a boundary of the ruling rather than an oversight. **That boundary is
+  superseded by D2700 (2026-11-16)**: `fugaro update` installs the login unit on a machine that has none — the owner's answer of 2026-11-16, D2700 in
+  `docs/orchestrator-graph-estimates/reconciliation.md` (F36; F48 keeps the fence) — so the boundary sentence above is T7's ruling as it stood and the
+  step installs as well as re-renders. **It follows the same
   plan-and-confirm rules as every other `update` step**: a managed project's gate stays exactly as it is (no new prompt and no new exemption for this
   step), and at a terminal it asks for the step's own class — **`Typed`**, the strictest, because a unit is code that runs at login and `--yes` never
   covers one (the same class `install` takes) — with the agent-marker refusal G2 names applying here too, so an agent-driven `update` writes no unit
@@ -501,7 +510,8 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   the file it re-renders and where it lives — and re-renders it, which is the standing Q2 gave the setup step's line (no extra confirmation, because the
   step is a line of a plan the person already reads before it is applied). Everything T7 fenced stays fenced and nothing is widened: `--yes` never covers
   the step, so an unattended run leaves it for the person and names `fugaro update`; a coding agent's session writes no unit; a run with nobody at it
-  writes no unit; the managed gate stays exactly as it is; and `update` never installs one. The consequence is stated rather than hidden: **a release that
+  writes no unit; the managed gate stays exactly as it is; and `update` never installs one — until **D2700 (2026-11-16)** has it install the login unit
+  on a machine that has none, which is recorded above and changes nothing this paragraph fences. The consequence is stated rather than hidden: **a release that
   changes only the unit's template asks the person nothing**, because no covered stage has anything to change and the run's single confirmation is asked
   lazily. `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` holds the behavior — `askedSomething` fails it if the step ever prints a question —
   and `TestDocsStatelessOrchestratorUnitRerenderAsksNothing` holds this paragraph. **The reversal is one place**: `internal/cli/update_unit_stage.go`'s
@@ -520,8 +530,10 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   the current template renders, so `doctor` reports the drift — never a command to run silently, and never a write). **T7's ruling adds the update-side
   half**, all in `update_unit_stage_test.go`: `TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged` (a machine whose unit was rendered from the
   previous template converges under **one `fugaro update`** — the file is re-rendered from the current template and the service reloaded — with no
-  second command, which is the HARD RULE), `TestUpdateNeverInstallsAUnit` (no unit installed: `update` writes none and the plan line says why, so a
-  project that did not choose the daemon never gets one), `TestUpdateLeavesACurrentUnitAlone` (the rendered text equals the file: no write and no
+  second command, which is the HARD RULE), `TestUpdateNeverInstallsAUnit` (**superseded by D2700 (2026-11-16)**: T7's boundary — no unit installed
+  means `update` writes none — is no longer the rule; the test is `TestUpdateInstallsMissingUnit` now, where a machine with none gets one and a run with
+  no terminal, a coding agent's session or `--dry-run` writes none and says so in one line, built by R2 of `docs/orchestrator-graph-estimates/implementation-plan.md`),
+  `TestUpdateLeavesACurrentUnitAlone` (the rendered text equals the file: no write and no
   reload, so a repeated `update` is quiet), `TestUpdateRerendersAUnitThatNamesAnotherPathOfTheSameInstall` (the render carries the stable path, so a
   unit written under another prefix — a moved Homebrew installation — re-renders, and the plan line names both paths),
   `TestUpdateNeverRepointsAUnitAtABuildThatWillNotBeThereTomorrow` (the program a re-render writes is one a release installed: a unit naming
@@ -532,7 +544,7 @@ Tasks are mergeable one at a time. The commit message is `type(scope): subject (
   `TestUpdateUnitStepUsesTheInstallersRenderer` (the step calls `service.Render` and the installer's reload, so there is no second renderer). Tests
   render into `t.TempDir()` and never call
   `launchctl` or `systemctl` (an interface is faked).
-- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateRerenders|TestUpdateNeverInstalls|TestUpdateNeverRepoints|TestUpdateLeaves|TestUpdateUnitStep|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
+- **Command:** `go test ./internal/orchestrator/service/ -count=1 && go test ./internal/cli/ -run 'TestLaunchd|TestSystemd|TestInstall|TestUninstall|TestWindows|TestSetup|TestUpdateRerenders|TestUpdateInstalls|TestUpdateNeverRepoints|TestUpdateLeaves|TestUpdateUnitStep|TestDoctorReportsAnOutOfDateUnitTemplate' -count=1`
 - **Depends on:** O8. **Level 4.**
 - **Commit:** `feat(cli): install the orchestrator unit from fugaro setup and re-render it from fugaro update (O9)`
 - **Red step:** `TestInstallWritesOnlyUnderTheUserHome` fails to build, then fails when a path outside the home is accepted; **and, for T7's ruling,
@@ -884,30 +896,55 @@ a started run whose refusal counts as an attempt (G4) — it spends its approval
 such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** put the choice to the owner, who answered **the recommendation
 (a)** on 2026-11-10; **this task is written for it**.
 
-- **Files (13):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
+- **Files (22):** `internal/orchestrator/hooks.go` (edit: a `WorkspaceFuncs` seam, `Refused func(RunReport) bool`, set once by
   `ee/register`; **the core default answers false**, so an untagged build behaves exactly as today), `internal/orchestrator/hooks_test.go`
   (edit), `internal/orchestrator/runview.go` (edit: `RunReport` carries the refusal's source as the run record states it — **the field's name
   and spelling were W7's to set, and #2275 merged without writing one — it is `halt.workspace_refusal` as of 2026-11-15, below**), `internal/cli/orchestrator_run.go` (edit: the reader fills that field from the run
-  record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the **same** `breaker-tripped` decision with the
-  workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`, `breaker.go:126`, and no new pause
-  mechanism or decision kind exists), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
-  the seam about a refused run and trips at once), `internal/orchestrator/tick_test.go` (edit), `ee/orchestrator/workspace.go` (new),
-  `ee/orchestrator/workspace_test.go` (new), `ee/register/orchestrator.go` (edit: installs the seam), `ee/register/orchestrator_test.go` (edit).
+  record) with `internal/cli/orchestrator_run_test.go` (edit), `internal/orchestrator/breaker.go` (edit: a trip at once, which raises the
+  breaker's **own** question with the workspace's reason, so the pause is the one `Plan` already refuses over through `BreakerOpen`,
+  `breaker.go:170`, and no new pause mechanism exists — but the question is **not** the streak's, and it is not the same decision: it carries
+  an id of its own, `breaker-tripped-workspace-<stamp>`, because it lifts itself after `WorkspacePauseWindow` while the streak's waits for a
+  person however long that takes, and the questions that have lapsed go out with the next one raised, so the document stays under its caps
+  (the reading of 2026-11-16 below)), `internal/orchestrator/breaker_test.go` (edit), `internal/orchestrator/tick.go` (edit: the fold asks
+  the seam about a refused run and puts the question in the same patch as the outcome it folds, so the two land together or not at all),
+  `internal/orchestrator/tick_workspace_test.go` (new: the refusal's own tests, beside `tick_test.go`'s), `ee/orchestrator/workspace.go` (new),
+  `ee/orchestrator/workspace_test.go` (new), `ee/register/orchestrator.go` (edit: installs the seam), `ee/register/orchestrator_test.go` (edit),
+  and the files the bound added past those 13: `internal/orchestrator/launch.go` and `internal/orchestrator/escalate_launch.go` with their
+  tests (`LadderLaunch` and the launch gate read the window-aware `BreakerOpen`), `internal/orchestrator/export_test.go`,
+  `internal/orchestrator/tick_decide_test.go`, `internal/orchestrator/ladder_test.go`, `internal/gateway/workspace_refusal.go` (edit:
+  `ValidWorkspaceRefusalHalt`, the one halt shape the rule corroborates), `internal/eeboundary/seam_test.go` (edit: the seam setter in
+  `seamSetterNames`), and `docs/stateless-orchestrator/reconciliation.md` (edit: U12's follow-up, the ruling recorded where the unit that
+  asked for it lives).
 - **Interfaces:** `orchestrator.SetWorkspace(WorkspaceFuncs) error` on the pattern of `SetHandoff` and `SetBatch` (`hooks.go:108`, `:187`:
   refuses a second call and a nil function); `ee/orchestrator.WorkspaceRefused(RunReport) bool` answers true only for a run whose record
-  says the workspace's credentials service refused it (its stop or its cap); the trip's decision is `waiting_on: person` (only a person
-  resolves it, D1225) and the audit line is `<run>:workspace-refused` (D1230). Nothing new is read from any database, no cap number is added,
+  says the workspace's credentials service refused it (its stop or its cap) **and** whose halt is the one shape that path writes
+  (`gateway.ValidWorkspaceRefusalHalt`); the trip's decision is `waiting_on: person` (a person resolves it, D1225), and it is the only
+  question of the prefix a person does not have to answer: it lifts itself after `orchestrator.WorkspacePauseWindow`; the audit line is
+  `<run>:workspace-refused` (D1230). Nothing new is read from any database, no cap number is added,
   and the money fence stays W7's and W8's.
 - **Schema/rules/config change:** **none** — the decision is the existing breaker decision (the prefix only the daemon may write,
-  `breaker.go`'s `BreakerDecisionID`), the audit transition is a name the existing pattern admits, and `RunReport` is in-process. Stated so a
+  `breaker.go`'s `BreakerDecisionID`; the trip's own id is that prefix plus `-workspace-<stamp>`, which the id's rules already admit, and the
+  state's shape carries the question's `at` either way), the audit transition is a name the existing pattern admits, and `RunReport` is
+  in-process. Stated so a
   reviewer checks it: **if W7's record field turns out to need a run-record change, that change is W7's (or a W-task's) and not this task's**,
   and this task waits for it.
 - **Tests:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` (one refused run, and the next tick plans no launch for any item),
   `TestAWorkspaceRefusalRaisesOnePersonDecision`, `TestOnlyAPersonLiftsTheWorkspacePause`, `TestAnOrdinaryRefusalStillCountsTowardTheBreaker`
   (a refusal the seam does not claim keeps O6's rule), `TestTheCoreDefaultClaimsNoRefusal` (an untagged build: unchanged behaviour),
   `TestSetWorkspaceRefusesASecondCall`, `TestWorkspaceRefusedReadsOnlyTheRunRecord` (no database, no network), `TestRunViewCarriesTheWorkspaceRefusal` (the CLI reader), `TestCoreBuildsWithoutEE`
-  (the eeboundary guard is run).
-- **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator' -count=1 && go test ./internal/eeboundary/ -count=1`
+  (the eeboundary guard is run). **The bound the ruling of 2026-11-16 asked for adds:** `TestAWorkspacePauseExpires` (the pause lifts itself
+  when `WorkspacePauseWindow` has passed) and `TestAForgedMarkerPausesAtMostTheWindow` (a marker whose halt is the shape holds the queue for
+  one window, once, and no longer) — the two ends of what a forger reaches; `TestTheWorkspaceRuleReadsNothingButTheReport` and
+  `TestTheUntaggedBuildClaimsNoRefusal` (the rule's table row by row, and the core default); `TestAWorkspaceRefusalLeavesAnAuditLine` (the
+  line is evidence and its failure is the cycle's, not the pause's); `TestARefusedRunWhoseWriteFailsIsAskedAboutOnTheRetry` (the outcome and
+  the pause are one patch, so a store that refuses the write loses neither) and `TestNRefusalsAcrossNWindowsLeaveTheNodeBounded` (a refusal a
+  window for as many windows as it takes leaves the node at one question, under its caps and still writable — without it the state crosses
+  `MaxStateBytes` and every write from every class, a person's included, is refused with `ErrTooLarge` for good).
+- **Command:** `go test ./internal/orchestrator/ -run 'Workspace|Breaker|Tick|Refus|Marker' -count=1 && go test ./internal/cli/ -run TestRunViewCarriesTheWorkspaceRefusal -count=1 && go test ./ee/orchestrator/ ./ee/register/ -run 'Workspace|Orchestrator|Untagged' -count=1 && go test ./internal/eeboundary/ -count=1`
+  (the filters are the names the tests above are written with, and not just the task's own two words: `Refus` is what reaches
+  `TestTheCoreDefaultClaimsNoRefusal`, `TestARefusedRunWhoseWriteFailsIsAskedAboutOnTheRetry` and
+  `TestNRefusalsAcrossNWindowsLeaveTheNodeBounded`, `Marker` is what reaches `TestAForgedMarkerPausesAtMostTheWindow` — the bound's other
+  end — and `Untagged` is what reaches `TestTheUntaggedBuildClaimsNoRefusal` in `ee/orchestrator`.)
 - **Depends on:** O6, O7, O8 and O18 (merged), **O14** (it writes `tick.go` at level 7), and externally **D2022 answered (a)** (done
   2026-11-10) and **W7** (#2275, merged 2026-11-11 as `d3b7613f`). **Serializes after** the open #2207 (`internal/cli/orchestrator_run.go`) and #2202 (`internal/cli/orchestrator_run_test.go`), and after O13 and O14 (`tick.go`,
   `orchestrator_run.go`). **Level 8**, and both external triggers have fired — **which did not make it launchable: the reading below blocked it,
@@ -935,6 +972,29 @@ such cycles (`internal/orchestrator/breaker.go`, `BreakerThreshold`). **D2022** 
   account's token from the metadata server (`SECURITY.md`, "Runs of one repository can see each other") — and O19 therefore still owes a bound
   on the pause, or a source a run cannot write, before it stops a queue on a claimed refusal. The field names the refusal; it does not
   authenticate it.
+  Read 2026-11-16 (**the bound is written, and the owner chose its shape**; `docs/stateless-orchestrator/reconciliation.md`'s U12 follow-up
+  records it too, and what is below is the task's own statement of it): put the question U12 left open — a source a run cannot write is not
+  available, so what bound does the pause owe — and the owner ruled **corroborate and auto-expire**, the recommendation. *Corroborate:*
+  `ee/orchestrator.WorkspaceRefused` answers true only for a marker that is one of the three **and** a halt that is the shape that path writes
+  — `budget_unavailable` / `run` / `the credentials service cannot read the state it must read (state_unavailable)`, the one shape
+  `gateway.ValidWorkspaceRefusalHalt` states, which all three markers share because all three reach a member's gateway as the same typed
+  refusal; a marker with another reason, another scope, another sentence, or no halt at all is an ordinary refusal, and it counts toward the
+  breaker exactly as O6's rule says (`TestWorkspaceRefusedReadsOnlyTheRunRecord` pins the combinations row by row). *Auto-expire:* the trip
+  raises the breaker's own question — `breaker-tripped-workspace-<stamp>`, `waiting_on: person`, the id only the daemon may write — and it
+  lifts itself after `orchestrator.WorkspacePauseWindow`, one hour (`internal/orchestrator/breaker.go`), unless a person answers it first;
+  `BreakerOpen` reads the pause off the unanswered, **unexpired** questions of the prefix, so nothing has to retire the decision, and a person
+  may still answer it after the window — the answer then changes nothing. **What a forged marker can and cannot do, in two sentences:** it
+  cannot stop the queue on the word alone — a record that claims a refusal without the halt shape the workspace's own path writes is an
+  ordinary refusal, trips nothing early, and the next approved item is launched as before — while one that does carry the shape, which a run
+  can write because the halt is in the same record it writes, holds the queue for at most one window, once, and a person who wants the queue
+  stopped for longer stops it the way the other stops work, with the kill switch. **And the half no other pass would have given back:** the
+  question is a decision nothing retires — retention never drops an open one, and `Retain` has no caller in the loop at all — so the lapsed
+  ones go out with the next question the fold raises (`dropLapsedWorkspaceQuestions`, on `decide/bounds.go`'s `dropStaleCallRecords` pattern),
+  which is what keeps a refusal a window from filling the document: past `MaxStateBytes` and `MaxDecisions` every write from every class, a
+  person's included, is refused with `ErrTooLarge` for good, `Apply` validating the state before the patch as well as the one after it
+  (`TestNRefusalsAcrossNWindowsLeaveTheNodeBounded`). The trip also leaves the audit line `<run>:workspace-refused` (D1230), and a log that
+  cannot be written costs the evidence and not the stop. What U12 said of the field is still true: `credsvc.SetWorkspaceRefusal` has no
+  caller, so no record of this release carries a marker for an honest path to corroborate.
 - **Commit:** `feat(ee): a workspace's refusal pauses the orchestrator's queue (O19)`
 - **Red step:** `TestAWorkspaceRefusalPausesTheQueueAtOnce` fails to build (no seam), then fails while a refused run is folded as an ordinary
   refusal and the next approved item is launched into the same stop.
@@ -1064,7 +1124,9 @@ where a Check would go if the owner wants one. No agent performs any of them. **
 the one owner action here that has no command behind it** (T1, answered 2026-11-04): it is the three steps Check 302 names, run by hand. **After T7's
 ruling (2026-11-05) no upgrade asks for a command at all**: a binary upgrade is the daemon's own hand-over, a template change is `fugaro update`'s
 re-render, and `fugaro orchestrator install` is the explicit command for a machine that skipped `setup` or needs a repair — **`update` never installs a
-unit, so Check 301's template half starts from a machine that has one**.
+unit, so Check 301's template half starts from a machine that has one** — **until D2700 (2026-11-16): `fugaro update` installs the login unit on a
+machine that has none, so that half may start from a machine `update` has just given a unit** (the note is at T7's row above and in section 6; Check 301
+itself is unchanged, and it is the owner's to run).
 
 ## 6. Owner questions: the answers, and the three left open on 2026-11-10
 
@@ -1080,11 +1142,15 @@ follows the ruling through O9, G11 and the conventions above.
   the unit written by the person's own run and never by an agent — and in a **managed project the step follows the no-prompt rule**: no extra
   confirmation, because the plan line already names the unit and its path. **Upgrades move out of `fugaro update`** and into
   **`fugaro orchestrator install`**, which installs or re-renders and restarts the unit; **`fugaro update` never touches it** — **amended on
-  2026-11-05 by the T7 ruling below.** The first answer
+  2026-11-05 by the T7 ruling below, and the "never installs one" half of that amendment is superseded by D2700 (2026-11-16)**: `fugaro update` installs
+  the login unit on a machine that has none. The first answer
   (an offer inside `update`) is gone, and with it the collision that was **T6**: nothing now asks a question the no-prompt rule forbids.
 - **T7: ruled 2026-11-05, and not the recommendation.** **`fugaro update` re-renders the daemon's unit when the rendered template changed**, so the HARD
   RULE is literally true and no release asks the person for a second command. The boundaries: `update` **only ever re-renders and reloads a unit that is
-  already installed** and never installs one (a machine that skipped `setup` stays without a daemon until a person asks for one); the step sits behind
+  already installed** and never installs one (a machine that skipped `setup` stays without a daemon until a person asks for one) — **superseded by D2700
+  (2026-11-16): `fugaro update` installs the login unit on a machine that has none**, so a machine that skipped `setup` gets its daemon from the one
+  command the person already runs, behind the same fence (a terminal; nothing is asked) and with the per-project lease keeping one daemon live (D2700 of
+  `docs/orchestrator-graph-estimates/reconciliation.md`; the ruling above is kept as it stood); the step sits behind
   the same plan-and-confirm rules as every other `update` step, takes the strict `Typed` class because a unit is code that runs at login, and writes
   only under the person's own home and service manager — never a cloud write, never root; `fugaro setup` still installs the first one (Q2) and `fugaro
   orchestrator install` stays as the explicit command (a machine that skipped `setup`, repair) that no release's `### For operators` needs; and the

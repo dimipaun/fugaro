@@ -142,11 +142,12 @@ func TestDocsStatelessOrchestratorDeviationsAreMarked(t *testing.T) {
 }
 
 // Q2 was ruled a second time: the first answer (an offer inside `fugaro
-// update`) is superseded, `fugaro setup` installs the unit, `fugaro
-// orchestrator install` is the explicit command, and `update` never installs
-// one — which closed T6 and left T7, since ruled (T7IsRuled below). A later
-// edit that puts the unit's *install* back into `update`, or that drops the
-// self-upgrade, is the change this design cannot afford.
+// update`) is superseded, `fugaro setup` installs the unit, and `fugaro
+// orchestrator install` is the explicit command — which closed T6 and left T7,
+// since ruled (T7IsRuled below). A later edit that drops the self-upgrade, or
+// the first install `fugaro setup` makes, is the change this design cannot
+// afford; the "never installs one" half of Q2's answer is D2700's to supersede
+// (T7IsRuled holds that note).
 func TestDocsStatelessOrchestratorQ2IsRuledTwice(t *testing.T) {
 	plan := soRead(t, soPlan)
 	rec := soRead(t, soReconciled)
@@ -184,13 +185,18 @@ func TestDocsStatelessOrchestratorQ2IsRuledTwice(t *testing.T) {
 	}
 }
 
-// T7 is the newest owner ruling and it is not the recommendation: it amends
-// Q2 — `fugaro update` re-renders an installed unit's template rather than
-// leaving the person a second command — so the HARD RULE is literally true.
-// What a later edit must not drop: the ruling, its date, the boundary that
-// `update` never installs a unit, the step that carries it, and the tests that
-// hold it. A folder that still says T7 is open, or that leaves the unit's
-// template out of `update` again, is the change this design cannot afford.
+// T7 is this folder's newest owner ruling and it is not the recommendation: it
+// amends Q2 — `fugaro update` re-renders an installed unit's template rather
+// than leaving the person a second command — so the HARD RULE is literally
+// true. Its "never installs one" boundary is superseded: D2700 (2026-11-16,
+// docs/orchestrator-graph-estimates/reconciliation.md) has `update` install the
+// login unit on a machine that has none, so this plan carries the old boundary
+// as it was ruled, visible, with the dated note beside it. What a later edit
+// must not drop: the ruling, its date, D2700's note and its date, the boundary
+// that note supersedes (kept visible rather than deleted), the step that
+// carries both, and the tests that hold them. A folder that still says T7 is
+// open, that leaves the unit's template out of `update` again, or that drops
+// D2700's install, is the change this design cannot afford.
 func TestDocsStatelessOrchestratorT7IsRuled(t *testing.T) {
 	plan := soRead(t, soPlan)
 	rec := soRead(t, soReconciled)
@@ -205,15 +211,22 @@ func TestDocsStatelessOrchestratorT7IsRuled(t *testing.T) {
 	}
 	for _, want := range []string{
 		"re-renders the daemon's unit",
-		"never installs one",
+		"superseded by D2700 (2026-11-16)",
+		"installs the login unit on a machine that has none",
 		"update_unit_stage.go",
 		"TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged",
-		"TestUpdateNeverInstallsAUnit",
+		"TestUpdateInstallsMissingUnit",
 		"`fugaro orchestrator install` stays",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s: T7's ruled follow-through %q is gone", soPlan, want)
 		}
+	}
+	// D2700 supersedes the boundary without deleting it: the plan keeps the
+	// sentence T7 was ruled with, so a reader who meets the old ruling finds
+	// the note that replaces it rather than a silent reversal.
+	if !strings.Contains(plan, "never installs one") {
+		t.Errorf("%s: T7's superseded boundary is not kept visible beside D2700's note", soPlan)
 	}
 	if !strings.Contains(rec, "ANSWERED 2026-11-05") {
 		t.Errorf("%s: T7 is not marked answered with its date", soReconciled)

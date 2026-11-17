@@ -25,15 +25,20 @@ Three things it deliberately does **not** claim:
   queue, `PROMPT_TTL_MS`, the interrupt table) and **P6.6** (`internal/cli/pair.go` and
   `internal/budget/sweep.go` — the pairing command with the wait that binds the phone's key and the
   delivery that seals the configuration to it, and the `m~…` rule in the history sweeper's
-  `deleteUsers`). **Approved and not built:**
-  **P6.7** (the
-  consumer's enforcement of the D128 amendment — this command's inbound gate, the action record,
-  the ledger and the expiry), **P6.12** (the phone's spoken confirmation, which consumes the merged
-  confirmation machine) and **P6.13** (the sweeper's rule for stored prompts). So the MAC **can** be
+  `deleteUsers`), and **P6.7** (the consumer's enforcement of the D128 amendment:
+  `internal/mailbox/action.go`, the Go port of `shared/confirm`'s rules that the re-validation and
+  the action allow-list live in, held to `shared/confirm/vectors.json`, and `internal/cli/mailbox.go`,
+  this plan's T5, which is where the runner it refuses from sits). **Partly built:** **P6.13** — the
+  command the sweeper hides behind is in the tree and the store-side deletion it adds to that same
+  file (`internal/cli/mailbox.go`) has landed with it, while this plan's own T7 half — the
+  sweeper's local delete set and the presence verdict it reports (`internal/mailbox/expiry.go`) —
+  is not. **Approved and not built:** **P6.12** (the phone's spoken
+  confirmation, which consumes the merged confirmation machine). So the MAC **can** be
   computed today and the **key can** too: the pairing command's wait and its delivery landed with the
   pairing CLI plan's T2b and T3, so a phone that has paired holds a per-pairing MAC key. What that means for
   this command's startup is §8.3's first row, and §8.4 says **which half of the MAC work is
-  P4.1's and which is P6.7's**. A module existing and a task being *built* are not the same claim,
+  P4.1's and which belongs to the enforcement that landed above**. A module
+  existing and a task being *built* are not the same claim,
   and this bullet is held to the tree by the pin (`TestMailboxPlanPhaseSixStatusIsTrue`).
 - **`shared/`'s tests have no CI job *running* — the job itself is written and staged.** P4.3 is
   owner-made (no agent edits `.github/workflows/`, Global Constraint 8), so the job is committed as
@@ -133,7 +138,7 @@ paragraph.
       "at": { ".validate": "TIMESTAMP" },
       "mac": { ".validate": "MACOK" },
       "agent": { ".validate": "AGENTID" },
-      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action')" },
+      "kind": { ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'prompt' || newData.val() == 'answer' || newData.val() == 'action' || newData.val() == 'registration')" },
       "options": {
         ".validate": "PARENTKIND == 'prompt' && newData.hasChildren()",
         "$i": { ".validate": "OPTIONIDX && newData.isString() && newData.val().length > 0 && newData.val().length <= {{.MaxOptionLength}}" }
@@ -479,11 +484,15 @@ confirmation record (D169's "typed action records executed by the consumer") tha
 action id, is itself MAC-verified, and is re-validated against `shared/confirm`'s rules by a Go
 implementation held to `shared/confirm/vectors.json` (P6.7's parity test — §8.4). **Absent that
 record, the refusal stands.** P6.2's module `shared/confirm` (its rules and its `vectors.json`) is in
-the tree, but nothing on `main` writes, mints or consumes a confirmation record — the phone's half is
-P6.12's and the consumer's is P6.7's, and neither is built — so **the refusal is unconditional until
-P6.7**, and that is
-what P4.1's tests pin — including a mutation that removes the allow-list and must turn a refusal
-test red. Owner decision 3.
+the tree, and **the consumer's half is P6.7's — built, as §9 records**: it re-validates a record
+against those rules, keeps the ledger of spent action and confirmation ids across a restart, and
+refuses a record that is unsigned, wrongly signed, replayed or aimed at a head that has moved. **The
+refusal was unconditional until P6.7**; it stands now for every message that arrives without a valid
+record, and a message that carries one is executed. What no phone does yet is **write** one — a
+record minted from a spoken read-back and an explicit "confirm" is P6.12's — so the records this
+command acts on today are the ones a test and the simulator build. The allow-list stays a value in
+code, and P4.1's tests still pin it — including a mutation that removes the allow-list and must turn
+a refusal test red. Owner decision 3.
 
 ### M7 — Dedupe is by `(sender, id)`, in the ledger, across restarts, and it is bounded.
 
@@ -998,11 +1007,11 @@ closes, and it is why P6.7 is written as an extension of this command rather tha
 | --- | --- | --- |
 | `fugaro cancel RUN` | **refused** | D128; F38 records that no argv table fences it |
 | `fugaro budget kill` | **refused** | same |
-| `gh pr merge` / an approve | **refused** | same; and the 2026-10-17 amendment's allowance is P6.2's and P6.7's |
+| `gh pr merge` / an approve | **refused** | same; the 2026-10-17 amendment's allowance needs the confirmation record of the last row |
 | Anything not in the allow-list | **refused** | the default is refusal, not permission |
 | A launch (`fugaro run`) | allowed | **D162**: launches need no confirmation |
 | A read-only report (`ls`, `diagnose`, `report`) | allowed | nothing is changed |
-| A destructive action **with** P6.7's confirmation record naming the same action id | allowed **then** | the 2026-10-17 amendment, through P6.2 (whose module and vectors are merged) and P6.7 (which is not built — it is the half that reads the record) |
+| A destructive action **with** a confirmation record naming the same action id | allowed **then** | the 2026-10-17 amendment, through P6.2 (whose module and vectors are merged) and P6.7, the half that reads the record — **built**, so the path is reachable from a message; the record itself is one no phone writes yet (P6.12) |
 
 The allow-list is a **value in code** (a slice of action kinds, each with the argv shape it may
 spawn), and the refusal is evaluated **before** any spawn (M11). The refusal is **recorded in the
@@ -1015,13 +1024,21 @@ decision 3. The pin checks all four clauses here as well
 as in M12 and §4.4, so a section that drifts on one of them is a failing test rather than a
 paragraph nobody re-reads.
 
-**The amendment is honoured as a seam and not as a behaviour**, because the record's *consumer* is
-P6.7's and P6.7 is not built: P6.2's module (`shared/confirm`, with `vectors.json`) **is** in the
-tree, so the re-validation table this command will use has a merged contract to be held to, but
-nothing in the merged tree writes a confirmation record, produces one from a real message, or keeps
-the ledger of used action and confirmation ids. So the code path here exists, is covered by a test
-that builds a **synthetic** confirmation record, and **cannot be reached from a real message
-today** — the refusal is unconditional until P6.7. Owner decision 3.
+**The amendment is honoured as a behaviour, and what is still missing is the phone's half.** P6.2's
+module (`shared/confirm`, with `vectors.json`) **is** in the tree, and P6.7 — the record's *consumer*
+— is built: a Go implementation of those rules, held to the vectors by a parity test and run over
+every action record before anything is performed, plus the ledger of used action and confirmation ids
+that survives a restart. The vectors are streams of the *phone's* machine — events in, state out — so
+what the parity test replays is that machine; the consumer's re-validation is the same rule table read
+the other way round, over the one record a message carries, and the P6.7 tests are what pin it. A
+record is refused unless it is correctly signed, names an action id the
+ledger has not spent, sits inside the six-hour window and points at a target and a head that have not
+moved; a correct one **is executed** by the command itself, not only by a test that builds a
+**synthetic** record. The refusal was **unconditional until P6.7**, and it is unconditional still for
+every message that arrives without a record — the difference is that a phone-minted record would now
+be acted on, where before none was read at all. No phone mints one yet: the spoken read-back and the
+explicit "confirm" are P6.12's, so the records exercised today are the simulator's and the tests'.
+Owner decision 3.
 
 ---
 
@@ -1431,7 +1448,13 @@ and P6.13 own, and the corpus's known gap.
    the refusal is unconditional. **Cost:** one code path with no caller, which a reviewer must be
    told about — hence T8's checklist and §9's "unconditional until P6.7". **What the merged module
    changes for the better:** P6.7's parity table has real vectors to be held to, so the seam is
-   written against a contract that exists rather than one that is promised.
+   written against a contract that exists rather than one that is promised. *(Settled 2026-11-16,
+   against the recommendation: P6.7 was built as behaviour. The re-validation is a Go implementation
+   held to `shared/confirm/vectors.json`, the ledger of spent action and confirmation ids survives a
+   restart, and the refusal is what a message without a record meets — so the cost priced above, "one
+   code path with no caller", was not paid, and T8's checklist line is answered by P6.7's tests. What
+   no phone does yet is mint a record: that is P6.12's, so the records exercised today are the
+   simulator's and the tests'.)*
 4. **The parity corpus (Ruling M9): a committed corpus generated by a JS test, replayed in Go — or
    a Node subprocess in the Go test?**
    **Recommended: the committed corpus.** Neither this runner nor CI's `test` job has Node (verified

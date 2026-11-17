@@ -223,6 +223,181 @@ func TestDiagnoseRedactsEveryStringOfAToleratedFinding(t *testing.T) {
 	}
 }
 
+// TestDiagnosePrintsTriageRounds: every triage round the record carries is in
+// the document with what served it, whether its call failed, why it failed and
+// how its findings were placed, counted by source -- and in the human
+// diagnosis a failed round is flagged both above the status block and in the
+// Triage block below it. A run a judge weighed looks judged from its findings
+// alone, which is what a failed call makes untrue: the fail-safe blocks every
+// finding the mode's table blocks (D1846), and the block is where a reader
+// learns that this round's fix round was handed findings no judge saw.
+func TestDiagnosePrintsTriageRounds(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	const answer = "Invalid API key · Fix external API key"
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abd9"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		Stages: []runstore.StageTiming{{Name: "triage"}},
+		Triage: runstore.NewTriage([]runstore.TriageRound{
+			// The round run 20261115-194116-0846 bought: a call the endpoint
+			// refused the credential for, at the model and account the record
+			// named, with the mode's table placing both of the round's
+			// findings because no verdict was read (D1846).
+			{Round: 1, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5-5", Account: "bmb",
+				Failed: true, Cause: answer + " " + secret,
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictBlock, Reason: "the table's own call", Source: runstore.TriageSourceTable},
+					{Key: "k2", Verdict: runstore.VerdictBlock, Reason: "no verdict was read", Source: runstore.TriageSourceFailSafe},
+				}},
+			// The round that answered, with one placement of each of the
+			// remaining two sources and no cause at all.
+			{Round: 2, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5-5",
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictDefer, Reason: "doc drift", Source: runstore.TriageSourceAgent},
+					{Key: "k3", Verdict: runstore.VerdictDefer, Reason: "trailing cleanup", Source: runstore.TriageSourceCap},
+				}},
+		})}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("the document carries the secret:\n%s", out)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.Triage) != 2 {
+		t.Fatalf("triage = %+v, want the record's two rounds", d.Triage)
+	}
+	failed := d.Triage[0]
+	if failed.Round != 1 || failed.Mode != rigor.Startup || failed.Level != policy.LevelL2 ||
+		failed.Model != "claude-opus-5-5" || failed.Account != "bmb" {
+		t.Errorf("the failed round = %+v, want the round, mode, level, model and account the record named", failed)
+	}
+	if !failed.Failed || failed.Cause != answer+" [REDACTED]" {
+		t.Errorf("the failed round = %+v, want it marked failed with the record's own cause, redacted", failed)
+	}
+	if failed.Sources != (TriageSources{Table: 1, FailSafe: 1}) || failed.Total != 2 {
+		t.Errorf("the failed round's placements = %+v of %d, want one table, one fail_safe and both findings", failed.Sources, failed.Total)
+	}
+	answered := d.Triage[1]
+	if answered.Failed || answered.Cause != "" {
+		t.Errorf("the round that answered = %+v, want it unflagged and without a cause", answered)
+	}
+	if answered.Sources != (TriageSources{Agent: 1, Cap: 1}) || answered.Total != 2 {
+		t.Errorf("the round that answered = %+v of %d, want one agent, one cap and both findings", answered.Sources, answered.Total)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		// The flag above the status block: a reader who stops there must not
+		// come away thinking the run's rounds were all judged.
+		"Triage:   the judge did not answer for round 1 of level 2: " + answer + " [REDACTED]; the fail-safe blocked every finding the mode's table blocks",
+		"Triage\n",
+		"round 1 (startup, l2, claude-opus-5-5, account bmb): 2 findings — agent 0, table 1, fail_safe 1, cap 0; FAILED: " + answer,
+		"round 2 (startup, l2, claude-opus-5-5): 2 findings — agent 1, table 0, fail_safe 0, cap 1",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("the human diagnosis lacks %q:\n%s", want, human)
+		}
+	}
+	if strings.Contains(human, secret) {
+		t.Fatalf("the human diagnosis carries the secret:\n%s", human)
+	}
+}
+
+// TestDiagnosePrintsASkippedTriageRound: a round the run did not ask at all is
+// a different fact from one whose call failed, and the document says so on a
+// member of its own: `skipped` set, `failed` absent, and the run's own cause
+// beside them. The human diagnosis flags it above the status block and in the
+// Triage block below it -- a reader who saw "failed" over a round that never ran
+// would go looking for a call that does not exist -- and the fix round that
+// follows such a round was handed what the mode's table blocks, which no judge
+// weighed (D1846).
+//
+// The clause above the block is runstore's own (TriageSkipClause, the same
+// reader the report's status line uses), so the two places cannot word one
+// record differently.
+func TestDiagnosePrintsASkippedTriageRound(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abda"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady,
+		Stages: []runstore.StageTiming{{Name: "triage", Ordinal: 1, Round: 1, Level: policy.LevelL2}},
+		Triage: runstore.NewTriage([]runstore.TriageRound{
+			{Round: 1, Ordinal: 1, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5-5",
+				Skipped: true, Cause: runstore.TriageCauseNoAccount,
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictBlock, Reason: "no verdict was read", Source: runstore.TriageSourceFailSafe},
+				}},
+			// The round that answered, so the two readings sit beside each
+			// other and a reader can tell them apart.
+			{Round: 2, Ordinal: 2, Mode: rigor.Startup, Level: policy.LevelL2, Model: "claude-opus-5-5",
+				Entries: []runstore.TriageEntry{
+					{Key: "k1", Verdict: runstore.VerdictDefer, Reason: "doc drift", Source: runstore.TriageSourceAgent},
+				}},
+		})}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(d.Triage) != 2 {
+		t.Fatalf("triage = %+v, want the record's two rounds", d.Triage)
+	}
+	skipped := d.Triage[0]
+	if !skipped.Skipped || skipped.Failed {
+		t.Errorf("the round = %+v, want it skipped and not failed", skipped)
+	}
+	if skipped.Cause != runstore.TriageCauseNoAccount {
+		t.Errorf("the skipped round's cause = %q, want the record's own", skipped.Cause)
+	}
+	if skipped.Sources != (TriageSources{FailSafe: 1}) || skipped.Total != 1 {
+		t.Errorf("the skipped round's placements = %+v of %d, want the fail-safe's one", skipped.Sources, skipped.Total)
+	}
+	if answered := d.Triage[1]; answered.Skipped || answered.Failed || answered.Cause != "" {
+		t.Errorf("the round that answered = %+v, want it unflagged and without a cause", answered)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Triage:   triage did not run for round 1 of level 2: " + runstore.TriageCauseNoAccount + "; the fail-safe blocked every finding the mode's table blocks",
+		"round 1 (startup, l2, claude-opus-5-5): 1 finding — agent 0, table 0, fail_safe 1, cap 0; SKIPPED: " + runstore.TriageCauseNoAccount,
+		"round 2 (startup, l2, claude-opus-5-5): 1 finding — agent 1, table 0, fail_safe 0, cap 0",
+	} {
+		if !strings.Contains(human, want) {
+			t.Errorf("the human diagnosis lacks %q:\n%s", want, human)
+		}
+	}
+}
+
 // TestDiagnoseOmitsStagesAndToleratedWhenEmpty: both keys are omitempty, so a
 // run whose record carries neither -- a run that never recorded a stage, and
 // one with no record at all -- prints a document without them rather than an
@@ -249,10 +424,10 @@ func TestDiagnoseOmitsStagesAndToleratedWhenEmpty(t *testing.T) {
 		if err := json.Unmarshal([]byte(out), &d); err != nil {
 			t.Fatal(err)
 		}
-		if d.Stages != nil || d.Tolerated != nil {
-			t.Fatalf("%s: stages %+v, tolerated %+v", id, d.Stages, d.Tolerated)
+		if d.Stages != nil || d.Tolerated != nil || d.Triage != nil {
+			t.Fatalf("%s: stages %+v, tolerated %+v, triage %+v", id, d.Stages, d.Tolerated, d.Triage)
 		}
-		for _, key := range []string{`"stages"`, `"tolerated"`} {
+		for _, key := range []string{`"stages"`, `"tolerated"`, `"triage"`} {
 			if strings.Contains(out, key) {
 				t.Fatalf("%s prints %s for a run that recorded none:\n%s", id, key, out)
 			}
@@ -1219,6 +1394,160 @@ func TestDiagnoseReportedComparesTheProviderRouteOnly(t *testing.T) {
 	}
 }
 
+// TestDiagnoseReportAgainstBand: a record that carries the table's band is
+// read against the band and not against the charge (D2650, F16). The human
+// line says what the run settled, how many of its calls the report covers and
+// the band; the JSON carries the record's three fields; and a report more than
+// reportedGapPct outside either end warns in band_warning -- the field the
+// console does not render yet, which is why reported_warning is empty for such
+// a record rather than left carrying a comparison it no longer makes.
+func TestDiagnoseReportAgainstBand(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		reported   float64
+		lo, hi     float64
+		unreported int
+		warn       string // "" inside the band, else "above" or "below"
+	}{
+		{0.42, 0.30, 0.45, 2, ""},
+		{0.55, 0.30, 0.45, 2, "above"},
+		{0.20, 0.30, 0.45, 2, "below"},
+		{0.45, 0.30, 0.45, 0, ""}, // the dearest end itself, and every call reported
+	} {
+		id := fmt.Sprintf("20260927-17000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.42}
+		cost.RouteBy = map[string]float64{"openrouter": 0.42}
+		cost.ReportedUSD, cost.TableLoUSD, cost.TableHiUSD, cost.UnreportedCalls =
+			tc.reported, tc.lo, tc.hi, tc.unreported
+		calls := 5
+		if err := runstore.Open(b, appSlug, id).WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.42, Cost: &cost,
+			Stages: []runstore.StageTiming{{Name: "implement", Calls: &calls}}}); err != nil {
+			t.Fatal(err)
+		}
+		human, _, err := execute(t, "diagnose", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := fmt.Sprintf("Settled:  $0.4200 (reported on %d of %d calls); table band $%.4f-$%.4f",
+			5-tc.unreported, 5, tc.lo, tc.hi)
+		if !strings.Contains(human, want) {
+			t.Fatalf("reported %v: diagnose lacks %q:\n%s", tc.reported, want, human)
+		}
+		if strings.Contains(human, "Reported:") {
+			t.Fatalf("reported %v: a record with the band printed the charge comparison:\n%s", tc.reported, human)
+		}
+		js, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(js), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.TableLoUSD != tc.lo || d.TableHiUSD != tc.hi || d.UnreportedCalls != tc.unreported {
+			t.Fatalf("reported %v: band %v-%v unreported %d, want %v-%v %d",
+				tc.reported, d.TableLoUSD, d.TableHiUSD, d.UnreportedCalls, tc.lo, tc.hi, tc.unreported)
+		}
+		if d.ReportedWarning != "" {
+			t.Errorf("reported %v: reported_warning = %q, want empty for a record with a band", tc.reported, d.ReportedWarning)
+		}
+		if tc.warn == "" && d.BandWarning != "" {
+			t.Errorf("reported %v: band_warning = %q, want none inside the band", tc.reported, d.BandWarning)
+		}
+		if tc.warn != "" {
+			if d.BandWarning == "" {
+				t.Fatalf("reported %v: no band_warning, want one %s the band", tc.reported, tc.warn)
+			}
+			if !strings.Contains(d.BandWarning, tc.warn) {
+				t.Errorf("reported %v: band_warning %q does not say %q", tc.reported, d.BandWarning, tc.warn)
+			}
+			if !strings.Contains(human, "Warning:  "+oneLine(d.BandWarning)) {
+				t.Errorf("reported %v: the warning is not in the human output:\n%s", tc.reported, human)
+			}
+		}
+	}
+}
+
+// TestReportedCallsReadsTheRunsOwnCounts: the coverage the Settled line prints
+// comes from the record's own figures -- the gateway's per-stage call counts
+// and cost.unreported_calls -- and never from a count diagnose would have to
+// guess. A record whose unreported count sits above the stages' sum is a run
+// whose calls settled after their stage's report was taken, and the larger of
+// the two is what it settled.
+func TestReportedCallsReadsTheRunsOwnCounts(t *testing.T) {
+	calls, none := 5, 0
+	stages := []runstore.StageTiming{{Name: "implement", Calls: &calls}, {Name: "review"}, {Name: "fix", Calls: &none}}
+	for _, tc := range []struct{ unreported, reported, settled int }{
+		{0, 5, 5},
+		{2, 3, 5},
+		{5, 0, 5},
+		{7, 0, 7},
+	} {
+		reported, settled := reportedCalls(stages, tc.unreported)
+		if reported != tc.reported || settled != tc.settled {
+			t.Errorf("unreported %d: reported on %d of %d, want %d of %d",
+				tc.unreported, reported, settled, tc.reported, tc.settled)
+		}
+	}
+}
+
+// TestDiagnoseOldRecordUnchanged: a record written before the band existed
+// keeps the comparison and the line it always had -- the report against the
+// charge without the route fee, and no band in either output.
+func TestDiagnoseOldRecordUnchanged(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-180000-aaaa"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	cost := runstore.NewCost(0.60, 0, runstore.BasisAPIList)
+	cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.30, "unattributed": 0.30}
+	cost.RouteBy = map[string]float64{"openrouter": 0.30, "unattributed": 0.30}
+	cost.ReportedUSD = 0.40
+	if err := runstore.Open(b, appSlug, id).WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.60, Cost: &cost}); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Reported: providers said $0.4000; charged $0.3000 (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)"
+	if !strings.Contains(human, want) {
+		t.Fatalf("diagnose lacks %q:\n%s", want, human)
+	}
+	if strings.Contains(human, "Settled:") || strings.Contains(human, "table band") {
+		t.Fatalf("a record with no band printed one:\n%s", human)
+	}
+	js, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"table_lo_usd", "table_hi_usd", "unreported_calls", "band_warning"} {
+		if _, ok := doc[key]; ok {
+			t.Errorf("a record with no band carries %q:\n%s", key, js)
+		}
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(js), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Reported != 0.40 || d.Charge != 0.30 || d.ReportedWarning == "" {
+		t.Fatalf("reported %v charge %v warning %q", d.Reported, d.Charge, d.ReportedWarning)
+	}
+}
+
 // With first-line entries in Reviews, the findings come from the transcript
 // of the last senior round, not review-<len(Reviews)>.
 func TestDiagnoseFindingsFromSeniorRound(t *testing.T) {
@@ -1280,21 +1609,28 @@ func TestRouteOfComparesWithoutTheRouteFee(t *testing.T) {
 	}
 }
 
-// TestDiagnoseReportedWarningNamesPricePolicy: on a catalog-priced route a
-// reported cost above the charge is as likely to be OpenRouter serving a
-// dearer endpoint as a wrong model_prices, so the warning names both ways
-// out (design §7, D12, Task 5 step 4).
-func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
+// TestDiagnoseReportedWarningNamesModelPrices: a reported cost above the
+// charge or above the table's dearest end has one answer left, model_prices,
+// because the catalog already charges its dearest end by default (D2644) —
+// the switch the warning used to name is the default, so naming it would be
+// advice to change nothing. A record that carries the band warns the same way
+// in band_warning, whose two directions name the same answers -- the band's
+// dearest end for a report above it, and a price too high for a report below
+// the cheapest one (D2650).
+func TestDiagnoseReportedWarningNamesModelPrices(t *testing.T) {
 	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
 	cost.RouteBy = map[string]float64{"openrouter": 0.30}
 	cost.ReportedUSD = 0.40
 	rec := &runstore.Record{Version: 1, RunID: "20261001-120000-abcd", Cost: &cost}
 	var d Diagnosis
 	routeOf(&d, rec, nil, func(s string) string { return s })
-	for _, want := range []string{"model_prices", "price_policy: highest", "reported"} {
+	for _, want := range []string{"model_prices", "reported"} {
 		if !strings.Contains(d.ReportedWarning, want) {
 			t.Errorf("the warning lacks %q: %q", want, d.ReportedWarning)
 		}
+	}
+	if strings.Contains(d.ReportedWarning, "price_policy") {
+		t.Errorf("the warning still names a price_policy, which is the default it already applies: %q", d.ReportedWarning)
 	}
 	// A report within the margin warns nothing.
 	cost.ReportedUSD = 0.31
@@ -1302,6 +1638,39 @@ func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
 	routeOf(&d, rec, nil, func(s string) string { return s })
 	if d.ReportedWarning != "" {
 		t.Errorf("a report inside the margin warned: %q", d.ReportedWarning)
+	}
+
+	// The same record with the table's band: the charge is no longer the
+	// comparison, so the warning is the band's and reported_warning is empty.
+	cost.ReportedUSD, cost.TableLoUSD, cost.TableHiUSD = 0.40, 0.30, 0.35
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	for _, want := range []string{"model_prices", "reported", "above"} {
+		if !strings.Contains(d.BandWarning, want) {
+			t.Errorf("the band warning lacks %q: %q", want, d.BandWarning)
+		}
+	}
+	if strings.Contains(d.BandWarning, "price_policy") {
+		t.Errorf("the band warning still names a price_policy, which is the default it already applies: %q", d.BandWarning)
+	}
+	if d.ReportedWarning != "" {
+		t.Errorf("a record with a band kept the charge comparison: %q", d.ReportedWarning)
+	}
+	cost.ReportedUSD = 0.20
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	for _, want := range []string{"model_prices", "below"} {
+		if !strings.Contains(d.BandWarning, want) {
+			t.Errorf("the below-band warning lacks %q: %q", want, d.BandWarning)
+		}
+	}
+	// Inside the band -- between the cheapest end and the dearest, with the
+	// 10% margin either side -- nothing warns at all.
+	cost.ReportedUSD = 0.32
+	d = Diagnosis{}
+	routeOf(&d, rec, nil, func(s string) string { return s })
+	if d.BandWarning != "" || d.ReportedWarning != "" {
+		t.Errorf("a report inside the band warned: %q / %q", d.BandWarning, d.ReportedWarning)
 	}
 }
 
@@ -1340,11 +1709,12 @@ func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
 // service tier the price table has no multiplier for charged them
 // conservatively (design §6.1), so diagnose names the tier and the multiple
 // over the Cost line: without it a reader has a figure nothing explains --
-// on a provider route the charge is the dearer of that multiple and the
-// provider's own reported cost, so the tier's name is what explains the
-// figure. That second figure is named only for a run that recorded one: a
-// Claude run has no route and no report. A run whose calls were all priced
-// normally prints no such line at all.
+// on a provider route a complete call settled on the provider's own reported
+// cost, and only a call the stream cut short kept the multiple with the report
+// as a floor under it, so the tier's name is what explains the figure. That
+// second figure is named only for a run that recorded one: a Claude run has no
+// route and no report. A run whose calls were all priced normally prints no
+// such line at all.
 func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 	f := newCloudFixture(t)
 	ctx := context.Background()
@@ -1357,8 +1727,8 @@ func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 	}{
 		{nil, 0, ""},
 		{[]string{`usage.service_tier "priority"`}, 0, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at (no published price for the tier)`},
-		{[]string{`usage.service_tier "priority"`}, 1.5, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
-		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, 1.5, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`}, 1.5, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, 1.5, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure (no published price for the tier)`},
 	} {
 		id := fmt.Sprintf("20260927-19000%d-aaaa", i)
 		exec := seedRun(t, f, id, "", "someone@example.com", true)
@@ -1485,7 +1855,7 @@ func TestDiagnoseRendersTheServiceTierCounter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)"
+	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure (no published price for the tier)"
 	if !strings.Contains(human, want+"\n") {
 		t.Fatalf("want %q:\n%s", want, human)
 	}

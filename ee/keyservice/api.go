@@ -401,10 +401,41 @@ type Where struct {
 
 // Tx is the reads and the writes one transaction makes together (plan P1.2):
 // what it writes is committed with what it read, or the store runs it again.
+//
+// A Query is one of those reads and not a listing beside them: the documents it
+// answers are part of what the transaction read, so a writer that puts one into
+// that collection is a conflict — the transaction runs again on the state that
+// includes it — rather than a document it never saw. That is what makes a check
+// about a collection hold inside the transaction that writes one (P3.1's one
+// project id bound once), and it is why a check made outside one holds nothing.
+//
+// The one write here that is not a document of the portal's own is a
+// withdrawal: the key store keeps its records in the same document store this
+// seam is (firestore_store.go's NewDocStore is handed the database the deploy
+// hands the portal), and a withdrawal a binding makes has to land with the
+// binding or not at all (P3.1's rebind), which is why it is made here rather
+// than through the store's own interface.
 type Tx interface {
 	Get(ctx context.Context, collection, id string) (Doc, error)
+	Query(ctx context.Context, collection string, where Where) ([]Doc, error)
 	Put(ctx context.Context, collection, id string, doc Doc) error
 	Delete(ctx context.Context, collection, id string) error
+	// Revoke withdraws keys the way the store's own Revoke does (store.go):
+	// the records go into the store this transaction runs in, under its rule
+	// for a key already withdrawn — the first entry a key is given stands, and a
+	// later one leaves the reason and the instant it holds. What it is not is a
+	// call to that store's Revoke, which opens a transaction of its own: the
+	// store would be asked to run one inside this, which the backend refuses
+	// (docstore's errNestedTransaction), and on a deployment that reached the
+	// two seams over two stores it would commit the withdrawal even when the
+	// binding that made it never landed.
+	//
+	// The whole list is one call because a transaction reads before it writes
+	// (docstore's ErrReadAfterWrite): what is already withdrawn is read first,
+	// so a caller makes this call before the transaction writes anything else —
+	// which is where a binding's withdrawal belongs, ahead of the records it is
+	// committed with.
+	Revoke(ctx context.Context, revocations []Revocation) error
 }
 
 // ErrNoDocument is what a read of a document that is not there answers, so a
@@ -416,8 +447,20 @@ var ErrNoDocument = errors.New("keyservice: the document is not there")
 // them, and the Microsoft (Entra ID) directory the account lives in when the
 // token carries one (F31, D2207 as amended on 2026-11-13).
 type Caller struct {
-	UID      string
-	Email    string
+	UID string
+	// Email is the address the sign-in asserted, and mcpauth has folded it
+	// WHOLE: the local part is lower-cased like the domain, which is not the
+	// fold access.Member makes. Anything comparing an address a person typed
+	// with this one compares through Member and never against Email.
+	Email string
+	// Member is access.Member of the address as the token CLAIMED it, which is
+	// the member an invitation is compared against (P2.2, F10). It is not
+	// derivable from Email — access.Member keeps the local part byte for byte,
+	// so the folded spelling answers a member a capitalised local part can never
+	// equal — and it is empty only when the address is no member at all, which
+	// P1.3's verifier refuses before answering a caller. A comparison against an
+	// empty member admits nobody.
+	Member   string
 	Provider string
 	AuthTime time.Time
 	TenantID string

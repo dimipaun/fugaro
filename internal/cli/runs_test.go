@@ -778,6 +778,82 @@ func TestLsPRJoinsExecutionsOnlyForPR(t *testing.T) {
 	}
 }
 
+// ls --pr reads no object of a run it cannot list: a run whose own task names
+// another pull request is on that one, and neither its launch.json nor its
+// result.json can place it on the pull request being listed, so the listing
+// reads its task and leaves the rest. What that saved is what the second half
+// of this test shows: the same window, with the run added to the bucket
+// between the two listings, is the same document byte for byte.
+//
+// Mutations caught: reading every run of the window whole and filtering
+// afterwards (the run off the pull request has its result.json opened, and its
+// run is not in the document either way), and narrowing on anything but the
+// task -- a first run's task names no pull request, so its record, which is
+// the only thing that names the one it opened, has to be read.
+func TestLsPRLeavesRunsOnAnotherPRUnread(t *testing.T) {
+	f := newCloudFixture(t)
+	root, on, off := runIDAt(0, "000100", "aaaa"), runIDAt(0, "000200", "bbbb"), runIDAt(0, "000300", "cccc")
+	seedSpec(t, f, firstRunSpec(root), false)
+	writeRecord(t, f, root, prRecord(root, "", 8, 3))
+	seedSpec(t, f, followUpSpec(on, root, root, 7), false)
+	writeRecord(t, f, on, prRecord(on, "", 7, 1))
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := lsLimitInstall(t, f, blobx.Wrap(b))
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := execute(t, "runs", "ls", "--json", "--pr", "7", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got lsOut
+	if err := json.Unmarshal([]byte(before), &got); err != nil {
+		t.Fatalf("%v: %s", err, before)
+	}
+	if len(got.Runs) != 1 || got.Runs[0].RunID != on {
+		t.Fatalf("ls --pr 7 = %v, want the follow-up on it alone: the first run beside it opened PR 8", runIDs(got.Runs))
+	}
+	// The run off the pull request, seeded and copied into the counting bucket
+	// between the two listings, so what the two documents compare is one
+	// window with it and without it.
+	seedSpec(t, f, followUpSpec(off, root, root, 8), false)
+	putBuildObject(t, f, "runs/"+appSlug+"/"+off+"/result.json", []byte("{not json"))
+	for _, name := range []string{"task.json", "result.json"} {
+		body, err := os.ReadFile(filepath.Join(strings.TrimPrefix(f.bucket, "file://"), "runs", appSlug, off, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		d.mu.Lock()
+		d.objects["runs/"+appSlug+"/"+off+"/"+name] = body
+		d.mu.Unlock()
+	}
+	after, errOut, err := execute(t, "runs", "ls", "--json", "--pr", "7", "--since", "0")
+	if err != nil {
+		t.Fatalf("%v (stderr: %s)", err, errOut)
+	}
+	if before != after {
+		t.Errorf("ls --pr 7 with a corrupt run on PR 8 in the window is not the listing without it:\n%s\n%s", before, after)
+	}
+	if strings.Contains(errOut, task.ShortRun(off)) {
+		t.Errorf("ls --pr 7 warned about run %s, which is on another pull request (stderr %q)", task.ShortRun(off), errOut)
+	}
+	read := func(id, name string) bool {
+		return slices.Contains(d.keysRead(), "runs/"+appSlug+"/"+id+"/"+name)
+	}
+	if read(off, "launch.json") || read(off, "result.json") {
+		t.Errorf("ls --pr 7 read run %s's pull-request objects, want its task alone: no reading of them places it on PR 7", task.ShortRun(off))
+	}
+	// The task is what says so, and the two runs whose task does not are read
+	// whole: the follow-up on the pull request, and the first run, whose record
+	// is the only object that names the pull request it opened.
+	if !read(off, "task.json") || !read(on, "result.json") || !read(root, "result.json") {
+		t.Errorf("ls --pr 7 read %v, want run %s's task.json and the objects of the runs whose task names no other pull request", d.keysRead(), task.ShortRun(off))
+	}
+}
+
 func TestLsPRNeedsOneRepo(t *testing.T) {
 	f := newCloudFixture(t)
 	if _, _, err := execute(t, "runs", "ls", "--pr", "7", "--all"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
@@ -2044,14 +2120,13 @@ func (lsLimitOpener) OpenBucketURL(context.Context, *url.URL) (*blob.Bucket, err
 	return blob.NewBucket(lsLimitBucket), nil
 }
 
-// lsLimitRuns seeds n runs into the counting bucket, serves the project marker
-// from it (the name check every cloud command makes reads it, and that read is
-// not the one under test) and points the fixture's config at it, so the
-// command under test reads the runs the test seeded and the driver records
-// every object it touches.
-func lsLimitRuns(t *testing.T, f *cloudFixture, n int) (*lsWidthDriver, []string) {
+// lsLimitInstall serves the counting bucket the objects of b, the project
+// marker of the fixture (the name check every cloud command makes reads it,
+// and that read is not the one under test) and points the fixture's config at
+// it, so the command under test reads the runs the test seeded and the driver
+// records every object it touches.
+func lsLimitInstall(t *testing.T, f *cloudFixture, b *blobx.Bucket) *lsWidthDriver {
 	t.Helper()
-	b, ids := lsBucketRuns(t, n)
 	d := &lsWidthDriver{objects: map[string][]byte{}, width: make(chan struct{})}
 	lsDriverObjects(t, d, b)
 	marker, err := os.ReadFile(f.markerPath())
@@ -2072,7 +2147,15 @@ func lsLimitRuns(t *testing.T, f *cloudFixture, n int) (*lsWidthDriver, []string
 	if err := os.WriteFile(path, bytes.ReplaceAll(data, []byte(f.bucket), []byte(lsLimitScheme+"://runs")), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return d, ids
+	return d
+}
+
+// lsLimitRuns seeds n runs into the counting bucket and serves them to the
+// fixture, returning the driver and their run IDs, oldest first.
+func lsLimitRuns(t *testing.T, f *cloudFixture, n int) (*lsWidthDriver, []string) {
+	t.Helper()
+	b, ids := lsBucketRuns(t, n)
+	return lsLimitInstall(t, f, b), ids
 }
 
 // TestRunsLsLimitReadsTheWholeWindow: --limit shortens what a listing prints

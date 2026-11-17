@@ -142,8 +142,12 @@ esac
 # the <workspace>/<repo> half alone: that is what is taken off the origin here,
 # and an origin that leaves no <workspace>/<repo> at all is refused below rather
 # than used as a path.
+# Inside a run `git remote get-url` answers with the insteadOf-rewritten URL,
+# which is the forwarder's own (…/v1/bitbucket/proxy/<workspace>/<repo>.git), so
+# that prefix is taken off too: left in, the pull-request paths carry a URL and
+# the service refuses them as path_malformed instead of by their own class.
 origin=$(git remote get-url origin 2>/dev/null || true)
-self=$(printf '%s' "$origin" | sed -e 's|^.*bitbucket\.org[/:]||' -e 's|\.git$||' | head -n 1)
+self=$(printf '%s' "$origin" | sed -e 's|^.*bitbucket\.org[/:]||' -e 's|^.*/v1/bitbucket/proxy/||' -e 's|\.git$||' | head -n 1)
 case "$self" in
 */*) ;;
 *) self="" ;;
@@ -215,11 +219,12 @@ attempt_git other-ref push "$origin" "HEAD:refs/heads/chk191-other-ref"
 
 # 3. tag: an update of refs/tags/.
 set +e
-git tag chk191-probe 2>/dev/null
+tagname="chk191-probe-$$"
+git tag "$tagname" 2>/dev/null
 set -e
-attempt_git tag push "$origin" "refs/tags/chk191-probe"
+attempt_git tag push "$origin" "refs/tags/$tagname"
 set +e
-git tag -d chk191-probe >/dev/null 2>&1
+git tag -d "$tagname" >/dev/null 2>&1
 set -e
 
 # 4. ref-delete: an update whose new id is the zero id. The ref it names is the

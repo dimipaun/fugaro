@@ -148,7 +148,16 @@ func applySettingsEdit(cmd *cobra.Command, lc *localcfg.Config, e settingsEdit) 
 	// purpose — a dry run answers for the write, so it is refused wherever the
 	// write would be, and the fence stays the first thing either path meets.
 	if e.DryRun != nil {
-		return writeSettingsWriteDoc(out, e.DryRun.document(e, changed), e.DryRun.jsonOut)
+		doc := e.DryRun.document(e, changed)
+		// A run of several writes answers with one document, and this is where
+		// its own document is handed over rather than printed: the caller that
+		// knows the run prints it once, after every write of it has been
+		// classified.
+		if e.DryRun.collect != nil {
+			*e.DryRun.collect = append(*e.DryRun.collect, doc)
+			return nil
+		}
+		return writeSettingsWriteDoc(out, doc, e.DryRun.jsonOut)
 	}
 
 	fmt.Fprintf(out, "%s\n%s", e.Path, diff)
@@ -291,7 +300,15 @@ func announceSettingsWrite(cmd *cobra.Command, managed bool, what string) error 
 // commands in that refusal, so each family's sentence names its own commands
 // rather than another family's.
 func settingsLocalFile(what string) (localcfg.Selection, *localcfg.Config, error) {
-	sel, lc, err := settingsSelection()
+	return settingsAimedLocalFile(settingsWriteOptions{}, what)
+}
+
+// settingsAimedLocalFile is settingsLocalFile for the commands that can aim the
+// selection with --config and --project (settingsAimedSelection), so the same
+// refusal and the same file are reached either way rather than a second copy of
+// the rule living in the family that gained the flags.
+func settingsAimedLocalFile(o settingsWriteOptions, what string) (localcfg.Selection, *localcfg.Config, error) {
+	sel, lc, err := settingsAimedSelection(o)
 	if err != nil {
 		return sel, nil, err
 	}

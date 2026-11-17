@@ -1146,20 +1146,23 @@ func (s *Server) logUsageUnparsed(model string, pr *Route, reason string, events
 		"route", route, "reason", reason, "events", strings.Join(events, ","))
 }
 
-// fromUsage prices a call from the usage the response reported: at the
-// serving model's rates, the table's maximum for an unknown model, or a
-// multiple of those rates when the response reported a pricing dimension the
-// table has no price for -- the dearest multiple it knows for a service tier
-// no provider publishes a multiplier for, and that multiple on the table's
-// maximum rates for a speed or inference geography the request didn't
-// allow. On a provider route (pr, else nil) a
-// serving model other than the pinned one is never priced lower than the
-// pin: the dearer of the two rates per dimension, or the table's maximum
-// when the table doesn't know it; the route's fee is added to the
-// charge; and a service tier no one prices is charged at least the cost the
-// provider itself reported for the call, up to the reservation w the call
-// already made. A partial call is charged its reported input and cache
-// tokens plus the reserved output.
+// fromUsage prices a call from the usage the response reported.
+//
+// On a provider route (pr, else nil) a complete call settles on the cost the
+// provider reported for it (D2640) -- that figure with the route's fee,
+// floored at the table's charge for the same usage at the row's cheapest end
+// -- and every other call is priced by the table: at the serving model's
+// rates, the table's maximum for an unknown model, or a multiple of those
+// rates when the response reported a pricing dimension the table has no price
+// for -- the dearest multiple it knows for a service tier no provider
+// publishes a multiplier for, and that multiple on the table's maximum rates
+// for a speed or inference geography the request didn't allow. A partial call
+// is charged its reported input and cache tokens plus the reserved output,
+// and the reported cost is a floor under that charge when the call was served
+// at a tier no one prices (RS2). A serving model other than the pinned one is
+// never priced lower than the pin: the dearer of the two rates per dimension,
+// or the table's maximum when the table doesn't know it. The route's fee is
+// added to every charge on it.
 func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, partial bool) outcome {
 	serving := t.model
 	if serving == "" {
@@ -1168,17 +1171,33 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	o := outcome{servingModel: serving, pricedAs: pricedTable, errorType: t.errorType}
 	rates := s.o.Prices.Max()
 	mult := int64(1)
+	// lo and hi are the two ends of the row this call's band is taken from
+	// (D2650, SA1.6), and haveRow says the table knows a row for the call at
+	// all. The band is the table's charge for the call at those ends, so its
+	// row is the row the charge's own rates come from where the table prices
+	// the call by the serving model, and the pin's for a call the table
+	// prices at its maximum (RS7) -- including a serving name that is no
+	// model of the table's at all. A call whose pin the table doesn't know
+	// either has no row and no band: the table's maximum is not a row, and a
+	// band of Claude's dearest rates would claim a prediction the table
+	// never made.
+	var lo, hi pricing.Rates
+	haveRow := false
 	if m, ok := s.o.Prices.Lookup(serving); ok {
-		rates = m.Rates
+		rates, lo, hi, haveRow = m.Rates, m.Lo, m.Hi, true
 		if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pin.ID != m.ID {
 			rates = pricing.MaxOf(pin.Rates, m.Rates)
+			lo, hi = pin.Lo, pin.Hi
 			o.pricedAs = pricedMax
 		}
 	} else if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pinSpelling(serving, p.model) {
 		// The pin with a date or other suffix: the pin's own model.
-		rates = pin.Rates
+		rates, lo, hi, haveRow = pin.Rates, pin.Lo, pin.Hi, true
 	} else {
 		o.pricedAs = pricedMax
+		if pin, pinned := s.o.Prices.Lookup(p.model); pinned {
+			lo, hi, haveRow = pin.Lo, pin.Hi, true
+		}
 		if pr != nil {
 			s.log.Warn("budget: serving model not in the price table, priced at the table maximum",
 				"serving_model", logValue(serving), "pinned_model", logValue(p.model))
@@ -1193,15 +1212,16 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// A service tier is the tier the provider itself served the call from:
 	// the agent's request said nothing about it, and a provider can answer
 	// with one at any time. It is charged the dearest multiple the table
-	// knows -- an assumed ceiling rather than a published price, so a
-	// provider route that reported what the call cost floors it at that
-	// figure (below) -- and recorded on the stage, in the call log and in a
-	// warning, and the stage goes on: failing the stage is what turns one
-	// provider's field into a dead run. Pricing it at the table's maximum
-	// rates instead of its own would charge a cheap model a dearer model's
-	// money -- a DeepSeek call at Claude's rates -- which inflates the record
-	// and the shared day counters and, on a tight cap, halts a run that the
-	// model's own rates would not have.
+	// knows -- an assumed ceiling rather than a published price -- and
+	// recorded on the stage, in the call log and in a warning, and the stage
+	// goes on: failing the stage is what turns one provider's field into a
+	// dead run. A provider route that reported what the call cost is not
+	// charged the multiple at all: a complete call settles on that figure
+	// (D2640), and a partial one is floored by it (below). Pricing the tier
+	// at the table's maximum rates instead of the call's own would charge a
+	// cheap model a dearer model's money -- a DeepSeek call at Claude's
+	// rates -- which inflates the record and the shared day counters and, on
+	// a tight cap, halts a run that the model's own rates would not have.
 	//
 	// A speed or an inference geography the request chose stays a violation,
 	// and is the dearer case of the two: the table's maximum rates times
@@ -1222,10 +1242,18 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 			o.charge.serviceTier = d.value
 			chargedAs := fmt.Sprintf("%dx the rates the call is priced at", mult)
 			if pr != nil && t.acc.hasReported {
-				// The provider's own report floors this charge (below), so
-				// the line the reader uses to explain the figure says the
-				// figure may be the report and not the multiple.
-				chargedAs += ", or the provider's reported cost with the route fee if dearer"
+				if partial {
+					// A partial call is charged the multiple, and the
+					// provider's own report only floors it (below), so the
+					// line the reader uses to explain the figure says the
+					// figure may be the dearer of the two.
+					chargedAs += ", or the provider's reported cost with the route fee if dearer"
+				} else {
+					// A complete call settles on the report itself (D2640),
+					// so the multiple is not the figure to expect: the line
+					// says what the call settled on.
+					chargedAs += ", or the provider's reported cost with the route fee, which is what the call settled on, floored at the row's cheapest end"
+				}
 			}
 			s.log.Warn("budget: service tier not priced", "model", logValue(serving), "service_tier", d.value,
 				"charged_as", chargedAs)
@@ -1241,25 +1269,23 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		}
 	}
 	u := t.acc.usage(rates, p.cacheTTL)
-	reported := pricing.WithFee(satMul(rates.Cost(u), mult), fee)
+	table := pricing.WithFee(satMul(rates.Cost(u), mult), fee)
 	// The conservative multiple is an assumed ceiling and not a published
 	// price -- no provider publishes a multiplier for a tier other than
-	// standard -- so on a provider route that reported what the call cost,
-	// the provider's own figure, with the route's fee as every charge on that
-	// route carries it, is a floor under the charge: an unpublished tier
-	// premium never charges less than the provider says the call cost. It can
-	// only raise the charge, never lower it, and a report the gateway refused
-	// to record -- below zero, above maxReportedUSD, not a number -- is not a
-	// floor either, since hasReported is set only inside those bounds.
+	// standard -- so a partial call whose provider reported what it cost is
+	// charged at least that figure, with the route's fee as every charge on
+	// that route carries it: an unpublished tier premium never charges less
+	// than the provider says the call cost. It can only raise the charge,
+	// never lower it, and a report the gateway refused to record -- below
+	// zero, above maxReportedUSD, not a number -- is not a floor either,
+	// since hasReported is set only inside those bounds. A complete call is
+	// not what this floor is for: it settles on the report itself, below.
 	//
-	// The floor stops at the reservation the call already made, w.
-	// maxReportedUSD bounds a figure recorded for comparison, not a charge,
-	// and this report is the one part of the charge the gateway cannot check
-	// against anything of its own: unclamped, a report at that bound would
-	// charge a single call millions of times its own worst case, halt the run
-	// and write that figure into result.json. So the report raises the charge
-	// as far as the reservation and no further; above it a charge is what the
-	// call's own usage made it, exactly as before this rule.
+	// The floor stops at the reservation the call already made, w: the report
+	// is the one part of a charge the gateway cannot check against anything
+	// of its own, and an unclamped one would charge a single call millions of
+	// times its own worst case, halt the run and write that figure into
+	// result.json.
 	floor := pricing.Micros(0)
 	if o.charge.serviceTier != "" && pr != nil && t.acc.hasReported {
 		floor = min(pricing.WithFee(t.acc.reported, fee), w)
@@ -1278,17 +1304,77 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// What this call had cached is what a switch after it re-reads (F24), and
 	// it is known because this call's usage was read.
 	o.usageRead = true
+	// The provider's own figure and the table's band over this call (F7,
+	// D2650) are recorded where the charge records the report and not
+	// wherever the response carried one: a call whose response carried no
+	// report at all, and a call on a route that reports no cost, are in no
+	// split the run's report total carries -- but the band is the table's own
+	// charge at the row's ends, no route fee and no multiple either: the
+	// conservative tier and surprise multiples are what the charge adds to an
+	// estimate (F12), while the band is the price a report is read against,
+	// and a band carrying a multiple would sit above the floor that same
+	// usage is charged at. It is taken over the usage the report is over,
+	// which for a partial call is the usage the provider sent and not the
+	// output it reserved.
 	if !partial {
-		o.amount, o.settled = max(reported, floor), settledUsage
+		// The report is recorded on its own terms (F7, D2650) whatever the
+		// charge below turns out to be: it is what the provider said the call
+		// cost, and the split and the band are over exactly the calls that
+		// carried one.
 		if pr != nil && t.acc.hasReported {
-			o.charge.reported = t.acc.reported // a record for comparison: it prices the call only where it floors a tier charge
+			o.charge.recordReport(t.acc.reported, lo, hi, u, haveRow)
 		}
+		switch {
+		case pr == nil || !t.acc.hasReported || o.pricedAs == pricedSurprise:
+			// The table's own charge: a call on the Anthropic upstream or on
+			// a route that reports no cost has nothing to settle on, and a
+			// call priced surprise -- a speed or a geography the request
+			// chose -- keeps its penalty charge and does not settle on its
+			// report either (O6), the report above naming what the provider
+			// charged beside it.
+			o.amount = max(table, floor)
+		default:
+			// A complete call on a provider route settles on what the
+			// provider says it cost, plus the route's fee (D2640). The table
+			// stays the reservation and the estimate: it is what the call was
+			// reserved against, what a report too malformed to price anything
+			// settles at, and the floor a report cannot fall below.
+			rep := pricing.WithFee(t.acc.reported, fee)
+			if rep > satMul(w, malformedReportMultiple) {
+				// A report ten times the call's own reservation is not a price
+				// (D2641): a figure that far out is a malformed field, a
+				// currency the gateway doesn't know, or a provider's own bug,
+				// and charging it would halt a run and write it into
+				// result.json. The table's own charge stands, and the warning
+				// names the figure.
+				s.log.Warn("budget: provider reported cost above ten times the reservation",
+					"model", logValue(serving), "reported_micros", int64(t.acc.reported), "reserved_micros", int64(w))
+				o.amount = table
+				break
+			}
+			// A report above the reservation settles in full and is counted
+			// as an overrun: the provider charged it, and understating the
+			// charge is what would let a capped run's spend pass its cap.
+			o.amount = rep
+			// Below the table's cheapest end for the same usage, a report is
+			// floored there (D2651): a provider that under-reports, or reports
+			// a zero, must not make a call cheaper than the table says it was.
+			if haveRow {
+				if loFloor := pricing.WithFee(lo.Cost(u), fee); loFloor > o.amount {
+					s.log.Warn("budget: provider reported cost below the tier's cheapest end",
+						"model", logValue(serving), "reported_micros", int64(t.acc.reported), "floored_micros", int64(loFloor))
+					o.amount = loFloor
+				}
+			}
+			o.pricedAs = pricedReported
+		}
+		o.settled = settledUsage
 		return o
 	}
 	charged := u
 	charged.Output = max(u.Output, p.maxTokens)
 	o.amount = max(pricing.WithFee(satMul(rates.Cost(charged), mult), fee), floor)
-	o.unreconciled = max(o.amount-reported, 0)
+	o.unreconciled = max(o.amount-table, 0)
 	o.settled = settledPartial
 	if floor > 0 {
 		// A partial call whose charge the report floors records it exactly as
@@ -1298,7 +1384,7 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 		// where the record carries a report -- would go silent on the run
 		// that needs it. A partial call the floor does not price keeps
 		// recording nothing, as it always has.
-		o.charge.reported = t.acc.reported
+		o.charge.recordReport(t.acc.reported, lo, hi, u, haveRow)
 	}
 	return o
 }

@@ -42,6 +42,17 @@ expect_absent() {
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
 }
+expect_same() { # got want what
+  [ "$1" = "$2" ] || fail "$3: expected '$2', got '$1'"
+}
+# na_of BLOCK: the keys of the block's `N/A — not part of this mode` rows, in the
+# order it printed them, space-separated and with a trailing space (so an empty
+# reading and a reading of the wrong rows are both visible to expect_same). The
+# keys are what say the N/A rows are EXACTLY the ones the run's mode never
+# records: a key the run would have recorded reads `FAIL — not reached`.
+na_of() { # na_of BLOCK
+  printf '%s\n' "$1" | sed -n 's/^FACT \([a-z-]*\): N\/A — not part of this mode.*$/\1/p' | tr '\n' ' '
+}
 
 # One run id base for the whole test file, so a case that asserts on a run id and
 # the run the check launches cannot disagree. It carries today's UTC date and a
@@ -320,6 +331,10 @@ logs)
     # probe at all — its check step ran something else — and `probe-unavailable`
     # is the probe stopping on one of its own guards, which reports all seven
     # as attempts it could not make rather than reporting six of seven.
+    # `served-empty` is the one a git call the proxy SERVED leaves: git prints
+    # nothing when it succeeds, so the probe's own line carries no token after
+    # `answer=` at all (test_the_probe_reports_an_attempt_the_proxy_served pins
+    # that at the probe's level).
     if [ "$mode" != no-probe ]; then
       for attempt in other-repository other-ref tag ref-delete other-pull-request merge workspaces; do
         refused=yes
@@ -331,6 +346,10 @@ logs)
         if [ "$mode" = unreported ] && [ "$attempt" = tag ]; then
           refused=no
           answer=200
+        fi
+        if [ "$mode" = served-empty ] && [ "$attempt" = other-ref ]; then
+          refused=no
+          answer=""
         fi
         echo "CHK191 attempt=$attempt refused=$refused answer=$answer"
       done
@@ -1579,6 +1598,15 @@ DOCTOR_EOF
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a grant doctor could not judge: the runs are launched"
 }
 
+# The block's own key list is printed whatever happened, and a key no fact
+# carries used to read `FAIL — not reached` — true of a row the run would have
+# recorded had it not stopped, and false of one this mode NEVER records: a
+# default (proxy) run reads the working run's rows and never Check 192's six
+# (`jobs`, `mount`, `accessor`, `doctor`, `run-still-works`, `plain-repo`), nor
+# `dry-run`, which only a --dry-run plan writes. Seven rows read as a failed
+# check on 2026-11-17 and hid the ones that were measured, so each mode now
+# names its own rows and print_block prints those as N/A: neither a pass nor a
+# failure, and no verdict at all — the exit code counts a FAIL alone.
 test_happy_path() {
   local dir=$work/happy
   prepare "$dir"
@@ -1652,6 +1680,38 @@ test_happy_path() {
   expect_absent "$out" "FAKE-ACCESS-TOKEN" "happy path: the access token is not in the block"
   expect_absent "$err" "FAKE-ACCESS-TOKEN" "happy path: the access token is not on stderr"
   expect_contains "$(cat "$dir/logs/gcloud.calls")" "--project=fugaro-dev" "happy path: every gcloud call names the installation's project"
+  # Every row this mode never records reads N/A, and NOTHING else does: the rows
+  # the run measured read their own verdict, so the key list above is the whole
+  # of it — a row the run would have recorded has to keep reading `not reached`
+  # when the run stops (the case below), never N/A.
+  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works plain-repo " \
+    "happy path: exactly the rows this mode never records read N/A"
+  expect_contains "$out" "N/A — not part of this mode (proxy)" "happy path: the N/A row names the mode it is not part of"
+  expect_absent "$out" "N/A — not part of this mode (flip)" "happy path: no row claims another mode"
+  expect_absent "$out" "FAIL — not reached" "happy path: no row reads as one the run stopped before"
+  expect_contains "$out" "CHECK 191 RESULT END (exit 0)" "happy path: the N/A rows move no exit code"
+}
+
+# A run that STOPS early is the case the `FAIL — not reached` wording is for, and
+# the mode's own list must not take it away: the guard below stops the check
+# before anything is launched, so every row the proxy mode records was never
+# reached and reads so — while the rows this mode never records keep reading N/A
+# (they were not reached either, but they were never going to be).
+test_a_stopped_run_still_reads_not_reached() {
+  local dir=$work/stopped key
+  prepare "$dir"
+  run_check "$dir" "$script" CHECK191_RUN_ID=20200101-010101
+  expect_status "$status" 1 "a stopped run: a guard stopped the check"
+  expect_contains "$out" "FACT aborted: FAIL" "a stopped run: the block names the stop"
+  expect_contains "$err" "must be today's UTC date and a time" "a stopped run: the guard that stopped it is the run-id base"
+  for key in proxied account-admitted run-launch run-outcome refusal-merge review-run ended-identity; do
+    expect_contains "$out" "FACT $key: FAIL — not reached" \
+      "a stopped run: $key is a row this mode records and the run stopped before it"
+  done
+  expect_absent "$out" "FACT proxied: N/A" "a stopped run: a row this mode records never reads N/A"
+  expect_same "$(na_of "$out")" "dry-run jobs mount accessor doctor run-still-works plain-repo " \
+    "a stopped run: the N/A rows are still exactly the ones this mode never records"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "fugaro run " "a stopped run: no run was launched"
 }
 
 test_a_run_that_did_not_succeed_is_a_failure() {
@@ -1714,6 +1774,29 @@ test_a_forbidden_attempt_the_run_did_not_report_is_a_failure() {
   run_check "$dir" "$script" FAKE_FUGARO_MODE=unreported
   expect_status "$status" 1 "an unreported refusal"
   expect_contains "$out" "FACT refusal-tag-ref: FAIL" "an unreported refusal: the fact names the attempt the run reported as served"
+}
+
+# The one shape of the probe's line a refusal does NOT carry: a git call the
+# proxy SERVED prints nothing when it succeeds, so the probe's own line leaves
+# the answer field empty (check191-probe.sh's words_of, pinned at the probe's
+# level by test_the_probe_reports_an_attempt_the_proxy_served). The check must
+# read that line as the finding it is — the call was answered instead of
+# refused — and not as a probe that differs: a reader that required a token
+# after `answer=` dropped the line, and the row then reported "the working run
+# reported NO line for the other-ref attempt", which sends its reader to the
+# probe instead of to the proxy.
+test_a_served_attempt_with_no_status_is_a_failure() {
+  local dir=$work/servedempty
+  prepare "$dir"
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=served-empty
+  expect_status "$status" 1 "an attempt served with no status"
+  expect_contains "$out" "FACT refusal-other-ref: FAIL" "an attempt served with no status: the fact names the attempt"
+  expect_contains "$out" "the working run made the other-ref attempt and was SERVED" \
+    "an attempt served with no status: the row is the served finding"
+  expect_absent "$out" "reported NO line for the other-ref attempt" \
+    "an attempt served with no status: the row is not read as a probe that differs"
+  expect_contains "$out" "FACT refusal-tag-ref: PASS" \
+    "an attempt served with no status: the attempts that carry a refusal are still read"
 }
 
 # A repository whose own test command is not the probe reports no CHK191 line at
@@ -1959,26 +2042,26 @@ test_a_review_runs_refusal_under_another_class_is_a_failure() {
   expect_contains "$out" "FACT refusal-other-repository: PASS" "the wrong class: the working run's own rows still hold"
 }
 
-# The state a review run whose agent made no attempt leaves: an empty reading,
-# recorded as NOT MEASURED rather than failed, because a FAIL here would name a
-# hole in an installation that is correct. It is not a claim about the code —
-# the way from inside a run to the service is the runner's own loopback
-# forwarder, which attaches the run's identity to whatever arrives and drops the
-# caller's Authorization (internal/gateway's gitforward), so an agent in that
-# container which finds the port DOES reach it. What nothing does is point a
-# review run at it: the runner gives its agent no git credential and no
-# forwarder rewrite (internal/runner's refreshGitAuth) and a mode: review recipe
-# allows exactly one review step and no repository command (internal/recipe).
+# The state a review run leaves when the service's lines hold no class and no
+# served call for it: an empty reading, recorded as NOT MEASURED rather than
+# failed, because a FAIL here would name a hole in an installation that is
+# correct. The reason is the design fact:
+# a review-mode run has no route to the service: the runner gives its agent no
+# git credential and no forwarder rewrite (internal/runner's refreshGitAuth) and
+# a mode: review recipe allows exactly one review step and no repository command
+# (internal/recipe), and the owner decided to leave it that way.
 test_a_review_run_that_reached_the_service_for_nothing_is_unmeasured() {
   local dir=$work/reviewnone
   prepare "$dir"
   run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-review-refusal
   expect_status "$status" 2 "a review run whose push left no line"
   expect_contains "$out" "FACT review-run: FAIL" "a review run whose push left no line: the row is reported, never a PASS nobody took"
-  expect_contains "$out" "no attempt that reached the service" \
+  expect_contains "$out" "no class for it at all" \
     "a review run whose push left no line: what is missing is named"
-  expect_contains "$out" "loopback forwarder" \
-    "a review run whose push left no line: the row says a review run does have a way to the service"
+  expect_contains "$out" "has no route to the credentials service" \
+    "a review run whose push left no line: the row names the design fact"
+  expect_contains "$out" "NOT MEASURED, not a failure" \
+    "a review run whose push left no line: the row says it is not a failure"
   expect_contains "$out" "FACT ended-identity: PASS" "a review run whose push left no line: the rows after it were still measured"
 }
 
@@ -2006,7 +2089,7 @@ test_a_review_run_that_says_its_push_was_served_with_no_service_line_is_unmeasur
   run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served FAKE_GCLOUD_MODE=review-no-served-line
   expect_status "$status" 2 "a served sentence with no service line behind it"
   expect_contains "$out" "FACT review-run: FAIL" "a served sentence with no line behind it: the row is reported"
-  expect_contains "$out" "no service line behind it" \
+  expect_contains "$out" "neither a class nor a served call" \
     "a served sentence with no line behind it: the row says what is missing"
 }
 
@@ -2017,6 +2100,7 @@ test_a_review_run_that_made_no_attempt_is_unmeasured() {
   expect_status "$status" 2 "a review run that reported no attempt"
   expect_contains "$out" "FACT review-run: FAIL" "a review run that reported no attempt: the row is reported"
   expect_contains "$out" "no line for the push attempt" "a review run that reported no attempt: the row says what it read"
+  expect_contains "$out" "has no route to the credentials service" "a review run that reported no attempt: the row names the design fact"
 }
 
 test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure() {
@@ -2026,7 +2110,7 @@ test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure() {
   # proxy either way, and taking it for one — reading refused=maybe as the round
   # below reads refused=no — would call a garbled report a hole in the
   # installation.
-  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-garbled
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-garbled FAKE_GCLOUD_MODE=review-read-only
   expect_status "$status" 1 "a review run whose line is not the one asked for"
   expect_contains "$out" "FACT review-run: FAIL" "a garbled line: the row is reported"
   expect_contains "$out" "refused=maybe" "a garbled line: the row carries what it read"
@@ -2164,6 +2248,16 @@ test_after_flip_happy_path() {
   expect_contains "$out" "opened pull request #42" "after-flip: the proxied repository's row carries its pull request"
   expect_contains "$out" "opened pull request #43" "after-flip: the plain repository's row carries its pull request"
   expect_absent "$(cat "$dir/logs/curl.calls")" "PUT" "after-flip: no outcome node is written"
+  # Check 192 reads the flip's six keys and none of Check 191's: the same
+  # print_block serves both, so the rows this mode never records — Check 191's
+  # measured ones and the `dry-run` marker — read N/A rather than `FAIL — not
+  # reached`, which would read as a check that stopped (fourteen rows did).
+  expect_same "$(na_of "$out")" \
+    "dry-run proxied account-admitted run-launch run-outcome refusal-other-repository refusal-other-ref refusal-tag-ref refusal-ref-delete refusal-other-pull-request refusal-merge refusal-workspaces review-run ended-identity " \
+    "after-flip: exactly the rows this mode never records read N/A"
+  expect_contains "$out" "N/A — not part of this mode (flip)" "after-flip: the N/A row names the mode it is not part of"
+  expect_absent "$out" "N/A — not part of this mode (proxy)" "after-flip: no row claims another mode"
+  expect_absent "$out" "FAIL — not reached" "after-flip: no row reads as one the run stopped before"
 }
 
 test_after_flip_a_job_that_still_mounts_the_token_is_a_failure() {
@@ -2317,11 +2411,13 @@ t test_doctor_s_catch_all_unreadable_arm_is_unmeasured
 t test_a_doctor_row_the_reading_does_not_place_is_unmeasured
 t test_doctor_s_row_is_context_and_never_the_decision
 t test_happy_path
+t test_a_stopped_run_still_reads_not_reached
 t test_a_run_that_did_not_succeed_is_a_failure
 t test_a_refusal_the_service_wrote_no_class_line_for_is_a_failure
 t test_a_refusal_that_was_not_audited_is_a_failure
 t test_a_log_that_lags_is_waited_for
 t test_a_forbidden_attempt_the_run_did_not_report_is_a_failure
+t test_a_served_attempt_with_no_status_is_a_failure
 t test_a_repository_with_no_probe_is_refused_rather_than_failed
 t test_an_attempt_the_probe_could_not_make_is_unmeasured
 t test_the_probe_makes_the_seven_attempts_through_the_forwarder

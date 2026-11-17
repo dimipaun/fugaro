@@ -20,8 +20,10 @@ import (
 	"rsc.io/qr"
 
 	accesslib "github.com/dimipaun/fugaro/internal/access"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/mobileauth"
@@ -423,6 +425,20 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 		return pairRefuse(ev, o, pairRefusedKeychain, pairRemoveDeviceNode(ctx, db, lc, device.UID, fmt.Errorf("the pairing's MAC key could not be stored in the OS keychain at %s: %w; the device node written a moment ago was removed again, so nothing was delivered and no device is on the allowlist", item.Name(), err)))
 	}
 
+	// §4.2 and P5.1e: the same key goes into the installation's own copy, which
+	// is the third one — the design of record's section 4.2, the copy its
+	// section 4.7 step 2b exists to revoke — because the resident orchestrator
+	// verifies this phone's messages with the same symmetric tag the laptop
+	// does. It is written here, beside the item and before the delivery, so the
+	// undo below covers it as it covers the other two: a pairing the cloud
+	// consumer cannot verify is refused where the operator can still fix it,
+	// rather than discovered at the first message the cloud refuses.
+	copied, err := pairWriteCloudCopy(ctx, lc, device.UID, macKey)
+	if err != nil {
+		return pairRefuse(ev, o, pairRefusalCode(err, pairRefusedCloudKey),
+			pairUndoItemAndNode(ctx, db, lc, device.UID, item, fmt.Errorf("the pairing's MAC key could not be copied into the installation's cloud container %s: %w; the node and the keychain item written a moment ago were removed again, so nothing was delivered and no device is on the allowlist", infra.OrchestratorPairingSecretID, err)))
+	}
+
 	// §7.1 step 8 and §4.4: the one payload the phone stores — D199's
 	// configuration, the device token and the MAC key — sealed to the key the
 	// phone wrote, and written where its own pairing token is the only reader.
@@ -488,7 +504,7 @@ func runPair(cmd *cobra.Command, o *pairOptions) error {
 			Request:      pairRequest{KeyFingerprint: fingerprint, At: pairRequestAt(request.At)},
 			Device:       pairDevice{UID: device.UID, Name: o.name, Email: email, Role: string(role)},
 			KeychainItem: item.Name(),
-			Wrote:        []string{rules.PathDevices + "/" + device.UID, pairPathDelivery(uid)},
+			Wrote:        pairWrote(uid, device.UID, lc, copied),
 			Refused:      []string{},
 			Warnings:     []string{},
 		}})
@@ -553,6 +569,111 @@ func pairStoreMACKey(ctx context.Context, store keychain.Store, item keychain.It
 	return key, nil
 }
 
+// pairCloud is this command's reach on the installation's copy of every
+// pairing's MAC key — the third copy (mobile plan task P5.1e; the design's
+// section 4.2, and its section 4.7 step 2b which is the step that revokes it).
+// The container is Terraform's and its ID is internal/infra's one literal, so
+// nothing here computes a name; the client is the operator's own credential,
+// which is the credential the pairing itself runs on. No grant is owed to that
+// credential beyond the ones it already has: an installation's owners and
+// editors read and write every container of the project's (their basic roles
+// carry secretmanager.versions.add and versions.access, the credentials-service
+// reconciliation's F3), and the module grants the READ to the orch account and
+// nothing at all to a person.
+//
+// A client that cannot be built is remote (exit 2): it is credentials or the
+// API, and no message about a container is the operator's to act on.
+func pairCloud(ctx context.Context, lc *localcfg.Config) (*keychain.Cloud, error) {
+	svc, err := gcp.NewSecretManager(ctx, gcpOptions(lc))
+	if err != nil {
+		return nil, remote(err)
+	}
+	return keychain.NewCloud(svc, lc.GCPProject, infra.OrchestratorPairingSecretID), nil
+}
+
+// pairCloudCopyName is the installation's copy as this command names it in a
+// document and in a refusal: the container's own resource name, which is what
+// an operator can look up. Never a version number — Secret Manager assigns
+// those, the command does not hold on to one, and the container is what a
+// reader has to open either way.
+func pairCloudCopyName(lc *localcfg.Config) string {
+	return "projects/" + lc.GCPProject + "/secrets/" + infra.OrchestratorPairingSecretID
+}
+
+// pairWriteCloudCopy puts this pairing's key in that container, as the version
+// the resident orchestrator reads, and answers whether it wrote one.
+//
+// The value is EncodeKey's spelling of the same key the OS keychain item holds,
+// which is pairStoreMACKey's own reason: the phone, this laptop's item and the
+// cloud copy have to be one value and not three encodings of it, since a
+// disagreement is a message that verifies on one side of the tag and not the
+// other.
+//
+// **An installation with no container is not an error.** keychain.ErrNoCloud —
+// the 404 of a project where no orchestrator was ever opted into, which is every
+// installation until someone asks for one — answers "nothing to do": there is no
+// cloud consumer, so there is no third copy, and D111's two places stand for it
+// exactly as they did before this task. Every other failure is the pairing's and
+// is refused by the caller: a phone the installation's own consumer could never
+// verify is a half-paired device, and that is worth stopping at the pairing
+// rather than at the first message the cloud refuses.
+func pairWriteCloudCopy(ctx context.Context, lc *localcfg.Config, deviceUID string, key []byte) (bool, error) {
+	cloud, err := pairCloud(ctx, lc)
+	if err != nil {
+		return false, err
+	}
+	err = cloud.Put(ctx, deviceUID, keychain.NewKey([]byte(token.EncodeKey(key))))
+	switch {
+	case errors.Is(err, keychain.ErrNoCloud):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
+}
+
+// pairDeleteCloudCopy destroys the installation's copy of a pairing's key and
+// answers how many versions it destroyed — one for a pairing, zero for an
+// installation with no container and for a pairing that never wrote one, which
+// are the same no-op the keychain's own Delete makes of an absent item.
+//
+// It is the design's revocation step 2b, and the reason revocation is not a hole
+// in phase 2: step 3 deletes this laptop's item and reaches the cloud's copy not
+// at all, and the laptop's item and the copy are two copies of one key, so
+// deleting either alone leaves the other verifying perfectly.
+//
+// The destroy is the version, and the design's own sentence is why it is not
+// something else: "Rotating the value is not enough unless the old version is
+// destroyed; disabling the version is not enough if the service is granted
+// versions.access on the parent" (keychain.Cloud's Delete makes the same call
+// for the same reason).
+func pairDeleteCloudCopy(ctx context.Context, lc *localcfg.Config, deviceUID string) (int, error) {
+	cloud, err := pairCloud(ctx, lc)
+	if err != nil {
+		return 0, err
+	}
+	return cloud.Delete(ctx, deviceUID)
+}
+
+// pairRemoveCloudCopy is the cloud copy's half of the undo, and it has the
+// shape and the reason of pairRemoveItem's: the copy is written before the
+// delivery, so a delivery that could not be written leaves a version behind
+// that nothing will ever read — the device node goes too, so `fugaro pair
+// revoke` can no longer name the pairing whose version it is. An installation
+// with no container, or one holding no version for this uid, is a no-op rather
+// than a failure, and the removal is best-effort: the operator is owed the
+// reason the pairing stopped and not a second message about the cleanup.
+func pairRemoveCloudCopy(ctx context.Context, lc *localcfg.Config, deviceUID string, cause error) error {
+	cloud, err := pairCloud(ctx, lc)
+	if err != nil {
+		return fmt.Errorf("%w; the installation's cloud copy of the pairing's key could not be checked either (%v), so it may still be readable there: %s", cause, oneLine(err.Error()), pairCloudCopyName(lc))
+	}
+	if _, err := cloud.Delete(ctx, deviceUID); err != nil {
+		return fmt.Errorf("%w; the installation's cloud copy of the pairing's key (%s) could not be removed either (%v), so it is there with no device behind it: destroy its version by hand, and by hand it has to be a destroy rather than a disable — the design's step 2b says why", cause, pairCloudCopyName(lc), oneLine(err.Error()))
+	}
+	return cause
+}
+
 // pairRemoveDeviceNode undoes the device node a failed step below left behind,
 // and returns cause either way: the removal is best-effort, because the
 // refusal the operator needs is the one that says why the pairing stopped, and
@@ -577,17 +698,42 @@ func pairRemoveItem(ctx context.Context, store keychain.Store, item keychain.Ite
 	return cause
 }
 
-// pairUndoPairing is the undo for every failure between the keychain write and
-// the delivery node: both of the things the pairing has written by then — the
-// item and the device node — go back, because a pairing that delivered nothing
-// is one the phone never completed, and `pairRemoveDeviceNode`'s own reason
-// applies to it in full: a node with no delivery behind it is a device that
-// fails USER on every request, on the allowlist, until someone removes it. The
-// item goes first, since it is the one written second and the one that holds
-// key material; the node's removal is what the operator is told about if it
-// fails, because that is the one they cannot do themselves by hand.
+// pairUndoPairing is the undo for every failure between the cloud copy and the
+// delivery node: all three of the things the pairing has written by then — the
+// installation's cloud copy of the key, the item and the device node — go back,
+// because a pairing that delivered nothing is one the phone never completed, and
+// `pairRemoveDeviceNode`'s own reason applies to it in full: a node with no
+// delivery behind it is a device that fails USER on every request, on the
+// allowlist, until someone removes it. The key's two copies go first, since they
+// are the ones written second and the ones that hold key material, and the
+// node's removal is what the operator is told about if it fails, because that is
+// the one they cannot do themselves by hand.
 func pairUndoPairing(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, deviceUID string, item keychain.Item, cause error) error {
+	return pairRemoveDeviceNode(ctx, db, lc, deviceUID,
+		pairRemoveItem(ctx, pairKeychain(), item, pairRemoveCloudCopy(ctx, lc, deviceUID, cause)))
+}
+
+// pairUndoItemAndNode is the undo for the failure the cloud copy itself meets:
+// the write that stopped the pairing is the copy's, so there is nothing in the
+// container to remove, and the two things the pairing did write are the ones
+// that go back.
+func pairUndoItemAndNode(ctx context.Context, db *rtdb.Client, lc *localcfg.Config, deviceUID string, item keychain.Item, cause error) error {
 	return pairRemoveDeviceNode(ctx, db, lc, deviceUID, pairRemoveItem(ctx, pairKeychain(), item, cause))
+}
+
+// pairWrote is the completed pairing's `wrote` list (§4.5's document): the two
+// nodes the pairing holds, and the installation's cloud copy of the key where
+// there is one. It is built from what the pairing actually wrote rather than
+// from the design's list, because the copy is the one write an installation
+// without a resident orchestrator does not get — and a document naming a copy
+// that is not in the container would report custody the installation does not
+// have.
+func pairWrote(uid, deviceUID string, lc *localcfg.Config, copied bool) []string {
+	wrote := []string{rules.PathDevices + "/" + deviceUID, pairPathDelivery(uid)}
+	if copied {
+		wrote = append(wrote, pairCloudCopyName(lc))
+	}
+	return wrote
 }
 
 // pairPathRequest is the phone's half of the pairing session (§4.4): one node
@@ -1429,6 +1575,57 @@ func pairDeviceRowFrom(uid string, raw json.RawMessage) pairDeviceRow {
 	return row
 }
 
+// pairPushRoot is the push node's parent (§3.4 of docs/mobile/design/
+// push-notifications.md): one child per paired account, holding the one
+// registration this installation made for it — the token, the platform, the
+// preferences and the sender's ledger. It is a SIBLING of the device node and
+// never a child of it, which is the design's whole reason for the shape: the
+// device node's existence IS the allowlist (rules.PathDevices, D166), and the
+// registration principal writes with database admin, so a node under
+// devices/** would let a registration that landed after a revoke re-admit the
+// device it was meant to have lost (§3.5 (b)).
+//
+// The path is spelled here rather than beside rules.PathDevices because no rule
+// names it: the deployed document denies config/admin to every client token,
+// and this node is written and deleted by database admin alone. There it would
+// read as a node the rules read, which is exactly what it is not.
+const pairPushRoot = "config/admin/push"
+
+// pairPushPath is one account's push node, the sibling `fugaro pair revoke`
+// deletes in the same act as config/admin/devices/$uid. The uid is the
+// DEVICE's, which is what makes the two nodes one account's: a pairing mints
+// it, the device node is keyed by it, and the registration principal writes
+// its token beside the same key.
+func pairPushPath(deviceUID string) string { return pairPushRoot + "/" + deviceUID }
+
+// pairPushLeftover is the clause a refusal carries when the push node's own
+// deletion failed as well as the thing that refusal is about. It is empty when
+// that deletion landed, which is the ordinary case. It exists because the
+// leftovers are deleted by different means — the keychain item by hand, the push
+// node by hand or by the sender's reaping, and the cloud copy by hand in the
+// project's Secret Manager — and a refusal that named one of them and not the
+// others would leave a node or a key nobody was told about.
+func pairPushLeftover(err error, deviceUID string) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("; the push node %s could not be deleted either (%v), so the registration the installation made for that account is still there and must be deleted by hand", pairPushPath(deviceUID), oneLine(err.Error()))
+}
+
+// pairCloudLeftover is pairPushLeftover's sibling for the third copy, carried by
+// the refusals that are about something else: a refusal that named one leftover
+// and not the other would leave a key nobody was told about, and this is the one
+// that keeps a revoked pairing's messages verifying in the cloud. It names the
+// container, because that is what the operator has to open, and it says destroy
+// rather than disable — the design's step 2b, and the one mistake here that
+// looks like success.
+func pairCloudLeftover(err error, lc *localcfg.Config) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("; the installation's cloud copy of the pairing's key (%s) could not be destroyed either (%v), so it is there with no device behind it and must be destroyed by hand — a destroy, not a disable, which the design's step 2b says is not enough", pairCloudCopyName(lc), oneLine(err.Error()))
+}
+
 type pairRevokeOptions struct {
 	cloudOptions
 	uid, name string
@@ -1446,8 +1643,19 @@ func newPairRevokeCmd() *cobra.Command {
 			"The order is the command (M4): the device node under config/admin/devices\n" +
 			"goes first, because the node's existence is what the rules read and its\n" +
 			"deletion revokes at once, without waiting for an ID token to expire; then\n" +
-			"this laptop's OS keychain item for that pairing's MAC key. Two deletions,\n" +
-			"and both are here.\n" +
+			"the account's push node under config/admin/push, the sibling that holds\n" +
+			"the one registration this installation made for it, so the phone's token\n" +
+			"goes with the pairing rather than outliving it (push design §3.4); then,\n" +
+			"where the installation has a resident orchestrator, the installation's own\n" +
+			"cloud copy of the pairing's MAC key, which is the mobile design's\n" +
+			"revocation step 2b: its version is destroyed rather than rotated or\n" +
+			"disabled, so the pairing's messages stop verifying in the cloud as well as\n" +
+			"on this laptop; then this laptop's OS keychain item for that pairing's MAC\n" +
+			"key. Every deletion this command can make is here, in that order.\n" +
+			"\n" +
+			"Deleting the cloud copy un-reads nothing: whoever held the key keeps it, a\n" +
+			"project Owner or Editor among them, and what the step ends is the\n" +
+			"installation's own service's ability to verify a message and to forge one.\n" +
 			"\n" +
 			"The pairing session's own node is not one of them. Its key is the p~ uid\n" +
 			"the session drew, and nothing on this laptop records that uid, so a revoke\n" +
@@ -1516,14 +1724,74 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 	}
 	wrote := []string{rules.PathDevices + "/" + device.UID}
 
+	// §3.4's sibling, deleted in the same act: the whole node goes, so the
+	// registration's token, platform, prefs and the sender's ledger go with the
+	// pairing rather than outliving it on a timer (§7, Q10(i)). The device node
+	// is already gone, so this deletion is what stops the delivery rather than
+	// what stops the reads — the sender's condition is both nodes (§3.4 rule 2)
+	// — and a device that never registered holds no node at all, whose deletion
+	// is the no-op the database makes it.
+	//
+	// The failure is remembered rather than returned on, and the steps below
+	// run either way: the device node is gone by now, so a second `fugaro pair
+	// revoke` is refused as nothing to revoke, and the keychain item — the one
+	// thing this command could still take away — would be left with nothing
+	// that ever removes it. What closes the act is the refusal below, once the
+	// item is gone; a node this act could not delete is never reported as
+	// deleted.
+	pushErr := db.Patch(ctx, pairPushRoot, map[string]any{device.UID: nil})
+	if pushErr == nil {
+		wrote = append(wrote, pairPushPath(device.UID))
+	}
+
+	// The design's step 2b, and its place in the order: the cloud copy of the
+	// pairing's key goes after the nodes and before the laptop's item, which is
+	// the order §4.7 numbers — the Auth user's deletion is step 2 and is not this
+	// command's (the sweep's), so what follows here is 2b, then the item.
+	//
+	// Its failure is remembered exactly as the push node's is, and for the same
+	// reason: the deletion after it is this laptop's own item, the one thing this
+	// command could still take away, and a revocation stopped before it would
+	// leave a key behind that nothing ever removes. What the operator is owed is
+	// the refusal below, whose sentence names the copy that is still readable in
+	// the cloud rather than a step that did not land.
+	destroyed, copyErr := pairDeleteCloudCopy(ctx, lc, device.UID)
+	if copyErr == nil && destroyed > 0 {
+		wrote = append(wrote, pairCloudCopyName(lc))
+	}
+
 	item, err := keychain.ParseItem(pairItemName(lc.Name, device.UID), lc.Name)
 	if err != nil {
 		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychain,
-			fmt.Errorf("the device is off the allowlist, but the keychain item this pairing's MAC key lives at (%s) is not a name a key is stored under: %v; the item's name carries the project's own name (M5), so it is not derivable here and must be deleted by hand", pairItemName(lc.Name, device.UID), err))
+			fmt.Errorf("the device is off the allowlist, but the keychain item this pairing's MAC key lives at (%s) is not a name a key is stored under: %v; the item's name carries the project's own name (M5), so it is not derivable here and must be deleted by hand%s", pairItemName(lc.Name, device.UID), err, pairPushLeftover(pushErr, device.UID)+pairCloudLeftover(copyErr, lc)))
 	}
 	if err := pairKeychain().Delete(ctx, item); err != nil {
 		return pairRefuseIn(ev, o.asJSON, pairRefusedKeychainDelete,
-			fmt.Errorf("the device node %s is deleted and the phone is off the allowlist, but this laptop's MAC key for the pairing could not be removed from the OS keychain at %s: %w; the key is still there and must be deleted by hand", wrote[0], item.Name(), err))
+			fmt.Errorf("the device node %s is deleted and the phone is off the allowlist, but this laptop's MAC key for the pairing could not be removed from the OS keychain at %s: %w; the key is still there and must be deleted by hand%s", wrote[0], item.Name(), err, pairPushLeftover(pushErr, device.UID)+pairCloudLeftover(copyErr, lc)))
+	}
+	if pushErr != nil {
+		if errors.Is(pushErr, rtdb.ErrPermission) {
+			return pairRefuseIn(ev, o.asJSON, pairRefusedDatabaseAdmin,
+				fmt.Errorf("the device node %s is deleted and this laptop's MAC key is gone, but the deletion of its push node %s was refused: revoking a device deletes both nodes with roles/firebasedatabase.admin, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %w%s",
+					wrote[0], pairPushPath(device.UID), lc.Name, pushErr, pairCloudLeftover(copyErr, lc)))
+		}
+		cause := dbErr(lc, pushErr, true)
+		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(cause, pairRefusedUnreachable),
+			fmt.Errorf("%w; the device node %s is deleted and this laptop's MAC key is gone, so the phone is off the allowlist and the sender — which sends only when both nodes exist (§3.4 rule 2) — delivers nothing to it, but the push node %s could not be deleted and still holds the installation's registration for that account: the token is there and must be deleted by hand%s",
+				cause, wrote[0], pairPushPath(device.UID), pairCloudLeftover(copyErr, lc)))
+	}
+
+	// The third copy's own failure, reported after the push node's for the reason
+	// the two deletions are ordered as they are: the node is the read the rules
+	// make, and this is the copy that keeps a revoked pairing's messages verifying
+	// in the cloud. The refusal says what did land — the node, the allowlist and
+	// the laptop's key — and what did not, and the fix is the operator's because
+	// no command of this CLI can reach a container the installation's own
+	// credential cannot write.
+	if copyErr != nil {
+		return pairRefuseIn(ev, o.asJSON, pairRefusalCode(copyErr, pairRefusedCloudKeyDelete),
+			fmt.Errorf("%w; the device node %s is deleted, this laptop's MAC key is gone and the phone is off the allowlist, but the installation's own cloud copy of the pairing's key (%s) could not be destroyed, so the pairing's messages keep verifying in the cloud until its version is destroyed by hand — a destroy rather than a disable, because disabling is not enough while the service is granted versions.access on the parent (the design's step 2b)%s",
+				copyErr, wrote[0], pairCloudCopyName(lc), pairPushLeftover(pushErr, device.UID)))
 	}
 
 	// The pairing session's own node is the third thing §4.3 names, and it is
@@ -1553,6 +1821,10 @@ func runPairRevoke(cmd *cobra.Command, o *pairRevokeOptions) error {
 		fmt.Fprintf(out, " (%s)", pairCell(device.Name))
 	}
 	fmt.Fprintf(out, ": deleted %s, so the phone is off %s's allowlist from its next request on\n", wrote[0], lc.Name)
+	fmt.Fprintf(out, "deleted its push node %s with it, so the registration this installation made for that account — its token, its platform and its preferences — is gone with the pairing\n", wrote[1])
+	if destroyed > 0 {
+		fmt.Fprintf(out, "destroyed the installation's own cloud copy of the pairing's key at %s, so the pairing's messages stop verifying in the cloud as well as on this laptop\n", pairCloudCopyName(lc))
+	}
 	fmt.Fprintf(out, "deleted this laptop's OS keychain item %s\n", item.Name())
 	fmt.Fprintf(out, "the %s Auth user is not deleted here — no role a Terraform grant gives an operator can delete one — and the history sweep removes it now that its device node is gone; an abandoned pairing node, if this pairing left one, is what the same sweep removes with it\n", device.UID)
 	return nil

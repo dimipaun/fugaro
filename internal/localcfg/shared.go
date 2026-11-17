@@ -69,9 +69,9 @@ const SharedVersion = 1
 // MergeShared unions this block's entries rather than taking it whole. What it
 // holds is the name and never the key — the key lives in the operator's OS
 // keychain and is never written to disk, so nothing published here is a secret.
-// The receiver is not modified. The copy is shallow except for repos: its other
-// maps, slices and pointers alias the receiver's, which is safe because the
-// result is only marshalled, and Marshal only reads.
+// The receiver is not modified. The copy is shallow except for repos and
+// model_prices: its other maps, slices and pointers alias the receiver's,
+// which is safe because the result is only marshalled, and Marshal only reads.
 func (c *Config) Shared() *Config {
 	s := *c
 	// The published document is version 1 whatever the file it was read from
@@ -109,6 +109,20 @@ func (c *Config) Shared() *Config {
 	s.Credentials = nil
 	s.Pools = nil
 	s.Crafts = config.Crafts{}
+	// The cascade, the grades and the removals travel the three blocks above
+	// into the policy node, and every one of them is dropped here for the
+	// reason they are, each with its own edge. The cascade's fallback decides
+	// whether a run may spend the project's money at all (D152), so a launcher
+	// who could publish it would be choosing every teammate's spending; a grade
+	// names the model a rung of the ladder runs and the credential or pool its
+	// calls go out on, which is the grant the pool and craft blocks are dropped
+	// for one step further out; and the removals are the one block here whose
+	// publication would be destructive rather than a widened grant — a launcher
+	// who could write them would be deleting pools, credentials and crafts of
+	// the project's node from the file it can write (D2607, F23, F22).
+	s.CredentialCascade = nil
+	s.ModelGrades = nil
+	s.NodeRemovals = nil
 	s.ProjectSecrets = nil
 	s.WorkflowSecrets = nil
 	// BitbucketAPIRoots is the owner's policy as well, and it travels the same
@@ -243,6 +257,19 @@ func (c *Config) Shared() *Config {
 	// it besides, because a shared config carrying it was not written by the
 	// converge.
 	s.Triage = nil
+	// RigorPending is dropped here for Triage's reason and one of its own that
+	// is nearer still: it is the wizard's rigor answer waiting to be written
+	// into the project layer, and the mode decides how much review every run of
+	// the project gets, so a launcher who could put one in the shared file would
+	// be choosing the review every teammate's runs are held to — the mode
+	// `fugaro rigor set` refuses to lower behind the owner's back (D1026), set
+	// by whoever can write this file. And it is a key that means nothing on
+	// another machine: it is one machine's hand-off, and a teammate whose
+	// config filled the gap from here would have its own converge write that
+	// mode into the layer file nobody on that machine answered for.
+	// ParseShared refuses the key besides, because a shared config carrying it
+	// was not written by the converge.
+	s.RigorPending = ""
 	// Orchestrator travels the catalog's way, into the policy node, and is
 	// dropped here for the same reason the floor is: the block is what stops a
 	// launcher spending the project's budget faster than the owner allows — the
@@ -289,7 +316,30 @@ func (c *Config) Shared() *Config {
 	s.WorkspaceMembers = nil
 	s.WorkspaceCap = nil
 	s.Repos = withoutRepoLocalKeys(c.Repos)
+	s.ModelPrices = withoutCacheSpellings(s.ModelPrices)
 	return &s
+}
+
+// withoutCacheSpellings is a copy of model_prices with the three per-million
+// keys and the three `_mult` keys cleared, leaving the old cache_read,
+// cache_write_5m and cache_write_1h keys: the published copy keeps the
+// multiplier under the name it has always had (D2646 as amended), so a
+// teammate's Fugaro — which may be older than this file and knows the old keys
+// alone — meets the document it knows. The multiplier field itself is left as
+// it is: the loader has already filled it from whichever spelling the owner
+// wrote, and MarshalYAML writes it under its old name.
+func withoutCacheSpellings(prices map[string]ModelPrice) map[string]ModelPrice {
+	if prices == nil {
+		return nil
+	}
+	out := make(map[string]ModelPrice, len(prices))
+	for id, mp := range prices {
+		mp.CacheWrite5mPerM, mp.CacheWrite5mMult = nil, nil
+		mp.CacheWrite1hPerM, mp.CacheWrite1hMult = nil, nil
+		mp.CacheReadPerM, mp.CacheReadMult = nil, nil
+		out[id] = mp
+	}
+	return out
 }
 
 // withoutRepoLocalKeys is a copy of repos with the two keys of an entry that
@@ -345,7 +395,11 @@ func MergeShared(published, local *Config) *Config {
 	}
 	out.Repos = withoutRepoLocalKeys(mergeRepoRecords(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
-	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
+	// The published side is stripped of the new spellings for withoutRepoLocalKeys'
+	// reason, one file over: a shared document carrying cache_read_mult would stop
+	// a teammate whose Fugaro is older than this file with an unknown field, which
+	// is the lockout Shared's own version exists to prevent.
+	out.ModelPrices = withoutCacheSpellings(unionMaps(published.ModelPrices, out.ModelPrices))
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)
 	keep := func(dst *string, old string) {
 		if *dst == "" {

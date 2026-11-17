@@ -58,7 +58,7 @@ func newSecretsCmd() *cobra.Command {
 	// pflag quotes an unknown flag, and a value pasted in the wrong place
 	// could be one (`-sk-ant-…`); every secrets command gets a fixed message.
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
-		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy and --dry-run, and never the value")
+		return userErr("unknown or malformed flag; secrets commands take --repo, --project-wide, --json, --config, --project, --gcp-project, --region, --allow-data-to, --proxy, --dry-run, --expires, --rotation-days, --bitbucket-api-root, --remove-bitbucket-api-root and --layer, and never the value")
 	})
 	// Two families, and they write different things: set, allow, deny, ls and rm
 	// are the repository's and the project's Secret Manager containers, written
@@ -97,6 +97,16 @@ type secretsOptions struct {
 	// on the one line every settings write ends on (secretsSetPolicy). Empty is
 	// `secrets set`, whose output has never carried that line.
 	form string
+	// expires, rotationDays, bitbucketAPIRoots, removeBitbucketAPIRoots and
+	// layer are the settings half of `secrets set` (S1): the records ABOUT
+	// secrets, which are written to the local config and are never a value
+	// (secrets_expiry.go). Each is a settings write of its own, and none of
+	// them is read by the value path.
+	expires                 string
+	rotationDays            int
+	bitbucketAPIRoots       []string
+	removeBitbucketAPIRoots []string
+	layer                   string
 	// yes answers the typed confirmation outside a coding agent's session
 	// (D1107), and dryRun is the policy write's own document.
 	yes    bool
@@ -111,6 +121,40 @@ type secretsOptions struct {
 // this never reads, and it reaches secretsSetPolicy directly.
 func (o *secretsOptions) policyWrite(cmd *cobra.Command) bool {
 	return len(o.allowDataTo) > 0 || cmd.Flags().Changed("proxy")
+}
+
+// settingsWrite reports whether the run is the family's settings half (S1):
+// --expires, --rotation-days, --bitbucket-api-root and
+// --remove-bitbucket-api-root record what this machine knows about secrets, and
+// --layer says where a settings write lands. None of them carries a value, and
+// none is read by the value path — the four are the records of
+// secrets_expiry.go and nothing else.
+//
+// Each flag is read as GIVEN and never as the value it parsed to: pflag records
+// `--expires ""` as Changed with an empty string and `--bitbucket-api-root ""` as
+// Changed with an empty slice (readAsCSV), so a route decided from the values
+// alone would send such a run down the value path, where it opens the cloud and
+// reads a value from stdin — `secrets set NAME --expires "$EXP"` with EXP unset is
+// a hidden prompt at a terminal and an overwrite of the stored secret from a pipe,
+// and the help's "reads no value" would be false. A flag given an empty value is
+// this half of the command, and the record it names is refused in
+// secretsSettingsChanges for being the empty one it is.
+func (o *secretsOptions) settingsWrite(cmd *cobra.Command) bool {
+	return cmd.Flags().Changed("expires") || cmd.Flags().Changed("rotation-days") ||
+		cmd.Flags().Changed("bitbucket-api-root") || cmd.Flags().Changed("remove-bitbucket-api-root") ||
+		cmd.Flags().Changed("layer")
+}
+
+// aimedSelection is the project config the family's settings writes act on:
+// --config and --project are the aiming pair every cloud command of this family
+// takes (addCloudFlags), and the value path resolves through them (openCloud,
+// selectProject). The two halves that write settings have to resolve the same
+// way, or a record or a policy entry aimed at another installation lands in
+// whichever one this machine's environment selected — localcfg.Select's steps 1
+// and 2 are what the pair is, and settingsAimedSelection is how every other
+// family's writer reads them.
+func (o *secretsOptions) aimedSelection() (localcfg.Selection, *localcfg.Config, error) {
+	return settingsAimedSelection(settingsWriteOptions{project: o.cloud.project, config: o.cloud.config})
 }
 
 func (o *secretsOptions) addFlags(cmd *cobra.Command) {
@@ -408,15 +452,66 @@ it with the command to run yourself (D1552). --dry-run
 says what the write would do and writes nothing, and --json prints that as
 the settings-write document.
 
+Three flags record what this machine knows about secrets, in its own local
+config, and read no value at all:
+
+  --expires DATE               record secret_expires.NAME, the day this secret
+                               lapses, written YYYY-MM-DD and not in the past:
+                               fugaro doctor warns ahead of it
+  --rotation-days N            record secret_rotation_days, the period this
+                               installation means to go between rotations
+  --bitbucket-api-root URL     add an API root to bitbucket_api_roots, the
+                               roots a run may send the Bitbucket token to: an
+                               https origin, with no userinfo, query or
+                               fragment, and never a credential
+  --remove-bitbucket-api-root URL
+                               take one of those roots out again: the same
+                               value the flag above takes, and the key goes
+                               with the last root, because a list with no
+                               roots is the absent key
+
+NAME goes with --expires alone — a date is recorded for one secret, while the
+others are records of the installation. --layer names the document such a
+record is written in (local, project or repo), and these are local config keys,
+so --layer project is refused with the layers the key has (local, shared). Each
+value a flag names is a settings write of its own: one diff and one backup each,
+so two flags in one command are two writes and one flag naming two roots — a
+comma-separated or repeated --bitbucket-api-root — is two writes as well. A dry
+run answers for the run and not per record: it prints one record per value named,
+in the order the flags named them, so a key named twice appears twice, and one
+record prints that record's document while two or more print one document that
+holds every record and names no single key — the one value a consumer of --json
+parses. The add flag writes
+into bitbucket_api_roots rather than writing the key whole, so no run of it can
+drop a root you put there:
+` + "`fugaro secrets set --remove-bitbucket-api-root URL`" + `
+takes one back out, and clearing the rotation period is
+` + "`fugaro secrets set --rotation-days 0`" + `, which records "no period" —
+the value the row itself reads as none. --repo and --project-wide are refused
+beside these flags, and so are --allow-data-to and --proxy: a record has no
+repository's copy, and the policy entry is a write of its own run — run the
+command twice to change both.
+
 A value is not a setting: it has no row, it is never in a diff, and no dry
-run of this command prints one. secrets set with neither policy flag is the
-value write and reads the value from stdin; to store a value and change its
-policy, run the command twice. A coding agent's session is refused the
-policy flags outright (spec §5), because a secret's policy is
+run of this command prints one. secrets set with neither the policy flags nor
+the records above is the value write and reads the value from stdin; to store
+a value and change its policy, run the command twice. A coding agent's session
+is refused the policy flags outright (spec §5), because a secret's policy is
 a value no plan shows.`,
-		Args: func(_ *cobra.Command, args []string) error {
+		Args: func(cmd *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:
+				// The records that are not about one secret are the whole
+				// command line, which is what makes their registered argv
+				// (writers_secrets.go) runnable as written. As in settingsWrite,
+				// the flags are read as given: `--expires ""` and
+				// `--bitbucket-api-root ""` are this half of the command too, and
+				// reach the record refusals rather than a sentence about a NAME
+				// the flag never wanted.
+				if cmd.Flags().Changed("expires") || cmd.Flags().Changed("rotation-days") ||
+					cmd.Flags().Changed("bitbucket-api-root") || cmd.Flags().Changed("remove-bitbucket-api-root") {
+					return nil
+				}
 				return userErr("secrets set needs the secret's NAME")
 			case len(args) > 1:
 				return userErr("pass the value on stdin, never as an argument: arguments land in shell history and process lists")
@@ -424,14 +519,23 @@ a value no plan shows.`,
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return secretsSet(cmd, o, args[0])
+			name := ""
+			if len(args) > 0 {
+				name = args[0]
+			}
+			return secretsSet(cmd, o, name, len(args) > 0)
 		},
 	}
 	o.addFlags(cmd)
 	f := cmd.Flags()
 	f.StringSliceVar(&o.allowDataTo, "allow-data-to", nil, "add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated")
 	f.BoolVar(&o.proxy, "proxy", false, "set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off)")
-	f.BoolVar(&o.dryRun, "dry-run", false, "print what the policy write would do and write nothing")
+	f.BoolVar(&o.dryRun, "dry-run", false, "print what the write would do — the policy entry, or one of the records the settings flags write — and write nothing")
+	f.StringVar(&o.expires, "expires", "", "record secret_expires.NAME, the day this secret lapses, as YYYY-MM-DD (today or later); writes the local config and reads no value")
+	f.IntVar(&o.rotationDays, "rotation-days", 0, "record secret_rotation_days, the period this installation means to go between rotations, in days; writes the local config and reads no value")
+	f.StringSliceVar(&o.bitbucketAPIRoots, "bitbucket-api-root", nil, "add an API root (https://host, no userinfo, query or fragment) to bitbucket_api_roots, the roots a run may send the Bitbucket token to; comma-separated or repeated, and never a credential")
+	f.StringSliceVar(&o.removeBitbucketAPIRoots, "remove-bitbucket-api-root", nil, "take an API root out of bitbucket_api_roots, the same value the add flag takes; the key goes with the last root, and removing a root the list does not hold changes nothing")
+	f.StringVar(&o.layer, "layer", "", "the layer a record is written in ("+strings.Join(settingsWriteLayers, ", ")+"); these records are the local config's, so local is the layer they take")
 	return cmd
 }
 
@@ -544,6 +648,21 @@ func claudeOAuthAccountRefusal(name, repo string) error {
 		pluginwire.Printable(name), pluginwire.Printable(repo))
 }
 
+// keyCredentialSecretRefusal is the one message a repository-scoped store under
+// a key credential's own derived secret name gets. It names the flag rather
+// than the field alone, because the project-wide store is the one a credential's
+// value has: `fugaro accounts add --type openrouter|anthropic` is the command
+// that stores it whole, and this is the spelling for a key that run could not
+// finish.
+func keyCredentialSecretRefusal(name string) error {
+	field := "claude_accounts.<credential>.allow_data_to"
+	if cred, ok := config.CredentialBySecret(name); ok {
+		field = "claude_accounts." + pluginwire.Printable(cred) + ".allow_data_to"
+	}
+	return userErr("%s is a key credential's own secret, and a credential's value is stored once for the project — its reach is %s, not the repository a copy was stored for: store it with '%s secrets set %s --project-wide'",
+		pluginwire.Printable(name), field, selfCommand(), quoteWord(name))
+}
+
 // declares reports whether some workflow of cfg lists secret name.
 func declares(cfg *config.Config, name string) bool {
 	for _, wf := range cfg.Workflows {
@@ -599,37 +718,77 @@ func repoSecretsDisabled(w io.Writer) error {
 	return nil
 }
 
-func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
+// repoSecretsDisabledName reports whether name is one D2313 disables: a
+// repository's own secret (config.RepoLevelSecret) that is not a credential
+// Fugaro's own scope machinery decides (platformSecretName). It is the
+// predicate every reader of the ruling asks, so the surfaces cannot disagree
+// about which names it is about: `secrets set`'s repository-scope form and
+// `secrets rm` answer the notice on it, and the secrets stage reads it to know
+// which names it may not take at all — no prompt and no line, because the one
+// store a prompt there could write is the repository's own container
+// (initsecrets.go), which is the store the ruling closed.
+func repoSecretsDisabledName(lc *localcfg.Config, name string) bool {
+	return config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(lc, name)
+}
+
+// secretsSetName is the NAME every run of this command is held to, before the
+// scope decision, before the checkout is read and before any cloud call: a
+// value path's name, a policy entry's name, and the name a secret_expires
+// record is keyed by are one name, so they are checked once, in one place.
+func secretsSetName(name string) error {
 	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
 		return userErr("the secret NAME must be one of %s, or a workflow secret's name matching %s",
 			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), config.SecretNameRE)
 	}
 	if config.CodexOAuthSecret(name) {
-		// Refused here, before the scope decision, before the checkout is
-		// read and before any cloud call: no spelling of the command
-		// (--project-wide, --repo, a bare command in a checkout) may store a
-		// value under a reserved Codex name, and the refusal does not depend
-		// on which scope it would have gone to. Neither this check nor the
-		// scope it precedes assumes config.Validate ran: a workflow can no
-		// longer declare such a name, and this is the write path's own,
-		// independent refusal (the Claude namespace's claudeOAuthAccountRefusal
-		// is the same shape, decided per account and per repository).
+		// Refused by the same write path's own, independent refusal: no spelling
+		// of the command (--project-wide, --repo, a bare command in a checkout)
+		// may store a value under a reserved Codex name, and the refusal does
+		// not depend on which scope it would have gone to. Neither this check
+		// nor the scope it precedes assumes config.Validate ran: a workflow can
+		// no longer declare such a name (the Claude namespace's
+		// claudeOAuthAccountRefusal is the same shape, decided per account and
+		// per repository).
 		return codexOAuthRefusal(name)
 	}
 	if name == config.CredentialsBundleSecret {
 		// The credentials service's one bundle container (C1.11's review
-		// finding n2), refused here for the Codex names' reason: before the
-		// scope decision, before the checkout is read and before any cloud
-		// call, so no spelling of the command may store a value under it. The
-		// document in that container is every model credential the
-		// installation holds, and `fugaro creds set NAME` (C1.25) is its only
-		// writer: a value written here would be read by the service as the
-		// credential it is not.
+		// finding n2), refused for the Codex names' reason: no spelling of the
+		// command may store a value under it. The document in that container is
+		// every model credential the installation holds, and `fugaro creds set
+		// NAME` (C1.25) is its only writer: a value written here would be read
+		// by the service as the credential it is not. The record flags are
+		// refused it too, by being read after this check: secret_expires is
+		// keyed by a secret name, and this is not one.
 		return credentialsBundleRefusal(name)
+	}
+	return nil
+}
+
+// secretsSet takes the NAME an argument carried and whether one was given at
+// all (hasName): a run of the record flags that are about the installation
+// rather than one secret names none, while an argument that is there and empty
+// is a NAME that is not one — `secrets set "$NAME"` with NAME unset is the
+// case — and is held to the guard above like any other. The decision is on
+// whether an argument was given, never on what it holds, so no path downstream
+// of this runs under a name the guard has not passed.
+func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool) error {
+	if hasName {
+		if err := secretsSetName(name); err != nil {
+			return err
+		}
 	}
 	if err := o.checkScope(cmd); err != nil {
 		return err
+	}
+	// The settings half is a different run, decided before the cloud is opened
+	// and before any value is read: it records what this machine knows about
+	// secrets in the local config and reads none (S1, secrets_expiry.go). It
+	// comes before the policy write because the two are never the same run —
+	// no flag is shared — and before the value path for the same reason.
+	if o.settingsWrite(cmd) {
+		return secretsSetSettings(cmd, o, name)
 	}
 	// The policy write is a different run, decided before the cloud is opened
 	// and before any value is read: it writes the config entry that says who
@@ -740,6 +899,14 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		if !claudeOAuthAccountAllowed(env.lc.ClaudeAccounts, name, r.repo) {
 			return claudeOAuthAccountRefusal(name, r.repo)
 		}
+	} else if config.KeyCredentialSecret(name) {
+		// A key credential's value is the project's, in one copy: the
+		// credential is declared once in this project's config, its reach is
+		// claude_accounts.<credential>.allow_data_to, and the half that serves
+		// it reads that one container — so a repository's own copy would be a
+		// value nothing reads, stored for a repository the allow-list does not
+		// name. The refusal names the store that does work.
+		return keyCredentialSecretRefusal(name)
 	} else if p, ok := config.ProviderBySecret(env.lc.Providers, name); ok && !reserved {
 		// The owner's, from the local config, so any checkout will do. The
 		// key is only ever mounted for a repository the provider may see.
@@ -783,7 +950,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
 		}
 	}
-	if config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(env.lc, name) {
+	if repoSecretsDisabledName(env.lc, name) {
 		// D2313: a repository-level secret is disabled for now, and everything
 		// below this line is a write into one repository's own container — the
 		// store, the notes about which copy wins and the step that files a log.
@@ -910,7 +1077,7 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 	if (len(o.allowDataTo) > 0 || len(o.denyDataTo) > 0) && proxy {
 		return userErr("--allow-data-to and --proxy are two different edits: name one, and repeat the command for the other")
 	}
-	sel, lc, err := settingsSelection()
+	sel, lc, err := o.aimedSelection()
 	if err != nil {
 		return err
 	}
@@ -1464,7 +1631,36 @@ func projectWideAccepted(lc *localcfg.Config, name string) bool {
 	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
 		return len(lc.ClaudeAccounts[account].AllowDataTo) > 0
 	}
+	// A key credential's own derived secret (MC22): gated by the same field a
+	// named Claude account's is, because a credential is bounded as an account
+	// is — claude_accounts.<credential>.allow_data_to names the repositories
+	// the credential's key may be sent to, and it is what `fugaro accounts add
+	// --type openrouter|anthropic` writes before the value is stored here. A
+	// name in the namespace whose credential is not declared with a key type
+	// is not one (keyCredentialBySecret), so a claude-oauth credential's
+	// derived key name cannot collect a copy nothing reads.
+	if cred, ok := keyCredentialBySecret(lc, name); ok {
+		return len(lc.ClaudeAccounts[cred].AllowDataTo) > 0
+	}
 	return false
+}
+
+// keyCredentialBySecret is CredentialBySecret's second half: the credential a
+// derived key name belongs to, when the config declares that credential as one
+// of the two key types. A name merely shaped like one belongs to no credential
+// — nothing would read that container — and a name whose credential is declared
+// another type is not one either: a claude-oauth credential's value is the
+// Claude account's own token, under the family claude_accounts already owns.
+func keyCredentialBySecret(lc *localcfg.Config, secret string) (string, bool) {
+	name, ok := config.CredentialBySecret(secret)
+	if !ok {
+		return "", false
+	}
+	cred, declared := config.CredentialNamed(lc.Credentials, name)
+	if !declared || !config.KeyCredentialType(cred.Type) {
+		return "", false
+	}
+	return name, true
 }
 
 // projectWideRefusal is what `secrets set name --project-wide` reports when
@@ -1485,6 +1681,22 @@ func projectWideRefusal(lc *localcfg.Config, name string) error {
 	}
 	if account, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, name); ok && account != config.DefaultClaudeAccount {
 		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(account)+".allow_data_to")
+	}
+	// Read in the same position as projectWideAccepted's branch, so the two
+	// answer for the same names: a name in the key credential namespace that
+	// reached this sentence is one whose credential is not declared as a key
+	// type, and the sentence says which of the two reasons it is rather than
+	// naming a field the owner could fill in and still not store under.
+	if cred, ok := config.CredentialBySecret(name); ok {
+		// The two states a name of the namespace is in when it is no declared
+		// key credential's are `fugaro creds set`'s own (creds.go's
+		// keyCredentialDeclarationRefusal), because they are one rule at the two
+		// write paths: this command refuses the container as a project-wide
+		// secret, and that one refuses the entry.
+		if err := keyCredentialDeclarationRefusal(lc, name, cred); err != nil {
+			return err
+		}
+		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(cred)+".allow_data_to")
 	}
 	if p, ok := config.ReservedProviderSecret(lc.Providers, name); ok {
 		// Reserved for a configured provider's key and not that provider's own
@@ -1958,6 +2170,13 @@ func projectSecretAllowed(lc *localcfg.Config, logical string) []string {
 		return []string{"any repository"}
 	}
 	if name, ok := config.ClaudeAccountBySecret(lc.ClaudeAccounts, logical); ok {
+		return slices.Clone(lc.ClaudeAccounts[name].AllowDataTo)
+	}
+	// A key credential's own derived secret is bounded by the same field a
+	// named Claude account's is (MC22): its key may be sent only to the
+	// repositories claude_accounts.<credential>.allow_data_to names, so that
+	// list is this column's honest answer for it.
+	if name, ok := keyCredentialBySecret(lc, logical); ok {
 		return slices.Clone(lc.ClaudeAccounts[name].AllowDataTo)
 	}
 	if name, ok := config.ProviderBySecret(lc.Providers, logical); ok {

@@ -35,6 +35,15 @@ module "workflow" {
   # opted in, which is every installation today, and then nothing changes.
   credentials_service = var.installation.credentials_service
 
+  # Which model credentials each job of THIS repository gives its accessor up
+  # for (D2072, G17), from the repository's own answer: the workflow module
+  # reads it for the model half of the drop, and it is a separate value from
+  # the service above because the two come apart on an `api-key` or `oauth`
+  # repository whose credential the service does not hold yet — the switch is
+  # on, the mount and the accessor stay (`none`), and B2.7's flip fills
+  # config.ServiceServedAuths in for the `anthropic` arm.
+  model_secrets_served = var.repo.model_secrets_served
+
   # The per-repository fact (D500, D502), passed to every workflow of this
   # repository: each of a proxied repository's jobs gives the credential up,
   # and no job of any other repository does (G9). Nothing derives it yet — the

@@ -306,6 +306,11 @@ var doctorActionableInfoIDs = map[string]bool{
 	// filing one is a command the reader runs and the pointer line alone
 	// would hide it (T-IS13 of docs/troubleshoot-issue).
 	"issues-pending": true,
+	// The repositories still on their per-repository jobs, each named with the
+	// shared project job that replaces it (M3, R3): the jobs are being retired
+	// and one `fugaro update` moves them, so the reader has to see the line —
+	// but nothing is broken, which is why it is info and never a failure.
+	"repo-bound-jobs": true,
 }
 
 // doctorClassOf is the classification, and it is the only place a class is
@@ -861,6 +866,14 @@ type doctorShort struct {
 // claude_accounts lists has no `accounts add` form to be the whole fix of
 // (doctorAccountStore), so the mint-then-store pair stands beside the one
 // command, which is what those two checks print for it.
+//
+// spend-drift is the entry this table must not have (spend-accuracy SA5.3):
+// doctor emits it once per drifting model under the one ID, and R6 asks the
+// line a reader sees to name the model and the factor it left the price
+// table's band by. A form keyed by the ID alone cannot carry either — the ID
+// is the same for every model — so a short sentence here would be a one-line
+// stand-in that hides the two facts the line exists for, and the check keeps
+// its own sentence, which the default view prints whole.
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
@@ -885,11 +898,21 @@ var doctorShorts = map[string]doctorShort{
 	// the same job by hand rebuilds the node from the config, and a line that
 	// offered it would be the lossy move in place of the one the update makes.
 	"policy-older-than-binary": {"the published policy is older than this Fugaro, and no run applies it.", ""},
-	"policy-rules-skew":        {"the deployed budget rules are older than the policy generation, so a published policy cannot be read.", ""},
-	"policy-vs-jobs":           {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
-	"installation":             {"no Fugaro installation is configured.", "run `fugaro setup`"},
-	"fugaro-yaml":              {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
-	"gcp-project-line":         {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
+	// The deployed document is older than the one this Fugaro generates, which
+	// is the whole of what the ID's states have in common: one of them is below
+	// PolicyRulesVersion, where a published policy really is unreadable, and the
+	// other is between PolicyRulesVersion and RulesVersion, where the policy is
+	// read and enforced and only this release's own additions are missing (the
+	// review finding on P2.1). The short said "so a published policy cannot be
+	// read" of both, which was false of the second and is the sentence the
+	// check's own Problem was rewritten to stop making; the fix line names what
+	// the redeploy adds for that generation (rulesMarkerOlderText), so the short
+	// stays at the fact the states share.
+	"policy-rules-skew": {"the deployed budget rules are older than the generation this Fugaro deploys.", ""},
+	"policy-vs-jobs":    {"the jobs run an image older than this Fugaro, so they do not read a published policy.", ""},
+	"installation":      {"no Fugaro installation is configured.", "run `fugaro setup`"},
+	"fugaro-yaml":       {"this checkout's fugaro.yaml is not valid.", "fix what `fugaro validate` prints"},
+	"gcp-project-line":  {"this checkout's fugaro.yaml has no gcp_project: line, so a run cannot tell which project it belongs to.", "run `fugaro update --anchor`"},
 	// The node is newer than this binary, and the move is two of them: the
 	// release that understands the node is not installed yet, so the upgrade
 	// comes first, and the update behind it is what brings the installation and
@@ -944,8 +967,8 @@ var doctorShorts = map[string]doctorShort{
 	// workflow, the service) to --all and --json. The fix stays the check's own:
 	// it names the container or the repository the command needs. The two whose
 	// only state is information (bundle-bitbucket-token with nothing proxied,
-	// bitbucket-direct before the flip) are counted rather than printed, so
-	// their entries are here for the warning state beside them.
+	// bitbucket-direct on a repository nobody proxied) are counted rather than
+	// printed, so their entries are here for the warning state beside them.
 	//
 	// credentials-service-deployed is the one whose read failures are the audit
 	// class, so they never reach this sentence: what reaches it is the four
@@ -958,17 +981,23 @@ var doctorShorts = map[string]doctorShort{
 	"secret-rotation-age":          {"a stored secret is past the rotation period or the expiry the local config records for it.", ""},
 	"bundle-bitbucket-token":       {"the credentials service's bundle holds no Bitbucket token, or could not be read.", ""},
 	"bitbucket-token-valid":        {"Bitbucket refuses the bundle's Bitbucket token, or could not be asked about it.", ""},
-	"bitbucket-direct":             {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
-	"model-key-in-agent":           {"a model credential reaches a workflow's agent's own environment.", ""},
-	"launcher-jobs":                {"which Cloud Run jobs a launcher can start could not be checked.", ""},
-	"launcher-jobs-public":         {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
-	"launcher-jobs-unread":         {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
-	"batch-launcher-iam":           {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
-	"allow-list-uncovered":         {"the published policy does not admit a repository this machine's config names.", ""},
-	"creds-broken":                 {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
-	"creds-unknown-state":          {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
-	"creds-rules":                  {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
-	"token-signers":                {"who can sign the budget database's sign-in tokens could not be read.", ""},
+	// T10's three other token lines. The per-token half of
+	// bitbucket-token-valid is the prefix below: doctor emits one line per typed
+	// token and the ID carries the token's name.
+	"bitbucket-tokens-uncovered": {"a proxied repository no stored Bitbucket token covers is refused before its first git call.", ""},
+	"bitbucket-token-broken":     {"a stored Bitbucket token was refused with 401 and the credential state holds it as broken.", ""},
+	"bitbucket-token-expiry":     {"a stored Bitbucket token's recorded expiry is near or past.", ""},
+	"bitbucket-direct":           {"a job of a proxied Bitbucket repository still mounts its own token, or that could not be read.", ""},
+	"model-key-in-agent":         {"a model credential reaches a workflow's agent's own environment.", ""},
+	"launcher-jobs":              {"which Cloud Run jobs a launcher can start could not be checked.", ""},
+	"launcher-jobs-public":       {"a Cloud Run job can be started by allUsers or allAuthenticatedUsers, which is anyone.", ""},
+	"launcher-jobs-unread":       {"the IAM policy of some Cloud Run jobs could not be read, so whether a launcher can start them is unknown.", ""},
+	"batch-launcher-iam":         {"the launchers' roles/batch.jobsEditor grant in this project is not the one Fugaro writes, or could not be read.", ""},
+	"allow-list-uncovered":       {"the published policy does not admit a repository this machine's config names.", ""},
+	"creds-broken":               {"a Claude account's token was refused, and no work routes to it until an operator clears the mark.", ""},
+	"creds-unknown-state":        {"a credential mark carries a state this Fugaro does not read, so the account is held rather than available.", ""},
+	"creds-rules":                {"the deployed budget rules do not carry the credentials family this Fugaro writes, or could not be read.", ""},
+	"token-signers":              {"who can sign the budget database's sign-in tokens could not be read.", ""},
 	// The managed deployer's own grants, the sweep's one warning that is the
 	// module's own binding: it carries no remove command, so its own sentence
 	// is the one the default view must print, and the sentence above is the
@@ -1003,6 +1032,12 @@ var doctorShortsByPrefix = []doctorPrefixShort{
 	// image is never built, so a line that offered only a build's states
 	// would name a problem the check cannot report for it at all.
 	{prefix: "image-catalog-", short: doctorShort{problem: "its project image catalog entry has no build or smoke of what its jobs start on, or one of another definition or reference."}},
+	// The per-token half of bitbucket-token-valid (T10): doctor emits one line
+	// per typed Bitbucket token, the ID carries the token's own name, and the
+	// sentence is the same for every one of them — refused, or a question
+	// Bitbucket did not answer. No short fix: the check's own names the token's
+	// document key, which is what `creds set` takes.
+	{prefix: "bitbucket-token-valid--", short: doctorShort{problem: "Bitbucket refuses this typed Bitbucket token, or could not be asked about it."}},
 	// The sweep's per-instance warnings, one for a member and one for a job
 	// account: doctor numbers their IDs (runs-bucket-iam-1, job-token-grant-2,
 	// token-signers-3) and their own sentence carries the whole triple, so each

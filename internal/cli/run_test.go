@@ -926,6 +926,58 @@ func TestAnArtifactLaunchRefusesACapSetThatCannotFitMemory(t *testing.T) {
 	}
 }
 
+// TestArtifactLaunchAdmitsADiagnoseOnlyRecipe is the launch's arm of T-TC11,
+// and it is the case the cloud tier of `fugaro troubleshoot` needs a checkout
+// of this repository to be: a mode: artifact recipe whose own step is a
+// diagnose runs no command of the workflow's — the step reads the evidence the
+// launcher left under the run's prefix and writes its answer, and calls the
+// model through the gateway (docs/troubleshoot-cloud D2402) — so a workflow
+// that declares no commands.render is nothing it needs, and this gate must
+// admit it rather than refuse the tier at the person's terminal. The recipe
+// read here is the catalog's own troubleshoot entry, carried in the task
+// exactly as the diagnosis launch carries it (T-TC8).
+//
+// The render shape of the same mode over the same workflow is refused in the
+// same reading, which is what makes the first reading evidence rather than a
+// gate that stopped judging artifact launches: the recipe's own step is the
+// difference between the two, not the mode.
+//
+// Mutation (make the render arm read the mode alone again): the first reading
+// comes back with "render step needs commands.render".
+func TestArtifactLaunchAdmitsADiagnoseOnlyRecipe(t *testing.T) {
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	// No commands.render anywhere: the repository that renders nothing is the
+	// one this exemption exists for.
+	testutil.WriteFiles(t, dir, map[string]string{
+		"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github }\n" +
+			"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n" +
+			"    resources: { memory: 8Gi }\n",
+	})
+	t.Chdir(dir)
+	text, ok := recipe.CatalogText(recipe.TroubleshootRecipe)
+	if !ok {
+		t.Fatalf("the catalog holds no %s recipe", recipe.TroubleshootRecipe)
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261117-100000-a1b2", Repo: "acme/other",
+		Workflow: "svc", Task: "Diagnose the failing command",
+		Recipe: &task.Recipe{Name: recipe.TroubleshootRecipe, Source: string(recipe.SourceCatalog), YAML: string(text)}}
+	env := &cloudEnv{be: backendNamed{codec: backend.CloudRunCodec()}}
+	if err := checkArtifactLaunch(context.Background(), env, spec); err != nil {
+		t.Fatalf("checkArtifactLaunch on the catalog's diagnose recipe over a workflow with no commands.render = %v, want no refusal", err)
+	}
+	// The render shape, carried the same way: same gate, same workflow, and
+	// the refusal that has to stay.
+	renderSpec := *spec
+	renderSpec.Recipe = &task.Recipe{Name: "sizzle", Source: string(recipe.SourceCatalog), YAML: projectSizzle}
+	if err := checkArtifactLaunch(context.Background(), env, &renderSpec); err == nil ||
+		!strings.Contains(err.Error(), "render step needs commands.render") {
+		t.Fatalf("checkArtifactLaunch on a render recipe over the same workflow = %v, want the render refusal", err)
+	}
+}
+
 // backendNamed is a backend.Backend that answers with one codec and nothing
 // else: launchBackend reads the seam for the backend a launch runs on, and
 // what these tests need is a backend of a named kind without the cloud client

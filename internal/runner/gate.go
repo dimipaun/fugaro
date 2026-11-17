@@ -142,10 +142,14 @@ func gateCommandProblems(steps []recipe.Step, cmds config.Commands) []string {
 // RecipeGateProblems is what `fugaro validate` reports for rcp against wf
 // (one workflow's config): the same refusals checkGateCommands makes at
 // launch, so a broken pairing shows up before a launch, not only at it.
-// For a mode: artifact recipe those are the artifact arms — the render and
-// probe steps need commands.render and commands.probe, and the caps the
-// recipe declares must fit the workflow's memory (outputsMemoryProblem) —
-// because an artifact recipe has no check steps at all.
+// For a mode: artifact recipe those are the artifact arms — a recipe that
+// carries a render step needs commands.render, one that asks for a probe needs
+// commands.probe, and the caps the recipe declares must fit the workflow's
+// memory (outputsMemoryProblem) — because an artifact recipe has no check
+// steps at all. An artifact arm fires only for the step it is about: a recipe
+// whose one step is a diagnose renders nothing and probes nothing, so a
+// workflow that leaves commands.render or commands.probe empty is no problem
+// for it (docs/troubleshoot-cloud T-TC11).
 func RecipeGateProblems(rcp *recipe.Recipe, wf config.Workflow) []GateProblem {
 	var out []GateProblem
 	for _, msg := range gateCommandProblems(checkGateSteps(rcp), wf.Commands) {
@@ -162,7 +166,18 @@ func RecipeGateProblems(rcp *recipe.Recipe, wf config.Workflow) []GateProblem {
 	if rcp.Mode != recipe.ModeArtifact {
 		return out
 	}
-	if strings.TrimSpace(wf.Commands.Render) == "" {
+	// The render arm judges a recipe that renders: commands.render is the
+	// command the render step runs, and a mode: artifact recipe whose own step
+	// is a diagnose instead (recipe.StepDiagnose, the cloud tier of `fugaro
+	// troubleshoot`, docs/troubleshoot-cloud D2402) runs no command at all —
+	// it reads the bundle the launcher left under the run's own prefix and
+	// writes its answer — so this workflow's commands.render is nothing it
+	// needs. Firing on the mode alone refused the tier outright in every
+	// repository whose workflow declares no render command, which is the
+	// repository a person with a broken machine is as likely to be in as any
+	// other (T-TC11). A recipe that does carry a render step keeps the refusal
+	// unchanged, as does the probe arm below for a recipe that asks for one.
+	if artifactRenders(rcp) && strings.TrimSpace(wf.Commands.Render) == "" {
 		out = append(out, GateProblem{Field: GateCommands, Message: "render step needs commands.render"})
 	}
 	if rcp.Outputs != nil && rcp.Outputs.Probe == recipe.ProbeCommand && strings.TrimSpace(wf.Commands.Probe) == "" {
@@ -172,6 +187,24 @@ func RecipeGateProblems(rcp *recipe.Recipe, wf config.Workflow) []GateProblem {
 		out = append(out, p)
 	}
 	return out
+}
+
+// artifactRenders reports whether rcp's steps carry the render step: the
+// deterministic step of a mode: artifact recipe, which runs the workflow's
+// commands.render in the checkout (design artifact-runs.md §3). It reads the
+// parsed steps rather than the mode, because the mode alone no longer says a
+// recipe renders: a mode: artifact recipe's one step is a render or a diagnose
+// (recipe.Parse's orderArtifact), and the two run different things — the
+// diagnose step reads the run's bundle and calls a model, running no command
+// of the workflow's (docs/troubleshoot-cloud D2402). Only the render step's
+// presence makes commands.render something the recipe needs.
+func artifactRenders(rcp *recipe.Recipe) bool {
+	for _, s := range rcp.Steps {
+		if s.Kind == recipe.StepRender {
+			return true
+		}
+	}
+	return false
 }
 
 // outputsMemoryProblem is the memory rule (design artifact-runs.md §5.2,

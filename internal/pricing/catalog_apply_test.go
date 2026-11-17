@@ -92,11 +92,93 @@ func TestApplyCatalogCompilesTierMinMax(t *testing.T) {
 			}
 		})
 	}
-	// The zero-value policy is cheapest, not the accident of an unset field
-	// reaching the wrong branch.
-	m, _ := compile(t, catalogFile("2026-10-14", entry()), route(false, "")).Lookup("vendor/model")
-	if m.Rates.InputPerM != 1 {
-		t.Errorf("an empty policy charged input %v, want the cheapest bound 1", m.Rates.InputPerM)
+}
+
+// TestApplyCatalogUnsetPolicyIsHighest pins the compiler's own default: an
+// empty CatalogRoute.Policy charges the dearest end of the selected tier
+// (D2644), so the value that reaches catalogModel is never the empty string
+// and a route built without a policy cannot under-count a call.
+func TestApplyCatalogUnsetPolicyIsHighest(t *testing.T) {
+	m, ok := compile(t, catalogFile("2026-10-14", entry()), route(false, "")).Lookup("vendor/model")
+	if !ok {
+		t.Fatal("no row")
+	}
+	if m.Rates.InputPerM != 4 || m.Catalog == nil || m.Catalog.Bound != "max" {
+		t.Errorf("an empty policy charged input %v at the %+v bound, want the dearest end 4 at max", m.Rates.InputPerM, m.Catalog)
+	}
+}
+
+// TestCatalogRowCarriesBothEnds pins that a compiled row carries the whole
+// of its tier's range beside the bound it charges: the cheapest and the
+// dearest end, every dimension included and each end's cache ratios taken at
+// that end's own prices, never at the charged end's. The charged rates are
+// one of the two ends and never a third figure, the ends bracket what a call
+// costs, and a dimension the tier does not price folds to the same value at
+// both. SA1.2's per-model band and SA2.1's floor read these.
+func TestCatalogRowCarriesBothEnds(t *testing.T) {
+	cases := []struct {
+		name       string
+		requireZDR bool
+		policy     string
+		wantLo     Rates
+		wantHi     Rates
+	}{
+		{"all/cheapest", false, "cheapest",
+			Rates{InputPerM: 1, OutputPerM: 2, CacheRead: 0.125, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h},
+			Rates{InputPerM: 4, OutputPerM: 8, CacheRead: 0.5, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h}},
+		{"all/highest", false, "highest",
+			Rates{InputPerM: 1, OutputPerM: 2, CacheRead: 0.125, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h},
+			Rates{InputPerM: 4, OutputPerM: 8, CacheRead: 0.5, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h}},
+		{"zdr/cheapest", true, "cheapest",
+			Rates{InputPerM: 2, OutputPerM: 4, CacheRead: 0.25, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h},
+			Rates{InputPerM: 4, OutputPerM: 8, CacheRead: 0.5, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h}},
+		{"zdr/highest", true, "highest",
+			Rates{InputPerM: 2, OutputPerM: 4, CacheRead: 0.25, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h},
+			Rates{InputPerM: 4, OutputPerM: 8, CacheRead: 0.5, CacheWrite5m: DefaultCacheWrite5m, CacheWrite1h: DefaultCacheWrite1h}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, ok := compile(t, catalogFile("2026-10-14", entry()), route(c.requireZDR, c.policy)).Lookup("vendor/model")
+			if !ok {
+				t.Fatal("no row")
+			}
+			if m.Lo != c.wantLo {
+				t.Errorf("Lo %+v, want the tier's cheapest end %+v", m.Lo, c.wantLo)
+			}
+			if m.Hi != c.wantHi {
+				t.Errorf("Hi %+v, want the tier's dearest end %+v", m.Hi, c.wantHi)
+			}
+			// The charged bound is one of the ends, whichever it is, and the
+			// band brackets what a call costs: a Lo above the charge would
+			// floor a settle past it, and a Hi below it would leave the
+			// report the alarm weighs outside the band itself.
+			if m.Rates != m.Lo && m.Rates != m.Hi {
+				t.Errorf("the charge %+v is neither end: Lo %+v, Hi %+v", m.Rates, m.Lo, m.Hi)
+			}
+			u := Usage{Input: 1_000, CacheRead: 2_000, Output: 500}
+			if lo, mid, hi := m.Lo.Cost(u), m.Rates.Cost(u), m.Hi.Cost(u); lo > mid || mid > hi {
+				t.Errorf("the band is not ordered: Lo %d, charge %d, Hi %d", lo, mid, hi)
+			}
+		})
+	}
+	// A stale catalog charges the dearest end whatever the policy asked for;
+	// the cheapest end is still the tier's own, so the floor does not move
+	// with the calendar.
+	stale, _ := compile(t, catalogFile("2026-01-01", entry()), route(false, "cheapest")).Lookup("vendor/model")
+	if stale.Rates != stale.Hi {
+		t.Errorf("a stale row charged %+v, want the dearest end %+v", stale.Rates, stale.Hi)
+	}
+	if stale.Lo.InputPerM != 1 {
+		t.Errorf("a stale row's Lo is %+v, want the tier's cheapest end", stale.Lo)
+	}
+	// A priced search and a folded cache dimension are the same shape: the
+	// search is each end's own price, and the fold is one value at both ends.
+	e := entry()
+	delete(e.All, "cache_read_per_m")
+	e.All["web_search_per_1k"] = bound("10", "12")
+	m, _ := compile(t, catalogFile("2026-10-14", e), route(false, "cheapest")).Lookup("vendor/model")
+	if m.Lo.CacheRead != 1 || m.Hi.CacheRead != 1 || m.Lo.WebSearchPer1k != 10 || m.Hi.WebSearchPer1k != 12 {
+		t.Errorf("ends %+v / %+v, want a cache read of 1 at both and the search price of each end", m.Lo, m.Hi)
 	}
 }
 
@@ -171,6 +253,17 @@ func TestApplyCatalogRefusesMultiplierAboveMax(t *testing.T) {
 	// Clamping would have priced it at 10x: it must not have.
 	if strings.Contains(why, "clamp") {
 		t.Errorf("the refusal suggests clamping: %v", why)
+	}
+	// The bound the table cannot express fails the row even where the
+	// charged one is fine: under cheapest this row would be charged 0.1x,
+	// and its dearest end is still the 25x nobody can state, so the row
+	// would carry a ceiling that is not the tier's.
+	got = compile(t, catalogFile("2026-10-14", e), route(false, "cheapest"))
+	if _, ok := got.Lookup("vendor/model"); ok {
+		t.Fatal("a 25x dearest end was carried on a row charged at the cheapest end")
+	}
+	if why := got.Refusal("vendor/model"); !strings.Contains(why, "cache_read_per_m") || !strings.Contains(why, "max") {
+		t.Errorf("the refusal does not name the dimension and the end: %v", why)
 	}
 }
 

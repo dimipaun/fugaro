@@ -92,19 +92,22 @@ import (
 // settle it (this file is not in its list) and left the residue visible; this
 // file is W2.6's, so W2.6 is where the two halves were made to agree.
 //
-// The three beyond the ten are `docs/central-orchestrator/`,
-// `docs/mobile-auth/` and `docs/rigor-modes/`, and they are the same class as
-// `docs/windows-cli/`, which the plan added past its own census on exactly
-// this reasoning: each is another artifact's own record -- README, spec,
-// implementation-plan and reconciliation for work planned on its own date --
-// so renaming inside one edits a record rather than fixing a document, which
-// is what D9 forbids. They postdate `82d366af`, the commit this plan was
-// checked against, so no census read there could see them, and the plan's
-// "no more and no fewer" is a claim about the roots it knew rather than a
-// licence to rewrite another artifact's plan. All three name the command, so
-// this is not the direction Global Constraint 7 forbids: an exemption for a
-// root with no occurrences at all (which is why `docs/website/redesign/` is
-// deliberately absent) would be.
+// The four beyond the ten are `docs/central-orchestrator/`,
+// `docs/mobile-auth/`, `docs/rigor-modes/` and `docs/spend-accuracy/`, and
+// they are the same class as `docs/windows-cli/`, which the plan added past
+// its own census on exactly this reasoning: each is another artifact's own
+// record -- README, spec, implementation-plan and reconciliation for work
+// planned on its own date -- so renaming inside one edits a record rather
+// than fixing a document, which is what D9 forbids. They postdate `82d366af`,
+// the commit this plan was checked against, so no census read there could see
+// them, and the plan's "no more and no fewer" is a claim about the roots it
+// knew rather than a licence to rewrite another artifact's plan. W2.6 ruled
+// on the first three; the fourth is the spend-accuracy plan's own record,
+// which that plan's task added after W2.6 had made its ruling, and the walk
+// is what found it. All four name the command, so this is not the direction
+// Global Constraint 7 forbids: an exemption for a root with no occurrences at
+// all (which is why `docs/website/redesign/` is deliberately absent) would
+// be.
 var datedRecords = []string{
 	// The plans: what was decided, in the words of the day.
 	"docs/plans/",
@@ -140,6 +143,12 @@ var datedRecords = []string{
 	"docs/central-orchestrator/",
 	"docs/mobile-auth/",
 	"docs/rigor-modes/",
+	// The spend-accuracy plan's record, one mention in its
+	// implementation-plan.md: the same class as the three above, and added the
+	// same way, by the walk finding it. It postdates W2.6 as well -- that
+	// plan's own docs task wrote the folder -- which is why it is stated here
+	// rather than folded into that ruling.
+	"docs/spend-accuracy/",
 }
 
 // retirementText is the second exemption class, and it is not a judgement
@@ -335,8 +344,10 @@ const censusRoot = "../.."
 // and docs/windows-cli/, which postdates the plan's census -- and six under the
 // three folders of that same class which also postdate it
 // (docs/central-orchestrator/, docs/mobile-auth/ and docs/rigor-modes/, each
-// another artifact's own plan record). That is why `datedRecords` above carries
-// thirteen roots and says so.
+// another artifact's own plan record). A sixteenth joined them when the walk
+// found the spend-accuracy plan's record too, one mention in its
+// implementation-plan.md, so that class is seven files under four folders now.
+// That is why `datedRecords` above carries fourteen roots and says so.
 //
 // Eight name the command by design, and they are `retirementText` above --
 // W0.2's three, W1.2's relay case and the four this task added: the tombstone
@@ -452,6 +463,11 @@ var censusOutputDirs = []string{
 	"dist",
 	".firebase",
 	"secrets",
+	// .gitignore: the JUnit reports `commands.test` writes through
+	// internal/verify/gotestjunit, which `fugaro verify test` reads back for the
+	// run record's counts (.gitignore says why they are ignored and never
+	// committed).
+	"reports",
 }
 
 // censusOutputNames are ignored by name at any depth.
@@ -943,9 +959,10 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 	}{
 		// Every dated root, and every path in retirementText -- named rather
 		// than counted, for the reason that list's own comment gives: it is
-		// appended to. The plan's ten, the three W2.6 ruled on beside them, the
-		// tombstone and its test, this file, the relay case whose input is the
-		// retired command line, and W2.6's two guards and two dated-record pins.
+		// appended to. The plan's ten, the three W2.6 ruled on beside them and
+		// the fourth the walk added after, the tombstone and its test, this
+		// file, the relay case whose input is the retired command line, and
+		// W2.6's two guards and two dated-record pins.
 		{"docs/plans/setup-wizard/implementation-plan.md", true},
 		{"docs/releases/v0.9.0.md", true},
 		{"docs/design/x.md", true},
@@ -959,6 +976,7 @@ func TestCensusOutputAndExemptArePinned(t *testing.T) {
 		{"docs/central-orchestrator/reconciliation.md", true},
 		{"docs/mobile-auth/reconciliation.md", true},
 		{"docs/rigor-modes/reconciliation.md", true},
+		{"docs/spend-accuracy/implementation-plan.md", true},
 		{"internal/cli/retired.go", true},
 		{"internal/cli/retired_test.go", true},
 		{"internal/cli/docs_live_init_census_test.go", true},
@@ -1041,6 +1059,10 @@ var censusIgnored = []struct {
 	{".gitignore", "/fugaro", "fugaro", true, ""},
 	{".gitignore", "/clidoc", "clidoc", true, ""},
 	{".gitignore", "*.exe", "fugaro.exe", true, ""},
+	// The JUnit reports this repository's own test command writes, one per
+	// `go test` invocation it runs (fugaro.yaml, internal/verify/gotestjunit):
+	// a run's own output, never source text.
+	{".gitignore", "/reports/", "reports/tree.xml", false, ""},
 	{".gitignore", "/deploy/terraform/**/.terraform/", "deploy/terraform/prod/.terraform/providers/registry.terraform.io/hashicorp/google/6.0.0/linux_amd64/terraform-provider-google", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate", "deploy/terraform/prod/terraform.tfstate", false, ""},
 	{".gitignore", "/deploy/terraform/**/*.tfstate.*", "deploy/terraform/prod/terraform.tfstate.backup", false, ""},

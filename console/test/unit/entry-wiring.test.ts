@@ -122,6 +122,7 @@ import {
   NO_CHECKOUT_USE_LABEL,
 } from '../../src/renderer/screens/nocheckout'
 import { CHECKOUT_SELECT_CLASS, checkoutLabel } from '../../src/renderer/checkout'
+import { LIVE_CAPS_HIDDEN_WORD } from '../../src/renderer/screens/live'
 import { GRAPH_SCOPE_ALL, GRAPH_SCOPE_PLAN } from '../../src/renderer/screens/graph'
 import {
   BUSY_ATTRIBUTE,
@@ -698,6 +699,51 @@ describe('the dashboard the entry mounts', () => {
     const drawn = await banners(anOkCompatibility())
     expect(drawn.map((banner) => banner.attributes.get('data-killed')), 'the ok mode drew no kill banner').toContain('true')
     expect(await banners(aReducedCompatibility()), 'the reduced mode drew the kill state').toEqual([])
+  })
+
+  it('draws the spend-rate gauge and the runs cap bar, and withholds them in the reduced mode', async () => {
+    // The `caps` view is the Live screen's spend rate, its red zone and the two
+    // figures that are a limit rather than money spent (`REDUCED_VIEWS`,
+    // `version.ts`), and the gate's verdict reaches the screen as `renderLive`'s
+    // fourth argument -- the withholding the screen does itself is `live.test.ts`'s
+    // (`capsWithheld`), and what this case holds is that the entry *hands the
+    // verdict over at all*. The same capped frame, in the two modes.
+    const last = syntheticDocuments()[syntheticDocuments().length - 1] as Readonly<Record<string, unknown>>
+    const capped = {
+      ...last,
+      total: { ...(last['total'] as Readonly<Record<string, unknown>>), max_parallel: 4 },
+    }
+    const panelIn = async (compatibility: Record<string, unknown>): Promise<FakeNode> => {
+      const { bridge } = fakeBridge({ compatibility, replies: { subscribeLive: () => snapshotReply(capped) } })
+      const document = await boot(bridge, new FakeDocument())
+      const panel = panelOf(document)
+      expect(classed(panel, 'live-repo-name'), 'the Live screen was not drawn').toHaveLength(1)
+      return panel
+    }
+    // The recording's day is at its cap, so its red zone is zero and the needle
+    // stands at the right-hand end: the figure this holds is the needle's
+    // presence and its place, not a rate the fixture happens to carry.
+    const ok = await panelIn(anOkCompatibility())
+    expect(
+      classed(ok, 'live-gauge-needle').map((needle) => needle.attributes.get('x')),
+      'the ok mode drew no needle',
+    ).toEqual(['99'])
+    expect(classed(ok, 'live-gauge-zone'), 'the ok mode drew no red zone').toHaveLength(1)
+    expect(
+      classed(ok, 'live-fleet-runs-cap').map((cap) => cap.attributes.get('data-state')),
+      'the ok mode did not read max_parallel',
+    ).toEqual(['measured'])
+
+    const reduced = await panelIn(aReducedCompatibility())
+    expect(classed(reduced, 'live-gauge-needle'), 'the reduced mode drew the needle').toEqual([])
+    expect(classed(reduced, 'live-gauge-zone'), 'the reduced mode drew the red zone').toEqual([])
+    const hidden = classed(reduced, 'live-fleet-runs-cap')
+    expect(hidden.map((cap) => cap.attributes.get('data-state')), 'the reduced mode still read a cap').toEqual([
+      'unavailable',
+    ])
+    expect(hidden.map((cap) => cap.attributes.get('title')), 'the runs bar withheld without its reason').toEqual([
+      LIVE_CAPS_HIDDEN_WORD,
+    ])
   })
 
   it.each(['readRunLogs', 'runLogLink'] as const)(

@@ -142,14 +142,32 @@ import (
 // (internal/projectpolicy/migrate.go), like the two before it: the node keeps
 // its bytes and only the number moves, because a node with no `binaries` block
 // admits nothing — which is what a project that never set one means.
-const Version = 8
+//
+// Version 9 (model-crafts MC20 and MC21; decisions D1668 and D1673) is the
+// version at which a pool stays on one path. It adds no member: what it changes
+// is what the members of `craft_pools` may be. The credentials service selects
+// among a pool's members by tier and the listed order only breaks a tie (F7,
+// D154), while a run's own gateway holds one upstream per stage and never
+// retries a call across a secret (F20, D1635) — so a pool naming members of both
+// halves of a run is a pool whose order can mean nothing, and from this release
+// the read of a published node refuses one (config.ValidatePublishedPools, which
+// Decode runs) instead of serving it. The bump is what makes a reader of the
+// release behind refuse such a node rather than read past a pool it cannot
+// honour, and the migration step that carries a version-8 node forward is NOT
+// shape-free (internal/projectpolicy/migrate.go): it splits every crossing pool
+// into one pool per half and repoints the crafts whose access named it, so a
+// version-8 node is one a version-9 reader refuses until `fugaro update`'s
+// policy stage has migrated it. A node with no crossing pool changes only its
+// number.
+const Version = 9
 
 // VersionSince names, for each policy version, the fugaro release that
 // introduced it: 1 is the model itself (0.8.0, internal/cli's policySince), 2
 // is the profile gate above (0.8.5), 3 the account axis (0.9.0), 4 the
 // Bitbucket token block (0.14.0), 5 the pools' owner and roster (0.23.0), 6 the
 // binaries block (0.24.0), 7 the two model grades (0.24.0) and 8 the binaries
-// block's carrier in the project's own config (0.26.0). It sits beside
+// block's carrier in the project's own config (0.26.0) and 9 the one-path pool
+// (0.26.0). It sits beside
 // Version because a bump of Version adds its row in the same change
 // (TestVersionSinceCoversEveryVersion fails until it does), and it is
 // read by every message about a node *ahead* of its reader (SkewSentence, so
@@ -171,6 +189,7 @@ var VersionSince = map[int]string{
 	6: "0.24.0",
 	7: "0.24.0",
 	8: "0.26.0",
+	9: "0.26.0",
 }
 
 // VersionRelease is the release that introduced policy version v, and false
@@ -367,7 +386,64 @@ const PolicyRulesVersion = 1
 // run that bootstrapped under the release behind keeps its records and its
 // counters and every write it makes still lands
 // (docs/design/update-in-flight.md).
-const RulesVersion = 5
+//
+// Generation 6 is the registration kind (mobile plan task P5.2.2, on
+// docs/mobile/design/push-notifications.md §3.5 (b) and §3.8): a mailbox
+// message may now carry the kind `registration` and, on it, the app's push
+// token, the platform it was issued for, and the preference record — the five
+// category switches and an optional quiet-hours window. It bumps where C1.3's
+// credentials children deliberately did not, and what separates them is the
+// direction the reach runs. Those were optional children of nodes a run already
+// writes, and only a `cascade` run writes them, so an installation that had not
+// opted in behaved identically. This is a *client's write*: the phone writes its
+// registration into its own inbox, and the document behind refuses the kind —
+// so every registration the app sends is refused at the database, with no
+// error, until the owner deploys. That is the drift the marker exists to
+// report, one direction over from generation 4's read grant: a client under the
+// older document cannot make a write this one admits, where generation 4's
+// reader could not make a read it admits. It is a widening for the phone and
+// nothing else: no rule an existing identity satisfies was loosened, the app's
+// inbox write still admits only the fields the inbox names, and neither
+// `config/admin/devices/**` nor `config/admin/push/**` gains a client writer.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document and
+// records its generation in the marker, so an installation at generation 5
+// converges in one run and no second command. The deploy still refuses to write
+// this binary's document under a marker *above* it, so an older CLI cannot take
+// the registration kind away behind a newer one's back. And the update is safe
+// while runs are in flight, which the marker's own write path carries: the
+// fields are new children of a subtree no run writes, a run that bootstrapped
+// under the release behind keeps its records, its ledger and its counters, and
+// every write it makes still lands (docs/design/update-in-flight.md).
+//
+// Generation 7 is the four day-counter leaves a run's stage report writes per
+// model (spend-accuracy task SA5.0, D2648 as amended by D2650,
+// docs/spend-accuracy/day-leaves.md): `notional`, `rep`, `tlo` and `thi` under
+// `spend/<day>/repos/<slug>/byModel/<model>`, granted exactly as `micros` is —
+// the amount bound, increase-only, at most MAXRES a write. It bumps where the
+// credentials children deliberately did not, and it bumps for generation 6's
+// reason sharpened: these are a *client's writes*, and the client is a run.
+// Realtime Database applies a multi-path update atomically, so a run under the
+// older document does not lose one leaf — the whole stage report is refused and
+// the stage fails, which is why the writer asks the deployed generation before
+// it writes them (reconciliation F10, SA5.1). The marker is the only thing that
+// tells such an installation that its deployed document is not this binary's.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document and
+// records generation 7 in the marker, so an installation at generation 6
+// converges in one run and no second command. The deploy still refuses to write
+// this binary's document under a marker *above* it, so an older CLI cannot take
+// the leaves away behind a newer one's back. And the update is safe while runs
+// are in flight, which the marker's own write path carries: the leaves are new
+// siblings of a node a run already writes, so a run that bootstrapped under the
+// release behind keeps writing `micros` and the token leaves, and keeps its
+// records, its ledger and its counters — every write it makes still lands, and
+// it writes no leaf it does not know (docs/design/update-in-flight.md).
+const RulesVersion = 7
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own

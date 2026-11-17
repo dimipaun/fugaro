@@ -259,6 +259,15 @@ type SharedAnchor struct {
 // them to. Shared nils it for the floor's reason, and the policy node the
 // runner reads is its other home.
 //
+// rigor_pending is the mode a first run's wizard was answered with before its
+// Layer stage wrote it (task W, D900), and it is refused for review_floor's
+// reason: the mode is how much review every run of the project gets — the
+// floor's own decision read from the other end — so a launcher who could write
+// one into the shared file could have a teammate's converge lower the project's
+// review behind the owner's back, which is the write `fugaro rigor set` refuses
+// (D1026). It is never published besides: it is one machine's hand-off to its
+// own Layer stage, and localcfg.Config.Shared nils it for that reason too.
+//
 // default_claude_account, stages and claude_account_auto are the
 // account-choice keys, and they are operator-only for claude_accounts' own
 // reason (docs/accounts-add/spec.md §11.1): a key that names the account a
@@ -322,7 +331,26 @@ type SharedAnchor struct {
 // member table are dropped with it, because a shared file that could name a
 // workspace would be one that could join this project to a group nobody here
 // chose. localcfg.Config.Shared nils all four.
-var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "binaries"}
+//
+// credential_cascade, model_grades and node_removals are the carriers the
+// node-only blocks gained (config-ownership, D2607, F23, F22), and each is here
+// on the rule the blocks above are here on. credential_cascade is the node's
+// `credentials` member — the cascade's paid fallback, its wait-or-switch
+// threshold, its backoff and D142's two controls — and `fallback: auto` is what
+// lets a run spend the project's money, so a launcher who could publish one
+// would be choosing every teammate's spending; the node `credentials` key is
+// the cascade and the local `credentials` key is the list of typed credentials,
+// which is why the carrier has a name of its own (F23) and why both are refused
+// here. model_grades names the model a rung of the escalation ladder runs and
+// the credential or pool its calls go out on, which is the grant the crafts and
+// pools blocks are refused for one step further out. node_removals is the one
+// of the three whose publication would be destructive rather than a widened
+// grant: it names what the next reconcile takes out of the node, so a launcher
+// who could write it would be deleting the project's pools, credentials and
+// crafts from the file it can write. All three are published through the policy
+// node, which the owner writes and the runner fails closed on, and
+// localcfg.Config.Shared nils them.
+var sharedForbidden = []string{"terraform", "backend", "user", "commit_name", "commit_email", "endpoints", "bucket_url", "registry", "providers", "routing", "claude_accounts", "project_secrets", "workflow_secrets", "bitbucket_api_roots", "bitbucket_tokens", "clone_urls", "update_check", "issues", "escalation", "mobile_allow", "secret_rotation_days", "secret_expires", "review_floor", "verifier_accounts", "image_catalog", "image_map", "bake_repos", "triage", "rigor_pending", "orchestrator", "default_claude_account", "stages", "claude_account_auto", "claude_account_aliases", "credentials", "pools", "subscription_spread", "crafts", "workspace", "workspace_pin", "workspace_members", "workspace_cap", "binaries", "credential_cascade", "model_grades", "node_removals"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
@@ -585,7 +613,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 // arrived some other way (a merge, a decoder that mapped a key onto a field of
 // its own), and the check a test can hold each field of without a file.
 func sharedNeverPublished(c *localcfg.Config) bool {
-	return c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil || c.Binaries != nil
+	return c.BackendName != "" || c.User != "" || c.CommitName != "" || c.CommitEmail != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil || c.Routing != nil || c.ClaudeAccounts != nil || c.ProjectSecrets != nil || c.WorkflowSecrets != nil || c.BitbucketAPIRoots != nil || c.BitbucketTokens != nil || c.CloneURLs != nil || c.UpdateCheck != nil || c.Issues != nil || c.SecretRotationDays != 0 || c.SecretExpires != nil || c.ReviewFloor != nil || c.ImageCatalog != nil || c.ImageMap != nil || c.BakeRepos != nil || c.Triage != nil || c.RigorPending != "" || c.DefaultClaudeAccount != "" || c.ClaudeAccountStages != nil || c.ClaudeAccountAuto || c.ClaudeAccountAliases != nil || c.Credentials != nil || c.Pools != nil || c.SubscriptionSpread != nil || !reflect.ValueOf(c.Crafts).IsZero() || c.Workspace != "" || !reflect.ValueOf(c.WorkspacePin).IsZero() || c.WorkspaceMembers != nil || c.WorkspaceCap != nil || c.Binaries != nil || c.CredentialCascade != nil || c.ModelGrades != nil || c.NodeRemovals != nil
 }
 
 // dropLegacyBaseImages removes a base_images entry of exactly a kind

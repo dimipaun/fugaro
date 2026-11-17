@@ -43,6 +43,13 @@ const (
 	statusReserve = 6 * 1024
 	// maxStatusText bounds the free text (a reason) placed in the section.
 	maxStatusText = 200
+	// maxStatusBinaries is how many of the run's admitted binaries the section
+	// names before it counts the rest (D993). The body is a surface a run can
+	// grow — a task that adds a hundred assets is one task — and the paths are
+	// there to say an unreadable file is in the diff, not to list it: a reader
+	// who needs every path reads the diff, and the count says how many there
+	// are.
+	maxStatusBinaries = 3
 )
 
 // earlyOpenTimeout bounds the whole early open (its retries included), so a
@@ -77,6 +84,7 @@ func (r *run) notePR(ctx context.Context, pr gitprov.PR) {
 	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL, Desc: r.pr.desc}
 	r.save(ctx)
 	r.noteRegistryPRURL(r.rec.PR.URL)
+	r.noteChangeSetMember(ctx, pr)
 }
 
 // noteStatusWritten records when the status section was last written, in
@@ -829,6 +837,7 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	// longer line -- a full run ID is what every version of the CLI takes.
 	id := inlineText(task.ShortRun(r.rec.RunID))
 	out := line + "\n"
+	out += r.changeSetPart()
 	out += r.ownerPart()
 	out += r.deferredPart()
 	if r.rec.DraftFallback {
@@ -836,6 +845,120 @@ func (r *run) sectionLines(head string, parts ...string) string {
 	}
 	return out + fmt.Sprintf("Run `%s` (a stale time here means the run died: `fugaro diagnose %s`)",
 		id, inlineText(r.rec.RunID))
+}
+
+// changeSetPart is the section's change-set block (D1): the run is one member
+// of a set launched together, and the block names the runs beside it so a
+// reader of one member's pull request can find them. It sits under the first
+// line, above the decisions and the deferrals, because it says what the run is
+// rather than what it left.
+//
+// "" for a run in no set, which is every other run: a launch that is in no
+// change set carries none (task.Spec.ChangeSet), and the section it writes is
+// the one it wrote before the field existed.
+//
+// The members are the run's own task's (D642) and are already canonical
+// (task.Validate), and no sibling's pull request is knowable here: a run
+// reaches only its own repository's prefixes in the runs bucket (SECURITY.md),
+// so the block a member writes leaves them unnamed and the settle step, which
+// reads every member's record, is what fills them in (D3).
+func (r *run) changeSetPart() string {
+	// A run under test can have no task at all (the section is rendered from
+	// the record alone in most of these paths), and a run with no task is in no
+	// set.
+	if r.spec == nil || r.spec.ChangeSet == nil {
+		return ""
+	}
+	cs := r.spec.ChangeSet
+	members := make([]gitprov.ChangeSetMember, 0, len(cs.Members))
+	for _, m := range cs.Members {
+		members = append(members, gitprov.ChangeSetMember{Repo: inlineText(m.Repo), RunID: inlineText(task.ShortRun(m.RunID))})
+	}
+	return gitprov.ChangeSetLine(inlineText(task.ShortRun(cs.ID)), inlineText(task.ShortRun(r.rec.RunID)), members)
+}
+
+// changeSetHoldReason is the sentence a member run's record and pull request
+// carry instead of the ready one: why a run that answered ready is left a draft
+// (D614). It names the set the way the pull request's own change-set block does
+// (the short form, which is what a reader of one member can see) and says what
+// lifts the hold, because neither the draft state nor the record says it: what
+// turns the pull request ready is the set's own step, once every member has
+// shipped (D3).
+func changeSetHoldReason(cs *task.ChangeSet) string {
+	return fmt.Sprintf("held: the pull requests of change set %s go ready together, when every member has shipped",
+		inlineText(task.ShortRun(cs.ID)))
+}
+
+// noteChangeSetMember records this run as a member of its change set, with the
+// pull request it just opened. The record lives in the member run's prefix, the
+// only one a run of its repository reaches, and it is what a step that reads a
+// whole set reads from this member (D3); the run's own verdict joins it when
+// the run ends (recordChangeSetVerdict, D2). A run in no change set records
+// nothing.
+func (r *run) noteChangeSetMember(ctx context.Context, pr gitprov.PR) {
+	r.writeChangeSetMember(ctx, pr, "")
+}
+
+// recordChangeSetVerdict writes the member's verdict once the run has ended
+// (D2), so the step that settles a whole set reads each member's own word about
+// whether anything must change before its pull request is merged (D3). It
+// writes the empty verdict for a run that ended without shipping, which is what
+// clears one an earlier attempt at the same pull request left behind: a member
+// whose follow-up failed must not be settled from a `ship` nobody stands by.
+func (r *run) recordChangeSetVerdict(ctx context.Context, pr gitprov.PR, verdict string) {
+	r.writeChangeSetMember(ctx, pr, verdict)
+}
+
+// writeChangeSetMember stores the member record of this run, at pr, with
+// verdict as the run's own word about merging it ("" while the run has none).
+// A run in no change set writes nothing.
+//
+// The record names and sits under the set's own member run — the run the set
+// was launched from (task.ChangeSetMember.RunID) — never the run that happens
+// to be writing: membership is fixed at the set's launch (D642), and a
+// follow-up to a member's pull request answers on that member's record rather
+// than making itself a member (D2). Runs of one repository share their
+// prefixes, which is what lets a follow-up write there (SECURITY.md, T5).
+//
+// The repository is written canonically (task.CanonicalRepo) while the task
+// keeps the spelling it was launched with: the record is matched against the
+// member list every member's task carries, which is canonical, and a record
+// that spelled its own repository differently would not match the list it
+// repeats.
+func (r *run) writeChangeSetMember(ctx context.Context, pr gitprov.PR, verdict string) {
+	cs := r.spec.ChangeSet
+	if cs == nil {
+		return
+	}
+	repo, err := task.CanonicalRepo(r.spec.Repo)
+	if err != nil {
+		r.d.Log.Warn("the run's repository is not a name a change set can record", "err", r.redact(err.Error()))
+		return
+	}
+	// task.Validate requires the set to name the run's own repository, so a
+	// set that does not is a task written by something other than a launcher
+	// this build ships; nothing is recorded for it rather than a member the
+	// set never named.
+	member, ok := cs.Member(repo)
+	if !ok {
+		r.d.Log.Warn("the change set does not name this run's repository", "repo", repo)
+		return
+	}
+	m := &runstore.ChangeSetMember{
+		Version: 1,
+		SetID:   cs.ID,
+		Repo:    repo,
+		RunID:   member.RunID,
+		PRURL:   pr.URL,
+		Verdict: verdict,
+		At:      r.d.Now().UTC(),
+	}
+	if err := r.d.Store.Sibling(member.RunID).WriteChangeSetMember(ctx, m); err != nil {
+		// The record is a coordination aid, not the run's own record: a set
+		// whose member cannot record its pull request is one the settle step
+		// reports rather than one this run fails over (T5).
+		r.d.Log.Warn("storing changeset.json failed", "err", r.redact(err.Error()))
+	}
 }
 
 // deferredPart is the section's list of the findings the run did not fix and
@@ -907,6 +1030,37 @@ func (r *run) ownerPart() string {
 		fmt.Fprintf(&b, "- and %s more; the run's record lists %d of them\n", Plural(od.Total-len(od.Decisions), "decision"), len(od.Decisions))
 	}
 	return b.String()
+}
+
+// binariesPart is the section's line for the binaries this run added at a path
+// the project's policy admits (D993, spec.md §5): the run used the rule, and a
+// reader of the pull request is told an unreadable file is in it without having
+// to open the diff and find one. "" for a run that added none, which is every
+// run whose task was not an asset — the section says nothing about a rule the
+// run did not use.
+//
+// The list is bounded (maxStatusBinaries) and the count is always the whole
+// one: a line that showed three paths of seven and stopped would read as a run
+// that added three. The paths are the run's own diff and go through inlineText,
+// so a path an agent named with a newline or a mention cannot break the line or
+// notify anyone.
+func (r *run) binariesPart() string {
+	if len(r.binariesAdmitted) == 0 {
+		return ""
+	}
+	shown, more := r.binariesAdmitted, 0
+	if len(shown) > maxStatusBinaries {
+		more, shown = len(shown)-maxStatusBinaries, shown[:maxStatusBinaries]
+	}
+	paths := make([]string, len(shown))
+	for i, p := range shown {
+		paths[i] = inlineText(p)
+	}
+	out := fmt.Sprintf("binaries: %d admitted (%s", len(r.binariesAdmitted), strings.Join(paths, ", "))
+	if more > 0 {
+		out += fmt.Sprintf(", and %d more", more)
+	}
+	return out + ")"
 }
 
 func (r *run) updated(label string) string {
@@ -982,7 +1136,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.binariesPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -140,14 +141,47 @@ type Diagnosis struct {
 	// record's bytes, which a hand can edit. Absent when the record has no
 	// reviews, and when there is no record at all.
 	Reviews []runstore.ReviewSummary `json:"reviews,omitempty"`
+	// Triage is the record's triage rounds (runstore.TriageRecord, D1846,
+	// D1850) as a diagnosis reads them: one entry per round the stage ran, in
+	// the record's own order and bounded again on read, with the review round
+	// it judged, the mode, level, model and account it ran under, whether its
+	// call failed, why it failed (Cause), and its placements counted by source.
+	// The entries themselves are the record's and stay in it — this is the
+	// shape a reader needs to see which rounds a judge weighed and which ones
+	// the fail-safe decided, and a diagnosis that dropped a failed round would
+	// be showing a run whose findings look judged (D1846). Absent — never an
+	// empty list — for a run that triaged nothing, and for every record written
+	// before the field existed.
+	Triage []TriageRound `json:"triage,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
 	// what the run charged the provider routes' calls -- the table's price
 	// with the fee, or the report where it floors an unpriced tier's charge.
 	// Claude's spend is not in it. Zero when no provider reported one.
-	// ReportedWarning is set when the two differ by more than reportedGapPct.
-	Reported        float64 `json:"reported_usd,omitempty"`
-	Charge          float64 `json:"charge_usd,omitempty"`
-	ReportedWarning string  `json:"reported_warning,omitempty"`
+	//
+	// TableLoUSD and TableHiUSD are what the table would have charged the calls
+	// a provider reported a cost for, at the tier's cheapest and dearest ends,
+	// and UnreportedCalls is how many of the run's settled calls carried no
+	// report at all (D2650, runstore.Cost's own fields). Together they are the
+	// band a report is read against: under D2640 a complete call settles on the
+	// report, so a report compared with Charge agrees with it by construction
+	// (F16). Zero for a record written before the fields existed, and for a run
+	// whose calls reported no cost -- and zero is what says this record has no
+	// band, so its report is compared with the charge instead.
+	Reported float64 `json:"reported_usd,omitempty"`
+	Charge   float64 `json:"charge_usd,omitempty"`
+	// ReportedWarning is set when the report and the charge differ by more than
+	// reportedGapPct, for a record with no band. It is empty for a record that
+	// has one, whose comparison is BandWarning's: the console renders this
+	// field, so a sentence left in it would describe a comparison that record
+	// never made.
+	ReportedWarning string `json:"reported_warning,omitempty"`
+	// BandWarning is set when the report falls more than reportedGapPct above
+	// TableHiUSD or below TableLoUSD: the provider billed outside the band the
+	// table prices those calls in, in either direction (D2650, F17).
+	BandWarning     string  `json:"band_warning,omitempty"`
+	TableLoUSD      float64 `json:"table_lo_usd,omitempty"`
+	TableHiUSD      float64 `json:"table_hi_usd,omitempty"`
+	UnreportedCalls int     `json:"unreported_calls,omitempty"`
 	// PinWarnings are the model prices the run's cap counted on a guess:
 	// an unverified placeholder, or cache rates left at 0.
 	PinWarnings []string `json:"pin_warnings,omitempty"`
@@ -173,6 +207,65 @@ type Diagnosis struct {
 	// that took no governance halt: a budget or credential halt carries none,
 	// and neither does a record written before the field existed.
 	Checkpoint *runstore.Checkpoint `json:"checkpoint,omitempty"`
+}
+
+// TriageRound is one triage round as a diagnosis prints it: the review round
+// the judge was asked about, the mode and level in force at it, the model and
+// account that served the call where the record names them, whether the call
+// failed and the one-line cause the record kept for the failure, and how the
+// round's findings were placed, counted by source.
+//
+// It is not the record's own round (runstore.TriageRound), which carries the
+// placements themselves: a diagnosis is the answer to "what happened to this
+// run", and each round's answer is the failure and the four counts it was read
+// with. The entries stay in the record, which is the run's own document, and
+// each one's source is what these counts are — a round with no fail_safe entry
+// is a round a judge really answered.
+type TriageRound struct {
+	Round int          `json:"round"`
+	Mode  rigor.Mode   `json:"mode"`
+	Level policy.Level `json:"level"`
+	Model string       `json:"model,omitempty"`
+	// Account is the Claude account that served the round, empty for a round
+	// that ran on the run's own credential.
+	Account string `json:"account,omitempty"`
+	// Failed is whether the call failed or its answer could not be read: the
+	// fail-safe blocks every finding the mode's table blocks (D1846), and the
+	// fix round that follows works on those findings, which no judge weighed.
+	Failed bool `json:"failed,omitempty"`
+	// Skipped is whether the round was not asked at all, because the stage
+	// resolved to no Claude account and the run's gateway held no Anthropic
+	// key for the model it would run (runstore.TriageRound.Skipped). It is not
+	// Failed — nothing failed, the run chose not to ask — and the fail-safe
+	// settles such a round the same way, which is why a reader takes the two
+	// together.
+	Skipped bool `json:"skipped,omitempty"`
+	// Cause is why the round failed or was skipped, one line, and absent for a
+	// round that neither (runstore.TriageRound.Cause): the call's own first
+	// line where it answered nothing shaped like a verdict, `unreadable
+	// verdict` where it answered one the reader refused, or the run's own
+	// sentence about the account no policy names where the round was skipped.
+	Cause string `json:"cause,omitempty"`
+	// Sources is the round's placements counted by where they came from. The
+	// four sum to the entries the record holds, which is Total unless the
+	// record's cap cut the list.
+	Sources TriageSources `json:"sources"`
+	// Total is how many findings the round read (runstore.TriageRound.Total),
+	// the record's own count and never less than the entries it holds.
+	Total int `json:"total"`
+}
+
+// TriageSources counts one triage round's placements by their source
+// (runstore.TriageSource): the judge's own answers, the mode's table deciding
+// on its own, the fail-safe a round with no verdict takes, and the cap's own
+// deferral (D1846, D1850, D1858). All four are always printed, zeros included:
+// a reader comparing two rounds must not have to tell "nothing came from the
+// fail-safe" from "the fail-safe is not shown".
+type TriageSources struct {
+	Agent    int `json:"agent"`
+	Table    int `json:"table"`
+	FailSafe int `json:"fail_safe"`
+	Cap      int `json:"cap"`
 }
 
 type diagnoseOptions struct {
@@ -325,6 +418,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.Ruling = clipRunes(red(rec.OwnerRuled), task.MaxOwnerRuledBytes)
 		d.Retries = rec.Retries
 		d.Reviews = reviewsOf(rec.Reviews, red)
+		d.Triage = triageRoundsOf(rec.Triage, red)
 		d.Checkpoint = checkpointOf(rec.Checkpoint, red)
 		d.Verify = rec.Verify
 		for i := range d.Verify {
@@ -492,6 +586,125 @@ func reviewsOf(reviews []runstore.ReviewSummary, red func(string) string) []runs
 	return out
 }
 
+// triageFlag is the line a diagnosis carries at the top when any triage round
+// failed or was skipped, "" for a run whose rounds all answered and for one that
+// triaged nothing: which rounds bought no verdict and what became of each call,
+// and what the fail-safe did with the findings — every finding the mode's table
+// blocks blocked, which is what the fix round that follows was handed (D1846).
+// It is the summary of the block below it, written from the same reading, so the
+// two cannot say different things about one round.
+//
+// Each round's clause is runstore's — TriageFailureClause for a call that went
+// out and bought no verdict, TriageSkipClause for a round the run did not ask —
+// and each is one shared with the pull request's status section
+// (internal/runner's triageStatusLine): a judge that answered nothing, a judge
+// whose answer could not be read and a judge that was never asked are three
+// different facts, and the two readers of the record must not tell them apart
+// differently. The clauses stand in the record's order, so a run that skipped a
+// round and failed a later one reads in the order it happened.
+func triageFlag(rounds []TriageRound) string {
+	var parts []string
+	for _, r := range rounds {
+		switch {
+		case r.Skipped:
+			parts = append(parts, runstore.TriageSkipClause(r.Level, r.Round, r.Cause))
+		case r.Failed:
+			parts = append(parts, runstore.TriageFailureClause(r.Level, r.Round, r.Cause))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s; the fail-safe blocked every finding the mode's table blocks",
+		strings.Join(parts, "; "))
+}
+
+// triageLine is one triage round as the human block prints it: the round it
+// judged, the mode and level it ran under, the model and the account that
+// answered where the record names them, the findings it read and how they were
+// placed, counted by source — and, for a round whose call failed or which was
+// not asked at all, the word FAILED or SKIPPED and the cause the record kept
+// for it.
+//
+// All four counts are printed, zeros included, because a reader comparing two
+// rounds must not have to tell "nothing came from the fail-safe" from "the
+// fail-safe is not shown", and a round nothing was placed on still says how
+// many findings it read (Total).
+func triageLine(r TriageRound) string {
+	where := []string{string(r.Mode), string(r.Level)}
+	if r.Model != "" {
+		where = append(where, r.Model)
+	}
+	if r.Account != "" {
+		where = append(where, "account "+clipRunes(r.Account, maxNameCellRunes))
+	}
+	line := fmt.Sprintf("round %d (%s): %s — agent %d, table %d, fail_safe %d, cap %d",
+		r.Round, strings.Join(where, ", "), runner.Plural(r.Total, "finding"),
+		r.Sources.Agent, r.Sources.Table, r.Sources.FailSafe, r.Sources.Cap)
+	switch {
+	case r.Skipped:
+		line += "; SKIPPED"
+	case r.Failed:
+		line += "; FAILED"
+	default:
+		return line
+	}
+	if r.Cause != "" {
+		line += ": " + r.Cause
+	}
+	return line
+}
+
+// triageRoundsOf is the record's triage rounds for the document: the record's
+// own order, bounded again on read — the write-side bound is
+// runstore.MaxTriageRounds, and the record is an object a hand can edit — and
+// with every string redacted, the cause, the account and the model included,
+// which are the record's bytes. nil for a record carrying no triage block, so
+// the key is absent rather than an empty list, and the rounds are counted here
+// and not stored: the counts are a reading of the entries, which are the
+// record's own.
+//
+// The counts are of the entries the record holds, and Total is the record's own
+// count of the findings the round read: the two differ where the cap cut a
+// round's list to MaxTriageEntries, and a diagnosis of such a round shows the
+// counts it can stand behind with the total beside them.
+func triageRoundsOf(t *runstore.TriageRecord, red func(string) string) []TriageRound {
+	if t == nil || len(t.Rounds) == 0 {
+		return nil
+	}
+	out := make([]TriageRound, 0, min(len(t.Rounds), runstore.MaxTriageRounds))
+	for _, r := range t.Rounds {
+		if len(out) == runstore.MaxTriageRounds {
+			break
+		}
+		tr := TriageRound{
+			Round:   r.Round,
+			Mode:    rigor.Mode(red(string(r.Mode))),
+			Level:   policy.Level(red(string(r.Level))),
+			Model:   red(r.Model),
+			Account: red(r.Account),
+			Failed:  r.Failed,
+			Skipped: r.Skipped,
+			Cause:   red(r.Cause),
+			Total:   r.Total,
+		}
+		for _, e := range r.Entries {
+			switch runstore.TriageSource(red(string(e.Source))) {
+			case runstore.TriageSourceAgent:
+				tr.Sources.Agent++
+			case runstore.TriageSourceTable:
+				tr.Sources.Table++
+			case runstore.TriageSourceFailSafe:
+				tr.Sources.FailSafe++
+			case runstore.TriageSourceCap:
+				tr.Sources.Cap++
+			}
+		}
+		out = append(out, tr)
+	}
+	return out
+}
+
 // toleratedOf is the record's tolerated findings for the document: bounded
 // again on read, because the record is an object a hand can edit and the
 // write-side bound (runstore.NewTolerated) is not one a reader can count on,
@@ -628,11 +841,12 @@ func seniorRound(rs []runstore.ReviewSummary) int {
 	return 0
 }
 
-// reportedGapPct is how far above Fugaro's charge (without the route fee) a
-// provider's reported cost may be before diagnose warns.
+// reportedGapPct is how far outside the table's band -- or, for a record that
+// carries none, above Fugaro's charge without the route fee -- a provider's
+// reported cost may sit before diagnose warns.
 const reportedGapPct = 10
 
-// routeOf fills d's route, reported-vs-charge and pin warnings from the
+// routeOf fills d's route, reported-vs-band and pin warnings from the
 // record's cost: the models the run paid for are its pins. The warnings use
 // the price table with the project's overrides, as the run's cap did.
 func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(string) string) {
@@ -641,6 +855,7 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 	}
 	c := rec.Cost
 	d.Route, d.ModelBy = redactKeys(c.RouteBy, red), redactKeys(c.ModelBy, red)
+	d.TableLoUSD, d.TableHiUSD, d.UnreportedCalls = c.TableLoUSD, c.TableHiUSD, c.UnreportedCalls
 	if c.ReportedUSD > 0 {
 		// The provider's charge is the routes' spend; the run's ModelUSD also
 		// holds Claude's, and "unattributed" may be a Claude call's.
@@ -660,13 +875,32 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 			bare += pricing.WithoutFee(m, fee).USD()
 		}
 		d.Reported, d.Charge = c.ReportedUSD, charge
-		// Only a report above the charge is a sign of under-pricing: a lower
-		// one may be partial reporting (a cut stream, a call without a cost).
-		if d.Reported > bare*(1+reportedGapPct/100.0) {
-			// Two answers, because a catalog-priced route has two: the
-			// owner's own price, or the built-in catalog's cheapest end
-			// while OpenRouter served a dearer endpoint (design §7, D12).
-			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route was charged its cheapest end while a dearer endpoint served the call — set price_policy: highest, or price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
+		// A record that carries the band is compared with it and not with the
+		// charge: D2640 settles a complete call on the report, so a report
+		// against the charge agrees with it by construction (F16).
+		switch {
+		case d.TableHiUSD > 0 && d.Reported > d.TableHiUSD*(1+reportedGapPct/100.0):
+			// The one answer left: the catalog already charges its dearest
+			// end by default (D2644), so a report above it is the owner's
+			// own price being too low, or an endpoint dearer than the whole
+			// tier (design §7, D12).
+			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table would have charged the calls they reported at the tier's dearest end: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the tier's range — price the model under model_prices; check model_prices and the account's provider settings",
+				d.Reported, reportedGapPct, d.TableHiUSD)
+		case d.TableLoUSD > 0 && d.Reported < d.TableLoUSD*(1-reportedGapPct/100.0):
+			// Below the band the table over-prices those calls, which is the
+			// direction an override meant as dollars-per-million leaves
+			// (spec §"Likely causes" 2) and the one a provider that
+			// under-reports its own bill shows up in (F17): the caps are
+			// enforced against the charge, so a low report is the one that
+			// hides spend.
+			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% below the $%.4f the table would have charged those calls at the tier's cheapest end: model_prices may be too high for the endpoints served, or the provider under-reported what it billed; check model_prices and the account's provider settings",
+				d.Reported, reportedGapPct, d.TableLoUSD)
+		case d.TableHiUSD == 0 && d.TableLoUSD == 0 && d.Reported > bare*(1+reportedGapPct/100.0):
+			// The charge is the comparison only for a record with no band,
+			// and only a report above it is a sign of under-pricing: a lower
+			// one may be partial reporting (a cut stream, a call without a
+			// cost).
+			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the end it charged — price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
 				d.Reported, reportedGapPct, bare)
 		}
 	}
@@ -686,6 +920,23 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 			}
 		}
 	}
+}
+
+// reportedCalls is how many of the run's settled calls carried a provider
+// report, and how many it settled in all. The record keeps the unreported
+// count alone (runstore.Cost), and the gateway's count of each stage's calls
+// is the only figure in it the two can be read off: a call that settled after
+// its stage's report was taken is in the record's unreported count and in no
+// stage's, so the sum can sit below the calls the record itself says carried
+// no report, and the larger of the two is the run's settled calls.
+func reportedCalls(stages []runstore.StageTiming, unreported int) (reported, settled int) {
+	for _, st := range stages {
+		if st.Calls != nil {
+			settled += *st.Calls
+		}
+	}
+	settled = max(settled, unreported)
+	return settled - unreported, settled
 }
 
 func redactKeys(m map[string]float64, red func(string) string) map[string]float64 {
@@ -906,6 +1157,17 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}
+	// A triage round whose call failed is said here, at the top, and not only
+	// in the block below: it changes what the run's own numbers mean. A fix
+	// round that looks like any other was handed the findings the mode's table
+	// blocks by the fail-safe, which no judge weighed (D1846), so a reader who
+	// stops at the status block must not come away thinking every round of the
+	// run was judged. The line names each failed round and its cause, and is
+	// the same reading the block below and the pull request's own line are
+	// written from.
+	if line := triageFlag(d.Triage); line != "" {
+		fmt.Fprintf(&b, "Triage:   %s\n", oneLine(line))
+	}
 	if acct := r.OAuthAccount; acct != "" && acct != "default" {
 		fmt.Fprintf(&b, "Account:  %s\n", oneLine(clipRunes(acct, maxNameCellRunes)))
 	}
@@ -958,23 +1220,26 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		// stage (design §6.1), so the Cost line above counts a figure the
 		// reader cannot otherwise explain -- on a provider route nothing
 		// else names it, since the provider's own reported cost is recorded
-		// and is the floor under that charge rather than its price. The rates
-		// the multiple scales are the ones the call was otherwise priced at --
+		// and is what a complete call settled on (D2640). The rates the
+		// multiple scales are the ones the call was otherwise priced at --
 		// the serving model's own, or the table's maximum for a model it
 		// doesn't know -- so the line says that and not "its own rates", which
 		// would be wrong for a call the table priced at maximum rates, or one
 		// the response also priced as a surprise. The multiple is an assumed
 		// ceiling and not a published price, so where a provider reported a
-		// cost the charge may be that figure with the route fee instead, and
-		// the line says so -- in the warning's own words, and with the fee
-		// named, because the Reported line below shows the report without it.
-		// The clause is printed only when the record carries a report at all:
-		// a Claude call has no route, so a report cannot exist for it, and a
-		// provider that sent none floors nothing.
+		// cost a complete call settled on that figure with the route fee,
+		// floored at the row's cheapest end, and only a call the stream cut
+		// short keeps the multiple with the report as a floor under it. The
+		// record cannot tell the two apart -- it carries the tiers, not the
+		// calls -- so the line names both, in the warning's own words and with
+		// the fee named, because the Reported line below shows the report
+		// without it. The clause is printed only when the record carries a
+		// report at all: a Claude call has no route, so a report cannot exist
+		// for it, and a provider that sent none floors nothing.
 		line := fmt.Sprintf("%s charged at %dx the rates the call was priced at",
 			oneLine(strings.Join(r.Cost.ServiceTiers, ", ")), pricing.ConservativeTierMultiplier)
 		if d.Reported > 0 {
-			line += ", or the provider's reported cost with the route fee if dearer"
+			line += ", or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure"
 		}
 		fmt.Fprintf(&b, "Tier:     %s (no published price for the tier)\n", line)
 	}
@@ -995,14 +1260,26 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if d.Retries > 0 {
 		fmt.Fprintf(&b, "Retries:  %d (the model's stream was closed before a stage finished, so that stage was run once more)\n", d.Retries)
 	}
-	if d.Reported > 0 {
+	// A record that carries the band says so here instead of the Reported
+	// line: the report is read against the table's band for the same calls
+	// (F16), and the settled figure is what the run was charged beside it.
+	// The count says how much of the run the report covers -- the calls the
+	// band is over -- so a band that a report sits inside is not read as a
+	// whole run's report.
+	if d.TableHiUSD > 0 || d.TableLoUSD > 0 {
+		reported, settled := reportedCalls(d.Stages, d.UnreportedCalls)
+		fmt.Fprintf(&b, "Settled:  $%.4f (reported on %d of %d calls); table band $%.4f-$%.4f\n",
+			d.Charge, reported, settled, d.TableLoUSD, d.TableHiUSD)
+	} else if d.Reported > 0 {
 		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles; an unpriced tier's charge is floored by the report, clamped to the call's reservation)\n", d.Reported, d.Charge)
 	}
 	for _, w := range d.PinWarnings {
 		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
 	}
-	if d.ReportedWarning != "" {
-		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(d.ReportedWarning))
+	for _, w := range []string{d.ReportedWarning, d.BandWarning} {
+		if w != "" {
+			fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
+		}
 	}
 	if r.PRURL != "" {
 		fmt.Fprintf(&b, "PR:       %s\n", oneLine(prColumnURL(r)))
@@ -1042,6 +1319,28 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		// the difference between a short list and a complete one (F19).
 		if len(d.Reviews) == diagnoseReviews {
 			fmt.Fprintf(&b, "  … at most %d review rounds are printed\n", diagnoseReviews)
+		}
+	}
+	// The triage rounds, under the reviews whose rounds they judged (D1846,
+	// D1850): which rounds a judge really weighed, and for each one the model
+	// and account that answered, how its findings were placed and — where the
+	// call failed — the FAILED word and the record's own cause. It is the block
+	// that says a round was decided by the fail-safe rather than by a judge,
+	// which the findings list below cannot: those findings are the round's
+	// either way, and a run whose triage call failed has every one of them that
+	// the mode's table blocks in it.
+	if len(d.Triage) > 0 {
+		fmt.Fprintf(&b, "\nTriage\n")
+		for _, tr := range d.Triage {
+			fmt.Fprintf(&b, "  %s\n", oneLine(triageLine(tr)))
+		}
+		// Bounded like the reviews above and for the same reason (F19): the
+		// record's own bound is a writer's, and a hand-edited record need
+		// never have been bounded at all. A list that reaches the bound is
+		// cut, and saying so is the difference between a short list and a
+		// complete one.
+		if len(d.Triage) == runstore.MaxTriageRounds {
+			fmt.Fprintf(&b, "  … at most %d triage rounds are printed\n", runstore.MaxTriageRounds)
 		}
 	}
 	if len(d.Findings) > 0 {

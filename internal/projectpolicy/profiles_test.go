@@ -366,6 +366,60 @@ func TestDecodeRefusesAProfileMountingACodexOAuthToken(t *testing.T) {
 	}
 }
 
+// TestDecodeRefusesAProfileMountingAKeyCredentialsSecret: a key credential's
+// value lives under its own derived secret name (config.CredentialSecret,
+// `credential-<name>-key`, MC22), and that name is no profile's mount. The two
+// readers of one profile disagreed about it: the deployer refuses the entry —
+// internal/infra's projectJobSecrets asks projectSecretEnv, which answers a
+// reserved name or a configured model provider's key and nothing else — while
+// this node's reader accepted it, so `fugaro project policy publish` wrote a
+// profile `fugaro update` then refused to deploy. A profile is judged by one
+// rule in both documents (the reason the Claude OAuth and Codex namespaces are
+// refused here too), and this is that rule for the third namespace.
+//
+// The whole credential- prefix is refused, not only the names a credentials
+// block happens to define: a name merely shaped like a derived one would be a
+// credential's the day that credential is declared (config.KeyCredentialSecret),
+// and `fugaro secrets set` already refuses to store under one. It is refused on
+// the read path as well as at publish: validProfiles runs inside Decode, so a
+// node written by hand or by an older CLI is refused by the launcher, the
+// runner and `policy show` too.
+//
+// The mutation is dropping the KeyCredentialSecret refusal from validProfiles:
+// every secrets list below is accepted.
+func TestDecodeRefusesAProfileMountingAKeyCredentialsSecret(t *testing.T) {
+	secrets := func(list string) string {
+		return `{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h","secrets":` + list + `}}`
+	}
+	for _, list := range []string{
+		`["credential-acme-personal-key"]`,
+		`["credential-nobody-key"]`,
+		`["github-app-key","credential-acme-personal-key"]`,
+	} {
+		_, err := decodeProfiles(t, secrets(list))
+		if err == nil {
+			t.Errorf("the secrets list %s was accepted", list)
+			continue
+		}
+		for _, want := range []string{
+			config.CredentialSecretPrefix,
+			"a typed credential's own derived secret name",
+			// The fix is not in this document: the credential is declared in the
+			// local config, so the refusal has to say which path reaches a run.
+			"its own type's path",
+		} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal for %s does not say %q: %v", list, want, err)
+			}
+		}
+	}
+	// A name merely shaped like a derived one is not the namespace: the rule is
+	// the prefix (config.KeyCredentialSecret).
+	if _, err := decodeProfiles(t, secrets(`["my-credential-key","credentials"]`)); err != nil {
+		t.Fatalf("a name merely shaped like a credential's secret was refused: %v", err)
+	}
+}
+
 // TestDecodeRefusesAProfileNameWrittenTwice: profiles are keyed by their exact
 // spelling and looked up by it (ProfileFor, and every reader of a selection
 // through it), so encoding/json keeping the last of a repeated key would drop

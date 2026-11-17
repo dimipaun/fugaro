@@ -42,7 +42,8 @@ func specs() []Layer {
 	}
 }
 
-// TestResolveTheSpecsExample: the four crafts, each half answered on its own.
+// TestResolveTheSpecsExample: the spec's own four crafts, each half answered on
+// its own.
 // A craft that sets one half keeps the other half it follows — the review craft
 // changes only the access and keeps the coder's model, the security review
 // changes only the model and keeps the senior review's pool — and each half

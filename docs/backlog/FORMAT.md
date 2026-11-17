@@ -1,9 +1,15 @@
 # The backlog's format
 
-This folder is the repository's one backlog (rigor modes, the owner's ruling of
-2026-10-20: [reconciliation](../rigor-modes/reconciliation.md) D26–D32). It
-holds one Markdown file per item, named `<id>-<slug>.md`, beside this document
-and the generated [index](README.md).
+**This folder is history.** It holds the items filed while the backlog was one
+Markdown file per item, and new items go to `fugaro backlog add` (D2716 of
+[the orchestrator graph estimates reconciliation](../orchestrator-graph-estimates/reconciliation.md)).
+The ruling that made this folder is
+[the rigor modes reconciliation](../rigor-modes/reconciliation.md) (D26–D32),
+and D2716 retires it; this document is kept because those items are still read
+by it.
+
+The folder holds one Markdown file per item, named `<id>-<slug>.md`, beside
+this document and the generated [index](README.md).
 
 ## The id, and the file name
 

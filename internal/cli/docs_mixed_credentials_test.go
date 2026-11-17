@@ -192,21 +192,37 @@ func TestDocsMixedCredentialsRecordsTheRuling(t *testing.T) {
 		"### The decisions the tasks B1-B6 follow",
 		// Where the keys live and what carries them to a run: the file is the
 		// only store of the two, the node is the only thing a run reads, and
-		// `fugaro update` is the one command that closes the gap (B7). A note
-		// that named the keys and never said how they reach the node would
-		// leave an operator setting them and getting a mix the runner never
-		// sees.
+		// `fugaro update`'s policy stage publishes them — the ordinary state,
+		// and the claim the section always made (B7). A note that named the keys
+		// and never said how they reach the node would leave an operator setting
+		// them and getting a mix the runner never sees.
 		"### Where the two keys live, and what carries them to a run",
-		"`fugaro update` publishes them",
+		"**`fugaro update` publishes them**",
+		"`policyConfigDrift`",
 		"the project's **published policy node**",
 		"a mix no run of the project has",
-		"no second `fugaro project policy publish`",
-		// And the one step that command cannot take for these members: the D854
-		// re-seed refuses the account keys by name, and the doc says which
-		// command writes them, so the operator who meets that refusal has a path
-		// rather than a failure naming members no documented command sets.
-		"refuses the account keys **by name**",
+		// The state the owner met, and the correction of 2026-11-16: the stage
+		// refuses to publish from a file whose recorded generation the node has
+		// moved past, the re-seed refuses the account keys by name, and the way
+		// out is the explicit door — so a reader in that state has a path rather
+		// than a refusal naming members no documented command sets.
+		"**`fugaro update` is the upgrade beside that publish.**",
+		"carries the published node forward to this Fugaro's version in place",
+		"refuses the account keys by name",
+		"`fugaro project policy publish`, run at the operator's own terminal",
 		"fugaro settings set default_claude_account <name>",
+		// And the correction is not a second upgrade step: the upgrade stays one
+		// command (CLAUDE.md's HARD RULE), and the section has to say both or a
+		// reader takes the publish for one more thing an upgrade needs.
+		"a setting the operator changed is not part of an upgrade",
+		// And the publish's precondition, without which that sentence is read as
+		// "publish at any point": the publish builds the node from the file, so
+		// the members the re-seed refused to splice have to be in the file
+		// first — the ones it could splice it has already written — or the
+		// operator ends up making the overwrite D854 refuses, with the refusal's
+		// own advice.
+		"**Amended 2026-11-16 (the publish's precondition, review finding).**",
+		"what the publish waits for is the members the refusal named as ones it **could not** write",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s §11 never says %q: the ruling is not recorded and the tasks B1-B6 have nothing to build against", path, want)
@@ -357,10 +373,19 @@ func TestDocsMultiModelRecordsTheReviewAccountException(t *testing.T) {
 		"not priced or capped by the gateway",
 		// Where the two keys live and what carries them to a run: the reader
 		// who sets one has to learn that the file alone is not enough and that
-		// the one command they already run is what publishes it (B7).
+		// the one command they already run is what publishes it (B7) — and the
+		// state the owner met on 2026-11-16, where that command refuses the file
+		// and the explicit door is the way out, so §3 names both.
 		"`fugaro update` publishes them",
 		"the project's published policy node",
-		"there is no second publish to run",
+		"refuses the account keys by name",
+		"**`fugaro project policy publish`, run at your own terminal**",
+		// And the correction does not add a step to the upgrade.
+		"a setting you changed is not an upgrade",
+		// Nor is the door safe at any moment: it builds the node from the file,
+		// so the members the re-seed refused to splice are in the file first.
+		"so it goes **after** the file states the node's own values",
+		"the re-seed has already written every member it could splice into the file",
 		// And that the credential is not a plan any more: the reader who
 		// meets the rule here has to learn that the keys it names work, and
 		// which owner-run check the claim rests on.
@@ -754,16 +779,26 @@ func TestDocsCheck290IsTheMixedRunsSmokeTest(t *testing.T) {
 
 	// A step is runnable only if it names the right command, and that is what
 	// these pins hold: making the config reach a run (the stage keys are the
-	// machine's, and the runner reads the published policy node, which
-	// `fugaro update` republishes for these keys since B7), committing and pushing
-	// the repository's own change (the run fetches the ref), and telling the
-	// refusals apart — three of them are not `fugaro validate`'s, and a check
-	// that attributes a refusal to a command which never raises it sends the
-	// owner looking in the wrong place.
+	// machine's, the runner reads the published policy node, and `fugaro
+	// update`'s policy stage publishes them — with the one state it refuses the
+	// file in named, and `fugaro project policy publish` as the way out of it:
+	// corrected 2026-11-16, because the check used to promise a publish that
+	// stage refuses whenever the file's recorded generation is behind the
+	// node), committing and pushing the repository's own change (the run
+	// fetches the ref), and telling the refusals apart — three of them are not
+	// `fugaro validate`'s, and a check that attributes a refusal to a command
+	// which never raises it sends the owner looking in the wrong place.
 	for _, want := range []string{
-		"there is no second publish command to run",
-		"`fugaro update --repo`, which publishes the two keys to the policy node",
+		"**Check this first: whether that stage will publish from your file at all.**",
+		"the check above found your file's recorded generation behind the node",
+		"`fugaro project policy publish`, run at your own terminal",
+		// And the order the publish has to come in: it builds the node from the
+		// file, so the members the re-seed refused to splice go in by hand
+		// before it, or the step's own advice makes the overwrite D854 refuses.
+		"it goes only after the file states the node's own values",
+		"its refusal names the members it could not",
 		"it republishes the removal to the policy node",
+		"a key removed from the config reaches no run until that publish rewrites it",
 		"policyConfigDrift",
 		"Commit the `fugaro.yaml` change and push",
 		"config.CheckStageAccountMix",

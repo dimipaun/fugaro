@@ -71,6 +71,7 @@ const (
 	pairRefusedCodeMissing         = "code_not_typed"
 	pairRefusedCodeMismatch        = "fingerprint_mismatch"
 	pairRefusedKeychain            = "keychain_write_failed"
+	pairRefusedCloudKey            = "cloud_key_write_failed"
 	pairRefusedDelivery            = "delivery_write_failed"
 	pairRefusedInterrupted         = "interrupted" // the operator stopped the command
 	pairRefusedNoSelector          = "revoke_needs_a_selector"
@@ -78,6 +79,7 @@ const (
 	pairRefusedNoPairing           = "pairing_not_found"
 	pairRefusedTwoPairings         = "pairing_name_not_unique"
 	pairRefusedKeychainDelete      = "keychain_delete_failed"
+	pairRefusedCloudKeyDelete      = "cloud_key_delete_failed"
 )
 
 // pairEvent is one line of the stream. Every event carries the version, its

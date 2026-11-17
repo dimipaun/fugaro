@@ -49,12 +49,15 @@ variable "installation" {
     launchers = list(string)
     operators = list(string)
     # The installation's credentials service (D146, D147), absent while it has
-    # not opted in: its Cloud Run service name and region, which the workflow
-    # module turns into each job account's roles/run.invoker grant and into the
-    # drop of that job's model-secret accessors.
+    # not opted in: its Cloud Run service name, its region and the email of its
+    # own account, which the workflow module turns into each job account's
+    # roles/run.invoker grant, the drop of that job's model-secret accessors,
+    # and the service account's own secretAccessor on each secret the job mounts
+    # (D2074, from `account`).
     credentials_service = optional(object({
-      name   = string
-      region = string
+      name    = string
+      region  = string
+      account = optional(string, "")
     }))
     # The project's catalog check job account (D1148), its email, or "" on an
     # installation whose project publishes no catalog. It is what
@@ -121,6 +124,11 @@ variable "repo" {
     # the fact existed — every golden one — plans exactly what it planned, and
     # false is what an installation that never proxies a repository sends.
     bitbucket_proxied = optional(bool, false)
+    # Which of the model credentials the credentials service serves this
+    # repository's runs (D2072, G17), passed down to every workflow: `all`,
+    # `anthropic` or `none`. Optional and `all`, so a tfvars written before the
+    # fact existed plans exactly what it planned.
+    model_secrets_served = optional(string, "all")
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool

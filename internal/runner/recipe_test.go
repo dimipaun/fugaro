@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -196,6 +198,60 @@ func TestRecipeDigestStepFailsBeforeImplement(t *testing.T) {
 	}
 	if len(h.agent.calls) != 0 {
 		t.Fatalf("%d agent calls, want none (implement must not run)", len(h.agent.calls))
+	}
+}
+
+// TestRecipeDiagnoseStepReachesTheDiagnoseStage: the embedded-task resolution
+// path reaches the stage the step names, which stands in commands.render's
+// place rather than beside it (T-TC4, D2402) — the mirror of
+// TestRecipeCheckStepReachesTheGate above for the other step whose work has no
+// commands entry of its own. Without the dispatch artifactMode would run the
+// repository's commands.render in the step's place and end
+// succeeded/artifacts with no diagnosis in it: the catalog's troubleshoot
+// names out/diagnosis.md and out/diagnosis.json, files no render writes, so
+// the run it prevents is exactly the "a step Parse accepts and the run drops"
+// outcome recipe.RegisterStepKind's own comment (recipe.go) says may never
+// happen.
+//
+// Mutation (drop the r.diagnose dispatch in artifactMode, or the recipe.UsesDiagnose
+// arm that sets it): this test fails, finding the run succeeded with outcome
+// artifacts, the render script's own file in the outputs root, a render
+// recorded and no diagnosis anywhere in it.
+func TestRecipeDiagnoseStepReachesTheDiagnoseStage(t *testing.T) {
+	data, ok := recipe.CatalogText(recipe.TroubleshootRecipe)
+	if !ok {
+		t.Fatalf("%s is not in the catalog", recipe.TroubleshootRecipe)
+	}
+	spec := recipeSpec(embeddedTask(recipe.TroubleshootRecipe, string(data)))
+	spec.Mode = recipe.ModeArtifact
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	seedDiagnoseBundle(t, h, map[string]string{"evidence/log.txt": "fugaro update failed\n"})
+	diagnoseTree(t, h)
+	rec, err := h.run(t, diagnoseAnswer(diagnoseagent.OutcomeBug, "update missing configuration",
+		"Fugaro's own update path is wrong."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("rec = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	// The render script never ran: what it writes is not in the outputs root and
+	// the record carries no render block, while the diagnosis's own two files
+	// are recorded in its place.
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err == nil {
+		t.Error("commands.render ran in the diagnose step's place")
+	}
+	if rec.Render != nil {
+		t.Errorf("a diagnose run recorded a render: %+v", rec.Render)
+	}
+	got := artifactNames(rec.Artifacts)
+	for _, want := range []string{diagnoseMDName, diagnoseJSONName} {
+		if !slices.Contains(got, want) {
+			t.Errorf("the record's artifacts are %v, want %s among them", got, want)
+		}
+	}
+	if len(h.agent.calls) != 1 {
+		t.Fatalf("%d agent calls, want the diagnosis's one", len(h.agent.calls))
 	}
 }
 

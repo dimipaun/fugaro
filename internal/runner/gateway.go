@@ -192,6 +192,14 @@ const coderPinPath = "agent.models.coder"
 // have to tell that problem from the ones about the run's other pins.
 const reviewerPinPath = "agent.models.reviewer"
 
+// diagnoseModelPath is where a problem with the diagnose stage's model is
+// named: the key internal/config's own validator and settings registry read it
+// under (agent.models.diagnose, validateAgentModels). The diagnose stage's
+// model is judged in the coder's slot, which is the slot config.StageRole
+// resolves the stage to and so the one its output limit is read from
+// (applyRecipeOutputLimit), and a problem about it is renamed here.
+const diagnoseModelPath = "agent.models.diagnose"
+
 // modelRefusal is the class of checkBudget failure the run's model policy
 // raises — a model this run may not run, or cannot price — rather than
 // infrastructure failing under it, and it carries whether the coder pin was
@@ -309,7 +317,8 @@ func (r *run) modelAuth() string {
 }
 
 // reviewClassRun reports whether this run's model path is the credentials
-// service's review class: the run's mode is review (r.runClass) and the job it
+// service's review class: the run is of that class (r.runClass — the task's
+// mode: review, or the review class a diagnosis's launch writes) and the job it
 // was admitted to is the review-only variant (jobTriple.Class, set where the
 // candidate was matched).
 //
@@ -331,8 +340,9 @@ func (r *run) modelAuth() string {
 // own configuration's auth — for the review job, oauth with a token its
 // container does not mount, which is a refusal and never a call on a credential
 // nobody chose.
-// A run with no task at all is not one: r.runClass reads the task's mode, and
-// a caller that has no task is asking about a run that never started.
+// A run with no task at all is not one: r.runClass reads the task's own
+// markers, and a caller that has no task is asking about a run that never
+// started.
 func (r *run) reviewClassRun() bool {
 	return r.spec != nil && r.runClass() == classReview && r.job.Class == classReview
 }
@@ -673,20 +683,7 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 		// should stop where the reason is known rather than there.
 		return gateway.Upstream{}, fmt.Errorf("starting the gateway: a run whose auth is %s has no Cloud Run job name to report", r.modelAuth())
 	}
-	svc := &gateway.Service{
-		Job:        job,
-		RunIDToken: sess.IDToken(),
-		IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, url) },
-	}
-	// The slip this run claimed at its start (DS1.5): the gateway presents it
-	// on every call it proxies, which is how a cascade run is served a
-	// per-user, pool-owned or shared credential at all (D1933, R9). A run
-	// that holds none — an installation whose service has no slip routes, a
-	// claim that did not land — sends none, and the service decides.
-	if hold := r.slipHold(); hold != nil {
-		svc.SlipID, svc.SlipClaim = hold.id, hold.secret
-	}
-	up := gateway.Upstream{Kind: gateway.KindService, BaseURL: url, Service: svc}
+	up := gateway.Upstream{Kind: gateway.KindService, BaseURL: url, Service: r.serviceIdentities(url, job, sess.IDToken())}
 	if auth := r.modelAuth(); ServiceSwitchedAuth(auth) {
 		// What this run's own repository goes out on, declared so the service
 		// can hold the call to that repository's record (D2070 (a), B2.1). A
@@ -705,6 +702,32 @@ func (r *run) serviceUpstream() (gateway.Upstream, error) {
 		}
 	}
 	return up, nil
+}
+
+// serviceIdentities is how every call this run makes to the credentials service
+// identifies itself: the job's Google ID token, minted per call from the
+// metadata server for the service's own URL (which is the audience Cloud Run
+// IAM checks, D135), the run's own Firebase ID token, the job's name, and the
+// slip the run claimed at its start (DS1.5).
+//
+// The slip is presented on every call, which is how a cascade run is served a
+// per-user, pool-owned or shared credential at all (D1933, R9). A run that
+// holds none — an installation whose service has no slip routes, a claim that
+// did not land — sends none, and the service decides.
+//
+// The model path (serviceUpstream) and the runner's own fetch of a workflow
+// secret its job does not mount (workflowsecrets.go, B3.4) both read it from
+// here, so one run cannot present two different identities to one service.
+func (r *run) serviceIdentities(url, job string, runToken func() string) *gateway.Service {
+	svc := &gateway.Service{
+		Job:        job,
+		RunIDToken: runToken,
+		IDToken:    func(ctx context.Context) (string, error) { return metadataIDToken(ctx, r.d.Env, url) },
+	}
+	if hold := r.slipHold(); hold != nil {
+		svc.SlipID, svc.SlipClaim = hold.id, hold.secret
+	}
+	return svc
 }
 
 // execName is what a local invocation is called, for the sentences that have
@@ -1047,7 +1070,28 @@ func (r *run) closeGateway() {
 	if err := gw.Close(ctx); err != nil {
 		r.d.Log.Warn("closing the gateway failed", "err", r.redact(err.Error()))
 	}
-	led := gw.Ledger()
+	r.recordLedgerCost(gw.Ledger())
+	r.mu.Lock()
+	// The run's own model figure is the ledger's totals plus the stages the
+	// ledger never saw, an account stage's own among them (P11, P12): the
+	// ledger's figure alone would drop them from the record here, at the last
+	// gateway write of the run, however carefully the stages kept them.
+	spent := r.gwUsed + r.gwNotional + r.direct
+	r.mu.Unlock()
+	r.rec.CostUSD = spent.USD()
+	r.updateCost()
+	r.warnReportedGap()
+}
+
+// recordLedgerCost takes the run's cost figures from the gateway's ledger:
+// the settled totals, the prompt-cache totals, the token counts by model, and
+// the provider reports with the price table's band behind them. Every one of
+// them is the ledger's and none is a sum of the stage reports, because the
+// ledger holds calls no report does: a call that settled after its stage's
+// wait ran out is in the ledger's figures and in no stage report at all, so a
+// figure built by adding a report's to the ledger's would count that call
+// twice (F24, G1.2, SA1.5).
+func (r *run) recordLedgerCost(led gateway.Ledger) {
 	r.mu.Lock()
 	// The ledger's settled totals are the run's, and they are the ones
 	// r.gwUsed and r.gwNotional keep: the money its calls paid and the
@@ -1060,15 +1104,14 @@ func (r *run) closeGateway() {
 	// stage's wait ran out is in them (G1.2, F8). The two are the same calls'
 	// tokens, so a reader that sums these entries gets exactly those totals.
 	r.modelTokens = modelTokenCounts(led.ModelTokens)
-	// The run's own model figure is the ledger's totals plus the stages the
-	// ledger never saw, an account stage's own among them (P11, P12): the
-	// ledger's figure alone would drop them from the record here, at the last
-	// gateway write of the run, however carefully the stages kept them.
-	spent := r.gwUsed + r.gwNotional + r.direct
+	// The provider reports and the table band behind them, by serving model,
+	// with the calls that carried no report counted beside them (F24, D2650).
+	// A Ledger is a snapshot, so these are the run's until it reads another.
+	r.reportedBy = led.ReportedBy
+	r.tableLoBy = led.TableLoBy
+	r.tableHiBy = led.TableHiBy
+	r.unreportedCalls = led.UnreportedCalls
 	r.mu.Unlock()
-	r.rec.CostUSD = spent.USD()
-	r.updateCost()
-	r.warnReportedGap()
 }
 
 // routingKnob reports whether the live test's knob skips the
@@ -1150,7 +1193,7 @@ func (r *run) checkBudget(ctx context.Context) error {
 	// model is judged here as the checks above judge it, and for the same
 	// reason: the list bounds the models a run may use, and a level model is a
 	// model the run would use.
-	if ps := r.checkLevels(func(a config.Agent) []config.Problem {
+	if ps := r.checkModels(func(a config.Agent) []config.Problem {
 		return config.CheckAllowed(a, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders())
 	}); len(ps) > 0 {
 		return refusal("the models are not all allowed", ps)
@@ -1159,7 +1202,7 @@ func (r *run) checkBudget(ctx context.Context) error {
 		return nil
 	}
 	priced := func(a config.Agent) []config.Problem { return config.CheckPins(a, s.Prices) }
-	if ps := r.checkLevels(priced); len(ps) > 0 {
+	if ps := r.checkModels(priced); len(ps) > 0 {
 		return refusal("the models can't be priced under the budget", ps)
 	}
 	// The run's images, judged with the pins above: a coder that can't read
@@ -1215,30 +1258,30 @@ func (r *run) warnReportedGap() {
 // exceed the charge by before the run warns.
 const reportedGapPct = 10
 
-// levelAgent is one review level's own model as the model checks see it: a
-// copy of the run's agent whose role slot carries the level's model, plus the
-// two keys a problem about it is named by — the level's own, and the slot the
-// check read.
-type levelAgent struct {
+// modelAgent is one model the run carries that is not one of its four pins, as
+// the model checks see it: a copy of the run's agent whose role slot carries
+// the model, plus the two keys a problem about it is named by — the key the
+// owner wrote it under, and the slot the check read it from.
+type modelAgent struct {
 	agent config.Agent
 	path  string
 	slot  string
 }
 
-// levelAgents are the agents the model checks judge beyond the run's own: one
-// per review level whose own model is not already one of the run's pins. A
-// level that runs its role's model has nothing of its own to judge, and a
-// level model that is a pin is judged as that pin.
-func (r *run) levelAgents() []levelAgent {
+// levelAgents are the review levels' own models as the model checks see them
+// (modelAgent): one per level whose own model is not already one of the run's
+// pins. A level that runs its role's model has nothing of its own to judge, and
+// a level model that is a pin is judged as that pin.
+func (r *run) levelAgents() []modelAgent {
 	a := r.cfg.Agent
 	pinned := a.PinnedModels()
-	var out []levelAgent
+	var out []modelAgent
 	for _, s := range reviewStages {
 		m := r.levelModel(s.level)
 		if m == "" || slices.Contains(pinned, m) {
 			continue
 		}
-		la := levelAgent{agent: a, path: levelModelPath(s.level)}
+		la := modelAgent{agent: a, path: levelModelPath(s.level)}
 		if s.role == config.RoleReviewer {
 			la.agent.Models.Reviewer, la.slot = m, reviewerPinPath
 		} else {
@@ -1249,20 +1292,57 @@ func (r *run) levelAgents() []levelAgent {
 	return out
 }
 
-// checkLevels runs one of the model checks over the run's own pins and then
-// over each review level's own model, renaming a problem about a level to the
-// key the owner wrote it under (agent.levels.l3.model) rather than the slot
-// the check read it from. A problem under any other path is the run's own,
-// which the first call has already reported: the level's copy of the agent
-// differs from the run's in that one slot and nothing else.
-func (r *run) checkLevels(check func(config.Agent) []config.Problem) []config.Problem {
+// diagnoseAgents is the diagnose stage's own model as the model checks see it
+// (modelAgent): one entry when this run executes the diagnose step, under the
+// key the owner wrote it or, when no layer wrote one, the built-in default this
+// run would call (diagnoseModel).
+//
+// It is judged exactly as a pin is, and for the same reason the level models
+// are: the list bounds the models a run may use, and the diagnose model is a
+// model this run calls. What the stage sends it is the evidence a failure left
+// behind — a log, a doctor report, the changed files' names — so where that may
+// go is the owner's decision and not a decision about role slots: a project
+// whose allow-list leaves the diagnose model off, or whose provider does not
+// name this repository in allow_data_to, refuses the run at bootstrap rather
+// than sending a person's failure logs to an endpoint the policy never
+// approved. A model that is already one of the run's pins is left out, as a
+// level's is: its own pin's judgement is the same one.
+func (r *run) diagnoseAgents() []modelAgent {
+	if !r.diagnose {
+		return nil
+	}
+	a := r.cfg.Agent
+	m := r.stageModel(stageDiagnose)
+	if slices.Contains(a.PinnedModels(), m) {
+		return nil
+	}
+	ma := modelAgent{agent: a, path: diagnoseModelPath, slot: coderPinPath}
+	ma.agent.Models.Coder = m
+	return []modelAgent{ma}
+}
+
+// modelAgents are every model the model checks judge beyond the run's own
+// pins: each review level's own model (levelAgents), and the diagnose stage's
+// when this run is a cloud diagnosis (diagnoseAgents).
+func (r *run) modelAgents() []modelAgent {
+	return append(r.levelAgents(), r.diagnoseAgents()...)
+}
+
+// checkModels runs one of the model checks over the run's own pins and then
+// over every other model the run carries (modelAgents), renaming a problem
+// about one of those to the key the owner wrote it under
+// (agent.levels.l3.model, agent.models.diagnose) rather than the slot the
+// check read it from. A problem under any other path is the run's own, which
+// the first call has already reported: the copy of the agent differs from the
+// run's in that one slot and nothing else.
+func (r *run) checkModels(check func(config.Agent) []config.Problem) []config.Problem {
 	ps := check(r.cfg.Agent)
-	for _, la := range r.levelAgents() {
-		for _, p := range check(la.agent) {
-			if p.Path != la.slot {
+	for _, ma := range r.modelAgents() {
+		for _, p := range check(ma.agent) {
+			if p.Path != ma.slot {
 				continue
 			}
-			p.Path = la.path
+			p.Path = ma.path
 			ps = append(ps, p)
 		}
 	}
@@ -1295,16 +1375,16 @@ func (r *run) checkProviderModels() error {
 		}
 	}
 	// The four checks below judge an Agent's pins, and a review level's own
-	// model is a pin of its stage: checkLevels runs each of them over the
+	// model is a pin of its stage: checkModels runs each of them over the
 	// level models too, so a model a level 3 names passes the same data
 	// policy, the same auth rule, the same gateway rule and the same price
 	// rule the coder's does. Without it a provider whose allow_data_to does
 	// not name this repository could serve a level, and the repository's code
 	// would be sent there (L4.5).
-	ps := r.checkLevels(func(a config.Agent) []config.Problem {
+	ps := r.checkModels(func(a config.Agent) []config.Problem {
 		return config.CheckProviderPolicy(a, allowed, r.spec.Repo, r.modelProviders(), prices)
 	})
-	ps = append(ps, r.checkLevels(func(a config.Agent) []config.Problem {
+	ps = append(ps, r.checkModels(func(a config.Agent) []config.Problem {
 		return config.CheckProviderAuth(a, r.modelProviders())
 	})...)
 	if len(ps) > 0 {
@@ -1318,7 +1398,7 @@ func (r *run) checkProviderModels() error {
 	if r.gatewayOn() {
 		mode = r.spend.Mode
 	}
-	if ps := r.checkLevels(func(a config.Agent) []config.Problem {
+	if ps := r.checkModels(func(a config.Agent) []config.Problem {
 		return config.CheckProviderGateway(a, bg, r.modelProviders(), mode)
 	}); len(ps) > 0 {
 		// The first problem's own sentence, as this check has always

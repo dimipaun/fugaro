@@ -15,7 +15,7 @@ package credsvc
 //
 // **What the crafts can and cannot say to this service.** The wire carries no
 // stage and no craft — a call arrives for a run and a job class, not for a
-// stage (C1.10) — so the list is the UNION of the four crafts' accesses rather
+// stage (C1.10) — so the list is the UNION of the five crafts' accesses rather
 // than the one craft this call is of: `implement` and `review_first` are served
 // by the same loop, and a service that guessed which craft a call is of would
 // answer a review stage from the coder's credential. Two consequences follow,
@@ -24,7 +24,7 @@ package credsvc
 //   - a craft this path cannot serve (an inert pool, an OpenRouter access) is
 //     skipped rather than refusing the whole call, because the union is what
 //     every call of every craft is offered and one craft's refusal would take
-//     the other three down with it. A narrowing that leaves NOTHING is the
+//     the other four down with it. A narrowing that leaves NOTHING is the
 //     other case and it is refused, naming every access that contributed
 //     nothing (poolRefusal below);
 //   - the list is narrower than the bundle for every caller, including a shared

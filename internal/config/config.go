@@ -193,6 +193,17 @@ type Config struct {
 	// visionSince refuses the key itself, whatever it says (internal/cli).
 	// Like the fields above it is never part of the file or of SHA256.
 	RepoVisionSet bool `yaml:"-" json:"-"`
+	// RepoMergeJudgeCraftSet is whether the repository's own file wrote the
+	// agent.crafts.merge-judge key at all, at any value: the question
+	// RepoVisionSet answers for agent.models.vision, and Agent.Crafts cannot
+	// answer it — the block written empty (`merge-judge: {}`, which sets
+	// neither half and so inherits both) decodes to the same zero Craft as the
+	// key being absent, and a runner older than mergeJudgeSince refuses the key
+	// itself, whatever it says (internal/cli). The other four crafts are not
+	// read here: their keys are 0.24.0's, so an older runner's decoder knows
+	// them, and only this one is the key that has to be judged. Like the fields
+	// above it is never part of the file or of SHA256.
+	RepoMergeJudgeCraftSet bool `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's
@@ -1049,8 +1060,9 @@ type Commands struct {
 	Fix string `yaml:"fix"`
 	// Render is a mode: artifact recipe's render command (design
 	// artifact-runs.md §3): repository text, run once, in the checkout, as
-	// the agent's user. "" means no artifact recipe may run against this
-	// workflow: the runner refuses one whose workflow leaves it empty.
+	// the agent's user. "" means no recipe with a render step may run
+	// against this workflow: the runner refuses one whose workflow leaves
+	// it empty.
 	Render string `yaml:"render"`
 	// Probe is the artifact recipe's optional check on what it rendered:
 	// one command, given the outputs directory and the names in its

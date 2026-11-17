@@ -109,6 +109,17 @@ const (
 	// whole upgrade for a second command (the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade).
 	Rules = "rules"
+	// ModelPrices is the owner's own config rewritten in place: the old
+	// cache-price key names (cache_read, cache_write_5m, cache_write_1h) become
+	// the ones this release documents (docs/spend-accuracy SA4.2, D2646). It is
+	// the owner's file and this machine's alone, so it asks nothing and runs in
+	// an agent's session too (LocalUnderAgent), and the plan places it before
+	// the policy stage (SA4.2): the rename is applied to the config the run
+	// holds, so the node that stage publishes and the run's own write of the
+	// file are made from the renamed copy rather than from the bytes read at
+	// boot. The node has no spelling for the order to fix — it carries each
+	// price as the folded multiplier, with no key name on it (policyPrices).
+	ModelPrices = "model-prices"
 	// Policy is the published policy node's migration in place
 	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
 	// fugaro update is the whole upgrade). It comes after the repository
@@ -174,12 +185,15 @@ const (
 	// Unit is the login unit that runs the orchestrator daemon
 	// (internal/cli/init_orchestrator_stage.go for `setup`, which installs the
 	// first one, and internal/cli/update_unit_stage.go for `update`, which
-	// re-renders one already installed and never installs one). The two are
+	// installs one where a machine has none and re-renders one already
+	// installed). The two are
 	// one stage because the loop takes one stage per name and the door decides
 	// which of them it is (initStages): the owner's ruling Q2 of 2026-11-04
-	// gives the first install to `setup`, and T7's of 2026-11-05 makes
+	// gives the first install to `setup`, T7's of 2026-11-05 makes
 	// `fugaro update` re-render an installed unit so that one command stays
-	// the whole upgrade.
+	// the whole upgrade, and D2700 of 2026-11-16 as corrected (F48) has that
+	// same command install the unit a machine is missing, at a person's own
+	// terminal and with nothing asked.
 	Unit = "unit"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
@@ -255,6 +269,10 @@ var order = []slot{
 	// predate the policy model, and a run whose rules are stale would refuse
 	// its own migration and leave the upgrade unfinished.
 	{name: Rules, needs: []string{Repository}},
+	// The owner's own cache-price keys are renamed before the node that is
+	// built from that config is published, so the published copy and the file
+	// say the same thing about the same price.
+	{name: ModelPrices, needs: []string{Repository}},
 	// The policy node is what every run of the project is admitted by, and
 	// the repository stage is the last writer of the installation those runs
 	// read it against.

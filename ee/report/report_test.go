@@ -372,21 +372,141 @@ func TestByModelSplitsBilledFromNotional(t *testing.T) {
 	}
 }
 
-// TestByModelMixedDayIsProportional: a day with billed and notional spend
-// splits each model's figure in the day's billed:notional proportion, and
-// the split always adds back to the model figure.
-func TestByModelMixedDayIsProportional(t *testing.T) {
+// rowOf is the by-model row built for a model, by the name the row shows.
+func rowOf(t *testing.T, rep Report, key string) Row {
+	t.Helper()
+	for _, r := range rep.Rows {
+		if r.Key == key {
+			return r
+		}
+	}
+	t.Fatalf("no row for %q in %v", key, keys(rep))
+	return Row{}
+}
+
+// TestByModelUsesNotionalLeaf: a day that records each model's notional is
+// read from the leaves, so the gateway model beside a subscription model keeps
+// its billed dollars billed (RS8) and no day here needed a proportion.
+func TestByModelUsesNotionalLeaf(t *testing.T) {
+	r := rec("2026-10-01", "app", 10_000_000, 90_000_000, 0)
+	r.ByModel = map[string]budget.ModelTotals{
+		"claude-sonnet-5":              {Micros: 90_000_000, Notional: 90_000_000, NotionalSet: true, In: 7},
+		"deepseek/deepseek-v4.1-flash": {Micros: 10_000_000, NotionalSet: true, In: 11, Out: 5},
+	}
+	rep := Build([]Rec{r}, ByModel)
+	gw := rowOf(t, rep, "deepseek/deepseek-v4.1-flash")
+	if gw.Spent != 10_000_000 || gw.Notional != 0 {
+		t.Fatalf("gateway row %+v", gw)
+	}
+	if sub := rowOf(t, rep, "claude-sonnet-5"); sub.Spent != 0 || sub.Notional != 90_000_000 {
+		t.Fatalf("subscription row %+v", sub)
+	}
+	if rep.MixedModelDays {
+		t.Fatal("a day whose models record their notional needed no split")
+	}
+	if rep.Totals.Spent != 10_000_000 || rep.Totals.Notional != 90_000_000 {
+		t.Fatalf("totals %+v", rep.Totals)
+	}
+}
+
+// TestByModelOldDaySplits: a day written before the notional leaf existed
+// keeps the old reading -- each model's figure in the day's billed:notional
+// proportion, the split adding back to the figure -- and the report says so.
+func TestByModelOldDaySplits(t *testing.T) {
 	r := rec("2026-10-01", "app", 3_000_000, 1_000_000, 0)
 	r.ByModel = map[string]budget.ModelTotals{"m": {Micros: 4_000_001}}
 	rep := Build([]Rec{r}, ByModel)
-	row := rep.Rows[0]
+	row := rowOf(t, rep, "m")
 	if row.Spent+row.Notional != 4_000_001 || row.Notional < 1_000_000 || row.Notional > 1_000_001 {
 		t.Fatalf("%+v", row)
+	}
+	if !rep.MixedModelDays {
+		t.Fatal("a day without the leaf, holding both kinds of spend, needed the split")
 	}
 	var b bytes.Buffer
 	_ = Table(&b, rep, Meta{Since: "a", Un: "b"})
 	if !strings.Contains(b.String(), "proportion") {
 		t.Fatalf("no footer on the mixed split:\n%s", b.String())
+	}
+}
+
+// TestByModelClampsBilledAtZero: in the mixed-version window a run in flight on
+// an older image writes its notional dollars into micros alone, so the leaf can
+// exceed the part of the model's figure it explains. Billed reads zero, never
+// negative dollars.
+func TestByModelClampsBilledAtZero(t *testing.T) {
+	r := rec("2026-10-01", "app", 1_000_000, 4_000_000, 0)
+	r.ByModel = map[string]budget.ModelTotals{"m": {Micros: 1_000_000, Notional: 3_000_000, NotionalSet: true, In: 5}}
+	rep := Build([]Rec{r}, ByModel)
+	row := rowOf(t, rep, "m")
+	if row.Spent != 0 || row.Notional != 3_000_000 {
+		t.Fatalf("row %+v", row)
+	}
+	var b bytes.Buffer
+	_ = Table(&b, rep, Meta{Since: "a", Un: "b"})
+	if strings.Contains(b.String(), "-$") {
+		t.Fatalf("negative dollars printed:\n%s", b.String())
+	}
+	var j bytes.Buffer
+	if err := JSON(&j, rep, Meta{}); err != nil {
+		t.Fatal(err)
+	}
+	var doc JSONDoc
+	if err := json.Unmarshal(j.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Rows[0].ModelUSD == nil || *doc.Rows[0].ModelUSD != "0.000000" {
+		t.Fatalf("json %+v", doc.Rows[0])
+	}
+}
+
+// TestByModelGatewayOnlyOnMixedDay: a gateway-only model on a day that also
+// holds a subscription's notional keeps its whole figure billed, its recorded
+// notional of zero, and the tokens the gateway recorded for it (RS8, R5).
+func TestByModelGatewayOnlyOnMixedDay(t *testing.T) {
+	r := rec("2026-10-01", "app", 1_000_000, 5_000_000, 0)
+	r.ByModel = map[string]budget.ModelTotals{
+		"claude-sonnet-5":              {Micros: 5_000_000, Notional: 5_000_000, NotionalSet: true, In: 4, Out: 2, CR: 3, CW: 1},
+		"deepseek/deepseek-v4.1-flash": {Micros: 1_000_000, NotionalSet: true, In: 11, Out: 5, CR: 7, CW: 2},
+	}
+	rep := Build([]Rec{r}, ByModel)
+	row := rowOf(t, rep, "deepseek/deepseek-v4.1-flash")
+	if row.Spent != 1_000_000 || row.Notional != 0 {
+		t.Fatalf("row %+v", row)
+	}
+	if row.In != 11 || row.Out != 5 || row.CR != 7 || row.CW != 2 {
+		t.Fatalf("tokens %+v", row)
+	}
+	var b bytes.Buffer
+	_ = Table(&b, rep, Meta{Since: "a", Un: "b"})
+	line := ""
+	for _, l := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(l, "deepseek/deepseek-v4.1-flash") {
+			line = l
+		}
+	}
+	if f := strings.Fields(line); len(f) != 7 || f[1] != "$1.00" || f[2] != "$0.00" || f[3] != "11" || f[4] != "5" || f[5] != "7" || f[6] != "2" {
+		t.Fatalf("gateway row %q", line)
+	}
+	var j bytes.Buffer
+	if err := JSON(&j, rep, Meta{}); err != nil {
+		t.Fatal(err)
+	}
+	var doc JSONDoc
+	if err := json.Unmarshal(j.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range doc.Rows {
+		if l.Key != "deepseek/deepseek-v4.1-flash" {
+			continue
+		}
+		if l.ModelMicros == nil || *l.ModelMicros != 1_000_000 || l.Tokens == nil ||
+			l.Tokens.In != 11 || l.Tokens.Out != 5 || l.Tokens.CacheRead != 7 || l.Tokens.CacheWrite != 2 {
+			t.Fatalf("json row %+v", l)
+		}
+	}
+	if rep.MixedModelDays {
+		t.Fatal("a day whose models record their notional needed no split")
 	}
 }
 

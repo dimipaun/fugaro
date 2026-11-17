@@ -15,7 +15,7 @@ The findings below were taken on 2026-11-01 against `main` at `3d6ed04d` plus th
 **#1476**, and are **refreshed against `main` on 2026-11-04** (the branch has `main` merged at
 `45b215b0`). **#1476 is merged**, so every finding that was marked **(needs #1476)** is now a fact
 about `main` and the markings are gone: `internal/runner/stray.go:48` is `strayArtifacts`,
-`gitops.NewPaths` (`internal/gitops/gitops.go:647`) lists what a commit would carry, finalize calls
+`gitops.NewPaths` (`internal/gitops/gitops.go:656`) lists what a commit would carry, finalize calls
 `r.fail(strayRefusal(strays))` and commits with `CommitAllExcept` (`runner.go:3731`–`3738`), and the
 challenger arm does the same in `shadowFinalize` (`shadow.go:318`–`333`). Line citations below are
 re-taken on that tree; where a line number in an older round of this folder is stale, the citation
@@ -67,7 +67,7 @@ place for the rule to be needed.
 wrong API.** The original finding read `#1476`'s plan as `git ls-files --others --exclude-standard`,
 under which a path staged with intent-to-add is in the index, is no longer "other", and has its
 bytes swept into the leftover commit unchecked. **The merge did not ship that**: the reading is
-`gitops.NewPaths` (`internal/gitops/gitops.go:647`), whose comment says it lists "the untracked ones
+`gitops.NewPaths` (`internal/gitops/gitops.go:656`), whose comment says it lists "the untracked ones
 **and the ones the agent staged itself**", with `TestNewPathsSeesAnIntentToAddFile` and
 `TestNewPathsSeesANewFileThatLooksLikeARenameOfATrackedOne` pinning it. So the bypass is closed on
 `main` **for a file that stays uncommitted**, and what remains is narrower and sharper: a payload the
@@ -374,7 +374,7 @@ for is the deliberate payload, and #1476's finalize-only check reads the working
 exactly the place a committed payload is not.
 
 The question, restated now that #1476 is merged: its check reads the **working tree** at finalize —
-`gitops.NewPaths` (`internal/gitops/gitops.go:647`), the untracked files **and the ones the agent
+`gitops.NewPaths` (`internal/gitops/gitops.go:656`), the untracked files **and the ones the agent
 staged itself**. A binary the coder put in a commit of its own is in neither set, so it is not
 refused, and neither `git commit -am work` nor `git add -N payload.bin` followed by any runner commit
 is seen by anything (F3, F4). **Closing it means refusing a *new* binary anywhere in the run's own

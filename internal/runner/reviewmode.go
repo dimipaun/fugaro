@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/failure"
@@ -948,14 +947,15 @@ func reviewReport(rec *runstore.Record, location string, failedComments []int) s
 	for _, n := range failedComments {
 		fmt.Fprintf(&b, "**Note:** posting the review comment on PR #%d failed; see the run's log.\n\n", n)
 	}
-	if len(rec.Stages) > 0 {
-		b.WriteString("| Stage | Duration |\n|---|---|\n")
-		for _, s := range rec.Stages {
-			d := time.Duration(s.DurationS * float64(time.Second)).Round(time.Second)
-			fmt.Fprintf(&b, "| %s | %s |\n", s.Name, d)
-		}
-		b.WriteString("\n")
-	}
+	// The same status line and table the run's own report carries (report.go's
+	// triageStatusLine): a review class run triages nothing, and the two are
+	// written from one record so a report cannot say what the other does not.
+	b.WriteString(triageStatusLine(rec))
+	b.WriteString(stageTable(rec))
+	// A review class run records no verify record of its own, so this table is
+	// empty here; it is written from the record like the two lines above it, so
+	// a record that ever carries one is shown the same way in both reports.
+	b.WriteString(verifyTable(rec))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
 	} else {

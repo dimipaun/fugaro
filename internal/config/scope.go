@@ -70,11 +70,11 @@ var Scopes = []ScopeRow{
 	// diagnose one — which is why it is here beside the vision slot rather than
 	// with the roles a run reads.
 	{Key: "agent.models.diagnose", In: InProject | InRepo},
-	// The four crafts (docs/model-crafts/spec.md §3): each craft's model and
+	// The crafts (docs/model-crafts/spec.md §3): each craft's model and
 	// the credential or pool its calls go out on. A craft's model is a default
 	// the project sets for every repository of it, as agent.models.* is; its
 	// access is not, and carries agent.oauth_token's own why — one sentence
-	// for all four, because the reason is about the key and not about which
+	// for all of them, because the reason is about the key and not about which
 	// craft writes it.
 	{Key: "agent.crafts.coder.model", In: InProject | InRepo},
 	{Key: "agent.crafts.coder.access", In: InRepo, Why: whyCredentialAccess},
@@ -84,6 +84,8 @@ var Scopes = []ScopeRow{
 	{Key: "agent.crafts.senior-review.access", In: InRepo, Why: whyCredentialAccess},
 	{Key: "agent.crafts.security-review.model", In: InProject | InRepo},
 	{Key: "agent.crafts.security-review.access", In: InRepo, Why: whyCredentialAccess},
+	{Key: "agent.crafts.merge-judge.model", In: InProject | InRepo},
+	{Key: "agent.crafts.merge-judge.access", In: InRepo, Why: whyCredentialAccess},
 	// The escalation ladder's two model grades (docs/outer-loop-escalation E2,
 	// D2039): the pair a craft carries, in one block of its own, and the one
 	// place a project layer may name an access (whyGrade). A repository's entry
@@ -183,6 +185,17 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.inputs.max_files", In: InProfile | InRepo},
 	{Key: "workflows.*.inputs.max_bytes", In: InProfile | InRepo},
 	{Key: "workflows.*.inputs.max_total_bytes", In: InProfile | InRepo},
+	// The tags a job of the workflow needs (D1155, spec project-image-catalog
+	// §Repo configuration item 3), beside image_name: the catalog's entries are
+	// the project's policy and a repository chooses among them, so only its own
+	// file may state this reference.
+	{Key: "workflows.*.needs", In: InRepo, Why: "it is a repository's own reference to an entry of the project's image catalog, and the entries themselves are the project's (D1155)"},
+	// A repository's A/B opt-out (D556, F18): the ab: block is the project
+	// layer's, because a repository author could name a challenger model and
+	// send that repository's code to a provider the owner opened only to
+	// others, and rate is the one leaf left to the repository — it may lower
+	// the sampling rate to 0 and say nothing else (validateRepoAB).
+	{Key: "ab.rate", In: InRepo, Why: "it is the repository's own opt-out of sampling, and every other leaf of the block is the project's (D556)"},
 	{Key: "followup.trusted", In: InRepo, Why: whyFollowup},
 	{Key: "followup.allow_public", In: InRepo, Why: whyFollowup},
 	// Both rigor keys are settable in both layers (D20, D20c): the project

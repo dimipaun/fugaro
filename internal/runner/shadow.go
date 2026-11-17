@@ -348,11 +348,39 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// The champion's leftover commit holds back the artifacts finalize refuses
 	// (stray.go), and this arm holds back the same ones, so the two arms'
 	// changed paths and patch objects describe the same checkout of the same
-	// work — which is what a pair is scored on (D559). Nothing is recorded as
-	// refused here: this arm has no branch for a refusal to be about.
-	strays, err := r.strayArtifacts(ctx)
+	// work — which is what a pair is scored on (D559). It records the refusal
+	// for the same reason: a refusal is what the champion's own record carries,
+	// and an arm whose record said succeeded while the champion's said failed
+	// would be a pair read as two runs of different work (D555). What this arm
+	// has no branch for is the push, not the answer.
+	strays, _, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
+	}
+	// The champion's other reading of the rule runs here too, over the same
+	// policy and the same range, and it is recorded the same way (stray.go's
+	// committedBinaries, spec.md §4.2). The bytes are not the same risk —
+	// nothing of a challenger's reaches the developer (shadow.go's own note) —
+	// which is why this is a call to the champion's check and not a second
+	// enforcement point with an answer of its own.
+	//
+	// A reading that fails is refused here exactly as the champion refuses it,
+	// and not returned as an error: the two arms' records have to say the same
+	// thing about the same work (D555), and the champion's own finalize refuses
+	// the run and carries on (runner.go).
+	//
+	// What the arm drops is the admitted half of the two answers, which the
+	// champion's status section reports and this arm has no surface for: it
+	// writes no pull request and no section (D554), so a list here would be
+	// text nothing reads.
+	added, _, err := r.committedBinaries(ctx)
+	unread := ""
+	if err != nil {
+		unread = r.redact(err.Error())
+		r.d.Log.Error("reading the run's own diff for binaries it added failed; the arm is refused for it", "err", unread)
+	}
+	if len(strays) > 0 || len(added) > 0 || unread != "" {
+		r.fail(strayRefusal(strays, added, unread))
 	}
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {

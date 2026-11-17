@@ -350,7 +350,11 @@ func TestDocsDesktopConsoleContractNamesEveryWatchField(t *testing.T) {
 // document, the cancel result, and the budget documents. A key that exists in
 // Go and not in the document fails here, and the document's own tables are
 // what it is checked against, so a field listed there cannot be one the code
-// does not have without this test's sibling below catching the mismatch.
+// does not have without this test's sibling below catching the mismatch. The
+// shapes of §6.9 and §6.10 are the exception: each is checked against that
+// section's own tables rather than against the whole file, because a word this
+// contract uses elsewhere would otherwise stand in for a field the section
+// never lists.
 func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	const path = "console/docs/json-contract.md"
 	doc := readDoc(t, path)
@@ -379,25 +383,6 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(configListDoc{}),
 		reflect.TypeOf(configListInstallation{}),
 		reflect.TypeOf(configListCheckout{}),
-		reflect.TypeOf(plan.Document{}),
-		reflect.TypeOf(plan.Node{}),
-		reflect.TypeOf(plan.Edge{}),
-		reflect.TypeOf(plan.Footprint{}),
-		// The decoupling pass's own record (schema 3): one broken edge and one
-		// change request, and the `was` object under the first.
-		reflect.TypeOf(plan.Decoupling{}),
-		reflect.TypeOf(plan.BrokenEdge{}),
-		reflect.TypeOf(plan.ContractChange{}),
-		// The read's own document (V2.2.3): every key of what `plan graph
-		// --json` prints, so a computed field the contract does not name fails
-		// here too, not only the artifact's own.
-		reflect.TypeOf(plan.Graph{}),
-		reflect.TypeOf(plan.NodeState{}),
-		reflect.TypeOf(plan.CriticalPath{}),
-		// What the decoupling pass bought (CD3): the gain and the critical path
-		// it measures before and after, both of them the read's own fields.
-		reflect.TypeOf(plan.Gain{}),
-		reflect.TypeOf(plan.PathMeasure{}),
 		reflect.TypeOf(runstore.ChangedFiles{}),
 		// The rigor block and the rule inside it (docs/rigor-modes D24).
 		reflect.TypeOf(runstore.RigorRecord{}),
@@ -442,6 +427,37 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(managedStatusRetirements{}),
 		reflect.TypeOf(localcfg.UpdateProject{}),
 		reflect.TypeOf(localcfg.UpdateRetirement{}),
+		// §6.27's shapes (the repos-management plan's RE2, D2409/D2410): the
+		// listing's own document, the enrolment view it embeds and every shape
+		// under that view — the row, the workflow, the two halves of a row's
+		// enrolment, the allow-list, what has run here and this machine's own
+		// half. They are one set and serve both documents of the group: RE1's
+		// `status` prints the same view under a version of its own.
+		//
+		// This file is outside RE2's own file list -- the task names five, and
+		// this is not one of them -- and had to change with it: the two
+		// struct-derived checks here are what make the section a contract
+		// rather than a description, and a section whose shape is not listed
+		// here is one neither of them reads.
+		reflect.TypeOf(reposLsDoc{}),
+		reflect.TypeOf(reposView{}),
+		reflect.TypeOf(reposViewRepo{}),
+		reflect.TypeOf(reposViewWorkflow{}),
+		reflect.TypeOf(reposViewRepoPublished{}),
+		reflect.TypeOf(reposViewRepoLocal{}),
+		reflect.TypeOf(reposViewAllow{}),
+		reflect.TypeOf(reposViewSeen{}),
+		reflect.TypeOf(reposViewSeenRepo{}),
+		reflect.TypeOf(reposViewLocal{}),
+		reflect.TypeOf(reposViewNamed{}),
+		reflect.TypeOf(reposViewCredentials{}),
+		reflect.TypeOf(reposViewCredential{}),
+		// §6.26, the enrolment's doctor (the repos-management plan's RE1):
+		// the document, the repository under it and the row, which is the
+		// shape doctor's own checks are rendered as.
+		reflect.TypeOf(reposStatusDoc{}),
+		reflect.TypeOf(reposStatusRepo{}),
+		reflect.TypeOf(reposStatusRow{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -449,6 +465,63 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 	for _, name := range jsonTagNames(t, namedTypes(shapes...), shapes...) {
 		if !strings.Contains(doc, "`"+name+"`") {
 			t.Errorf("%s never names the json field %q, which the shape it documents carries", path, name)
+		}
+	}
+
+	// §6.9's own shapes are held to §6.9's field tables instead of to the whole
+	// document, for the reason §6.10's block below gives — and the plan graph is
+	// where a Contains over the whole document is blindest: `tier` is a word
+	// this contract already uses for a reviewer's round (§6.1) and a price's
+	// band (§6.18), so the node's own `tier` was named nowhere in §6.9's tables
+	// and the whole-document check passed anyway, which is exactly the drift
+	// this test exists to catch. The section's tables are the document, the
+	// node and the state the read adds to it, the edge, the footprint, the
+	// decoupling record, the change requests and the gain, and the comparison
+	// is set EQUALITY in both directions, as §6.10's is.
+	graphShapes := []reflect.Type{
+		reflect.TypeOf(plan.Document{}),
+		reflect.TypeOf(plan.Node{}),
+		reflect.TypeOf(plan.Edge{}),
+		reflect.TypeOf(plan.Footprint{}),
+		// The decoupling pass's own record (schema 3): one broken edge and one
+		// change request, and the `was` object under the first.
+		reflect.TypeOf(plan.Decoupling{}),
+		reflect.TypeOf(plan.BrokenEdge{}),
+		reflect.TypeOf(plan.ContractChange{}),
+		// The read's own document (V2.2.3): every key of what `plan graph
+		// --json` prints, so a computed field the contract does not name fails
+		// here too, not only the artifact's own.
+		reflect.TypeOf(plan.Graph{}),
+		reflect.TypeOf(plan.NodeState{}),
+		reflect.TypeOf(plan.CriticalPath{}),
+		// What the decoupling pass bought (CD3): the gain and the critical path
+		// it measures before and after, both of them the read's own fields.
+		reflect.TypeOf(plan.Gain{}),
+		reflect.TypeOf(plan.PathMeasure{}),
+	}
+	const graph = "### 6.9 "
+	graphRows := mdSectionTables(t, path, mdSection(t, path, doc, graph))
+	graphListed := map[string]bool{}
+	for _, row := range graphRows {
+		for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+			graphListed[m[1]] = true
+		}
+	}
+	graphKeys := jsonTagNames(t, namedTypes(graphShapes...), graphShapes...)
+	for _, name := range graphKeys {
+		if !graphListed[name] {
+			t.Errorf("%s's §6.9 tables never list the json field %q, which the shape it documents carries", path, name)
+		}
+	}
+	inGraph := map[string]bool{}
+	for _, name := range graphKeys {
+		inGraph[name] = true
+	}
+	for _, row := range graphRows {
+		for _, m := range jsonCellRE.FindAllStringSubmatch(row[0], -1) {
+			if !inGraph[m[1]] {
+				t.Errorf("%s's §6.9 field table lists %q, which no field of the plan graph shapes carries", path, m[1])
+			}
 		}
 	}
 
@@ -740,12 +813,35 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(managedStatusRetirements{}),
 		reflect.TypeOf(localcfg.UpdateProject{}),
 		reflect.TypeOf(localcfg.UpdateRetirement{}),
+		// §6.26, the enrolment's doctor, the same three shapes as the test
+		// above (the repos-management plan's RE1).
+		reflect.TypeOf(reposStatusDoc{}), reflect.TypeOf(reposStatusRepo{}),
+		reflect.TypeOf(reposStatusRow{}),
 		// §6.23, the security list's own document (the security-classification
 		// design's SC3, D1512): the list in force with the layer of every row,
 		// and one answer per checked path.
 		reflect.TypeOf(securityPathsDoc{}), reflect.TypeOf(securityListDoc{}),
 		reflect.TypeOf(securityPattern{}), reflect.TypeOf(securityPathAnswer{}),
 		reflect.TypeOf(securityMatch{}),
+		// §6.27's shapes, the same set as the test above (the repos-management
+		// plan's RE2, D2409/D2410): the `ls` document and the enrolment view
+		// under it. They are here for this test's own reason — a field table
+		// that names a key no shape carries is a field invented rather than
+		// read — and the view is listed whole because a reader outside this
+		// binary builds against all of it.
+		reflect.TypeOf(reposLsDoc{}),
+		reflect.TypeOf(reposView{}),
+		reflect.TypeOf(reposViewRepo{}),
+		reflect.TypeOf(reposViewWorkflow{}),
+		reflect.TypeOf(reposViewRepoPublished{}),
+		reflect.TypeOf(reposViewRepoLocal{}),
+		reflect.TypeOf(reposViewAllow{}),
+		reflect.TypeOf(reposViewSeen{}),
+		reflect.TypeOf(reposViewSeenRepo{}),
+		reflect.TypeOf(reposViewLocal{}),
+		reflect.TypeOf(reposViewNamed{}),
+		reflect.TypeOf(reposViewCredentials{}),
+		reflect.TypeOf(reposViewCredential{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1102,6 +1198,15 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// (D1514 defers the screen) — but the document describes its two flags, so
 	// they are checked against this constructor like any other command's.
 	"security paths": newSecurityPathsCmd,
+	// §6.27 documents the group's listing (the repos-management plan's RE2,
+	// D2409/D2410): one versioned enrolment document, whose rows
+	// are the repositories this machine's config holds and the concrete names
+	// the published allow-list admits, with the allow-list and what has run
+	// kept apart from them. Its console row in §5.1 is that plan's RE5 and not
+	// this task's (D2413), so the console does not spawn it yet — but the
+	// document describes its flags, so they are checked against this
+	// constructor like any other command's.
+	"project repos ls": newProjectReposLsCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1354,6 +1459,39 @@ func docTableAfter(t *testing.T, path, doc, header string) [][]string {
 	}
 	if len(rows) == 0 {
 		t.Fatalf("%s's table under %q has no rows", path, header)
+	}
+	return rows
+}
+
+// mdSectionTables returns the data rows of EVERY field table in a section --
+// the shape a section that carries a dozen tables of one header needs, where
+// docTableAfter reads only the first. A row's cells are parsed as docTableAfter
+// parses them, and a row whose first cell names no `field` is not a data row:
+// that is how the "| Key | Type | ... |" header and the "|---|" rule drop out,
+// and how a section's prose table (one whose first cell is a word, not a
+// backticked key) is left to the tests that read it by name.
+func mdSectionTables(t *testing.T, path, section string) [][]string {
+	t.Helper()
+	var rows [][]string
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(trimmed, "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if len(cells) < 2 || strings.Trim(cells[0], "-") == "" { // the header and the rule
+			continue
+		}
+		if jsonCellRE.FindStringSubmatch(cells[0]) == nil {
+			continue
+		}
+		rows = append(rows, cells)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("%s: the section carries no field table with a row", path)
 	}
 	return rows
 }
@@ -6826,17 +6964,21 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "verify kind", kinds, tsList(t, scrub, `VERIFY_KINDS = \[([^\]]*)\]`, "VERIFY_KINDS"))
 
 	// The two status words `Record.Summary` picks between, the flag it appends
-	// to the kind, the one warning sentence it writes, and the note it appends
-	// to a run that found the tree dirty. The last two are the CLI's own text
-	// sitting in the middle of the line: the scrub spells them out, so a second
-	// warning or a reworded note fails here rather than making the recorder
-	// refuse an ordinary run.
+	// to the kind, the warning sentences it writes -- `verify.go` picks between
+	// two of them, one for a workflow that declared report paths and one for a
+	// workflow that declared none -- and the note it appends to a run that found
+	// the tree dirty. The last ones are the CLI's own text sitting in the middle
+	// of the line: the scrub spells them out, so a third warning or a reworded
+	// note fails here rather than making the recorder refuse an ordinary run.
 	statuses := sourceValues(t, "internal/verify/verify.go", verifyGo, `status (?::=|=) "([A-Za-z]+)"`)
 	sameSet(t, "verify status", statuses, tsList(t, scrub, `VERIFY_STATUSES = \[([^\]]*)\]`, "VERIFY_STATUSES"))
 	rerun := sourceValues(t, "internal/verify/verify.go", verifyGo, `kind \+= " ([^"]+)"`)
 	sameSet(t, "verify rerun flag", rerun, []string{tsConst(t, scrub, "VERIFY_RERUN_FLAG")})
 	sameSet(t, "verify warning", sourceValues(t, "internal/verify/verify.go", verifyGo,
-		`rec\.Warning = "([^"]*)"`), []string{tsConst(t, scrub, "VERIFY_WARNING_PREFIX")})
+		`rec\.Warning = "([^"]*)"`), []string{
+		tsConst(t, scrub, "VERIFY_WARNING_PREFIX"),
+		tsConst(t, scrub, "VERIFY_WARNING_NO_REPORTS"),
+	})
 	sameSet(t, "verify clean-tree note", sourceValues(t, "internal/verify/verify.go", verifyGo,
 		"s \\+= \"; ([^\"]*)\"\n\t}\n\treturn s"), []string{tsConst(t, scrub, "VERIFY_CLEAN_TREE")})
 
@@ -6930,12 +7072,12 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	//
 	// Both sides are rendered to one string per segment, from their own sources:
 	// a literal as written (with the writer's `%d` as the digits marker), the
-	// test-name joins as the names marker, and `r.Warning` -- which verify.go
-	// builds as the sentence below plus the repository's reports -- as that
-	// sentence followed by the globs marker. Nothing is retyped here, so a
-	// reworded, dropped, reordered or added segment fails on the two renderings.
-	warning := sourceValues(t, "internal/verify/verify.go", verifyGo, `rec\.Warning = "([^"]*)"`)[0]
-	goTail := summaryTail(t, verifyGo, warning+"\x02globs")
+	// test-name joins as the names marker, and `r.Warning` -- whose two
+	// sentences are the sameSet above and which the scrub's tail carries as one
+	// slot, VERIFY_WARNING_PREFIX included -- as the warning marker. Nothing is
+	// retyped here, so a reworded, dropped, reordered or added segment fails on
+	// the two renderings.
+	goTail := summaryTail(t, verifyGo, tailWarning)
 	tsTail := verifyTailRendered(t, scrub)
 	if len(goTail) == 0 || len(tsTail) == 0 {
 		t.Fatalf("%s: the tail scan read nothing (verify.go %q, scrub.ts %q); the sources have moved", scrubTS, goTail, tsTail)
@@ -6961,13 +7103,14 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	}
 }
 
-// tailDigits, tailNames and tailGlobs mark, in the two renderings compared
+// tailDigits, tailNames and tailWarning mark, in the two renderings compared
 // above, the places a segment is not literal text: a `%d`, the test-name lists
-// verify.go joins with ", ", and the report globs inside its warning.
+// verify.go joins with ", ", and the warning the scrub's tail carries as a slot
+// (whose two sentences the sameSet above holds, prefix and all).
 const (
-	tailDigits = "\x03"
-	tailNames  = "\x02names"
-	tailGlobs  = "\x02globs"
+	tailDigits  = "\x03"
+	tailNames   = "\x02names"
+	tailWarning = "\x02warning"
 )
 
 // summaryTail renders the statements Record.Summary appends, in order, one string
@@ -10418,8 +10561,8 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"`widening`",
 		"`changed`",
 		"`refusal`",
-		// The four optional members version 1 has since grown (D1164), off the
-		// four `omitempty` fields of `settingsWriteDoc` and the four rows
+		// The four optional entry members version 1 has since grown (D1164),
+		// off the four `omitempty` entry fields of `settingsWriteDoc` and the four rows
 		// `writeSettingsWriteTable` prints below `refusal`. The console's own
 		// row cannot build an entry write, so its reader ignores them — but the
 		// section is the document described member by member, and a reader who

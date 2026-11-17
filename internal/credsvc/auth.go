@@ -191,6 +191,16 @@ type Identity struct {
 	// one a follow-up continues, or the one to four a review run reviews.
 	// Empty when it writes none.
 	PRs []int
+	// ContextRepos are the repositories this run READS and never writes (the
+	// fcr claim, C5a): the context repositories the launch recorded, which this
+	// service is the reader of because it cannot read the task and the task
+	// file is writable by the job (D613/F17). They are the boundary the context
+	// mint is held to — a request naming any other repository is refused — and
+	// they are held to their own rule here (contextRepoClaims) rather than
+	// trusted, because this service reads a signature and not the launcher's
+	// intent. Empty on an identity minted without the claim, which is every
+	// launcher before C5a and every run that named no context repository.
+	ContextRepos []string
 	// Job is the Cloud Run job the run reported — the caller's claim, which is
 	// why JobAccount, the verified service account, is the one of the two that
 	// identifies the job — and JobAccount is the account that called: the
@@ -218,6 +228,22 @@ type Identity struct {
 	// than from the request a second time.
 	AuthMode    string
 	AuthAccount string
+	// BuildID and BuildRepositories are what a BUILD's proxy call carries
+	// instead of the run identity above (B1, rule 9): the build id the call
+	// named and the repositories the pairing recorded for that id. A build is
+	// not a run of this installation and is a job of no repository, so Run,
+	// Job, Branch and PRs are empty on such an Identity — and Slug is not a
+	// claim either: the proxy's own admission fills it with the canonical
+	// repository THIS call is served for, out of BuildRepositories, before the
+	// rules see the request.
+	//
+	// BuildID is not a boundary and is never treated as one: a project has one
+	// build identity (B5), so every build of it holds the same ID token and can
+	// name another build's id. What bounds the call is BuildRepositories —
+	// which the service wrote from the entry's own published map — and the
+	// read-only class a build is served as (proxyIdentity).
+	BuildID           string
+	BuildRepositories []string
 }
 
 // KeySource returns the RSA public key a token's kid names. A kid that is not
@@ -518,6 +544,31 @@ type AuthConfig struct {
 	// The name is recorded in the audit line exactly as the person class's is,
 	// and it is an address like any other: never a credential.
 	CoordinatorAccount string
+	// BuildAccounts are the installation's build identities (B1, B5): the
+	// service accounts a project's catalog builds run as, one per Fugaro
+	// project, and the caller class of the build route and of nothing else.
+	//
+	// It is the same shape as VerifierAccounts and PersonAccounts — bare
+	// addresses, matched by the same fold, duplicates harmless — and it is the
+	// one list held against EVERY other one: a build is neither a run of this
+	// installation nor an operator of it, every other list here is one of those
+	// two, and an address on two of them would be a caller whose class is
+	// decided by which route read it (see NewAuthenticator).
+	//
+	// An empty list is an installation that runs no catalog build of its own: a
+	// class no caller belongs to, which is the state of every project whose
+	// build identity is not rendered yet.
+	//
+	// Where the list comes from (B5, D2301). Not from a stored document: the
+	// installation module creates ONE build identity per project —
+	// `fugaro-build-identity`, deploy/terraform/gcp/modules/installation/
+	// build_identity.tf — and renders its address into the service's
+	// FUGARO_BUILD_ACCOUNTS, which internal/cli's credentials serve reads. The
+	// account ID is a literal on both sides for the reason the verifier's is:
+	// any reader of the deployment can name the address before the apply, so
+	// the identity that may knock and the identity that is served are one value
+	// read twice rather than two derivations that agree by luck.
+	BuildAccounts []string
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -567,7 +618,15 @@ type Authenticator struct {
 	// the folded key alone because the spelling the identity carries is
 	// cfg.CoordinatorAccount, and there is exactly one entry.
 	coordinatorAccount string
-	now                func() time.Time
+	// buildAccounts maps a presented email, folded the same way, to the
+	// configured spelling of that build identity (B1): the class the build route
+	// is answered by, read by VerifyBuildCaller and by nothing else. Like the
+	// verifier, person, launcher and orchestrator lists it is read by one entry
+	// point — the build route is answered ahead of the shared parse — so no
+	// branch of Verify consults it, which is what keeps a build off the run
+	// routes.
+	buildAccounts map[string]string
+	now           func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -811,6 +870,54 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		orchestrators[folded] = email
 	}
+	// The build list is read LAST, and it is the one list held against every
+	// list above it (B1, B5, G4). The order is what makes that one pass: the
+	// build identity is the only caller this service serves a credential to
+	// that is neither a run of this installation nor an operator of it — a job,
+	// a shared job, a review job, a verifier, the coordinator and the daemon
+	// are one of the two — so an address on this list AND on any other is a
+	// caller whose class would be decided by which route read the token, and,
+	// worse here than anywhere else, a job or a person holding a build's reach
+	// over a project's entries. The refusals below are therefore one per list
+	// and are read at the START, where the operator sees a deployment that
+	// disagrees with itself rather than at a route.
+	//
+	// An empty BuildAccounts is not a missing gate: an installation that runs
+	// no catalog build names none, and the class is then one no caller belongs
+	// to. Nothing else here requires the list, for the reason the shared list
+	// is not required.
+	builds := make(map[string]string, len(cfg.BuildAccounts))
+	for _, email := range cfg.BuildAccounts {
+		folded, ok := foldEmail(email)
+		if !ok {
+			return nil, errors.New("credsvc: a build service account is not a printable ASCII email address")
+		}
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's job service accounts, so one caller would be two classes")
+		}
+		if _, isShared := shared[folded]; isShared {
+			return nil, errors.New("credsvc: a build service account is also a shared project job's service account, so one caller would be two classes")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: a build service account is also one of the review job accounts, so one caller would be two classes")
+		}
+		if _, isVerifier := verifiers[folded]; isVerifier {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's verifiers, so one caller would be two classes")
+		}
+		if _, isPerson := people[folded]; isPerson {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's people, and the build class is an automation")
+		}
+		if _, isLauncher := launchers[folded]; isLauncher {
+			return nil, errors.New("credsvc: a build service account is also one of the installation's launchers, and the build class is an automation")
+		}
+		if _, isOrchestrator := orchestrators[folded]; isOrchestrator {
+			return nil, errors.New("credsvc: a build service account is also the installation's orchestrator daemon, so one caller would be two classes")
+		}
+		if coordinator != "" && folded == coordinator {
+			return nil, errors.New("credsvc: a build service account is also the installation's coordinator, so one caller would be two classes")
+		}
+		builds[folded] = email
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -825,6 +932,7 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		launcherAccounts:     launchers,
 		orchestratorAccounts: orchestrators,
 		coordinatorAccount:   coordinator,
+		buildAccounts:        builds,
 		now:                  now,
 	}, nil
 }
@@ -1251,6 +1359,49 @@ func (a *Authenticator) VerifyOrchestrator(ctx context.Context, tok string) (str
 	return account, nil
 }
 
+// VerifyBuildCaller admits the caller of the build route (buildtoken.go), or
+// refuses it with ErrUnverifiedJob (the caller is not one of the installation's
+// build service accounts) or ErrUnavailable (the key set could not be read). It
+// answers the configured spelling of the address that matched, which is what
+// the audit line carries, or the empty string with an error — never a partially
+// verified caller.
+//
+// It is VerifyVerifier's mechanism against one more list and not a sixth
+// spelling of the token check: the signature, the issuer, the email fold and
+// the token's own window are the same shared code (callerClaims,
+// checkCallerToken), and the audience is this class's own line
+// (checkCallerAudience) exactly as it is every other class's — this service's
+// own URL and nothing else, like every class whose caller is not a person.
+//
+// The class is the whole of the difference and it is B5's: a build identity is
+// the account a project's catalog builds run as (B5's terraform), which holds
+// no run identity and is not a job of this installation, so there is nothing
+// here to pair and no repository this caller owns.
+//
+// It takes the caller's token directly for VerifyVerifier's reason: the build
+// route is answered ahead of RequestFromHTTP (server.go), because a build holds
+// no run identity and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyBuildCaller(ctx context.Context, tok string) (string, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return "", err
+	}
+	if err := checkCallerAudience(claims, a.cfg.Audience); err != nil {
+		return "", err
+	}
+	account, ok := a.buildAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address, for the reason
+		// VerifyVerifier's does.
+		return "", fmt.Errorf("%w: the caller is not one of this installation's build service accounts, so it may not mint a build's credential", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return "", err
+	}
+	return account, nil
+}
+
 // LauncherCaller is a verified launcher (D1938): a member of the installation
 // who may ask this service for a slip and reach the intake, answered as the
 // two facts about them the two routes key on.
@@ -1523,18 +1674,71 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 	if err != nil {
 		return Identity{}, err
 	}
+	contexts, err := contextRepoClaims(claims)
+	if err != nil {
+		return Identity{}, err
+	}
 	if err := a.checkLive(ctx, slug, run, now); err != nil {
 		return Identity{}, err
 	}
 	return Identity{
-		Slug:     slug,
-		Run:      run,
-		Project:  a.cfg.Project,
-		FX:       fx,
-		Launcher: claimString(claims, "rb"),
-		Branch:   branch,
-		PRs:      prs,
+		Slug:         slug,
+		Run:          run,
+		Project:      a.cfg.Project,
+		FX:           fx,
+		Launcher:     claimString(claims, "rb"),
+		Branch:       branch,
+		PRs:          prs,
+		ContextRepos: contexts,
 	}, nil
+}
+
+// contextRepoClaims reads the context-repository claim (fcr, C5a) of a verified
+// run identity, and holds it to its rules.
+//
+// fcr is the list of repositories a run READS and never writes, and it is the
+// whole boundary of the context mint (C5b, D613): the service cannot read the
+// task, and the call it answers names the repositories the CALLER wants rather
+// than the ones it may have — so the list it may be served is this claim, which
+// the launcher minted and signed, and nothing else. That is why a claim this
+// code cannot read is refused rather than read as none, the rule branchClaims
+// keeps for fpr: a claim present but not an array of repository names is not a
+// list this service may treat as empty, because the two answers differ — an
+// empty list refuses every context repository a run has, which is at least
+// fail-closed, while a list read wrongly could serve a repository the launch
+// never named.
+//
+// Every entry is held to the canonical form the launcher writes it in
+// (task.CanonicalRepo, applied by fugaro run before the claim is minted):
+// owner/name, lower-cased, with no "." or ".." element. The rule is applied
+// here as well and not trusted, because a signature says who wrote a claim and
+// never what it may hold: an entry in another spelling would compare unequal to
+// every repository the call names, so a run whose identity held one would be
+// served nothing at all — a refusal an operator could not read, in place of the
+// one this produces.
+//
+// An identity minted without the claim is admitted with an empty list and no
+// error: every launcher before C5a minted one, and the context mint refuses such
+// a run's calls by finding the claim empty — the same way the proxy refuses a
+// push by finding fb empty (B1.4).
+func contextRepoClaims(claims map[string]any) ([]string, error) {
+	if _, present := claims[token.ClaimContextRepos]; !present {
+		return nil, nil
+	}
+	repos, ok := token.ClaimStrings(claims, token.ClaimContextRepos)
+	if !ok || len(repos) > token.MaxContextRepos {
+		return nil, fmt.Errorf("%w: the run identity's fcr is not an array of at most %d context repositories", ErrUnverified, token.MaxContextRepos)
+	}
+	for _, repo := range repos {
+		canonical, err := task.CanonicalRepo(repo)
+		if err != nil || canonical != repo {
+			// Nothing of the entry is repeated: it is caller text of unbounded
+			// length, and the rule it broke is the whole of what an operator
+			// needs to read (the same rule the branch claim's refusal keeps).
+			return nil, fmt.Errorf("%w: the run identity's fcr names a repository that is not a canonical owner/name", ErrUnverified)
+		}
+	}
+	return repos, nil
 }
 
 // branchClaims reads the branch and pull-request claims (fb and fpr, G6) of a

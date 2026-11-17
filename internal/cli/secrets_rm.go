@@ -133,7 +133,16 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 			pluginwire.Printable(name), marker, command)
 	}
 
-	sel, lc, err := settingsSelection()
+	// --config and --project are the aiming pair this command takes with the
+	// rest of the family's cloud commands, and both halves of the removal are
+	// the named installation's: the entry is in that installation's config
+	// file, and the container is the one its own name derives (the id below).
+	// A selection read from the environment alone would delete a container
+	// while leaving the entry standing in the file it never read — the state
+	// D1171 gives this command the job of preventing — which is why the
+	// family's writers resolve the pair (settingsAimedSelection), and the
+	// value half of this command already does (openCloud).
+	sel, lc, err := settingsAimedSelection(settingsWriteOptions{project: o.cloud.project, config: o.cloud.config})
 	if err != nil {
 		return err
 	}
@@ -161,12 +170,18 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 		// and before the container lookup below: nothing is read and nothing is
 		// deleted for a value this installation no longer mounts.
 		//
-		// The names that are not this case keep the refusal below, which is
-		// why it is asked first: a provider's key, a provider's conventional
-		// name and a Claude account's token share this block's derived ID and
-		// belong to another block that this command does not remove, and a
-		// name no block holds at all is a typo rather than a disabled feature.
-		if config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(lc, name) {
+		// The guard exists because the ruling keeps what is already there: a
+		// repository-level secret is disabled for now, its container is the one
+		// the repository root created and a returning feature wants, so there
+		// is nothing for this command to withdraw and the honest answer is the
+		// notice (nothing removed, exit 0) rather than a refusal over a name a
+		// person would read as live. The refusal below is the other state: a
+		// provider's key, a provider's conventional name and a Claude account's
+		// token belong to a block this command does not remove, and their
+		// containers are mounted. A well-formed name no block holds reads as
+		// the disabled feature since D2313, so the guard can no longer be the
+		// spelling check that used to send a typo to that refusal.
+		if repoSecretsDisabledName(lc, name) {
 			return repoSecretsDisabled(cmd.OutOrStdout())
 		}
 		// project_secrets holds only the reserved names. Any other name sharing

@@ -41,17 +41,29 @@ import (
 // of its own and not a parse of Source, which is the merchant's event id for a
 // purchase and a rotation's own name for a successor.
 type Record struct {
-	Source       string    `json:"source"`
-	KeyID        string    `json:"key_id"`
-	Plan         string    `json:"plan"`
-	Tier         string    `json:"tier"`
-	Features     []string  `json:"features"`
-	Seats        int       `json:"seats"`
-	Organisation string    `json:"organisation"`
-	Email        string    `json:"email"`
-	Subscription string    `json:"subscription"`
-	Issued       time.Time `json:"issued"`
-	Expires      time.Time `json:"expires"`
+	Source string `json:"source"`
+	KeyID  string `json:"key_id"`
+	// EntitlementID is the licence this key was minted for, and it is empty for a
+	// key no licence bought — the admin page's and the mint tool's (P3.6).
+	//
+	// It is here because a key's life is one licence's and the record was the
+	// only place that did not say so. Renewal reads it to know which licence a
+	// key runs under and whether that licence still runs (F27), a withdrawal
+	// walks it to withdraw every key of one licence (F29), and a reissue reads
+	// the licence's own keys to hand the newest of them back (D2200). None of the
+	// three can be answered from the subscription: a free seat, a trial and an
+	// operations grant bought no subscription at all, and a subscription is an id
+	// the merchant mints and never the licence's identity.
+	EntitlementID string    `json:"entitlement_id"`
+	Plan          string    `json:"plan"`
+	Tier          string    `json:"tier"`
+	Features      []string  `json:"features"`
+	Seats         int       `json:"seats"`
+	Organisation  string    `json:"organisation"`
+	Email         string    `json:"email"`
+	Subscription  string    `json:"subscription"`
+	Issued        time.Time `json:"issued"`
+	Expires       time.Time `json:"expires"`
 	// TermDays is the term in whole days this issuance stands for: the term a
 	// purchase bought, the whole days a renewal covers, the row's own term where
 	// the request named none (a free seat, a trial), or what an end the caller
@@ -193,31 +205,82 @@ type KeyState struct {
 	LastSeen          time.Time `json:"last_seen"`
 }
 
-// Handover is one rotation's answer, kept for the window its own lost answer can
-// be asked for again in (D2135, §7): the successor an old secret fetched, that
-// old secret's digest and the instant the window closes.
+// Handover is one reissue's answer, kept for the window its own lost answer can
+// be asked for again in (D2135, D2200, §7): the successor an old secret fetched,
+// that old secret's digest and the instant the window closes.
 //
 // It is the one record in this store that holds key material, and it is here
 // because the promise cannot be kept anywhere else. A replay lands on whichever
-// instance answers it, hours after the rotation and never on the process that
+// instance answers it, hours after the reissue and never on the process that
 // made it; what it asks for is the successor's own two lines; and the minter
 // cannot be asked again, because a second mint is a *different* key with a
 // different secret, and the first one is the only successor the holder's answer
 // ever carried. What keeps the exception small is Until: a handover is answered
 // only inside its window and is dropped when the window closes, so what the
-// store holds is the rotations of the last 24 hours rather than a growing list
-// of live credentials, and a durable store expires them by that instant (a TTL)
+// store holds is the reissues of the last 24 hours rather than a growing list of
+// live credentials, and a durable store expires them by that instant (a TTL)
 // rather than keeping a table nothing sweeps.
+//
+// **Sealed is ciphertext and nothing here is a credential** (D2182 as amended,
+// F3): the service seals the successor's key text and its renewal secret under
+// the deploy's KMS key before the record is written and opens it for the one
+// request that asks inside the window, so a reader of this store — an operator,
+// a leaked export, the database's own console — holds bytes and not a licence
+// (`Sealer`, kmsseal.go). The record keeps the sealed bytes and nothing else:
+// the two plaintext fields that used to sit here were the leak this ruling is
+// about.
 //
 // SecretHash is the **old** key's renewal-secret digest, so the window reopens
 // for the secret that earned it and for no other, and KeyID is that same old
 // key's id, because that is what a replay presents.
 type Handover struct {
-	KeyID         string    `json:"key_id"`
-	SecretHash    string    `json:"secret_hash"`
-	Key           string    `json:"key"`
-	RenewalSecret string    `json:"renewal_secret"`
-	Until         time.Time `json:"until"`
+	KeyID      string    `json:"key_id"`
+	SecretHash string    `json:"secret_hash"`
+	Sealed     []byte    `json:"sealed"`
+	Until      time.Time `json:"until"`
+}
+
+// entitlementRecords is the slice of an issuance list that names one licence,
+// which is how this store is read by the entitlement a key belongs to (P3.6):
+// F27 asks whether that licence still runs, D2200 asks for its newest key and
+// F29 asks for all of them.
+//
+// It is a filter over the list the service has already read and not a store
+// method of its own, for the reason the interface's own comment gives: the
+// queries a durable backend has to express are the ones this list shape already
+// states, and every read here is a whole collection the service filters.
+func entitlementRecords(records []Record, entitlementID string) []Record {
+	if entitlementID == "" {
+		return nil
+	}
+	out := make([]Record, 0, len(records))
+	for _, record := range records {
+		if record.EntitlementID == entitlementID {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+// newestIssuance answers the key of one licence that was issued last, which is
+// what D2200's reissue reads: the key it supersedes is that one, and the secret
+// hash it is reissued under is that one's.
+//
+// The newest is taken by `Issued` and not by the order the list happens to be
+// in, because a store that answers its records in no order is one this file's
+// memory shape allows and a list read back is one a test may write in any order.
+// The tie is broken by key id, so two keys minted in the same instant — a seat
+// change and the merchant's renewal delivered together — answer the same key on
+// every read rather than whichever the store handed back first.
+func newestIssuance(records []Record, entitlementID string) (Record, bool) {
+	newest, held := Record{}, false
+	for _, record := range entitlementRecords(records, entitlementID) {
+		if !held || record.Issued.After(newest.Issued) ||
+			(record.Issued.Equal(newest.Issued) && record.KeyID > newest.KeyID) {
+			newest, held = record, true
+		}
+	}
+	return newest, held
 }
 
 // Trial is one 14-day Team trial handed out under §14: the installation it was
@@ -255,7 +318,7 @@ type Trial struct {
 //
 // After Subscriptions come the things a key's life adds to §7.3's record: the
 // state its renewal is decided from (§7), the revocation list (§8), the trials
-// handed out (§14) and a rotation's handover (D2135). They keep the shape above
+// handed out (§14) and a reissue's handover (D2135, D2200). They keep the shape above
 // — whole records that the service filters as it reads — and they meet that
 // limit in the same two ways: an issuance and its key state are two writes, so a
 // mint that dies between them leaves a key the store can revoke and cannot renew

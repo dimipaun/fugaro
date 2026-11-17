@@ -43,6 +43,45 @@ const (
 	// All remotes count, not only origin's fetch URL: a token in a pushurl
 	// would also send the runner's pushes to a stale embedded credential.
 	GitCredentialRemoteURLKey = `^remote\..*\.(url|pushurl)$`
+	// GitConfigCredentialText matches a git config file's own text that
+	// carries a credential: a credential section, a helper, an
+	// http.extraheader, or a URL whose userinfo is a credential. The constants
+	// above are `git config --get-regexp` patterns over a *key*, read
+	// lowercased, and cannot be applied to the file as it is written; this is
+	// the same thing a reader with no git to ask greps for. images/scan.sh's
+	// leak check and images/trivy-secret.yaml's fugaro-git-config-credential
+	// rule both carry it verbatim (a test pins that), so the two never
+	// disagree about what a credential in a config is.
+	//
+	// Its URL alternative names the schemes instead of taking every userinfo,
+	// where GitCredentialURL — read by the checkout strip and the smoke, which
+	// refuse an ssh URL because run-time credential injection cannot use it
+	// either — takes them all. This one asks what *is* a credential in the
+	// file, and on http(s) and git any userinfo is one: Fugaro's own injected
+	// credential is https://x-token-auth:<token>@host, and the form GitHub's
+	// token instructions give, which is what a Dockerfile's own
+	// `git clone https://${TOKEN}@github.com/...` bakes into .git/config, is
+	// the token alone as the user name. The one userinfo that carries no
+	// secret is ssh's own git@host, which is what a mirror rule naming
+	// ssh://git@host asks for — a leak scan refusing that would refuse an
+	// image for a config that leaks nothing — so ssh is the scheme left out.
+	GitConfigCredentialText = `\[credential|^[[:space:]]*helper[[:space:]]*=|extraheader|(https?|git)://[^/[:space:]]*@`
+	// GitConfigPathText matches every path git reads a config from, which is
+	// more than a checkout's .git/config: a bare or mirror repository's
+	// <name>.git/config, the global configs (~/.gitconfig and $XDG_CONFIG_HOME's
+	// git/config, which is ~/.config/git/config by default) and the system ones
+	// (/etc/gitconfig and $XDG_CONFIG_DIRS's, /etc/xdg/git/config). A build
+	// writes the credential where its own git call reads it, so a fence that
+	// knew one spelling would pass an image whose build used another; the
+	// content is what GitConfigCredentialText then judges. images/scan.sh's
+	// leak check and images/trivy-secret.yaml's fugaro-git-config-credential
+	// rule both carry it verbatim (a test pins that).
+	//
+	// What it cannot name is a config reached through GIT_CONFIG_GLOBAL,
+	// GIT_CONFIG_SYSTEM, GIT_DIR or an XDG_CONFIG_HOME pointing elsewhere:
+	// those are a build's own naming, and no scan of a filesystem can guess
+	// them.
+	GitConfigPathText = `(^|/)(\.gitconfig|gitconfig|[^/]*\.git/config|(\.config|xdg)/git/config)$`
 )
 
 // CloudBuild is images/derived/cloudbuild.yaml, which fugaro image build
@@ -56,3 +95,17 @@ var CloudBuild []byte
 //
 //go:embed base/tools.tsv
 var BaseTools string
+
+// ScanScript is images/scan.sh, the leak scan, and TrivySecretConfig is
+// images/trivy-secret.yaml, the rules and allowances it passes Trivy. The
+// catalog build runs the two of them (internal/backend/gcp's catalog-scan
+// step, B3), where the script cannot be read from a checkout: the CLI embeds
+// them, and the step writes both out and runs the script, so the build scans
+// its image with the same script CI does rather than with a second copy of
+// the checks.
+//
+//go:embed scan.sh
+var ScanScript []byte
+
+//go:embed trivy-secret.yaml
+var TrivySecretConfig []byte

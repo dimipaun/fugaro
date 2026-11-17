@@ -85,12 +85,15 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 // runImageBuildCatalog submits one Cloud Build per entry of cat (D1144):
 // each reads the Dockerfile the entry's source resolved to and this command
 // copied into the project's bucket, builds it as the checkout's repository's
-// build account with that repository's provider credential and workflow
-// secrets, and promotes the image into the installation's shared registry
-// (D1152).
+// build account with that repository's provider credential and no secret of
+// it, and promotes the image into the installation's shared registry
+// (D1152). The credential is the clone step's alone and no step of an entry's
+// build mounts a secret (B9, D2311): the entry's definition is refused at
+// publish if it asks for one, and a build handed none cannot satisfy a mount
+// the refusal failed to read.
 //
-// Everything a build is named from — the build account, the credential, the
-// secrets and the record's slug — is the checkout's repository's, so an
+// Everything a build is named from — the build account, the credential and
+// the record's slug — is the checkout's repository's, so an
 // entry whose Dockerfile lives in another repository is refused rather than
 // submitted: its build would run as an account that does not hold that
 // repository's credential. Building one from anywhere is a decision this
@@ -119,9 +122,11 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// reads is per workflow: the base kind is the one there is (below), the
 	// smoke's spec is the same for every workflow (image.SpecForCloud reads
 	// that same constant and only checks that the name it is given exists),
-	// and the secrets are the repository's (catalogBuildSecrets). So a
-	// repository that declares several workflows is not asked to pick one to
-	// build an entry with: the first name is the one the spec is rendered for.
+	// and no workflow's secrets reach a step of it — a build step is handed
+	// none at all (B9, D2311), and the clone step's credential is the
+	// repository's. So a repository that declares several workflows is not
+	// asked to pick one to build an entry with: the first name is the one the
+	// spec is rendered for.
 	// loadCheckoutResolved has already refused a file with no workflow, so
 	// there is always one.
 	workflow := slices.Sorted(maps.Keys(cfg.Workflows))[0]
@@ -235,13 +240,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		return userErr("%v", err)
 	}
 	gitID := ""
-	var secrets []config.Secret
 	if builds {
 		gitID, err = gitSecretID(ctx, lc, rs, nodePolicy(ctx, &env.policy, lc), "the catalog build of "+rs.Name)
 		if err != nil {
-			return err
-		}
-		if secrets, err = catalogBuildSecrets(cfg); err != nil {
 			return err
 		}
 	}
@@ -594,7 +595,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			if err != nil {
 				return withLease(userErr("%v", err), lease.release(ctx))
 			}
-			spec.WorkflowSecrets, spec.Selftest = secrets, selftestJSON
+			spec.Selftest = selftestJSON
 		}
 		res, err := b.SubmitCatalog(ctx, spec)
 		switch {
@@ -774,9 +775,9 @@ func catalogBuildEntryGuard(e config.Entry, repo string, noSmoke bool) error {
 // catalogBuildWrongRepo is the refusal of one entry that this checkout cannot
 // build: its Dockerfile is another repository's, and a build runs as the
 // build account of the repository it was submitted from, holding that
-// repository's credential and secrets.
+// repository's credential.
 func catalogBuildWrongRepo(e config.Entry, repo string) error {
-	return userErr("the catalog entry %s is built from %s's Dockerfile, and a build runs as the build account of the repository it is submitted from, with that repository's credential and secrets: run this from %s's checkout (or from %s, which is already there)",
+	return userErr("the catalog entry %s is built from %s's Dockerfile, and a build runs as the build account of the repository it is submitted from, with that repository's credential: run this from %s's checkout (or from %s, which is already there)",
 		pluginwire.Printable(e.Name), pluginwire.Printable(e.Source.Repo), pluginwire.Printable(e.Source.Repo), pluginwire.Printable(repo))
 }
 
@@ -790,37 +791,6 @@ func catalogEntryNamed(cat *config.Catalog, name string) (config.Entry, bool) {
 		}
 	}
 	return config.Entry{}, false
-}
-
-// catalogBuildSecrets is what a catalog build mounts as BuildKit file
-// secrets: the repository's build secrets, which are the ones its workflows
-// declare. An entry is not a workflow (D1144), so no one workflow's list is
-// the entry's, and a build that took one workflow's would go without a secret
-// another declares. The same pair declared twice is one mount; two workflows
-// that mount different secrets on one variable are refused, rather than the
-// build silently getting one of the two (CatalogBuildSpec.check refuses a
-// variable used twice for the same reason).
-func catalogBuildSecrets(cfg *config.Config) ([]config.Secret, error) {
-	var out []config.Secret
-	owner := []string{} // parallel to out: the workflow whose declaration added it
-	at := map[string]int{}
-	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
-		for _, ws := range cfg.Workflows[name].Secrets {
-			i, ok := at[ws.Env]
-			if !ok {
-				at[ws.Env] = len(out)
-				owner = append(owner, name)
-				out = append(out, ws)
-				continue
-			}
-			if out[i] != ws {
-				return nil, userErr("workflows %s and %s mount different secrets as %s (%s and %s): a catalog build mounts the repository's secrets, so one variable cannot carry two",
-					pluginwire.Printable(owner[i]), pluginwire.Printable(name), pluginwire.Printable(ws.Env),
-					pluginwire.Printable(out[i].Name), pluginwire.Printable(ws.Name))
-			}
-		}
-	}
-	return out, nil
 }
 
 // catalogBuildBanner is what a catalog build says it does: the entries it

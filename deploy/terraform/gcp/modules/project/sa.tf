@@ -96,6 +96,28 @@ resource "google_secret_manager_secret_iam_member" "job" {
   member    = google_service_account.job.member
 }
 
+# The credentials service, for a profile it serves (B5.2): the job's account
+# may invoke it, and nothing else may — one member, the job's own account,
+# roles/run.invoker, on that one service, exactly as a repository's own job is
+# granted it (modules/workflow/sa.tf). What the service then serves that
+# account is its own decision (a shared caller is admitted for the identity's
+# repository when that repository is one of its profile's, B5.1/G21), so the
+# grant is the front door and not the permission.
+#
+# Null for a profile the service does not serve, which is the whole of the
+# switch on this side (infra.ProjectJobs' projectJobServesTheCredentialsService):
+# the job is otherwise untouched, and everything it mounts stays until B5.7's
+# flip (G17).
+resource "google_cloud_run_v2_service_iam_member" "credentials" {
+  count = var.job.credentials_service == null ? 0 : 1
+
+  project  = var.project
+  location = var.job.credentials_service.region
+  name     = var.job.credentials_service.name
+  role     = "roles/run.invoker"
+  member   = google_service_account.job.member
+}
+
 # Only a profile whose runs authenticate through Vertex AI.
 resource "google_project_iam_member" "vertex" {
   count = var.job.vertex ? 1 : 0

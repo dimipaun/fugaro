@@ -55,12 +55,19 @@ var pipeIntoPythonHeredocRE = regexp.MustCompile(`\|\s*python3?\s[^\n]*<<`)
 //     the keyless provider only when FUGARO_CREDENTIALS_SERVICE_URL is set, and
 //     **the launch is what sets it now** (0.10.1) —
 //     internal/cli/run.go's credentialsServiceLaunchEnv puts it on a switched-on
-//     repository's per-repository execution and on no other, from the URL the
-//     credentials stage recorded in the project's config. So the check has to
-//     say what to expect per job: the variable present on a repository job's
-//     execution and the key not read in-job, absent on a shared project job and
-//     on every job of a repository whose root has not been re-applied with the
-//     switch on. The sentence it
+//     repository's per-repository execution — and, since B5.2, on the shared
+//     project job a switched profile sends its runs to, judged by the same
+//     switch (the service admits the class for the repositories the profile
+//     admits, B5.1), from the URL the credentials stage recorded in the
+//     project's config. So the check has to say what to expect per job: the
+//     variable present on the job of a repository whose root is switched on —
+//     its own job or its profile's shared one — the key not read in-job, and the
+//     variable absent on every job of a repository whose root has not been
+//     re-applied with the switch on. A shared project job's row is judged the
+//     same way and the run then stops on it, because the class has no
+//     deployment: its table, FUGARO_SHARED_JOB_ACCOUNTS, is rendered by no
+//     module under deploy/terraform/ yet, so every row below would read the
+//     class's own refusal rather than the release. The sentence it
 //     used to carry ("nothing on this tree sets it", the variable expected
 //     absent, the key still read in-job) is now false and is banned below.
 //   - The service reads the installation's database on this tree: its
@@ -190,13 +197,16 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 		"**Run it:** `bash scripts/live-checks/check96.sh [--dry-run] [--workflow <name>] [<owner/name>]`",
 		"scripts/live-checks/check96.sh",
 		// The wiring, which the check has to state per job: the launch sets the
-		// variable on a switched-on repository's per-repository job and on no
-		// other, so the expected answer is true there and false on a shared
-		// project job and on every job of a repository whose root has not been
-		// re-applied with the switch on.
+		// variable on the job of a switched-on repository — its own job and the
+		// shared project job its profile sends the run to (B5.2) — so the
+		// expected answer is true on both and false on every job of a repository
+		// whose root has not been re-applied with the switch on.
 		"the expected answer on a switched-on repository's repository job is `true`",
-		"On a **shared project job** the expected answer is `false`",
-		"**What to expect on a switched-on repository is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and the App key not read in-job",
+		"On a **shared project job** the same switch judges it (B5.2), so the expected answer there is `true` on a switched-on repository and `false` on one whose root has not been re-applied",
+		"that job is then where the run **stops** (exit `2`)",
+		"**What to expect on a switched-on repository is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and, on the same switch, on the shared project job's, and the App key not read in-job",
+		"**What a told shared job then meets is the class's own missing deployment**",
+		"and whether its container carries `FUGARO_SHARED_JOB_ACCOUNTS`, the shared class's own table",
 		"**The launch is what puts it there, as of 0.10.1**",
 		"credentialsServiceLaunchEnv",
 		"held until the live result of this check proves the deployed service mints",
@@ -517,8 +527,8 @@ func TestDocsCheck96IsWrittenAndSaysWhatIsNotYetTrue(t *testing.T) {
 	if !strings.Contains(run, "func credentialsServiceLaunchEnv(") {
 		t.Errorf("internal/cli/run.go no longer has `credentialsServiceLaunchEnv`: Check 96 states the launch as what puts `FUGARO_CREDENTIALS_SERVICE_URL` on a repository job's execution, and that helper is the mechanism")
 	}
-	if !strings.Contains(check, "**What to expect on a switched-on repository is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and the App key not read in-job; on a shared project job, or on any job of a repository whose root has not been re-applied with the switch on, the variable is absent**") {
-		t.Errorf("Check 96 does not state what to expect about the URL gate: the keyless path needs FUGARO_CREDENTIALS_SERVICE_URL, the launch sets it on a repository job, and the check the owner runs must say so per job — present there, absent on a shared project job and on a repository whose root has not been re-applied with the switch on")
+	if !strings.Contains(check, "**What to expect on a switched-on repository is therefore `FUGARO_CREDENTIALS_SERVICE_URL` present on a per-repository job's execution and, on the same switch, on the shared project job's, and the App key not read in-job; on any job of a repository whose root has **not** been re-applied with the switch on, the variable is absent**") {
+		t.Errorf("Check 96 does not state what to expect about the URL gate: the keyless path needs FUGARO_CREDENTIALS_SERVICE_URL, the launch sets it on a repository whose root is switched on — its own job and its profile's shared one, judged by the same switch (B5.2) — and the check the owner runs must say so per job: present on both, absent on every job of a repository whose root has not been re-applied with the switch on")
 	}
 	// And the retired half of that sentence, which said no job ever carried the
 	// name: banned rather than merely unpinned.

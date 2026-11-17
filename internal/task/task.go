@@ -169,6 +169,51 @@ type Spec struct {
 	// CLI older than this one, or a hand-built task, could set either
 	// alone).
 	ReviewPRs []int `json:"review_prs,omitempty"`
+	// ContextRepos are the repositories this run READS and never writes,
+	// from fugaro run --context: one to MaxContextRepos owner/name paths,
+	// each of which the project's published allow_repos has admitted (plan
+	// task C5a; D613's read-only rule, reconciliation-image-setup D652).
+	// The runner clones them outside the work tree and the prompt names
+	// them as reference; nothing copies one into the run's own repository
+	// and nothing the run commits can reach one.
+	//
+	// It is written only when the flag names one, so a spec from a launch
+	// with no --context is byte-identical to what the previous release
+	// wrote, and every spec written before this field reads the same. A
+	// spec that carries one needs a runner that knows the field: Parse
+	// decodes with DisallowUnknownFields, so an older runner refuses the
+	// whole task rather than run it without the repositories — which is
+	// why the launcher gates such a launch on the job image
+	// (internal/cli's contextReposSince) instead.
+	//
+	// Each entry is held to ContextReposProblem's rule, which is
+	// CanonicalRepo's own: a repository the policy can admit is a
+	// repository a task may name, and a name spelled another way (a URL, a
+	// ".git" suffix, a "." or ".." element) is refused here rather than
+	// resolved by a reader that would have to guess which repository was
+	// meant.
+	ContextRepos []string `json:"context_repos,omitempty"`
+	// ChangeSet is the change set this run is a member of (fugaro run
+	// --change-set, plan task D1; reconciliation-image-setup D613 step 2,
+	// D616, D642): the set's ID and the whole member list, which the one
+	// launch that created every member run wrote into each member's task.
+	// Membership is fixed there and read from here — the settle step acts
+	// only when every member lists the same set — so a task file that names
+	// a set is a member of that set and nothing else can make it one. A
+	// task file is writable by launchers and by runs of the same repository
+	// (SECURITY.md), so a member can stall a set but cannot widen one unseen
+	// (D642, T5): this block is a coordination record, never an
+	// authorization input.
+	//
+	// It is written only when the launch named one, so a spec from a launch
+	// without --change-set is byte-identical to what the previous release
+	// wrote, and every spec written before this field reads the same. A
+	// spec that carries one needs a runner that knows the field: Parse
+	// decodes with DisallowUnknownFields, so an older runner refuses the
+	// whole task rather than run it as an ordinary one — which is why the
+	// launcher gates such a launch on the job image (internal/cli's
+	// changeSetSince) instead.
+	ChangeSet *ChangeSet `json:"change_set,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
 	// (docs/design/layered-config.md §8): its exact text, which the runner
 	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
@@ -225,6 +270,33 @@ type Spec struct {
 	// launcher's own image gate refuses an artifact launch before this
 	// field is ever set at such a job.
 	Mode string `json:"mode,omitempty"`
+	// ReviewClass is the launcher's marker that admits a run to the
+	// review-only job variant without being a review (docs/troubleshoot-cloud
+	// D2411): the cloud tier of `fugaro troubleshoot` writes it, because the
+	// recipe that tier runs is mode: artifact (D2402) while the job it must
+	// run on is the variant whose container mounts no App key and no Claude
+	// token (D2403). The runner's own class marker is this spec's Mode alone
+	// (runClass, internal/runner/projectjob.go), so without the field such a
+	// run is a coding-class run: the variant's two doors on the credential
+	// halt it at bootstrap, and its model call would not take the review
+	// class's path through the credentials service.
+	//
+	// It never overrides the mode — a spec whose mode is review is a review
+	// whatever this field says — and Validate refuses it unless the mode is
+	// recipe.ModeArtifact. Setting the field alone is not enough to be a
+	// diagnosis: the runner refuses a spec that carries it against a resolved
+	// recipe holding no diagnose step (resolveRecipe, internal/runner/
+	// runner.go), which is the half this decoder cannot see, since the recipe
+	// is not resolved here. The real protection is that one launcher writes
+	// the field: no repository's fugaro.yaml sets it and no flag does.
+	//
+	// The field is additive, and a runner before the release that reads it
+	// refuses the whole spec (Parse decodes with DisallowUnknownFields), so
+	// the launcher gates a launch that would set it on the job image — the
+	// step kind's own gate, which the recipe that needs this marker carries
+	// anyway (internal/recipe's UsesDiagnose) — rather than let it be
+	// rejected after the fact.
+	ReviewClass bool `json:"review_class,omitempty"`
 	// Rigor is the mode the run's own launcher asked for (fugaro run
 	// --mode, docs/rigor-modes implementation-plan T1.6): the one input
 	// that may raise the mode the run's layers resolve and never lower it
@@ -858,6 +930,105 @@ func InputNameProblem(name string) string {
 // off must not read alike.
 const MaxPlanTaskBytes = 128
 
+// MaxContextRepos bounds the repositories one run may read (Spec.ContextRepos,
+// fugaro run --context, plan task C5a): a run reads a handful of siblings — the
+// shared library, the schema, the client it has to stay in step with — and
+// every one of them is another clone, another installation-token read and
+// another repository named in the run's claim. A value over the cap is a
+// refusal, not a truncation: a run that silently read four of five would be
+// missing exactly the repository the task was about.
+//
+// The claim the launcher mints carries the same list, and the same bound is
+// held there (internal/budget/token's MaxContextRepos): a task that got past
+// this rule must not be able to mint what the claim's own bound refuses.
+const MaxContextRepos = 5
+
+// ContextReposProblem reports what is wrong with one context repository repo —
+// "" when nothing is — for the two places one is accepted: the launcher, at
+// fugaro run --context, and the runner, reading a stored task back
+// (Spec.Validate). One rule with two callers, as PlanTaskProblem is, and for
+// the same reason: a name the launcher accepts has to be one the runner
+// accepts, or the launch writes a task the run then refuses at bootstrap.
+//
+// The rule is CanonicalRepo's, and it is not restated here: it is the form
+// every allow-list entry and every repository this program compares is reduced
+// to (ASCII lower case, no trailing ".git", no "." or ".." element), so a
+// context repository is admitted by the policy under the same canonical name
+// the run's own repository is. What the schema can carry of it is the pattern
+// (schemas/task.schema.json's context_repos items); the "." and ".." elements
+// are outside what a regular expression of that shape can refuse, which is why
+// this function and not the pattern is the rule.
+func ContextReposProblem(repo string) string {
+	if _, err := CanonicalRepo(repo); err != nil {
+		return "must look like owner/name"
+	}
+	return ""
+}
+
+// MaxChangeSetMembers bounds the repositories one change set may span
+// (ChangeSet.Members, fugaro run --change-set, plan task D1): a launch that
+// names more writes more tasks and starts more jobs, each with its own budget
+// and its own pull request, in the one command a person types. The cap is the
+// handful MaxContextRepos allows, for the same reason: a change that has to
+// land across repositories lands across a few siblings — the contract and what
+// consumes it — and a set bigger than a person can still read at launch is one
+// they cannot check. A value over the cap is a refusal, not a truncation: a set
+// that silently left out a member would deliver half a change.
+const MaxChangeSetMembers = 5
+
+// ChangeSet is the change set a run is a member of (Spec.ChangeSet, fugaro run
+// --change-set; plan task D1, D613 step 2, D616, D642): the set's ID and every
+// member of it. One launch creates one run per repository in the set, and every
+// one of those tasks carries this same block, so what the settle step reads
+// from a member is what the launch wrote (D642).
+//
+// It says nothing about what a member's run may do: each member run writes its
+// own repository alone, under its own claim, on its own pull request (D613's
+// linked runs), and the block is what tells the members apart from one another.
+type ChangeSet struct {
+	// ID is the set's own ID: the run ID of its first member (ChangeSetMembers
+	// are in launch order, so Members[0].Run). A launch mints every member's
+	// run ID at once anyway, so the first of them names the set with no second
+	// identity to mint, keep unique or look up.
+	ID string `json:"id"`
+	// Members is every member of the set, in launch order, the run reading
+	// this block included: 2 to MaxChangeSetMembers of them, each a repository
+	// no other member names. A member's repository is canonical
+	// (CanonicalRepo), the form the policy admits and every reader compares.
+	Members []ChangeSetMember `json:"members"`
+}
+
+// ChangeSetMember is one repository of a change set and the run that writes it:
+// the two facts the settle step reads a member's record and pull request by
+// (D3), and the two a member's own status section lists its siblings by — a run
+// reads only its own repository's records, so a sibling's pull request is one
+// it cannot look up itself.
+type ChangeSetMember struct {
+	// Repo is the member's repository, canonical.
+	Repo string `json:"repo"`
+	// RunID is the member's run ID, in the form NewRunID writes. On a member's
+	// task it is that run's own ID; on the task of a follow-up to a member's
+	// pull request (D2) it is the ID of the run that created the member, since
+	// the set is the launch's and a follow-up joins it rather than changing it.
+	RunID string `json:"run_id"`
+}
+
+// Member returns the member whose repository is repo, and whether the set names
+// one. It exists so a reader that holds a run's own repository — the runner
+// rendering a status section, the settle step walking a set — asks the set the
+// same question the same way, rather than each comparing names itself.
+func (c *ChangeSet) Member(repo string) (ChangeSetMember, bool) {
+	if c == nil {
+		return ChangeSetMember{}, false
+	}
+	for _, m := range c.Members {
+		if m.Repo == repo {
+			return m, true
+		}
+	}
+	return ChangeSetMember{}, false
+}
+
 // PlanTaskElemRE is the form of one "/"-separated element of a plan task
 // id: letters, digits, '.', '_' and '-', starting with a letter or a digit.
 // An allow-list rather than a list of refusals, because the id is shown as
@@ -1317,6 +1488,74 @@ func (s *Spec) Validate() error {
 			seen[n] = true
 		}
 	}
+	// The context repositories (Spec.ContextRepos, fugaro run --context): one
+	// to MaxContextRepos of them, each ContextReposProblem's rule, none twice.
+	// A list that is present and empty is refused rather than read as none:
+	// the launcher writes no key at all for a launch that named no repository
+	// (omitempty), so a task.json that carries `"context_repos": []` was
+	// written by something other than this launcher, and the run it reaches
+	// would read the repositories a reader expects to find there — none.
+	if s.ContextRepos != nil {
+		switch {
+		case len(s.ContextRepos) < 1 || len(s.ContextRepos) > MaxContextRepos:
+			bad("task spec: context_repos must name 1 to %d repositories", MaxContextRepos)
+		default:
+			seen := map[string]bool{}
+			for _, repo := range s.ContextRepos {
+				if p := ContextReposProblem(repo); p != "" {
+					bad("task spec: context_repos names %q, which %s", repo, p)
+					continue
+				}
+				c, _ := CanonicalRepo(repo)
+				if seen[c] {
+					bad("task spec: context_repos repeats %s", c)
+				}
+				seen[c] = true
+			}
+		}
+	}
+	// The change set (Spec.ChangeSet, fugaro run --change-set): an ID that is
+	// its first member's run, two to MaxChangeSetMembers members, each a
+	// canonical repository with a run ID, no repository twice, and this run's
+	// own repository among them. A block that is present and names fewer than
+	// two members is refused rather than read as "no set": the launcher writes
+	// no key at all for a launch that named no --change-set (omitempty), so a
+	// task.json carrying a one-member set was written by something other than
+	// this launcher — and a set of one is a draft pull request no settle can
+	// lift (D614). The run's own repository is required to be in the list
+	// because the set is what says whose sibling this run is: a member that
+	// lists a set it is not in would be one no settle waits for.
+	if cs := s.ChangeSet; cs != nil {
+		switch {
+		case !runIDRE.MatchString(cs.ID):
+			bad("task spec: change_set id %q must look like 20260926-221530-a1b2", cs.ID)
+		case len(cs.Members) < 2 || len(cs.Members) > MaxChangeSetMembers:
+			bad("task spec: change_set must name 2 to %d members", MaxChangeSetMembers)
+		default:
+			if cs.Members[0].RunID != cs.ID {
+				bad("task spec: change_set id %s is not its first member's run %s", cs.ID, cs.Members[0].RunID)
+			}
+			seen := map[string]bool{}
+			for _, m := range cs.Members {
+				c, err := CanonicalRepo(m.Repo)
+				if err != nil {
+					bad("task spec: change_set names %q, which must look like owner/name", m.Repo)
+					continue
+				}
+				if !runIDRE.MatchString(m.RunID) {
+					bad("task spec: change_set member %s names %q, which must look like a run ID", c, m.RunID)
+				}
+				if seen[c] {
+					bad("task spec: change_set repeats %s", c)
+				}
+				seen[c] = true
+			}
+			own, _ := CanonicalRepo(s.Repo)
+			if !seen[own] {
+				bad("task spec: change_set does not name this run's repository %s", s.Repo)
+			}
+		}
+	}
 	if !anyFollowUp && !anyReview && strings.TrimSpace(s.Task) == "" {
 		bad("task spec: task is required")
 	}
@@ -1506,6 +1745,14 @@ func (s *Spec) Validate() error {
 	case "", recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate:
 	default:
 		bad("task spec: mode %q must be %s, %s, %s, %s or empty", s.Mode, recipe.ModeImplement, recipe.ModeReview, recipe.ModeArtifact, recipe.ModeEvaluate)
+	}
+	// ReviewClass is the diagnosis launch's marker and only ever rides a
+	// mode: artifact spec (the field's own comment); every other mode is
+	// either already a review class of its own or a shape no launcher writes
+	// it for, so a spec carrying it elsewhere is refused here rather than
+	// admitted to the review-only job's container by a field alone.
+	if s.ReviewClass && s.Mode != recipe.ModeArtifact {
+		bad("task spec: review_class is only for mode %s, and this spec's mode is %q", recipe.ModeArtifact, s.Mode)
 	}
 	// The entries' own shapes only. What an input NAME may be — no absolute
 	// path, no ".." element, no NUL or newline, a length limit, no duplicate
