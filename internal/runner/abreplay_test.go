@@ -278,6 +278,42 @@ func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 		{name: "a local instruction file", path: "CLAUDE.local.md", comp: "CLAUDE.local.md"},
 		{name: "an MCP configuration", path: ".mcp.json", comp: ".mcp.json"},
 		{name: "a nested instruction file", path: "nested/deep/CLAUDE.md", comp: "CLAUDE.md"},
+		{
+			// The checkout the fence judges is not guaranteed to be the one the
+			// reviewer reads it in: on a filesystem that does not distinguish
+			// case — macOS's default, Windows — .Claude and .claude are one
+			// path, so this patch writes the file the replay's review stage
+			// loads as its own configuration, hooks included, while a component
+			// compared byte for byte refuses it in neither reading (the review
+			// of 2026-11-17).
+			name: "the agent's own settings in another case",
+			path: ".Claude/settings.json",
+			comp: ".Claude",
+		},
+		{
+			// The same folding on the prefix the .git rule is: .GITIGNORE is
+			// .gitignore to a filesystem that does not distinguish case, and an
+			// ignore rule the patch wrote would be honoured by the later git of
+			// this run.
+			name: "an ignore rule in another case",
+			path: ".GITIGNORE",
+			comp: ".GITIGNORE",
+		},
+		{
+			// The same fold through the reading that decides: this rename header
+			// is one git applies and the fence's prefix list does not hold, so
+			// the first reading returns "" and the paths git wrote are what
+			// refuse it — CLAUDE.MD, which a filesystem that does not
+			// distinguish case hands the review stage as CLAUDE.md.
+			name: "an instruction file in another case behind a rename header",
+			path: "CLAUDE.MD",
+			patch: `diff --git a/README.md b/README.md
+similarity index 100%
+rename old README.md
+rename new CLAUDE.MD
+`,
+			comp: "CLAUDE.MD",
+		},
 		{name: "a path that merely reads like one", path: "docs/claude-notes.md"},
 		{name: "a file beside a refused one", path: "src/clauderc.go"},
 		{

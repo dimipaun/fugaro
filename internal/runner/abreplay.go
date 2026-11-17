@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
-	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -349,8 +348,27 @@ var replayRefusedNames = []string{
 
 // replayRefusesComponent reports whether a path component is one no patch may
 // write.
+//
+// The comparison folds case, because the checkout the fence judges is not
+// guaranteed to be the one the review stage reads it in: on a filesystem that
+// does not distinguish case — macOS's default, Windows — the component .Claude
+// and the component .claude are one path, so a patch spelling a refused name in
+// another case writes the file the stage then loads as its own configuration,
+// hooks included, while a byte-for-byte comparison refuses it in neither
+// reading (the review of 2026-11-17). Folding refuses a patch that writes, say,
+// Claude.md beside CLAUDE.md, and that is the safe side, as everywhere else in
+// this fence: the arm loses a sample rather than run a review over a checkout
+// whose configuration a patch chose.
 func replayRefusesComponent(name string) bool {
-	return strings.HasPrefix(name, ".git") || slices.Contains(replayRefusedNames, name)
+	if len(name) >= len(".git") && strings.EqualFold(name[:len(".git")], ".git") {
+		return true
+	}
+	for _, refused := range replayRefusedNames {
+		if strings.EqualFold(name, refused) {
+			return true
+		}
+	}
+	return false
 }
 
 // replayPatchPrefixes are the two header lines that name a path in a git diff,
