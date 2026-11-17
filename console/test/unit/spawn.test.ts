@@ -178,7 +178,11 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * the same installation every other write here does -- and the roles-and-scopes
  * plan's RS7's members read, `members.list`, the twenty-seventh: `fugaro user
  * ls` resolves the checkout on its way to the installation whose grants it
- * lists, so it takes the flag the way every cloud read here does. The
+ * lists, so it takes the flag the way every cloud read here does -- and the
+ * composite-commands plan's AP8's pending-steps read, `apply.pending`, the
+ * twenty-eighth: `fugaro apply --status --json` resolves the installation from
+ * the project flags the row fixes, so it takes the flag every other read of a
+ * project takes. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -214,6 +218,7 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'run.launch',
   'seats.read',
   'members.list',
+  'apply.pending',
 ]
 /** freshDirectory is a temporary directory this test owns, one per call. */
 function freshDirectory(prefix = 'fugaro-console-test-'): string {
@@ -537,7 +542,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-eight argvs, twenty-six commands, twenty-six of them with --project', () => {
+  it('fixes the design allow-list exactly: thirty argvs, twenty-seven commands, twenty-eight of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -582,7 +587,12 @@ describe('the spawn table and the argv it builds', () => {
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
-    // console's; the two are held in step by hand on purpose.
+    // console's; the two are held in step by hand on purpose. The
+    // composite-commands plan's AP8 added the last row here: the pending-steps
+    // read, `apply --status --json`, whose `--status` is a word of the command
+    // path and not a flag a caller controls -- the bare `apply` is the chain
+    // that runs what is owed, and the word is the whole difference between the
+    // write and this read.
     expect([...SPAWN_COMMANDS].map((row) => row.words.join(' '))).toEqual([
       'watch --json',
       'budget show --json',
@@ -636,9 +646,14 @@ describe('the spawn table and the argv it builds', () => {
       // argument), and its two project flags are the installation's.
       'user ls --json',
       'run --task-file - --json',
+      // The pending-steps read (the composite-commands plan's AP8): the three
+      // words the row's `command` and its one fixed flag make, with the
+      // installation's two project flags taken out like every other row's. No
+      // argument of a caller's is in it -- the command takes none.
+      'apply --status --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are twenty-seven rows over twenty-four commands: `logs` has two rows,
+    // are twenty-eight rows over twenty-five commands: `logs` has two rows,
     // `--json` and `--url`, and neither of them may be the one that forgets
     // --project, and `settings` (a read and a write) and `graph` (a read and its
     // feed) have two each as well.
@@ -674,9 +689,10 @@ describe('the spawn table and the argv it builds', () => {
         'user ls',
         'coordinator roadmap move',
         'run',
+        'apply',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(27)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(28)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1517,7 +1533,7 @@ describe('the spawn table and the argv it builds', () => {
     }
   })
 
-  it('spawns `settings set` for a narrowing with exactly these words, and no phase flag', () => {
+  it('spawns `settings set` for a narrowing with exactly these words, and `--no-apply`', () => {
     // The settings write (the settings-edit plan's C3, D1103, D1104, D1107).
     // One argv, written out word by word: the group, the subcommand, the key,
     // the layer the read's own row named (**D1105** -- it is the main process's
@@ -1533,15 +1549,18 @@ describe('the spawn table and the argv it builds', () => {
     // terminator is emitted by `argvFor` after every flag this row knows, which
     // is why the order below is the order a child gets.
     //
-    // **A narrowing carries no phase flag at all** (D1107): the CLI asks
-    // nothing, so there is no word to answer with. The dry run's classification
-    // decides the console's own question -- the tick, which gates Confirm for a
-    // widening -- and not a word of this argv.
+    // **A narrowing's one phase word is `--no-apply`** (D1572): the CLI asks
+    // nothing -- no confirmation, no typed name, no flag at all
+    // (`docs/no-prompt-policy/`) -- and the word the console passes says *save
+    // this and run none of its follow-up steps*. The console runs the chain
+    // itself, after the operator has seen what is owed. The dry run's
+    // classification decides the console's own question -- the tick, which gates
+    // Confirm for a widening -- and not a word of this argv.
     //
     // **The phase table is the only place a phase becomes words.**
     // `SETTINGS_EDIT_PHASE_WORDS` is keyed by the main process's own phase
     // (`settingsedit.ts`'s `phaseOf`, from the dry run's `widening` field), and
-    // the vector below is where the narrowing's empty spelling is written down.
+    // the vector below is where the narrowing's `--no-apply` is written down.
     const args = { op: 'set', key: 'budget.cap_usd', value: '25' }
     const narrowing = [...argvFor('settings.edit', args, {
       ...safeContext({ project: 'chosen' }),
@@ -1553,6 +1572,7 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
+      '--no-apply',
       '--project',
       'chosen',
       '--',
@@ -1578,6 +1598,7 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
+      '--no-apply',
       '--project',
       'chosen',
       '--',
@@ -1625,6 +1646,7 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'local',
+      '--no-apply',
       '--project',
       'chosen',
       '--',
@@ -1634,7 +1656,7 @@ describe('the spawn table and the argv it builds', () => {
     expect(tricky[tricky.length - 1]).toBe('--layer')
   })
 
-  it('spawns `settings unset` with no value and no terminator, and no phase flag at either phase', () => {
+  it('spawns `settings unset` with no value and no terminator, and the same phase word at either phase', () => {
     // **The unset form has nothing behind a terminator at all** (D1103): there
     // is no value to protect, and a row that emitted a bare `--` would be a
     // command line with an empty positional the CLI does not take. The key is
@@ -1645,21 +1667,39 @@ describe('the spawn table and the argv it builds', () => {
         { op: 'unset', key: 'budget.cap_usd' },
         { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'narrowing', layer: 'local' } },
       ),
-    ]).toEqual(['settings', 'unset', 'budget.cap_usd', '--layer', 'local', '--project', 'chosen'])
+    ]).toEqual([
+      'settings',
+      'unset',
+      'budget.cap_usd',
+      '--layer',
+      'local',
+      '--no-apply',
+      '--project',
+      'chosen',
+    ])
     // An `unset` that **widens** -- the CLI classifies it, and the console asks
-    // the same question of either subcommand -- carries no flag either and
-    // still no terminator. The two spellings differ by the subcommand word and
-    // the layer, and by nothing else.
+    // the same question of either subcommand -- carries the same one phase word
+    // and still no terminator. The two spellings differ by the subcommand word
+    // and the layer, and by nothing else.
     expect([
       ...argvFor(
         'settings.edit',
         { op: 'unset', key: 'rigor.areas' },
         { ...safeContext({ project: 'chosen' }), settingsEdit: { phase: 'widening', layer: 'repo' } },
       ),
-    ]).toEqual(['settings', 'unset', 'rigor.areas', '--layer', 'repo', '--project', 'chosen'])
+    ]).toEqual([
+      'settings',
+      'unset',
+      'rigor.areas',
+      '--layer',
+      'repo',
+      '--no-apply',
+      '--project',
+      'chosen',
+    ])
   })
 
-  it('carries the installation’s config path on a settings write, and refuses every word a renderer could not be trusted with', () => {
+  it('carries the installation’s config path and `--no-apply` on a settings write, and refuses every word a renderer could not be trusted with', () => {
     // The two flags every cloud command of this tab takes (rule 3): the write is
     // not special, and an installation that declares a config file gets it.
     expect([
@@ -1677,6 +1717,7 @@ describe('the spawn table and the argv it builds', () => {
       'budget.cap_usd',
       '--layer',
       'project',
+      '--no-apply',
       '--project',
       'chosen',
       '--config',
@@ -1723,12 +1764,15 @@ describe('the spawn table and the argv it builds', () => {
       'settings.edit',
     ])
     // The phase table is the only thing that produces a phase's words: the dry
-    // run's two, and **no word at all** for either write phase -- the CLI asks
-    // nothing of a write. A fourth phase, or a word on a write, fails here.
+    // run's two, and then **`--no-apply`** for either write phase (D1565,
+    // D1572) -- the word that says *save this and run none of its follow-up
+    // steps*, which is what the console's own chain (`apply.pending` and the
+    // `fugaro apply` that follows it) is for. A fourth phase, a write phase that
+    // lost the word, or a word on the dry run fails here.
     expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
     expect(SETTINGS_EDIT_PHASE_WORDS['dry-run']).toEqual(['--dry-run', '--json'])
-    expect(SETTINGS_EDIT_PHASE_WORDS['widening']).toEqual([])
-    expect(SETTINGS_EDIT_PHASE_WORDS['narrowing']).toEqual([])
+    expect(SETTINGS_EDIT_PHASE_WORDS['widening']).toEqual(['--no-apply'])
+    expect(SETTINGS_EDIT_PHASE_WORDS['narrowing']).toEqual(['--no-apply'])
   })
 
   it('takes the `=` form on the summary row, and never an empty one', () => {

@@ -458,6 +458,12 @@ func TestDocsDesktopConsoleContractNamesTheOtherShapesFields(t *testing.T) {
 		reflect.TypeOf(reposStatusDoc{}),
 		reflect.TypeOf(reposStatusRepo{}),
 		reflect.TypeOf(reposStatusRow{}),
+		// §6.28, the pending-steps read (the composite-commands plan's AP8,
+		// D1569): the answer and one row of what is owed under it. They are
+		// here because the section is a contract the console reads, and a
+		// field table is held to the shape it documents.
+		reflect.TypeOf(applyDoc{}),
+		reflect.TypeOf(applyRow{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command:
 		// ee/coordinator/cli/console_contract_test.go pins them against the
 		// tagged tree, which is the tree that still serves the console.
@@ -842,6 +848,12 @@ func TestDocsDesktopConsoleContractNamesNoInventedField(t *testing.T) {
 		reflect.TypeOf(reposViewNamed{}),
 		reflect.TypeOf(reposViewCredentials{}),
 		reflect.TypeOf(reposViewCredential{}),
+		// §6.28's two shapes, as in the test above (the composite-commands
+		// plan's AP8): the answer and one row of what is owed under it. They
+		// are here for this test's own reason -- a field table that names a key
+		// no shape carries is a field invented rather than read.
+		reflect.TypeOf(applyDoc{}),
+		reflect.TypeOf(applyRow{}),
 		// §6.13's coordinator shapes moved to ee/coordinator with the command,
 		// as in the test above.
 	}
@@ -1207,6 +1219,16 @@ var consoleContractCommands = map[string]func() *cobra.Command{
 	// document describes its flags, so they are checked against this
 	// constructor like any other command's.
 	"project repos ls": newProjectReposLsCmd,
+	// §6.28 documents the read half of the one command that runs what a
+	// management change saved for later (the composite-commands plan's AP8,
+	// D1569): its document is the queued steps, the change that asked for each
+	// and the two facts the record and its stamp are read by. It is on the
+	// console's spawn list as `apply --status --json` (design §5.1 rule 6), so
+	// its flags -- `--status` not least, which no other command here carries --
+	// are checked against this constructor like any other command's. The bare
+	// `apply` is the same constructor's write arm, and both its words are
+	// checked against it here rather than in the design's table alone.
+	"apply": newApplyCmd,
 }
 
 // TestDocsDesktopConsoleContractNamesOnlyRealFlags: every --flag the document
@@ -1239,7 +1261,19 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 	// checked for absence, the opposite of the rest. The root command is not
 	// one of the commands this document describes -- the console spawns
 	// subcommands -- so its own flag is not in `all` either.
-	documentedAbsent := map[string]bool{"version": true}
+	//
+	// `no-apply` is the second, and its reason is the other side of the same
+	// coin: §6.20 names the word the console's settings WRITE passes -- the one
+	// that says "save this and run none of its follow-up steps" (the
+	// composite-commands plan's D1565) -- while this build's commands do not
+	// register it yet: `settings set` and `settings unset` gain it in that
+	// plan's AP5 and AP6, and AP8 (the task that landed this document's §6.28
+	// and the console's spawn row) is the console half, which the plan lands
+	// ahead of them. So the absence is recorded here the way `version`'s is,
+	// and **an entry that stops being absent fails**: the moment a command
+	// gains the flag this test says so, and the two sentences -- the
+	// document's and this map's -- move together.
+	documentedAbsent := map[string]bool{"version": true, "no-apply": true}
 
 	// (1) Every flag token in the document, outside the sections whose command
 	// moved out of the core with the coordinator (see consoleMovedSections).
@@ -1611,8 +1645,14 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// write and the reason rule 6's fence grew a row, so it is spelled
 		// exactly as rule 12 spawns it -- the dry run's phase words first,
 		// then the write's -- with the value last, after the terminator, and
-		// the `unset` form the same words with no value at all.
-		"settings set KEY --layer <L> [--dry-run --json] --project <name> [--config <path>] -- <VALUE>",
+		// the `unset` form the same words with no value at all. **The two
+		// phase groups are alternatives and never a pair** (the composite-
+		// commands plan's AP8, D1565, D1572): a write now carries `--no-apply`
+		// -- the word that saves the change and runs none of its follow-up
+		// steps -- where it used to carry nothing at all, because what a
+		// management command leaves owed is run later by `fugaro apply` and
+		// never from behind the settings window.
+		"settings set KEY --layer <L> [--dry-run --json] [--no-apply] --project <name> [--config <path>] -- <VALUE>",
 		// The managed state and its audit trail (the managed screens' plan's
 		// CM3, the `managed.status` operation, D1472 to D1477): the two marks'
 		// own answer and the bounded subset of the newest audit record, never

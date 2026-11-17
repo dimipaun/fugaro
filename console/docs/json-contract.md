@@ -2882,11 +2882,22 @@ of the group: `--ask` is about the confirmations a write is given, which a dry
 run has none of and asks for none of (a managed project writes on the gate's
 verdict and asks nothing, and `--ask` is the flag that puts those questions
 back). **A console passes the dry run's spelling and nothing else** —
-`--dry-run --json` for the read, and no flag at all for the write — and the CLI
-is what makes that a property rather than a convention: `--ask` is not a word of
-the console's argv (design §5.1 rule 6), because the questions it restores are
-asked at a terminal and the console's child has none, so the write it spawns
-asks nothing and needs no flag to say so. **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
+`--dry-run --json` for the read, and `--no-apply` for the write — and the CLI
+is what makes the choice a property rather than a convention: `--ask` is not a
+word of the console's argv (design §5.1 rule 6), because the questions it
+restores are asked at a terminal and the console's child has none, so the write
+it spawns asks nothing and needs no flag to say so. **`--no-apply` is the one
+word in this section that no command of this build registers yet**: `settings
+set` and `settings unset` gain it in the composite-commands plan's AP5 and AP6,
+and the helper that will spell it once for every management command
+(`addNoApplyFlag`) is already in `internal/cli/apply.go`. **The write's own word
+is not an answer to a question either** (the composite-commands plan's AP8,
+D1565, D1572): it says *save this and run none of its follow-up steps*, so the
+console writes the local half of a change and what it owes is run later by
+`fugaro apply` (§6.28) rather than from behind the settings window. It is the
+same word on a widening and on a narrowing: the two phases differ in the
+console's own window, the tick a widening needs, and never in the argv the CLI
+is handed (D1107). **The layer is never guessed by the console** either: the CLI itself falls back to the narrowest layer when `--layer` is
 omitted, but the console always names one (`argvFor` refuses a settings edit without it), the layer must be
 one `settingsWriteLayers` names, and a layer outside them is a refusal rather
 than a document. The command is the same pair §6.19's paragraph describes, so the
@@ -3857,6 +3868,85 @@ group's read and not a console row yet: the design's §5.1 table and
 `CONSOLE_OPERATIONS` take the two read verbs once both documents exist, which is
 a later task of the same plan.
 
+### 6.28 `fugaro apply --status --json` — the steps a change still owes
+
+**Command:** `internal/cli/apply.go` `newApplyCmd` / `runApply`, with the
+document built as `applyDoc` and the record read by `loadPendingSteps`. **The
+record itself is `internal/apply`'s** (`apply.Pending`, `apply.LoadPending`,
+`apply.PendingPath`), and the file's own shape is pinned by
+`schemas/pending-steps.schema.json` — this section documents the answer, not the
+file.
+
+**`--status` is the read half of the one command that runs what a change
+owes.** A management command (`settings set`, `image add`, `models rm`, `workspace
+add`, …) writes its change and then runs the steps that make it live — publishing the project policy, redeploying the checkout's
+repository, building a catalog image — and `--no-apply` is the skip word
+that saves the change and stops — `--no-apply`, spelled in §6.20 (D1565). What it leaves behind is a local record per
+machine, and `fugaro apply` runs it. **`--status` prints what is owed, runs
+nothing and writes nothing**, which is what makes it the arm the console is
+admitted to (the composite-commands plan's AP8, D1569; design §5.1 rule 6's
+`apply --status --json` row, operation `apply.pending`). The bare `apply` — the
+same command's write arm — is a rule 6 row the console does not spawn yet
+(D1572).
+
+**The document is one object.**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `version` | int | never | never | the document's own version (`applyStatusVersion`), `1` today. A field is added and never repointed, so a reader can tell a shape it knows from one it does not (F9) |
+| `project` | string | never | never | the Fugaro project this answer is about: the installation the aiming pair resolved, and the name every entry of the record is bound to (D1575) |
+| `gcp_project` | string | never | never | the GCP project of that same installation, and the other half of the binding: a record whose entries name another pair is **refused rather than answered for**, so this document is only ever about the installation it was read for |
+| `recorded` | bool | never | never | whether a record of what is owed is on disk **at all**. A machine that never made such a change and one whose record was deleted read the same — nothing is owed — and this is what tells the two apart (D1575) |
+| `current` | bool | never | never | whether the record was stamped against the project config **as it stands**. `false` means the config changed since the last successful apply, so what is owed may be older than the config — or newer than it. It is a fact about the stamp, not a refusal |
+| `pending` | array | never | never | what is still owed, in the order it runs — one row per step, the table below. **It is written even when it is empty**: `[]` is "nothing is owed", a true answer, and a different one from a document that could not be read at all. **No step appears twice**, whatever queued it, because the record is keyed by step |
+| `applied` | array | **yes — for `--status`** | never | the steps a run answered, in the order they ran. **`--status` runs none and the key is absent from its document**, not present-and-empty: the write arm is the only one that carries it, and then only when it answered something |
+
+**One row of `pending`:**
+
+| Key | Type | Absent | Null | Notes |
+| --- | --- | --- | --- | --- |
+| `step` | string | never | never | the step's name: an `internal/initflow` stage name, or the one step that is not a stage, `catalog-build` (D1577). It is a **name** and never a command line: the console draws it, and a reader must not run it |
+| `kind` | string | never | never | what kind of change asked for the step (`apply.Setting` or `apply.Resource`), which is the vocabulary the text form's own sentence is built from |
+| `key` | string | never | never | which thing changed: a setting key or a resource type, **exactly as the writer typed it**. It is written by a person and printed through `safetext.Field` in both forms, because a key carrying an escape sequence would draw whatever it liked on the terminal the text form prints to |
+
+**No value is ever in this document, and no argv either** (D1570, D1575). The
+record holds the *names* of the steps and the change that asked for each of
+them; what a step will write, publish or deploy is decided when it runs, by the
+step's own read-only check. That is why this document is safe to draw and safe
+for a console to hold: it names work, not secrets.
+
+**Read-only, and local only.** `--status` reads this machine's project config
+(for the binding pair and the stamp), the pending record beside it, and nothing
+else: **no runs bucket, no database, no host and no container**. It mints no
+credential and it starts no child. So a console reads it with no cloud access at
+all — and the same is why the console's operation is on no reduced view and no
+lapse refusal (design §5.1 rules 13 and 14; the read costs nothing and reaches
+nothing).
+
+**Exit status.** Zero for a read, whether or not anything is owed: an empty
+`pending` with `recorded: false` is a true answer and the text form prints
+`Nothing to apply.` Non-zero, **with no document at all**, for the two ways the
+answer cannot be made into one: the project cannot be resolved from the flags,
+the environment and the checkout, and the record could not be read — a record
+bound to another project name or another GCP project is refused there (D1575),
+and so is one this build cannot parse. Nothing is printed before the refusal.
+
+**Flags** (`newApplyCmd`): `--status`, `--json`, and the aiming pair `--project
+<name>` / `--config <path>`. They are the pair every project read carries
+(design §3.4 rule 3) and this command carries no cloud flags: it never opens a
+cloud. `--json` without `--status` is the run arm's document — `applied`, and
+the version the file was written as — and not this one. The command takes **no
+argument** (`cobra.NoArgs`), so `apply --status --json` and nothing else is the
+whole of the console's argv.
+
+**The console's operation allow-list gains `apply.pending` here** (D1569), and
+the console's own wording for the row is the design's §5.1 rule 6 entry: the
+pending steps a management command saved for a later `fugaro apply`, the change
+that asked for each of them, and whether a record is on disk and still stamped
+against this machine's config. The
+write half — the bare `apply` — is a rule 6 row and **not** an operation: the
+console shows what is owed and does not run the chain yet.
+
 ## 7. The CLI gaps, settled against the code
 
 The console ships **without any of these** and must work, visibly degraded
@@ -3921,7 +4011,8 @@ and **not** off this document or the design:
 | `coordinator status` | yes (`newCoordinatorStatusCmd`, §6.13) — with `--from-store` it is the one read here that asks nothing of the host (the stored view, through the caller's own credentials), and it is a cloud read all the same: the view lives in the project's database, so it carries `--project` and `--config` like the rest |
 | `coordinator show` | yes (`newCoordinatorShowCmd`, §6.15) — the pull request read (coordinator v2 C3, D816): `--repo` and `--pr` are its own two arguments, both required, and it carries `--project` and `--config` like the rest because it resolves the repository's provider the way the project view does. **The second row here whose child mints a credential of the host's** — the first is `run`'s below, whose child is a run and mints the write-capable token it pushes and opens the pull request with; this row's is the person read set's own read-only installation token (contents, pull requests and metadata, all read), revoked when the command is done — so its argv is the whole of what a renderer may influence about it |
 | `coordinator intents` | yes (`newCoordinatorIntentsCmd`, §6.16) — the declarations read (coordinator v2 C4, D827): it has **no argument of its own** (`--all` and `--json` are the console row's fixed words), and it carries `--project` and `--config` like the rest because it resolves the local config the way the project view does. **The one row here whose child asks nothing of the host at all**: the declarations are the caller's own database node, read through the same credentials §6.13's stored read uses, so there is no App key, no installation token and no provider anywhere in it |
-| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose |
+| `settings set\|unset` | yes (`newSettingsCmd`, §6.20) — **the second row here that writes** (the settings-edit plan's C3, design §5.1 rule 12): the dry run and the confirmed write are the same command with the same aiming pair, and the layer written is §6.19's `target_layer` rather than a flag a renderer chose. The write carries `--no-apply` (the composite-commands plan's AP8, D1572), so the change is saved and its follow-up steps are owed rather than run |
+| `apply --status` | yes (`newApplyCmd`, §6.28) — **the third row here that writes**, and the only one with a read arm: `fugaro apply` runs the follow-up steps a management command saved for later (the composite-commands plan's D1560). The console is admitted to `apply --status --json` and nothing else (D1569, design §5.1 rule 6): the bare `apply` is a row of that table the console does not spawn yet, and the read costs no cloud, so the pair here is what aims it at an installation |
 | **`run`** | yes (`newRunCmd`, §6.14) — **the other row here that writes**: the launch (design §5.1 rule 11) is cut for a project like every cloud command, so it carries `--project` and `--config` too, and the task itself arrives on stdin rather than as a flag |
 
 So the console passes `--project <name>` (and `--config <path>` when the

@@ -557,6 +557,27 @@ export interface FugaroSource {
    */
   listMembers(args: ValidatedArguments): Promise<Snapshot>
   /**
+   * readPendingSteps is the pending-steps read (`fugaro apply --status --json`,
+   * the composite-commands plan's AP8, D1569): the follow-up steps a management
+   * command saved for a later `fugaro apply`, the change that asked for each of
+   * them, and whether a record is on disk and still stamped against this
+   * machine's config.
+   *
+   * It takes **no argument at all** -- the command is cobra's `NoArgs` and the
+   * operation declares no key -- so an implementation adds no word of its own to
+   * the argv, which is the spawn row's own three words plus the installation's
+   * `--project`. **`--status` is a word of that row's command path and not a
+   * flag a caller controls**: the bare `fugaro apply` is the chain that runs the
+   * steps, and this is the arm that runs none of them.
+   *
+   * **Nothing it reads is a cloud object**: the child reads this machine's
+   * project config and the pending record beside it, so the read writes nothing
+   * and reaches no bucket, database or host. What comes back is the project's
+   * own text carried as data -- a step's name, the kind of change and the key or
+   * repository it was about -- and no screen reads a word of it as a flag.
+   */
+  readPendingSteps(args: ValidatedArguments): Promise<Snapshot>
+  /**
    * readSettings is the Project tab's settings section (`settings --json`, the
    * settings-edit plan's C1; `console/docs/json-contract.md` §6.19): the
    * project's settings, each with the value a run gets, the layer that decided
@@ -915,6 +936,7 @@ export function handlersFor(
     'models.list': (args) => source.listModels(args),
     'seats.read': (args) => source.readSeats(args),
     'members.list': (args) => source.listMembers(args),
+    'apply.pending': (args) => source.readPendingSteps(args),
     'settings.read': (args) => source.readSettings(args),
     'environment.report': (args) => source.environmentReport(args),
     'link.openExternal': async (args) => {

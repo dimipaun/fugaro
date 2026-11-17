@@ -948,6 +948,23 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('members.list', args)
   }
 
+  /** readPendingSteps reads `apply --status --json`: the follow-up steps a
+   * management command saved for a later `fugaro apply`, the change that asked
+   * for each of them and whether a record is on disk and still stamped
+   * against this machine's config (the
+   * composite-commands plan's AP8, D1569; contract §6.28). The argv is the
+   * spawn row's own three words and the installation's `--project`, because the
+   * operation takes no argument at all -- **and `--status` is a word of that
+   * row's command path rather than a flag this method could leave out**: the
+   * bare `fugaro apply` is the chain that runs the steps, so the word is the
+   * whole difference between the read and the write. It reads this machine's
+   * own project config and the pending record beside it -- no bucket, no
+   * database, no host -- so it writes nothing, mints nothing of the host's and
+   * is safe to ask on an installation whose cloud is unreachable. */
+  readPendingSteps(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('apply.pending', args)
+  }
+
   /** readSettings reads `settings --json`: the project's settings, each with
    * the value a run gets, the layer that decided it, its default, its state and
    * the three writability facts the row set draws its pencils from (the
@@ -2009,6 +2026,22 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * they run it, and a minute-old answer in front of a newer one would show a
      * role that has already moved. */
     listMembers: (args) => read('members.list', (source) => source.listMembers(args)),
+    /** readPendingSteps has no precondition and no cadence, and both halves are
+     * deliberate. It needs no directory: the installation is the `--project`
+     * the spawn fixes, and the record it reads is that installation's own --
+     * so a console with an installation and no checkout still answers. It
+     * passes no `--dir` and remembers no checkout, which is what puts the read
+     * on `consoleReadPaths` (`internal/cli/project.go`). It holds no floor
+     * between two calls either, and that is the point of the read: a pending
+     * step is written by a management command the operator just ran, and an
+     * answer held back for a minute would show a list the screen has already
+     * changed.
+     *
+     * **It is answered on an installation whose cloud is unreachable**, which
+     * is why no cloud precondition is written here: the child reads a file on
+     * this machine, and the steps it lists are exactly what a lapsed or
+     * offline installation still owes. */
+    readPendingSteps: (args) => read('apply.pending', (source) => source.readPendingSteps(args)),
     /** readSettings has no precondition and no cadence either: the read is the
      * registry, the project layer's cache, the local config and the checkouts
      * this machine remembers, with no bucket, no database and no host behind
