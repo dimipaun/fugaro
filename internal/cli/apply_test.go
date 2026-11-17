@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
@@ -279,7 +280,9 @@ func TestApplyUnderAgentMarker(t *testing.T) {
 	}
 	cmd := newApplyCmd()
 	cmd.SetOut(&bytes.Buffer{})
-	if err := applyCatalogBuild(cmd, lc); err == nil || !strings.Contains(ErrorText(err), initflow.AgentRefusal("CLAUDECODE")) {
+	// No run: this arm is the refusal, which comes before the build opens
+	// anything at all.
+	if err := applyCatalogBuild(cmd, lc, nil); err == nil || !strings.Contains(ErrorText(err), initflow.AgentRefusal("CLAUDECODE")) {
 		t.Errorf("the catalog build in a coding agent's session answered %v, want the session's refusal", err)
 	}
 }
@@ -964,6 +967,155 @@ func TestApplyJSONAnswersItsDocumentWhenTheCatalogBuildFails(t *testing.T) {
 		t.Errorf("the record after the failed run is %+v, want the step still owed", p.Steps)
 	}
 	applySchemaCheck(t, []string{"apply", "--json"}, out)
+}
+
+// applyCatalogOneYAML is a catalog whose one entry is written in project state:
+// a whole-catalog build of it submits one build and reads no repository source,
+// and so no provider credential (catalogProviderEnv), which is all a test about
+// WHICH installation a catalog build acts on needs.
+const applyCatalogOneYAML = `image_catalog:
+  entries:
+    - name: tools
+      tags: [node]
+      source: { kind: inline, inline: "FROM example.invalid/base\nRUN true\n" }
+`
+
+// applyCatalogBaseImage is the base a catalog build is built on, pinned into the
+// config these tests run against: `apply` runs the build itself and so cannot
+// pass `--base` the way a person's `image build` does, and a development build
+// has no published base to fall back on.
+const applyCatalogBaseImage = "base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n"
+
+// otherProjectConfig writes a second project's config beside this machine's own
+// and answers its path: the same config in every other respect — the fakes'
+// endpoints, the budget block, the catalog — under another name, GCP project
+// and region, so the two installations differ in exactly what a submission and
+// a lease name.
+func otherProjectConfig(t *testing.T, name, gcpProject, region string) string {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	for _, r := range [][2]string{
+		{"name: " + initProjectName + "\n", "name: " + name + "\n"},
+		{"gcp_project: " + initProject + "\n", "gcp_project: " + gcpProject + "\n"},
+		{"region: us-east5\n", "region: " + region + "\n"},
+	} {
+		if !strings.Contains(body, r[0]) {
+			t.Fatalf("this machine's own config no longer carries %q, so the second project's config cannot be built out of it:\n%s", r[0], body)
+		}
+		body = strings.Replace(body, r[0], r[1], 1)
+	}
+	out := filepath.Join(filepath.Dir(path), name+".yaml")
+	if err := os.WriteFile(out, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestApplyCatalogBuildsTheCatalogOfTheProjectItWasAimedAt: `fugaro apply` can
+// be aimed at a project the working directory is not a checkout of — its own
+// selection is checkout-blind (settingsAimedSelection, --project and --config
+// being localcfg.Select's steps 2 and 1) — while the build command it runs
+// inside itself selects the other way round: the flags first and the working
+// directory's checkout at step 3 (selectProject). So the aim has to reach the
+// build. A build left to select for itself reads the checkout, builds THAT
+// project's catalog, leases the Cloud Build against that installation's budget
+// — and returns success, so this run then clears the aimed project's entry as
+// answered: the aimed project's catalog is never built and its record says
+// otherwise.
+func TestApplyCatalogBuildsTheCatalogOfTheProjectItWasAimedAt(t *testing.T) {
+	// The checkout belongs to vega, whose config this machine holds too:
+	// another installation, of another GCP project and another region, so a
+	// build that followed the checkout cannot produce the aimed project's
+	// images by accident.
+	checkout := strings.Replace(bitbucketYAML, "project: "+initProjectName, "project: vega", 1)
+	fb, _, f := catalogBuildCheckout(t, checkout, applyCatalogOneYAML)
+	// A catalog build in a development build needs the installation's base
+	// pinned: the flag is not there to be passed (this command runs the build
+	// itself), and `fugaro dev` has no published base to fall back on.
+	f.appendConfig(t, applyCatalogBaseImage)
+	stubCatalogProvider(t, nil)
+	vega := otherProjectConfig(t, "vega", "proj-7777", "europe-west1")
+	// vega's installation is one this machine has read the name of before, so
+	// the check a build makes of it is answered from the cache: a build that
+	// followed the checkout into vega gets past that read — which here would go
+	// to a bucket nothing serves — and is refused by what is left, naming vega
+	// rather than the installation this command was aimed at.
+	vlc, err := localcfg.Load(vega)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := localcfg.SaveNameCheck(os.Getenv, "vega", localcfg.NameCheck{GCPProject: "proj-7777", RunsBucket: vlc.BucketURL(), CheckedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	owed(t, apply.CatalogBuild, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage})
+
+	out, errOut, err := executeStdin(t, "", "apply", "--project", initProjectName, "--json")
+	if err != nil {
+		t.Fatalf("apply: %v\n%s", err, out+errOut)
+	}
+	if got := buildPosts(fb); got != 1 {
+		t.Fatalf("the run submitted %d builds, want the aimed project's one catalog entry:\n%s", got, out+errOut)
+	}
+	if subs := catalogBuildSubs(t, fb); subs["_IMAGE"] != catalogBuildImage(t, "tools") {
+		t.Errorf("the build was submitted for %v, want the aimed installation's image %v", subs["_IMAGE"], catalogBuildImage(t, "tools"))
+	}
+	doc := applyDocOf(t, out)
+	if !slices.Equal(doc.Applied, []string{apply.CatalogBuild}) || len(doc.Pending) != 0 {
+		t.Errorf("the run applied %v and left %v owed, want the aimed project's catalog build answered and nothing owed",
+			doc.Applied, applySteps(doc.Pending))
+	}
+	if p := record(t); len(p.Steps) != 0 {
+		t.Errorf("the record after the run is %+v, want nothing owed", p.Steps)
+	}
+}
+
+// TestApplyJSONWithAnOwedCatalogBuildPrintsOnlyItsDocument: --json answers one
+// document and no line of anything else (G2). The catalog build is the one owed
+// step this command runs itself rather than through the loop, and it opened its
+// own run on the command's stdout: its step lines, its progress and its closing
+// line landed ahead of the document, so a script or the console reading this
+// arm could not parse it — and the run filed a second log beside the command's
+// own for one command's work (D1352, D1354). The build runs inside this
+// command's own run instead, which is the account the document is printed on
+// top of.
+func TestApplyJSONWithAnOwedCatalogBuildPrintsOnlyItsDocument(t *testing.T) {
+	fb, _, f := catalogBuildCheckout(t, bitbucketYAML, applyCatalogOneYAML)
+	f.appendConfig(t, applyCatalogBaseImage)
+	stubCatalogProvider(t, nil)
+	owed(t, apply.CatalogBuild, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage})
+
+	out, errOut, err := executeStdin(t, "", "apply", "--json")
+	if err != nil {
+		t.Fatalf("apply: %v\n%s", err, out+errOut)
+	}
+	if got := buildPosts(fb); got != 1 {
+		t.Fatalf("the run submitted %d builds, want the owed catalog build to have run:\n%s", got, out+errOut)
+	}
+	// The whole of stdout is the document: a step line, a progress line or the
+	// build's own summary before it makes this read fail, which is exactly what
+	// a script or the console would do with it.
+	doc := applyDocOf(t, out)
+	if !slices.Equal(doc.Applied, []string{apply.CatalogBuild}) || len(doc.Pending) != 0 {
+		t.Errorf("the run applied %v and left %v owed, want the catalog build answered and nothing owed",
+			doc.Applied, applySteps(doc.Pending))
+	}
+	// And it is one run's work, filed once: an `image-build` log beside this
+	// command's own would be a second account of one command.
+	onlyLog(t, applyName)
+	entries, err := os.ReadDir(logDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "image-build-") {
+			t.Errorf("the run filed %s beside its own log: the catalog build opened a run of its own", e.Name())
+		}
+	}
 }
 
 // TestApplyNeverOnboardsAnUnlistedRepository: this door runs the steps a

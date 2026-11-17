@@ -50,7 +50,7 @@ func runImageBuildCatalogOrDerived(cmd *cobra.Command, name string, o imageBuild
 	// for, a pipe is not judged (openBuildManaged), and --json never reaches
 	// this far (runImageBuild refuses it for a Cloud Build).
 	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))}
-	env, err := openCloud(ctx, o.cloud)
+	env, err := openBuildCloud(ctx, o)
 	if err != nil {
 		return err
 	}
@@ -393,7 +393,19 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	// proceeds — after the confirmation above, the credential read and this
 	// entry's own judgement by the gate — so a run refused before that point
 	// keeps no log, not even an empty one.
+	//
+	// rep is the run the steps print through: the one the caller handed in
+	// (o.run), or this command's own, opened below. It is what makes `fugaro
+	// apply`'s catalog build one of its own run's steps, in its own run's one
+	// log, rather than a second `image-build` run opened beside it — and a run
+	// handed in belongs to its caller, so it is never closed here (that
+	// command's own defer closes it). began is "a step of this run has begun",
+	// which is what the two refusals below read: a borrowed run is open before
+	// the first entry proceeds, and a refusal before that point is still the
+	// whole of what the command says (D1354).
 	var sr *stepRun
+	rep := o.run
+	var began bool
 	defer func() {
 		if sr != nil {
 			sr.close()
@@ -409,7 +421,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// after its submission. It comes before the lease and the copy so that
 		// an entry the gate refused leaves no trace in the bucket.
 		if err := m.admitEntry(ctx, cmd, conds, cat, e, rs.Slug, plan); err != nil {
-			if sr == nil {
+			if !began {
 				// Nothing of this run has run yet, so there is no account to
 				// end: the refusal is the whole of what the command says
 				// (D1354).
@@ -419,7 +431,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// and its closing line is this run's verdict: a command that exits
 			// non-zero may not end on a "Done" (G3). The entry the gate refused
 			// is the step the run failed on.
-			return failStep(sr.rep, sr.rep.Step(e.Name), err)
+			return failStep(rep.rep, rep.rep.Step(e.Name), err)
 		}
 		// T8's lease, taken before anything of this build is written: the copy
 		// below is what the build reads, and a build no cap has room for is
@@ -430,21 +442,23 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// cap and whose day counter this build is counted against.
 		lease, err := openBuildLease(ctx, cmd.ErrOrStderr(), lc, rs.Name, rs.Slug, pricers)
 		if err != nil {
-			if sr == nil {
+			if !began {
 				return err
 			}
-			return failStep(sr.rep, sr.rep.Step(e.Name), err)
+			return failStep(rep.rep, rep.rep.Step(e.Name), err)
 		}
-		if sr == nil {
+		if rep == nil {
 			sr = stepRunFor(cmd, "image-build", cmd.OutOrStdout())
+			rep = sr
 		}
-		step := sr.rep.Step(e.Name)
+		began = true
+		step := rep.rep.Step(e.Name)
 		// The build's own progress is the run's output and the log's, and the
 		// sentence this command has always printed on stdout is the step's own
 		// line now: one line per entry on the default view, the detail in the
 		// log (D1352, D1354). A run whose log could not be opened keeps printing
 		// its progress where it always did (G5, G8).
-		w := streamOut(sr.rep, sr.log, cmd.ErrOrStderr())
+		w := streamOut(rep.rep, rep.log, cmd.ErrOrStderr())
 		// What the request is named from and what it carries is the same value
 		// either way; the two arms differ in everything a build adds to it. A
 		// prebuilt entry's run is the smoke of the reference the entry names
@@ -465,7 +479,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		} else {
 			key, err := config.CatalogDockerfileKey(e.Name)
 			if err != nil {
-				return failStep(sr.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
+				return failStep(rep.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
 			}
 			// The bake this entry's definition may carry, decided here where the
 			// entry's name is: every repository the project's map puts on it, when
@@ -486,9 +500,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				// failure carries it: providers.ErrNoCredential is only ever the
 				// missing token.
 				if providerHint != "" && errors.Is(err, providers.ErrNoCredential) {
-					return failStep(sr.rep, step, withLease(fmt.Errorf("%w%s", err, providerHint), lease.release(ctx)))
+					return failStep(rep.rep, step, withLease(fmt.Errorf("%w%s", err, providerHint), lease.release(ctx)))
 				}
-				return failStep(sr.rep, step, withLease(err, lease.release(ctx)))
+				return failStep(rep.rep, step, withLease(err, lease.release(ctx)))
 			}
 			// The copy lost the checkout a previous build composed into it, if
 			// any: the plan above is this build's own bake and says nothing
@@ -508,12 +522,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 			// this process resolved a moment earlier.
 			data, gen, err := rb.Read(ctx, key)
 			if err != nil {
-				return failStep(sr.rep, step, withLease(remote(err), lease.release(ctx)))
+				return failStep(rep.rep, step, withLease(remote(err), lease.release(ctx)))
 			}
 			sum := sha256.Sum256(data)
 			imageRef, err := gcp.SharedCatalogImage(region, lc.GCPProject, e.Name)
 			if err != nil {
-				return failStep(sr.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
+				return failStep(rep.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
 			}
 			spec.GitProvider, spec.RepoURL, spec.BaseBranch = rs.Provider, rs.RepoURL, cmp.Or(rs.BaseBranch, "main")
 			spec.GitSecretID, spec.GitUser, spec.GitHubAppID = gitID, rs.GitUser, rs.GitHubAppID
@@ -585,9 +599,9 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		res, err := b.SubmitCatalog(ctx, spec)
 		switch {
 		case errors.Is(err, gcp.ErrBadBuildSpec):
-			return failStep(sr.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
+			return failStep(rep.rep, step, withLease(userErr("%v", err), lease.release(ctx)))
 		case err != nil:
-			return failStep(sr.rep, step, withLease(remote(err), lease.release(ctx)))
+			return failStep(rep.rep, step, withLease(remote(err), lease.release(ctx)))
 		}
 		// The submission IS the write this build's record is about: once it is
 		// out the build happened and keeps billing, so the record is written
@@ -612,7 +626,7 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 		// has to be read with, on the screen and in the log).
 		submitted := fmt.Sprintf("submitted Cloud Build build %s of %s; log: %s", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 		if err := m.recorded(ctx); err != nil {
-			return failStep(sr.rep, step, withLease(err, lease.settle(ctx, false)), submitted)
+			return failStep(rep.rep, step, withLease(err, lease.settle(ctx, false)), submitted)
 		}
 		if !o.noWait {
 			fmt.Fprintf(w, "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
@@ -630,14 +644,14 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 				// that may still be running, and the whole reservation is what
 				// the day counts for one (buildLease.settle, and the same
 				// decision image.go makes for its own wait).
-				return failStep(sr.rep, step, withLease(remote(waitErr), lease.settle(ctx, gcp.TerminalStatus(done.Status))))
+				return failStep(rep.rep, step, withLease(remote(waitErr), lease.settle(ctx, gcp.TerminalStatus(done.Status))))
 			}
 		}
 		// The lease closes before the step is reported done: a settle that
 		// fails is the command's exit, and a command that exits non-zero may not
 		// end on a "Done" (G3). The build stays named by it either way.
 		if err := lease.settle(ctx, !o.noWait); err != nil {
-			return failStep(sr.rep, step, err, submitted)
+			return failStep(rep.rep, step, err, submitted)
 		}
 		// A prebuilt entry is smoked and never built, and the sentence says so:
 		// what the run produced is the digest of the reference the entry names,

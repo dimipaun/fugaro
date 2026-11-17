@@ -287,20 +287,30 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 
 	names := pending.Names()
 	var ran, kept []string
+	// A stage that prints to cmd.OutOrStdout() directly — the policy stage's
+	// publish diff is the loudest — would land on the stdout this command's
+	// answer is on, and --json answers one document and no line of anything else
+	// (G2). So the command is pointed at stderr for the length of the run and
+	// its own writer goes on the answer. The catalog build below runs inside
+	// that same window: whatever it writes where the command's output is — the
+	// notice its no-catalog arm answers with, a step line — is not the answer.
+	answer := cmd.OutOrStdout()
+	cmd.SetOut(cmd.ErrOrStderr())
 	// The catalog image is the one step that is not a stage, and apply.Order
 	// puts it first (D1577): the image is what the project's jobs run, so a run
 	// that cannot build it must not go on to publish the policy that names it.
 	// A build that fails leaves every step owed, this one included, so running
 	// this command again finishes the whole job.
 	if slices.Contains(names, apply.CatalogBuild) {
-		if err := applyCatalogBuild(cmd, lc); err != nil {
+		if err := applyCatalogBuild(cmd, lc, run); err != nil {
 			// --json answers one document on every outcome (G2), and this arm
 			// returns ahead of the answer below: nothing ran, so the document
-			// is the record as it was read, with every step still owed.
+			// is the record as it was read, with every step still owed. It goes
+			// on the answer, which the redirect above is not pointed at.
 			if o.asJSON {
-				fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, pending, recorded, applyCurrent(pending, recorded, path), nil)))
+				fmt.Fprintln(answer, string(applyDocJSON(lc, pending, recorded, applyCurrent(pending, recorded, path), nil)))
 			} else {
-				applyKeptLine(cmd.OutOrStdout(), []string{apply.CatalogBuild})
+				applyKeptLine(answer, []string{apply.CatalogBuild})
 			}
 			return err
 		}
@@ -309,12 +319,6 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 
 	stageNames := slices.DeleteFunc(slices.Clone(names), func(n string) bool { return n == apply.CatalogBuild })
 	stages, unanswered := stagesNamed(e, stageNames...)
-	// A stage that prints to cmd.OutOrStdout() directly — the policy stage's
-	// publish diff is the loudest — would land on the stdout this command's
-	// answer is on, so the command is pointed at stderr for the length of the
-	// run and its own writer goes on the answer.
-	answer := cmd.OutOrStdout()
-	cmd.SetOut(cmd.ErrOrStderr())
 	opts := e.options()
 	opts.ReportBorrowed = true
 	res, runErr := initflow.Run(cmd.Context(), stages, opts)
@@ -514,14 +518,30 @@ func applyAnswered(st initflow.StageResult) bool {
 // billable build nobody asked for (F6); and in a coding agent's session it
 // refuses with the session's own refusal, the one `fugaro update`'s steps
 // answer with (D1571).
-func applyCatalogBuild(cmd *cobra.Command, lc *localcfg.Config) error {
+func applyCatalogBuild(cmd *cobra.Command, lc *localcfg.Config, run *stepRun) error {
 	if !infra.CatalogBuilds(lc) {
 		return nil
 	}
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
 		return userErr("%s", initflow.AgentRefusal(m))
 	}
-	return runImageBuildCatalogOrDerived(cmd, "", imageBuildOptions{})
+	// The build acts on the installation this command was aimed at, and it is
+	// handed that installation rather than being left to select one: this
+	// command's own selection is checkout-blind (settingsAimedSelection), while
+	// a build that selected for itself reads the working directory's checkout
+	// before anything else (selectProject) — so a build left to itself in a
+	// checkout of another project would build THAT project's catalog, lease the
+	// Cloud Build against that installation's budget, and answer nothing to
+	// this run's record: the aimed project's step would clear as applied with
+	// its catalog unbuilt (D1577). Passing the config on is also what keeps the
+	// build out of the checkout rule that refuses a command whose project and
+	// checkout disagree, which is a fact about this command's aim and not about
+	// the repository the Dockerfile is read out of.
+	//
+	// It runs inside this command's own run as well (D1352, D1354): the build's
+	// steps and their output are this run's account and this run's one log, not
+	// a second `image-build` log filed beside it.
+	return runImageBuildCatalogOrDerived(cmd, "", imageBuildOptions{lc: lc, run: run})
 }
 
 // clearAnsweredSteps is D1567: `update` runs every stage, so the stages it ran
