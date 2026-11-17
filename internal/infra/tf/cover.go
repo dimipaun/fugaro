@@ -1528,6 +1528,30 @@ var (
 	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
 )
 
+// orchestratorServiceResource, orchestratorServiceArgs, orchestratorServiceEnv
+// and orchestratorTickPath are the same quartet for the resident orchestrator's
+// own service (mobile plan task P5.1c; modules/installation/orchestrator.tf):
+// the resource name the service case dispatches on, the argv of the released
+// image's `orchestrator serve` subcommand, the three names
+// internal/cli/orchestrator_serve.go reads and nothing else — the project that
+// names this installation's node, the Firebase project it belongs to and the
+// database URL it is read from — and the one route that process answers, which
+// is the only path a tick of this installation may be pointed at.
+//
+// A scheduling job of this service is the tree's ONE tick whose target is a
+// run.app URL rather than the run API's job path, and whose token is therefore
+// an OIDC ID token rather than an OAuth access token: orchestratorTickChange is
+// what those two facts are held by.
+const (
+	orchestratorServiceResource = "orchestrator"
+	orchestratorTickPath        = "/tick"
+)
+
+var (
+	orchestratorServiceArgs = []string{"orchestrator", "serve"}
+	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"}
+)
+
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
 // admits that the installation module does not render yet: the cover is what
 // one `fugaro update` confirmation covers, so a name is added to the allow-list
@@ -1792,6 +1816,13 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 const (
 	credentialsAccountResource = "credentials"
 	intakeAccountResource      = "intake"
+	// orchestratorAccountResource is the resident orchestrator's own account,
+	// resource "google_service_account" "orchestrator" in
+	// modules/installation/orchestrator.tf (mobile plan task P5.1b). It is the
+	// account the module's Cloud Run service runs as (P5.1c), and the service
+	// case reads it back through accountFrom, so it is counted the same way:
+	// the plan's address for it ends in google_service_account.orchestrator[0].
+	orchestratorAccountResource = "orchestrator"
 	// intakeServiceResource is the Cloud Run service's own resource name:
 	// intake.tf names the service and the account that runs it the same word,
 	// and the service case dispatches on this one (cloudRunServiceName).
@@ -1821,35 +1852,45 @@ type accountPlan struct {
 	held    map[string]bool
 }
 
-// serviceAccountsPlan is the installation module's two service accounts as a plan
-// carries them, which the google_cloud_run_v2_service case reads: the
-// credentials service's (D146) and the secrets intake's (D1931, DS2.2).
+// serviceAccountsPlan is the installation module's three service accounts as a
+// plan carries them, which the google_cloud_run_v2_service case reads: the
+// credentials service's (D146), the secrets intake's (D1931, DS2.2) and the
+// resident orchestrator's (mobile plan task P5.1c).
 //
-// They are two and not one because the two services run as two different
-// identities: a check that admitted either for both would let a plan run the
-// intake's container as the account that reads every model credential in the
-// bundle — the account the intake's own roles deliberately keep free of every
-// read (R3) — or the credentials service's as the account that only writes
-// dynamic containers.
+// They are three and not one because the three services run as three different
+// identities: a check that admitted either of the first two for the others
+// would let a plan run the intake's container as the account that reads every
+// model credential in the bundle — the account the intake's own roles
+// deliberately keep free of every read (R3) — or the credentials service's as
+// the account that only writes dynamic containers; and the orchestrator's is
+// the account that holds iam.serviceAccounts.signJwt on the budget signer, so
+// admitting it anywhere else would run a service as the identity that may mint
+// a token for any uid (section 4.5 E4).
 type serviceAccountsPlan struct {
-	credentials accountPlan
-	intake      accountPlan
+	credentials  accountPlan
+	intake       accountPlan
+	orchestrator accountPlan
 }
 
-// planServiceAccounts reads the two accounts out of a plan. Every change
+// planServiceAccounts reads the three accounts out of a plan. Every change
 // counts, a no-op included: an unchanged account is one the plan holds and the
 // service it runs keeps naming, which is the shape of every plan after the one
 // that created the service.
 func planServiceAccounts(p *Plan) serviceAccountsPlan {
 	c := serviceAccountsPlan{
-		credentials: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
-		intake:      accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		credentials:  accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		intake:       accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		orchestrator: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
 	}
 	for _, rc := range p.ResourceChanges {
 		for _, a := range []struct {
 			resource string
 			plan     *accountPlan
-		}{{credentialsAccountResource, &c.credentials}, {intakeAccountResource, &c.intake}} {
+		}{
+			{credentialsAccountResource, &c.credentials},
+			{intakeAccountResource, &c.intake},
+			{orchestratorAccountResource, &c.orchestrator},
+		} {
 			id, ok := accountOfResource(rc, a.resource)
 			if !ok || id == "" {
 				continue
@@ -3483,15 +3524,19 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 			}
 		}
 	case "google_cloud_run_v2_service":
-		// The installation module's two services are two shapes, and which
+		// The installation module's three services are three shapes, and which
 		// rules a change is held to is the resource the plan names and nothing
 		// an editor of the variables can reach: intake.tf hardcodes the
 		// intake's account, its args and its environment names, so the change
-		// at that address is the intake's, and everything else falls to the
+		// at that address is the intake's, orchestrator.tf does the same for
+		// the resident orchestrator's (P5.1c), and everything else falls to the
 		// credentials service's case below — which is what refuses a Cloud Run
 		// service this module does not create.
-		if cloudRunServiceName(rc) == intakeServiceResource {
+		switch cloudRunServiceName(rc) {
+		case intakeServiceResource:
 			return c.intakeServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
+		case orchestratorServiceResource:
+			return c.orchestratorServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
 		}
 		// The credentials service (D146, C1.18): the one container image in
 		// the tree that is not a job's. Its container sits one `template`
@@ -3621,6 +3666,16 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 		}
 	case "google_cloud_scheduler_job":
 		ht := at(a["http_target"])
+		// The token block says which kind of target this is, and the two are
+		// not interchangeable: a run API job URI is called with an OAuth access
+		// token and a run.app service URL with an OIDC ID token, so a job
+		// carrying the wrong one authenticates against nothing. The resident
+		// orchestrator's tick is the tree's one job of the second kind
+		// (P5.1c), and it is checked by rules of its own rather than by the
+		// run API's.
+		if len(objects(at(ht, "oidc_token"))) > 0 {
+			return c.orchestratorTickChange(rc, a, rc.Change.AfterUnknown, pre, creates)
+		}
 		if at(rc.Change.AfterUnknown, "http_target", "uri") == true || unknown(rc.Change, "http_target") {
 			// The job's name and location are known only once the job this
 			// module creates exists.
@@ -3922,6 +3977,23 @@ func (c Cover) intakeAccount(a map[string]any, unk any, pre string, plans servic
 	return c.accountFrom(a, unk, pre, plans.intake, "the secrets intake", intakeAccountResource)
 }
 
+// orchestratorAccount is the same check on the third service of the module
+// (mobile plan task P5.1c): the plan's own google_service_account.
+// orchestrator[0], which orchestrator.tf writes into the template and which the
+// same rules hold.
+//
+// It is a check of its own for intakeAccount's reason one account over: the
+// orchestrator's identity is the one that holds iam.serviceAccounts.signJwt on
+// the installation's budget signer (section 4.3's first row, section 4.5 E4 —
+// "may mint" is also "may be the phone"), so admitting either of the module's
+// other two service accounts here would run this process as an identity the
+// design's table never priced, and admitting this account at the credentials
+// service's address would give the process that reads every model credential in
+// the bundle the signJwt reach too.
+func (c Cover) orchestratorAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.orchestrator, "the resident orchestrator", orchestratorAccountResource)
+}
+
 // accountFrom is the check both of the above are: the account a covered
 // service's template names must be the plan's own resource named resource, in
 // this run's project and in the service's module, and the plan must create or
@@ -4017,6 +4089,201 @@ func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any,
 				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
 			}
 		}
+	}
+	return ""
+}
+
+// orchestratorServiceChange holds the resident orchestrator's own service
+// (mobile plan task P5.1c, modules/installation/orchestrator.tf) to the same
+// four rules intakeServiceChange holds the intake's to, and the reasoning for
+// the shape is that function's and credentials.tf's case above. It is a case of
+// its own and not an arm of the intake's, because two of the four are this
+// service's own:
+//
+//   - the argv. This process is the released image's `orchestrator serve`
+//     subcommand (internal/cli/orchestrator_serve.go), and the image's own
+//     default command serves the credentials service, so the module writes
+//     `args = ["orchestrator", "serve"]`. A change whose args are anything else
+//     is refused in both directions: none would serve the credentials service's
+//     or the intake's routes from this URL as an account that may mint a token
+//     for any uid, and anything else would run code orchestrator.tf does not
+//     write. The command is empty, as the two other services' is.
+//   - the environment, which is THREE names and not four
+//     (orchestratorServiceEnv): the project that names this installation's
+//     node, the Firebase project it belongs to, and the database URL it is read
+//     from. Those three are what internal/cli/orchestrator_serve.go reads, and
+//     an environment is the one path a credential could reach this process
+//     without a Secret Manager read — so an entry off the list, or one whose
+//     value comes from a source, is refused here rather than under the one
+//     confirmation that covered the plan. The database URL is on the list as a
+//     NAME; the check that the value is THIS installation's database is the
+//     process's own (it compares the host to the Firebase project it was
+//     given), because only the project's own services know which database is
+//     theirs.
+//
+// The account is the orchestrator's own google_service_account.orchestrator[0]
+// (orchestratorAccount) and never one of the module's other accounts: this
+// identity holds iam.serviceAccounts.signJwt on the installation's budget
+// signer, so running either of the other two services' images as it — or this
+// image as another account — is a pairing section 4.3's table never priced.
+func (c Cover) orchestratorServiceChange(rc ResourceChange, a map[string]any, unk any, pre string, plans serviceAccountsPlan, proj string) string {
+	if unknown(rc.Change, "invoker_iam_disabled") {
+		return "an IAM setting that is not known"
+	}
+	if a["invoker_iam_disabled"] != false {
+		return "a service that does not require IAM, which would let anyone on the internet wake the resident orchestrator and act on this installation's own state"
+	}
+	cs := objects(at(a["template"], "containers"))
+	if unknownAt(unk, "template", 0, "containers") {
+		return "containers that are not known"
+	}
+	if len(cs) == 0 {
+		return "no container"
+	}
+	if why := c.orchestratorAccount(a, unk, pre, plans); why != "" {
+		return why
+	}
+	for i, m := range cs {
+		cp := []any{"template", 0, "containers", i}
+		for _, attr := range []string{"image", "command", "args"} {
+			if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+				return "a container " + attr + " that is not known"
+			}
+		}
+		img := str(m["image"])
+		if !c.credentialsImageOK(img, proj) {
+			return fmt.Sprintf("runs the image %q, which is not this installation's released pin read back through the pull-through repository (%s/%s/%s/%s/fugaro-<kind>:<version>@sha256:<digest>): the resident orchestrator is a subcommand of the released binary, so it runs that pin and never an image of its own",
+				img, c.Registry, proj, c.Ghcr, c.Owner)
+		}
+		cmd, args := strList(m["command"]), strList(m["args"])
+		if len(cmd) != 0 || !slices.Equal(args, orchestratorServiceArgs) {
+			return "a container whose command or args are not the module's: the resident orchestrator runs the released image with no command of its own and args " +
+				strings.Join(orchestratorServiceArgs, " ") + ", and a change that named anything else would run one of this installation's other services here, or code orchestrator.tf does not write"
+		}
+		if unknownAt(unk, append(slices.Clone(cp), "env")...) {
+			return "an environment that is not known"
+		}
+		for j, e := range objects(m["env"]) {
+			ep := append(slices.Clone(cp), "env", j)
+			if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) ||
+				unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "an environment variable that is not known"
+			}
+			if n := str(e["name"]); !slices.Contains(orchestratorServiceEnv, n) {
+				return fmt.Sprintf("an environment variable %q, which the resident orchestrator does not read: its container sets only %s",
+					n, strings.Join(orchestratorServiceEnv, ", "))
+			}
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
+			}
+		}
+	}
+	return ""
+}
+
+// orchestratorTickChange holds the tick that wakes that service to the two
+// facts that make it this service's, and it is the tree's only scheduling job
+// of either shape:
+//
+//   - the URI. Every other tick in the tree calls the Cloud Run API's
+//     `/v2/projects/<project>/locations/<region>/jobs/<job>:run`, because what
+//     it starts is a JOB. This one calls a run.app URL, because what it wakes is
+//     a SERVICE, and the path is the process's single route
+//     (orchestratorTickPath). The URI is a computed attribute of the service
+//     resource (`${google_cloud_run_v2_service.orchestrator[0].uri}/tick`), so
+//     it is UNKNOWN on the apply that creates the service and KNOWN on every
+//     later one, when terraform reads it back out of state — both arms are
+//     checked, and neither is vacuous: unknown requires a service created in
+//     this same module (the shape the module writes), and known holds the URL
+//     to this run's region, the run.app domain, the project number of the
+//     host's own label and the tick's path (orchestratorTickURI states the
+//     bound, and what it does not read). A tick pointed anywhere else runs,
+//     fails and logs every minute forever, which is a service nobody measures.
+//   - the token. It is an OIDC ID token, not the OAuth access token every other
+//     tick carries: Cloud Run's front end authenticates a run.app caller by the
+//     ID token whose audience is that service's own URL, and an access token
+//     there is refused before the container runs. The audience is therefore the
+//     URI — the same expression, so a token minted for another service or
+//     another URL cannot be described by this file — and the account is this
+//     run's scheduler account, held to the same two arms the OAuth path's is
+//     (an unknown email is the module's own only when the plan creates an
+//     account with it; a known one must be a Fugaro account of this run).
+//
+// What it does NOT check, because the other case does: the service the URI
+// names is checked where it is declared (orchestratorServiceChange), so this
+// function never has to read a container.
+func (c Cover) orchestratorTickChange(rc ResourceChange, a map[string]any, unk any, pre string, creates map[string]bool) string {
+	ht := at(a["http_target"])
+	// The two blocks are read through `at` rather than `unknownAt`, as the run
+	// API arm below reads them: `http_target` and `oidc_token` are blocks of
+	// list nesting mode, and `at` collapses a single-element list, so the same
+	// call reaches the block's own attribute in both the after and the
+	// after_unknown document.
+	if at(unk, "http_target", "uri") == true {
+		if !creates[pre+"|google_cloud_run_v2_service"] {
+			return "calls a service that is not known and none is created with it"
+		}
+	} else if why := c.orchestratorTickURI(str(at(ht, "uri"))); why != "" {
+		return why
+	}
+	oidc := objects(at(ht, "oidc_token"))
+	if len(oidc) == 0 {
+		return "calls a run.app URL with no ID token: Cloud Run's front end authenticates a caller of this service by an OIDC ID token, and an OAuth access token there is refused before the container runs"
+	}
+	if at(unk, "http_target", "oidc_token", "audience") == true {
+		// The module's own shape: the audience is the service's own URL, which
+		// is unknown exactly while the service is being created.
+		if at(unk, "http_target", "uri") != true {
+			return "an ID token whose audience is not known and a URL that is: the audience of a Cloud Run ID token is the service's own URL, and the two are one expression"
+		}
+	} else if got, want := str(oidc[0]["audience"]), str(at(ht, "uri")); got != want {
+		return fmt.Sprintf("an ID token for the audience %q, not for the URL it calls (%q): Cloud Run refuses an ID token whose audience is not the service's own URL, so this job would never be admitted",
+			got, want)
+	}
+	if at(unk, "http_target", "oidc_token", "service_account_email") == true {
+		if !creates[pre+"|google_service_account"] {
+			return "calls as an account that is not known and none is created with it"
+		}
+	} else if email := str(oidc[0]["service_account_email"]); email == "" || !c.fugaroAccount("serviceAccount:"+email) {
+		return "calls as " + email + ", not a Fugaro service account of this run"
+	}
+	return ""
+}
+
+// orchestratorTickURI is the known-URI arm of the tick's URL rule: the URL has
+// to be a Cloud Run service URL of THIS run's region on the tick's path —
+// https, the run.app domain, the project number Cloud Run appends to the
+// service's name, and the path with nothing after it.
+//
+// What it does not tie, and why: the service's own name. A run.app host is
+// <service>-<project number>, and the number is a fact only the deployment has
+// — this cover knows the project's ID and this run's region, not the number —
+// so which service the host names is held where the expression is written:
+// orchestrator.tf's `uri` is the service's own computed attribute, pinned by
+// the module's TestOrchestratorServiceIsTheDesignsShape and by internal/infra's
+// plan test, which reads the tick's uri and audience off the very service the
+// same plan creates. The run API arm above draws the same bound one URL shape
+// over: it checks this run's project and region, not the job the URI names.
+func (c Cover) orchestratorTickURI(uri string) string {
+	bad := func() string {
+		return fmt.Sprintf("calls %q, not a Cloud Run service URL of this run's region on the tick's path: the job must be https://<the service this module creates>-<project number>.%s.run.app%s, which is the URL the service answers on and the audience its ID token must carry",
+			uri, c.Region, orchestratorTickPath)
+	}
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "https" || u.RawQuery != "" || u.Fragment != "" || u.Path != orchestratorTickPath || c.Region == "" {
+		return bad()
+	}
+	// The dot in front of the region is what makes it a label of its own: a
+	// host that merely ends in the same words (evil-us-east5.run.app) is not
+	// this region's service URL.
+	service, ok := strings.CutSuffix(u.Host, "."+c.Region+".run.app")
+	if !ok {
+		return bad()
+	}
+	// <service>-<project number>: a label, a hyphen and digits. A URL that
+	// names no project at all is not a Cloud Run service URL, whoever hosts it.
+	if i := strings.LastIndex(service, "-"); i <= 0 || strings.Trim(service[i+1:], "0123456789") != "" {
+		return bad()
 	}
 	return ""
 }

@@ -2546,6 +2546,26 @@ var runAccountGrants = setOf(
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	`google_service_account_iam_member | "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com" | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=?`,
 	`google_cloud_run_v2_job_iam_member | "projects/${var.project}/roles/fugaroJobRunner" | name=module.project[each.key].job | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each=var.orchestrator == null ? {} : var.project_jobs | perms=?`,
+	// Reviewed for P5.1c (the resident orchestrator's service and the tick that
+	// wakes it, the mobile design's section 4.1). This row is the one of the
+	// block that is not a grant to var.orchestrator.account_id: it is made TO
+	// the installation's own scheduler account — the fixed account that already
+	// holds the history, reports, coordinator and catalog-check ticks' invoker
+	// grants, in the module's own terms — and it is what lets this tick call
+	// the service at all: Cloud Run's front end refuses a caller without
+	// roles/run.invoker before the container runs, which is the whole of "no
+	// public ingress" on a service whose ingress is INGRESS_TRAFFIC_ALL.
+	//
+	// What it grants is roles/run.invoker on the orchestrator's own service:
+	// the right to send a request to that one Cloud Run service. It carries no
+	// storage permission at all (no objectUser, no objectViewer), no permission
+	// to grant a role, no iam.serviceAccounts.actAs and no token minting, and
+	// its target is the service rather than the runs bucket, the project or a
+	// job. The scheduler account's reach through it is the POST the module
+	// configures and nothing else, and the container behind it runs as the
+	// orchestrator's own account — whose five rows are the block above — so
+	// nothing here widens what any run credential can reach.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.orchestrator.service | google_service_account.scheduler.member | for_each= | perms=`,
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.pairing_key[0].secret_id | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 )
 
