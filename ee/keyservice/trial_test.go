@@ -362,7 +362,7 @@ func TestTrialIsTeamTierFourteenDays(t *testing.T) {
 		t.Errorf("the trial's workspace is %+v, want the one pointing at its licence %s (D2204)", workspace, entitlement.ID)
 	}
 	// The key's issuance is named by its licence, which is what a rebind of that
-	// licence reads the key it replaces back with (D2198, `bindingKeys`).
+	// licence reads the key it replaces back with (D2198, `licenceKeys`).
 	if want := bindingPrefix + entitlement.ID + ":"; !strings.HasPrefix(records[0].Source, want) {
 		t.Errorf("the key's issuance is named %q, want one under %q: a trial's key is its licence's, and a rebind has to be able to find it", records[0].Source, want)
 	}

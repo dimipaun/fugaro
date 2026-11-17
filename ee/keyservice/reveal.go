@@ -139,7 +139,14 @@ func (s *Service) reveal(ctx context.Context, actor Caller, workspaceID string) 
 	if licence.Status != entitlementActive {
 		return MintedV1{}, errEntitlementNotActive
 	}
-	if !licence.EndsAt.After(now) {
+	// The free seat is the one licence whose `ends_at` is not its term, and it is
+	// read the way `/renew` reads it (renew.go): D2184 gives it for as long as the
+	// organisation exists, the sign-up writes that year once and nothing ever
+	// moves it on, so read as a term it would refuse every free-seat reveal about
+	// a year after sign-up — the installation of a customer who has paid for
+	// nothing and owes nothing. What still bounds this reveal is the key: a
+	// lapsed one is `errKeyLapsed` below.
+	if licence.Source != entitlementSourceFreeSeat && !licence.EndsAt.After(now) {
 		return MintedV1{}, errEntitlementEnded
 	}
 	if workspace.ProjectID == nil {

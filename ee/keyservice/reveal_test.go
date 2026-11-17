@@ -483,6 +483,89 @@ func TestAirGappedIsNeverRevealed(t *testing.T) {
 	}
 }
 
+// TestAFreeSeatRevealsPastItsFirstYear: D2184 and F27 read at the reveal's own
+// door. The free seat is the one grant given for as long as the organisation
+// exists, and the year its record ends at is bookkeeping rather than a term:
+// the sign-up writes it once and nothing ever moves it on, because the merchant
+// writes an end only for a purchase. A reveal that read it as a term would
+// refuse every free-seat installation about a year after sign-up and tell the
+// owner to buy a new one — the customer who has paid for nothing and owes
+// nothing — while what the reveal is really bounded by is the key in hand, which
+// a lapsed one answers `key_lapsed` for.
+//
+// A year on, the key the installation holds is the one it renewed into the month
+// before: a free seat's key is D2202's thirty days whatever the record states,
+// so the year is behind the clock and the key is live, which is the state every
+// free-seat installation is in for the whole of its life after the first year.
+func TestAFreeSeatRevealsPastItsFirstYear(t *testing.T) {
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		// The renewal door is the installation's own and the fixture wires it
+		// only where a case asks: it is the same minter the binding mints
+		// through, so every key this case reads is one the released verifier
+		// accepts (service.go's Deps).
+		f.deps.MintsV1 = f.deps.Mints.(MintsV1)
+	})
+	org := f.signedUp(danaUID, danaEmail, "Dana Ltd")
+	seat := f.onlyEntitlement(t, org.ID)
+	if seat.Source != entitlementSourceFreeSeat {
+		t.Fatalf("the sign-up wrote the licence %q, want the free seat: this case is about the one grant that runs while the organisation does (D2184, D2199)", seat.Source)
+	}
+	if rec := f.bind(t, seat.ID, exampleProject); rec.Code != http.StatusOK {
+		t.Fatalf("binding the free seat answered %d: %s", rec.Code, rec.Body)
+	}
+	bound := f.mints.answers[0]
+
+	f.advance(seat.EndsAt.Sub(f.now) + day)
+	if renewed := answerOf(t, f.call(RouteRenew, RenewalCall{
+		KeyID: bound.Record.KeyID, WorkspaceID: exampleProject, RenewalSecret: bound.RenewalSecret,
+	})); renewed.Key == "" {
+		t.Fatalf("the free seat's installation was answered no key a year on: %+v", renewed)
+	}
+	if !f.now.After(seat.EndsAt) {
+		t.Fatalf("the clock is %s, inside the year the licence's record ends at (%s), so this case reads nothing", f.now, seat.EndsAt)
+	}
+
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	rec := f.apiAsCaller(http.MethodPost, apiKeysRevealPath,
+		`{"workspace_id":`+jsonString(t, f.workspaceOf(t, seat))+`}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("revealing a free seat's key a year after sign-up answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body)
+	}
+	bundle := readAnswer[WireRevealBundle](f.fixture, rec)
+	if !bundle.PaidThrough.After(f.now) {
+		t.Errorf("the revealed key ends at %s, want a term still running at %s: the year on the record is not an end of the licence (D2184, F27)",
+			bundle.PaidThrough, f.now)
+	}
+}
+
+// TestARebindWithdrawsARevealedKey: D2198 read after a reveal. A rebind is what
+// takes the licence away from the installation holding its key, and the key that
+// installation holds after a reveal is the successor the reveal minted: it is a
+// key of the same licence, so it is withdrawn with the rest, or the workspace the
+// licence has moved away from keeps running on a key nothing stops.
+func TestARebindWithdrawsARevealedKey(t *testing.T) {
+	f := newRevealFixture(t)
+	bundle := f.bundleOf(t, f.reveal(t, f.workspace.ID))
+	if f.withdrawn(bundle.KeyID) {
+		t.Fatal("the reveal withdrew the key it had just issued, so this case reads nothing")
+	}
+
+	if rec := f.bind(t, f.entitlement.ID, secondProject); rec.Code != http.StatusOK {
+		t.Fatalf("the rebind answered %d: %s", rec.Code, rec.Body)
+	}
+	if !f.withdrawn(bundle.KeyID) {
+		t.Errorf("the key the reveal issued (%s) is still live after the licence moved to %s: the installation of %s keeps running on it (D2198)",
+			bundle.KeyID, secondProject, exampleProject)
+	}
+	if !f.withdrawn(f.predecessor.Record.KeyID) {
+		t.Errorf("the key the binding issued (%s) is still live after the rebind, which is D2198's own case", f.predecessor.Record.KeyID)
+	}
+	fresh := f.mints.answers[len(f.mints.answers)-1]
+	if f.withdrawn(fresh.Record.KeyID) {
+		t.Errorf("the rebind withdrew the key it minted itself (%s)", fresh.Record.KeyID)
+	}
+}
+
 // TestResellerAndOperationsSeeMetadataOnly: F5 — a reseller and an operations
 // member see key **metadata** (the key id, the seats, the tier, the renewal date
 // and the last refresh) and never a key. The metadata reads are P5.1's and
