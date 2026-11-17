@@ -1193,9 +1193,15 @@ func TestWatchAWithdrawnListenIsADownScopeAndNotAnExit(t *testing.T) {
 
 	f.db.SendCancel()
 
+	// A document the child had already queued, or a tick of its own clock, can
+	// land between the cancel and the document that says the scope is down, so
+	// the test reads on to the first one that does.
 	down := sink.next(t, testPatience)
+	for i := 0; i < 20 && (len(down.Sources) != 1 || down.Sources[0].State != graph.SourceDown); i++ {
+		down = sink.next(t, testPatience)
+	}
 	if len(down.Sources) != 1 || down.Sources[0].State != graph.SourceDown {
-		t.Errorf("the scope is %+v after the listen was withdrawn, want it down", down.Sources)
+		t.Fatalf("the scope is %+v after the listen was withdrawn, want it down", down.Sources)
 	}
 	if got := down.Sources[0].Reason; got != withdrawnListen {
 		t.Errorf("the reason is %q, want %q: the document says why the scope is down", got, withdrawnListen)
