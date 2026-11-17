@@ -77,6 +77,17 @@ func (f *ArtifactRegistry) SetTag(project, location, id, pkg, tag string) {
 	f.tags[repo+"/packages/"+pkg+"/tags/"+tag] = repo + "/packages/" + pkg + "/versions/sha256:" + hex.EncodeToString(sum[:])
 }
 
+// RemoveTag makes pkg:tag no longer exist in the repository, so that a read of
+// it answers 404: the state a fixture between two runs needs when the thing a
+// deployment's readiness check reads has gone (internal/infra's baseImageExists
+// reads the tag, and internal/cli.coordinatorJob recomputes the coordinator's
+// job from it on every run).
+func (f *ArtifactRegistry) RemoveTag(project, location, id, pkg, tag string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.tags, arRepository(project, location, id)+"/packages/"+pkg+"/tags/"+tag)
+}
+
 func (f *ArtifactRegistry) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
