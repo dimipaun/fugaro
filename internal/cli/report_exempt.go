@@ -244,7 +244,7 @@ var exemptAnswers = map[string]string{
 	"models provider set":    "writes the leaves of one providers entry, and prints what the entry carries now",
 	"models rm":              "drops the claim, the price and the allow-list entry, and prints what it dropped",
 	"models use":             "writes one repository's own config in its working tree, and prints the line it wrote",
-	"orchestrator import":    "lands the one-time session dump into the state, and prints what it wrote and what the person is left to approve",
+	"orchestrator import":    "lands a plan's graph into the plan's node, or the one-time session dump into the state, and prints what it wrote and what the person is left to approve",
 	"orchestrator install":   "writes the login unit that runs the daemon, printing its own account by hand",
 	"orchestrator patch":     "applies one typed patch document to the state, and prints the state it wrote",
 	"orchestrator run":       "runs the daemon in the foreground and streams its own log, which no step account fits",

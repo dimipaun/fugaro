@@ -114,8 +114,10 @@ func newOrchestratorCmd() *cobra.Command {
 			"land (approving a work item, setting the goal, closing a decision that\n" +
 			"waits on a person) are confirmed at a real terminal with the project's\n" +
 			"name typed: a session that has none writes nothing.\n" +
-			"import loads the one-time session dump, validated as a patch and refused\n" +
-			"the person's own ops: no dump approves work.\n\n" +
+			"import loads one of two documents: a plan's graph, which becomes the\n" +
+			"work items of the plan's own node, or the one-time session dump,\n" +
+			"validated as a patch and refused the person's own ops: no dump approves\n" +
+			"work, and no import approves anything.\n\n" +
 			"run is the daemon itself, in the foreground. install, uninstall and\n" +
 			"status are the login unit that keeps it running: the three read no\n" +
 			"project and reach no network, and they write no system path and need no\n" +
