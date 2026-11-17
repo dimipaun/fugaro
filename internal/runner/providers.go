@@ -112,16 +112,24 @@ func GatewayRoute(name string, p config.ModelProvider, cred func() (string, erro
 // is not mounted fails the run (an infra_error) before the gateway starts.
 func (r *run) gatewayRoutes() ([]gateway.Route, error) {
 	a := r.cfg.Agent
-	// Every model a stage of this run runs: the three pins and each review
+	// Every model a stage of this run runs: the three pins, each review
 	// level's own model, which is the model its stage runs (stageModel, L4.5)
-	// rather than the role slot the level sits in. A level's model is a pin of
-	// its own, so a provider serving one serves this run, and a run that left
-	// it out of this list would register no route for that provider at all:
-	// the level's call is admitted and charged, and it goes direct to
-	// Anthropic.
+	// rather than the role slot the level sits in, and the diagnose stage's
+	// when the run executes the diagnose step. A level's model is a pin of its
+	// own, so a provider serving one serves this run, and a run that left it
+	// out of this list would register no route for that provider at all: the
+	// level's call is admitted and charged, and it goes direct to Anthropic.
+	// The diagnose model is the same question with more at stake: a provider
+	// serving it and no route registered would carry the evidence the run
+	// collected to Anthropic on an ID no Anthropic endpoint answers to — a
+	// failure, where the level's is a silent charge — and the endpoint that
+	// would have been the owner's own approved route is never reached.
 	models := []string{a.ModelFor(config.RoleCoder), a.ModelFor(config.RoleReviewer), r.backgroundModel()}
 	for _, s := range reviewStages {
 		models = append(models, r.stageModel(s.stage))
+	}
+	if r.diagnose {
+		models = append(models, r.stageModel(stageDiagnose))
 	}
 	used := map[string]bool{}
 	for _, m := range models {

@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -58,50 +60,62 @@ type strayArtifact struct {
 // the same and `git add -A` puts it in the commit. A file the run's base commit
 // already holds is the run's own — a binary it edited, an icon it replaced —
 // and an ignored file can never reach a commit, whatever it holds.
-func (r *run) strayArtifacts(ctx context.Context) ([]strayArtifact, error) {
+//
+// The admitted paths come back beside the refused ones: they are the other
+// answer of the same question, and the status section reports them so a reader
+// of the pull request knows an unreadable file is in it (D993, prflow.go's
+// binariesPart).
+func (r *run) strayArtifacts(ctx context.Context) (refused []strayArtifact, admitted []string, err error) {
 	paths, err := r.repo.NewPaths(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var strays []strayArtifact
 	for _, path := range paths {
-		if a := r.strayArtifact(path); a != nil {
-			strays = append(strays, *a)
+		a, ok := r.strayArtifact(path)
+		switch {
+		case a != nil:
+			refused = append(refused, *a)
+		case ok:
+			// The file is the run's own work, admitted by the project's list:
+			// finalize commits it, and the section names it.
+			admitted = append(admitted, path)
 		}
 	}
-	return strays, nil
+	return refused, admitted, nil
 }
 
 // strayArtifact reports the file at path as one finalize refuses, or nil when
-// it is the run's own work. A path the checkout no longer holds is not one —
-// nothing keeps the tree still between the listing and this read — and a file
-// this cannot read is refused rather than committed unseen.
-func (r *run) strayArtifact(path string) *strayArtifact {
+// it is the run's own work; admitted is true when the project's rule is what
+// let it through, which is what the status section reports. A path the checkout
+// no longer holds is not one — nothing keeps the tree still between the listing
+// and this read — and a file this cannot read is refused rather than committed
+// unseen.
+func (r *run) strayArtifact(path string) (refused *strayArtifact, admitted bool) {
 	full := filepath.Join(r.repo.Dir, filepath.FromSlash(path))
 	info, err := os.Lstat(full)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return nil, false
 	}
 	if err != nil {
-		return &strayArtifact{path: path, why: "it could not be read"}
+		return &strayArtifact{path: path, why: "it could not be read"}, false
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		// A symlink commits the path it names, which is text whatever it
 		// points at.
-		return nil
+		return nil, false
 	}
 	head, err := readHead(full, binaryScanBytes)
 	if err != nil {
-		return &strayArtifact{path: path, why: "it could not be read"}
+		return &strayArtifact{path: path, why: "it could not be read"}, false
 	}
 	if bytes.IndexByte(head, 0) < 0 {
-		return nil
+		return nil, false
 	}
 	why := r.binaryRefusal(path, info.Size())
 	if why == "" {
-		return nil
+		return nil, true
 	}
-	return &strayArtifact{path: path, why: why}
+	return &strayArtifact{path: path, why: why}, false
 }
 
 // committedBinaries is the same predicate over the other reading of the run:
@@ -116,18 +130,22 @@ func (r *run) strayArtifact(path string) *strayArtifact {
 // paths a base the run works from already tracks (withoutBasePaths). A binary
 // the run merely *edited* is not an addition and is left alone, the same
 // tolerance §2.1 gives a file the base commit already holds.
-func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
+//
+// The admitted additions come back beside the refused ones, as they do from the
+// untracked reading: the two readings are one answer to one question, and the
+// status section reports both (D993).
+func (r *run) committedBinaries(ctx context.Context) (refused []strayArtifact, admitted []string, err error) {
 	if r.repo == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	rng := r.committedRange(ctx) + "...HEAD"
 	raw, err := rawChanges(ctx, r.repo, rng)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	numstat, err := reviewChanges(ctx, r.repo, rng)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	added, binary := addedBinaries(raw, numstat)
 	// The bases the run works from are subtracted before anything is asked
@@ -170,7 +188,7 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 		}
 		carries, err := blobCarriesBytes(ctx, r.repo, c.newBlob)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		binary[c.path] = carries
 	}
@@ -185,10 +203,9 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 		// The size of the blob at HEAD, which is the one the branch carries:
 		// `git ls-tree -l` reads the size without reading the bytes.
 		if sizes, err = treeSizes(ctx, r.repo, "HEAD", sized); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	var strays []strayArtifact
 	for _, c := range added {
 		isBinary, named := binary[c.path]
 		if named && !isBinary {
@@ -200,14 +217,16 @@ func (r *run) committedBinaries(ctx context.Context) ([]strayArtifact, error) {
 			// it, or HEAD's tree does not hold it although the raw reading says
 			// it added it there. An unreadable file is refused rather than
 			// passed, the same as a file in the working tree that cannot be read.
-			strays = append(strays, strayArtifact{path: c.path, why: "it could not be read"})
+			refused = append(refused, strayArtifact{path: c.path, why: "it could not be read"})
 			continue
 		}
 		if why := r.binaryRefusal(c.path, size); why != "" {
-			strays = append(strays, strayArtifact{path: c.path, why: why})
+			refused = append(refused, strayArtifact{path: c.path, why: why})
+			continue
 		}
+		admitted = append(admitted, c.path)
 	}
-	return strays, nil
+	return refused, admitted, nil
 }
 
 // committedRange is the revision the committed reading's range starts from.
@@ -495,6 +514,18 @@ func readHead(path string, n int) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(f, int64(n)))
 }
 
+// admittedBinaries is the two readings' admitted paths as one list, sorted and
+// with no path twice: it is what the status section reports (D993), and a list
+// whose order came from whichever reading ran first would say the same work two
+// ways. The two readings are disjoint by construction — one is the paths no
+// commit holds, the other the paths a commit added — so the deduplication is
+// for a tree that moved between them rather than for an ordinary run.
+func admittedBinaries(untracked, committed []string) []string {
+	out := slices.Concat(untracked, committed)
+	sort.Strings(out)
+	return slices.Compact(out)
+}
+
 // strayRefusal is finalize's reason for the binaries it refused: every path
 // with the reason it was refused, so the file can be dealt with by name, and
 // the rule it met — the project's binaries.allow, which admits the paths a
@@ -514,6 +545,13 @@ func readHead(path string, n int) ([]byte, error) {
 // unknown rather than none. Its clause is its own because there is no list of
 // paths to give, and there is no rule sentence after it either — nothing was
 // refused against binaries.allow, the reading itself is what failed.
+//
+// The closing sentence says where the fix is (D992, spec.md §5): the two
+// readers who have one are a person — who adds a path in the owner's project
+// config and publishes it, through either door — and a repository, which has
+// none. Saying so is what stops an agent from "fixing" the refusal by writing
+// the list into fugaro.yaml, a file this rule never reads and whose own decode
+// refuses the key.
 func strayRefusal(untracked, committed []strayArtifact, unread string) string {
 	var parts []string
 	if len(untracked) > 0 {
@@ -531,7 +569,8 @@ func strayRefusal(untracked, committed []strayArtifact, unread string) string {
 		return strings.Join(parts, "; ")
 	}
 	return strings.Join(parts, "; ") +
-		"; a binary is admitted by the project's binaries.allow, at the paths it names and within its cap, and what it does not admit is a build's artifact rather than the run's work"
+		"; a binary is admitted by the project's binaries.allow, at the paths it names and within its cap, and what it does not admit is a build's artifact rather than the run's work. " +
+		"The list is the project's own, and no file in the repository can widen it: a person adds a path to it in the project config and publishes it (`fugaro project policy publish`, or `fugaro update`, which publishes the same node), while `fugaro.yaml` carries no binaries key at all, so a list written there is read by nothing"
 }
 
 // artifactsWithWhy is refused paths with the reason each was refused.

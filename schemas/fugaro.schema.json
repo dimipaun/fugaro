@@ -488,7 +488,7 @@
             "test": { "type": "string", "minLength": 1 },
             "lint": { "type": "string", "minLength": 1, "description": "The check step's gate command (build | test | lint)." },
             "fix": { "type": "string", "minLength": 1, "description": "The check step's autofix command; needs lint, since the gate runs fix, then lint." },
-            "render": { "type": "string", "minLength": 1, "description": "A mode: artifact recipe's render command: repository text, run once, in the checkout, as the agent's user (docs/design/artifact-runs.md §3). Absent, no artifact recipe may run against this workflow." },
+            "render": { "type": "string", "minLength": 1, "description": "A mode: artifact recipe's render command: repository text, run once, in the checkout, as the agent's user (docs/design/artifact-runs.md §3). Absent, no recipe with a render step may run against this workflow." },
             "probe": { "type": "string", "minLength": 1, "description": "The artifact recipe's optional check on what it rendered: one command, given the outputs directory and the names in its environment. Absent, the recipe's outputs.probe must be none." },
             "rerun_failed": {
               "type": "object",
@@ -572,6 +572,18 @@
             "max_files": { "type": "integer", "minimum": 0, "maximum": 64, "description": "How many files may be attached; absent or 0 means 16 (config.DefaultInputFiles)." },
             "max_bytes": { "type": "integer", "minimum": 0, "maximum": 1073741824, "description": "The most ONE attached file may hold; absent or 0 means 256 MiB (config.DefaultInputBytes)." },
             "max_total_bytes": { "type": "integer", "minimum": 0, "maximum": 4294967296, "description": "The most the WHOLE set may hold; absent or 0 means 1 GiB (config.DefaultInputTotalBytes). The runner stages these beside the render's originals, so the memory rule counts them (docs/design/artifact-runs.md §5.2)." }
+          }
+        },
+        "ab": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reviewer_arm"],
+          "description": "The A/B reviewer arm this workflow asks for (config.WorkflowAB): the review level a second run replays over this workflow's champion, once the champion's patch exists. It is a workflow key and not the top-level ab: block, whose rate, challengers and judge are the project's; absent means the workflow asks for no arm, which is every workflow today.",
+          "properties": {
+            "reviewer_arm": {
+              "enum": ["l1", "l2", "l3"],
+              "description": "The review level the reviewer arm replays (config.WorkflowAB.ReviewerArm): l1, l2 or l3. `coder` is refused: a coder pair is launched beside its champion at one moment and asks nothing of this key. A workflow that asks for an arm is launched only onto a job image whose runner reads this block (internal/cli's workflowABSince), and the arm's own launch onto one whose runner acts on the review slot it replays (slotSince)."
+            }
           }
         },
         "rebuild": {

@@ -70,14 +70,19 @@ features:
       - managed-agent-converge
   - id: review-and-fix
     name: "A model that did not write the code reviews it"
-    explanation: "Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not. A pull request can also be reviewed on its own, with the review depth chosen for the project."
+    explanation: "Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not."
     plan: community
     specs:
       - cloud-senior-review
       - api-key-review
+      - post-review-triage
+  - id: review-on-its-own
+    name: "Review a pull request on its own, at a chosen depth"
+    explanation: "A pull request can be reviewed by a separate review job, with the review depth chosen for the project and a second model offered as the reviewer."
+    plan: community
+    specs:
       - review-job
       - review-levels-ab-jobmax
-      - post-review-triage
   - id: model-access
     name: "Choose the model and the account behind every stage"
     explanation: "Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot."
@@ -151,12 +156,17 @@ features:
       - forge-labels
   - id: credentials-and-secrets
     name: "Your credentials stay in your own cloud"
-    explanation: "Model and forge credentials are held by a service in your own project, and a job is given the access it needs when it starts rather than a stored key. A workflow's own secret is stored once for the project and reaches only the runs allowed to use it."
+    explanation: "Model and forge credentials are held by a service in your own project, and a workflow's own secret is stored once for the project and reaches only the runs allowed to use it."
     plan: community
     specs:
       - credentials-service
-      - secrets-brokering
       - project-workflow-secrets
+  - id: runs-handed-their-access
+    name: "A run is handed its access, not a stored key"
+    explanation: "A job is given the access it needs when it starts, through a broker in your own project, rather than a stored key."
+    plan: community
+    specs:
+      - secrets-brokering
   - id: project-security-rules
     name: "Say what counts as security-sensitive"
     explanation: "A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such."
@@ -191,6 +201,12 @@ features:
     specs:
       - periodic-reviews
       - failure-classes
+  - id: billed-spend-matches
+    name: "Recorded spend matches what the provider billed"
+    explanation: "A run's spend is settled on the cost the model provider reports, priced conservatively where the provider reports none, and an alarm is raised when settled and estimated spend drift apart."
+    plan: community
+    specs:
+      - spend-accuracy
   - id: shared-jobs
     name: "Runs share a project's jobs"
     explanation: "A project's runs share a small pool of jobs and image caches instead of one job per repository, and what each run may reach is decided per job."
@@ -203,6 +219,12 @@ features:
     plan: community
     specs:
       - stateless-orchestrator
+  - id: orchestrator-estimates
+    name: "Know when the work will be ready and what it will cost"
+    explanation: "A task graph shows a range for when the work will be ready and roughly what it will cost, and ad hoc items join the same graph as nodes. The estimate is informational and reserves no budget."
+    plan: community
+    specs:
+      - orchestrator-graph-estimates
   - id: escalation
     name: "Pull requests that stop converging"
     explanation: "When a pull request stops converging, the orchestrator escalates through a ladder of rungs — rebase and retest, resume, one stronger pass, merge with follow-ups, or split — instead of retrying forever."
@@ -226,15 +248,6 @@ features:
       - console-settings-edit
       - console-coordinator-v2
       - cli-output-console-graph
-  - id: console-on-windows
-    name: "The console on Windows"
-    explanation: "The console runs on Windows with the command line inside a Linux distribution, so the same screens work on a Windows machine."
-    plan: team
-    specs:
-      - console-windows
-    hold:
-      status: coming-soon
-      reason: "The build is written, and the console publishes no Windows download yet."
   - id: release-graph
     name: "See how releases depend on each other"
     explanation: "A graph draws the project's releases and tasks as boxes, with the dependencies between them and the path that matters."
@@ -260,19 +273,6 @@ features:
     hold:
       status: coming-soon
       reason: "The endpoint is built, and its front door stays off until a release turns it on."
-  - id: portal
-    name: "A signed-in web app for accounts and keys"
-    explanation: "The web app behind the site manages an account, its organisations and its workspaces, the keys it holds, and the records of what was bought."
-    plan: team
-    specs:
-      - portal
-  - id: plans-and-keys
-    name: "Buy and manage a plan"
-    explanation: "A paid plan is bought and managed online, and an installation is activated with the key it issues. Seats, renewal and lapse are all reported."
-    plan: team
-    specs:
-      - licence-key-v2
-      - subscriptions
   - id: project-groups
     name: "Group projects into a workspace"
     explanation: "Several projects can be grouped into a workspace with its own budget, so a team's projects share one cap and one view."
@@ -314,6 +314,14 @@ excluded:
     reason: "The repository's licence split and its published terms: legal documents rather than a capability."
   - spec: repo-image-removal
     reason: "Internal cleanup of the image build path; the capability it moves to is the image catalogue."
+  - spec: console-windows
+    reason: "Platform support, which the compatibility matrix lists, rather than a capability of its own: the console's capabilities are the same on Windows."
+  - spec: portal
+    reason: "The portal behind the website, where accounts and keys are managed: part of buying and holding a licence, not a capability of the product itself."
+  - spec: licence-key-v2
+    reason: "Billing: the licence key an installation is activated with, which belongs to the plan a person buys rather than to a capability of the product."
+  - spec: subscriptions
+    reason: "Billing: buying, renewing and lapsing a plan, which is the commercial terms of the product rather than a capability of it."
   - spec: windows-cli
     reason: "Superseded by the console's own Windows work."
   - spec: voice-module

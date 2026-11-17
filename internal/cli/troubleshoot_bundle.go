@@ -22,7 +22,6 @@ package cli
 // own bucket.
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -108,12 +107,13 @@ func troubleshootBundleType(name string) string {
 // is that the person can see what happened.
 func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnoseagent.Evidence, rec srctree.Record) error {
 	b := diagnoseagent.Bundle{
-		Version: diagnoseagent.BundleVersion,
-		RunID:   ev.RunID,
-		Command: ev.Command,
-		Fugaro:  ev.Version,
-		OS:      runtime.GOOS + "/" + runtime.GOARCH,
-		Source:  diagnoseagent.BundleSource{Version: rec.Version, Commit: rec.Commit},
+		Version:       diagnoseagent.BundleVersion,
+		RunID:         ev.RunID,
+		Command:       ev.Command,
+		FugaroVersion: ev.Version,
+		OS:            runtime.GOOS + "/" + runtime.GOARCH,
+		SourceVersion: rec.Version,
+		SourceCommit:  rec.Commit,
 		// The statement is written by the side that knows what it did: the
 		// files are the collector's, and this command uploads nothing else.
 		Redaction: diagnoseagent.BundleRedaction,
@@ -122,7 +122,7 @@ func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnos
 	if err != nil {
 		return userErr("the source tree of %s cannot be read, so the diagnosis job cannot be told which tree to read: %v", ev.Version, err)
 	}
-	b.Source.Digest = digest
+	b.SourceTree = digest
 	for _, f := range troubleshootBundleFiles(ev) {
 		// The name becomes an object key here and a path in the job's checkout
 		// there, so it is judged before either exists. Both names this command
@@ -132,7 +132,7 @@ func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnos
 		if problem := task.InputNameProblem(f.name); problem != "" {
 			return userErr("the diagnosis bundle's part %q %s, so nothing was uploaded", f.name, problem)
 		}
-		size, sum, err := s.PutFileFrom(ctx, runstore.InputName(diagnoseagent.BundleDir, f.name), f.path, troubleshootBundleType(f.name), "")
+		size, sum, err := s.PutFileFrom(ctx, troubleshootBundleName(f.name), f.path, troubleshootBundleType(f.name), "")
 		if err != nil {
 			if errors.Is(err, blobx.ErrExists) {
 				return userErr("run %s already holds a diagnosis bundle, so this one was not uploaded: a run's inputs are written once", shortRef(s))
@@ -141,22 +141,30 @@ func troubleshootUploadBundle(ctx context.Context, s *runstore.Store, ev diagnos
 		}
 		b.Parts = append(b.Parts, diagnoseagent.BundlePart{Name: f.name, Bytes: size, SHA256: sum})
 	}
-	var buf bytes.Buffer
-	if err := diagnoseagent.WriteBundle(&buf, b); err != nil {
+	manifest, err := diagnoseagent.WriteBundle(b)
+	if err != nil {
 		return userErr("the diagnosis bundle cannot be described: %v", err)
 	}
 	// Not create-only, unlike the parts, and it does not need to be: a second
 	// launcher that won the same run id fails on the first part with ErrExists,
 	// so nothing can reach this line twice.
-	if err := s.PutFile(ctx, runstore.InputName(diagnoseagent.BundleDir, diagnoseagent.BundleManifestName), buf.Bytes(), "application/json"); err != nil {
+	if err := s.PutFile(ctx, troubleshootBundleName(diagnoseagent.BundleManifestName), manifest, "application/json"); err != nil {
 		return remote(fmt.Errorf("uploading the diagnosis bundle's manifest: %w", err))
 	}
 	return nil
 }
 
-// troubleshootAnswer is the job's answer as this command reads it: the outcome
-// and the signature the job wrote beside the markdown, the markdown a person
-// reads, and what the run cost.
+// troubleshootBundleName is one object of the bundle as the Store's own methods
+// take it — a name relative to the run's prefix, which is what PutFileFrom,
+// ReadFile and DeleteFile are given. The leaf is diagnoseagent.PartObjectName,
+// the one spelling the runner downloads by, so the two ends of the bundle
+// cannot drift apart about where a part is stored.
+func troubleshootBundleName(name string) string {
+	return runstore.InputsDir + "/" + diagnoseagent.PartObjectName(name)
+}
+
+// troubleshootAnswer is the job's answer as this command reads it: the three
+// fields the run's diagnosis.json holds, and what the run cost.
 type troubleshootAnswer struct {
 	Outcome   string
 	Signature string
@@ -176,9 +184,11 @@ type troubleshootAnswer struct {
 // artifacts` reads a run with — and each file is checked against the size and
 // the SHA-256 the record gives it before a byte of it is used, so what is
 // printed is what the run recorded rather than whatever is in the bucket now.
-// Both files are required: a diagnosis with a document and no markdown is a
-// job that answered halfway, and printing an outcome with nothing under it is
-// worse than saying so.
+// Both files are required, and both are checked even though the document alone
+// carries the three fields: the markdown is what a person opens out of the
+// bucket, a diagnosis with a document and no markdown is a job that answered
+// halfway, and printing an outcome with nothing under it is worse than saying
+// so.
 //
 // The answer is model output, and this is the second look at it (F20): the job
 // that wrote it holds the project's secrets and not this machine's, so the
@@ -192,11 +202,10 @@ func troubleshootReadAnswer(ctx context.Context, s *runstore.Store) (troubleshoo
 	if err != nil {
 		return troubleshootAnswer{}, err
 	}
-	text, err := troubleshootArtifact(ctx, s, rec, diagnoseagent.AnswerMarkdownName)
-	if err != nil {
+	if _, err := troubleshootArtifact(ctx, s, rec, diagnoseagent.AnswerMarkdownName); err != nil {
 		return troubleshootAnswer{}, err
 	}
-	a, err := diagnoseagent.ReadAnswer(bytes.NewReader(doc))
+	a, err := diagnoseagent.ReadAnswerDocument(doc)
 	if err != nil {
 		return troubleshootAnswer{}, remote(fmt.Errorf("run %s: %w", shortRef(s), err))
 	}
@@ -204,7 +213,7 @@ func troubleshootReadAnswer(ctx context.Context, s *runstore.Store) (troubleshoo
 	return troubleshootAnswer{
 		Outcome:   a.Outcome,
 		Signature: diagnoseagent.RedactOutput(a.Signature, secrets),
-		Text:      diagnoseagent.RedactOutput(string(text), secrets),
+		Text:      diagnoseagent.RedactOutput(a.Text, secrets),
 		CostUSD:   rec.CostUSD,
 	}, nil
 }
@@ -282,7 +291,7 @@ func troubleshootDeleteBundle(ctx context.Context, s *runstore.Store, warn io.Wr
 	names = append(names, diagnoseagent.BundleManifestName)
 	var left []string
 	for _, name := range names {
-		if err := s.DeleteFile(ctx, runstore.InputName(diagnoseagent.BundleDir, name)); err != nil {
+		if err := s.DeleteFile(ctx, troubleshootBundleName(name)); err != nil {
 			left = append(left, name)
 		}
 	}
@@ -303,9 +312,9 @@ func troubleshootDeleteBundle(ctx context.Context, s *runstore.Store, warn io.Wr
 // field or an unvalidated name from a bucket would be the one place where
 // "what this CLI uploaded" stops being an assumption.
 func troubleshootReadManifest(ctx context.Context, s *runstore.Store) (diagnoseagent.Bundle, error) {
-	data, err := s.ReadFile(ctx, runstore.InputName(diagnoseagent.BundleDir, diagnoseagent.BundleManifestName))
+	data, err := s.ReadFile(ctx, troubleshootBundleName(diagnoseagent.BundleManifestName))
 	if err != nil {
 		return diagnoseagent.Bundle{}, err
 	}
-	return diagnoseagent.ReadBundle(bytes.NewReader(data))
+	return diagnoseagent.ReadBundle(data)
 }

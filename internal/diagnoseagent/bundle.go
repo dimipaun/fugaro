@@ -1,6 +1,7 @@
 package diagnoseagent
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,154 +18,164 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// The bundle is what the cloud tier of `fugaro troubleshoot` sends to the
-// diagnosis job, and what the job reads before it reads anything else
-// (docs/troubleshoot-cloud, D2404): the files the local tier would have sent
-// anyway, a manifest naming each one with the size and the SHA-256 of the
-// bytes that reached the bucket, and a REFERENCE to the Fugaro source — its
-// version, its commit and the tree's digest — never the tree's bytes. The job
-// fetches the tree itself with srctree.Ensure, the same function and the same
-// tag archive this CLI used, so the model reads the same source either way.
-//
-// Nothing here redacts: the evidence files are the collector's own, written
-// through both passes before they were named in a manifest (evidence.go, F5),
-// and the manifest says so in one sentence rather than leaving a reader to
-// assume it. What this file adds is the promise a reader can check — every
-// part's digest, so a job refuses a bundle that is not the one that was
-// uploaded — and the names' own refusals, because every name here becomes an
-// object key and then a path in the job's checkout.
+// BundleVersion is the manifest format this build reads. A manifest naming
+// another version is refused rather than parsed on a hope: the fields are a
+// wire shape a launcher and a job image at different releases both hold, and
+// a reader that guessed at a version it does not know would read a bundle the
+// launcher meant something else by (D2404).
+const BundleVersion = 1
+
+// Where a diagnosis's bundle lives. The launcher writes it and the runner
+// reads it back through the same two spellings, under the run's own prefix:
+// runstore.InputKey(prefix, BundlePrefix+name) — runs/<slug>/<run>/inputs/
+// diagnose/<name>, the --attach path (D2404, D2405). The manifest is one of
+// those objects and names the rest.
 const (
-	// BundleVersion is the manifest format's version. It moves when a field is
-	// removed or retyped and never when one is added (the field-meaning rule),
-	// and a reader refuses a version it does not know rather than reading it as
-	// this one.
-	BundleVersion = 1
-	// BundleDir is the leaf the bundle's objects live under inside the run's
-	// own inputs: runs/<slug>/<run-id>/inputs/diagnose/<name> (D2404, the
-	// --attach path). The CLI that uploads it, the runner that reads it and
-	// the CLI that deletes it again spell this once.
-	BundleDir = "diagnose"
-	// BundleManifestName is the manifest's own name among those objects. It is
-	// uploaded last and deleted last: a reader that finds it knows every part
-	// it names is already there.
+	// BundlePrefix is the segment, under a run's inputs, that holds the
+	// bundle.
+	BundlePrefix = "diagnose/"
+	// BundleManifestName is the manifest's own leaf under BundlePrefix. It is
+	// not a part: it is what names the parts and the hash each is checked
+	// against, so it is the one object of the bundle no digest covers.
 	BundleManifestName = "manifest.json"
+	// BundleManifestMaxBytes bounds the manifest, which is a small document:
+	// the read of it is bounded before anything is downloaded, so a bucket
+	// holding a large object under that key cannot make the runner hold it.
+	BundleManifestMaxBytes = 64 << 10
 	// AnswerName and AnswerMarkdownName are the two files the job's diagnose
-	// step writes and the CLI reads back (D2402): the document a command
-	// parses, and the markdown a person reads. They are the runner's own
-	// contract, as the two output names of a render step are.
+	// step writes and the launcher reads back out of the run's artifacts
+	// (D2402, D2410): the document a command parses, and the markdown a person
+	// opens. They are this program's own contract rather than the repository's
+	// — the step's stage writes them, the catalog recipe's outputs name them —
+	// and they are spelled here because the writer and the reader are two
+	// binaries.
 	AnswerName         = "diagnosis.json"
 	AnswerMarkdownName = "diagnosis.md"
 )
 
 // BundleRedaction is the bundle's own statement of what was done to the
 // evidence before it left the machine, carried in the manifest because the job
-// reads the files and not this file's comments (D2404). It is a statement and
-// not a promise this package keeps: the passes are the collector's, and what
-// makes it true is that the only files uploaded are the ones it wrote.
+// reads the files and not the launcher's code (F5, D2404). It is a statement
+// and not a promise this package keeps: the passes are the collector's, and
+// what makes it true is that the only files uploaded are the ones it wrote.
 const BundleRedaction = "Every part of this bundle is a file the local diagnosis had already written through both redaction passes " +
 	"(the values this diagnosis knows, and the shapes nobody named), and the source is a reference to the tree rather than the tree: " +
 	"its version, its commit and the digest of its files."
 
-// Bundle is one diagnosis's manifest: what the job is about to read.
-type Bundle struct {
-	// Version is BundleVersion. A reader refuses any other.
-	Version int `json:"version"`
-	// RunID is the LOCAL run ID (D1609) — the failed command's log, the run
-	// the person was told to pass back — and never the cloud run's own ID,
-	// which the job knows without being told.
-	RunID string `json:"run_id"`
-	// Command is the Fugaro command that failed ("update"), and Fugaro the
-	// version that failed. OS is the platform it failed on, "goos/goarch".
-	Command string `json:"command"`
-	Fugaro  string `json:"fugaro_version"`
-	OS      string `json:"os"`
-	// Parts is the evidence, in the order the collector wrote it, and
-	// changes.txt last when the CLI managed to write it. A bundle with no
-	// parts is refused: there would be nothing for a diagnosis to read.
-	Parts []BundlePart `json:"parts"`
-	// Source is the reference the job fetches the source by, and Redaction is
-	// what was done to the files above.
-	Source    BundleSource `json:"source"`
-	Redaction string       `json:"redaction"`
-}
+// sha256RE is one SHA-256 as the manifest spells it: 64 lowercase hex digits,
+// the shape runstore.ArtifactFile and blobx both use. A digest in any other
+// shape is refused rather than passed to the download, which would compare it
+// against a hash it can never equal and report a mismatch that was really a
+// malformed manifest.
+var sha256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// BundlePart is one file of the bundle: the name it went up under, its size,
-// and the SHA-256 of the bytes that reached the bucket — taken in the pass
-// that wrote them, not of a file read earlier that could have changed since.
+// BundlePart is one file of a bundle as the manifest accounts for it: the
+// name it is stored under (BundlePrefix+Name is its object name's leaf), the
+// bytes it holds and the SHA-256 of those bytes. The runner checks both
+// before any model call, so a part that changed in the bucket between the
+// launch and the run is refused rather than diagnosed (D2404).
 type BundlePart struct {
 	Name   string `json:"name"`
 	Bytes  int64  `json:"bytes"`
 	SHA256 string `json:"sha256"`
 }
 
-// BundleSource is the source reference: which version and commit the tree is
-// of, and the digest of its files, so a job that fetched its own copy can tell
-// whether it is reading the same tree (D2404).
-type BundleSource struct {
-	Version string `json:"version"`
-	// Commit is the commit the tree was fetched by, or "" for a build with no
-	// anchor (D1611): the version then names the tag, and the digest is all a
-	// reader has to compare.
-	Commit string `json:"commit,omitempty"`
-	// Digest is TreeDigest of the tree, or "" when it could not be taken —
-	// which is a manifest a job reads with less to check, not a manifest it
-	// refuses.
-	Digest string `json:"tree_digest,omitempty"`
+// Bundle is the manifest one diagnosis's launcher wrote: what the evidence is
+// about, the parts it holds, and where the source the answer is about comes
+// from. It carries no evidence of its own — the parts do — and no source
+// bytes: the job fetches the tree itself with srctree.Ensure from the version
+// and commit named here, which are the same tag archive the launcher's own
+// local tier reads (D2404).
+//
+// Every part is a file the collector wrote through both redaction passes plus
+// the changes the CLI wrote beside them (F5): the bundle adds no redaction of
+// its own, because it uploads exactly what the local tier already sends. The
+// manifest says so in Redaction, as its own statement of the same fact, which
+// the launcher writes and the runner quotes into the prompt.
+type Bundle struct {
+	Version       int          `json:"version"`
+	RunID         string       `json:"run_id"`
+	Command       string       `json:"command"`
+	FugaroVersion string       `json:"fugaro_version"`
+	OS            string       `json:"os"`
+	Parts         []BundlePart `json:"parts"`
+	SourceVersion string       `json:"source_version"`
+	SourceCommit  string       `json:"source_commit"`
+	// SourceTree is the digest of the launcher's own copy of the source, from
+	// TreeDigest: the tree goes up as a reference and never as bytes, so this
+	// is what a reader on the other side has to compare its own copy against
+	// (D2404). It is "" for a tree whose digest could not be taken, which is a
+	// manifest read with less to check and not one refused.
+	SourceTree string `json:"source_tree"`
+	// Redaction is BundleRedaction as the launcher wrote it: the manifest's
+	// own account of what was done to the parts before they left the machine.
+	Redaction string `json:"redaction"`
 }
 
-// Answer is the job's answer as its diagnose step writes it beside the
-// markdown (D2402): the outcome and the signature the command reads, so that
-// what a person is shown does not depend on parsing prose. It is the same pair
-// the local tier's answer block carries (parseAnswer), written as a document
-// instead of as two lines of a fenced block, because the cloud tier's reader
-// and writer are two processes.
-type Answer struct {
-	Outcome   string `json:"outcome"`
-	Signature string `json:"signature,omitempty"`
-}
-
-// ReadAnswer reads the job's answer document. An unknown outcome is a refusal,
-// exactly as it is for a local answer: the command decides what a person is
-// shown — and whether a report is written — from that one word, so a word
-// Fugaro does not know is an answer this CLI cannot act on rather than one it
-// may guess at. The decode is lenient the other way round from ReadBundle: a
-// newer job may add a field, and this reader ignores what it does not know.
-func ReadAnswer(r io.Reader) (Answer, error) {
-	var a Answer
-	if err := json.NewDecoder(r).Decode(&a); err != nil {
-		return Answer{}, fmt.Errorf("the diagnosis job's answer is not readable: %w", err)
+// Validate checks the manifest's own rules: a version this build reads, at
+// least one part, a name that is a name, a size that is a size, and a SHA-256
+// for every part.
+//
+// It is one function called from both ends — WriteBundle refuses to write a
+// manifest Validate would not accept, and ReadBundle refuses to hand one on —
+// so a bundle one end would refuse is never uploaded by the other, and a
+// manifest that fails here is a refusal in the command that could still say
+// why rather than in a job's log.
+//
+// The part names go through task.InputNameProblem over the whole object name
+// (BundlePrefix+name), the rule the runner's own input download applies and
+// the rule blobx's GetFile is given: a name that would leave the run's prefix,
+// or is absolute, or holds a NUL, is refused here rather than handed to a
+// downloader that trusts its caller. The manifest's own name is refused as a
+// part for the same reason at one remove: a reader downloading a part named
+// after it would write over the list it is reading.
+func (b Bundle) Validate() error {
+	var errs []error
+	bad := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	if b.Version != BundleVersion {
+		bad("the diagnosis bundle's manifest is version %d, and this build reads version %d: a bundle another release wrote is refused rather than guessed at, because the fields are a wire shape both sides hold", b.Version, BundleVersion)
 	}
-	if !slices.Contains(Outcomes, a.Outcome) {
-		return Answer{}, fmt.Errorf("the diagnosis job named an outcome Fugaro does not know (%q): it has to be one of %s", a.Outcome, strings.Join(Outcomes, ", "))
+	if len(b.Parts) == 0 {
+		bad("the diagnosis bundle's manifest names no parts: a diagnosis with no evidence to read has nothing to answer about")
 	}
-	return a, nil
+	seen := make(map[string]bool, len(b.Parts))
+	for _, p := range b.Parts {
+		if problem := task.InputNameProblem(BundlePrefix + p.Name); problem != "" {
+			bad("the diagnosis bundle names a part %q that %s", p.Name, problem)
+			continue
+		}
+		if p.Name == BundleManifestName {
+			bad("the diagnosis bundle names %s as one of its own parts: the manifest is the bundle's account of itself, and a reader that downloaded a part under that name would write over the list it is reading", BundleManifestName)
+			continue
+		}
+		if seen[p.Name] {
+			bad("the diagnosis bundle names the part %q twice; one file cannot be two", p.Name)
+		}
+		seen[p.Name] = true
+		if p.Bytes <= 0 {
+			bad("the diagnosis bundle's part %q claims %d bytes", p.Name, p.Bytes)
+		}
+		if !sha256RE.MatchString(p.SHA256) {
+			bad("the diagnosis bundle's part %q carries no SHA-256: %q is not 64 lowercase hex digits, and a part nothing can be checked against is a part the run would read whatever the bucket holds", p.Name, p.SHA256)
+		}
+	}
+	return errors.Join(errs...)
 }
 
-// WriteBundle writes the manifest as JSON, refusing a bundle no reader would
-// accept: a manifest that fails Validate is one no job should be handed, and
-// writing it anyway would put the refusal in the job's log instead of in the
-// command that could still do something about it.
-func WriteBundle(w io.Writer, b Bundle) error {
-	if err := b.Validate(); err != nil {
-		return err
-	}
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(b)
-}
-
-// ReadBundle reads a manifest, refusing an unknown field, an unknown version
-// and any part name this package would not have written. The decode is strict
-// because the two ends are different binaries: the runner in the job image is
-// whatever release built it, and a field it does not know is a manifest it
-// would otherwise read as though the field were not there (the field-meaning
-// rule).
-func ReadBundle(r io.Reader) (Bundle, error) {
-	var b Bundle
-	dec := json.NewDecoder(r)
+// ReadBundle parses and checks a bundle's manifest: the strict codec every
+// wire shape in this program uses (an unknown field is an error), the version
+// this build reads, and every part's name, size and digest. Nothing it
+// returns has been downloaded yet; what it refuses, it refuses before a key
+// is built or a model is called.
+func ReadBundle(data []byte) (Bundle, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
+	var b Bundle
 	if err := dec.Decode(&b); err != nil {
-		return Bundle{}, fmt.Errorf("the diagnosis bundle's manifest is not readable: %w", err)
+		return Bundle{}, fmt.Errorf("the diagnosis bundle's manifest cannot be read: %w", err)
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return Bundle{}, errors.New("the diagnosis bundle's manifest holds more than one JSON document")
 	}
 	if err := b.Validate(); err != nil {
 		return Bundle{}, err
@@ -172,60 +183,27 @@ func ReadBundle(r io.Reader) (Bundle, error) {
 	return b, nil
 }
 
-// Validate checks the manifest's own rules: a version this package writes, at
-// least one part, a name that is a name, a size that is a size, and a SHA-256
-// for every part. It is called on both sides — the CLI when it writes the
-// manifest, the job when it reads one — so a bundle one end would refuse is
-// never written by the other, and a manifest that fails here is a refusal in
-// the command that could still say why rather than in a job's log.
-//
-// The names go through task.InputNameProblem, the ONE rule for a name that
-// becomes a key under inputs/ (the --attach path). It is the same rule here
-// for a reason beyond tidiness: this manifest arrives from a bucket, and the
-// runner builds the path it downloads each part to out of the name in it. A
-// name that walks out of the checkout — "..", an absolute path, a NUL — is
-// refused before any key or path is built, which is the difference between a
-// hostile manifest and a hostile manifest that wrote outside the run's own
-// directory.
-func (b Bundle) Validate() error {
-	var errs []error
-	bad := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
-	if b.Version != BundleVersion {
-		bad("the bundle manifest is version %d and this reader knows version %d", b.Version, BundleVersion)
+// WriteBundle writes the manifest the launcher uploads, refusing a bundle no
+// reader would accept: it is the other half of ReadBundle, and the two ends
+// are different binaries, so a manifest that fails Validate is one no job
+// should be handed. Writing it anyway would put the refusal in the job's log
+// instead of in the command that could still do something about it.
+func WriteBundle(b Bundle) ([]byte, error) {
+	if err := b.Validate(); err != nil {
+		return nil, err
 	}
-	if len(b.Parts) == 0 {
-		bad("the bundle manifest names no parts, so there is no evidence for a diagnosis to read")
+	data, err := json.MarshalIndent(b, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("writing the diagnosis bundle's manifest: %w", err)
 	}
-	seen := make(map[string]bool, len(b.Parts))
-	for _, p := range b.Parts {
-		if problem := task.InputNameProblem(p.Name); problem != "" {
-			bad("the bundle manifest names a part %q that %s", p.Name, problem)
-			continue
-		}
-		if p.Name == BundleManifestName {
-			// The manifest is the bundle's account of itself and not one of its
-			// parts: a reader downloading a part named after it would write
-			// over the list it is reading.
-			bad("the bundle manifest names itself (%s) as one of its parts", BundleManifestName)
-			continue
-		}
-		if seen[p.Name] {
-			bad("the bundle manifest names the part %q twice", p.Name)
-		}
-		seen[p.Name] = true
-		if p.Bytes < 0 {
-			bad("the bundle manifest gives the part %q a size of %d bytes, which is not a size", p.Name, p.Bytes)
-		}
-		if !bundleSHA256RE.MatchString(p.SHA256) {
-			bad("the bundle manifest gives the part %q no SHA-256 (%q), so a reader cannot check the bytes it downloads", p.Name, p.SHA256)
-		}
-	}
-	return errors.Join(errs...)
+	return append(data, '\n'), nil
 }
 
-// bundleSHA256RE is a part's SHA256: the lower-case hex sha256 every other
-// hash in a run's records uses (task.inputSHA256RE, the artifact record's).
-var bundleSHA256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+// PartObjectName is the leaf, under a run's inputs, that one part is stored
+// at: runstore.InputKey(prefix, PartObjectName(name)). It is one spelling
+// because the launcher's upload and this read must agree about it, and the
+// name is validated by ReadBundle before this is ever called on it.
+func PartObjectName(name string) string { return BundlePrefix + name }
 
 // EvidenceNames is the four files Collect writes into the evidence folder of
 // the run id, in the order it writes them: the failed command's log, the
@@ -235,6 +213,30 @@ var bundleSHA256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // them — the changes file and, for a report-carrying outcome, the report.
 func EvidenceNames(id string) []string {
 	return []string{id + logSuffix, doctorFileName, versionFileName, configFileName}
+}
+
+// ReadAnswerDocument reads an answer as this program holds it in a file
+// (D2410): the runner writes out/diagnosis.json as json.Marshal of Answer, and
+// the tier reads it back out of the run's artifacts. Both ends are Fugaro, so
+// the decode is the strict one — a field this build does not know is one it
+// would otherwise ignore while acting on the rest, which is exactly the
+// reading the field-meaning rule forbids. The outcome is the one word the
+// command acts on — what a person is shown, and whether a report is written —
+// so a word Fugaro does not know is refused rather than guessed at.
+func ReadAnswerDocument(data []byte) (Answer, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var a Answer
+	if err := dec.Decode(&a); err != nil {
+		return Answer{}, fmt.Errorf("the diagnosis job's answer is not readable: %w", err)
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return Answer{}, errors.New("the diagnosis job's answer holds more than one JSON document")
+	}
+	if !slices.Contains(Outcomes, a.Outcome) {
+		return Answer{}, fmt.Errorf("the diagnosis job named an outcome Fugaro does not know (%q): it has to be one of %s", a.Outcome, strings.Join(Outcomes, ", "))
+	}
+	return a, nil
 }
 
 // TreeDigest is the digest the manifest carries in place of the source tree's

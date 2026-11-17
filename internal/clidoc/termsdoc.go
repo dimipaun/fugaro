@@ -30,6 +30,7 @@ var termsHeaderBlock = securityHeader + "\n<!-- source: " + termsSource + " -->\
 var (
 	termsTitle      = regexp.MustCompile(`(?m)^# .+$`)
 	termsDate       = regexp.MustCompile(`\bwritten (\d{4}-\d{2}-\d{2})\b`)
+	termsRevised    = regexp.MustCompile(`(?m)^\*\*Revised (\d{4}-\d{2}-\d{2})`)
 	termsFirst      = regexp.MustCompile(`(?m)^(# Part A\. |## 1\. )`)
 	termsLast       = regexp.MustCompile(`(?m)^## 34\. .*$`)
 	termsNextHead   = regexp.MustCompile(`(?m)^(---|## )`)
@@ -76,7 +77,17 @@ func renderTermsPage(source []byte) ([]byte, error) {
 	}
 	body := termsTrailing.ReplaceAllString(strings.Join(kept, "\n\n"), "")
 
-	page := termsHeaderBlock + title + "\n\n" + termsStatus + ". Dated " + date[1] + ".\n\n" + body + "\n"
+	// A revision is dated on the page as well as in the source: section 29.1
+	// amends the agreement "by publishing a new dated version", so the URL a
+	// Customer accepts the agreement from has to say which revision it carries.
+	// The date alone is carried -- the source's note names task and ruling
+	// numbers, which are not text for a published agreement.
+	revised := ""
+	if m := termsRevised.FindStringSubmatch(src); m != nil {
+		revised = ". Revised " + m[1]
+	}
+
+	page := termsHeaderBlock + title + "\n\n" + termsStatus + ". Dated " + date[1] + revised + ".\n\n" + body + "\n"
 	for _, marker := range termsLeftovers {
 		if strings.Contains(page, marker) {
 			return nil, fmt.Errorf("%s: the agreement text still carries %q after the drafting notes were cut; teach renderTermsPage the new shape", termsSource, marker)

@@ -199,6 +199,14 @@ func TestWorkspaceProjectStageSkipsAnInstallationThatIsNotAWorkspace(t *testing.
 			if st.State != initflow.Skipped {
 				t.Fatalf("state = %v (%s), want a skip", st.State, st.Detail)
 			}
+			// Nothing to do, and not work left undone: there is no account to
+			// create and no grant to make in a project that has no workspace of
+			// its own, so a step that asked for this stage is answered by this
+			// check rather than left owed (initflow.Status.Undone, read by
+			// applyAnswered).
+			if st.Undone {
+				t.Errorf("a skip that has no work to leave undone reads Undone: %s", st.Detail)
+			}
 			for _, want := range []string{"workspace_members", "workspace_cap", "spec §5", wsProjectName} {
 				if !strings.Contains(st.Detail, want) {
 					t.Errorf("the skip's reason does not name %q: %s", want, st.Detail)
@@ -252,6 +260,15 @@ func TestWorkspaceProjectStageSkipsAWorkspaceWhoseFirebaseIsAnotherProject(t *te
 	st := g.check(t)
 	if st.State != initflow.Skipped {
 		t.Fatalf("check = %v (%s), want the skip a split installation takes", st.State, st.Detail)
+	}
+	// This skip is the other half of the rule the test above pins: THIS
+	// project is the workspace's own, and the account and the single grant this
+	// stage converges are the whole of what it is here for. Neither is created
+	// on a database the workspace does not use, so the stage's work is undone
+	// and a step that asked for this stage stays owed rather than being read as
+	// answered (initflow.Status.Undone).
+	if !st.Undone {
+		t.Errorf("a skip that created no account and made no grant does not read Undone: %s", st.Detail)
 	}
 	for _, want := range []string{
 		"budget.firebase_project", "proj-9999", "docs/workspaces/spec.md §3",
@@ -569,6 +586,37 @@ func TestWorkspaceProjectStageNeverConfirmsByTheRunsOwnAnswer(t *testing.T) {
 				t.Errorf("%s applied the workspace root: %q", c.name, applied)
 			}
 		})
+	}
+}
+
+// TestWorkspaceProjectStageAtTheApplyDoorNamesTheDoorThatCanConfirmIt: `fugaro
+// apply` runs with no terminal of its own by construction, so this stage's
+// question is never reached there — the run ends leaving the step. What it
+// leaves has to name the command that reaches the question, and apply's own
+// command is not one: it asks apply to run apply again, and the second run says
+// what the first said (the no-prompt rule reaches every refusal this way). The
+// door that asks is `fugaro update`, in the owner's own terminal.
+func TestWorkspaceProjectStageAtTheApplyDoorNamesTheDoorThatCanConfirmIt(t *testing.T) {
+	fakeTerminal(t)
+	g := newWSCreateOwnerRig(t, wsProjectName+"\n")
+	// The apply door's own run, opened the way `fugaro apply` opens it
+	// (applyRunSteps): the door, the run's own answer, and no terminal.
+	g.e.r.o.door, g.e.r.o.yes, g.e.r.o.nonInteractive = applyName, true, true
+	g.ri.setPlanAt(t, "workspace", wsAccountChange("create"), wsGrantChange("create"))
+
+	_, err := g.apply(t, initflow.Env{Interactive: false})
+	var needs *initflow.NeedsYouError
+	if !asNeedsYou(err, &needs) {
+		t.Fatalf("apply = %v, want the step left for the operator", err)
+	}
+	if needs.Left.Stage != initflow.WorkspaceProject || needs.Left.Kind != initflow.LeftCommand {
+		t.Errorf("the step left for the operator is not this stage's own command: %+v", needs.Left)
+	}
+	if cmd := strings.Join(needs.Left.Commands, " "); cmd != "fugaro update" {
+		t.Errorf("the command left for the operator is %q, want the door that can ask this step's question", cmd)
+	}
+	if applied := g.ri.ran(t, "apply"); len(applied) != 0 {
+		t.Errorf("the apply door applied the workspace root: %q", applied)
 	}
 }
 

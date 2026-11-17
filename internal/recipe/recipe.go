@@ -108,9 +108,9 @@ const (
 	// launcher left under the run's own prefix and writes the two files the
 	// recipe's outputs block names. It takes no options, like plan, render and
 	// digest: what the step reads and what it writes are the runner's own
-	// contract rather than an author's choice, and the bounds a diagnosis runs
-	// under are the recipe's (TroubleshootMaxTurns,
-	// TroubleshootReviewerMaxOutput; D2407).
+	// contract rather than an author's choice, and the per-call output a
+	// diagnosis runs under is the recipe's (TroubleshootReviewerMaxOutput;
+	// D2407 — whose turn bound, TroubleshootMaxTurns, nothing reads).
 	StepDiagnose StepKind = "diagnose"
 )
 

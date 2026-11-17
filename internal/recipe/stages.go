@@ -161,17 +161,26 @@ func UsesDiagnose(r *Recipe) bool {
 // writes rather than a pull request.
 const TroubleshootRecipe = "troubleshoot"
 
-// The recipe's own bounds (D2407), read by the runner's diagnose stage and by
-// the tier's launch. They are the recipe's rather than the runner's for the
-// reason internal/runner's runDigestReviewerMaxOutput is the report run's: a
-// diagnosis is one small question about one failure, so it is bounded far
-// below any run — and a stage's model call reserves its whole output allowance
-// at the gateway before it spends anything, so a bound on that reservation is
-// what keeps the call inside the tier's own cap.
+// The recipe's own bounds (D2407). The output bound is read by the runner's
+// diagnose stage and by the tier's launch; the turn bound is read by neither,
+// which its own comment says. They are the recipe's rather than the runner's
+// for the reason internal/runner's runDigestReviewerMaxOutput is the report
+// run's: a diagnosis is one small question about one failure, so it is bounded
+// far below any run — and a stage's model call reserves its whole output
+// allowance at the gateway before it spends anything, so a bound on that
+// reservation is what keeps the call inside the tier's own cap.
 const (
-	// TroubleshootMaxTurns is the most turns the diagnose stage's own agent
-	// call may take: a diagnosis reads a bundle and answers once, and eight
-	// turns is enough for the reading and the answer.
+	// TroubleshootMaxTurns is the most turns a diagnosis should take: a
+	// diagnosis reads a bundle and answers once, and eight turns is enough for
+	// the reading and the answer. It is D2407's bound written down, and nothing
+	// reads it: the cloud stage's call goes through internal/agent, whose
+	// Request carries no turn knob and whose Args passes no --max-turns (only
+	// the local tier's child gets one, from its own cap in
+	// internal/diagnoseagent), so a cloud diagnosis is bounded by the per-call
+	// output reservation below, the run's own lease and the stage's timeout.
+	// Enforcing it is a behaviour of its own — a turns field on agent.Request
+	// and --max-turns in agent.Args, set from here for this stage — and the
+	// owner's to decide; schemas/recipe.schema.json says the same.
 	TroubleshootMaxTurns = 8
 	// TroubleshootReviewerMaxOutput is the per-call output the stage's model
 	// may reserve: 10000 tokens is $0.20 at the reviewer model's $20/M output

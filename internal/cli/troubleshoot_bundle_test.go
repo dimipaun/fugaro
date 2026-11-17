@@ -9,6 +9,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -89,17 +90,22 @@ func tbFileStore(t *testing.T, x *tsWorld, id string) *runstore.Store {
 // tbInputDir is where a run's bundle lands on the file:// driver: one file per
 // object of the run's own prefix.
 func tbInputDir(x *tsWorld, id string) string {
-	return filepath.Join(x.f.runsDir(), "runs", appSlug, id, "inputs", diagnoseagent.BundleDir)
+	return filepath.Join(x.f.runsDir(), "runs", appSlug, id, "inputs", "diagnose")
 }
 
-// tbAnswer writes the two files a diagnosis job delivers, the record that
-// names them, and returns the record.
-func tbAnswer(t *testing.T, s *runstore.Store, outcome, markdown string) *runstore.Record {
+// tbAnswer writes the two files a diagnosis job delivers — the document the
+// command reads and the markdown a person opens, both from the same answer, as
+// the runner writes them — the record that names them, and returns the record.
+func tbAnswer(t *testing.T, s *runstore.Store, answer diagnoseagent.Answer) *runstore.Record {
 	t.Helper()
+	doc, err := json.Marshal(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec := &runstore.Record{Version: 1, RunID: s.RunID(), Repo: "acme/app", Workflow: "web",
 		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeArtifacts, CostUSD: 0.42}
-	tbPutArtifact(t, s, rec, diagnoseagent.AnswerName, []byte(`{"outcome":"`+outcome+`","signature":"update the layer check"}`))
-	tbPutArtifact(t, s, rec, diagnoseagent.AnswerMarkdownName, []byte(markdown))
+	tbPutArtifact(t, s, rec, diagnoseagent.AnswerName, append(doc, '\n'))
+	tbPutArtifact(t, s, rec, diagnoseagent.AnswerMarkdownName, []byte("# Diagnosis\n\n"+answer.Text))
 	if err := s.WriteRecord(t.Context(), rec); err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +152,9 @@ func TestTroubleshootUploadBundleWritesEveryPartAndItsHash(t *testing.T) {
 				name, p.Bytes, p.SHA256, len(body), sha256Hex(body))
 		}
 		// The key is the one the runner downloads from — runstore.InputKey of
-		// the run's own prefix — and what is there is the file itself.
-		key := runstore.InputKey(s.Prefix(), diagnoseagent.BundleDir+"/"+name)
+		// the run's own prefix, over the leaf diagnoseagent.PartObjectName
+		// spells — and what is there is the file itself.
+		key := runstore.InputKey(s.Prefix(), diagnoseagent.PartObjectName(name))
 		at := filepath.Join(x.f.runsDir(), filepath.FromSlash(key))
 		onDisk, err := os.ReadFile(at)
 		if err != nil {
@@ -158,17 +165,17 @@ func TestTroubleshootUploadBundleWritesEveryPartAndItsHash(t *testing.T) {
 			t.Errorf("the object at %s is not the file that was uploaded", key)
 		}
 	}
-	if b.Version != diagnoseagent.BundleVersion || b.RunID != ev.RunID || b.Command != ev.Command || b.Fugaro != ev.Version {
+	if b.Version != diagnoseagent.BundleVersion || b.RunID != ev.RunID || b.Command != ev.Command || b.FugaroVersion != ev.Version {
 		t.Errorf("the manifest describes %+v, want the run %s of %s", b, ev.RunID, ev.Version)
 	}
 	if b.OS != runtime.GOOS+"/"+runtime.GOARCH {
 		t.Errorf("the manifest names the OS %q", b.OS)
 	}
-	if b.Source.Version != rec.Version || b.Source.Commit != rec.Commit {
-		t.Errorf("the manifest's source is %+v, want %+v", b.Source, rec)
+	if b.SourceVersion != rec.Version || b.SourceCommit != rec.Commit {
+		t.Errorf("the manifest's source is %s at %s, want %+v", b.SourceVersion, b.SourceCommit, rec)
 	}
-	if !validSHA256(b.Source.Digest) {
-		t.Errorf("the manifest carries no digest of the source tree (%q), so a job cannot tell which tree it read", b.Source.Digest)
+	if !validSHA256(b.SourceTree) {
+		t.Errorf("the manifest carries no digest of the source tree (%q), so a job cannot tell which tree it read", b.SourceTree)
 	}
 	if b.Redaction != diagnoseagent.BundleRedaction || b.Redaction == "" {
 		t.Errorf("the manifest's own statement of the redaction is %q", b.Redaction)
@@ -220,6 +227,28 @@ func TestTroubleshootUploadBundleRefusesATraversalName(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(x.f.runsDir(), "runs", appSlug, tbRunID, "inputs")); !os.IsNotExist(err) {
 		t.Errorf("the run's inputs hold something after a refused upload: %v", err)
+	}
+}
+
+// A run's inputs are written once: a second launch under the same run id fails
+// on the first part rather than leaving two bundles in one prefix, and the
+// refusal names the run and the reason, because "the run already has a
+// diagnosis" is something this command can still explain and a bucket that
+// would not answer is not.
+//
+// Mutation (drop the blobx.ErrExists arm): the second upload is reported as a
+// remote failure, and only this test notices.
+func TestTroubleshootUploadBundleRefusesARunThatAlreadyHasOne(t *testing.T) {
+	x := tsSetup(t)
+	ev := tbEvidence(t)
+	s := tbFileStore(t, x, tbRunID)
+	rec := srctree.Record{Version: ev.Version}
+	if err := troubleshootUploadBundle(t.Context(), s, ev, rec); err != nil {
+		t.Fatal(err)
+	}
+	err := troubleshootUploadBundle(t.Context(), s, ev, rec)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "already holds a diagnosis bundle") {
+		t.Fatalf("uploading a second bundle to the same run = %v, want a user error saying the run already holds one", err)
 	}
 }
 
@@ -279,8 +308,11 @@ func TestTroubleshootReadAnswerReadsTheJobsAnswer(t *testing.T) {
 	// know it, and it is built from pieces (the repository's no-secret-shaped-
 	// literal rule).
 	secret := strings.Join([]string{"ghp_", strings.Repeat("A1b2C3d4", 5)}, "")
-	rec := tbAnswer(t, s, diagnoseagent.OutcomeConfiguration,
-		"The layer check failed.\n\nA token like "+secret+" was in the log, and `fugaro update` fixes it.\n")
+	rec := tbAnswer(t, s, diagnoseagent.Answer{
+		Outcome:   diagnoseagent.OutcomeConfiguration,
+		Signature: "update the layer check",
+		Text:      "The layer check failed.\n\nA token like " + secret + " was in the log, and `fugaro update` fixes it.\n",
+	})
 	a, err := troubleshootReadAnswer(t.Context(), s)
 	if err != nil {
 		t.Fatal(err)
@@ -349,7 +381,7 @@ func TestTroubleshootDeleteBundleIsBestEffort(t *testing.T) {
 	}
 	// A manifest nothing can read: the names to delete cannot be had from it,
 	// so nothing is deleted and the failure is reported in one line.
-	if err := s.PutFile(t.Context(), runstore.InputName(diagnoseagent.BundleDir, diagnoseagent.BundleManifestName), []byte("not a manifest\n"), "application/json"); err != nil {
+	if err := s.PutFile(t.Context(), troubleshootBundleName(diagnoseagent.BundleManifestName), []byte("not a manifest\n"), "application/json"); err != nil {
 		t.Fatal(err)
 	}
 	var warn bytes.Buffer

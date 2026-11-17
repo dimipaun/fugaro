@@ -530,11 +530,16 @@ func TestRecipesSkewRefusesSlotOnOldImage(t *testing.T) {
 	if err := checkSlotImage(context.Background(), env, appSlug, &quiet, "base", "", &bytes.Buffer{}); err != nil {
 		t.Fatalf("a launch that asks nothing: %v", err)
 	}
+	// The gate answers for the task alone: the workflow's own ask for a
+	// reviewer arm is a key of the file the job decodes rather than a field of
+	// the task, and it has its own constant and its own test
+	// (workflowABSince, TestRecipesSkewRefusesWorkflowABOnOldImage).
 }
 
-// TestSlotSinceHasAReleaseBullet: slotSince names 0.24.0, which is not tagged,
-// so docs/release.md's Before-you-tag list is what holds the constant to the
-// release actually cut — the job every other *Since constant's bullet does.
+// TestSlotSinceHasAReleaseBullet: slotSince names 0.26.0, the untagged release
+// this work ships in — not the tagged release the field itself ships in — so
+// docs/release.md's Before-you-tag list is what holds the constant to the
+// release actually cut, the job every other *Since constant's bullet does.
 // Nothing else ties the number the gate accepts to the release whose runner
 // replays a reviewer pair's champion patch, and a release that landed the
 // replay elsewhere would otherwise keep refusing images that have it.
@@ -552,7 +557,7 @@ func TestSlotSinceHasAReleaseBullet(t *testing.T) {
 	if !strings.Contains(bullet, "currently `\""+slotSince+"\"`") {
 		t.Errorf("docs/release.md's slotSince bullet does not carry the constant's release (%q)", slotSince)
 	}
-	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk"} {
+	for _, want := range []string{"ab.slot", "not tagged yet", "checkSlotImage", "checkCloneSlotImage", "slotAsk", "0.25.0"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's slotSince bullet does not say %q", want)
 		}
@@ -1740,7 +1745,7 @@ func TestRefuseCatalogSwitches(t *testing.T) {
 		{"require_zdr: false", config.ModelProvider{AllowDataTo: allows, RequireZDR: &no}, true},
 		{"require_zdr: true (the default, but still written)", config.ModelProvider{AllowDataTo: allows, RequireZDR: &yes}, true},
 		{"price_policy: highest", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyHighest}, true},
-		{"price_policy: cheapest (the default, but still written)", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyCheapest}, true},
+		{"price_policy: cheapest (not the default, but still written)", config.ModelProvider{AllowDataTo: allows, PricePolicy: config.PricePolicyCheapest}, true},
 		{"both", config.ModelProvider{AllowDataTo: allows, RequireZDR: &no, PricePolicy: config.PricePolicyHighest}, true},
 		{"a switch on a route that may not receive this repository", config.ModelProvider{AllowDataTo: []string{"acme/other"}, RequireZDR: &no}, false},
 	}
