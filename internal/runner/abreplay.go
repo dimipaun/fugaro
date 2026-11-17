@@ -464,8 +464,9 @@ func replayPatchRefusal(patch []byte) string {
 // bakes a checkout that carries the dependency warm-up and the image.setup
 // output (images/derived/Dockerfile.tmpl), untracked and ignored — a node_modules
 // where many packages ship a .github/FUNDING.yml is the one every such repository
-// has — and the reset that opens a baked checkout keeps ignored files (git clean
-// -fd, never -x). Every one of those is a refused component the patch never
+// has — and the run's own checkout of its branch leaves them where they are:
+// CheckoutNewBranch's clean is git clean -fd, never -x, so what git already
+// ignores survives it. Every one of those is a refused component the patch never
 // touched, so a fence that read the listing alone would refuse every arm in such
 // a repository and B1.3 would get no samples at all (the review of 2026-11-17).
 // What is the patch's is what before does not hold, or holds with another size or
