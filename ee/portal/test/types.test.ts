@@ -37,9 +37,14 @@ import auditSchema from '../schemas/audit.schema.json'
 import auditEntry from '../schemas/fixtures/audit.entry.json'
 import { type AuditEntry } from '../src/api/types/audit'
 import billingSchema from '../schemas/billing.schema.json'
+import billingPortal from '../schemas/fixtures/billing.portal.json'
 import billingSeats from '../schemas/fixtures/billing.seats.json'
 import billingSubscription from '../schemas/fixtures/billing.subscription.json'
-import { type Subscription, type SubscriptionSeats } from '../src/api/types/billing'
+import {
+  type CustomerPortal,
+  type Subscription,
+  type SubscriptionSeats,
+} from '../src/api/types/billing'
 import checkoutSchema from '../schemas/checkout.schema.json'
 import checkoutCreate from '../schemas/fixtures/checkout.create.json'
 import checkoutSession from '../schemas/fixtures/checkout.session.json'
@@ -171,6 +176,13 @@ const FIXTURES: Fixture[] = [
     definition: 'entry',
     same: true satisfies Identical<keyof JsonShape<AuditEntry>, keyof typeof auditEntry>,
     fixture: auditEntry satisfies JsonShape<AuditEntry>,
+  },
+  {
+    name: 'billing.portal',
+    schema: billingSchema,
+    definition: 'portal',
+    same: true satisfies Identical<keyof JsonShape<CustomerPortal>, keyof typeof billingPortal>,
+    fixture: billingPortal satisfies JsonShape<CustomerPortal>,
   },
   {
     name: 'billing.seats',

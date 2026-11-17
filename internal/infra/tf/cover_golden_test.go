@@ -93,7 +93,20 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
-			got := goldenCover(listed...).NotCovered(p, nil)
+			c := goldenCover(listed...)
+			// The licence renewal job's container, for the one golden whose
+			// fixture carries a licence block (installation-coordinator, the
+			// coordinator's own opt-in): licenceSecretGrant is the one grant the
+			// cover reads a TARGET for, because its four calls are a read of a
+			// value where every other row's are reads of a key the job holds, and
+			// the ID a real run carries is what internal/infra.LicenceRenewalSecretID
+			// derives from the fixture's Fugaro project (aurora). A literal here
+			// and not a call: internal/infra imports this package, so the
+			// derivation cannot be reached from it.
+			if name == "installation-coordinator" {
+				c.LicenceRenewalSecret = "fugaro-project-aurora-licence-renewal-0e382f732fd21bbd"
+			}
+			got := c.NotCovered(p, nil)
 			// installation-credentials is the one golden whose fixture names an
 			// operator, so it is also the one plan that creates the grants an
 			// operator receives (iam.tf's `for_each = toset(var.operators)`) —

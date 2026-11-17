@@ -220,6 +220,7 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 	}{
 		{name: "no document store", miss: func(d *Deps) { d.Docs = nil }, need: needDocs},
 		{name: "no sign-in verifier", miss: func(d *Deps) { d.SignIn = nil }, need: needSignIn},
+		{name: "no sealer", miss: func(d *Deps) { d.Sealer = nil }, need: needSealer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			deps := *f.deps
@@ -239,16 +240,10 @@ func TestNewRefusesASeamOnlyAMountedRouteReaches(t *testing.T) {
 		})
 	}
 
-	// The seams no mounted route reaches are not this deployment's: a service
-	// that serves none of their doors starts without them. The merchant is not
-	// one of these any more — P4.1's checkout reaches it — and neither is the
-	// scheduler, which P7.1's reminder run reaches, so what is left here is the
-	// one seam whose area has not landed a route yet (P1.7's handover).
-	deps := *f.deps
-	deps.Sealer = nil
-	if _, err := New(base, deps); err != nil {
-		t.Errorf("a deployment holding no seam a mounted route reaches did not start: %v", err)
-	}
+	// Every seam the table above names is one a mounted route reaches, so there
+	// is no seam left over to check here: the merchant is reached by P4.1's
+	// checkout, the scheduler by P7.1's reminder run, and the sealer by P3.2's
+	// reveal — which is the last of the five and the one that closed this list.
 }
 
 // firstRouteReaching is the path of the first route in the table that declares

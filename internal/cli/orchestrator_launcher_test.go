@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -427,15 +429,22 @@ func TestRunLauncherTakesNoJobFromItsWorkingDirectory(t *testing.T) {
 // The gates listed are the ones a daemon's own launch shape reaches. The rest
 // of that block fires only on a shape the daemon does not have and stays with
 // the command's own tests: the --attach caps and recipe gate (the daemon
-// attaches nothing), the named-token and plan-task field gates (no work item
-// carries either), the mode: artifact and mode: review gates (the daemon
-// starts neither), the proxy gate (nothing here brokers Bitbucket), the
-// checkout: clone and checkout: shared gates, and every gate that judges a
-// document only a checkout of the repository holds — the repository's own
-// fugaro.yaml above all, which is where the cascade's gate and the per-field
-// config gates read from (the daemon resolves without a checkout,
+// attaches nothing), the named-token field gate (no work item carries a
+// token), the mode: artifact and mode: review gates (the daemon starts
+// neither), the proxy gate (nothing here brokers Bitbucket), the checkout:
+// clone and checkout: shared gates, and every gate that judges a document only
+// a checkout of the repository holds — the repository's own fugaro.yaml above
+// all, which is where the cascade's gate and the per-field config gates read
+// from (the daemon resolves without a checkout,
 // TestRunLauncherResolvesThePlanWithoutACheckout, and a run's own bootstrap
 // refuses what a launch could not read).
+//
+// The plan-task gate beside the named-token one is the one a daemon's launch
+// does reach: the item carries the plan task its run stands for, so the field
+// goes through the command's own resolution and its own refusal (B7,
+// TestLauncherPassesPlanTask). The item's external id is the other field no
+// flag carries, and it is dropped rather than refused against an older runner
+// (TestExternalDroppedForOlderRunner), which is why no row below covers it.
 //
 // Mutation (run, restored): drop the freshLaunchGates call from the launcher's
 // prepare — every subtest below launches and fails.
@@ -645,5 +654,185 @@ func TestRunLauncherGatesAReIssueOnTheStoredProjectLayer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(after.ProjectLayer, stored.ProjectLayer) {
 		t.Errorf("the task on record now carries a different layer than the one the re-issue was gated on:\nafter  %+v\nstored %+v", after.ProjectLayer, stored.ProjectLayer)
+	}
+}
+
+// TestLauncherPassesPlanTask: the item's plan task is what joins a daemon's run
+// to its node. `fugaro run --plan-task` records it in two places — the stored
+// task, which the runner reads and `--retry` replays, and launch.json, which
+// `plan status` and the console's graph read — and the daemon's launch resolves
+// through that same command path (resolveAttemptPlan is where the flag and its
+// checks live), so an item carrying one has to reach both. F38 is the gap this
+// closes: a run a daemon started used to carry none, so `plan status` showed
+// the node with no run on it while the run went, and the --plan-task duplicate
+// refusal could not see such a run either, so a second run for a node a daemon
+// was already driving passed it.
+//
+// Mutation (run, restored): drop planTask from the runOptions literal in
+// prepare — both records lose the join and this fails.
+func TestLauncherPassesPlanTask(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	l := f.launcher(t)
+	const planTask = "orchestrator-graph-estimates/B7"
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", PlanTask: planTask, Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("launching an item that stands for a plan task: %v", err)
+	}
+	s := f.runStore(t, runID)
+	ts, err := s.ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("reading the task the launch stored: %v", err)
+	}
+	if ts.PlanTask != planTask {
+		t.Errorf("the stored task's plan task is %q, want the item's %q: the runner reads the stored task, and `fugaro run --retry` replays it", ts.PlanTask, planTask)
+	}
+	launch, err := s.ReadLaunch(ctx)
+	if err != nil {
+		t.Fatalf("reading the launch the daemon recorded: %v", err)
+	}
+	if launch.PlanTask != planTask {
+		t.Errorf("launch.json carries plan task %q, want the item's %q: `plan status` joins a run to its node by it, and the --plan-task duplicate refusal reads it off the runs a repository already has (F38)", launch.PlanTask, planTask)
+	}
+}
+
+// TestLauncherPassesExternal: the item's external id — the ticket it came from
+// outside Fugaro with — reaches the task's own field. No flag carries it, so
+// the daemon's launch is its only writer, and the field is what the pull
+// request of a run for the item builds its `Fixes` line from (B5, D2727). The
+// id is not re-checked here: the orchestrator admitted it when the item was
+// declared (orchestrator.externalRE), so this is a copy of an id already
+// checked, not a second rule about what a ticket looks like.
+//
+// Mutation (run, restored): drop the ts.External assignment from prepare — the
+// stored task carries none, so the run has no ticket to name (B5).
+func TestLauncherPassesExternal(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	l := f.launcher(t)
+	const ticket = "github:acme/app#7"
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", External: ticket, Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("launching an item that came from a ticket: %v", err)
+	}
+	ts, err := f.runStore(t, runID).ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("reading the task the launch stored: %v", err)
+	}
+	if ts.External != ticket {
+		t.Errorf("the task's external id is %q, want the item's %q: the runner reads the stored task to name the issue its pull request closes", ts.External, ticket)
+	}
+}
+
+// TestExternalDroppedForOlderRunner: the field arrived in externalSince's
+// runner, and a task.json carrying a field an older runner does not know is a
+// run that dies at bootstrap — the runner decodes the task strictly
+// (task.Parse rejects an unknown field) with the approved attempt already
+// spent. So the launch drops the field rather than refusing, out loud, judged
+// on the image the job would really run: what the drop costs is one Fixes line,
+// and what a refusal would cost is the attempt. The rest of the launch is
+// untouched, which is what makes the drop a safe default rather than a
+// silent half-launch.
+//
+// Mutation (run, restored): make imagePredates return false in the drop, or
+// remove the externalSkew call from prepare — the stored task carries an id the
+// image below externalSince cannot read, which is the bootstrap death this gate
+// exists to prevent.
+func TestExternalDroppedForOlderRunner(t *testing.T) {
+	f := newLauncherFixture(t)
+	// The installation's derived job image, which is the judge a launch with no
+	// checkout has (releaseOf asks the installation's base image and
+	// recordBaseRelease the job's own build record).
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, externalSince, -1))
+	ctx := context.Background()
+	l := f.launcher(t)
+	var warn strings.Builder
+	l.stderr = &warn
+	const ticket = "github:acme/app#7"
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", External: ticket, Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("a launch whose job image predates the field was refused rather than started without it (the approved attempt is what a refusal spends): %v", err)
+	}
+	ts, err := f.runStore(t, runID).ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("reading the task the launch stored: %v", err)
+	}
+	if ts.External != "" {
+		t.Errorf("the stored task carries external %q for a job image older than %s: the runner refuses that task at bootstrap and the attempt is spent", ts.External, externalSince)
+	}
+	// One line about it, and it is the drop's: a launch that silently leaves out
+	// a field the item carried is one nobody can explain later. The launch's
+	// other notes (the fixture's own bucket note) are not this gate's.
+	var dropped []string
+	for _, line := range strings.Split(strings.TrimSuffix(warn.String(), "\n"), "\n") {
+		if strings.Contains(line, "external") {
+			dropped = append(dropped, line)
+		}
+	}
+	if len(dropped) != 1 {
+		t.Fatalf("the drop printed %d line(s) about the field, want the one: %q", len(dropped), warn.String())
+	}
+	for _, want := range []string{ticket, externalSince} {
+		if !strings.Contains(dropped[0], want) {
+			t.Errorf("the line the drop printed does not name %q: %q", want, dropped[0])
+		}
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Errorf("the launch started %d execution(s), want the one the approved attempt is: %v", len(execs), execs)
+	}
+}
+
+// TestTaskWithoutExternalDecodes: the field is additive, and the strictness of
+// the task's own decoder is what makes that a claim to test rather than to
+// assume — task.Parse rejects an unknown field, so a task carrying this one
+// handed to the runner of an older image is that run's death at bootstrap. A task.json written
+// for an item that came from no ticket carries no external key at all (an empty
+// field writes none, so the spec's bytes are the ones the release before the
+// field wrote) and decodes into an empty External; one carrying an id decodes
+// into it.
+func TestTaskWithoutExternalDecodes(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	l := f.launcher(t)
+	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
+	const runID = "20261109-101500-abcd"
+
+	if _, err := l.Launch(ctx, spec, runID); err != nil {
+		t.Fatalf("launching an item that came from no ticket: %v", err)
+	}
+	data, err := f.runStore(t, runID).ReadFile(ctx, "task.json")
+	if err != nil {
+		t.Fatalf("reading the task the launch stored: %v", err)
+	}
+	if bytes.Contains(data, []byte(`"external"`)) {
+		t.Errorf("the task of an item with no ticket carries an external key, so its bytes differ from the ones the release before the field writes:\n%s", data)
+	}
+	ts, err := task.Parse(data)
+	if err != nil {
+		t.Fatalf("the task the launch stored does not decode: %v", err)
+	}
+	if ts.External != "" {
+		t.Errorf("a task with no external key decoded into %q, want the empty field", ts.External)
+	}
+	// The same task with the id the daemon's launch writes, through the same
+	// decoder: what the runner of this release reads back is the id.
+	const ticket = "github:acme/app#7"
+	ts.External = ticket
+	encoded, err := ts.Marshal()
+	if err != nil {
+		t.Fatalf("writing the task back with the external id: %v", err)
+	}
+	back, err := task.Parse(encoded)
+	if err != nil {
+		t.Fatalf("a task carrying the external id does not decode: %v", err)
+	}
+	if back.External != ticket {
+		t.Errorf("the task decoded into external %q, want %q", back.External, ticket)
 	}
 }

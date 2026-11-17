@@ -1267,6 +1267,44 @@ func TestProjectLayerSecurityIsInTheTopKeyAllowList(t *testing.T) {
 	}
 }
 
+// TestTheProjectLayerFileRefusesAReportsCommitKey: `reports_commit` is the
+// project's designated repository for committed reports (D2750, D2751;
+// periodic-reviews R14), and the layer file is the launcher's to write — so a
+// designation there would let whoever can write that file aim every report of
+// the project at a repository of their own choosing, which is the widening
+// D2751 refuses. The member is deliberately absent from layerTopKeys, and this
+// is the pin that keeps it absent: the refusal names the key and the list of
+// keys that are allowed, which is the one message an operator uses to find the
+// spelling they wanted.
+//
+// The member's own carrier is the owner's local project config
+// (internal/localcfg, the binaries block's carrier of version 8), which the
+// launcher cannot write; a layer that states it is not silently ignored, it is
+// refused where the layer is read.
+func TestTheProjectLayerFileRefusesAReportsCommitKey(t *testing.T) {
+	if slices.Contains(layerTopKeys, "reports_commit") {
+		t.Fatal("layerTopKeys carries reports_commit, so a launcher-written layer file could designate where every report of the project lands")
+	}
+	for _, block := range []string{
+		"reports_commit: { repo: acme/reports }\n",
+		"reports_commit:\n",
+		"reports_commit: {}\n",
+	} {
+		got := layerProblems(t, layerHead+block)
+		for _, want := range []string{"reports_commit", "is not a project layer key (" + strings.Join(layerTopKeys, ", ") + ")"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("problems %q for %q, want one containing %q", got, strings.TrimSpace(block), want)
+			}
+		}
+	}
+	// The block is refused by its key and not by its contents: the same block
+	// under a key the layer does allow is a different refusal, so a rule that
+	// refused the text would fail here.
+	if got := layerProblems(t, layerHead+"defaults:\n  reports_commit: { repo: acme/reports }\n"); !strings.Contains(got, "is not a fugaro.yaml key the project layer knows") {
+		t.Errorf("problems %q, want the nested key refused by the decoder that reads defaults", got)
+	}
+}
+
 // TestProjectLayerSecuritySchemaAgreesWithTheLayerParser: two surfaces read
 // the layer file, the strict decoder a run uses and project-layer.schema.json
 // a repository's CI may check against, and a block one refuses while the other

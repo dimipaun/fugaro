@@ -209,6 +209,11 @@ type orchestratorDaemon struct {
 	// node's own stream and the interval; a test replaces it with one that
 	// ends the loop, which is the only way to run this loop deterministically.
 	wake func(context.Context) error
+	// debounce is how long that wait holds a run-side write for the rest of
+	// the burst it came in. Zero is orchestrator.WakeDebounce; a test shortens
+	// it, because two seconds of real time per assertion is not a test's to
+	// spend.
+	debounce time.Duration
 }
 
 // sealOutput gives the daemon's two streams one lock, once, for the daemon's
@@ -538,6 +543,13 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// about and pause on a spend question nobody sees.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
+		// The labels of the pull requests the runs it launched opened (F25, T7):
+		// read back from the runs bucket by run id and written through the
+		// installation's credentials service, which is the one holder of the App
+		// key (D2439). Empty until the installation records a service URL and
+		// this build can mint the daemon's own identity for it
+		// (orchestratorLabelSeams), which is the state this tree is in.
+		Labels: orchestratorLabelSeams(d),
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the
 		// same log the triage and the decision agent append to. It is wired
@@ -1001,23 +1013,32 @@ func (d *orchestratorDaemon) report(rep orchestrator.Report, err error) {
 	}
 }
 
-// wait is the daemon's wait between cycles: the node's own stream — the
-// database's SSE, whose first event is a full put of the node as it stands, so
-// a change made while the stream was down is never lost — and the interval as
-// the ceiling. A stream that ends falls back to the interval alone rather than
-// stopping the daemon.
+// wait is the daemon's wait between cycles: the streams of every node a run
+// writes outside the orchestrator subtree — `agents/<slug>` for each
+// repository the state names and the day's `outcomes` node (E1, D2708) — plus
+// the daemon's own state node, and the interval as the ceiling.
 //
-// The connection's first event is passed over, because it is not news: the
-// cycle that just ran read that same node, and the snapshot is what every
-// connection opens with rather than a change. Returning on it would end every
-// wait in microseconds and spin the loop at the speed of the interval it never
-// honours — and the writes that follow it in the same connection are the
-// changes a wake-up is for, so nothing is lost by sitting out the first one.
+// A run's end is what the run-side streams are for. Without them the daemon
+// learned of one at its next cycle, and the interval is a person's flag rather
+// than the delay a run's end deserves: a run that finishes a second after a
+// cycle waited the whole of it. What wakes and what does not — an entry's
+// creation or deletion under `agents/` and never the heartbeat every run in
+// flight writes, any write under `outcomes/`, and the two-second debounce that
+// makes one run's end one cycle — is the waker's own (orchestrator.Wakes,
+// internal/orchestrator/wake.go), which is also where the runs whose registry
+// entry vanished with no outcome are named.
 //
-// The stream is cancelled on the way out. It holds a connection, a goroutine
-// and a 64KiB scanner buffer for as long as its context lives, and the stream
-// of a wait that left its context behind would still be connected to the node
-// a day later: one per cycle is a leak with no bound at all.
+// Every stream is cancelled on the way out. Each holds a connection, a
+// goroutine and a 64KiB scanner buffer for as long as its context lives, and a
+// wait that left its context behind would still be connected to the node a day
+// later: one set per cycle is a leak with no bound at all.
+//
+// The ceiling is the interval, and it is what a stream that fails falls back
+// to rather than stopping the daemon: the database's client reconnects with a
+// fresh snapshot of the node, and the cycle the ceiling then runs reads what
+// the outage missed. Nothing wakes on a snapshot — not the first connection's
+// and not a reconnect's — because it is the node as it already stands and not a
+// change; the waker passes over each one it reads.
 //
 // The wait beats the claim while it runs, on the lease's own cadence. The
 // interval is a person's value and the claim expires at LeaseTTL, so a wait
@@ -1045,35 +1066,20 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 	}
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	events := d.db.Stream(sctx, d.node.Path())
-	// opening is true until this connection's opening put has been consumed, and
-	// it is set again by the events that end a connection: the stream
-	// reconnects on this same channel, so the put after one of them is the new
-	// connection's own snapshot of the node rather than a change, exactly as the
-	// first connection's was. A latch cleared by any event instead would stay
-	// down for the rest of the wait, and every reconnect would end it — the
-	// daemon would then cycle at the reconnects' pace, which the backoff starts
-	// at a second, rather than at the interval this wait exists to honour.
-	opening := true
+	wakes := orchestrator.NewWakes(d.wakeOptions(ctx)).Run(sctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case ev, ok := <-events:
+		case w, ok := <-wakes:
+			// A waker that closed its channel heard nothing more for good:
+			// the wait keeps its ceiling, which is the cycle that catches up.
 			if !ok {
-				events = nil
+				wakes = nil
 				continue
 			}
-			switch ev.Type {
-			case "put", "patch":
-				if opening {
-					opening = false
-					continue
-				}
-				return nil
-			case "error", "auth_revoked":
-				opening = true
-			}
+			d.noteWake(w)
+			return nil
 		case <-beats:
 			if err := d.lease.Beat(ctx); err != nil {
 				return nil
@@ -1081,6 +1087,88 @@ func (d *orchestratorDaemon) wait(ctx context.Context) error {
 		case <-timer.C:
 			return nil
 		}
+	}
+}
+
+// wakeOptions is the run-side half of this wait: the daemon's own node, one
+// `agents/<slug>` per repository the state names, and the day's outcomes node.
+//
+// The repositories come from the state the cycle just read, and a state that
+// cannot be read costs wakes rather than the wait: without its slugs the daemon
+// still hears every run's end on the outcomes node, and what it would miss is
+// the entry that vanished without one.
+//
+// The day is the database's own clock where it has one, which is the clock
+// every stamp under this subtree comes from (D1230), and the local clock only
+// until the first response has been read.
+func (d *orchestratorDaemon) wakeOptions(ctx context.Context) orchestrator.WakeOptions {
+	o := orchestrator.WakeOptions{
+		DB:  d.db,
+		Own: []string{d.node.Path()},
+		Now: func() time.Time {
+			if t, ok := d.db.ServerNow(); ok {
+				return t
+			}
+			return time.Now()
+		},
+		Log: func(err error) {
+			fmt.Fprintf(d.warn, "orchestrator %s: %s\n", safetext.Field(d.id), safetext.OneLine(err.Error()))
+		},
+		Debounce: d.debounce,
+	}
+	slugs, err := d.stateSlugs(ctx)
+	if err != nil {
+		fmt.Fprintf(d.warn, "orchestrator %s: the repositories the state names could not be read, so this wait hears a run's end on the outcomes node alone: %s\n",
+			safetext.Field(d.id), safetext.OneLine(err.Error()))
+		return o
+	}
+	o.Agents = slugs
+	return o
+}
+
+// stateSlugs is the slug of every repository the state's items name: the
+// repositories whose runs write their registry entries where this daemon has to
+// listen for them.
+//
+// The slug is resolved the way the launch resolves it — under the checkoutless
+// switch, and from the local config where the working directory cannot answer
+// (repoSlug, checkoutOf) — because the node a run's entry lands on is named by
+// the launch's slug and not by a second rule kept here. A repository whose
+// provider nothing names has no slug and no stream: its runs' ends are still on
+// the outcomes node, which is the half that says a run is over.
+func (d *orchestratorDaemon) stateSlugs(ctx context.Context) ([]string, error) {
+	s, _, err := d.node.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	var slugs []string
+	for _, item := range s.WorkItems {
+		if item.Repo == "" || seen[item.Repo] {
+			continue
+		}
+		seen[item.Repo] = true
+		slug, err := d.env.repoSlug(item.Repo, checkoutOf(withoutCheckout(ctx), item.Repo))
+		if err != nil {
+			continue
+		}
+		slugs = append(slugs, slug)
+	}
+	return slugs, nil
+}
+
+// noteWake says what the wake means, and nothing has to be handed on for the
+// cycle that follows to act on it: a run whose entry vanished wrote no outcome,
+// so its intent is still open, and the cycle — which the tick derives from the
+// state it then reads — asks the platform about the execution of every run that
+// has not reported (orchestratorRunView.executionOver, D2725). A run whose
+// execution the platform has ended is folded over on the state it reported, and
+// the run that is still spending is one this cycle leaves alone, exactly as it
+// treats every other run still in flight.
+func (d *orchestratorDaemon) noteWake(w orchestrator.Wake) {
+	for _, ref := range w.Vanished {
+		fmt.Fprintf(d.warn, "run %s/%s: its registry entry vanished with no outcome, so this cycle checks its execution\n",
+			safetext.Field(ref.Slug), task.ShortRun(oneLine(ref.Run)))
 	}
 }
 

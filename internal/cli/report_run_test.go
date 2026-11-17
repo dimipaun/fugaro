@@ -168,49 +168,34 @@ func TestReaperDefaultIsShort(t *testing.T) {
 	closingLine(t, out, 1)
 }
 
-// TestBacklogAddDefaultIsShort: filing an item is two steps -- the item and
-// the index it regenerates beside it -- and the closing line, where the two
-// lines it printed were the same two facts.
+// TestBacklogAddDefaultIsShort: filing an item is one step -- the id the run
+// minted -- and the closing line. The item is a node, so there is no second
+// file to write and no second step to report (D2715, D2716).
 func TestBacklogAddDefaultIsShort(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), backlog.Dir)
-	out, _, err := execute(t, addArgs(dir)...)
+	isolateState(t)
+	newOrchestratorFixture(t)
+	out, _, err := execute(t, addArgs()...)
 	if err != nil {
 		t.Fatal(err)
 	}
-	item := filepath.Join(dir, "20261024-01-review-round-2-left-3-findings-open.md")
-	index := filepath.Join(dir, backlog.IndexName)
-	filed, wrote := markDone+" filed "+item, markDone+" wrote "+index
-	if !strings.Contains(out, filed) || !strings.Contains(out, wrote) {
-		t.Errorf("filing printed %q, want %q and %q", out, filed, wrote)
+	filed := markDone + " filed " + addDay + "-01"
+	if !strings.Contains(out, filed) {
+		t.Errorf("filing printed %q, want %q", out, filed)
 	}
-	if strings.Index(out, filed) > strings.Index(out, wrote) {
-		t.Errorf("the index is reported before the item it lists:\n%s", out)
-	}
-	closingLine(t, out, 2)
+	closingLine(t, out, 1)
 }
 
-// TestBacklogAddFailureIsAFailedStep: a filing the folder refuses (the same
-// title filed twice on one day) is the run's failure block (G8) -- the step
-// that failed with the reason it did, the path of the log this run's output is
-// in, and the closing line under it -- where it printed the refusal alone.
-//
-// The item it refuses is written through backlog.Write and not by running
-// `backlog add`: this test's one run of the command is the refused one, and a
-// second run a second later in this process would want the log name of the
-// first (CL3 names a log after the command, the second and the pid).
+// TestBacklogAddFailureIsAFailedStep: a filing the state model refuses -- a
+// repository that is not owner/name -- is the run's failure block (G8): the
+// step that failed with the reason it did, the path of the log this run's
+// output is in, and the closing line under it, where it printed the refusal
+// alone.
 func TestBacklogAddFailureIsAFailedStep(t *testing.T) {
 	isolateState(t)
-	dir := filepath.Join(t.TempDir(), backlog.Dir)
-	if _, err := backlog.Write(dir, backlog.New{
-		Title: "Review round 2 left 3 findings open", Mode: "none", Area: "repo",
-		FiledBy: "octocat", FiledIn: "hand", Date: "2026-10-24",
-		Body: backlog.Body("Review round 2 left 3 findings open", "the round's findings are worth addressing, not blocking", "", nil),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	out, _, err := execute(t, addArgs(dir)...)
+	f := newOrchestratorFixture(t)
+	out, _, err := execute(t, addArgs("--repo", "not-a-repository")...)
 	if err == nil {
-		t.Fatal("a second filing of the same title and day was accepted")
+		t.Fatal("a filing of an item whose repository is not owner/name was accepted")
 	}
 	if !strings.Contains(out, markFailed+" filed: ") {
 		t.Errorf("the refusal is not the step that failed:\n%s", out)
@@ -221,6 +206,9 @@ func TestBacklogAddFailureIsAFailedStep(t *testing.T) {
 	}
 	if lines := reportLines(out); !strings.HasPrefix(lines[len(lines)-1], "Failed in ") {
 		t.Errorf("the run's closing line is missing, or is not the failure it was:\n%s", out)
+	}
+	if s := storedBacklogState(t, f); len(s.WorkItems) != 0 {
+		t.Errorf("the refused filing wrote %d work items to the backlog node", len(s.WorkItems))
 	}
 }
 
@@ -288,16 +276,16 @@ func TestReaperWritesALog(t *testing.T) {
 	}
 }
 
-// TestBacklogAddWritesALog and TestBacklogIndexWritesALog: filing writes
-// files and regenerating writes one, so both keep a log of their own run
-// (D1352) -- named after the command, 0600 in the 0700 directory (G5). The
-// two facts they print are the reporter's step lines, which the screen has
-// and the log does not: the log is the run's own stream, and neither command
-// has one.
+// TestBacklogAddWritesALog and TestBacklogIndexWritesALog: filing writes a
+// work item into the project's database and regenerating writes a file, so
+// both keep a log of their own run (D1352) -- named after the command, 0600 in
+// the 0700 directory (G5). The facts they print are the reporter's step lines,
+// which the screen has and the log does not: the log is the run's own stream,
+// and neither command has one.
 func TestBacklogAddWritesALog(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), backlog.Dir)
 	isolateState(t)
-	if _, _, err := execute(t, addArgs(dir)...); err != nil {
+	newOrchestratorFixture(t)
+	if _, _, err := execute(t, addArgs()...); err != nil {
 		t.Fatal(err)
 	}
 	assertLogMode(t, "backlog-add")
@@ -476,8 +464,8 @@ func assertNoLog(t *testing.T) {
 // a listing, and --json, whose document no human line may touch -- prints no
 // escape byte off a terminal and no step line where its output goes (G2, G4).
 func TestNoStepCommandPrintsAnsiOffATerminal(t *testing.T) {
-	dir := backlogFixture(t)
-	out, errOut, err := execute(t, "backlog", "list", "--dir", dir)
+	newOrchestratorFixture(t)
+	out, errOut, err := execute(t, "backlog", "list")
 	if err != nil {
 		t.Fatal(err)
 	}

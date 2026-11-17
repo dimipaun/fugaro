@@ -28,6 +28,8 @@ type Scheduler struct {
 	mu   sync.Mutex
 	jobs map[string]map[string]any // projects/<p>/locations/<r>/jobs/<name> → fields
 	runs []string
+	// deleted are the full names a delete removed, in order.
+	deleted []string
 }
 
 var (
@@ -40,6 +42,20 @@ func (f *Scheduler) Runs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.runs...)
+}
+
+// Deleted are the jobs a delete removed, by full name, in order.
+func (f *Scheduler) Deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deleted...)
+}
+
+// HasJob reports whether the job still exists, by full name.
+func (f *Scheduler) HasJob(full string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.jobs[full] != nil
 }
 
 // NewScheduler starts a Cloud Scheduler fake that lives until the test
@@ -85,8 +101,18 @@ func (f *Scheduler) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 		return
 	}
 	m := schedulerJobRE.FindStringSubmatch(r.URL.Path)
-	if r.Method != http.MethodGet || m == nil {
+	if m == nil || (r.Method != http.MethodGet && r.Method != http.MethodDelete) {
 		f.unhandled(w, r)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		if f.jobs[m[1]] == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Job not found.")
+			return
+		}
+		delete(f.jobs, m[1])
+		f.deleted = append(f.deleted, m[1])
+		writeJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
 	j := f.jobs[m[1]]

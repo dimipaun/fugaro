@@ -881,9 +881,7 @@ func TestDiagnoseSinceNamesARelease(t *testing.T) {
 	if rel, ok := releaseOf("ghcr.io/dimipaun/fugaro-base:" + diagnoseSince); !ok || rel != diagnoseSince {
 		t.Fatalf("diagnoseSince = %q is not the X.Y.Z release a build record's base_ref carries", diagnoseSince)
 	}
-	// The bullet opens a sentence with the clause, so the guide carries the
-	// capital; the number after it is the half this test is here for.
-	want := "The first release whose runner executes the step is " + diagnoseSince
+	want := "the first release whose runner executes the step is " + diagnoseSince
 	if doc := readDoc(t, "docs/recipes.md"); !strings.Contains(doc, want) {
 		t.Errorf("docs/recipes.md's diagnose bullet does not say %q: the guide is where a person reads which release the step needs", want)
 	}

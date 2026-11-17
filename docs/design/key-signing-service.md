@@ -590,6 +590,23 @@ when a *person* asks for a key, never by the product, and rule 5's scan is exten
 the exclusion is for. The merchant of record appears as a recipient of buyers' data, and the whole of
 it needs the owner's approval (all of it is S7.3's text, not this document's).
 
+**S7.3 carried it on 2026-11-17**, with the owner's approval of the plan's tasks on 2026-11-16 and
+counsel's S8.4 round closed the day before: `/privacy/` carries a key sign-up card — the three
+forms' fields, the licence service they post to, the drop of a dead application's personal data and
+Paddle as the merchant of record — and the software part's sentence now reads "and to nothing the
+Fugaro project operates except the licence service". Two things above it did not state, and the tree
+is why. **The product does ask the service**: `ee/register/licence.go`'s `licenceServerURL` is
+contacted by `fugaro licence`'s own commands and by the installation's renewal job
+(`ee/register/licence_renew.go`, `ee/register/licence_login.go`), so the sentence names the service
+and says when it is asked instead of claiming a reach the sources refuse — "never by the product"
+above is true of a **run** (R2's runtime claim, and the verifier's offline check) and of nothing
+else, and the notice is written to what happens rather than to the runtime rule alone. **`ee/portal/`
+is exempt from rule 5's `ee/` scan beside `ee/keyservice/`**: the licence site's own web app is a
+service the project operates, and it names the host it runs on and the site's own privacy notice and
+Subscription Terms — the same reason this section gives for the first exclusion. What the scan now
+reads, refuses and records is `website/test/privacy.mjs` rules 5 and 9; the ruling record is
+[reconciliation.md](../subscriptions/reconciliation.md) §"The privacy notice for key sign-up".
+
 ## 8. Uptime and the overlap (T26)
 
 **The promise is issuance only**: validation is offline (R2), so a stopped service cannot stop a

@@ -259,7 +259,8 @@ func catalogBuildStepIDs(t *testing.T, fb *gcpfake.Build) []string {
 // `fugaro image build <name>` submits that entry's own build (D1144) — the
 // copied Dockerfile is the build's whole context, the definition's sha256 is
 // the content tag of the image it produces, and the image lands in the
-// installation's shared registry (D1152) as this repository's build account.
+// installation's shared registry (D1152), run as the project's build identity
+// (B6).
 // Without a name every entry of this checkout is submitted, a prebuilt image
 // among them: it is not built but smoked, which is the entry's own run
 // (TestPrebuiltEntrySmoked), and only another repository's entry is passed
@@ -327,9 +328,11 @@ func TestImageBuildWithACatalogBuildsTheEntry(t *testing.T) {
 	if string(spec) != string(wantJSON) {
 		t.Errorf("the smoke's spec is %s, want %s", spec, wantJSON)
 	}
-	slug := mustSlug("bitbucket", "acme/app")
-	if sa, _ := fb.Last()["serviceAccount"].(string); sa != "projects/proj-1234/serviceAccounts/"+gcp.BuildServiceAccountID(slug)+"@proj-1234.iam.gserviceaccount.com" {
-		t.Errorf("serviceAccount = %q, want this repository's build account", sa)
+	// The project's build identity and not the repository's build account:
+	// the identity is the installation's one account for catalog builds (B6),
+	// and it is the value CatalogBuildSpec.check requires.
+	if sa, _ := fb.Last()["serviceAccount"].(string); sa != "projects/proj-1234/serviceAccounts/"+gcp.BuildIdentityEmail("proj-1234") {
+		t.Errorf("serviceAccount = %q, want the project's build identity %s", sa, gcp.BuildIdentityEmail("proj-1234"))
 	}
 	// A catalog build reads one object and never a checkout: the derived
 	// build's clone-and-render steps are not in it, and its own are.

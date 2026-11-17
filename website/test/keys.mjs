@@ -2,10 +2,11 @@
 //
 // `/keys/` is the page a person asks for a licence key on, and it is the one page of this site
 // that ASKS A READER FOR SOMETHING: the privacy statement says the site has no account and no
-// form, and the statement's own copy for the key sign-up is S7.3's and the owner's (the
-// design's §7.3) — which is why the page is in the repository and not published before S7.4.
-// So this file holds the page to the things the task names, read off the BUILT artifact,
-// because what a browser gets is what the page is:
+// comment box and that this is the one page carrying a form, and the statement's own copy for
+// the key sign-up is S7.3's and the owner's (the design's §7.3) — which is why the page was held
+// out of the deploy until S7.3 wrote that copy and took the hold off. So this file holds the
+// page to the things the task names, read off the BUILT artifact, because what a browser gets is
+// what the page is:
 //
 //   1. **The three forms, and where they post.** `free-seat`, `open-source` and `request` (the
 //      design's §4.1, §4.4 and §4.5): one form each, POST, and each action is the key service's
@@ -24,7 +25,8 @@
 //      W3.2); this case reads the page's own fetch set, so the keys page's one off-site address
 //      is named where the page is rather than inferred from the policy.
 //   4. **The privacy link.** The page points at `/privacy/` (`privacyLinkFailures`), which is
-//      where S7.3 writes what the intake collects and how long it keeps it.
+//      where S7.3 writes what the intake collects and how long it keeps it — the card
+//      `website/test/privacy.mjs` rule 9 reads against these forms' own fields.
 //
 // It reads `dist/`, which `npm run check` builds before it runs this file. Standard library
 // only, no network (Global Constraint 4). Red step: this file fails against a build with no
