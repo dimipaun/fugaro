@@ -403,7 +403,44 @@ func TestAdoptKeepsItsItemsWhenTheFactsAreAtTheirBound(t *testing.T) {
 	}
 }
 
-// TestAdoptSkipsReviewAndArtifactRuns is the other half of D2702's "the
+// TestAdoptKeepsItsItemsWhenTheFactsWouldNotFitTheNode is the node's byte
+// budget, which the items are spent against first and the facts after: twelve
+// runs whose briefs are whole task files fill the state node to just under
+// MaxStateBytes, and a fact written over that bound is a document ValidateState
+// refuses — the whole save with it, so no adopted item ever lands in the main
+// node and every start repeats it. The items win over the fact, which is what a
+// start that leaves runs behind must not pay for.
+//
+// Mutation: queue the fact without asking whether it fits and twelve runs of
+// ordinary task-file size are adopted into nothing, for good.
+func TestAdoptKeepsItsItemsWhenTheFactsWouldNotFitTheNode(t *testing.T) {
+	at := o6Now()
+	const runs = 12
+	inFlight := make([]orchestrator.RunInFlight, 0, runs)
+	for i := range runs {
+		r := adoptRun(mainRun(i), "")
+		r.Brief = strings.Repeat("b", 1007)
+		inFlight = append(inFlight, r)
+	}
+	_, node, _, got := adopt(t, at, inFlight...)
+	if got == 0 || got == runs {
+		t.Fatalf("adoption wrote %d of %d items, and the node's bytes are meant to leave room for some of them and not for all", got, runs)
+	}
+	s := nodeState(t, node)
+	if len(s.WorkItems) != got {
+		t.Fatalf("the state node carries %d items and adoption answered %d", len(s.WorkItems), got)
+	}
+	if orchestrator.OverCap(s) {
+		t.Fatalf("the state node is over the target of %d bytes, and adoption wrote a document this release refuses", orchestrator.MaxStateBytes)
+	}
+	if fact, ok := s.Facts["adopt_not_carried"]; ok {
+		t.Fatalf("the node carries %q, and the fact that does not fit is what the items would be lost for", fact.Value)
+	}
+	if !s.WorkItems[0].Adopted || s.WorkItems[0].RunID == "" {
+		t.Fatalf("the item reads %+v, want one adoption wrote", s.WorkItems[0])
+	}
+}
+
 // code-change runs": a review job and a render are a job somebody else asked
 // for and not work of the project's a dependent waits on, so the daemon writes
 // no item for them — and names them nowhere, because they are not runs it left

@@ -495,11 +495,15 @@ func (a *adoption) adoptedPlans() []string {
 }
 
 // setFact writes one fact, and leaves the node alone where it already says this
-// or where its facts are at their bound. A fact past MaxFacts is a document
-// ValidateState refuses, and that save carries this call's items with it, so the
-// fact is what is dropped and never an item — the bound mergeread checks before
-// it queues one of its own — and a node with room again records the plan on a
-// later start, because the plans are derived from the items (facts).
+// or where the node has no room for it.
+//
+// No room is either bound: the node's facts are already at MaxFacts — the bound
+// mergeread checks before it queues one of its own — or this fact is what would
+// take the document past MaxStateBytes, which ValidateState refuses, and the
+// items this same call writes would be lost with the refusal. The items win:
+// the runs are what the node is for, a fact is what a reader is told, and a
+// node with room again records the plan on a later start, because the plans are
+// derived from the items (facts).
 func (a *adoption) setFact(p *adoptPlan, key, value string) {
 	if p.state.Facts[key].Value == value {
 		return
@@ -512,6 +516,9 @@ func (a *adoption) setFact(p *adoptPlan, key, value string) {
 		next.Facts = map[string]Fact{}
 	}
 	next.Facts[key] = Fact{Value: value, By: Daemon}
+	if OverCap(next) {
+		return
+	}
 	next.Rev = p.state.Rev + 1
 	p.state, p.changed = next, true
 }
