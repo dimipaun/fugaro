@@ -309,6 +309,45 @@ func TestPlanApproveSkipsChangedDigest(t *testing.T) {
 	}
 }
 
+// TestPlanApproveSkipsFinishedItems: an item that is already done or cancelled
+// takes no approval — validateItem refuses one on a finished item — so a list
+// read before its items landed leaves the finished ones alone and lands the
+// rest. The list is what a saved patch or an import's own `--json` output
+// carries, so re-running it after some of the plan merged is the ordinary way
+// to meet this, and one finished item must not take the whole patch down.
+func TestPlanApproveSkipsFinishedItems(t *testing.T) {
+	now := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+	plan := "orchestrator-graph-estimates"
+	runID := "20261117-090000-abcd"
+	s := planState(t, now, plan, "wi-1", "wi-2", "wi-3")
+	read := planItems(t, s, "wi-1", "wi-2", "wi-3")
+
+	// wi-2 has landed and wi-3 was cancelled since the list was read: both runs
+	// are over.
+	finish := func(id string, phase orchestrator.Phase) {
+		t.Helper()
+		s = mustApply(t, s, orchestrator.Daemon, "orchestrator-a", now,
+			phaseOp(id, ptr(orchestrator.PhaseRunning), &runID))
+		s = mustApply(t, s, orchestrator.Daemon, "orchestrator-a", now,
+			phaseOp(id, ptr(phase), nil))
+	}
+	finish("wi-2", orchestrator.PhaseDone)
+	finish("wi-3", orchestrator.PhaseCancelled)
+
+	next := mustApply(t, s, orchestrator.Person, "owner", now, planApproveOp(plan, read...))
+	if a := approvedBy(t, next, "wi-1"); a == nil {
+		t.Fatal("the one item that is not finished carries no approval")
+	}
+	for _, id := range []string{"wi-2", "wi-3"} {
+		if a := approvedBy(t, next, id); a != nil {
+			t.Fatalf("the finished item %s carries an approval, and a document with one is one this release does not read back", id)
+		}
+	}
+	if got := skipSentences(next); len(got) != 0 {
+		t.Fatalf("a finished item was recorded as something the person must act on: %q", got)
+	}
+}
+
 // TestPlanApproveOnBacklogNode is D2717: the standing backlog is the other node
 // this op approves, and its items are the ones carrying no spec at all (D2715).
 // The node is what the fence reads, so a backlog approval leaves a plan's items

@@ -55,19 +55,19 @@ type PlanApproveItem struct {
 
 // applyPlanApprove approves the items the op lists, at the digests it carries.
 //
-// Three things leave an item unapproved, and none of them fails the patch: the
+// Four things leave an item unapproved, and none of them fails the patch: the
 // node may no longer carry it, it may not be an item of the node the op names,
-// or its spec may have moved since the person read it. The last of those is
-// recorded as one fact naming the item, so that a person who approved a plan
-// whose re-import changed a task learns which task did not go rather than
-// finding out when it never launches (the shape D2740 gives the same
-// situation). The first two are silent: an id the node does not carry is not a
-// question about the item, and an item of another node is one this op was
-// never about.
+// it may already be finished, or its spec may have moved since the person read
+// it. That one is recorded as one fact naming the item, so that a person who
+// approved a plan whose re-import changed a task learns which task did not go
+// rather than finding out when it never launches (the shape D2740 gives the
+// same situation). The others are silent: an id the node does not carry is not
+// a question about the item, an item of another node is one this op was never
+// about, and a finished item needs no approval and has nothing left to do.
 //
 // The op is all-or-nothing in the one direction that matters: nothing here
-// refuses the patch, so one moved item cannot hold up the nineteen that did
-// not move.
+// refuses the patch, so one item that cannot be approved cannot hold up the
+// nineteen that can.
 func applyPlanApprove(s *State, op PlanApproveOp, a Actor) error {
 	if a.Class != Person {
 		return fmt.Errorf("%w: a %s may not approve a plan's items", ErrActorNotAllowed, a.Class)
@@ -91,6 +91,17 @@ func applyPlanApprove(s *State, op PlanApproveOp, a Actor) error {
 		}
 		w := &s.WorkItems[i]
 		if !itemOfNode(*w, node) {
+			continue
+		}
+		if w.Phase.Done() {
+			// A finished item carries no approval and takes none: validateItem
+			// refuses an item that is done or cancelled and still carries one,
+			// so approving it would take the whole patch down — the nineteen
+			// beside it included. A list read before its items landed (a saved
+			// patch re-run, an import's list re-approved after a merge) is
+			// where this is met, and the item needs nothing: the run is over.
+			// Nothing is recorded either, for that same reason: unlike a moved
+			// digest there is nothing here for the person to do.
 			continue
 		}
 		if SpecDigest(*w) != item.Digest {
