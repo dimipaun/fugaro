@@ -32,10 +32,14 @@ import (
 // spelling the owner chose — that is what makes an unrelated `fugaro update`
 // harmless to a file a person edits by hand — so a rename has to happen in the
 // bytes, through internal/yamledit, the way the policy generation and the
-// checkout's pin are recorded. It runs BEFORE the policy stage: the node that
-// stage publishes is built from this config, so the published copy carries the
-// name this release documents, and the next run's comparison of the two finds
-// them agreeing.
+// checkout's pin are recorded. The plan places it before the policy stage
+// (SA4.2), and what that order buys is the config and not the node: the rename
+// is applied to the config the run holds, so every write a later stage makes
+// from that config — the local-config write and the policy node among them —
+// is made from the renamed copy rather than from the bytes read at boot. The
+// node itself is the same either way: its prices are the folded multipliers,
+// with no key name on them (policyPrices), so it never carried the old spelling
+// for this stage to fix.
 //
 // Nothing is asked (CLAUDE.md: fugaro asks for nothing). No price moves — the
 // value each key held is the value the new name holds — so it is a

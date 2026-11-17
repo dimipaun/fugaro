@@ -113,10 +113,12 @@ const (
 	// cache-price key names (cache_read, cache_write_5m, cache_write_1h) become
 	// the ones this release documents (docs/spend-accuracy SA4.2, D2646). It is
 	// the owner's file and this machine's alone, so it asks nothing and runs in
-	// an agent's session too (LocalUnderAgent), and it comes BEFORE the policy
-	// stage because the node that stage publishes is built from this config: a
-	// node carrying the old spelling would differ from the file on every run
-	// that followed.
+	// an agent's session too (LocalUnderAgent), and the plan places it before
+	// the policy stage (SA4.2): the rename is applied to the config the run
+	// holds, so the node that stage publishes and the run's own write of the
+	// file are made from the renamed copy rather than from the bytes read at
+	// boot. The node has no spelling for the order to fix — it carries each
+	// price as the folded multiplier, with no key name on it (policyPrices).
 	ModelPrices = "model-prices"
 	// Policy is the published policy node's migration in place
 	// (internal/cli/init_policy_migrate.go, the owner's rule of 2026-10-30:
