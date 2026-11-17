@@ -70,21 +70,19 @@
  * sentence here, and the count this page carries is the one `website/README.md` derives the
  * words ceiling from, so a sentence added here re-derives it in the same commit.
  *
- * **The key sign-up is S7.3's, and it is the reason S3.3's hold on the key request page came
- * off.** The page that asks for a licence key carries three forms, and until this page accounted
- * for them the statement's "no form" was a sentence a served page would have made false — so the
- * page was built and held out of the deploy (`firebase.json`'s `ignore`, and the exemption
- * `website/test/consent.mjs` kept). The card below closes that: what the three forms take, that
- * they post to the licence service rather than to this host, how long the service keeps what it
- * takes — the drop of a link's dead application, and the request a person decides on, which the
- * queue keeps whole and mails the owner — and the merchant of record as a recipient of a buyer's
- * data. None of it is written here for the first time — counsel's Subscription Terms §7.5(b)
- * states what the Key Service collects, the design's §7.3
- * (`docs/design/key-signing-service.md`) states the retention rule and obliges
- * the notice to name the recipient, and the service's own code drops a dead application's
- * personal data — and `website/test/privacy.mjs` rule 9 holds each sentence to the source that
- * makes it true, the forms' own fields included. The owner approved the whole of it with the
- * plan's tasks on 2026-11-16.
+ * **The key sign-up is the portal's now, and the key request page asks for nothing.** A licence
+ * key — the free seat, the open-source programme, the requests a person reads — is asked for in
+ * the portal, Fugaro's own signed-in service at `app.` plus this site's canonical host, and the
+ * key request page points a reader there rather than carrying the three forms it once did. So the
+ * statement's card states what is true of the build that ships: the page sends a reader to the
+ * portal, this site keeps no copy of what a reader types there, the service collects what issuing
+ * a key needs (the email address of the person signing up, counsel's Subscription Terms' own
+ * list), and a Team purchase is sold by the merchant of record, who receives a buyer's data.
+ * None of it is written here for the first time — counsel's Subscription Terms §7.5(b) states
+ * what the Key Service collects, and the design's §7.3 (`docs/design/key-signing-service.md`)
+ * obliges the notice to name the merchant of record as a recipient — and `website/test/privacy.mjs`
+ * rule 9 holds each sentence to the source that makes it true. The owner approved the whole of it
+ * with the plan's tasks on 2026-11-16.
  *
  * **The software part's sentence about the project's hosts is restated, and the tree is why.**
  * The page said the CLI and the console talk "to nothing the Fugaro project operates", and
@@ -125,11 +123,16 @@
  */
 import Base from '../layouts/Base.astro'
 import { loadSite } from '../content.ts'
+import { portalOrigin } from '../lib/portal.mjs'
 
 // The facts, through the pipeline the layout uses: a site.yaml this page cannot read stops
 // the build rather than shipping a statement about a configuration nobody checked (W1.3).
 const site = loadSite()
 const analyticsEnabled = site.facts.analytics.enabled
+
+// The portal, from the same one function the key request page builds its link from (P9.3): a
+// key is asked for there, so the card points at the same host the page does.
+const portal = portalOrigin(site.facts.canonicalURL)
 
 // The repository, from the same file every other GitHub link on the site is built from
 // (W1.7): the issue tracker and the reporting route are links a reader acts on, so they are
@@ -242,9 +245,9 @@ const repo = site.facts.repository
             <h3>What this site does not do</h3>
             <ul>
               <li>
-                It sets no cookie of its own, and has no account and no comment box. The key
-                request page below is the one page of this site that carries a form, and its
-                three forms post to the licence service rather than to this host.
+                It sets no cookie of its own, and has no account and no comment box. It carries no
+                form either: the key request page below sends you to the portal, Fugaro's own
+                service, rather than asking you for anything here.
               </li>
               <li>
                 It loads nothing from another origin except Google's script — and, on the four
@@ -264,10 +267,10 @@ const repo = site.facts.repository
             <p>
               <strong>This site collects nothing.</strong> It is a set of static pages built from
               this repository's files: no account, no comment box, nothing counting your visit,
-              and no code of the site's own running on a server. The one thing it asks you for is
-              a key, on the page below, and what a form there takes goes to the licence service
-              rather than to this host. Should measurement ever be switched on, this page changes
-              at the same time, and the site asks you first.
+              and no code of the site's own running on a server. It asks you for nothing either,
+              not even a key: the key request page below sends you to the portal, Fugaro's own
+              service, where a key is asked for under your own account. Should measurement ever be
+              switched on, this page changes at the same time, and the site asks you first.
             </p>
           </div>
 
@@ -301,41 +304,24 @@ const repo = site.facts.repository
         </>
       )}
 
-      {/* The key sign-up (subscriptions plan Task S7.3, the design's section 7.3), and it sits
-          AFTER the flag branch on purpose: the page a person asks for a licence key on is served
-          whether or not the site measures anything, so the card that accounts for it is a fact of
-          the site and not of the measurement — which is what let S3.3's hold on that page come
-          off in this commit. Inside the branch it would be a card the flag-off site does not
-          carry, and the forms would be unaccounted for in the half of the site a reader reaches
-          with measurement off. */}
+      {/* The key sign-up card, and it sits AFTER the flag branch on purpose: the account of where
+          a key is asked for is a fact of the site whether or not it measures anything. A licence
+          key is asked for in the portal, Fugaro's own signed-in service, and the key request page
+          points a reader there rather than carrying a form — so the card names the portal, says
+          this site keeps no copy of what a reader types there, states what the service collects
+          (counsel's list) and names the merchant of record as a recipient of a buyer's data. */}
       <div class="card privacy-card">
         <h3>Asking for a key</h3>
         <p>
-          The <a href="/keys/">key request page</a> is the one place this site asks you for
-          something. Its three forms take an <strong>email address</strong> to send a key to, the{' '}
-          <strong>repository URLs</strong> the open-source programme checks, and, on the manual
-          request, <strong>what you are asking for</strong>. A form posts to the{' '}
-          <strong>licence service</strong> and not to this site: this host keeps no copy of what
-          one sends.
+          A licence key comes from the <a href={portal} rel="noopener">portal</a>, Fugaro's own
+          service, where you sign in and ask for one. The <a href="/keys/">key request page</a> is
+          where this site sends you to it, and it asks you for nothing: this site keeps no copy of
+          what you type in the portal.
         </p>
         <p>
-          The service mails the address a link that proves the mailbox is read, and issues the key
-          when it is followed. It drops the address, the domain and the repository URLs once the
-          link can no longer be followed — it has been used, the application was refused, or its
-          window closed — and what is left of the application is the link's digest, the plan and
-          the instant.
-        </p>
-        <p>
-          Not every request is one a link answers. The manual form, and the free-seat and
-          open-source requests the checks send to a person, are kept with what they carried: the
-          address, the domain, the text you wrote and the repository URLs stay beside the decision
-          made on them. The owner is mailed a notification carrying them when one arrives, so the
-          request is read. This notice states no period for a request a person decided on.
-        </p>
-        <p>
-          The record of a key it issued keeps the key's own facts and the address the key was
-          mailed to, because a renewal, a seat change or a question about the key is answered from
-          it.
+          The service collects the <strong>email address</strong> of the person signing up, to
+          issue the key. What it keeps besides, and for how long, is its own statement's to say,
+          and not this site's.
         </p>
         <p>
           A <strong>Team</strong> subscription is bought online from <strong>Paddle</strong>, the
@@ -424,11 +410,10 @@ const repo = site.facts.repository
           rather than yours. The crash reports and anonymous usage above: deleting the app does not
           remove them, and Google holds them for the Fugaro project, under the policy linked above.
           Uninstalling the app stops the sending. It does not take a report already sent out of
-          Google's hands. And what you send when you ask for a key: the licence service drops a
-          request once the link can no longer be followed, as the key sign-up card above says, and
-          keeps the request a person decided on with the address, the text and the repository URLs
-          it carried. The issue tracker is where to ask about a report already sent, or about what
-          the licence service still holds of yours.
+          Google's hands. And what you give the licence service when you ask for a key: that is the
+          service's own, and the key sign-up card above says what it collects. The issue tracker is
+          where to ask about a report already sent, or about what the licence service still holds
+          of yours.
         </p>
       </div>
 

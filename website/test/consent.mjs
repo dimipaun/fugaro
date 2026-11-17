@@ -1880,7 +1880,7 @@ test('the third control is one of the bar\'s own buttons, the panel it opens is 
   const panel = findAll(banner, (el) => el.attrs.get('id') === 'consent-banner-settings')[0]
   assert.ok(panel, 'the banner carries no settings panel for the third control to open')
   assert.ok(panel.attrs.has('hidden'), 'the settings panel is drawn before the visitor opens it: the bar must not change what a reader sees until they ask')
-  assert.equal(panel.name, 'fieldset', `the panel is a <${panel.name}>: the switches are a labelled group, and the site's one form is the key request page's, which posts to the licence service and not to this host`)
+  assert.equal(panel.name, 'fieldset', `the panel is a <${panel.name}>: the switches are a labelled group, and the site carries no form at all, so a control that could be submitted has no place in the banner`)
   const legend = find(panel, 'legend')
   assert.ok(legend, 'the panel carries no legend, so the group of switches is unnamed')
   assert.match(textOf(legend), /cookie settings/i, 'the panel\'s legend does not name the group it labels')
@@ -2358,57 +2358,28 @@ test('the privacy statement names the campaign vendors the site is configured to
   assert.match(text, /the vendor's to remove/i, "the privacy page no longer says a cookie on the vendor's own domain is the vendor's to remove")
 })
 
-// The key request page, which is the one page of this site that carries forms (subscriptions
-// plan Task S3.3, published by S7.3): `/keys/` is the three ways to ask for a licence key, each
-// a form posting to the key service's intake, and the claim this case reads is the privacy
-// statement's account of it — the key sign-up card, which is where "the site has no form" now
-// says what the one form it does have takes (`website/test/privacy.mjs` rule 9). S3.3 built the
-// page and held it out of the deploy because that card did not exist; S7.3 wrote it and took the
-// hold off in the same commit, so what is refused here is the hold going back on — and the
-// controls the page carries are held to the sentence that accounts for them rather than to an
-// exemption.
+// The key request page, which now carries no form (the portal plan's P9.3):
+// `/keys/` sends a reader to the portal to ask for a licence key, and the claim this case reads is
+// the privacy statement's account of it — the key sign-up card, which names that page and links to
+// the portal (`website/test/privacy.mjs` rule 9). The site carries no form at all now, on any page,
+// so what is refused here is a `<form>` or a field coming back: the statement's "this site has no
+// form" is held to the built pages, with the two controls the site really carries excepted — the
+// homepage's hero task field and the banner's settings switches, neither of which is submitted.
 const KEYS_PAGE = 'keys/index.html'
 
 test('the claims the privacy page makes about the site are held to the artifact', () => {
   const statement = textOf(find(parse(pageOf(SHIPPED, 'privacy/index.html')), 'main')).replace(/\s+/g, ' ')
   assert.ok(
     !deployExcludes(KEYS_PAGE),
-    `firebase.json holds ${KEYS_PAGE} out of the deploy: the statement's key sign-up card was written for that page (S7.3, the owner's approval of 2026-11-16) and the hold S3.3 put on it came off in the same commit, so a config that excludes it again hides a page the notice already accounts for`,
+    `firebase.json holds ${KEYS_PAGE} out of the deploy: the statement's key sign-up card names that page as the route to the portal (P9.3), so a config that excludes it hides a page the notice links`,
   )
   assert.match(
     statement,
     /key request page/,
-    `/privacy/ does not account for ${KEYS_PAGE}: the statement is what a reader filling one of those forms has to be able to read, and this case refuses the page being served while the site's own sentence about forms says nothing about it`,
+    `/privacy/ does not account for ${KEYS_PAGE}: the statement is what a reader is owed before they ask for a key, and this case refuses the page being served while the site's own sentence about it says nothing`,
   )
   for (const page of [...SHIPPED]) {
     for (const el of walk(parse(page.html))) {
-      // The key request page's own controls: the three forms S3.3 built, and every field inside
-      // them. `website/test/keys.mjs` is where the page is held — the routes it posts to, the
-      // fields, their labels and the intake — and what is held HERE is the one thing that makes
-      // the page different from every other page of the site, which is the sentence the card
-      // states: the form posts to the licence service and not to this host.
-      if (page.rel === KEYS_PAGE && el.name === 'form') {
-        const action = el.attrs.get('action') ?? ''
-        assert.ok(
-          action.startsWith('https://'),
-          `${page.rel}: a form's action is ${JSON.stringify(action)}, and a form on this page posts to the licence service — a same-origin action (or none) would submit an applicant's address to the host the statement says keeps no copy of it`,
-        )
-        assert.notEqual(
-          new URL(action).origin,
-          siteFacts().canonicalURL,
-          `${page.rel}: a form posts to this site's own origin, and /privacy/ says the key request page's forms post to the licence service rather than to this host`,
-        )
-        continue
-      }
-      // A field inside one of those forms is the page's own and is held where the page is; a
-      // field OUTSIDE one falls through to the refusal below, which is every other page's rule
-      // and the banner's own switch excepted — a field nothing submits is a reader being asked
-      // for something the page does nothing with, on this page as on any other.
-      if (page.rel === KEYS_PAGE && ['input', 'textarea', 'select'].includes(el.name)) {
-        let form = null
-        for (let up = el.parent; up; up = up.parent) if (up.name === 'form') form = up
-        if (form) continue
-      }
       // The one field the site carries: the homepage hero's live card, where a reader types a
       // task and sees it drawn as jobs (the owner's ruling of 2026-10-23, the redesign's Step 3,
       // lever 3). It is not a form and submits nothing: it has no `name`, no `<form>` around it,
@@ -2436,7 +2407,7 @@ test('the claims the privacy page makes about the site are held to the artifact'
         }
         assert.ok(
           panel,
-          `${page.rel} carries an <input> outside the consent banner's settings panel: the privacy page says the key request page is the one page of this site that carries a form and that the site asks for nothing else, and this is that claim held to the built pages`,
+          `${page.rel} carries an <input> outside the consent banner's settings panel: the privacy page says the site carries no form and asks for nothing else, and this is that claim held to the built pages`,
         )
         assert.ok(!el.attrs.has('name') && !el.attrs.has('form'), `${page.rel}: a consent switch carries a name or a form, so it is shaped to be submitted`)
         assert.equal(panel.name, 'fieldset', `${page.rel}: the settings panel is a <${panel.name}>, so a consent switch sits in a control that can be submitted`)
@@ -2445,7 +2416,7 @@ test('the claims the privacy page makes about the site are held to the artifact'
       }
       assert.ok(
         !['form', 'input', 'textarea', 'select'].includes(el.name),
-        `${page.rel} carries a <${el.name}>: the privacy page says the key request page is the one page of this site that carries a form and that the site asks for nothing else, and this is that claim held to the built pages`,
+        `${page.rel} carries a <${el.name}>: the privacy page says the site carries no form and asks for nothing, and this is that claim held to the built pages — the two controls the site does carry are the hero's task field and the banner's settings switches, both held above`,
       )
     }
   }
