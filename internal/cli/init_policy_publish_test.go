@@ -713,7 +713,7 @@ func reposDoorThenEdit(t *testing.T, door func(t *testing.T, f *projectFixture))
 
 func TestReposAddThenEditThenUpdatePublishes(t *testing.T) {
 	reposDoorThenEdit(t, func(t *testing.T, f *projectFixture) {
-		if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+		if _, _, err := execute(t, "project", "repos", "add", "github/acme/new", "--allow-list-only"); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -757,7 +757,7 @@ func TestReposAddLeavesAStaleRecordStale(t *testing.T) {
 	if now := nodeETag(t, f); now == stale {
 		t.Fatalf("the other machine's node carries the generation this file records (%q): nothing is stale in this fixture", now)
 	}
-	out, _, err := execute(t, "project", "repos", "add", "github/acme/new")
+	out, _, err := execute(t, "project", "repos", "add", "github/acme/new", "--allow-list-only")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -3423,18 +3423,18 @@ func TestPolicyCraftWideningNamesTheGrants(t *testing.T) {
 // does not move — and a release that bumped it here would refuse every older
 // CLI the project's own node for a change no runner has to enforce.
 func TestPolicyVersionUnchangedByTheCraftMembers(t *testing.T) {
-	if projectpolicy.Version != 8 {
-		t.Fatalf("the policy Version is %d, and this test is written for 8: update it deliberately with the version", projectpolicy.Version)
+	if projectpolicy.Version != 9 {
+		t.Fatalf("the policy Version is %d, and this test is written for 9: update it deliberately with the version", projectpolicy.Version)
 	}
 	f := newProjectFixture(t, craftMembersYAML)
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "version"); fmt.Sprintf("%v", got) != "8" {
-		t.Errorf("the published version = %v (%T), want 8: the craft members move no version", got, got)
+	if got, _ := nodeAt(f.db.Value(projectpolicy.PathShared()), "version"); fmt.Sprintf("%v", got) != "9" {
+		t.Errorf("the published version = %v (%T), want 9: the craft members move no version", got, got)
 	}
-	if p := publishedPolicy(t, f); p.Version != 8 {
-		t.Errorf("the node decodes at version %d, want 8", p.Version)
+	if p := publishedPolicy(t, f); p.Version != 9 {
+		t.Errorf("the node decodes at version %d, want 9", p.Version)
 	}
 	if len(publishedPolicy(t, f).CraftCredentials) == 0 {
 		t.Error("the node carries no craft_credentials, so this test says nothing about the version they are written at")

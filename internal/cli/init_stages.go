@@ -276,6 +276,13 @@ func initStages(e *initEngine) []initflow.Stage {
 	// its own write and leave the upgrade for a second command
 	// (init_rules_stage.go, the owner's rule of 2026-10-30).
 	stages = append(stages, newRulesStage(e))
+	// The owner's own cache-price keys, renamed in place, before the policy
+	// stage as the plan puts it (SA4.2) and before the writes made from this
+	// config later in the run: the rename is applied to the config the run
+	// holds, so the policy node and the run's own write of the file are made
+	// from the renamed copy. The node is the same either way — its prices are
+	// the folded multipliers, not key names (update_model_prices.go).
+	stages = append(stages, newModelPricesStage(e))
 	e.policy = newPolicyMigrateStage(e)
 	// The run's own local-config write drops the read this stage's plan is made
 	// from (initRun.writeConfig), so the stage is reachable from there too.
@@ -322,8 +329,9 @@ func initStages(e *initEngine) []initflow.Stage {
 	stages = append(stages, newCheckoutStage(e))
 	// The login unit that runs the orchestrator daemon: `fugaro setup` writes
 	// the first one (init_orchestrator_stage.go, the owner's Q2 answer of
-	// 2026-11-04) and `fugaro update` re-renders one already installed and
-	// never installs one (update_unit_stage.go, T7's ruling of 2026-11-05).
+	// 2026-11-04) and `fugaro update` installs one where a machine has none
+	// and re-renders one already installed (update_unit_stage.go, T7's ruling
+	// of 2026-11-05 as amended by D2700 of 2026-11-16).
 	// The two are one stage — the loop takes one stage per name, and the
 	// canonical order holds one slot for it — and the door is what decides
 	// which of them this run gets, the way the door decides the project

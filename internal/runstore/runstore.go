@@ -29,8 +29,10 @@ type Status string
 
 const (
 	StatusRunning Status = "running"
-	// StatusSucceeded is a ready PR, or (outcome none, Record.Gate "clean")
-	// a check gate that found nothing to fix, so no PR was ever needed.
+	// StatusSucceeded is a ready PR, or a change set's member whose work is
+	// done and whose PR the set's hold leaves a draft until its siblings
+	// ship (outcome draft, D614), or (outcome none, Record.Gate "clean") a
+	// check gate that found nothing to fix, so no PR was ever needed.
 	StatusSucceeded Status = "succeeded"
 	// StatusFailed is a draft PR exists, or (outcome none) review mode
 	// refusing a pull request before checkout (no PR of its own ever
@@ -1973,6 +1975,25 @@ type Record struct {
 	// format's version stays 1 (schemas/result.schema.json declares the
 	// property, as it does for StageAccounts).
 	Retries int `json:"retries,omitempty"`
+	// Discovered is what the run found out about the graph while it worked
+	// (docs/orchestrator-graph-estimates/implementation-plan.md X2, D2709):
+	// the items its own work blocks and the items it found it needed, each a
+	// plan task or a footprint path with the run's one-line why, bounded as
+	// discovered.go bounds them. Nothing reads it yet — the daemon that folds
+	// it into the graph is E3 — and it is written because the record is what
+	// survives the run. Absent — never an empty block — for a run that
+	// discovered nothing, which is every record written before this field
+	// existed: the field is additive, so an old reader sees the record it
+	// always saw and the format's version stays 1.
+	Discovered *Discovered `json:"discovered,omitempty"`
+	// ConflictPaths is the paths a rebase or a push of this run met a
+	// conflict on (X2, D2709, D2710): the sign the graph the run worked from
+	// was wrong, which the daemon reads beside the footprints of the items
+	// merged since the attempt began. Bounded at MaxConflictPaths. Absent —
+	// never an empty list — for a run that met none, which is every record
+	// written before this field existed, so an old reader sees the record it
+	// always saw.
+	ConflictPaths []string `json:"conflict_paths,omitempty"`
 }
 
 // PatchName is a run's patch object under its own prefix:

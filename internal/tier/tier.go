@@ -4,10 +4,13 @@
 //
 // It is the only place that spells the four tiers, so the task spec, the
 // governance configuration and the CLI share one closed list rather than three
-// that can drift apart. It holds the vocabulary alone: the expectations each
-// tier starts with are governance defaults and live with them
-// (ee/governance's Defaults), because a tier's value is a guardrail the project
-// layer may set and never a property of the name.
+// that can drift apart. Beside the names it carries the seed minutes a tier is
+// estimated at while it has no run history (seed.go, D2724): those are core's
+// own figures, read from here alone, because core cannot import ee/governance,
+// where the expectations a project sets for a tier live (Defaults). The two are
+// separate lists and may differ: a project's expected cost is a guardrail it
+// may set and never a property of the name, where a seed is what an estimate
+// assumes when it knows nothing.
 //
 // A tier is an expectation and never a cap: the deployed per-run cap stays the
 // ceiling whatever tier a run carries (constraint G6), so an expected cost

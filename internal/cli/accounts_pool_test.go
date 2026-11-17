@@ -273,6 +273,37 @@ func TestAccountsPoolAddRefusesACrossPathMembership(t *testing.T) {
 	}
 }
 
+// TestPoolAddOwnerOnlyLeavesALegacyCrossingPoolAlone is the other side of the
+// refusal above: it judges the member list the command was given and not the
+// document it lands in (poolsWithNewMembers). A pool 0.25.0 already wrote may
+// name both halves, and the owner of such an installation must still be able to
+// write the people the pool is served to — the write that converges the
+// crossing is the update's own migration, not this door. An owner-only edit is
+// the case that parts the two: no member list is given, so there is nothing to
+// judge, and the pool's own list is left exactly as the file has it.
+func TestPoolAddOwnerOnlyLeavesALegacyCrossingPoolAlone(t *testing.T) {
+	path := accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsCrossingPools)
+
+	out, _, err := execute(t, "accounts", "pool", "add", "mixed", "--owner", "owner@example.com")
+	if err != nil {
+		t.Fatalf("an owner-only edit of a pool an earlier release wrote was refused: %v\n%s", err, out)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the config this command wrote does not read back: %v", err)
+	}
+	pool, ok := accountsPoolOf(lc, "mixed")
+	if !ok {
+		t.Fatalf("pools.mixed is not in the config this command wrote: %+v", lc.Pools)
+	}
+	if pool.Owner != "owner@example.com" {
+		t.Errorf("pools.mixed.owner = %q, want owner@example.com", pool.Owner)
+	}
+	if got := strings.Join(pool.Members, ", "); got != "oauth-one, router-one" {
+		t.Errorf("pools.mixed.members = %q, want the crossing list the file already had", got)
+	}
+}
+
 // TestPoolAddAcceptsTheBuiltInVertex: vertex is a credential every installation
 // has without defining one, so it is a member like any other — the pool a route
 // is kept behind ends with the built-in as its last fallback (D1624). It is the
@@ -510,15 +541,15 @@ pools:
       - router-one
 `
 
-// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the staging this refusal ships
-// under, and the reason it is the write door's rule and not the readers': a
-// config 0.25.0 wrote may hold a pool naming a member of each half, and nothing
-// in this release may refuse it. The read loads the config through the very
-// path `fugaro update` loads it through, so a read that prints is an
-// installation that still works — and it renders the pool with both halves and
-// the boundary its failover is left at rather than hiding a pool the person
-// wrote. The step that splits such a pool into one pool per half is MC21's, and
-// it ships in the same release as this rule (activation plan row 43).
+// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the reason the rule is the write
+// door's and not the config load's: a config 0.25.0 wrote may hold a pool naming
+// a member of each half, and this read must not refuse it. The read loads the
+// config through the very path `fugaro update` loads it through, so a read that
+// prints is an installation that still works — and it renders the pool with both
+// halves and the boundary its failover is left at rather than hiding a pool the
+// person wrote. It stays true after MC21: the split is written by the update's
+// own migration (derivePathPools, on every write of the file) and never by a
+// read, so a config that has not been through an update yet is still read.
 func TestPoolLsReadsAPoolAnEarlierReleaseWrote(t *testing.T) {
 	accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsCrossingPools)
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // Change is one step of a migration, in the words a caller renders as the
@@ -45,6 +47,7 @@ var migrators = map[int]migrator{
 	5: migrateV5ToV6,
 	6: migrateV6ToV7,
 	7: migrateV7ToV8,
+	8: migrateV8ToV9,
 }
 
 // tooOld names the versions this Fugaro reads but has no migrator for. The
@@ -101,6 +104,15 @@ func Migratable(v int) bool {
 // version 6 and this bump carries no member at all — what it marks is that the
 // project's config states the block from this release on, so a version-7 node
 // is already a version-8 node in everything but the number.
+//
+// Version 8 is NOT one, and it is the fourth counter-example (MC21): its step
+// rewrites the node's `craft_pools` and `crafts` blocks, splitting every pool
+// whose members span the two halves of a run and repointing the crafts that
+// named one, so a version-8 node is not a version-9 node that happens to carry
+// no crossing — it is a node whose pools may cross, which the reader above
+// refuses (config.ValidatePublishedPools). A reader that admitted it without
+// running the step would serve a pool whose listed order the credentials service
+// cannot honour, which is the whole of D1668.
 //
 // The counter-examples are version 3 and version 4, and they are why this
 // table is a table and not a rule about numbers. Version 4's step marks every
@@ -818,4 +830,337 @@ func migrateV7ToV8(raw json.RawMessage) (json.RawMessage, Change, error) {
 		Changed: "the version field: 7 to 8",
 		Kept:    keptKeys(doc, "version"),
 	}, nil
+}
+
+// migrateV8ToV9 splits every craft_pools entry whose members span the two
+// halves of a run into one entry per half, repoints the crafts whose access
+// named such a pool, and writes the version field version 9 reads.
+//
+// Version 9 is the version at which a pool stays on one path (activation plan
+// MC20, D1668): the credentials service selects among its members by tier and
+// the listed order only breaks a tie, while a run's own gateway holds one
+// upstream per stage and never retries a call across a secret, so a pool naming
+// members of both halves is a pool whose order can mean nothing. From this
+// release the read of a published node refuses one (config.ValidatePublishedPools,
+// which Decode runs), and this step is the other half of that pair: a node an
+// earlier release published, or one an administrator edited by hand, carries a
+// crossing pool that no validation may repair and no config-side migration can
+// reach, so the chain converges it in place, the way `fugaro update` converges
+// the installation's own config (internal/cli's derivePathPools).
+//
+// The split is internal/craft's one rule (craft.SplitCrossPathPools) and not a
+// second copy of it: the halves are the node's own craft_credentials types
+// through config.CredentialServingPath, the order is the pool's own member
+// order, and the craft's half is its model — the node's crafts block, with the
+// inheritance config.CraftParent applies — resolved through the node's own
+// routing switch and providers block. A step may read nothing but the node, and
+// this one does not: a rung the node does not carry (the installation's
+// agent.models.<role>) is not its to read, and where the node resolves nothing
+// the craft keeps the half the pool's first member is on, which is what the
+// config side answers for the same craft.
+//
+// The edit is confined to the two blocks it rewrites: every other member comes
+// back byte for byte (Kept), and so does every pool entry and every craft the
+// step does not touch — the entries keep their bytes, their order and their
+// spacing, because this is an edit of the owner's document and not a
+// re-encoding of it. A node with no crossing pool changes only its number.
+//
+// It carries no Note: the move it makes is the whole of the move, there is
+// nothing for the operator to republish for, and the split it writes is a node
+// the current reader reads.
+func migrateV8ToV9(raw json.RawMessage) (json.RawMessage, Change, error) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, Change{}, fmt.Errorf("projectpolicy: the version-8 node is not a JSON object: %w", err)
+	}
+	out, err := writeVersionField(raw, 8, 9)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	changed := "the version field: 8 to 9"
+	kept := keptKeys(doc, "version")
+
+	blocks, err := readNodeCraftBlocks(doc)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	_, access, splits := craft.SplitCrossPathPools(blocks.pools, blocks.creds, blocks.crafts, blocks.routing, blocks.providers)
+	if len(splits) == 0 {
+		return out, Change{From: 8, To: 9, Changed: changed, Kept: kept}, nil
+	}
+
+	start, end, ok := memberValueSpan(out, "craft_pools")
+	if !ok {
+		return nil, Change{}, errors.New("projectpolicy: the version-8 node's craft_pools field could not be located")
+	}
+	rewritten, err := spliceCrossedPools(out[start:end], splits)
+	if err != nil {
+		return nil, Change{}, err
+	}
+	out = spliceMember(out, start, end, rewritten)
+	changed = fmt.Sprintf("the version field: 8 to 9, and craft_pools: %s", splitSentence(splits))
+	kept = keptKeys(doc, "version", "craft_pools")
+
+	if len(access) > 0 {
+		cs, ce, ok := memberValueSpan(out, "crafts")
+		if !ok {
+			return nil, Change{}, errors.New("projectpolicy: the version-8 node's crafts field could not be located")
+		}
+		repointed, wrote, err := repointCraftAccesses(out[cs:ce], access)
+		if err != nil {
+			return nil, Change{}, err
+		}
+		if wrote > 0 {
+			out = spliceMember(out, cs, ce, repointed)
+			changed += fmt.Sprintf(", and the access of %s, which names the half its own model routes to", countCrafts(wrote))
+			kept = keptKeys(doc, "version", "craft_pools", "crafts")
+		}
+	}
+	return out, Change{From: 8, To: 9, Changed: changed, Kept: kept}, nil
+}
+
+// nodeCraftBlocks are the members of a version-8 node the split reads: the
+// credentials a pool's members are typed by, the pools, the crafts whose access
+// may name one, and the routing switch and providers block a craft's model
+// resolves through. A member the node does not carry is left empty, which is
+// what the reader above it answers for one too.
+type nodeCraftBlocks struct {
+	creds     []config.Credential
+	pools     []config.Pool
+	crafts    config.Crafts
+	routing   *config.Routing
+	providers map[string]config.ModelProvider
+}
+
+// readNodeCraftBlocks reads those members off the node, and refuses a member
+// that is not the block this version reads: the node is then one no step can
+// converge, and the class of the fault is MalformedError's, exactly as it is for
+// a node that is not an object at all.
+//
+// A member it cannot read is refused rather than skipped, because skipping it
+// would leave a crossing pool in the node this step hands to Decode — which
+// refuses it a moment later with a sentence about the pool rather than about the
+// block that could not be read.
+func readNodeCraftBlocks(doc map[string]json.RawMessage) (nodeCraftBlocks, error) {
+	var b nodeCraftBlocks
+	if raw, ok := doc["craft_credentials"]; ok && !IsNull(raw) {
+		if err := json.Unmarshal(raw, &b.creds); err != nil {
+			return nodeCraftBlocks{}, &MalformedError{Why: "its craft_credentials block is not the block this version reads", Err: err}
+		}
+	}
+	if raw, ok := doc["craft_pools"]; ok && !IsNull(raw) {
+		if err := json.Unmarshal(raw, &b.pools); err != nil {
+			return nodeCraftBlocks{}, &MalformedError{Why: "its craft_pools block is not the block this version reads", Err: err}
+		}
+	}
+	if raw, ok := doc["crafts"]; ok && !IsNull(raw) {
+		if err := json.Unmarshal(raw, &b.crafts); err != nil {
+			return nodeCraftBlocks{}, &MalformedError{Why: "its crafts block is not the block this version reads", Err: err}
+		}
+	}
+	if raw, ok := doc["routing"]; ok && !IsNull(raw) {
+		if err := json.Unmarshal(raw, &b.routing); err != nil {
+			return nodeCraftBlocks{}, &MalformedError{Why: "its routing block is not the block this version reads", Err: err}
+		}
+	}
+	if raw, ok := doc["providers"]; ok && !IsNull(raw) {
+		var ps map[string]Provider
+		if err := json.Unmarshal(raw, &ps); err != nil {
+			return nodeCraftBlocks{}, &MalformedError{Why: "its providers block is not the block this version reads", Err: err}
+		}
+		b.providers = make(map[string]config.ModelProvider, len(ps))
+		for name, p := range ps {
+			b.providers[name] = p.ModelProvider
+		}
+	}
+	return b, nil
+}
+
+// spliceCrossedPools returns the craft_pools array with every entry the split
+// rewrote replaced by the pools that replace it, and nothing else: an entry the
+// step leaves alone keeps its own bytes and the array keeps its own separators
+// and spacing, which is what makes this an edit of the owner's document rather
+// than a re-encoding of it. The halves are written as new objects — they are
+// entries no release wrote, and there are no bytes of the owner's to keep.
+func spliceCrossedPools(arr []byte, splits []craft.PoolSplit) ([]byte, error) {
+	byName := make(map[string]craft.PoolSplit, len(splits))
+	for _, s := range splits {
+		byName[s.Pool.Name] = s
+	}
+	dec := json.NewDecoder(bytes.NewReader(arr))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, fmt.Errorf("projectpolicy: the version-8 node's craft_pools is not readable: %w", err)
+	}
+	if d, isDelim := tok.(json.Delim); !isDelim || d != '[' {
+		return nil, errors.New("projectpolicy: the version-8 node's craft_pools is not an array")
+	}
+	prev := int(dec.InputOffset())
+	out := make([]byte, 0, len(arr))
+	out = append(out, arr[:prev]...)
+	for dec.More() {
+		var el json.RawMessage
+		if err := dec.Decode(&el); err != nil {
+			return nil, fmt.Errorf("projectpolicy: the version-8 node's craft_pools is not readable: %w", err)
+		}
+		end := int(dec.InputOffset())
+		chunk := arr[prev:end]
+		lead := len(chunk) - len(bytes.TrimLeft(chunk, " \t\r\n,"))
+		out = append(out, chunk[:lead]...)
+		body := chunk[lead:]
+		s, crossed := byName[poolEntryName(body)]
+		if !crossed {
+			out = append(out, body...)
+			prev = end
+			continue
+		}
+		for i, path := range s.Paths() {
+			if i > 0 {
+				out = append(out, ',')
+			}
+			half, err := json.Marshal(s.Halves[path])
+			if err != nil {
+				return nil, fmt.Errorf("projectpolicy: a pool the split derives cannot be written: %w", err)
+			}
+			out = append(out, half...)
+		}
+		prev = end
+	}
+	out = append(out, arr[prev:]...)
+	return out, nil
+}
+
+// poolEntryName is one craft_pools entry's name, "" for an entry that names
+// none. A name is not re-spelled on the way out — the entry the step does not
+// rewrite keeps its own bytes — so this reads the name to find the entry and
+// writes nothing with it.
+func poolEntryName(el []byte) string {
+	var pool struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(el, &pool); err != nil {
+		return ""
+	}
+	return pool.Name
+}
+
+// repointCraftAccesses returns the crafts object with the access of every craft
+// the split repointed written to the name of its half, and reports how many it
+// wrote. Everything else in the object is the owner's own bytes: the craft's key,
+// the colon after it and the members beside `access` are re-emitted from the
+// document rather than re-encoded.
+func repointCraftAccesses(obj []byte, access map[string]string) ([]byte, int, error) {
+	dec := json.NewDecoder(bytes.NewReader(obj))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, 0, fmt.Errorf("projectpolicy: the version-8 node's crafts is not readable: %w", err)
+	}
+	if d, isDelim := tok.(json.Delim); !isDelim || d != '{' {
+		return nil, 0, errors.New("projectpolicy: the version-8 node's crafts is not an object")
+	}
+	prev := int(dec.InputOffset())
+	out := make([]byte, 0, len(obj))
+	out = append(out, obj[:prev]...)
+	written := 0
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, 0, fmt.Errorf("projectpolicy: the version-8 node's crafts is not readable: %w", err)
+		}
+		name, isString := kt.(string)
+		if !isString {
+			return nil, 0, errors.New("projectpolicy: the version-8 node's crafts has a member name that is not a string")
+		}
+		afterKey := int(dec.InputOffset())
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, 0, fmt.Errorf("projectpolicy: the version-8 node's crafts is not readable: %w", err)
+		}
+		afterValue := int(dec.InputOffset())
+		to, repoint := access[name]
+		if !repoint {
+			out = append(out, obj[prev:afterValue]...)
+			prev = afterValue
+			continue
+		}
+		// The value alone is written: the key, the colon and whatever the owner
+		// wrote around them are the document's own bytes.
+		colon := bytes.IndexByte(obj[afterKey:afterValue], ':')
+		if colon < 0 {
+			return nil, 0, fmt.Errorf("projectpolicy: the version-8 node's crafts.%s has no access to repoint", pluginwire.Printable(name))
+		}
+		out = append(out, obj[prev:afterKey+colon+1]...)
+		next, wrote, err := replaceMemberString(v, "access", to)
+		if err != nil {
+			return nil, 0, err
+		}
+		if !wrote {
+			return nil, 0, fmt.Errorf("projectpolicy: the version-8 node's crafts.%s names the pool %s and carries no access string to repoint", pluginwire.Printable(name), pluginwire.Printable(access[name]))
+		}
+		out = append(out, next...)
+		written++
+		prev = afterValue
+	}
+	out = append(out, obj[prev:]...)
+	return out, written, nil
+}
+
+// replaceMemberString returns obj with the value of one of its members written
+// as the JSON string value, and reports whether it wrote anything. A member that
+// is not there, or whose value is not a string, is left as it is: the caller's
+// own rule decided what the value has to be, and this only edits bytes.
+func replaceMemberString(obj []byte, member, value string) ([]byte, bool, error) {
+	start, end, ok := memberValueSpan(obj, member)
+	if !ok {
+		return obj, false, nil
+	}
+	var cur string
+	if err := json.Unmarshal(obj[start:end], &cur); err != nil {
+		return obj, false, nil
+	}
+	if cur == value {
+		return obj, false, nil
+	}
+	out := make([]byte, 0, len(obj)+len(value))
+	out = append(out, obj[:start]...)
+	out = append(out, strconv.Quote(value)...)
+	out = append(out, obj[end:]...)
+	return out, true, nil
+}
+
+// spliceMember returns raw with the byte span of one of its members replaced.
+// The span comes from memberValueSpan over raw itself, so the member's name, its
+// colon and its neighbours are the document's bytes and only the value changes.
+func spliceMember(raw []byte, start, end int, repl []byte) json.RawMessage {
+	out := make(json.RawMessage, 0, len(raw)-(end-start)+len(repl))
+	out = append(out, raw[:start]...)
+	out = append(out, repl...)
+	out = append(out, raw[end:]...)
+	return out
+}
+
+// splitSentence words one step's craft_pools edit for the diff the operator
+// reads: the pool that crossed and the two that replace it, by name.
+func splitSentence(splits []craft.PoolSplit) string {
+	parts := make([]string, 0, len(splits))
+	for _, s := range splits {
+		names := make([]string, 0, len(s.Halves))
+		for _, path := range s.Paths() {
+			names = append(names, pluginwire.Printable(s.Halves[path].Name))
+		}
+		parts = append(parts, fmt.Sprintf("%s split into %s", pluginwire.Printable(s.Pool.Name), strings.Join(names, " and ")))
+	}
+	if len(parts) == 1 {
+		return "the pool " + parts[0]
+	}
+	return "the pools " + strings.Join(parts, "; ")
+}
+
+// countCrafts words the number of crafts a step repointed, so the diff reads as
+// a sentence about the owner's node rather than as a count of entries.
+func countCrafts(n int) string {
+	if n == 1 {
+		return "1 craft"
+	}
+	return strconv.Itoa(n) + " crafts"
 }

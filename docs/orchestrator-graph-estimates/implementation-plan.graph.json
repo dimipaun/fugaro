@@ -1,0 +1,922 @@
+{
+  "schema_version": 3,
+  "plan": "docs/orchestrator-graph-estimates/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "X0",
+      "title": "the orchestrator store's plan and backlog nodes",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/store.go",
+          "internal/orchestrator/shard.go",
+          "internal/orchestrator/shard_test.go",
+          "internal/budget/rules/emulator_orchestrator_test.go"
+        ]
+      }
+    },
+    {
+      "id": "X4",
+      "title": "the tick plans and counts its caps across all nodes",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/tick.go",
+          "internal/orchestrator/caps.go",
+          "internal/orchestrator/launch.go",
+          "internal/orchestrator/tick_nodes_test.go"
+        ]
+      }
+    },
+    {
+      "id": "X1",
+      "title": "the orchestrator state shape: external ids, plan_task, adoption, the migration",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/state.go",
+          "internal/orchestrator/validate.go",
+          "internal/orchestrator/state_test.go",
+          "schemas/orchestrator-state.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "X2",
+      "title": "the run record's discovered dependencies and conflict paths",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runstore/runstore.go",
+          "internal/runstore/discovered.go",
+          "internal/runstore/discovered_test.go",
+          "schemas/result.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "S0",
+      "title": "the graph node's tier field",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/plan/document.go",
+          "internal/plan/read.go",
+          "internal/plan/read_test.go"
+        ]
+      }
+    },
+    {
+      "id": "R1",
+      "title": "the orchestrator_enabled and issue_sync policy keys",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/issuesync.go",
+          "internal/projectpolicy/policy_test.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "R2",
+      "title": "fugaro update installs the orchestrator unit everywhere",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_unit_stage.go",
+          "internal/cli/update_unit_stage_test.go",
+          "internal/cli/managed_test.go",
+          "internal/cli/orchestrator_install.go",
+          "internal/cli/init_orchestrator_stage.go"
+        ]
+      }
+    },
+    {
+      "id": "R7",
+      "title": "the update skill and Checks 301-302 say update installs the unit",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/update/SKILL.md",
+          "plugin/update_skill_test.go",
+          "internal/cli/docs_check301_302_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "R8",
+      "title": "the stateless-orchestrator plan records that D2700 supersedes T7",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/stateless-orchestrator/implementation-plan.md",
+          "internal/cli/docs_stateless_orchestrator_test.go"
+        ]
+      }
+    },
+    {
+      "id": "R3",
+      "title": "the daemon honours orchestrator_enabled",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/caps.go",
+          "internal/orchestrator/caps_test.go",
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_run_test.go"
+        ]
+      }
+    },
+    {
+      "id": "R4",
+      "title": "the daemon adopts runs in flight at start",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/adopt.go",
+          "internal/orchestrator/adopt_test.go",
+          "internal/orchestrator/escalate_launch.go"
+        ]
+      }
+    },
+    {
+      "id": "R5",
+      "title": "the orchestrator skill hands work to the daemon, and the cutover how-to",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/orchestrator/SKILL.md",
+          "plugin/skills/orchestrator/reference/state.md",
+          "plugin/orchestrator_skill_test.go",
+          "docs/how-to/orchestrator-cutover.md",
+          "internal/cli/docs_orchestrator_cutover_test.go"
+        ]
+      }
+    },
+    {
+      "id": "R6",
+      "title": "working and parallelism point to the daemon; the tier field and the one-off graph",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/parallelism/SKILL.md",
+          "plugin/parallelism_skill_test.go"
+        ]
+      }
+    },
+    {
+      "id": "G1",
+      "title": "fugaro orchestrator import --plan",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/planimport.go",
+          "internal/orchestrator/planimport_test.go",
+          "internal/cli/orchestrator_import.go",
+          "internal/cli/orchestrator_import_test.go"
+        ]
+      }
+    },
+    {
+      "id": "G2",
+      "title": "the plan_approve op, routed through Apply",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/patch.go",
+          "internal/orchestrator/patch_plan.go",
+          "internal/orchestrator/patch_plan_test.go",
+          "schemas/orchestrator-patch.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "G4",
+      "title": "the CLI's person-class approve, showing an issue item's body",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_patch.go",
+          "internal/cli/orchestrator_patch_test.go",
+          "internal/cli/orchestrator_approve_issue.go",
+          "internal/cli/orchestrator_approve_issue_test.go"
+        ]
+      }
+    },
+    {
+      "id": "G3",
+      "title": "unlock on merge: the review phase and the merge read",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/runview.go",
+          "internal/orchestrator/mergeread.go",
+          "internal/orchestrator/mergeread_test.go",
+          "internal/orchestrator/export_test.go"
+        ]
+      }
+    },
+    {
+      "id": "G5",
+      "title": "the merge read on Bitbucket: the label route's get serves Bitbucket state",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/labelroute.go",
+          "internal/creds/labelclient.go",
+          "internal/credsvc/labelroute.go",
+          "internal/credsvc/labelroute_bitbucket.go",
+          "internal/credsvc/labelroute_bitbucket_test.go"
+        ]
+      }
+    },
+    {
+      "id": "E1",
+      "title": "the daemon wakes on agents/ and outcomes/",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/wake.go",
+          "internal/orchestrator/wake_test.go",
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_run_test.go"
+        ]
+      }
+    },
+    {
+      "id": "E2",
+      "title": "the runner records discovered dependencies and conflict paths",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/discovered.go",
+          "internal/runner/discovered_test.go",
+          "internal/runner/recordend.go",
+          "internal/runner/prompts.go"
+        ]
+      }
+    },
+    {
+      "id": "E3",
+      "title": "the daemon folds discovered dependencies and conflicts into the graph",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/fold_discovered.go",
+          "internal/orchestrator/fold_discovered_test.go",
+          "internal/orchestrator/tick.go",
+          "internal/orchestrator/runview.go"
+        ]
+      }
+    },
+    {
+      "id": "E4",
+      "title": "pin: an event and a poll over one finished run make one decision",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/tick_double_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S1",
+      "title": "run history per tier and rigor, and the time seeds",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/estimate/history.go",
+          "internal/estimate/history_test.go",
+          "internal/tier/seed.go",
+          "internal/tier/seed_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S2",
+      "title": "the estimate: weighted critical path, the running cap, cost, recalibration",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/plan/estimate.go",
+          "internal/plan/estimate_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S3",
+      "title": "plan graph and plan status print the estimate",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/plan.go",
+          "internal/cli/plan_status.go",
+          "internal/cli/plan_test.go",
+          "internal/cli/plan_status_test.go"
+        ]
+      }
+    },
+    {
+      "id": "S4",
+      "title": "the console graph screen shows the estimate",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/graph/model.ts",
+          "console/src/renderer/screens/graph.ts",
+          "console/test/unit/graph-estimate.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "S5",
+      "title": "orchestrator state --brief shows each plan's ready-by range",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/orchestrator/summary.go",
+          "internal/orchestrator/summary_test.go",
+          "internal/cli/orchestrator_state.go"
+        ]
+      }
+    },
+    {
+      "id": "S6",
+      "title": "the spec-to-pr skill quotes the estimate",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/spec-to-pr/SKILL.md",
+          "plugin/skills/spec-to-pr/reference/plan.md",
+          "plugin/spec_to_pr_estimate_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B1",
+      "title": "fugaro backlog add writes a work item",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/backlog.go",
+          "internal/cli/backlog_test.go",
+          "internal/cli/backlog_add_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B2",
+      "title": "fugaro update folds docs/backlog in, once",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_backlog.go",
+          "internal/cli/update_backlog_test.go",
+          "internal/cli/update.go"
+        ]
+      }
+    },
+    {
+      "id": "B8",
+      "title": "docs/backlog becomes history",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/backlog/render.go",
+          "internal/cli/docs_backlog_test.go",
+          "docs/backlog/README.md",
+          "docs/backlog/FORMAT.md"
+        ]
+      }
+    },
+    {
+      "id": "B3",
+      "title": "the GitHub issues route behind the credentials service",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/issueroute.go",
+          "internal/credsvc/issueroute.go",
+          "internal/credsvc/issueroute_test.go",
+          "internal/credsvc/server.go"
+        ]
+      }
+    },
+    {
+      "id": "B11",
+      "title": "the GitHub issues REST calls",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gitprov/github/issues.go",
+          "internal/gitprov/github/issues_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B10",
+      "title": "SECURITY.md and the website's security page describe the issue route",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md"
+        ]
+      }
+    },
+    {
+      "id": "B4",
+      "title": "the issue sync: the adapter seam, ingest, mirror, dedupe, on the tick",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/issuesync/adapter.go",
+          "internal/issuesync/fake.go",
+          "internal/issuesync/sync.go",
+          "internal/issuesync/sync_test.go",
+          "internal/orchestrator/tick.go"
+        ]
+      }
+    },
+    {
+      "id": "B5",
+      "title": "a run for a GitHub item writes Fixes #N",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/prflow.go",
+          "internal/runner/prflow_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B7",
+      "title": "the launcher passes plan_task and the external id",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/task/task.go",
+          "schemas/task.schema.json",
+          "internal/cli/orchestrator_launcher.go",
+          "internal/cli/orchestrator_launcher_test.go",
+          "internal/cli/recipes_skew.go"
+        ]
+      }
+    },
+    {
+      "id": "W1",
+      "title": "wire plan approval, adoption and discovery into the daemon, end to end",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_run.go",
+          "internal/cli/orchestrator_mergeread.go",
+          "internal/cli/orchestrator_runlister.go",
+          "internal/orchestrator/plan_e2e_test.go"
+        ]
+      }
+    },
+    {
+      "id": "B9",
+      "title": "an issue item's brief at launch, pinned to the approved body",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/orchestrator_launcher.go",
+          "internal/cli/orchestrator_launcher_issue.go",
+          "internal/cli/orchestrator_launcher_issue_test.go"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "R3",
+      "needs": "R1",
+      "reason": "the daemon reads the merged key R1 adds; R1 is smaller than a contract would be"
+    },
+    {
+      "task": "R3",
+      "needs": "E1",
+      "reason": "one file: both edit internal/cli/orchestrator_run.go"
+    },
+    {
+      "task": "R5",
+      "needs": "G1",
+      "reason": "the skill names import --plan, which plugin tests check against the CLI"
+    },
+    {
+      "task": "R5",
+      "needs": "W1",
+      "reason": "the skill teaches plan_approve and the review phase, which must behave as written"
+    },
+    {
+      "task": "R5",
+      "needs": "R1",
+      "reason": "the skill reads orchestrator.enabled by name"
+    },
+    {
+      "task": "R5",
+      "needs": "B1",
+      "reason": "the skill teaches backlog add for a casual fix"
+    },
+    {
+      "task": "R6",
+      "needs": "S0",
+      "reason": "the schema example shows the tier field"
+    },
+    {
+      "task": "R6",
+      "needs": "G1",
+      "reason": "the one-off graph text names import --plan"
+    },
+    {
+      "task": "G1",
+      "needs": "S0",
+      "reason": "the import reads and validates the node's tier"
+    },
+    {
+      "task": "E2",
+      "needs": "X2",
+      "reason": "the record fields it writes"
+    },
+    {
+      "task": "E3",
+      "needs": "X1",
+      "reason": "the graph_suspect fact"
+    },
+    {
+      "task": "E3",
+      "needs": "X2",
+      "reason": "the record fields it reads"
+    },
+    {
+      "task": "S2",
+      "needs": "S0",
+      "reason": "the estimate reads each node's tier"
+    },
+    {
+      "task": "B2",
+      "needs": "B1",
+      "reason": "the fold reuses backlog add's item writer, its behaviour and not only its shape"
+    },
+    {
+      "task": "B4",
+      "needs": "X1",
+      "reason": "the external field it dedupes on"
+    },
+    {
+      "task": "B4",
+      "needs": "R1",
+      "reason": "reads the issue_sync key R1 adds; smaller than a contract would be"
+    },
+    {
+      "task": "W1",
+      "needs": "G1",
+      "reason": "adopted plans and imported plans meet in one test"
+    },
+    {
+      "task": "W1",
+      "needs": "G2",
+      "reason": "the end-to-end test approves a plan"
+    },
+    {
+      "task": "W1",
+      "needs": "G3",
+      "reason": "the end-to-end test unlocks on merge"
+    },
+    {
+      "task": "W1",
+      "needs": "R4",
+      "reason": "adoption is called at start-up"
+    },
+    {
+      "task": "W1",
+      "needs": "R3",
+      "reason": "one file: both edit internal/cli/orchestrator_run.go"
+    },
+    {
+      "task": "W1",
+      "needs": "E2",
+      "reason": "the end-to-end test reads a run's discovered dependency"
+    },
+    {
+      "task": "W1",
+      "needs": "E3",
+      "reason": "the end-to-end test folds it"
+    },
+    {
+      "task": "G1",
+      "needs": "X0",
+      "reason": "the import writes the plan's own node"
+    },
+    {
+      "task": "G2",
+      "needs": "X0",
+      "reason": "the op lands on the plan's own node"
+    },
+    {
+      "task": "B1",
+      "needs": "X0",
+      "reason": "backlog add writes the backlog node"
+    },
+    {
+      "task": "B4",
+      "needs": "X0",
+      "reason": "the ingest writes the backlog node"
+    },
+    {
+      "task": "E3",
+      "needs": "X4",
+      "reason": "one file: both edit internal/orchestrator/tick.go"
+    },
+    {
+      "task": "E3",
+      "needs": "G3",
+      "reason": "one file: both edit internal/orchestrator/runview.go"
+    },
+    {
+      "task": "E4",
+      "needs": "E1",
+      "reason": "it pins the wake path E1 builds"
+    },
+    {
+      "task": "E4",
+      "needs": "G3",
+      "reason": "it pins the unlock G3 builds"
+    },
+    {
+      "task": "R7",
+      "needs": "R2",
+      "reason": "the docs say what R2's code does"
+    },
+    {
+      "task": "B5",
+      "needs": "B7",
+      "reason": "the body reads the external id the launcher passes"
+    },
+    {
+      "task": "B7",
+      "needs": "X1",
+      "reason": "the item's external id and plan_task"
+    },
+    {
+      "task": "W1",
+      "needs": "B7",
+      "reason": "the end-to-end test meets an adopted run's plan_task"
+    },
+    {
+      "task": "S2",
+      "needs": "S1",
+      "reason": "the estimate reads the history table"
+    },
+    {
+      "task": "S3",
+      "needs": "S2",
+      "reason": "the CLI prints the estimate S2 computes"
+    },
+    {
+      "task": "S4",
+      "needs": "S3",
+      "reason": "the console draws the block plan status prints"
+    },
+    {
+      "task": "S5",
+      "needs": "S2",
+      "reason": "the brief summarises the estimate"
+    },
+    {
+      "task": "S6",
+      "needs": "S3",
+      "reason": "the skill quotes the line plan graph prints"
+    },
+    {
+      "task": "B4",
+      "needs": "B3",
+      "reason": "the sync calls the issue route's client"
+    },
+    {
+      "task": "B4",
+      "needs": "E3",
+      "reason": "one file: both edit internal/orchestrator/tick.go"
+    },
+    {
+      "task": "G1",
+      "needs": "X1",
+      "reason": "the import writes plan_task, which X1 adds"
+    },
+    {
+      "task": "S5",
+      "needs": "X0",
+      "reason": "the brief reads the plan and backlog nodes"
+    },
+    {
+      "task": "E1",
+      "needs": "X0",
+      "reason": "the daemon streams the nodes X0 adds"
+    },
+    {
+      "task": "R4",
+      "needs": "X1",
+      "reason": "the adopted mark and plan_task are X1's fields"
+    },
+    {
+      "task": "R8",
+      "needs": "R2",
+      "reason": "the plan's note says what R2's code does"
+    },
+    {
+      "task": "B9",
+      "needs": "B3",
+      "reason": "the launch reads one issue through the route"
+    },
+    {
+      "task": "B9",
+      "needs": "B7",
+      "reason": "one file: both edit internal/cli/orchestrator_launcher.go"
+    },
+    {
+      "task": "B9",
+      "needs": "X1",
+      "reason": "the issue body digest is stored on the item"
+    },
+    {
+      "task": "W1",
+      "needs": "B9",
+      "reason": "the end-to-end launch of an issue item reads its brief"
+    },
+    {
+      "task": "R4",
+      "needs": "X0",
+      "reason": "an adopted plan run is written into its plan's node"
+    },
+    {
+      "task": "X4",
+      "needs": "X0",
+      "reason": "the tick reads the nodes X0 adds"
+    },
+    {
+      "task": "R3",
+      "needs": "X4",
+      "reason": "one file: both edit internal/orchestrator/caps.go"
+    },
+    {
+      "task": "G4",
+      "needs": "G2",
+      "reason": "the CLI sends the op G2 applies"
+    },
+    {
+      "task": "R5",
+      "needs": "G4",
+      "reason": "the skill teaches the person's approve as the CLI does it"
+    },
+    {
+      "task": "B3",
+      "needs": "B11",
+      "reason": "the route calls the GitHub client"
+    },
+    {
+      "task": "B10",
+      "needs": "B3",
+      "reason": "the security pages describe the route as built"
+    },
+    {
+      "task": "W1",
+      "needs": "G4",
+      "reason": "the end-to-end test approves through the CLI's person path"
+    },
+    {
+      "task": "W1",
+      "needs": "G5",
+      "reason": "the real merge reader reads Bitbucket pull requests through G5's act"
+    },
+    {
+      "task": "B10",
+      "needs": "G5",
+      "reason": "the security pages describe the label route's Bitbucket read as built"
+    }
+  ]
+}

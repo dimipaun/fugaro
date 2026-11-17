@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"bytes"
 	"encoding/json"
 	"maps"
 	"reflect"
@@ -8,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -115,6 +118,132 @@ func TestCarriedProjectJobsKeepsTheCodingJobAndItsReviewVariants(t *testing.T) {
 	if gotReview := reviewJobsOf(t, got); !reflect.DeepEqual(gotReview, wantReview) {
 		t.Errorf("the carried document's project_review_jobs are %v, want %v: ProjectReviewJobs derives a profile's variants from the coding set, so a coding job the carry leaves out takes its own variants with it",
 			slices.Sorted(maps.Keys(gotReview)), slices.Sorted(maps.Keys(wantReview)))
+	}
+}
+
+// keyCredentialCarryDeclaration is the one line keyCredentialAccountAxisLC
+// (projectjobs_test.go) declares its key credential on. This file's fixtures
+// take it away to write the record the release behind left: the same config,
+// with acme-key not yet a key credential, which is a name the deployer composed
+// a job for.
+const keyCredentialCarryDeclaration = "credentials:\n  - { name: acme-key, type: openrouter }\n"
+
+// TestCarriedProjectJobAccountsKeepsTheKeyCredentialsJob: the installation that
+// deployed a job for a name its config NOW declares a key credential keeps that
+// job, whole, when the carry runs — and the carry changes nothing else.
+//
+// MC22/D1670 taught the deployer to leave such a name out of the job set it
+// composes (config.ClaudeAccountTokenNames, ProjectKeyAccountJobs naming what
+// that drops), and the installation the release behind left holds the job all
+// the same: a profile listing a key-typed name is written by hand — no command
+// ever wrote one, and `fugaro accounts add` refuses to — and that name's
+// project-wide container is what the pre-fix composer needed to build the job
+// (projectAccountMount). A document rewritten without it is the plan of its
+// destruction, and RefuseProjectJobDeletes stops the whole update on that plan
+// with a remedy nobody can carry out: putting the name back into the profile's
+// claude_accounts is what the filter drops the job for. So the job is carried,
+// as the profile carries above are.
+//
+// The record is composed from the config with the declaration taken away, and
+// it is the record the pre-fix deployer wrote byte for byte: nothing about a
+// job of that axis depends on the credential's type — the difference the filter
+// makes is whether the job exists at all.
+//
+// Mutations (each run and restored): return vars unchanged, and both the coding
+// job and its variant are missing below; carry the record's jobs rather than
+// the named triples (an empty name set, the call below), and the document comes
+// back with the job of a triple nobody named.
+func TestCarriedProjectJobAccountsKeepsTheKeyCredentialsJob(t *testing.T) {
+	withKey := implicitReviewBaseLC() + keyCredentialAccountAxisLC
+	before := strings.Replace(withKey, keyCredentialCarryDeclaration, "", 1)
+	if before == withKey {
+		t.Fatalf("the fixture no longer declares the key credential on %q, so this test would not be about the carry", keyCredentialCarryDeclaration)
+	}
+	deployed := projectReviewJobsDocument(t, before)
+	fresh := projectReviewJobsDocument(t, withKey)
+	key := gcp.ProjectJobName("standard", "github", "acme-key")
+	keyReview := credsvc.ReviewJobName("standard", "github", "acme-key")
+	deployedCoding, deployedReview := projectJobsOf(t, deployed), reviewJobsOf(t, deployed)
+	if _, ok := deployedCoding[key]; !ok {
+		t.Fatalf("the fixture's record holds %v, want the job the deployer composed for acme-key", slices.Sorted(maps.Keys(deployedCoding)))
+	}
+	if _, ok := deployedReview[keyReview]; !ok {
+		t.Fatalf("the fixture's record holds %v, want acme-key's review variant %s", slices.Sorted(maps.Keys(deployedReview)), keyReview)
+	}
+	if _, ok := projectJobsOf(t, fresh)[key]; ok {
+		t.Fatalf("the fixture's own document already composes %s, so this test would not be about the carry", key)
+	}
+	if _, ok := reviewJobsOf(t, fresh)[keyReview]; ok {
+		t.Fatalf("the fixture's own document already composes %s, so this test would not be about the carry", keyReview)
+	}
+
+	accounts := ProjectKeyAccountJobs(parseLC(t, withKey), nil)
+	want := []ProjectJobAccount{{Profile: "standard", Provider: "github", Account: "acme-key"}}
+	if !reflect.DeepEqual(accounts, want) {
+		t.Fatalf("ProjectKeyAccountJobs = %+v, want %+v: the filter's own answer, the triples the spec composes no job for", accounts, want)
+	}
+	// Nothing named is nothing carried: the carry is the caller's list and never
+	// the record's contents.
+	if got, err := CarriedProjectJobAccounts(fresh, deployed, nil); err != nil || !bytes.Equal(got, fresh) {
+		t.Fatalf("a carry of no triples changed the document (err %v): the record holds a job no caller named, and it stays where the config and the state have it\n%s", err, got)
+	}
+
+	got, err := CarriedProjectJobAccounts(fresh, deployed, accounts)
+	if err != nil {
+		t.Fatalf("the carry failed: %v", err)
+	}
+	wantCoding, wantReview := map[string]any{}, map[string]any{}
+	for name, job := range projectJobsOf(t, fresh) {
+		wantCoding[name] = job
+	}
+	wantCoding[key] = deployedCoding[key]
+	for name, job := range reviewJobsOf(t, fresh) {
+		wantReview[name] = job
+	}
+	wantReview[keyReview] = deployedReview[keyReview]
+	if gotCoding := projectJobsOf(t, got); !reflect.DeepEqual(gotCoding, wantCoding) {
+		t.Errorf("the carried document's project_jobs are %v, want %v: acme-key's job as the record holds it, and nothing else",
+			slices.Sorted(maps.Keys(gotCoding)), slices.Sorted(maps.Keys(wantCoding)))
+	}
+	if gotReview := reviewJobsOf(t, got); !reflect.DeepEqual(gotReview, wantReview) {
+		t.Errorf("the carried document's project_review_jobs are %v, want %v: ProjectReviewJobs derives a profile's variants from the coding set, so a coding job the carry leaves out takes its own variant with it",
+			slices.Sorted(maps.Keys(gotReview)), slices.Sorted(maps.Keys(wantReview)))
+	}
+	// The job is the record's own, and the plan that follows is a no-op because
+	// of it: an entry this run recomposed — a newer image, an environment this
+	// release's composer writes — would be a change the plan proposes.
+	job, carried := projectJobsOf(t, got)[key].(map[string]any)
+	if !carried || !reflect.DeepEqual(job, deployedCoding[key]) {
+		t.Errorf("the carried document's %s is\n%v\nwant the record's own entry\n%v: a job is carried as the record holds it, so the plan that follows proposes no change to it", key, job, deployedCoding[key])
+	}
+}
+
+// TestCarriedProjectJobAccountsLeavesTheSpecsOwnJobAlone: the carry fills what
+// the spec cannot compose and nothing else, on an axis whose other points the
+// spec composes itself.
+//
+// It is the shared walk's rule (carriedProjectJobs), and the reason it matters
+// on this axis: the caller names the triples the filter dropped
+// (ProjectKeyAccountJobs), and a document that composes one of them all the same
+// is the authority on it — that run is what catches the job up with this
+// release's image and environment.
+func TestCarriedProjectJobAccountsLeavesTheSpecsOwnJobAlone(t *testing.T) {
+	fresh := projectReviewJobsDocument(t, implicitReviewBaseLC()+keyCredentialAccountAxisLC)
+	name := gcp.ProjectJobName("standard", "github", "acme-personal")
+	if _, ok := projectJobsOf(t, fresh)[name]; !ok {
+		t.Fatalf("the fixture composes no %s, so this test would not be about the spec's own answer", name)
+	}
+	older := projectJobEnvFact(t, fresh, name, providers.EnvGitHubAppID, "999999999")
+
+	got, err := CarriedProjectJobAccounts(fresh, older, []ProjectJobAccount{{Profile: "standard", Provider: "github", Account: "acme-personal"}})
+	if err != nil {
+		t.Fatalf("the carry failed: %v", err)
+	}
+	job, _ := projectJobsOf(t, got)[name].(map[string]any)
+	env, _ := job["env"].(map[string]any)
+	if env[providers.EnvGitHubAppID] != "123456789" {
+		t.Errorf("the carried document's %s job runs on %v, want the App ID the spec composed: a record that holds an older job does not overwrite the one the config describes",
+			name, env[providers.EnvGitHubAppID])
 	}
 }
 
@@ -304,6 +433,12 @@ func TestCarriedProfileKeepsThePolicyAndLosesOnlyItsJob(t *testing.T) {
 		t.Fatalf("the carried review composition was refused: %v", err)
 	}
 	for _, name := range slices.Sorted(maps.Keys(review)) {
+		// The implicit default review job of a provider is the project's own, not
+		// a variant of the carried profile: it carries that profile's name by
+		// design and is composed whenever a repository of its provider exists.
+		if slices.ContainsFunc(ImplicitReviewProviders, func(p string) bool { return name == ImplicitReviewJobName(p) }) {
+			continue
+		}
 		if job := review[name]; job.Profile == projectpolicy.DefaultProfileName {
 			t.Errorf("the carried profile derived a review variant (%s): its variants are the deployed ones the carry keeps", name)
 		}

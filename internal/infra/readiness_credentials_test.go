@@ -22,8 +22,14 @@ var (
 // installation's outputs carry once fugaro update's credentials stage has run
 // (internal/infra.CredentialsService, D146).
 func credentialsService() *CredentialsService {
-	return &CredentialsService{Name: "fugaro-credentials", Region: "us-east5"}
+	return &CredentialsService{Name: "fugaro-credentials", Region: "us-east5", Account: credentialsServiceAccount}
 }
+
+// credentialsServiceAccount is the email of the account above, as the
+// installation's outputs carry it (the service's own account, D2074): it is
+// the member a repository root grants each mounted workflow secret to, so a
+// fixture without one plans no such grant at all.
+const credentialsServiceAccount = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
 
 // serviceHoldsTheAppKey is C2.2's release, in one line: the name joins
 // config.ServiceHeldSecretNames and every drop written for it turns on at once

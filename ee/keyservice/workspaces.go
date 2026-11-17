@@ -362,7 +362,17 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 		}
 		request.RenewalSecretHash = digest(dropped)
 	}
-	answer, err := s.paid(ctx, request, "", source, "")
+	// The key names the merchant's subscription where the licence was bought
+	// under one, which is what lets the customer renew the key they hold: the
+	// renewal endpoint reads the subscription off the record, and a key whose
+	// record names none is refused there (renew.go). A licence no merchant event
+	// sold — a free seat, a trial, an operations grant — names none, and that is
+	// the state its renewals are not a subscription's.
+	subscription, err := s.licenceSubscription(ctx, entitlement.ID)
+	if err != nil {
+		return WireWorkspace{}, err
+	}
+	answer, err := s.paid(ctx, request, "", source, subscription, entitlement.ID)
 	if err != nil {
 		return WireWorkspace{}, err
 	}

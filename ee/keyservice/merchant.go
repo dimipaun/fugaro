@@ -3,31 +3,37 @@
 
 package keyservice
 
-// The paid path: the merchant of record's events (§5). Paddle is the merchant
-// for Team checkout (D442), a purchase mints a v1 key stating the seats bought,
-// a seat change reissues under a new key id, a refund or a chargeback withdraws
-// the key its event names and every other key the same licence holds (§8, D2131
-// — see `withdrawn` for how the walk finds them and what that does not stop), a
-// cancellation stops the reissue, and a test-mode event mints a staging key and
-// nothing else. Enterprise is not this path: it is invoiced directly by the
-// entity and its key is the admin page's (D2141, §5.5).
+// The paid path: the merchant of record's events (§5, portal plan P4.2). Paddle
+// is the merchant for Team checkout (D442), a purchase grants the customer an
+// **entitlement** and never a key (D2196 — the key is minted at binding, which
+// is workspaces.go's), a seat change reissues under a new key id, a refund or a
+// chargeback withdraws the keys of the entitlement its transaction or
+// subscription belongs to (§8, D2131 — see `withdrawn` for how the walk finds
+// them and what that does not stop), a cancellation stops the reissue, and a
+// test-mode event mints a staging key and nothing else. Enterprise is not this
+// path: it is invoiced directly by the entity and its key is the admin page's
+// (D2141, §5.5).
 //
-// Two rules give this path its shape, and both are about not minting twice: a
-// body is verified **before it is read**, and what was minted for which source
-// is written down before the answer is returned (§5.2).
+// Three rules give this path its shape. A body is verified **before it is read**,
+// with the signature's own timestamp inside a five-minute window (F16). The
+// verified body is then **stored as received, before it is processed**, under
+// Paddle's event id — which is what makes a redelivery an event the store
+// already has rather than a second application of it, and what keeps a forged
+// body from being pre-stored under a real id. And an event is **admitted** only
+// if its transaction, or the subscription it belongs to, began with a
+// transaction this API created at the checkout (F15, D2192); anything else is
+// parked for operations rather than acted on.
+//
+// The body the intake reads is Paddle's own notification, and the adapter that
+// maps it to this service's canonical event is `paddleevents.go`.
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -111,12 +117,20 @@ var (
 	// therefore a redelivery, which is the whole of the repair this shape can
 	// offer — an event dropped here is one nothing will ever apply.
 	ErrUnknownSubscription = errors.New("keyservice: there is no subscription by that id")
-	// ErrNoBuyer is an event the service cannot deliver a key for: the paid path
-	// mails the key to the buyer's own address, and an event whose address is
-	// missing or unreadable is one that would end in a key nobody holds. It is
-	// answered with a failure rather than a mint, so the merchant's retry and the
-	// owner's alerting see it (§5.1).
-	ErrNoBuyer = errors.New("keyservice: the event carries no address a key can be mailed to")
+	// ErrNoBuyer is an event the service cannot answer for: the paid path writes
+	// the customer a notice at the buyer's own address, and an event whose
+	// address is missing or unreadable is one that would end in a licence nobody
+	// is told about. It is answered with a failure rather than a grant, so the
+	// merchant's retry and the owner's alerting see it (§5.1).
+	ErrNoBuyer = errors.New("keyservice: the event carries no address a licence can be sent to")
+	// ErrNoTransaction is a purchase this API did not open: the event names a
+	// transaction the checkout's own record does not hold, and the subscription
+	// it belongs to is one nothing here began either. It is the case F15 parks
+	// for operations rather than the case this path refuses, and the two are told
+	// apart before `purchased` is reached — so reaching it here means the record
+	// a first delivery read was gone by the second, which is a `500` and a
+	// redelivery rather than a sale written against a transaction nobody made.
+	ErrNoTransaction = errors.New("keyservice: the purchase's transaction is not one this API created")
 	// ErrNoClaims is an event that does not say what to mint: a purchase or a
 	// seat change with no organisation, no workspace id, no seats or no term,
 	// or one whose term is not a period this checkout sells. Those four are the
@@ -137,17 +151,21 @@ var (
 
 // Event is one merchant event as the intake reads it. It is the service's own
 // canonical shape rather than the merchant's raw notification body: the names
-// are this project's, the decode is strict, and the mapping from Paddle's
-// payload to this one is the deploy's (S3.7) — which is also where a field
-// Paddle adds later is absorbed, instead of silently failing a strict decode
-// here.
+// are this project's, and the mapping from Paddle's payload to this one is
+// `paddleevents.go` — which is also where a field Paddle adds later is absorbed,
+// instead of failing the intake on the day the merchant ships a change.
 type Event struct {
-	ID           string    `json:"id"`
-	Type         string    `json:"type"`
-	Mode         Mode      `json:"mode"`
-	OccurredAt   time.Time `json:"occurred_at"`
-	Subscription string    `json:"subscription"`
-	Organisation string    `json:"organisation"`
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	Mode       Mode      `json:"mode"`
+	OccurredAt time.Time `json:"occurred_at"`
+	// Transaction is the merchant's own transaction id, which is the half of
+	// F15's admission rule the event itself states: a transaction this API
+	// created at the checkout (P4.1) is what makes a purchase admissible, and a
+	// renewal of the subscription it began is admissible by the other half.
+	Transaction  string `json:"transaction"`
+	Subscription string `json:"subscription"`
+	Organisation string `json:"organisation"`
 	// Email is the buyer's own address as the merchant's payload carries it,
 	// and it is where the key is mailed: the record's personal data is the
 	// minimum a key's delivery needs (§7.3). An event without one is refused
@@ -163,96 +181,79 @@ type Event struct {
 	WorkspaceID string `json:"workspace_id"`
 	Seats       int    `json:"seats"`
 	TermDays    int    `json:"term_days"`
-	// KeyID is the key a refund or a chargeback withdraws. §8's list is keyed by
-	// the key and not by the subscription, so what the event names is the key the
-	// buyer holds — and resolving the merchant's own transaction or subscription
-	// to it is the deploy's mapping (S3.7), which is why the field is here rather
-	// than looked up: the store is a list of who holds a licence and never of the
-	// licences (K2.2, §7.3).
-	KeyID string `json:"key_id"`
 }
 
-// VerifySignature checks the merchant's signature over the raw body, in the
-// scheme Paddle signs with: `Paddle-Signature: ts=<unix>;h1=<hex>`, where the
-// digest is HMAC-SHA256 of `ts:body` under the deployment's signing secret.
+// webhook receives one merchant event, in the order F16 fixes: **verify, store,
+// then process**.
 //
-// There is no freshness window, and that is deliberate: §5.2 makes replay the
-// event id's job and out-of-order delivery the subscription's own state's, so a
-// window would be a second rule that refuses a delivery the merchant meant —
-// while an attacker replaying a captured body gets a mint that the record
-// already holds and an ordering that does not move backwards either way (§9.1
-// row 9).
-func VerifySignature(secret []byte, header string, body []byte) error {
-	if len(secret) == 0 {
-		return errors.New("the merchant's signing secret is not configured, so no body can be verified and none is read")
-	}
-	stamp, signature := "", ""
-	for _, part := range strings.Split(header, ";") {
-		name, value, found := strings.Cut(strings.TrimSpace(part), "=")
-		if !found {
-			continue
-		}
-		switch name {
-		case "ts":
-			if stamp == "" {
-				stamp = value
-			}
-		case "h1":
-			if signature == "" {
-				signature = value
-			}
-		}
-	}
-	if stamp == "" || signature == "" {
-		return fmt.Errorf("%w: the header carries no ts and h1", ErrSignature)
-	}
-	if _, err := strconv.ParseInt(stamp, 10, 64); err != nil {
-		return fmt.Errorf("%w: the timestamp is not a unix second", ErrSignature)
-	}
-	signed, err := hex.DecodeString(signature)
-	if err != nil {
-		return fmt.Errorf("%w: the h1 is not hexadecimal", ErrSignature)
-	}
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(stamp + ":"))
-	mac.Write(body)
-	if !hmac.Equal(signed, mac.Sum(nil)) {
-		return ErrSignature
-	}
-	return nil
-}
-
-// webhook receives one merchant event. Everything it refuses is refused with
-// the same answer, `200` and no body: a forger learns nothing about which
-// bodies are close to verifying, and the merchant is not told which of its
-// events a stranger could forge either (§5.2). A failure on this side is a
-// `500`, which is the merchant's cue to send it again.
+// Everything it refuses is refused with the same answer, `200` and no body: a
+// forger learns nothing about which bodies are close to verifying, and the
+// merchant is not told which of its events a stranger could forge either (§5.2).
+// A failure on this side is a `500`, which is the merchant's cue to send it
+// again.
+//
+// The one answer that is neither is the undecodable verified body's `400`. It is
+// a `400` and not a `200` because the body was Paddle's own — it verified — and
+// a body this service cannot read is a mapping that has stopped working, which
+// the merchant's retry and operations' list are the two things that see (F16).
+// It is stored all the same, so that what arrived is not lost with the failure.
 func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxEventBytes))
 	if err != nil {
 		s.accept(w)
 		return
 	}
-	if err := VerifySignature(s.cfg.MerchantSecret, r.Header.Get(SigningHeader), body); err != nil {
+	header := r.Header.Get(SigningHeader)
+	if err := VerifyDelivery(s.cfg.MerchantSecret, header, body, s.now()); err != nil {
+		// A body whose signature does not verify, and a body whose signature is
+		// outside the window, are one answer: the window is not something a
+		// stranger posting bodies is told about either.
 		s.accept(w)
 		return
 	}
-	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
-	var e Event
-	if err := dec.Decode(&e); err != nil {
+	ctx := r.Context()
+	n, err := decodeNotification(body)
+	if err != nil {
+		digest := eventDigest(body)
+		// The digest is the id of a body that names none of Paddle's, and it is
+		// derived from the bytes rather than minted here: the same body
+		// delivered twice is one record, and a stranger who could choose the id
+		// would choose the one a real event is stored under (F16).
+		if _, err := s.keepReceived(ctx, WireLedgerEvent{
+			ID: digest, ReceivedAt: s.now(), Signature: header, Body: string(body),
+		}); err != nil {
+			fail(w, err)
+			return
+		}
+		if err := s.markEvent(ctx, digest, ledgerUndecodable, nil); err != nil {
+			fail(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	held, err := s.keepReceived(ctx, WireLedgerEvent{
+		ID: n.key(), ReceivedAt: s.now(), Signature: header,
+		Notification: n.EventType, Body: string(body),
+	})
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if held.State == ledgerProcessed || held.State == ledgerDismissed {
+		// §5.2's idempotency, and for the events that mint nothing it is the
+		// whole of it: the store already holds what this event did, and the body
+		// arriving again does not unmake it. The state is read from the record
+		// the store held rather than from this delivery, because it is the store
+		// that knows the event was applied.
 		s.accept(w)
 		return
 	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		s.accept(w)
-		return
-	}
-	if e.ID == "" || e.Subscription == "" {
-		s.accept(w)
-		return
-	}
-	if e.Mode != ModeFor(s.cfg.Environment) {
+	e, known := canonicalEvent(n, ModeFor(s.cfg.Environment))
+	if !known {
+		// A notification this service does not act on: a customer record, a
+		// payment failure, a reversal. It is stored and answered, because an
+		// event the merchant adds later is not a reason to make it retry forever.
 		s.accept(w)
 		return
 	}
@@ -263,16 +264,81 @@ func (s *Service) webhook(w http.ResponseWriter, r *http.Request) {
 		// redelivery of that event is newer than the state it must not move, and
 		// a replayed purchase would rewrite a cancelled subscription and let a
 		// renewal mint a paid key for it. It is refused rather than dropped
-		// silently, so the deploy's mapping of the merchant's payload to this
-		// shape (S3.7) fails visibly instead of minting nothing for a customer.
+		// silently, so the adapter fails visibly instead of minting nothing for a
+		// customer.
 		fail(w, fmt.Errorf("%w: the event %s", ErrNoInstant, e.ID))
 		return
 	}
-	if err := s.apply(r.Context(), e); err != nil {
+	admitted, err := s.admitted(ctx, e)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	if !admitted {
+		// F15: an event whose transaction and subscription both began with
+		// something this API did not create is parked, not applied and not
+		// refused. Operations is what attaches or dismisses it (P5.1), and the
+		// body is in the list for them either way.
+		if err := s.markEvent(ctx, e.ID, ledgerParked, nil); err != nil {
+			fail(w, err)
+			return
+		}
+		s.accept(w)
+		return
+	}
+	if err := s.apply(ctx, e); err != nil {
+		fail(w, err)
+		return
+	}
+	if err := s.markEvent(ctx, e.ID, ledgerProcessed, s.entitlementOfEvent(ctx, e)); err != nil {
 		fail(w, err)
 		return
 	}
 	s.accept(w)
+}
+
+// admitted is F15's rule: an event is admitted when its transaction, or the
+// subscription it belongs to, began with a transaction this API created at the
+// checkout.
+//
+// The two halves are Paddle's own behaviour. A first purchase's transaction is
+// the one P4.1 created, and the checkout's record is keyed by it. Everything
+// after that — a renewal, a proration, a seat change, a cancellation, a refund —
+// is Paddle acting on the subscription that transaction began, and what says so
+// is the record this service wrote when it processed the purchase
+// (`paddleOrigin`). A subscription a stranger started has neither.
+func (s *Service) admitted(ctx context.Context, e Event) (bool, error) {
+	if e.Transaction != "" {
+		if _, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, e.Transaction); err != nil {
+			return false, err
+		} else if held {
+			return true, nil
+		}
+	}
+	if e.Subscription != "" {
+		if _, held, err := s.origin(ctx, e.Subscription); err != nil {
+			return false, err
+		} else if held {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// entitlementOfEvent is the entitlement one event resolved to, or nil for an
+// event that resolved to none. It is written onto the stored event so that a
+// person reading the ledger can walk from the money to the licence it bought
+// without reading the store's own records.
+//
+// The resolution is the one `withdrawn` makes, because the two are one question
+// asked at two moments: a refund names a transaction or a subscription, and the
+// entitlement is what both of them belong to.
+func (s *Service) entitlementOfEvent(ctx context.Context, e Event) *string {
+	held, found, err := s.entitlementFor(ctx, e)
+	if err != nil || !found {
+		return nil
+	}
+	return &held.ID
 }
 
 // apply is one event's effect on the store: §5.2's idempotency first, then §8's
@@ -334,6 +400,16 @@ func (s *Service) apply(ctx context.Context, e Event) error {
 		if !held {
 			return fmt.Errorf("%w: the seat change %s for the subscription %s", ErrUnknownSubscription, e.ID, e.Subscription)
 		}
+		if sub.Seats == e.Seats {
+			// Paddle's `subscription.updated` fires for every change to a
+			// subscription, and the seats are only one of them: a body stating
+			// the seats the store already holds is a change to something else —
+			// a price, a status, a billing period — and minting a key for it
+			// would reissue the licence on every unrelated update the merchant
+			// sends. Nothing is done and the event is recorded as processed,
+			// because it is the event that is stored and read, not the mint.
+			return nil
+		}
 		return s.seatChanged(ctx, e, sub)
 	case EventCancellation:
 		if !held {
@@ -349,15 +425,18 @@ func (s *Service) apply(ctx context.Context, e Event) error {
 
 // completed is the second half of an event whose mint is already recorded, and
 // §5.2's idempotency guard is what a redelivery of one meets. What it is for is
-// the write the first delivery did not finish: a purchase mints and *then* saves
-// the subscription, so a store failure between the two leaves a customer with a
-// delivered key and no state — no renewal, no seat changes, no cancellation, and
-// no paid-domain refusal — and the merchant's retry would otherwise stop at the
-// recorded source and leave it that way forever. Here the retry finishes it from
-// the record the mint left, which is the whole of what the event's effect needs:
-// the seats, the term, the address and the end of the term are all in it — and
-// what it writes into is the subscription the store holds, never a fresh one, so
-// a state the store has moved on to since is not thrown away by the repair.
+// the write the first delivery did not finish: a seat change mints and *then*
+// saves the subscription, so a store failure between the two leaves a customer
+// with a delivered key and a store that still holds the old seats — and the
+// merchant's retry would otherwise stop at the recorded source and leave it that
+// way forever. Here the retry finishes it from the record the mint left, which
+// is the whole of what the event's effect needs: the seats are in it — and what
+// it writes into is the subscription the store holds, never a fresh one, so a
+// state the store has moved on to since is not thrown away by the repair.
+//
+// A purchase has no such half any more: it mints nothing, so there is no
+// recorded source for a retry to stop at, and what the retry re-applies is the
+// grant itself (D2196).
 //
 // The same read-then-write limit is why the store, and not this function, is
 // where a durable fix belongs; the Store contract says so and S3.5 is the
@@ -368,82 +447,65 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 		return err
 	}
 	// §5.2's ordering is re-read here for the same reason it is read in apply: a
-	// redelivery of a purchase must not resurrect the subscription a later
+	// redelivery of an event must not resurrect the subscription a later
 	// cancellation or a later term has already moved past. It excludes the same
 	// thing it excludes there, an event strictly older than the state, and not a
 	// tie: an event tied with the stored instant is one the merchant meant.
 	if held && e.OccurredAt.Before(sub.At) {
 		return nil
 	}
-	switch e.Type {
-	case EventPurchase:
-		to, deliverable := address(record.Email)
-		if !deliverable {
-			return fmt.Errorf("%w: the purchase %s", ErrNoBuyer, e.ID)
-		}
-		// The state is written from what the store holds when it holds one, and
-		// never from a fresh subscription: a redelivery is not a second purchase,
-		// and writing the record's fields into a literal drops everything the
-		// subscription has since become — a cancellation that landed on the
-		// purchase's own instant is undone by the very write that repairs the
-		// term, and the renewal then mints a paid key for a customer who has left
-		// (§5.2, §5.3). Only the fields the record is the source of move, and the
-		// term moves only forward: a renewal runs inside the term the purchase
-		// paid for and ends later than it, so a redelivery of the purchase after
-		// one would otherwise put the subscription back on the term the renewal
-		// replaced — a store that says the term has ended while the customer holds
-		// a key for the year after it, and a seat change in that window minting a
-		// key that covers the wrong term.
-		sub.ID = e.Subscription
-		sub.Organisation = record.Organisation
-		sub.Seats = record.Seats
-		sub.TermDays = record.TermDays
-		if sub.TermDays < 1 {
-			// A record an earlier deploy wrote names no term of its own, and the
-			// length of the key it minted is the only term it has left to state.
-			// The repair may not carry that absence into the state: a subscription
-			// at zero days is one `checkoutPolicy` does not sell, so every renewal
-			// and every seat change after it is refused for good (D442).
-			sub.TermDays = daysBetween(record.Issued, record.Expires)
-		}
-		sub.Email = to
-		sub.At = e.OccurredAt
-		// The workspace is the event's and not the record's: the issuance record
-		// carries no workspace id, so a purchase whose subscription write failed
-		// and is repaired here would otherwise leave a record that names none —
-		// and Renew refuses such a record rather than minting a key every
-		// verifier refuses (TN2, §5.1).
-		if e.WorkspaceID != "" {
-			sub.WorkspaceID = e.WorkspaceID
-		}
-		if end := entitlementEnd(record); end.After(sub.Expires) {
-			sub.Expires = end
-		}
-		return s.store.SaveSubscription(ctx, sub)
-	case EventSeatChange:
-		if !held || sub.Cancelled || sub.Seats == record.Seats {
-			return nil
-		}
-		sub.Seats = record.Seats
-		if e.WorkspaceID != "" {
-			sub.WorkspaceID = e.WorkspaceID
-		}
-		sub.At = e.OccurredAt
-		return s.store.SaveSubscription(ctx, sub)
+	if e.Type != EventSeatChange {
+		return nil
 	}
-	return nil
+	if !held || sub.Cancelled || sub.Seats == record.Seats {
+		return nil
+	}
+	sub.Seats = record.Seats
+	if e.WorkspaceID != "" {
+		sub.WorkspaceID = e.WorkspaceID
+	}
+	sub.At = e.OccurredAt
+	return s.store.SaveSubscription(ctx, sub)
 }
 
-// purchased mints the first key of a subscription and records the term it
-// covers. The mint happens through the minter and never through a signer here,
-// the seats are the ones the merchant's event names (§5.1), and the row is the
-// one its term is sold under.
+// purchased grants the entitlement a purchase bought, records the subscription
+// the merchant's later events are about, and mails the buyer a link. **It mints
+// nothing** (D2196).
+//
+// A **renewal** and a **proration** reach this function too, because Paddle
+// states them as a transaction completed like any other and the difference is
+// only in what is behind the event: a first payment's transaction is the one
+// P4.1 created, and a renewal's is one Paddle made itself against the
+// subscription the first one began. What a renewal does here is add the term the
+// money bought to the licence that is already there (`renewedLicence`) and mail
+// nothing — the customer has been told about that licence once already, and a
+// second notice for every month of a subscription is mail nobody asked for.
+//
+// The key is minted at the binding and not at the sale, and the reason is
+// ordering rather than taste: a customer pays before `fugaro setup` has created
+// anything (F25), so a purchase that minted would mint a key bound to no project
+// — which every verifier refuses (TN2) — and mail it to an address nobody has
+// installed anything at. What the purchase leaves is the grant: the row, the
+// seats and the term, running from the payment's own instant (D2197), and the
+// customer's own act of binding it to a project is what issues the key
+// (workspaces.go's `bindEntitlement`).
+//
+// The mail carries the portal's address and no key (F3, D2182): there is no key
+// yet, and the portal is where the customer binds the licence and finds the key
+// it mints — and, later, where they find it again.
+//
+// The record read first is F15's other half: what was bought is the checkout's
+// own record and not the notification's word for it, and a purchase whose
+// transaction this API never opened is the case that was parked before this
+// function was reached (`admitted`), so reaching here without one means the
+// record went away between the two reads — a `500`, and the merchant sends it
+// again.
 //
 // Enterprise is refused before any of that, and it is refused rather than sold
 // the Team row: §5.5's keys are invoiced directly by the entity and minted from
 // the admin page, so a deployment whose paid plan names the Enterprise tier is
 // one whose checkout would price a tier that is never self-serve — and the
-// customer would be mailed a key for a licence nobody sold them (D2141).
+// customer would be granted a licence nobody sold them (D2141).
 func (s *Service) purchased(ctx context.Context, e Event) error {
 	if s.cfg.Paid.Tier != licence.TierTeam {
 		return fmt.Errorf("the checkout sells Team keys and this deployment's paid plan names the %s tier, and an Enterprise key is invoiced directly and minted from the admin page (D2141, §5.5)", s.cfg.Paid.Tier)
@@ -451,28 +513,311 @@ func (s *Service) purchased(ctx context.Context, e Event) error {
 	if e.Organisation == "" || e.WorkspaceID == "" || e.Seats < 1 || e.TermDays < 1 {
 		return fmt.Errorf("%w: the purchase %s", ErrNoClaims, e.ID)
 	}
-	policy, sold := checkoutPolicy(e.TermDays)
-	if !sold {
-		return fmt.Errorf("%w: the purchase %s names a term the checkout does not sell (D442)", ErrNoClaims, e.ID)
-	}
-	to, deliverable := address(e.Email)
-	if !deliverable {
-		return fmt.Errorf("%w: the purchase %s", ErrNoBuyer, e.ID)
-	}
-	minted, err := s.paid(ctx, s.paidRequest(policy, e.WorkspaceID, e.Organisation, e.Seats, e.TermDays), to, e.ID, e.Subscription)
+	bought, found, err := s.boughtBy(ctx, e)
 	if err != nil {
 		return err
 	}
-	return s.store.SaveSubscription(ctx, Subscription{
-		ID:           e.Subscription,
-		Organisation: e.Organisation,
-		WorkspaceID:  e.WorkspaceID,
-		Seats:        e.Seats,
-		TermDays:     e.TermDays,
-		Email:        to,
-		At:           e.OccurredAt,
-		Expires:      entitlementEnd(minted.Record),
-	})
+	if !found {
+		return fmt.Errorf("%w: the purchase %s", ErrNoTransaction, e.ID)
+	}
+	// The row is the one the term is sold under, and a term the checkout does not
+	// sell is refused rather than sold the nearest one: a licence granted for a
+	// period nobody sells is one the customer paid for with whatever they paid
+	// (D442). A **renewal** states its own period like any other transaction, and
+	// a period Paddle computed — a proration's — is read against the row the
+	// subscription was bought on, because the customer bought that row and this
+	// event is that purchase continued.
+	policy, sold := checkoutPolicy(e.TermDays)
+	days := e.TermDays
+	if !sold {
+		stored, held, err := s.store.Subscription(ctx, e.Subscription)
+		if err != nil {
+			return err
+		}
+		if !held {
+			return fmt.Errorf("%w: the purchase %s names a term the checkout does not sell (D442)", ErrNoClaims, e.ID)
+		}
+		days = stored.TermDays
+		policy, sold = checkoutPolicy(days)
+		if !sold {
+			return fmt.Errorf("%w: the purchase %s names a term the checkout does not sell and its subscription's own is not one either (D442)", ErrNoClaims, e.ID)
+		}
+	}
+	to, deliverable := address(bought.Email)
+	if !deliverable {
+		to, deliverable = address(e.Email)
+	}
+	if !deliverable {
+		return fmt.Errorf("%w: the purchase %s", ErrNoBuyer, e.ID)
+	}
+	end := e.OccurredAt.Add(time.Duration(days) * 24 * time.Hour)
+	// The workspace is the checkout's own and never the notification's: it is the
+	// portal workspace the money was for (P4.1's record), and the event's
+	// `custom_data` is the same name stated a second time by the body this
+	// service signed for. A grant written against the notification's word alone
+	// would be a grant for whatever a body named.
+	workspace := bought.WorkspaceID
+	if workspace == "" {
+		return fmt.Errorf("%w: the purchase %s", ErrNoClaims, e.ID)
+	}
+	// A first purchase is the one that grants; a renewal and a proration are the
+	// same licence continued, and what they move is the term of the grant that is
+	// already there (`renewedLicence`).
+	//
+	// The grant is made only when the checkout's record names no licence yet: the
+	// grant is followed by writes that can fail, and the merchant redelivers what
+	// it got no answer for, so a retry that reached `recordBought` reads its own
+	// licence back here and carries on with it. The notice is not gated this way —
+	// the failure being answered may have been the notice itself, so it is sent
+	// again below.
+	licence := bought.EntitlementID
+	if bought.First && licence == "" {
+		entitlement, err := s.grantEntitlement(ctx, entitlementGrant{
+			ID:             purchaseLicenceID(bought.TransactionID),
+			At:             e.OccurredAt,
+			OrganisationID: bought.OrganisationID,
+			WorkspaceID:    &workspace,
+			Source:         entitlementSourcePurchase,
+			Row:            policy,
+			Seats:          e.Seats,
+			StartsAt:       e.OccurredAt,
+			EndsAt:         end,
+		})
+		if err != nil {
+			return err
+		}
+		licence = entitlement.ID
+	}
+	// The subscription is the store's own record of what the merchant bills: the
+	// renewal's window, the seat change's term and the cancellation's own state
+	// are all read off it, and Paddle's subscription id is what every later
+	// event is matched to a licence by. A renewal moves its end forward and never
+	// back — an event redelivered out of order must not take a term off a
+	// customer who has paid for it — while a first purchase writes it.
+	sub, held, err := s.store.Subscription(ctx, e.Subscription)
+	if err != nil {
+		return err
+	}
+	if !held {
+		sub = Subscription{ID: e.Subscription}
+	}
+	sub.Organisation = bought.OrganisationID
+	// The workspace the store's own record names is the project id the event
+	// carries where it carries one, and the portal's workspace otherwise: a
+	// workspace a customer has not bound yet has no project, and D2192's second
+	// sale for it is refused by the portal workspace's name just as well
+	// (checkout.go's `refuseSubscribedWorkspace` reads both spellings).
+	sub.WorkspaceID = e.WorkspaceID
+	sub.Seats = e.Seats
+	// The term the subscription stands for is the row it was bought on and never
+	// the period this one event stated: a period Paddle computed is not a row
+	// anybody sells, and a record left holding it is one whose every later event
+	// — a seat change, a renewal — is refused for good (D442).
+	sub.TermDays = days
+	sub.Email = to
+	sub.At = e.OccurredAt
+	if end.After(sub.Expires) {
+		sub.Expires = end
+	}
+	if err := s.store.SaveSubscription(ctx, sub); err != nil {
+		return err
+	}
+	if err := s.recordOrigin(ctx, paddleOrigin{
+		SubscriptionID: e.Subscription,
+		TransactionID:  e.Transaction,
+		EntitlementID:  licence,
+		OrganisationID: bought.OrganisationID,
+		WorkspaceID:    workspace,
+		At:             e.OccurredAt,
+	}); err != nil {
+		return err
+	}
+	if bought.First {
+		// The checkout's own record names the licence its money bought, so a
+		// refund of this transaction resolves to that licence months later —
+		// when the workspace's current one is a licence this money never paid
+		// for, or when there is none at all (F16, F29).
+		if err := s.recordBought(ctx, bought.TransactionID, licence); err != nil {
+			return err
+		}
+	}
+	if !bought.First {
+		return s.renewedLicence(ctx, e, licence, end)
+	}
+	return s.mail.Send(ctx, purchaseMail(to, s.portalLink()))
+}
+
+// renewedLicence is a renewal's and a proration's effect: the licence the
+// customer holds, with the term the money bought added to it (D2196, D2197).
+//
+// Nothing is granted and nothing is minted. A renewal buys another term of the
+// licence that is already there — the entitlement is the grant and the term is
+// what the money moved — and the key the customer's installation runs was minted
+// at the binding and belongs to that same grant. A renewal that granted a second
+// entitlement would supersede the first (D2204's one active grant per workspace)
+// and leave the key the customer holds attached to a grant the portal no longer
+// shows as theirs.
+//
+// The end moves forward and never back: a renewal redelivered out of order, or
+// one whose event is older than a term already granted, must not take a term off
+// a customer who has paid for it. That is the same direction `purchased` writes
+// the subscription's own end in, and the two are the same rule at two records.
+func (s *Service) renewedLicence(ctx context.Context, e Event, licence string, end time.Time) error {
+	if licence == "" {
+		// The subscription is this API's — that is what admitted the event — and
+		// a subscription whose origin names no grant is a record this service did
+		// not write. It is a `500` and the merchant's retry rather than a silent
+		// drop, because a renewal nothing applies is a customer who has paid for a
+		// term they do not get.
+		return fmt.Errorf("%w: the renewal %s belongs to the subscription %s, whose record names no licence", ErrNoTransaction, e.ID, e.Subscription)
+	}
+	held, present, err := getRecord[WireEntitlement](ctx, s.docs, entitlementsCollection, licence)
+	if err != nil {
+		return err
+	}
+	if !present {
+		return fmt.Errorf("%w: the renewal %s names the licence %s, which the store does not hold", ErrNoTransaction, e.ID, licence)
+	}
+	if !end.After(held.EndsAt) {
+		return nil
+	}
+	held.EndsAt = end
+	doc, err := storedDoc(held)
+	if err != nil {
+		return err
+	}
+	if err := s.docs.Put(ctx, entitlementsCollection, held.ID, doc); err != nil {
+		return fmt.Errorf("keyservice: the licence %s was renewed and its term could not be moved: %w", held.ID, err)
+	}
+	return nil
+}
+
+// purchaseLicenceID is the id of the licence one transaction bought. It is taken
+// from the transaction rather than minted, because the grant is followed by
+// writes that can fail and the merchant delivers an event again when it got no
+// answer: a delivery applied twice has to write one licence and not two, and the
+// transaction is the one thing the two deliveries share (D2192's one transaction
+// is one purchase).
+//
+// It is the second of two halves. A redelivery whose licence the checkout's
+// record already names is not granted again at all (`boughtBy`, `purchased`), and
+// this id is what keeps the grant itself one record for the failures before that
+// record was stamped: the same id is written again, superseding nothing, instead
+// of a second licence superseding the first (D2204).
+func purchaseLicenceID(transactionID string) string {
+	return "purchase:" + digest(transactionID)
+}
+
+// boughtBy is what one purchase event is read against: the transaction this API
+// created for it, or — for a renewal or a proration, which Paddle creates itself
+// (F15) — the subscription that transaction began.
+type boughtBy struct {
+	TransactionID  string
+	OrganisationID string
+	WorkspaceID    string
+	Email          string
+	// EntitlementID is the licence this money is already the money of: the one
+	// the subscription was begun by, which is what a renewal's and a proration's
+	// term is added to, or — for a purchase whose grant has already landed — the
+	// licence the checkout's own record names, which is what a redelivery reads
+	// instead of granting a second one. It is empty for a first purchase whose
+	// grant is what this delivery makes.
+	EntitlementID string
+	// First is whether this event is the subscription's first payment, which is
+	// the one that grants the licence and mails the customer. A redelivery of it
+	// is still the first payment — the subscription was begun by it and no other
+	// — and what keeps it from granting twice is EntitlementID, which the grant
+	// itself writes; the notice is mailed again, because the failure the
+	// redelivery is answering may have been the notice.
+	First bool
+}
+
+// boughtBy reads the two records a purchase is admitted and read against, in the
+// order F15 names them: the checkout's own record by the event's transaction,
+// and the subscription's origin by the event's subscription.
+func (s *Service) boughtBy(ctx context.Context, e Event) (boughtBy, bool, error) {
+	if e.Transaction != "" {
+		record, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, e.Transaction)
+		if err != nil {
+			return boughtBy{}, false, err
+		}
+		if held {
+			// The licence the checkout's record names is read back here so that a
+			// redelivery of a purchase whose grant already landed reuses it. The
+			// merchant retries a delivery whose answer it never saw, and every step
+			// after the grant — the subscription's write, the origin, the record
+			// itself, the notice, the event's own state — can be the one that failed:
+			// a second grant would supersede the licence the customer is already
+			// binding against, for money that bought one licence (D2204).
+			return boughtBy{
+				TransactionID:  record.ID,
+				OrganisationID: record.OrganisationID,
+				WorkspaceID:    record.WorkspaceID,
+				Email:          record.Email,
+				EntitlementID:  record.EntitlementID,
+				First:          true,
+			}, true, nil
+		}
+	}
+	if e.Subscription == "" {
+		return boughtBy{}, false, nil
+	}
+	origin, held, err := s.origin(ctx, e.Subscription)
+	if err != nil {
+		return boughtBy{}, false, err
+	}
+	if !held {
+		return boughtBy{}, false, nil
+	}
+	// The address a renewal is mailed to is the subscription's own, which the
+	// purchase wrote and which is the only place it still is months later
+	// (§5.1).
+	email := ""
+	if stored, found, err := s.store.Subscription(ctx, e.Subscription); err != nil {
+		return boughtBy{}, false, err
+	} else if found {
+		email = stored.Email
+	}
+	return boughtBy{
+		TransactionID:  origin.TransactionID,
+		OrganisationID: origin.OrganisationID,
+		WorkspaceID:    origin.WorkspaceID,
+		Email:          email,
+		EntitlementID:  origin.EntitlementID,
+	}, true, nil
+}
+
+// portalLink is where a notice sends the customer: the portal's own workspace
+// list, on the origin this intake answers on. The SPA and this API are one host
+// (F21 — Hosting serves the page from the origin it rewrites `/api/**` from), so
+// the origin is already configuration and no second field has to name it.
+func (s *Service) portalLink() string {
+	return strings.TrimSuffix(s.cfg.URL, "/") + portalWorkspacesPath
+}
+
+// portalWorkspacesPath is the portal's own route for the list of a customer's
+// workspaces, which is where a licence that has just been bought is bound.
+const portalWorkspacesPath = "/workspaces"
+
+// licenceSubject is the purchase notice's subject. It is a constant of this
+// package's for the reason mail.go's two are: a buyer's own text must not be able
+// to reach a mail header (§7.2).
+const licenceSubject = "Your Fugaro licence is ready"
+
+// purchaseMail is the notice one purchase sends: where the licence is, and how
+// to get the key it issues. **It carries no key** (F3, D2182) — there is none
+// yet, because the key is minted at the binding — and that is also why it names
+// the portal rather than attaching anything: the portal is where the customer
+// binds the licence, and where they find the key again after they have.
+func purchaseMail(to, link string) Message {
+	return Message{
+		To:      to,
+		Subject: licenceSubject,
+		Body: "Your Fugaro licence is ready.\n\n" +
+			"Bind it to your Firebase project in the portal, and your key is issued there:\n" +
+			link + "\n\n" +
+			"No key is sent by mail. The portal is where it is issued, and where you can find it again.\n",
+	}
 }
 
 // entitlementEnd is the end of the term an issuance stands for: the instant its
@@ -501,6 +846,102 @@ func entitlementEnd(record Record) time.Time {
 		return record.Expires
 	}
 	return record.Issued.Add(time.Duration(record.TermDays) * 24 * time.Hour)
+}
+
+// licenceOf is the licence one subscription was bought under, which every
+// reissue path reads before it mints (P3.6).
+//
+// A subscription whose origin names no licence is a record this service did not
+// write — the same state `renewedLicence` refuses for a renewal event — and it
+// is a failure rather than a plain mint: the key a reissue mints is one `/renew`
+// serves, and `/renew` serves only keys that name the licence they run under
+// (F27), so a reissue under none would hand the customer a key whose every later
+// renewal is refused. A `500` is the merchant's cue to send the event again, and
+// by then the store either holds the licence or an operator is looking at it.
+func (s *Service) licenceOf(ctx context.Context, subscriptionID string) (string, error) {
+	origin, held, err := s.origin(ctx, subscriptionID)
+	if err != nil {
+		return "", err
+	}
+	if !held || origin.EntitlementID == "" {
+		return "", fmt.Errorf("%w: the subscription %s, whose record names no licence (P3.6)", ErrNoTransaction, subscriptionID)
+	}
+	return origin.EntitlementID, nil
+}
+
+// reissueRequest is one reissue under a licence: what the minter is asked for,
+// where the key is mailed, and the two names the record keeps (P3.6, D2200).
+type reissueRequest struct {
+	// Entitlement is the licence the key is reissued under. A path that cannot
+	// name one does not reach here — `licenceOf` is what refuses it — and the
+	// empty string is refused again in `reissue`, because what it would mint is
+	// a key no renewal can serve.
+	Entitlement  string
+	Request      RequestV1
+	Applicant    string
+	Source       string
+	Subscription string
+}
+
+// reissue mints the next key of a licence that already has one, and it is D2200
+// as code: the successor keeps the **licence's renewal secret hash** rather than
+// rotating it, the key it supersedes is left in the handover for `/renew` to
+// answer with, and the licence's own record carries both keys.
+//
+// Keeping the hash is what the ruling is for. The secret is the installation's
+// half of a renewal — it is written into the keychain once, at the first
+// binding, and the key's claim set carries only its digest — so a seat change or
+// the merchant's own renewal that minted a *fresh* secret would leave the
+// installation holding a key and a secret that no longer renew it, waiting for a
+// mail nobody has to read (F2). The minter takes the hash in place of a fresh
+// secret and answers none (P1.8, minter.MintV1), which is why `paid` files the
+// key state under the request's hash and the mail says the secret is unchanged.
+//
+// The handover is what makes `/renew` answer the newest key, and it is written
+// against the key it supersedes: an installation still running that key asks
+// with it, the state still proves it — the secret is the same one — and the
+// handover hands over the successor the mail may never have been read for
+// (renew.go's `answerRotation`). It is written only when the holder's secret is
+// known: a predecessor with no key state is a key that cannot renew at all, so
+// there is no secret to reopen the window for, and the successor — minted with a
+// fresh secret the same mail carries — stands on its own.
+func (s *Service) reissue(ctx context.Context, req reissueRequest) (MintedV1, error) {
+	if req.Entitlement == "" {
+		return MintedV1{}, fmt.Errorf("%w: a reissue under no licence (P3.6)", ErrNoClaims)
+	}
+	records, err := s.store.Issuances(ctx)
+	if err != nil {
+		return MintedV1{}, err
+	}
+	predecessor, supersedes := newestIssuance(records, req.Entitlement)
+	hash := ""
+	if supersedes {
+		state, known, err := s.store.KeyState(ctx, predecessor.KeyID)
+		if err != nil {
+			return MintedV1{}, err
+		}
+		if known {
+			hash = state.RenewalSecretHash
+		}
+	}
+	request := req.Request
+	request.RenewalSecretHash = hash
+	minted, err := s.paid(ctx, request, req.Applicant, req.Source, req.Subscription, req.Entitlement)
+	if err != nil || !supersedes || hash == "" {
+		return minted, err
+	}
+	now := s.now()
+	if sealed, held := s.sealHandover(ctx, predecessor.KeyID, minted.Key, minted.RenewalSecret); held {
+		if err := s.store.SaveHandover(ctx, Handover{
+			KeyID:      predecessor.KeyID,
+			SecretHash: hash,
+			Sealed:     sealed,
+			Until:      now.Add(renewalHandover),
+		}, now); err != nil {
+			log.Printf("keyservice: keeping the answer the reissue of the key %s left for it: %v", predecessor.KeyID, err)
+		}
+	}
+	return minted, nil
 }
 
 // seatChanged reissues inside the term the customer already paid for: `seats`
@@ -554,7 +995,14 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 		// minting something that has already expired.
 		return nil
 	}
-	to, deliverable := address(e.Email)
+	// The address is the subscription's own and not the event's: Paddle's
+	// notification carries no address at all, and the one the licence was bought
+	// with is the one the reissue is mailed to (§5.1). The event's own word for
+	// it stands in where the record carries none.
+	to, deliverable := address(sub.Email)
+	if !deliverable {
+		to, deliverable = address(e.Email)
+	}
 	if !deliverable {
 		return fmt.Errorf("%w: the seat change %s", ErrNoBuyer, e.ID)
 	}
@@ -562,7 +1010,20 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 	if !sold {
 		return fmt.Errorf("%w: the seat change %s is for a subscription whose term is not one the checkout sells (D442)", ErrNoClaims, e.ID)
 	}
-	if _, err := s.paid(ctx, s.paidRequest(policy, e.WorkspaceID, sub.Organisation, e.Seats, days), to, e.ID, e.Subscription); err != nil {
+	// The licence the reissue is under, read before anything is minted: the
+	// successor it mints is a key of that licence and not a second one bought by
+	// this event (§5.3), and D2200's kept secret is the licence's (P3.6).
+	entitlement, err := s.licenceOf(ctx, sub.ID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.reissue(ctx, reissueRequest{
+		Entitlement:  entitlement,
+		Request:      s.paidRequest(policy, e.WorkspaceID, sub.Organisation, e.Seats, days),
+		Applicant:    to,
+		Source:       e.ID,
+		Subscription: e.Subscription,
+	}); err != nil {
 		return err
 	}
 	sub.Seats = e.Seats
@@ -571,90 +1032,158 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 	return s.store.SaveSubscription(ctx, sub)
 }
 
-// withdrawn writes §8's entries for a key the merchant has given the money back
-// for (D2131): the one the event names and every other key the same licence
-// holds. It is the whole of the event's effect: those keys stop being
-// renewable and the customer's own job reads them as revoked, and nothing about
-// the subscription moves — a refund is not a cancellation, and the merchant's
-// cancellation is the event that stops the reissue (§5.3).
+// withdrawn writes §8's entries for the keys of a licence the merchant has given
+// the money back for (D2131). It is the whole of the event's effect: those keys
+// stop being renewable and the customer's own job reads them as revoked, and
+// nothing about the subscription moves — a refund is not a cancellation, and the
+// merchant's cancellation is the event that stops the reissue (§5.3).
+//
+// **The event resolves to the entitlement, and never to a key** (F16, F29).
+// Paddle sends no key id and never has, so the shape that read one was a shape
+// no real notification could drive — and under D2196 there is nothing for it to
+// name at the purchase anyway: the key is minted at the binding, so the key a
+// customer's installation runs is the one bound to the entitlement, and the
+// entitlement is what the transaction and the subscription both resolve to.
 //
 // The walk is over one **licence** and nothing else, and that is the owner's
-// ruling of 2026-11-13 (D2147). Two steps reach a key of it and the walk takes
-// both: the subscription every issuance of a sold licence stamps on its record —
-// the purchase, the key a **seat change** reissued, and the merchant's own
-// renewal, which is §5.1's ordinary route and the key a paying customer actually
-// holds — and the record's own word for the key it replaced,
-// `rotation:<the key it replaces>` (see `rotationSource`), which the `/renew`
-// endpoint's rotation carries beside the subscription.
+// ruling of 2026-11-13 (D2147). **F29's rule is the entitlement itself**: every
+// record that names this licence is one of its keys, and every one of them is
+// withdrawn, whatever minted it. On top of that the walk follows the three steps
+// that reach a key whose record does not name the licence — the ones minted
+// before P3.6 wrote the field — which are the entitlement's own bindings, the
+// keys D2196 mints for it (`bindingKeys`); the subscription every other issuance
+// of the licence stamps on its record — the key a **seat change** reissued, and
+// the merchant's own renewal, which is §5.1's ordinary route — and the record's
+// own word for the key it replaced, `rotation:<the key it replaces>` (see
+// `rotationSource`), which the `/renew` endpoint's rotation carries beside the
+// subscription.
 //
-// The subscription is the step that matters, and a seat change's key belongs to
-// it like any other: a seat change mints inside the term the customer already
-// paid for, so it is the same licence and not a second one — `seatChanged` says
-// so, and the term is the subscription's while only the seats are in the key
-// (§5.3). Reading the source as what tells one licence from another was the
-// tempting shortcut and it is wrong: the key a customer's installation runs is
-// usually a seat change's or a renewal's, never the purchase's, so a withdrawal
-// that stopped at the purchase would leave the licence renewing after the money
-// went back.
+// The subscription is the step that matters for a licence bought before D2196
+// and for every reissue after it, and a seat change's key belongs to it like any
+// other: a seat change mints inside the term the customer already paid for, so
+// it is the same licence and not a second one — `seatChanged` says so, and the
+// term is the subscription's while only the seats are in the key (§5.3). Reading
+// the source as what tells one licence from another was the tempting shortcut
+// and it is wrong: the key a customer's installation runs is usually a seat
+// change's or a renewal's, so a withdrawal that stopped at the binding would
+// leave the licence renewing after the money went back.
 //
-// The refunded key's own record is what says which subscription the licence is;
-// the event's own word for it stands in where the store holds no record of the
-// key, because a key whose issuance write failed is still one §8 has to
-// withdraw. Only a key whose record names a subscription is walked, which is
+// Only a key whose record names a subscription is walked by that step, which is
 // what keeps a hand-minted key — the admin page's, the mint tool's, a trial's —
 // from being read as the same licence as every other key whose record names
 // none.
-//
-// Without the walk a customer who renewed once and then obtained a refund kept a
-// key nothing named and nothing could name: every entry on this list is a key id,
-// and the id the refund carries is the superseded one.
 //
 // It is still not a cancellation: nothing here ends the subscription's ability
 // to mint, so a seat change or a trigger inside a term's window mints a fresh
 // key the moment after this runs, and a withdrawal of **that** key is the
 // merchant's next event. That is the shape §5.3 and §8 state between them — the
 // list withdraws keys, the cancellation ends the subscription — and it puts the
-// pairing on the deploy's event mapping (S3.7). Making the store's own list stop
-// a reissue would mean recording which key a subscription currently holds, which
+// pairing on the merchant's own events. Making the store's own list stop a
+// reissue would mean recording which key a subscription currently holds, which
 // is a decision for the owner rather than a repair to make here.
 //
 // Nothing is recorded here, and that is deliberate: §5.2's idempotency is a
 // record of an **issuance**, and a withdrawal mints none. Two things make a
-// redelivery harmless anyway — the event id is only ever read for a source it
-// might have minted, and the list itself refuses to change an entry it holds, so
-// a refund delivered twice is one revocation from the first instant either way
+// redelivery harmless anyway — the event's own state is what says it was
+// processed, and the list itself refuses to change an entry it holds, so a
+// refund delivered twice is one revocation from the first instant either way
 // (K2.2). The walk is idempotent for the same reason: every key it reaches is
 // revoked against the list that ignores an entry it already holds, and the
 // visited set keeps a chain the store happens to hold in a loop from being
 // walked for ever.
 //
-// A refund whose event names no key is refused by the store rather than
-// dropped, and that is the whole of the check here: the one entry an unnamed key
-// would write answers for every key nobody named, which is every project
-// dropped to Free by a record nobody meant to write (K2.2). The refusal comes
-// first, before the chain is read, so an unnamed event withdraws nothing at all
-// rather than a successor it happened to reach.
+// A refund of a licence that has no key yet withdraws no key and is not a
+// failure: D2196 mints the key at the binding, so a customer who paid and never
+// bound anything holds nothing to take back. The licence is withdrawn either
+// way, and that is the half that matters for one nobody has bound: the record
+// stops being active, so the binding the customer would otherwise make after the
+// refund is refused rather than served with the key the walk had nothing to
+// find.
+//
+// A withdrawal whose **licence** is not there yet is the one thing here that is
+// a failure, and it is the refund that arrived before the purchase it belongs
+// to: nothing has been withdrawn and the purchase is still coming, so the event
+// is refused rather than marked processed — a state that would short-circuit
+// every redelivery of it while the purchase's own retry granted a licence for
+// money that has gone back.
 func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	reason := ReasonRefund
 	if e.Type == EventChargeback {
 		reason = ReasonChargeback
 	}
-	if err := s.store.Revoke(ctx, Revocation{KeyID: e.KeyID, Reason: reason, At: e.OccurredAt}); err != nil {
+	entitlement, licensed, err := s.entitlementFor(ctx, e)
+	if err != nil {
 		return err
+	}
+	if !licensed {
+		// An admitted withdrawal that resolves to no licence is the refund that
+		// arrived before the purchase it belongs to: the money's own record — the
+		// checkout's, or the subscription's origin — is here, because that is what
+		// admitted the event, and the licence the purchase writes onto it is not,
+		// because that delivery is still being retried. Applying it now would mark
+		// the event processed with nothing withdrawn, and that state short-circuits
+		// every redelivery of it, so the purchase's own retry would go on to grant
+		// an active licence for money that has gone back. The refusal is the one an
+		// event about an unknown subscription gets (`apply`), and for the same
+		// reason: a `500` is the merchant's cue to deliver it again, and by then the
+		// licence is there to withdraw.
+		return fmt.Errorf("%w: the %s %s resolves to no licence the store holds yet", ErrNoTransaction, e.Type, e.ID)
 	}
 	records, err := s.store.Issuances(ctx)
 	if err != nil {
 		return err
 	}
-	// The subscription the refunded key was sold under. The record is the
-	// authority and the event is the fallback: a refund reaches keys whose
-	// issuance the store never took, and then the merchant's own word for the
-	// subscription is all there is to match a renewal of the licence by.
+	seen := map[string]bool{}
+	walk := []string{}
+	revoke := func(keyID string) error {
+		if seen[keyID] {
+			return nil
+		}
+		seen[keyID] = true
+		walk = append(walk, keyID)
+		return s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: reason, At: e.OccurredAt})
+	}
+	// The entitlement's own keys first, because they are the keys this licence
+	// actually has: everything below reaches a key through the subscription, and
+	// the subscription of a licence bought after D2196 names no key at all until
+	// a seat change or a renewal mints one.
 	subscription := e.Subscription
-	for _, record := range records {
-		if record.KeyID == e.KeyID {
-			subscription = record.Subscription
-			break
+	keys, err := s.bindingKeys(ctx, entitlement.ID)
+	if err != nil {
+		return err
+	}
+	for _, keyID := range keys {
+		if err := revoke(keyID); err != nil {
+			return err
+		}
+	}
+	// **F29: revocation is by entitlement.** Every record that names this licence
+	// is a key of it and is withdrawn here, whatever minted it and whatever its
+	// record's source and subscription say: the binding's key, the key a seat
+	// change reissued, the one the merchant's own renewal minted, and the
+	// successor a rotation left in the handover — all of them carry the licence's
+	// id, and the walk below reaches only the ones whose shape it can follow.
+	//
+	// It is here rather than only below because a record the walk cannot follow is
+	// still a key the customer's installation may be running: the source of a
+	// reissue names the event that caused it and not the key it replaced (D2200
+	// keeps the secret, so nothing about that key is spent), and a key whose
+	// record names no subscription at all — a comped or operations grant — has
+	// nothing for the subscription step to match on. A key left live here is the
+	// gap F29 states: the customer keeps a licence the money went back for.
+	for _, record := range entitlementRecords(records, entitlement.ID) {
+		if err := revoke(record.KeyID); err != nil {
+			return err
+		}
+	}
+	if subscription == "" {
+		// A refund against a transaction alone names no subscription, and the
+		// licence's own is where its other keys are: the origin record a
+		// purchase wrote is keyed by the subscription and holds the
+		// entitlement, so the step back is a query on the entitlement's id.
+		subscription, err = s.licenceSubscription(ctx, entitlement.ID)
+		if err != nil {
+			return err
 		}
 	}
 	// successors indexes the rotations the store holds by the key they replace,
@@ -666,20 +1195,16 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 			successors[from] = append(successors[from], record.KeyID)
 		}
 	}
-	// The refunded key and every other issuance of its own subscription start the
-	// walk, whatever minted it, and each of those is then followed through the
-	// rotations it has. The empty subscription is not a licence: an unsold key
-	// names none, so matching on "" would withdraw every hand-minted key there is.
-	seen := map[string]bool{e.KeyID: true}
-	walk := []string{e.KeyID}
+	// Every other issuance of the licence's own subscription joins the walk,
+	// whatever minted it, and each of those is then followed through the rotations
+	// it has. The empty subscription is not a licence: an unsold key names none,
+	// so matching on "" would withdraw every hand-minted key there is.
 	if subscription != "" {
 		for _, record := range records {
-			if record.Subscription != subscription || seen[record.KeyID] {
+			if record.Subscription != subscription {
 				continue
 			}
-			seen[record.KeyID] = true
-			walk = append(walk, record.KeyID)
-			if err := s.store.Revoke(ctx, Revocation{KeyID: record.KeyID, Reason: reason, At: e.OccurredAt}); err != nil {
+			if err := revoke(record.KeyID); err != nil {
 				return err
 			}
 		}
@@ -688,17 +1213,66 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 		keyID := walk[len(walk)-1]
 		walk = walk[:len(walk)-1]
 		for _, next := range successors[keyID] {
-			if seen[next] {
-				continue
-			}
-			seen[next] = true
-			if err := s.store.Revoke(ctx, Revocation{KeyID: next, Reason: reason, At: e.OccurredAt}); err != nil {
+			if err := revoke(next); err != nil {
 				return err
 			}
-			walk = append(walk, next)
 		}
 	}
+	// F29's revocation is by entitlement, so the licence itself is withdrawn and
+	// not only the keys that happened to exist when the money went back. A licence
+	// left active is one the customer binds again — the first rebind after a
+	// binding is not held by D2198's clock — and the binding mints a key the walk
+	// above never reached, running to the end of the term that was refunded.
+	//
+	// The keys are withdrawn first, because they are the half that reaches an
+	// installation: a store that fails on this write leaves keys that are already
+	// dead and a licence the merchant's retry withdraws again — the walk above is
+	// idempotent — rather than a licence that is dead with its keys still live.
+	if err := s.revokeEntitlement(ctx, entitlement); err != nil {
+		return err
+	}
 	return nil
+}
+
+// entitlementFor resolves the entitlement one event is about: the licence the
+// money belongs to (F16, F29).
+//
+// Two steps, and either alone is enough. The event's **subscription** is the
+// licence where this portal began it: the origin record a purchase wrote is
+// keyed by Paddle's subscription id and names the entitlement. The event's
+// **transaction** is the other half: an adjustment against a one-off transaction
+// names no subscription, and what that transaction bought is written on the
+// checkout's own record, under Paddle's transaction id.
+//
+// Both steps answer the licence **the money belongs to** and neither asks
+// whether it is still the workspace's current one: a licence a later sale
+// superseded is still the licence this transaction paid for, and revoking the
+// current one instead would withdraw a licence this money never bought (D2204's
+// one licence per workspace is about which licence a workspace is served by, not
+// about which one a refund is about). An event whose transaction and
+// subscription resolve to no licence at all answers false — nothing of this
+// portal's was bought with that money.
+func (s *Service) entitlementFor(ctx context.Context, e Event) (WireEntitlement, bool, error) {
+	if e.Subscription != "" {
+		origin, held, err := s.origin(ctx, e.Subscription)
+		if err != nil {
+			return WireEntitlement{}, false, err
+		}
+		if held && origin.EntitlementID != "" {
+			return getRecord[WireEntitlement](ctx, s.docs, entitlementsCollection, origin.EntitlementID)
+		}
+	}
+	if e.Transaction == "" {
+		return WireEntitlement{}, false, nil
+	}
+	record, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, e.Transaction)
+	if err != nil {
+		return WireEntitlement{}, false, err
+	}
+	if !held || record.EntitlementID == "" {
+		return WireEntitlement{}, false, nil
+	}
+	return getRecord[WireEntitlement](ctx, s.docs, entitlementsCollection, record.EntitlementID)
 }
 
 // Renew mints the next key for one subscription when T26's window is open: 30
@@ -830,7 +1404,20 @@ func (s *Service) Renew(ctx context.Context, subscriptionID string) (MintedV1, b
 	if !deliverable {
 		return MintedV1{}, false, fmt.Errorf("%w: the subscription %s", ErrNoBuyer, sub.ID)
 	}
-	answer, err := s.paid(ctx, s.paidRequest(policy, sub.WorkspaceID, sub.Organisation, sub.Seats, days), to, source, sub.ID)
+	// The licence the renewal is under, which is the key's own as well as the
+	// money's: the renewal of a subscription mints the next key of the licence
+	// that subscription bought, under the same renewal secret (D2200, P3.6).
+	entitlement, err := s.licenceOf(ctx, sub.ID)
+	if err != nil {
+		return MintedV1{}, false, err
+	}
+	answer, err := s.reissue(ctx, reissueRequest{
+		Entitlement:  entitlement,
+		Request:      s.paidRequest(policy, sub.WorkspaceID, sub.Organisation, sub.Seats, days),
+		Applicant:    to,
+		Source:       source,
+		Subscription: sub.ID,
+	})
 	if err != nil {
 		return MintedV1{}, false, err
 	}
@@ -975,7 +1562,7 @@ func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, d
 // failed key state withdraws nothing: it is the pair's safe half (above), and
 // the key it belongs to is one the store holds, so a revocation can name it and
 // a redelivery can finish it.
-func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, subscription string) (MintedV1, error) {
+func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, subscription, entitlement string) (MintedV1, error) {
 	mints, answersV1 := s.mints.(MintsV1)
 	if !answersV1 {
 		return MintedV1{}, errors.New("the intake's minter does not answer a v1 mint request, and the paid path issues v1 keys")
@@ -987,6 +1574,13 @@ func (s *Service) paid(ctx context.Context, req RequestV1, applicant, source, su
 	answer.Record.Source = source
 	answer.Record.Email = applicant
 	answer.Record.Subscription = subscription
+	// The licence the key was minted for, which is the record's own word for it
+	// (P3.6). Every path through here mints under one — a binding, a reissue, the
+	// merchant's own renewal — and the id is what a later renewal reads to know
+	// whether the licence still runs (F27), what a reissue reads to find the key
+	// it supersedes (D2200) and what a withdrawal walks (F29). A record without
+	// it is a key nothing can prove was granted, and `/renew` refuses it.
+	answer.Record.EntitlementID = entitlement
 	if applicant != "" {
 		if err := s.mail.Send(ctx, paidKeyMail(applicant, answer.Key, answer.RenewalSecret)); err != nil {
 			return MintedV1{}, err

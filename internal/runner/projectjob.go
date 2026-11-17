@@ -2,17 +2,20 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
-	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/repourl"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // The run's job identity (plan task 3.3, design §4.1 and §12a items 1 and 2).
@@ -49,15 +52,15 @@ type jobTriple struct {
 	Provider string
 	Account  string
 	Class    jobClass
-	// Implicit marks the one project job that is the installation's own rather
-	// than a published policy profile's: the implicit default review-only job
-	// (implicitReviewCandidate), the review job a project has whether or not it
-	// declares a profile. The profile name its own name spells is the default
-	// one, which a policy with no profiles block does not define, so the two
-	// readers that look a profile up — the admission and the job's timeout
-	// class — have nothing to read for it: a review on that job is admitted by
-	// the project's own allow_repos, and it is bounded by the job the
-	// installation deployed rather than by a class no policy states. The
+	// Implicit marks the one kind of project job that is the installation's own
+	// rather than a published policy profile's: the implicit review-only job of
+	// the repository's provider (implicitReviewCandidates), the review job a
+	// project has whether or not it declares a profile. The profile name its own
+	// name spells is the default one, which a policy with no profiles block does
+	// not define, so the readers that look a profile up — the admission and the
+	// job's timeout class — have nothing to read for it: a review on that job is
+	// admitted by the project's own allow_repos, and it is bounded by the job
+	// the installation deployed rather than by a class no policy states. The
 	// credential check needs it too, for the same reason and one step earlier
 	// (checkProjectJobAccount).
 	Implicit bool
@@ -80,20 +83,37 @@ const (
 	classReview
 )
 
-// runClass is the class of job this run is: a review run belongs on the
-// review-only variant and every other run on the shared coding job.
+// runClass is the class of job this run is: a run of the review class belongs
+// on the review-only variant and every other run on the shared coding job.
 //
-// The marker is spec.Mode == recipe.ModeReview, which is the launcher's own and
-// the same one finishLaunch sends a run to the variant on (internal/cli/run.go)
-// — never anything the job's environment says, so a container cannot be told
-// which class it is by the name it was started under. It is the task's mode and
-// not the pull requests it names: `fugaro run --pr N --recipe review-only`
-// carries ReviewPRs with an empty Mode and is launched onto the shared coding
-// job, so its run is a review (r.review, reviewmode.go) on the coder's
-// container, and only `fugaro review` — the class whose container mounts no App
-// key and no Claude token — carries the mode.
+// The markers are the launcher's own and never anything the job's environment
+// says, so a container cannot be told which class it is by the name it was
+// started under. There are two, and either is enough:
+//
+//   - spec.Mode == recipe.ModeReview, which is the mode finishLaunch sends a
+//     run to the variant on (internal/cli/run.go). It is the task's mode and
+//     not the pull requests it names: `fugaro run --pr N --recipe review-only`
+//     carries ReviewPRs with an empty Mode and is launched onto the shared
+//     coding job, so its run is a review (r.review, reviewmode.go) on the
+//     coder's container, and only `fugaro review` — the class whose container
+//     mounts no App key and no Claude token — carries the mode.
+//   - spec.ReviewClass, the diagnosis launch's marker (docs/troubleshoot-cloud
+//     D2411): the cloud tier of `fugaro troubleshoot` runs a mode: artifact
+//     recipe (D2402) on the same credential-less variant (D2403), and the mode
+//     alone would make it a coding-class run the variant's doors halt. The
+//     mode still wins where the two would disagree — a mode: review spec is a
+//     review whatever this field says — task.Validate refuses the field
+//     outside mode: artifact, and resolveRecipe refuses a spec carrying it
+//     against a recipe that holds no diagnose step (runner.go), so no other
+//     run claims the class.
+//
+// Every reader of the class reads it here — checkJobClass, the second door on
+// the same credential (checkProjectReviewJobAccount), and the model path
+// (reviewClassRun, gateway.go) — so a diagnosis admitted by the second marker
+// is admitted and served as a review is, without any of them being taught what
+// a diagnosis is.
 func (r *run) runClass() jobClass {
-	if r.spec.Mode == recipe.ModeReview {
+	if r.spec.Mode == recipe.ModeReview || r.spec.ReviewClass {
 		return classReview
 	}
 	return classCoding
@@ -106,69 +126,6 @@ func (r *run) runClass() jobClass {
 // for it.
 func reviewVariantAccount(account string) string {
 	return config.ReviewVariantAccount(account) + config.ReviewVariantSuffix
-}
-
-// implicitReviewCandidate is the installation's implicit default review-only
-// job (internal/infra's implicitReviewVariant, named by ImplicitReviewJobName)
-// as a candidate this run places: the review variant of the no-account job of
-// the default profile on github, and the ONE project job a policy that declares
-// no profile can have.
-//
-// It is in the set because the set is what the names a run may be placed in are
-// computed from, and this job is the one project job such a policy cannot
-// compute for itself: its triple names a profile the policy does not define. A
-// project that declares no profile runs every workflow on the default profile —
-// a job's name is a (profile, provider, account) triple, and the deployer
-// stands this job under that profile anyway (internal/infra's
-// ImplicitReviewProfile) — so without it the container of that job is a job no
-// policy computes, and every run of it halts in cannotPlaceJob however the
-// launcher resolved it (F3).
-//
-// The class is carried like any other candidate's, so a coding run in this job
-// is refused by checkJobClass exactly as a coding run is refused the variant of
-// a profile that does exist: nothing about a review job's container is a
-// coding run's to hold.
-//
-// It is in the set whether or not this installation deployed the job, and that
-// is not this set's question: the candidates are the names the POLICY defines
-// (R2-5), and the deployment's set is the subset the credentials-service switch
-// and a recorded GitHub App ID gate (internal/infra's ProjectReviewJobs and
-// implicitReviewVariant). A profile-derived variant is a candidate under the
-// same rule whether or not its own job was deployed — the switch gates the
-// jobs, never the names — and a review launch is refused where the service is
-// off before it looks for a job at all (internal/cli's checkReviewService).
-//
-// internal/infra cannot be imported here (it imports this package for
-// SecretEnvsVar), so the three segments are spelled with the functions the
-// deployer, the launcher and the credentials service spell them with:
-// projectpolicy.DefaultProfileName, which is what infra.ImplicitReviewProfile
-// is; gitprov.KindGitHub, the provider the deployer names; and the axis's
-// default account as reviewVariantAccount spells it, which is the account
-// segment internal/infra's ImplicitReviewJobName builds the name over
-// (config.ReviewVariantAccount's "default" plus the variant's suffix).
-//
-// That the deployer suppresses this job where a github profile named
-// DefaultProfileName already derives it is why projectJobCandidates adds the
-// candidate only for a name the policy does not derive itself: every profile
-// keeps the axis's empty account (config.ProjectJobAccounts), so such a
-// profile's variant of that account IS this candidate — the set holds one
-// entry for the one name, and the triple is the same either way.
-//
-// Implicit is set here and nowhere else, and it is what the readers of the
-// placement do with the one candidate that may have no profile behind it: the
-// admission admits its repositories by the project's own allow_repos, the
-// credential check answers it without reading a policy for the profile its name
-// spells, and the run's clock is left to the job the installation deployed
-// (clampTotalToJob), because a policy that declares no profile states none of
-// these for it.
-func implicitReviewCandidate() jobTriple {
-	return jobTriple{
-		Profile:  projectpolicy.DefaultProfileName,
-		Provider: gitprov.KindGitHub,
-		Account:  reviewVariantAccount(""),
-		Class:    classReview,
-		Implicit: true,
-	}
 }
 
 // projectJob is the identity this run adopted, and whether the job it is in is
@@ -331,13 +288,14 @@ func (r *run) jobIdentity(ctx context.Context) (profile, provider, account strin
 // its model credential from the credentials service's review class (O1), while
 // the shared job mounts the App key the review container exists to be without.
 //
-// The class is the run's own marker (r.runClass, the task's mode: review, set
-// before admission) and the candidate's, never a suffix read back out of the
-// job's name (R2-5): a name is matched against the names the published policy
-// computes, and what a matched name *means* is the candidate it matched. So a
-// container cannot choose its class by the name it was started under — the
-// name is the platform's, but a run that is not a review is a run that may not
-// adopt a review job's identity however it got there.
+// The class is the run's own markers (r.runClass: the task's mode: review, or
+// the review class a diagnosis's launch writes, both set before admission) and
+// the candidate's, never a suffix read back out of the job's name (R2-5): a
+// name is matched against the names the published policy computes, and what a
+// matched name *means* is the candidate it matched. So a container cannot
+// choose its class by the name it was started under — the name is the
+// platform's, but a run of neither class is a run that may not adopt a review
+// job's identity however it got there.
 //
 // It is a halt and not a silent correction in either direction: what a run may
 // do with the credential the job it is in already holds is decided before it
@@ -349,11 +307,11 @@ func (r *run) checkJobClass(id jobTriple) error {
 		return nil
 	}
 	if class == classReview {
-		return fmt.Errorf("this run is a review, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a review runs on the review-only variant of that job, %s, whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's mode: review) and the job the run is in, never the job's name. The run stops before any git credential is requested",
+		return fmt.Errorf("this run is a review or a diagnosis, and it is in the Cloud Run job %s, which is the shared project job of the profile %q: a run of that class runs on the review-only variant of that job, %s, whose container mounts no App key and no Claude token, and never on the shared job, whose container holds both. What class a run is, is the launcher's marker (the task's mode: review, or the review class a diagnosis's launch writes) and the job the run is in, never the job's name. The run stops before any git credential is requested",
 			gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile,
 			gcp.ProjectJobName(id.Profile, id.Provider, reviewVariantAccount(id.Account)))
 	}
-	return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request and pushes nothing, its container mounts no App key and no Claude token, and this run is not a review. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's mode: review) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
+	return fmt.Errorf("this run is in the Cloud Run job %s, which is the review-only variant of the project job of the profile %q: the variant exists for a review that reads a pull request, or for a diagnosis that reads its own evidence, and pushes nothing either way; its container mounts no App key and no Claude token, and this run is neither a review nor a diagnosis. Every other run of the profile belongs on the shared project job of that profile. What class a run is, is the launcher's marker (the task's mode: review, or the review class a diagnosis's launch writes) and the job the run is in, never the job's name: this name is not read back out of the job. The run stops before any git credential is requested",
 		gcp.ProjectJobName(id.Profile, id.Provider, id.Account), id.Profile)
 }
 
@@ -391,11 +349,14 @@ func (r *run) jobName() (string, error) {
 // job of (slug, workflow, token) (project = false), or a halt.
 //
 // The order is the plan's: the computed project names first, because that match
-// carries an identity — the installation's implicit review-only job among them,
-// for a policy that has no profile to derive it from (implicitReviewCandidate);
-// then the run's own per-repository job name, recomputed with
-// gcp.WorkflowVariant so a named OAuth run matches the job it was launched as
-// (B2 — the deployed job of a named run is JobName(slug,
+// carries an identity, and it is the one name a policy need not derive itself:
+// the installation's implicit review-only job of this run's provider is in the
+// set whether or not a policy is published (implicitReviewCandidates), and a
+// profile the policy defines under the same name wins, which is the same job
+// the deployer's collision gate leaves standing (internal/infra's
+// implicitReviewVariant); then the run's own per-repository job name, recomputed
+// with gcp.WorkflowVariant so a named OAuth run matches the job it was launched
+// as (B2 — the deployed job of a named run is JobName(slug,
 // WorkflowVariant(wf, token)), and comparing against the plain workflow would
 // refuse every one of its own executions, which is the bug internal/cli's
 // cloud.go:271-300 documents for --run-id repeats, ls, logs, diagnose and
@@ -406,6 +367,11 @@ func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflo
 			if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
 				return c, true, nil
 			}
+		}
+	}
+	for _, c := range implicitReviewCandidates() {
+		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == job {
+			return c, true, nil
 		}
 	}
 	variant, err := legacyVariant(job, slug, workflow, token)
@@ -447,14 +413,14 @@ func matchJobName(job string, p *projectpolicy.Policy, found bool, slug, workflo
 // review job because the published policy computes that name and not because
 // its own name says so.
 //
-// The installation's implicit review-only job is in the set beside the
-// profiles, added when the policy does not derive its name itself — and it is
-// the one entry that can be there with no profile behind it, which is what
-// makes a policy that declares no profile have exactly one project job
-// (implicitReviewCandidate, reconciliation F3).
+// The installation's implicit review-only jobs are in the set beside the
+// profiles, added when the policy does not derive their names itself — and they
+// are the entries that can be there with no profile behind them, which is what
+// makes a policy that declares no profile have exactly the installation's own
+// review jobs (implicitReviewCandidates, reconciliation F3).
 func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 	names := p.ProfileNames()
-	out := make([]jobTriple, 0, len(names)+1)
+	out := make([]jobTriple, 0, len(names)+len(implicitReviewCandidates()))
 	for _, name := range names {
 		pr := p.Profiles[name]
 		for _, account := range config.ProjectJobAccounts(pr.JobProfile) {
@@ -462,20 +428,63 @@ func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 			out = append(out, jobTriple{Profile: name, Provider: pr.Provider, Account: reviewVariantAccount(account), Class: classReview})
 		}
 	}
-	imp := implicitReviewCandidate()
-	name := gcp.ProjectJobName(imp.Profile, imp.Provider, imp.Account)
-	for _, c := range out {
-		if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == name {
+	for _, imp := range implicitReviewCandidates() {
+		name := gcp.ProjectJobName(imp.Profile, imp.Provider, imp.Account)
+		derived := false
+		for _, c := range out {
+			if gcp.ProjectJobName(c.Profile, c.Provider, c.Account) == name {
+				derived = true
+				break
+			}
+		}
+		if derived {
 			// The policy derives this job itself — a github profile under
 			// DefaultProfileName always derives the review variant of its
 			// no-account job, which is what the deployer's collision gate
 			// suppresses its own copy of the job for. The set is names, so the
 			// derivation's entry is the entry, and the triple is the same one
 			// either way.
-			return out
+			continue
 		}
+		out = append(out, imp)
 	}
-	return append(out, imp)
+	return out
+}
+
+// implicitReviewCandidates is the identity of the installation's implicit
+// default review-only jobs: one per provider kind (jobProviderKinds, the list
+// internal/cli holds to config.Providers), under the deployer's implicit
+// profile name and the default account's variant segment, which is the name
+// internal/infra's ImplicitReviewJobName computes.
+//
+// It is a second set and not part of projectJobCandidates on purpose, and the
+// difference is what each set is a function of. projectJobCandidates is the
+// published policy and nothing else — that is what makes the runner's and the
+// launcher's answer about a profile's job unforgeable — while these names exist
+// whether or not a policy does: an installation deploys the job from its own
+// local config, so a run in one has a job to bind to before the first policy is
+// published. Nothing a policy says can add or remove one, and a profile the
+// policy happens to define under the same name is matched first, which is the
+// job the deployer's collision gate leaves standing.
+//
+// The profile name is projectpolicy.DefaultProfileName and not a local-config
+// value: the deployer writes it into the job's own name (ImplicitReviewProfile),
+// and a run reads the name back by computing it, never by parsing it (R2-5).
+// jobProviderKinds is the whole list because it is the whole list of kinds a
+// Cloud Run job's storage slug exists under: a run in a job of any other kind
+// halts rather than adopting an identity no installation deploys.
+func implicitReviewCandidates() []jobTriple {
+	out := make([]jobTriple, 0, len(jobProviderKinds))
+	for _, kind := range jobProviderKinds {
+		out = append(out, jobTriple{
+			Profile:  projectpolicy.DefaultProfileName,
+			Provider: kind,
+			Account:  reviewVariantAccount(""),
+			Class:    classReview,
+			Implicit: true,
+		})
+	}
+	return out
 }
 
 // ProjectJobOfPolicy is the (profile, provider, account) of the project job
@@ -490,11 +499,12 @@ func projectJobCandidates(p *projectpolicy.Policy) []jobTriple {
 // nil, which is a project that has published no policy and so defines no
 // project job.
 //
-// The installation's implicit review-only job is here like any other candidate,
-// and it is the one row that may name a profile the policy does not define
-// (implicitReviewCandidate): a reader that reads the profile's own fields out of
-// the policy for it reads the zero value, which is why the runner holds such a
-// run's admission and its clock to the project and to the deployed job instead.
+// The installation's implicit review-only jobs are here like any other
+// candidate, and they are the rows that may name a profile the policy does not
+// define (implicitReviewCandidates): a reader that reads the profile's own
+// fields out of the policy for one reads the zero value, which is why the
+// runner holds such a run's admission and its clock to the project and to the
+// deployed job instead.
 func ProjectJobOfPolicy(p *projectpolicy.Policy, job string) (profile, provider, account string, ok bool) {
 	if p == nil || job == "" {
 		return "", "", "", false
@@ -632,9 +642,9 @@ func jobWorkflow(workflow, token string) (variant string, ok bool) {
 // says which profiles this project's policy defines, so a reader can tell "the
 // job is stale" from "the policy is". A policy that defines no profiles is a
 // third case and says so: it is published — the rules a policy is read under
-// are deployed — but it names no profile, so the only project job it derives
-// is the installation's implicit review-only job (implicitReviewCandidate) and
-// no other name is a project job of it. Saying "no policy published" there
+// are deployed — but it names no profile, so the only project jobs it derives
+// are the installation's implicit review-only jobs (implicitReviewCandidates)
+// and no other name is a project job of it. Saying "no policy published" there
 // would send the reader to deploy rules that are already deployed.
 //
 // The fix is a command either way: publishing the policy a project job is
@@ -653,45 +663,231 @@ func cannotPlaceJob(job string, p *projectpolicy.Policy, found bool, slug, workf
 			detail = fmt.Sprintf("This project's published policy defines the job profiles %s, and a project job is one whose name is gcp.ProjectJobName of one of their (profile, provider, account) triples", strings.Join(names, ", "))
 			fix = "The fix is `fugaro doctor`, then `fugaro update` with the current Fugaro, whose first apply is the one that deploys this project's jobs from that policy"
 		} else {
-			detail = fmt.Sprintf("This project's published policy defines no job profiles at all, so the only project job it derives is the installation's implicit review-only job %s — a review job — and that is not the job this run is in: every other project job is gcp.ProjectJobName of a (profile, provider, account) triple of a profile this policy defines, and a policy with no profiles defines none", gcp.ProjectJobName(implicitReviewCandidate().Profile, implicitReviewCandidate().Provider, implicitReviewCandidate().Account))
+			implicit := implicitReviewCandidates()
+			jobNames := make([]string, 0, len(implicit))
+			for _, c := range implicit {
+				jobNames = append(jobNames, gcp.ProjectJobName(c.Profile, c.Provider, c.Account))
+			}
+			detail = fmt.Sprintf("This project's published policy defines no job profiles at all, so the only project jobs it derives are the installation's implicit review-only jobs %s — review jobs — and that is not the job this run is in: every other project job is gcp.ProjectJobName of a (profile, provider, account) triple of a profile this policy defines, and a policy with no profiles defines none", strings.Join(jobNames, ", "))
 		}
 	}
 	return fmt.Errorf("this run is in the Cloud Run job %s, and that is neither a project job of this project's policy nor the per-repository job of this run (%s for the slug %s and the workflow %s): a job the run cannot place may be another installation's, a job of a module version this policy no longer describes, or one created by hand, and the run adopts no identity from it. %s. %s",
 		job, gcp.JobName(slug, variant), slug, workflow, detail, fix)
 }
 
-// checkProjectCheckoutOrigin refuses, on a project job, any checkout already
-// in the work directory (review C5). openCheckout opens an existing checkout
-// as it is, and on a per-repository job the admission holds its origin to the
-// task's repository (originURL feeds remoteAdmissionErr); a project job
-// computes its clone URL and reads no origin, so without this a checkout of
-// another repository — a baked image built for one, or a directory something
-// left behind — would be fetched with the profile's credential and worked on
-// under this run's slug.
+// checkProjectCheckoutOrigin settles the checkout a project job works on when
+// its image already holds one: it is the run's own repository's, it is put into
+// a state this run wrote, and only then does anything fetch through it (D2308,
+// review F22). Every other repository the image baked is removed before the
+// agent starts (D2309, review F23) — this job class's half of it, the other
+// being openBakedCheckout's. A run in a per-repository job, and a work
+// directory with no checkout at all, pass: the first is the admission's own
+// case (openBakedCheckout), and the second clones.
 //
-// The refusal covers a checkout whose origin is the computed URL too, and that
-// is deliberate: an origin is one line of the checkout's .git/config, which
-// also holds a push URL, url rewrites and hooks — code and configuration the
-// run would execute with the profile's credential — so no origin can vouch for
-// a checkout the run did not make. Nothing legitimate is lost: project jobs run
-// the installation's base image, which bakes no checkout, and each Cloud Run
-// execution starts from that image. A run in a per-repository job, and a work
-// directory with no checkout, pass.
+// The guard this replaces refused every checkout a project job's image held
+// (review C5), because a project job's image was the base one and baked none —
+// so any checkout was something the run did not make, and its .git/config,
+// which also holds push URLs, url rewrites and hooks, was code the profile's
+// credential would have run. The job model no longer decides that: a project
+// job runs the project's catalog image (S10), whose generated stages bake the
+// checkout of every repository the entry serves (D2301), and the entry's own
+// Dockerfile may clone into the work directory besides. What replaces the
+// refusal is the reset gitops' ResetBakedGit performs — the configuration
+// replaced by one the run writes, the hooks removed, the replace refs and
+// grafts dropped, the build's leftovers cleaned — so what a run works on is a
+// checkout whose configuration, hooks and refs are the run's own, whichever
+// stage put the files there. A checkout whose origin is not this run's
+// repository is refused before that reset, as it was before: no origin can
+// vouch for a checkout of another repository.
+//
+// Which checkout it is comes from bakedProjectCheckout, and it is read before
+// the provider is opened, so every refusal below is a run that requested no git
+// credential and fetched nothing.
 func (r *run) checkProjectCheckoutOrigin(ctx context.Context, remote string) error {
 	job, project := r.projectJob()
 	if !project {
 		return nil
 	}
-	repo, err := gitops.Open(r.d.WorkDir, nil)
-	if err != nil {
+	if err := r.removeOtherBakedRepos(); err != nil {
+		return err
+	}
+	dir := r.bakedProjectCheckout()
+	if dir == "" {
 		return nil // no checkout: the run clones remote
 	}
-	got := "no origin"
-	if origin, err := strip(repo).OriginURL(ctx); err == nil {
-		got = remoteDisplay(origin)
+	repo, err := gitops.Open(dir, nil)
+	if err != nil {
+		return nil // not a checkout after all: the run clones remote
 	}
-	return fmt.Errorf("the work directory %s already holds a checkout (origin %s), and this run is in the project job %s, which clones %s itself: a project job's image bakes no checkout and the run works only on the one it clones, since a checkout it did not make carries configuration and hooks the profile's credential would run with, so the run stops before any git credential is requested",
-		r.d.WorkDir, got, gcp.ProjectJobName(job.Profile, job.Provider, job.Account), remoteDisplay(remote))
+	origin, err := strip(repo).BakedGitOrigin(ctx)
+	if err != nil {
+		return fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)
+	}
+	// The image's own configuration is not the run's, and its origin is the one
+	// line of it this run quotes: registered before anything can print it, as
+	// the job's remote and a work-directory checkout's are (bootstrap).
+	r.addRemoteSecrets(origin)
+	if err := remoteAdmissionErr(origin, job.Provider, r.spec.Repo, r.d.Store.Slug()); err != nil {
+		return fmt.Errorf("the checkout this run found at %s is not this run's repository (origin %s): %w", dir, remoteDisplay(origin), err)
+	}
+	if err := strip(repo).ResetBakedGit(ctx, remote, r.bakedHooksDir()); err != nil {
+		return fmt.Errorf("the checkout this run found at %s cannot be reset to the state this run works from: %w", dir, err)
+	}
+	if dir == r.d.WorkDir {
+		return nil // already the work directory: there is nothing to adopt
+	}
+	// The image may hold a second checkout, in the work directory the run
+	// started in — a hand-written entry's own clone (D1208) beside the per-slug
+	// stage an engine-generated one writes (D2301) — and it is verified here,
+	// before this run works from the per-slug one: the guard this run replaces
+	// refused a work-directory checkout of another repository, and a second one
+	// left unchecked would readmit exactly that — the read of /work/repo C5's
+	// refusal was about — because the run adopts the per-slug directory and
+	// never looks at the work directory again.
+	if err := r.refuseForeignWorkDirCheckout(ctx, job); err != nil {
+		return err
+	}
+	// From here the checkout this run works on is this one, as it is for a
+	// per-repository job that adopts its own baked path (openBakedCheckout),
+	// and for the same reason: everything bootstrap reads of the checkout from
+	// now on — which remote the agent's git and the push name, which tree a
+	// stage runs in — reads this directory.
+	if err := stateDirOutsideCheckout(dir, r.d.StateDir); err != nil {
+		return err
+	}
+	r.d.WorkDir = dir
+	// The record's image has to name the commit this run's checkout is at, and
+	// the read bootstrap made ran while the work directory held no checkout of
+	// this run's — where imageInfo falls back to the commit the image's own
+	// record names, which belongs to whichever repository the image was built
+	// from. Read here, after the adoption and before the sync below moves the
+	// checkout off the baked commit, as openBakedCheckout's adoption does.
+	if sha := r.bakedHead(ctx); sha != "" {
+		if r.rec.Image == nil {
+			r.rec.Image = &runstore.ImageInfo{}
+		}
+		r.rec.Image.BakedCommit = sha
+	}
+	return nil
+}
+
+// bakedProjectCheckout is the checkout a project job's image holds for this
+// run, or the empty string when it holds none and the run clones.
+//
+// The directory the image baked this run's own repository at is preferred: it
+// is the one an engine-generated bake stage writes (runner.BakedDir), which is
+// the stage D2308 trusts, and it is the layout imagebake guarantees — the
+// generated stages bake at a per-slug path and never at /work/repo, so a
+// hand-written entry's own clone sits in the work directory beside it. That
+// clone is taken when there is no per-slug checkout — a derived image whose
+// Dockerfile clones is a definition D1208 leaves to its author — and it is
+// reset like the baked one, since the guard this replaces refused it for the
+// same reason it refused any other.
+func (r *run) bakedProjectCheckout() string {
+	for _, dir := range []string{BakedDir(r.d.WorkDir, r.d.Store.Slug()), r.d.WorkDir} {
+		if _, err := gitops.Open(dir, nil); err == nil {
+			return dir
+		}
+	}
+	return ""
+}
+
+// refuseForeignWorkDirCheckout refuses a checkout of another repository in the
+// work directory this run started in, when the checkout it adopts is the
+// per-slug directory beside it (review F25).
+//
+// Which checkout is adopted is a preference, not an exclusion: an image whose
+// entry both bakes the per-slug path and clones into its own WORKDIR holds a
+// checkout of each, and the guard above reads only the one it adopts. The other
+// is a checkout of another repository whenever the entry serves one, and a run
+// that adopts the per-slug directory works from there — the agent's stages run
+// in it, and nothing reads the work directory again — so the refusal has to be
+// made here or it is not made at all.
+//
+// A checkout of this run's own repository in the work directory is left where
+// it is: it is the source this run holds a grant over, and what the run works
+// on is the checkout it reset and adopted.
+func (r *run) refuseForeignWorkDirCheckout(ctx context.Context, job jobTriple) error {
+	repo, err := gitops.Open(r.d.WorkDir, nil)
+	if err != nil {
+		return nil // no checkout beside this run's own: the run adopts what it found
+	}
+	origin, err := strip(repo).BakedGitOrigin(ctx)
+	if err != nil {
+		return fmt.Errorf("the checkout this run found at %s cannot be verified as this run's: %w", r.d.WorkDir, err)
+	}
+	r.addRemoteSecrets(origin)
+	if err := remoteAdmissionErr(origin, job.Provider, r.spec.Repo, r.d.Store.Slug()); err != nil {
+		return fmt.Errorf("the checkout this run found at %s is not this run's repository (origin %s): %w", r.d.WorkDir, remoteDisplay(origin), err)
+	}
+	return nil
+}
+
+// removeOtherBakedRepos removes every directory the image baked beside this
+// run's own (D2309, review F23): a catalog image bakes the checkout of every
+// repository its entry serves (D2301), so leaving them in place would let this
+// run's agent read a repository this run holds no grant over and works on none
+// of. Only the directory named by this run's storage slug stays — the run's own
+// repository's, whichever stage baked it.
+//
+// Both job classes call it, each from the function that settles its checkout:
+// checkProjectCheckoutOrigin for a project job, openBakedCheckout for a
+// per-repository one. The read F23 names is a property of the shared image's
+// layout (D1900: the per-repository class runs the project's catalog image too)
+// and not of the job class, so neither class leaves a sibling for its agent.
+// The call is before the checkout decision either way: a run that finds no
+// baked checkout of its own clones, and the other repositories the image baked
+// are no more its to read for that. The one run that reaches neither call is a
+// per-repository job whose storage slug derives no provider kind
+// (providerForSlug): it adopts no baked directory either, so the layout this
+// removal is about is not the layout it runs in.
+//
+// The directories are found by their position beside the work directory, so
+// before anything is removed the run has to be able to show that directory is
+// the job image's own (review F24). A caller supplies a local invocation's
+// (exec's --workdir, whose default only happens to spell the path a job image's
+// WORKDIR does), and the directory beside a caller's is the caller's too —
+// holding their own directories and files, not all of them repositories — so a
+// local run removes nothing at all. Deps.Local is that distinction and the one
+// place it is read: its zero value means the run is in the cloud, in a job the
+// platform placed, whose work directory the job's image chose and no caller did.
+// That is the layout this removal and D2309's read are about.
+func (r *run) removeOtherBakedRepos() error {
+	if r.d.Local {
+		return nil
+	}
+	root := filepath.Join(filepath.Dir(r.d.WorkDir), BakedRepoRoot)
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading the baked repositories at %s: %w", root, err)
+	}
+	keep := r.d.Store.Slug()
+	for _, entry := range entries {
+		if entry.Name() == keep {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("removing %s, which the image baked for a repository this run is not for: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// bakedHooksDir is the directory a reset baked checkout points core.hooksPath
+// at: an empty directory this run owns, so no hook the image's build installed
+// runs for this run — on the agent's commits, whose stamp pass-throughs chain
+// to whatever the checkout configures (writeStampHooks), or anywhere else.
+//
+// It is under the state directory, the one place of the run's own that is
+// outside the checkout (stateDirOutsideCheckout), and ResetBakedGit empties and
+// re-makes it, so a file an earlier execution of the job left in it is not one
+// a later hook reaches.
+func (r *run) bakedHooksDir() string {
+	return filepath.Join(r.d.StateDir, "baked-hooks")
 }
 
 // cloneURL is where this run clones from (design §4.1(1), plan task 3.3 step
@@ -789,9 +985,9 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 		// The review arm is asked before the policy is, because nothing it
 		// decides is the policy's: what a review container holds is its
 		// class's and never a profile's token, and the job may be the
-		// installation's implicit default review-only job, whose profile no
-		// policy with a profiles block of its own need define
-		// (implicitReviewCandidate).
+		// installation's implicit review-only job, whose profile no policy
+		// with a profiles block of its own need define
+		// (implicitReviewCandidates).
 		return r.checkProjectReviewJobAccount(job)
 	}
 	p, found, err := r.projectPolicy(ctx)
@@ -852,8 +1048,12 @@ func (r *run) checkProjectJobAccount(ctx context.Context, auth string) error {
 }
 
 // checkProjectReviewJobAccount is checkProjectJobAccount's review arm: a run
-// in the review-only variant of its profile's job, which the job identity has
-// already held to its class (checkJobClass).
+// in a review-only job, the variant of a profile's job or the installation's
+// implicit one (jobTriple.Implicit), which the job identity has already held to
+// its class (checkJobClass). Neither shape reads a profile: the variant's job
+// is the profile's by its name alone, and the implicit job's profile is the
+// deployer's own, which no policy defines — so the coding arm's lookup is not
+// this arm's business and, for the implicit job, would refuse the run.
 //
 // It admits, and the three rules the coding arm applies are each refused for a
 // reason that does not hold here:
@@ -891,7 +1091,7 @@ func (r *run) checkProjectReviewJobAccount(job jobTriple) error {
 		// decided. Kept as the halt it would be, because this check is the
 		// run's second, independent door on the credential it holds and a door
 		// that admits what the first refused is not one.
-		return fmt.Errorf("this run is in the review-only project job %s, and it is not a review: that job's container holds no Claude token and no App key, and what a run of it may do is decided by its class, so no other run may be admitted to it. The run stops before the agent starts",
+		return fmt.Errorf("this run is in the review-only project job %s, and it is neither a review nor a diagnosis: that job's container holds no Claude token and no App key, and what a run of it may do is decided by its class, so no other run may be admitted to it. The run stops before the agent starts",
 			gcp.ProjectJobName(job.Profile, job.Provider, job.Account))
 	}
 	return nil

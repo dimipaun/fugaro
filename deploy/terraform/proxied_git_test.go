@@ -10,17 +10,20 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
-// The flip list's two tests (B1.8, D500, G9): what the drop DOES, not what it
-// is spelled like. The module's list is empty on this branch, and with it empty
-// no plan can tell a proxied repository from any other, so these read
-// modules/workflow/sa.tf's own locals, fill the list the way B1.13 part two
-// fills it, and evaluate them. That is the only state in which the drop is
-// observable at all, and B1.13 part two's red step is this test with the real
-// list: it fails while the list is empty.
+// The flip list's two tests (B1.8, B1.13 part two, D500, G9): what the drop
+// DOES, not what it is spelled like. They read modules/workflow/sa.tf's own
+// locals, put config.ProxiedGitSecretNames — the list the tree carries, which
+// names the Bitbucket token since the flip — in place of the module's literal,
+// and evaluate them. That is the state a real plan of a proxied repository is
+// in, and the mirror guard (TestProxiedGitSecretNamesMatchTheModule) is what
+// holds the two spellings to each other.
 //
 // They need the terraform binary, so they carry the build tag the rest of the
 // tree's real-binary tests carry: `go test -tags terraform ./deploy/terraform/`.
@@ -28,11 +31,12 @@ import (
 // the module's locals, its variables stubbed, and two outputs, so there is no
 // provider in it.
 
-// proxiedModulePlan evaluates sa.tf's locals with proxied_git_secret_names =
-// ["bitbucket-token"] and returns the job's accessor set (job_secret_names) and
-// its container's mounts (job_mounts) for one repository. proxied is the
-// per-repository fact; service is whether the installation has the credentials
-// service, whose absence keeps every accessor and every mount (G9, D147).
+// proxiedModulePlan evaluates sa.tf's locals with proxied_git_secret_names set
+// to config.ProxiedGitSecretNames and returns the job's accessor set
+// (job_secret_names) and its container's mounts (job_mounts) for one
+// repository. proxied is the per-repository fact; service is whether the
+// installation has the credentials service, whose absence keeps every accessor
+// and every mount (G9, D147).
 //
 // The workflow is the Bitbucket one the repo root's fixtures carry: the
 // repository's own probe secret, the model credential every job of an opted-in
@@ -42,6 +46,9 @@ func proxiedModulePlan(t *testing.T, proxied, service bool) (accessors []string,
 	bin, err := exec.LookPath("terraform")
 	if err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
+	}
+	if !slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret) {
+		t.Fatalf("config.ProxiedGitSecretNames = %v does not name %s: the flip is B1.13 part two, and with the list empty every assertion below reads the inert state", config.ProxiedGitSecretNames, config.BitbucketSecret)
 	}
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := os.ReadFile(path)
@@ -64,10 +71,19 @@ func proxiedModulePlan(t *testing.T, proxied, service bool) (accessors []string,
 			t.Fatalf("%s: the locals block this test evaluates declares no %s, so it is not reading the module's own rule", path, name)
 		}
 	}
-	filled := strings.Replace(locals, "proxied_git_secret_names = []", `proxied_git_secret_names = ["bitbucket-token"]`, 1)
-	if filled == locals {
-		t.Fatalf("%s: the flip list is no longer the empty literal this test fills, so the evaluation below would plan the inert state and prove nothing", path)
+	// The list the module's own literal is replaced with, spelled the way Go
+	// spells it: the drop this test evaluates is the one the tree ships, and a
+	// literal that disagreed with Go's would be caught by the mirror guard
+	// rather than here.
+	names := make([]string, 0, len(config.ProxiedGitSecretNames))
+	for _, n := range config.ProxiedGitSecretNames {
+		names = append(names, strconv.Quote(n))
 	}
+	list := regexp.MustCompile(`proxied_git_secret_names\s*=\s*\[[^\]]*\]`)
+	if !list.MatchString(locals) {
+		t.Fatalf("%s: the locals block declares no proxied_git_secret_names literal for this test to put %v in place of", path, config.ProxiedGitSecretNames)
+	}
+	filled := list.ReplaceAllString(locals, "proxied_git_secret_names = ["+strings.Join(names, ", ")+"]")
 
 	dir := t.TempDir()
 	main := `variable "workflow" { type = any }

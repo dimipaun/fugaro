@@ -50,27 +50,56 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// newProjectReposCmd is `fugaro project repos`: the project's allow-list as
-// data. `ls` prints it against what this installation has seen run, and
-// `add`/`rm` edit one entry each (task 1.6's write path, unchanged).
-// `project sync` — what the App is installed on — is its sibling.
+// newProjectReposCmd is `fugaro project repos`: the project's repositories as
+// data — which are enrolled, and what each one is still missing before a run of
+// it can start. `ls` prints the enrolment, `status` is the doctor for one
+// repository's, and `add`/`rm` edit one entry each (task 1.6's write path,
+// unchanged). `project sync` — what the App is installed on — is its sibling.
+//
+// The group's own sentence names the whole of that and no longer the allow-list
+// alone: `add`/`rm` still edit the published list, while `ls` and `status` read
+// all three halves of the enrolment — this machine's config, the list and the
+// App — and an operator who read "the allow-list" would not look here for the
+// empty credential container that is why `status` exists (F11).
 func newProjectReposCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "repos",
-		Short: "The project's allow-list: which repositories may run",
-		Args:  cobra.NoArgs,
+		Short: "The project's repositories: what is enrolled, and what each one is missing",
+		Long: "The project's repositories as data. `ls` lists what is enrolled and what has run\n" +
+			"here, `status` is a doctor for one repository's enrolment (or for every repository\n" +
+			"when it names none), and `add` and `rm` edit the published allow-list — the one\n" +
+			"entry each that admits a repository or stops admitting it. A repository is enrolled\n" +
+			"by its own project line and the App's installation as much as by that list, which is\n" +
+			"why `status` reads all three and names the one command each of its failing rows\n" +
+			"needs.\n" +
+			"\n" +
+			"Nothing here admits a repository on its own: a name a run wrote is printed as seen\n" +
+			"and never taken as an enrolment.",
+		Args: cobra.NoArgs,
 	}
-	cmd.AddCommand(newProjectReposLsCmd(), newProjectReposAddCmd(), newProjectReposRmCmd(), newProjectReposSetCmd())
+	cmd.AddCommand(newProjectReposLsCmd(), newProjectReposStatusCmd(), newProjectReposAddCmd(), newProjectReposRmCmd(), newProjectReposSetCmd())
 	return cmd
 }
 
 type projectReposOptions struct {
 	cloud cloudOptions
-	yes   bool
+	// yes is the field the no-prompt policy's T11 left behind when it removed
+	// the flag: `rm` still passes it to confirmRemoval, and no constructor
+	// registers it any more. `add`'s confirmation is its own and nothing on
+	// the command line answers it (D2403).
+	yes bool
+	// allowListOnly is `add`'s way back to what it did before the whole
+	// enrolment converged: one entry in the published allow-list and nothing
+	// else. It is a flag and not the absence of a flag because the converge is
+	// the ordinary act of enrolling while a pattern — owner/* — has no
+	// checkout, no fugaro.yaml and no image to converge, and * is the list's
+	// own entry for every repository rather than a repository at all.
+	allowListOnly bool
 }
 
 func newProjectReposLsCmd() *cobra.Command {
 	var o projectReposOptions
+	var asJSON bool
 	// The Short names the list this command prints, never "running now": that
 	// is `project show`'s list — the run registry's runs in flight — while
 	// what is printed here is the durable seen, the runs bucket's
@@ -79,11 +108,20 @@ func newProjectReposLsCmd() *cobra.Command {
 	// command away rather than in that output") and the sibling add/rm
 	// commands point at it.
 	cmd := &cobra.Command{
-		Use:   "ls",
+		Use:   "ls [--json]",
 		Short: "List the allow-list and the repositories that have run here",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runProjectReposLs(cmd, &o) },
+		Long: "One row per repository — the ones this machine's config holds and the\n" +
+			"concrete names the published allow-list admits — with the image its job runs,\n" +
+			"its workflows, its Claude accounts, whether the allow-list admits it and\n" +
+			"whether this machine's config holds it; then the published allow_repos with\n" +
+			"the source of each entry; then the repositories that have run here, which is\n" +
+			"a reading of what has run and never of what is enrolled.\n\n" +
+			"Nothing is written, and `add`/`rm` are the only commands that enroll.\n" +
+			"--json prints the same answer as one versioned document.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectReposLs(cmd, &o, asJSON) },
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -91,17 +129,53 @@ func newProjectReposLsCmd() *cobra.Command {
 func newProjectReposAddCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "add <provider/owner/name | owner/name | *>",
-		Short: "Enroll a repository: add it to the policy's allow-list",
-		Long: "Add a canonical repository (github/acme/app, bitbucket/acme/*) to the\n" +
-			"published policy's allow_repos, through the same ETag-guarded write the\n" +
-			"publisher uses, and print the change. A bare owner/name takes its provider\n" +
-			"from this machine's project config, and * is the list's own entry for every\n" +
-			"repository: it is written as it is. Only allow_repos changes.",
+		Use:   "add <provider/owner/name | owner/name>",
+		Short: "Enroll a repository: one confirmation for the whole enrolment",
+		Long: "Enrol a repository in the project, behind one confirmation. The command\n" +
+			"reads what it can and never guesses one: the provider from this machine's\n" +
+			"config, then the checkout's own fugaro.yaml, then its origin remote; the\n" +
+			"workflows and the base branch from that fugaro.yaml; the image its job runs\n" +
+			"from the workflow's catalog reference, then this project's effective image\n" +
+			"map, then the catalog's default; the GitHub App ID and the Claude accounts\n" +
+			"from the project's other repositories. It prints the whole list of what it\n" +
+			"will change, asks once for the project's name, and then does each step as\n" +
+			"far as it can:\n" +
+			"\n" +
+			"  1. the repository's own fugaro.yaml: read, never written\n" +
+			"  2. this machine's project config: the repository's repos: entry\n" +
+			"  3. this machine's project config: its repo-to-image mapping\n" +
+			"  4. the published policy's allow_repos\n" +
+			"  5. the publish of the policy node (fugaro update's policy stage)\n" +
+			"  6. the repository's job set and its roles/run.invoker grant\n" +
+			"\n" +
+			"Every step is idempotent and the command is resumable: over a repository\n" +
+			"already enrolled nothing is written and each step says so, and over an\n" +
+			"enrolment a failure or a Ctrl-C left half done the missing steps are done\n" +
+			"and the ones already done are left alone. A value it cannot read it refuses\n" +
+			"with the one command that supplies it, and never guesses one.\n" +
+			"\n" +
+			"Step 6 converges the repository's own root, which is deployed from a\n" +
+			"checkout of it, so run this from that checkout: without one the command\n" +
+			"refuses and names --allow-list-only. The catalog's entry for the repository\n" +
+			"is mapped and never built — the first image build is billable and it is\n" +
+			"`fugaro image build <entry>`'s — and the map step merges the entry into the\n" +
+			"map the published node holds, so enrolling one repository cannot take\n" +
+			"another's mapping away. Nothing here asks a run to finish, and nothing\n" +
+			"rewrites what a run in flight holds.\n" +
+			"\n" +
+			"--allow-list-only writes the published allow-list entry and nothing else,\n" +
+			"as this command did before the enrolment converged: it is what * needs, and\n" +
+			"it is the whole of what a pattern such as owner/* can want.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], false) },
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if o.allowListOnly {
+				return runProjectReposEdit(cmd, &o, args[0], false)
+			}
+			return runProjectReposEnroll(cmd, &o, args[0])
+		},
 	}
 	addCloudFlags(cmd, &o.cloud)
+	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for *)")
 	return cmd
 }
 
@@ -123,75 +197,6 @@ func newProjectReposRmCmd() *cobra.Command {
 	}
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
-}
-
-func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
-	ctx := cmd.Context()
-	lc, db, err := openBudget(ctx, o.cloud)
-	if err != nil {
-		return err
-	}
-	out := cmd.OutOrStdout()
-	// The seen set is read before the node is printed: it is the half of this
-	// command that can fail on the way to the data (the bucket's marker, the
-	// Firestore mark), and a listing that printed half of itself before
-	// refusing would read as one that had finished.
-	seen, notes, err := seenRepos(ctx, lc, budgetNow())
-	if err != nil {
-		return err
-	}
-	p, found, err := projectpolicy.Read(ctx, db)
-	if err != nil {
-		return policyReadErr(err)
-	}
-	if !found {
-		return userErr("no policy is published for project %s (%s): enroll repositories by publishing one ('fugaro project policy publish'), which seeds the allow-list from this machine's config", lc.Name, projectpolicy.PathShared())
-	}
-	if err := refuseUnknownPolicyKeys(p); err != nil {
-		return err
-	}
-	sources, err := allowSources(ctx, lc)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "allow_repos (%s):\n", projectpolicy.PathShared())
-	if len(p.AllowRepos) == 0 {
-		fmt.Fprintln(out, "  (empty: a published policy with an empty allow-list admits no repository at all)")
-	}
-	for _, r := range p.AllowRepos {
-		fmt.Fprintf(out, "  %s%s\n", r, sourceSuffix(sources[r]))
-	}
-	fmt.Fprintln(out, seenHeader)
-	for _, n := range notes {
-		fmt.Fprintf(out, "  note: %s\n", n)
-	}
-	if len(seen) == 0 {
-		fmt.Fprintln(out, "  (none: no run of any repository has been recorded here)")
-	}
-	// The listing is bounded twice, and both bounds are needed. One entry is
-	// printableName (bounded to one inert line, and distinct from every other
-	// name, so the entry the allow-list refuses cannot print as the one it
-	// admits): every value on this list was written by a run, not by this
-	// program — a runs/<slug>/ prefix is a directory name in the runs bucket
-	// and spendDaily's slug is a field of a document the rollup writes, and
-	// neither path checks the shape of the name. Raw, an escape sequence in
-	// one rewrites the operator's screen, a newline adds a line that reads as
-	// another entry, and a long one pushes the note off the column. And the
-	// count is bounded (safetext.FieldListMax) because the list is as long as
-	// whoever wrote those names made it: a listing that grew with its input
-	// would push this command's own words — the header, the sources, the way
-	// to enroll — off the screen. What is left out is counted in this
-	// program's own words (safetext.FieldListNote), so a listing that stopped
-	// at twenty does not read as a list of twenty. The admission question
-	// above is asked of the name itself; only what is printed is bounded.
-	for i, r := range seen {
-		if i == safetext.FieldListMax {
-			fmt.Fprintf(out, "  (%s)\n", safetext.FieldListNote(len(seen)-i))
-			break
-		}
-		fmt.Fprintf(out, "  %s%s\n", printableName(r.Name), seenNote(r, projectpolicy.AdmitRepo(p.AllowRepos, r.Name)))
-	}
-	return nil
 }
 
 // seenHeader introduces the seen half of `project repos ls`. It names both

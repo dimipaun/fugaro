@@ -267,6 +267,19 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "reviewer: team-a",
 		seed:    closedStdinAccountAliasSeed,
 	},
+	// The switch rewrites every key naming an account, and the sentence its
+	// fixture reads is the first line of its own list — the key as the file
+	// spells it and the move it takes, printed before the write. The seed
+	// declares the two accounts and points the default at the first, so the run
+	// rewrites a key rather than answering "no change: no key of this config
+	// names team-a"; and no repository's own list and no profile names either
+	// account, which is what keeps the run off the subset rule the write is
+	// judged by.
+	"fugaro accounts switch": {
+		args:    []string{"team-a", "team-b"},
+		reaches: "default_claude_account: team-a -> team-b",
+		seed:    closedStdinAccountSwitchSeed,
+	},
 	// The settings write used to ask for the project's name over the document it
 	// edits, and what it edits here is the world's own project config. It asks
 	// nothing now (D1540), and the sentence naming the change is the proof this
@@ -320,6 +333,17 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "read 0, delivered 0, duplicates 0, refused 0, replied 0",
 		seed:    closedStdinMailboxSeed,
 	},
+	// The sweeper is the consumer's other half over the same world, and the one
+	// leaf of the pair that writes nothing at all: `--dry-run` is the plan
+	// rather than the work, so what it reaches is the line naming the mailbox it
+	// walked and the prompts D118's TTL left behind. It reads no keychain, so
+	// the seed is here for the mailbox block the world would otherwise have
+	// none of — a project with no mailbox refuses before it walks anything.
+	"fugaro mailbox sweep": {
+		args:    []string{"--dry-run"},
+		reaches: "0 stored prompt(s) past the TTL",
+		seed:    closedStdinMailboxSeed,
+	},
 	// The daemon is the same shape and answers it the same way: it drives the
 	// project until it is stopped, and --once is its own one cycle — the lease
 	// taken for it and released with it. In this world the node holds no work
@@ -337,6 +361,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro artifacts ls":         {args: []string{"run-1"}},
 	"fugaro budget preview":       {args: []string{"--recipe", "r", "--runs", "1"}},
 	"fugaro budget history":       {args: []string{"--sweep"}},
+	"fugaro budget reconcile":     {args: []string{"--from", "2026-10-12", "--to", "2026-11-16", "--all"}},
 	"fugaro cancel":               {args: []string{"run-1"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
@@ -390,24 +415,21 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// The world's config defines no profiles, so this fixture stops at the
 	// command's own refusal — which is still its body, and the whole of what a
 	// bare run cannot reach.
-	"fugaro project profile set": {args: []string{"standard", "cpu", "4"}},
-	"fugaro project repos add":   {args: []string{"acme/app"}},
-	"fugaro project repos rm":    {args: []string{"acme/app"}},
-	"fugaro project routing set": {args: []string{"claude", "--via", "direct"}},
-	"fugaro recipes publish":     {args: []string{"slug"}},
-	"fugaro recipes show":        {args: []string{"slug"}},
-	"fugaro recipes validate":    {args: []string{"slug"}},
-	"fugaro restore":             {args: []string{"proj-2", "root"}},
-	"fugaro review show":         {args: []string{"run-1"}},
-	"fugaro run":                 {args: []string{"do something"}},
-	// The item is the argument this leaf takes, and it is the whole of what
-	// stands between a bare run and the body: this world's node holds no such
-	// item, so what the body answers is its own refusal, reached with the stdin
-	// closed and asking nothing.
-	"fugaro escalation show": {args: []string{"wi-1"}},
-	"fugaro runs show":       {args: []string{"run-1"}},
-	"fugaro secrets rm":      {args: []string{"NAME"}},
-	"fugaro secrets set":     {args: []string{"NAME"}},
+	"fugaro project profile set":  {args: []string{"standard", "cpu", "4"}},
+	"fugaro project repos add":    {args: []string{"acme/app"}},
+	"fugaro project repos rm":     {args: []string{"acme/app"}},
+	"fugaro project repos status": {args: []string{"github/acme/app"}},
+	"fugaro project routing set":  {args: []string{"claude", "--via", "direct"}},
+	"fugaro recipes publish":      {args: []string{"slug"}},
+	"fugaro recipes show":         {args: []string{"slug"}},
+	"fugaro recipes validate":     {args: []string{"slug"}},
+	"fugaro restore":              {args: []string{"proj-2", "root"}},
+	"fugaro review show":          {args: []string{"run-1"}},
+	"fugaro run":                  {args: []string{"do something"}},
+	"fugaro escalation show":      {args: []string{"wi-1"}},
+	"fugaro runs show":            {args: []string{"run-1"}},
+	"fugaro secrets rm":           {args: []string{"NAME"}},
+	"fugaro secrets set":          {args: []string{"NAME"}},
 	// The intake's two families take the same NAME as the pair above, and their
 	// bodies are reached the same way: the name is the whole of what stands
 	// between a bare run and the command's own body, which is where the
@@ -859,6 +881,17 @@ func closedStdinAccountAllowListSeed(t *testing.T, f *budgetFixture) {
 func closedStdinAccountAliasSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\nclaude_account_aliases:\n  reviewer: team-a\n")
+}
+
+// closedStdinAccountSwitchSeed gives the world the two things a switch needs
+// before it has a key to rewrite: the account it moves onto has to be declared
+// (the resolve's own refusal, which would leave the fixture's list unproven),
+// and a key has to name the account it moves off — here the default, which is
+// the shortest of the five keys and names no repository, so the subset rule the
+// write is judged by has nothing to ask about it.
+func closedStdinAccountSwitchSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\ndefault_claude_account: team-a\n")
 }
 
 // closedStdinProjectSecretAllowListSeed is the same for the project secret's

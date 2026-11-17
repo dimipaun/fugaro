@@ -113,11 +113,27 @@ type Request struct {
 	// asks for none. It may raise and never lower (D6, F14): the fail-closed
 	// direction, kept for every run kind.
 	//
-	// Hotfix is off the axis and ranks below every on-axis mode, so a
-	// request for it raises nothing. That is deliberate: reaching Hotfix is
-	// an operator invoking it under a repository's own opt-in (D12), not a
-	// request that outranks an area, and no request may carry a run below a
-	// floor.
+	// Hotfix is the one mode the request takes a run to outright rather than
+	// by outranking what the layers resolved (Mode.PerRun): it is off the
+	// axis and ranks below every on-axis mode, so a rank comparison would
+	// always discard it, while an operator asking for it is saying
+	// production is on fire. The owner's ruling of 2026-11-13 is that this
+	// door needs no opt-in — the gate D12 named is dropped rather than built
+	// (docs/rigor-command/implementation-plan.md R7) — so `--mode hotfix`
+	// decides for the run that asked for it.
+	//
+	// The floors stay outside every layer and are applied over this
+	// resolution, not by it, and they are keyed by the mode the run is at
+	// (config.LevelInputs.Floor). A request raises a mode and never lowers a
+	// floor (D8, LF5), so moving the mode may not move the run off a floor: a
+	// run a PerRun request takes to hotfix is held to hotfix's row *and* to
+	// the row the layers resolved for it, which is what LayersMode answers and
+	// what the two readers of a floor hand to
+	// policy.Effective.ReviewFloorFor. An owner who wants hotfix runs floored
+	// says so for hotfix as well: `fugaro rigor floor set hotfix l2,l3`. What
+	// no mode reaches is the security-sensitive diff's own escalation, which
+	// turns the adversarial pass on for the run whatever mode it is at
+	// (internal/runner/plan.go).
 	Mode Mode
 	// Paths are the paths the run touches, matched against the area rules
 	// (D20c): the paths a caller declared at bootstrap, and the run's own
@@ -128,6 +144,27 @@ type Request struct {
 	// (D22, D23's own only-tightens shape), so a later resolution that comes
 	// back weaker leaves the reached value standing.
 	Reached Mode
+}
+
+// LayersMode is the mode the layers alone resolve for req — the run's own
+// request left out of the resolution — given the answer an earlier moment gave
+// for it (reached, "" for the first), and "" when the request asks for no mode
+// a run takes whole (Mode.PerRun). For every other request the layers' answer
+// is the mode the run is at, since a request may only raise it, and there is
+// no second row for a reader of the floors to hold beside the first.
+//
+// It is the mode whose floor holds beside the requested one's (D8, LF5: a
+// request raises a mode and never lowers a floor), which is why the two
+// readers of an owner's floor — internal/runner's resolveLevelsForcing and the
+// launcher's copy in internal/cli — ask it and hand the answer to
+// policy.Effective.ReviewFloorFor. reached folds the way Resolve's own
+// Reached does, so a caller asking at each of D22's moments keeps the
+// strictest answer its layers have given.
+func LayersMode(cfg Config, req Request, reached Mode) Mode {
+	if !req.Mode.PerRun() {
+		return ""
+	}
+	return Resolve(cfg, Request{Paths: req.Paths, Reached: reached}).Mode
 }
 
 // Resolved is one resolution (D24): the mode, the layer that won, and every
@@ -149,7 +186,8 @@ type Resolved struct {
 // Resolve is the one resolver (D6): the narrowest layer that sets the mode
 // wins — an area the run's paths match, then the repository's own value,
 // then the project default, then Fugaro's own default — and on top of that
-// the run's own request may raise and never lower it.
+// the run's own request may raise and never lower it, except for Hotfix,
+// which the request takes whole (Mode.PerRun).
 //
 // A narrower layer may set a *lower* mode than a wider one (D21): the order
 // is a precedence, not an only-tightens rule — that is what a default is
@@ -177,9 +215,12 @@ func Resolve(cfg Config, req Request) Resolved {
 		mode, from = Strictest(ModesOf(matched)...), FromArea
 		areas = matched
 	}
-	if Known(req.Mode) && req.Mode.Rank() > mode.Rank() {
-		// Raise-only: a request equal to the resolved mode leaves the layer
-		// that already set it named, since that is the narrower answer.
+	if Known(req.Mode) && (req.Mode.PerRun() || req.Mode.Rank() > mode.Rank()) {
+		// Raise-only for every on-axis mode: a request equal to the resolved
+		// mode leaves the layer that already set it named, since that is the
+		// narrower answer. Hotfix is not raised to and not compared at all —
+		// it is taken whole, so a request for it decides whether the layers
+		// resolved pro or critical (Mode.PerRun).
 		mode, from = req.Mode, FromRequest
 	}
 	if Known(req.Reached) && req.Reached.Rank() > mode.Rank() {

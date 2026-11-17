@@ -49,7 +49,12 @@ import (
 type pairFixture struct {
 	db  *gcpfake.RTDB
 	iam *gcpfake.IAMCredentials
-	dir string
+	// secrets is the installation's Secret Manager, which holds the third copy
+	// of a pairing's MAC key (mobile plan task P5.1e). It starts with no
+	// container — an installation that never opted into a resident orchestrator
+	// has none — so a test that wants the copy seeds one first.
+	secrets *gcpfake.Secrets
+	dir     string
 	// keys is the OS keychain, as a Fake: M5's rule is that no test in this
 	// repository touches a real keychain, so the command's pairKeychain seam is
 	// pointed here and a test reads what the pairing stored.
@@ -73,7 +78,7 @@ var pairT0 = time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 // is missing something.
 func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)) *pairFixture {
 	t.Helper()
-	f := &pairFixture{db: gcpfake.NewRTDB(t), iam: gcpfake.NewIAMCredentials(t), dir: t.TempDir(), keys: &keychain.Fake{}}
+	f := &pairFixture{db: gcpfake.NewRTDB(t), iam: gcpfake.NewIAMCredentials(t), secrets: gcpfake.NewSecrets(t), dir: t.TempDir(), keys: &keychain.Fake{}}
 	f.iam.AddSigner(pairSigner)
 	runs := filepath.Join(f.dir, "runs")
 	if err := os.MkdirAll(runs, 0o755); err != nil {
@@ -82,7 +87,7 @@ func newPairFixture(t *testing.T, me string, edit ...func(*string, *pairFixture)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\n" +
 		"bucket_url: file://" + runs + "\nuser: " + me + "\nmax_parallel: 2\n" +
 		"budget: { mode: observe, per_run_usd: 5, firebase_project: proj-1234, rtdb_url: " + f.db.URL + ", token_signer: " + pairSigner + ", firebase_api_key: " + pairAPIKey + " }\n" +
-		"endpoints: { no_auth: true, iam_credentials: " + f.iam.URL + "/ }\n" +
+		"endpoints: { no_auth: true, iam_credentials: " + f.iam.URL + "/, secret_manager: " + f.secrets.URL + "/ }\n" +
 		"terraform: { operators: [user:" + pairMe + "], launchers: [user:" + pairLauncher + "] }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
 	for _, e := range edit {
@@ -2134,6 +2139,167 @@ func TestPairDeliversSealedConfigurationThenDeletesTheNode(t *testing.T) {
 	}
 }
 
+// pairSeedCloud creates the installation's pairing-key container, as the
+// installation module does when a resident orchestrator is opted into
+// (deploy/terraform/gcp/modules/installation/orchestrator.tf): the secret, its
+// two labels, and no version — an installation that has opted in and paired
+// nothing has nothing for the cloud consumer to verify with. NO fixture seeds
+// it: an installation that never opted in has no container, which is the state
+// every other pairing and revoke test in this file is written against (D111's
+// two places and no third copy).
+func (f *pairFixture) pairSeedCloud(t *testing.T) {
+	t.Helper()
+	f.secrets.Seed(infra.OrchestratorPairingSecretID, map[string]string{
+		"fugaro": "managed", "fugaro_project": "aurora",
+	}, nil)
+}
+
+// pairCloudCopy is the installation's pairing-key container as the command names
+// it in a document and in a refusal: the fixture's project and internal/infra's
+// one container ID, which is the same string pairCloudCopyName builds from the
+// local config.
+func pairCloudCopy() string {
+	return "projects/proj-1234/secrets/" + infra.OrchestratorPairingSecretID
+}
+
+// pairCloudVersion is one version's payload as `fugaro pair` writes it: the
+// device uid the version belongs to, and that device's key. It is how a revoke
+// test gets a copy to destroy without running a whole pairing.
+func pairCloudVersion(t *testing.T, uid, key string) []byte {
+	t.Helper()
+	raw, err := json.Marshal(map[string]string{"uid": uid, "key": key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// pairCloudUIDs reads the container back the way the cloud consumer does — every
+// version's uid and key — so a test asserts on what the resident orchestrator
+// would verify with and not on the bytes of a payload. A DESTROYED version is
+// not in the answer, which is what makes it usable as the assertion for a
+// revoke.
+func (f *pairFixture) pairCloudUIDs(t *testing.T) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	for _, raw := range f.secrets.EnabledVersions(infra.OrchestratorPairingSecretID) {
+		var rec struct {
+			UID string `json:"uid"`
+			Key string `json:"key"`
+		}
+		if err := json.Unmarshal(raw, &rec); err != nil {
+			t.Fatalf("the container holds a version that is not a pairing record: %v", err)
+		}
+		out[rec.UID] = rec.Key
+	}
+	return out
+}
+
+// TestPairWritesTheCloudCopyOfTheKey is P5.1e's half of a pairing: the third
+// copy of the pairing's MAC key goes into the installation's own Secret Manager
+// container, carrying the device uid it belongs to, and it is the same value the
+// phone was given and the laptop's keychain item holds. One value at three ends,
+// because the tag is one symmetric HMAC: a copy that spelled the key another way
+// would verify on the phone and not in the cloud.
+func TestPairWritesTheCloudCopyOfTheKey(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedCloud(t)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deviceUID := f.pairDeviceUID(t)
+	_, itemValue := f.pairStoredKey(t)
+
+	got := f.pairCloudUIDs(t)
+	if len(got) != 1 {
+		t.Fatalf("the container holds %d pairing(s), want the one this pairing wrote: %v", len(got), got)
+	}
+	if key, ok := got[deviceUID]; !ok {
+		t.Fatalf("the container answers %v, want the pairing's own uid %s: a version is told apart by the uid it carries, and that is what a revoke is keyed by", got, deviceUID)
+	} else if key != itemValue {
+		t.Fatalf("the cloud copy's key differs from the keychain item's: the phone, the laptop and the cloud hold one key or the two ends sign differently")
+	}
+
+	events := pairLines(t, out)
+	done := events[len(events)-1]
+	want := []string{rules.PathDevices + "/" + deviceUID, pairPathDelivery(uid), pairCloudCopy()}
+	if !slices.Equal(done.Document.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v: the document reports the copy as custody the installation holds", done.Document.Wrote, want)
+	}
+}
+
+// TestPairWithoutAContainerWritesNoCloudCopy is the switch from the command's
+// side, and it is D111's two places standing: an installation that never opted
+// into a resident orchestrator has no container, so its pairing has no third
+// copy to write and nothing to report — the pairing completes exactly as it did
+// before this task, and the document names the two nodes it always named.
+func TestPairWithoutAContainerWritesNoCloudCopy(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+	if err != nil {
+		t.Fatalf("a pairing on an installation with no cloud container: %v", err)
+	}
+	deviceUID := f.pairDeviceUID(t)
+	events := pairLines(t, out)
+	done := events[len(events)-1]
+	want := []string{rules.PathDevices + "/" + deviceUID, pairPathDelivery(uid)}
+	if !slices.Equal(done.Document.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v: a document naming a copy that is not in the container would report custody the installation does not have", done.Document.Wrote, want)
+	}
+	if raw := f.secrets.Latest(infra.OrchestratorPairingSecretID); raw != nil {
+		t.Fatalf("the pairing wrote a version into a container the installation does not have: %s", raw)
+	}
+	if len(f.keys.Keys) != 1 {
+		t.Fatalf("the keychain holds %v, want the one item a pairing on an installation without a cloud consumer still writes", f.keys.Keys)
+	}
+}
+
+// TestPairCloudWriteFailureDeliversNothing is the refusal a cloud write that is
+// not the container's absence meets: the pairing is stopped and the two things
+// it wrote are taken back, because a phone the installation's own consumer could
+// never verify is half paired — and the operator is owed that at the pairing,
+// where they can still fix the container, rather than at the first message the
+// cloud refuses.
+func TestPairCloudWriteFailureDeliversNothing(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedCloud(t)
+	f.secrets.FailAddVersion = "the container refused the version"
+	uid := pairFixedRand(t)
+	f.pairSeedRequest(uid, pairKey)
+
+	out, _, err := pairRunIn(t, token.Fingerprint(pairKeyBytes), "--json", "--name", "phone-a")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1: a pairing whose key could not be copied into the installation's container is refused", err)
+	}
+	events := pairLines(t, out)
+	last := events[len(events)-1]
+	if last.Event != pairEventRefused || last.Code != pairRefusedCloudKey {
+		t.Fatalf("events = %v, want one refused with %q", events, pairRefusedCloudKey)
+	}
+	if !strings.Contains(last.Reason, infra.OrchestratorPairingSecretID) {
+		t.Errorf("the refusal does not name the container it could not write: %q", last.Reason)
+	}
+	if len(f.keys.Keys) != 0 {
+		t.Fatalf("the keychain holds %v, want nothing: the item written before the copy goes back with it", f.keys.Keys)
+	}
+	if v := f.db.Value("config/admin/devices"); v != nil {
+		t.Fatalf("a refused pairing left a device on the allowlist: %v", v)
+	}
+	f.pairNoDelivery(t, uid)
+	// The pairing is not over: the phone's own request node and the token it
+	// holds are untouched, so the operator can fix the container and pair again.
+	if v := f.db.Value(pairPathRequest(uid)); v == nil {
+		t.Fatal("the refusal deleted the phone's own request node")
+	}
+}
+
 // TestPairItemNameFitsTheKeychain is the arithmetic behind the name's shape, at
 // both ends of what a local config accepts. The ceiling is keychain.ParseItem's
 // 64 characters, the body of the uid `fugaro pair` draws is 22 of them, and a
@@ -2877,6 +3043,165 @@ func TestRevokePushDeleteFailureIsNotSuccess(t *testing.T) {
 	}
 	if _, ok := f.keys.Keys[itemName]; ok {
 		t.Fatal("the MAC keychain item survived a revoke whose device node is already gone: no second revoke could ever remove it")
+	}
+}
+
+// TestRevokeDestroysTheCloudCopyOfTheKey is the design's revocation step 2b,
+// which is what keeps a revoked pairing's messages from verifying in the cloud:
+// the version carrying the revoked device's uid is DESTROYED — the design's own
+// sentence refuses a rotation and a disable, since the service holds
+// versions.access on the parent — and every other pairing's version is left
+// where it is. The version is the unit because a pairing is: one container holds
+// every pairing of the installation.
+func TestRevokeDestroysTheCloudCopyOfTheKey(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedDevice(pairDevB, "phone-b")
+	_, keyA := f.pairSeedItem(t, pairDevA)
+	_, keyB := f.pairSeedItem(t, pairDevB)
+	f.pairSeedCloud(t)
+	f.secrets.AddVersion(infra.OrchestratorPairingSecretID, pairCloudVersion(t, pairDevA, keyA))
+	f.secrets.AddVersion(infra.OrchestratorPairingSecretID, pairCloudVersion(t, pairDevB, keyB))
+	f.secrets.AllowAccess()
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
+		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
+	}
+	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA), pairCloudCopy()}
+	if !slices.Equal(events[0].Revoke.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v: the copy is step 2b, between the two nodes and the laptop's item", events[0].Revoke.Wrote, want)
+	}
+	destroyed := f.secrets.Destroyed()
+	if len(destroyed) != 1 || !strings.HasSuffix(destroyed[0], "/versions/1") {
+		t.Fatalf("destroyed = %v, want the one version carrying the revoked device's uid", destroyed)
+	}
+	if disabled := f.secrets.Disabled(); len(disabled) != 0 {
+		t.Fatalf("disabled = %v, want none: a disabled version is still readable by a service that holds versions.access on the parent, which is the design's step 2b in one sentence", disabled)
+	}
+	left := f.pairCloudUIDs(t)
+	if _, ok := left[pairDevA]; ok {
+		t.Fatal("the revoked pairing's key is still in the container: without step 2b the pairing's messages keep verifying in the cloud")
+	}
+	if _, ok := left[pairDevB]; !ok {
+		t.Fatalf("the container holds %v, want the pairing that was not revoked: one revoke must not take another device's key", left)
+	}
+}
+
+// TestRevokeDestroysTheCloudCopyOfADisabledVersion: a version an operator
+// disabled — or a rotation left behind, this repository's own idiom — is not
+// "nothing to destroy". It still carries the pairing's key, its value is not
+// served at all, so a revoke that read the container as an empty one would exit
+// 0 with the key where it was: exactly what step 2b is for. The revoke destroys
+// it, reports it in wrote, and leaves the other pairing's version DISABLED
+// again, since reading a disabled version to tell it apart costs an enable.
+func TestRevokeDestroysTheCloudCopyOfADisabledVersion(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedDevice(pairDevB, "phone-b")
+	_, keyA := f.pairSeedItem(t, pairDevA)
+	_, keyB := f.pairSeedItem(t, pairDevB)
+	f.pairSeedCloud(t)
+	f.secrets.AddVersion(infra.OrchestratorPairingSecretID, pairCloudVersion(t, pairDevA, keyA))
+	f.secrets.AddVersion(infra.OrchestratorPairingSecretID, pairCloudVersion(t, pairDevB, keyB))
+	f.secrets.AllowAccess()
+	f.secrets.DisableVersions(infra.OrchestratorPairingSecretID)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke over a disabled copy: %v", err)
+	}
+	events := pairLines(t, out)
+	if len(events) != 1 || events[0].Event != pairEventRevoked || events[0].Revoke == nil {
+		t.Fatalf("events = %v, want one %s carrying a document", events, pairEventRevoked)
+	}
+	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA), pairCloudCopy()}
+	if !slices.Equal(events[0].Revoke.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v: the copy is step 2b, and a version a disable hides from the revoke is the state step 2b exists for", events[0].Revoke.Wrote, want)
+	}
+	destroyed := f.secrets.Destroyed()
+	if len(destroyed) != 1 || !strings.HasSuffix(destroyed[0], "/versions/1") {
+		t.Fatalf("destroyed = %v, want the disabled version carrying the revoked device's uid", destroyed)
+	}
+	if disabled := f.secrets.Disabled(); len(disabled) != 1 || !strings.HasSuffix(disabled[0], "/versions/2") {
+		t.Fatalf("disabled = %v, want one disable, of the other pairing's version: the enable the revoke made to read it is undone, so a revoke hands no other pairing's key back to the consumer", disabled)
+	}
+	if n := len(f.secrets.EnabledVersions(infra.OrchestratorPairingSecretID)); n != 0 {
+		t.Fatalf("the container answers %d enabled version(s), want none: one is destroyed and the other is DISABLED again", n)
+	}
+}
+
+// TestRevokeWithoutAContainerDestroysNothing: an installation that never opted
+// into a resident orchestrator has no container, so there is no third copy to
+// destroy — the revoke is the two nodes and the laptop's item, exactly as it was
+// before this task, and it reports nothing it did not do.
+func TestRevokeWithoutAContainerDestroysNothing(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	f.pairSeedItem(t, pairDevA)
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err != nil {
+		t.Fatalf("revoke on an installation with no cloud container: %v", err)
+	}
+	events := pairLines(t, out)
+	want := []string{rules.PathDevices + "/" + pairDevA, pairPushPath(pairDevA)}
+	if !slices.Equal(events[0].Revoke.Wrote, want) {
+		t.Fatalf("wrote = %v, want %v", events[0].Revoke.Wrote, want)
+	}
+	if destroyed := f.secrets.Destroyed(); len(destroyed) != 0 {
+		t.Fatalf("destroyed = %v, want none: the container is not there", destroyed)
+	}
+}
+
+// TestRevokeCloudDeleteFailureIsNotSuccess is the refusal a destroy that does
+// not land meets, and it is the one mistake here that looks like success: a
+// version the operator believes is gone and is not keeps verifying the messages
+// of a pairing nobody holds any more. The revoke still finishes — the device
+// node is gone, so no second revoke could ever name this pairing, and the
+// laptop's item is the one thing the command can still take away — and what the
+// operator is owed is a refusal naming the container and the fix, which is a
+// destroy by hand rather than a disable.
+func TestRevokeCloudDeleteFailureIsNotSuccess(t *testing.T) {
+	f := newPairFixture(t, pairMe)
+	f.pairSeedDevice(pairDevA, "phone-a")
+	itemName, keyA := f.pairSeedItem(t, pairDevA)
+	f.pairSeedCloud(t)
+	f.secrets.AddVersion(infra.OrchestratorPairingSecretID, pairCloudVersion(t, pairDevA, keyA))
+	f.secrets.AllowAccess()
+	f.secrets.FailDestroyWith = http.StatusForbidden
+
+	out, _, err := pairRun(t, "revoke", "--uid", pairDevA, "--json")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want exit 1: a revoke that could not destroy the cloud copy is not a success", err)
+	}
+	events := pairLines(t, out)
+	last := events[len(events)-1]
+	if last.Event != pairEventRefused || last.Code != pairRefusedCloudKeyDelete {
+		t.Fatalf("events = %v, want a %s with code %q", events, pairEventRefused, pairRefusedCloudKeyDelete)
+	}
+	for _, want := range []string{infra.OrchestratorPairingSecretID, "destroyed by hand", "a destroy rather than a disable"} {
+		if !strings.Contains(last.Reason, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, last.Reason)
+		}
+	}
+	for _, e := range events {
+		if e.Event == pairEventRevoked {
+			t.Fatalf("a failed revoke emitted the %s event: %v", pairEventRevoked, events)
+		}
+	}
+	if v := f.db.Value(rules.PathDevices + "/" + pairDevA); v != nil {
+		t.Fatalf("the device node survived: its deletion is the revocation (%v)", v)
+	}
+	if _, ok := f.keys.Keys[itemName]; ok {
+		t.Fatal("the MAC keychain item survived a revoke whose device node is already gone: no second revoke could ever remove it")
+	}
+	if n := len(f.secrets.EnabledVersions(infra.OrchestratorPairingSecretID)); n != 1 {
+		t.Fatalf("the container holds %d version(s), want the one the destroy did not take: a refusal must not report a deletion that did not land", n)
 	}
 }
 

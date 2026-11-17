@@ -57,10 +57,11 @@ type ModelProvider struct {
 	// enforce routing (see PricePolicy).
 	RequireZDR *bool `yaml:"require_zdr,omitempty" json:"require_zdr,omitempty"`
 	// PricePolicy is which end of the selected tier's price range is charged:
-	// "cheapest" or "highest"; unset means cheapest (PricePolicySet). It
-	// prices a tier; it does not choose the endpoint OpenRouter serves from,
-	// so a call may still be billed at the other end of the range (see
-	// docs/multi-model.md §2).
+	// "cheapest" or "highest"; unset means highest (PricePolicySet), the
+	// end that keeps the charge an upper bound on what the endpoint served
+	// can bill. It prices a tier; it does not choose the endpoint OpenRouter
+	// serves from, so a call may still be billed at the other end of the
+	// range (see docs/multi-model.md §2).
 	PricePolicy string `yaml:"price_policy,omitempty" json:"price_policy,omitempty"`
 	// Models are the model IDs the provider serves: exact IDs, or a prefix
 	// ending in "*" such as "deepseek/*". No two providers may overlap.
@@ -146,12 +147,15 @@ var (
 // only: true unless require_zdr is false (the PRSettings.EarlyDraftOn shape).
 func (p ModelProvider) RequireZDROn() bool { return p.RequireZDR == nil || *p.RequireZDR }
 
-// PricePolicySet is the policy to apply, spelled out: cheapest when the field
-// is unset. It is the value that reaches the price table, so the compiler
-// never branches on the empty string.
+// PricePolicySet is the policy to apply, spelled out: highest when the field
+// is unset (D2644, which supersedes the catalog design's ruling that cheapest
+// stays the default: the charge is what the caps and the ledger are computed
+// from, so the safe end is the one that cannot under-count a call OpenRouter
+// serves from a dearer endpoint). It is the value that reaches the price
+// table, so the compiler never branches on the empty string.
 func (p ModelProvider) PricePolicySet() string {
 	if p.PricePolicy == "" {
-		return PricePolicyCheapest
+		return PricePolicyHighest
 	}
 	return p.PricePolicy
 }
@@ -438,7 +442,7 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			add(at+".route_fee_pct", "must be between 0 and %d (a percentage added to every charge)", MaxRouteFeePct)
 		}
 		if p.PricePolicy != "" && p.PricePolicy != PricePolicyCheapest && p.PricePolicy != PricePolicyHighest {
-			add(at+".price_policy", "%q must be one of %s, %s (which end of the built-in price catalog's range to charge; unset means %s)", p.PricePolicy, PricePolicyCheapest, PricePolicyHighest, PricePolicyCheapest)
+			add(at+".price_policy", "%q must be one of %s, %s (which end of the built-in price catalog's range to charge; unset means %s)", p.PricePolicy, PricePolicyCheapest, PricePolicyHighest, PricePolicyHighest)
 		}
 		if len(p.Models) == 0 {
 			add(at+".models", "must list the model IDs the provider serves, such as deepseek/*")
@@ -680,25 +684,33 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // --repo` reads through the operator's own credentials and hands to infra.Repo
 // as Inputs.Policy — the tfvars carry it as the repo object's own
 // bitbucket_proxied, and the same derivation refuses a local project_secrets
-// entry that disagrees with the node for this repository (G15). So this list
-// is inert once over on this branch and not twice: it is EMPTY, and that is
-// the only thing left that stops the drop. The fact itself is false for every
-// repository until the node admits it with `proxy: true` and the installation
-// has opted in, so the drop is gated twice even after this list is filled.
+// entry that disagrees with the node for this repository (G15). The fact is
+// false for every repository until the node admits it with `proxy: true` and
+// the installation has opted in, so the drop is gated twice: this list names
+// the credential, the fact names the repository.
 //
 // Terraform cannot ask Go, so the same names are a literal in
 // modules/workflow/sa.tf's proxied_git_secret_names, held to this list by
 // deploy/terraform's TestProxiedGitSecretNamesMatchTheModule, and read beside
 // the module's own bitbucket_proxied input.
 //
-// It is EMPTY, and it stays empty until the flip. B1.13 part two fills it with
-// "bitbucket-token", and the flip is 0.16.0 — the release after B1.12's Check
-// 191 on the released 0.15.0 and the owner's go on it (D500, G1; O7 and the S1
-// row of docs/secrets-brokering/implementation-plan.md). The module's mirror,
-// the guard test and the tftest runs move in that one commit. Until then no job
-// loses an accessor or a mount for it, whatever the node admits, and a proxied
-// repository's run reads its token exactly as it always has.
-var ProxiedGitSecretNames = []string{}
+// It is FILLED, and that is B1.13 part two: the flip ships in 0.26.0 — the
+// release after the proxy chain's, which is the one `proxySince` names (0.22.0,
+// internal/cli/recipes_skew.go), and after 0.23.0, which went out without it;
+// the owner released the hold on 2026-11-16 (D500, G1; the plan's B1.13 and
+// its S1 row). The module's mirror, the guard test and the
+// tftest runs moved in that one commit. Two gates still stand in front of the
+// drop, and both are per repository: the installation opted in, and the
+// published node's block admits the repository with `proxy: true`. So filling
+// this list changed nothing for a repository the node does not admit, and a
+// proxied repository's job gives up the mount and the accessor its run no
+// longer reads.
+//
+// There is no version gate on that fill: the drop is compiled in and fires
+// wherever the two gates above hold. What keeps it from stranding a proxied
+// run is `fugaro update`, which refuses the drop until the bundle holds the
+// token and names the one command that stores it (O8).
+var ProxiedGitSecretNames = []string{BitbucketSecret}
 
 // ProviderBySecret is the provider whose key is the secret named secret.
 // Provider secrets are the owner's, in the local config, so a workflow's own
