@@ -339,6 +339,17 @@ var consoleReadPaths = map[string]bool{
 	// and it is the read the Project tab's policy panel was missing. It reads
 	// the project's database node and writes neither it nor the state file.
 	"fugaro project policy show": true,
+	// The project's two enrolment reads (the repos-management plan's RE5,
+	// D2413): `project repos ls --json` prints what the project admits and what
+	// each repository runs, and `project repos status --json` prints one row per
+	// fact that decides whether a run of a repository can start. Both resolve
+	// the project the way every cloud read here does -- so a console that asks
+	// either must remember no checkout -- and both write nothing on any path,
+	// `--json` included, with the status read reading a credential's presence
+	// and never a value. The group's two writes, `repos add` and `repos rm`, are
+	// on §5.1's never table and are named by no row there.
+	"fugaro project repos ls":     true,
+	"fugaro project repos status": true,
 	// The effective-craft read (the model-crafts plan's MC8, D1633): per
 	// craft, the model and the credential or pool it runs on, with the layer
 	// each half came from and whether the pool serves anything yet. It is
