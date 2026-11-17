@@ -1133,7 +1133,7 @@ func TestDoctorGitHubApp(t *testing.T) {
 		doctorApp(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read", "workflows": "write"})
 		out, checks := doctorChecks(t)
 		c, _ := doctorCheckByID(checks, "github-app:acme/app")
-		if c.OK || !strings.Contains(c.Problem, "Issues: Read") || !strings.Contains(c.Fix, "add Issues: Read, then accept the new permission on the installation") {
+		if c.OK || !strings.Contains(c.Problem, "Issues: Write") || !strings.Contains(c.Fix, "add Issues: Write, then accept the new permission on the installation") {
 			t.Fatalf("%+v", c)
 		}
 		w, ok := doctorCheckByID(checks, "github-app-permissions-1:acme/app")

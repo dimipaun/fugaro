@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -39,10 +40,11 @@ func checkOpts(t *testing.T, url string) Options {
 	return Options{Owner: "acme", Repo: "app", AppID: "12345", PrivateKey: key(t), BaseURL: url}
 }
 
-// What runs ask for is derived from the code that asks: the union of a run's
-// token and a build's, the higher level where both name a permission.
+// What Fugaro requires is derived from the code that asks: the union of a run's
+// token, a build's and the credentials service's issue route, the higher level
+// where two or more name one permission.
 func TestRequiredPermissionsAreWhatTheTokensAsk(t *testing.T) {
-	want := map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"}
+	want := map[string]string{"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
 	got := RequiredPermissions()
 	if len(got) != len(want) {
 		t.Fatalf("RequiredPermissions = %v, want %v", got, want)
@@ -61,8 +63,63 @@ func TestRequiredPermissionsAreWhatTheTokensAsk(t *testing.T) {
 	}
 }
 
+// TestRequiredPermissionsCarryTheServicesIssueWrite is the owner's ruling of
+// 2026-11-17 made mechanical (U3, D2718, B3 of
+// docs/orchestrator-graph-estimates/implementation-plan.md): the App's
+// installation must grant `issues: write`, which is what the credentials
+// service's issue route mints with, while the run's own token keeps the read it
+// has always asked for — the write belongs to the service, which performs the
+// act and hands no token over.
+//
+// Both halves matter: a requirement without the mint is a permission nobody
+// uses, and a mint without the requirement is a route that mints what the
+// installation does not hold and fails at the first issue with GitHub's 422
+// instead of at init with the grant named.
+func TestRequiredPermissionsCarryTheServicesIssueWrite(t *testing.T) {
+	if got := RequiredPermissions()["issues"]; got != "write" {
+		t.Errorf("RequiredPermissions issues: %q, want write (the App's installation grants it)", got)
+	}
+	if got := tokenPermissions["issues"]; got != "read" {
+		t.Errorf("the run's token asks for issues: %q, want the read it has always asked for", got)
+	}
+	if !maps.Equal(IssueTokenPermissions(), map[string]string{"issues": "write", "metadata": "read"}) {
+		t.Errorf("IssueTokenPermissions() = %v, want the set the issue route mints", IssueTokenPermissions())
+	}
+}
+
+// TestCheckInstallationReportsAnIssuesReadGrantAsMissing is the gap the owner's
+// ruling creates on an installation granted before it: an App whose installation
+// holds `issues: read` where Fugaro requires the write is reported MISSING it, by
+// name and with the exact fix, rather than passing the check and failing later
+// at the first issue the service opens.
+func TestCheckInstallationReportsAnIssuesReadGrantAsMissing(t *testing.T) {
+	srv, _ := installServer(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"})
+	rep, err := CheckInstallation(context.Background(), checkOpts(t, srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Missing) != 1 || rep.Missing[0].Name != "issues" {
+		t.Fatalf("missing = %+v, want the issues grant alone", rep.Missing)
+	}
+	gap := rep.Missing[0]
+	if gap.Want != "write" || gap.Have != "read" {
+		t.Errorf("gap = %+v, want write over a read grant", gap)
+	}
+	wantDisplay := "Issues: Write"
+	wantFix := "change Issues to Read and write, then accept the new permission on the installation"
+	if gap.Display() != wantDisplay || gap.Fix() != wantFix {
+		t.Errorf("Display/Fix = %q / %q, want %q / %q", gap.Display(), gap.Fix(), wantDisplay, wantFix)
+	}
+	// The same installation with the write granted is clean: the read is not
+	// reported as extra and nothing else moves.
+	srv, _ = installServer(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"})
+	if rep, err = CheckInstallation(context.Background(), checkOpts(t, srv.URL)); err != nil || len(rep.Missing) != 0 || len(rep.Extra) != 0 {
+		t.Fatalf("an installation granting the write: %+v, %v", rep, err)
+	}
+}
+
 func TestCheckInstallationFine(t *testing.T) {
-	srv, seen := installServer(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"})
+	srv, seen := installServer(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"})
 	rep, err := CheckInstallation(context.Background(), checkOpts(t, srv.URL))
 	if err != nil || rep.InstallationID != 777 || len(rep.Missing) != 0 || len(rep.Forbidden) != 0 || len(rep.Extra) != 0 {
 		t.Fatalf("report %+v, %v", rep, err)
@@ -70,8 +127,8 @@ func TestCheckInstallationFine(t *testing.T) {
 	if len(*seen) != 1 {
 		t.Errorf("requests %v, want the one installation lookup", *seen)
 	}
-	// A higher level than needed is fine: issues write covers issues read.
-	srv, _ = installServer(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"})
+	// A higher level than needed is fine: issues admin covers issues write.
+	srv, _ = installServer(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "issues": "admin", "metadata": "read"})
 	if rep, err = CheckInstallation(context.Background(), checkOpts(t, srv.URL)); err != nil || len(rep.Missing) != 0 {
 		t.Fatalf("a higher level was refused: %+v, %v", rep, err)
 	}
@@ -103,7 +160,7 @@ func TestCheckInstallationNamesEachGap(t *testing.T) {
 	slices.Sort(missing)
 	want := []string{
 		"Contents: Write (change Contents to Read and write, then accept the new permission on the installation)",
-		"Issues: Read (add Issues: Read, then accept the new permission on the installation)",
+		"Issues: Write (add Issues: Write, then accept the new permission on the installation)",
 		"Pull requests: Write (add Pull requests: Write, then accept the new permission on the installation)",
 	}
 	if !slices.Equal(missing, want) {
@@ -161,4 +218,4 @@ func TestCheckInstallationRefusesOddNames(t *testing.T) {
 	}
 }
 
-var fullPermsForTest = map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"}
+var fullPermsForTest = map[string]string{"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}

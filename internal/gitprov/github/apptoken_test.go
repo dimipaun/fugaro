@@ -421,6 +421,33 @@ func TestRunTokenPermissionsAreTheRuns(t *testing.T) {
 	}
 }
 
+// TestIssueTokenPermissionsAreTheServicesWrite: the set the credentials
+// service's issue route mints with (B3 of
+// docs/orchestrator-graph-estimates/implementation-plan.md, D2718) is `issues:
+// write` and `metadata: read` and nothing else — the creation is the act that
+// needs the write and GitHub has no read-only issue permission beside it — and
+// it is a copy, so a caller that mutates what it was handed cannot widen what
+// the next mint asks GitHub for.
+//
+// It is the same set RequiredPermissions holds the App's installation to, which
+// is what makes an installation granted only `issues: read` an init-time
+// finding rather than a 422 at the first issue the service opens, and what
+// makes the owner's ruling of 2026-11-17 (U3) mechanical.
+func TestIssueTokenPermissionsAreTheServicesWrite(t *testing.T) {
+	want := map[string]string{"issues": "write", "metadata": "read"}
+	perms := IssueTokenPermissions()
+	if !maps.Equal(perms, want) {
+		t.Fatalf("IssueTokenPermissions() = %v, want %v", perms, want)
+	}
+	perms["contents"] = "write"
+	if again := IssueTokenPermissions(); !maps.Equal(again, want) {
+		t.Errorf("IssueTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
+	}
+	if maps.Equal(RunTokenPermissions(), want) {
+		t.Error("the issue route's set is the run's: the two are two declarations, and the write is the service's alone")
+	}
+}
+
 // TestAppTokenCoordinatorPermissionsHoldNoWrite is Q3's hard rule made
 // mechanical (P2 of docs/coordinator/implementation-plan.md, D193(A)): the
 // installation token a coordinator mints carries the reads the project view
