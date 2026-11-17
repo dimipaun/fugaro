@@ -143,7 +143,7 @@ func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 		}
 		repo = got
 	}
-	brief, err := backlogBrief(cmd, o, title)
+	brief, err := backlogBrief(o, title)
 	if err != nil {
 		return err
 	}
@@ -213,7 +213,7 @@ func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 // backlogBrief is the brief the item is launched with: --brief-file's contents,
 // or the title when no file is named — an item is a title with no text only if
 // its filer leaves it that way, and the title is the one line they gave.
-func backlogBrief(cmd *cobra.Command, o *backlogAddOptions, title string) (string, error) {
+func backlogBrief(o *backlogAddOptions, title string) (string, error) {
 	if o.briefFile == "" {
 		return title, nil
 	}

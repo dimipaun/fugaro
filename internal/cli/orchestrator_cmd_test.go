@@ -120,7 +120,7 @@ func orchestratorPath(t *testing.T, node string) string {
 	case orchestrator.BacklogNode:
 		path, err = orchestrator.PathBacklog(orchestratorTestID)
 	default:
-		t.Fatalf("%q is not one of the node's three siblings", node)
+		t.Fatalf("%q is not one of the kinds of node this fixture can point at", node)
 	}
 	if err != nil {
 		t.Fatal(err)
