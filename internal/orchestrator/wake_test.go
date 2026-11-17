@@ -74,6 +74,15 @@ func (f *wakeFixture) put(path, rel, data string) {
 	f.send(path, rtdb.Event{Type: "put", Path: rel, Data: json.RawMessage(data)})
 }
 
+// patch is one root PATCH as the budget's writers send it: the body's keys are
+// the whole paths of what they write (budget.Session.flush patches the root
+// with `agents/<slug>/<run>`, and the registry with
+// `outcomes/<day>/<slug>/<run>`), so a key is a path and not a name.
+func (f *wakeFixture) patch(path, data string) {
+	f.t.Helper()
+	f.send(path, rtdb.Event{Type: "patch", Path: "/", Data: json.RawMessage(data)})
+}
+
 func (f *wakeFixture) send(path string, ev rtdb.Event) {
 	f.t.Helper()
 	f.src.feed(f.t, path).send(ev)
@@ -147,6 +156,44 @@ func TestHeartbeatDoesNotWake(t *testing.T) {
 	// a wake: the wait is not asleep, it is filtering.
 	f.put(f.agents(), "/"+wakeRunTwo, entry)
 	f.expectWake(2 * time.Second)
+}
+
+// TestHeartbeatWithAPathKeyDoesNotWake: the heartbeat as the budget writes it
+// is one PATCH of the root whose key is the entry's whole path, and the wait
+// has to read that key as a path — as rtdb.Tree.Apply reads the same key off
+// the same events — or every heartbeat is a run the presence set has never
+// heard of, and the tick runs per run in flight (F45). The run that ends the
+// ordinary way is the other half of the same reading: its outcome's key is its
+// whole path too, so a wait that misses it calls the run vanished (D2725).
+func TestHeartbeatWithAPathKeyDoesNotWake(t *testing.T) {
+	f := newWakeFixture(t)
+	f.open()
+	f.expectNoWake(3 * wakeDebounce)
+	entry := AgentsPath(wakeSlug) + "/" + wakeRunOne
+
+	f.patch(f.agents(), `{"`+entry+`":{"repo":"acme/app"}}`)
+	f.expectWake(2 * time.Second) // the run's start, which is a wake
+	for i := 0; i < 5; i++ {
+		f.patch(f.agents(), `{"`+entry+`":{"repo":"acme/app"}}`)
+	}
+	f.expectNoWake(5 * wakeDebounce)
+
+	// A run that reported before it cleared its entry: the outcome's key is
+	// its own path under the day, so the wake that clears the entry finds the
+	// run's outcome where the wake's own check looks for it.
+	two := AgentsPath(wakeSlug) + "/" + wakeRunTwo
+	f.patch(f.agents(), `{"`+two+`":{"repo":"acme/app"}}`)
+	f.expectWake(2 * time.Second)
+	f.patch(f.outcomes(), `{"`+budget.PathOutcome(f.day, wakeSlug, wakeRunTwo)+`":{"status":"succeeded"}}`)
+	f.expectWake(2 * time.Second)
+	f.patch(f.agents(), `{"`+two+`":null}`)
+	w, ok := f.wakeWithin(2 * time.Second)
+	if !ok {
+		t.Fatal("the entry of a run that ended did not wake the wait")
+	}
+	if len(w.Vanished) != 0 {
+		t.Fatalf("a run whose outcome was written as a path key was reported vanished: %+v", w.Vanished)
+	}
 }
 
 // TestWakesAreDebounced: one run's end is several writes — its outcome, its

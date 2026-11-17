@@ -17,7 +17,11 @@
 //     — a whole-value put of the entry at its own path — so the two are told
 //     apart by what the wait has already seen below that node and not by the
 //     event. Waking on every heartbeat would tick the daemon several times a
-//     second (F45), which is why the presence set exists at all.
+//     second (F45), which is why the presence set exists at all. Reading an
+//     entry out of an event is where the keys of a patch body have to be read
+//     as paths (wakeStream.named): every budget writer patches the root with
+//     the entry's whole path as the key, so a key read as a name would make
+//     every heartbeat a run the wait had never seen.
 //   - `outcomes/<day>`: any write is the change. The node is written once per
 //     run, as it ends, so there is no repeat to filter out.
 //   - the daemon's own node: any write is the change, as it was before.
@@ -47,6 +51,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -186,6 +191,9 @@ const (
 type wakeStream struct {
 	kind wakeKind
 	path string
+	// base is path's own segments, which a key of a patch body may carry in
+	// front of the part below this node (named).
+	base []string
 	slug string // wakeAgents: the repository whose entries are below this node
 	day  int64  // wakeOutcomes: the day this node is
 	// opening is set until the connection's first snapshot has been read: the
@@ -251,6 +259,7 @@ type wakeRun struct {
 func (r *wakeRun) open(parent context.Context, st *wakeStream) {
 	sctx, cancel := context.WithCancel(parent)
 	st.cancel, st.done, st.opening = cancel, make(chan struct{}), true
+	st.base = relSegments(st.path)
 	if st.present == nil {
 		st.present = map[AgentRef]bool{}
 	}
@@ -455,60 +464,101 @@ type wakeEntry struct {
 // whole node — a put of the node itself replaces what is below it, so every
 // entry the value does not hold is gone.
 //
+// A key of a patch body is a path, not a name: the budget's writers patch the
+// root with what they write (`agents/<slug>/<run>` and
+// `outcomes/<day>/<slug>/<run>`, budget.Session's flush and its registry), and
+// the database's own update is a write at each of those paths. rtdb.Tree.Apply
+// reads the same keys off the same events the same way. A key read as a name
+// instead would make the ref of a heartbeat a run the wait has never seen,
+// absent from the presence set, so every heartbeat would be a start and the
+// wait would tick per run in flight — the one thing F45 forbids.
+//
 // Anything deeper than an entry names nothing: a run rewriting one field of its
 // own entry is a heartbeat, and the entry is already in the presence set. For
 // the same reason nothing here reads the fields of an entry: which run it is,
 // is the whole of what the wait needs to know about it.
 func (st *wakeStream) named(ev rtdb.Event) ([]wakeEntry, bool) {
-	segs := relSegments(ev.Path)
 	depth := 1
 	if st.kind == wakeOutcomes {
 		depth = 2
 	}
-	if len(segs) == 0 {
+	segs := st.relative(relSegments(ev.Path))
+	switch n := len(segs); {
+	case n == 0:
 		var held map[string]json.RawMessage
 		if json.Unmarshal(ev.Data, &held) != nil {
 			return nil, ev.Type == "put"
 		}
-		return st.children(held, depth), ev.Type == "put"
-	}
-	if depth == 1 {
-		return []wakeEntry{{AgentRef{Slug: st.slug, Run: segs[0]}, !(len(segs) == 1 && isNull(ev.Data))}}, false
-	}
-	if len(segs) == 1 {
-		// A patch of one repository's runs names the runs it carries as its
-		// keys. Anything else at this depth (a put of one repository's whole
-		// set, which nothing in the tree does) is read as what its data holds.
-		var runs map[string]json.RawMessage
-		if json.Unmarshal(ev.Data, &runs) != nil {
+		return st.entries(held, nil, depth), ev.Type == "put"
+	case n < depth:
+		// A patch made between this node and its entries — one repository's
+		// runs under `outcomes/<day>` — names them in its keys.
+		var held map[string]json.RawMessage
+		if json.Unmarshal(ev.Data, &held) != nil {
 			return nil, false
 		}
-		return st.children(runs, 1), false
+		return st.entries(held, segs, depth), false
+	case n == depth:
+		return []wakeEntry{{st.ref(segs), !isNull(ev.Data)}}, false
+	default:
+		// Deeper than an entry: one of its fields, which names the entry it is
+		// under and does not delete it. What deletes an entry is a null at the
+		// entry's own path.
+		return []wakeEntry{{st.ref(segs), true}}, false
 	}
-	return []wakeEntry{{AgentRef{Slug: segs[0], Run: segs[1]}, !(len(segs) == 2 && isNull(ev.Data))}}, false
 }
 
-// children is the entries a map of one node's children names, at the depth of
-// the entries below this stream's path: one level for `agents/<slug>`, two for
-// `outcomes/<day>`.
-func (st *wakeStream) children(m map[string]json.RawMessage, depth int) []wakeEntry {
+// entries is the entries a body of keys names, each key resolved against the
+// paths the write was made at: a key is a path itself, so it can carry several
+// segments of the way down to an entry, and a value that stops above the entry
+// holds the rest of the path below it.
+func (st *wakeStream) entries(m map[string]json.RawMessage, base []string, depth int) []wakeEntry {
 	out := make([]wakeEntry, 0, len(m))
-	if depth == 1 {
-		for run, v := range m {
-			out = append(out, wakeEntry{AgentRef{Slug: st.slug, Run: run}, !isNull(v)})
-		}
-		return out
-	}
-	for slug, raw := range m {
-		var runs map[string]json.RawMessage
-		if json.Unmarshal(raw, &runs) != nil {
-			continue
-		}
-		for run, v := range runs {
-			out = append(out, wakeEntry{AgentRef{Slug: slug, Run: run}, !isNull(v)})
-		}
+	for k, raw := range m {
+		segs := append(append([]string{}, base...), relSegments(k)...)
+		out = append(out, st.walk(st.relative(segs), raw, depth)...)
 	}
 	return out
+}
+
+// walk is one key's resolved path, taken down to the entry at this stream's
+// depth.
+func (st *wakeStream) walk(segs []string, raw json.RawMessage, depth int) []wakeEntry {
+	switch n := len(segs); {
+	case n == depth:
+		return []wakeEntry{{st.ref(segs), !isNull(raw)}}
+	case n > depth:
+		return []wakeEntry{{st.ref(segs), true}}
+	default:
+		var held map[string]json.RawMessage
+		if json.Unmarshal(raw, &held) != nil {
+			return nil
+		}
+		return st.entries(held, segs, depth)
+	}
+}
+
+// ref is the entry the first segments of a resolved path name: the run alone
+// below `agents/<slug>`, and the repository and the run below
+// `outcomes/<day>`.
+func (st *wakeStream) ref(segs []string) AgentRef {
+	if st.kind == wakeOutcomes {
+		return AgentRef{Slug: segs[0], Run: segs[1]}
+	}
+	return AgentRef{Slug: st.slug, Run: segs[0]}
+}
+
+// relative drops this node's own path from a path that carries it. An event's
+// path arrives relative to the streamed node (rtdb.Event.Path), but a key of a
+// patch body is a path from the root of the write — which for the budget's
+// writers is the database's root — so where it opens with the node the stream
+// is over, that much of it is the stream's own address and not part of the way
+// down to an entry.
+func (st *wakeStream) relative(segs []string) []string {
+	if len(st.base) > 0 && len(segs) >= len(st.base) && slices.Equal(segs[:len(st.base)], st.base) {
+		return segs[len(st.base):]
+	}
+	return segs
 }
 
 // relSegments is an event's path as its segments below the streamed node: "/"
