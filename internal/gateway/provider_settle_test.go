@@ -498,6 +498,36 @@ func TestNoReportIsTable(t *testing.T) {
 	}
 }
 
+// TestSurpriseCallKeepsItsPenaltyCharge: a report does not talk the gateway
+// out of the penalty charge for a pricing dimension the request did not allow
+// (O6). A speed the caller never asked for is charged the table's maximum
+// rates with the surprise multiple, exactly as it was before a report settled
+// anything, and the report is recorded beside that charge rather than charged:
+// the charge follows the violation, and the record still says what the
+// provider itself charged.
+func TestSurpriseCallKeepsItsPenaltyCharge(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 500}
+	rep := anthropicfake.Compat{}.StreamOK(dsModel, u)
+	rep.Events[0] = rawUsage(t, rep.Events[0], `"speed":"fast","cost":0.05`)
+	call, stage := settleCase(t, 10, msg(dsModel, 4000, `"stream":true`), rep)
+	want := pricing.WithFee(satMul(maxRates().Cost(u), pricing.SurpriseMultiplier), 10)
+	if settled := pricing.WithFee(50_000, 10); settled == want {
+		t.Fatalf("the fixture's penalty charge %d is the report's own: the test proves nothing", want)
+	}
+	if got := pricing.Micros(num(call["charged_micros"])); got != want {
+		t.Errorf("charged %d, want the penalty charge %d", got, want)
+	}
+	if call["priced_as"] != pricedSurprise {
+		t.Errorf("priced_as %v, want %q", call["priced_as"], pricedSurprise)
+	}
+	if stage.Reported != 50_000 || stage.ReportedBy[dsModel] != 50_000 {
+		t.Errorf("reported %d by model %v, want the provider's 50000 recorded beside the charge", stage.Reported, stage.ReportedBy)
+	}
+	if got := pricing.Micros(num(call["reported_micros"])); got != 50_000 {
+		t.Errorf("the call log's reported_micros %v, want 50000", got)
+	}
+}
+
 // An unusable reported cost is not recorded and changes nothing.
 func TestReportedCostUnusableIgnored(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 2000}

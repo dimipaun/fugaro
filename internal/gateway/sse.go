@@ -190,7 +190,7 @@ func (a *usageAcc) merge(u *wireUsage) {
 			// wins, as each count's own takeMax does: a later event must not
 			// talk a call's charge down, and a call settles on the most the
 			// response ever said it cost (F22). The Claude route has no
-			// report to settle on and keeps the last value.
+			// report to settle on and keeps the last figure it read.
 			m := pricing.Micros(math.Round(usd * 1e6))
 			if !a.provider || !a.hasReported || m > a.reported {
 				a.reported, a.hasReported = m, true
