@@ -461,7 +461,8 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	// that answered every step — one that could not says so itself, in D1563's
 	// words (chainKeptLine) — so what a person reads is never both "live" and
 	// "still owed".
-	if err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply); err != nil {
+	live, err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply)
+	if err != nil || !live {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Image %s added and now available to your jobs.\n", pluginwire.Printable(e.Name))
@@ -605,7 +606,8 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string, noApply bool) e
 	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
 		return err
 	}
-	if err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply); err != nil {
+	live, err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply)
+	if err != nil || !live {
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Image %s removed and no longer available to your jobs: its built image stays in the registry.\n", pluginwire.Printable(name))

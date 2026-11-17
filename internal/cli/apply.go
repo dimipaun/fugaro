@@ -649,15 +649,40 @@ func queueChange(cmd *cobra.Command, lc *localcfg.Config, change apply.Change) (
 // noApply is D1565: the change is saved, its steps are recorded, and nothing is
 // run — so the answer is the same sentence saying what is owed, and the exit is
 // the plain one, because the command did exactly what it was asked for.
-func runChangeChain(cmd *cobra.Command, lc *localcfg.Config, path string, change apply.Change, noApply bool) error {
+//
+// live is what the caller's own sentence hangs on: it is true only when this
+// run answered every step of the change, so a command never tells a person
+// that its change is live in the same breath as a line saying what is still
+// owed.
+func runChangeChain(cmd *cobra.Command, lc *localcfg.Config, path string, change apply.Change, noApply bool) (live bool, err error) {
 	steps, err := queueChange(cmd, lc, change)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if noApply {
 		chainKeptLine(cmd.OutOrStdout(), steps)
-		return nil
+		return false, nil
 	}
+	// The steps run against the config as this command left it and not the copy
+	// it read before writing its change. A step's own check reads what is true
+	// now (D1575), and the change is the newest thing in that file: handed the
+	// copy taken before the write, the catalog build's check reads a project
+	// whose catalog is the one this run was aimed at rather than the entry it
+	// just added, answers its own step with nothing built (infra.CatalogBuilds,
+	// applyCatalogBuild), and the policy step beside it publishes a node the
+	// entry is missing from. So the file is read again here, once the write has
+	// happened; a file that will not read back is this command's own error and
+	// not a fallback to the copy, because no step of the change can be run
+	// against a config this build cannot read.
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, userErr("reading %s back for the steps this change owes: %v", pluginwire.Printable(path), err)
+	}
+	fresh, err := localcfg.Parse(data)
+	if err != nil {
+		return false, userErr("the project config %s: %v", pluginwire.Printable(path), err)
+	}
+	lc = fresh
 	run, err := runOwedSteps(cmd, lc, path, false)
 	kept := run.kept
 	if !run.started {
@@ -673,11 +698,11 @@ func runChangeChain(cmd *cobra.Command, lc *localcfg.Config, path string, change
 	case err != nil:
 		// The run's own failure, which already says what stopped it: the
 		// sentence above is this command's, and this is the run's.
-		return err
+		return false, err
 	case len(kept) > 0:
-		return userErr("%s still owed; run `fugaro apply` to finish the job", strings.Join(kept, ", "))
+		return false, userErr("%s still owed; run `fugaro apply` to finish the job", strings.Join(kept, ", "))
 	}
-	return nil
+	return true, nil
 }
 
 // applyAnswered reports whether a stage's own answer means the step it was run
