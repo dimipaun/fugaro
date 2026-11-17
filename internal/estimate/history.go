@@ -189,10 +189,16 @@ type Table struct {
 //     sample of its tier and of no (tier, rigor) group.
 //
 // A run that ended failed or halted is none of those: it took the time it took,
-// and its duration is a real sample of its tier. A record whose duration or
-// cost is not a figure -- zero or negative minutes, a negative dollar, an
-// infinity, a NaN, a value past maxFigure -- is dropped from that measure
-// alone, so one bad record costs one sample and never the table.
+// and its duration is a real sample of its tier.
+//
+// The two measures are read apart in one direction only. A record whose cost is
+// not a figure -- a negative dollar, an infinity, a NaN, a value past maxFigure
+// -- keeps its duration sample and pays nothing: one bad record costs one
+// sample and never the table. A record whose duration is not a figure -- zero
+// or negative minutes, or one of those values -- is no sample at all, and its
+// cost goes with it: a run that cannot say how long the work took is not one
+// this table trusts to say what it cost, and the cost sample may never outgrow
+// the group's own count, which is what both figures are widened by.
 //
 // now is the caller's clock, stamped on the table: a reader says how stale a
 // cached table is from it, so a caller that passes the zero time writes one its

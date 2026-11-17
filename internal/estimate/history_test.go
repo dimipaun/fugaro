@@ -180,7 +180,13 @@ func TestTableWidensUnderTwenty(t *testing.T) {
 // TestNoCostSeed: D2712's "no cost defaults". A seeded answer carries no cost
 // figure at all, and neither does a group whose runs were recorded before the
 // cost breakdown existed: the figure reads "no history yet" rather than a zero
-// a reader would take for free.
+// a reader would take for free. A record whose cost is not a figure is not a
+// cost sample either, and the duration it carries still counts.
+//
+// Mutation (run, restore): the guard on the dollars
+// (`if rec.Cost != nil && figure(rec.Cost.TotalUSD)`) to `if rec.Cost != nil`,
+// and the six-run case at the end reads six cost samples where the negative
+// dollar is no sample at all.
 func TestNoCostSeed(t *testing.T) {
 	table := Build(nil, historyReadAt)
 	seeded := table.Answer(tier.Medium, rigor.Pro)
@@ -223,6 +229,22 @@ func TestNoCostSeed(t *testing.T) {
 	if want := (Range{Low: 1.5, High: 4.5}); !mixedAnswer.HasCost || !sameRange(mixedAnswer.Cost, want) {
 		t.Errorf("cost = %v (%v), want the five paid runs' widened %v", mixedAnswer.Cost, mixedAnswer.HasCost, want)
 	}
+
+	// A record whose cost is not a figure pays nothing and is still a duration
+	// sample: the guard is on the cost alone, so one mispriced record costs one
+	// sample and never the table. Six runs of which the last carries a negative
+	// dollar are six duration samples and five cost ones.
+	mispriced := historySeries(tier.Small, rigor.Pro, runstore.StatusSucceeded,
+		[]float64{10, 20, 30, 40, 50, 60}, []float64{1, 2, 3, 4, 5, 6})
+	negative := runstore.NewCost(-1, 0, runstore.BasisAPIList)
+	mispriced[5].Cost = &negative
+	costed := Build(mispriced, historyReadAt).group(tier.Small, rigor.Pro)
+	if costed == nil || costed.Runs != 6 || costed.CostRuns != 5 {
+		t.Fatalf("six runs, one of them mispriced, = %+v, want 6 duration samples and 5 cost ones", costed)
+	}
+	if costed.CostUSD == nil {
+		t.Error("the five paid runs published no cost figure")
+	}
 }
 
 // TestExcludesUnfinishedRuns: the runs no figure can be drawn from are counted
@@ -231,7 +253,13 @@ func TestNoCostSeed(t *testing.T) {
 // a cancelled run was stopped at whatever moment a person chose -- none of the
 // three says how long the work takes, so all three are left out. A run that
 // ended failed is not one of them: it took the time it took, and its duration
-// is a real sample of the tier.
+// is a real sample of the tier. A record whose duration is not a figure is no
+// sample at all, and the cost it carries goes with it.
+//
+// Mutation (run, restore): the guard on the durations
+// (`if minutes <= 0 || !figure(minutes)`) to `if false`, and the zero-minute
+// record at the end enters the sample: the group reads six runs where five are
+// measurable.
 func TestExcludesUnfinishedRuns(t *testing.T) {
 	recs := historySeries(tier.Small, rigor.Pro, runstore.StatusSucceeded,
 		[]float64{10, 20, 30, 40, 50}, []float64{1, 2, 3, 4, 5})
@@ -267,6 +295,26 @@ func TestExcludesUnfinishedRuns(t *testing.T) {
 	}
 	if want := (Range{Low: 120, High: 480}); !sameRange(large.Minutes, want) {
 		t.Errorf("large minutes = %v, want the seed %v", large.Minutes, want)
+	}
+
+	// A record whose duration is not a figure is no sample at all, and its cost
+	// goes with it: zero minutes (a run that finished at the instant it started)
+	// and a negative duration (one that finished before it started) are the two
+	// shapes the guard takes, and neither may be read as a run that took no time
+	// and cost a hundred dollars.
+	unmeasurable := historySeries(tier.Medium, rigor.Pro, runstore.StatusSucceeded,
+		[]float64{10, 20, 30, 40, 50}, []float64{1, 2, 3, 4, 5})
+	instant := historyRun(tier.Medium, rigor.Pro, runstore.StatusSucceeded, 0, 100)
+	backwards := historyRun(tier.Medium, rigor.Pro, runstore.StatusSucceeded, 30, 100)
+	before := backwards.StartedAt.Add(-time.Minute)
+	backwards.FinishedAt = &before
+	measured := Build(append(unmeasurable, instant, backwards), historyReadAt)
+	if g := measured.group(tier.Medium, rigor.Pro); g == nil || g.Runs != 5 || g.CostRuns != 5 {
+		t.Fatalf("five runs beside a zero-minute and a backwards one = %+v, want the five alone", g)
+	}
+	// 10..50 minutes: p25/p50/p75 are 20/30/40, widened to 15-45.
+	if want := (Range{Low: 15, High: 45}); !sameRange(measured.Answer(tier.Medium, rigor.Pro).Minutes, want) {
+		t.Errorf("minutes = %v, want the five measurable runs' %v", measured.Answer(tier.Medium, rigor.Pro).Minutes, want)
 	}
 }
 
@@ -342,6 +390,34 @@ func TestTableCacheRoundTrip(t *testing.T) {
 		}
 		if _, err := ReadCache(strange); err == nil {
 			t.Fatal("ReadCache accepted a field this release does not read")
+		}
+	})
+
+	// Mutation (run, restore): `case doc.WrittenAt.IsZero():` to `case false:`,
+	// and the undated file below is read back as a table whose staleness cannot
+	// be shown.
+	t.Run("a table with no stamp is refused", func(t *testing.T) {
+		undated := filepath.Join(dir, "undated.json")
+		body := `{"schema_version":1,"groups":[]}`
+		if err := os.WriteFile(undated, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadCache(undated); err == nil {
+			t.Fatal("ReadCache accepted a table that cannot say how stale it is")
+		}
+	})
+
+	// Mutation (run, restore): the group scan's `if !tier.Known(g.Tier)` to
+	// `if false`, and the file below is read back with a group of a tier no
+	// reader can look up.
+	t.Run("a group of a tier this release does not ship is refused", func(t *testing.T) {
+		unknown := filepath.Join(dir, "unknown-tier.json")
+		body := `{"schema_version":1,"written_at":"2026-11-16T12:00:00Z","groups":[{"tier":"enormous","runs":5,"duration_minutes":{"p25":10,"p50":20,"p75":30}}]}`
+		if err := os.WriteFile(unknown, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadCache(unknown); err == nil {
+			t.Fatal("ReadCache accepted a group of a tier this release does not ship")
 		}
 	})
 }
