@@ -2040,6 +2040,12 @@ func licenceGrantPlan(computed bool, role string, cnd map[string]any) *Plan {
 // a whole-bucket read would reach the run records, the prompts, the
 // transcripts, the sealed tokens, the cache, the locks and the issue store,
 // none of which the job has any business reading (plan K4.2, D524).
+//
+// Mutation (verified, run and restored): deleting licenceGrant's
+// member-mismatch return covers the orphan plan below — the plan that creates
+// some other service account, so the member reads as an account and the row
+// admits it — and leaves the rest of the test green, which is what makes that
+// case the pin on the branch rather than on the condition rows.
 func TestLicenceGrantsAreTheConditions(t *testing.T) {
 	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
 	read := cond(gcp.LicenceReadConditionTitle(LicenceAccountID), gcp.LicenceReadCondition(cbBucket))
@@ -2093,6 +2099,120 @@ func TestLicenceGrantsAreTheConditions(t *testing.T) {
 	lookalike.ResourceChanges[1].Change.After["member"] = "serviceAccount:" + LicenceAccountID + "@fp-2.iam.gserviceaccount.com"
 	if got := c.NotCovered(lookalike, nil); len(got) == 0 {
 		t.Errorf("the three-object read of %s@fp-2 is covered: the account is the installation's own", LicenceAccountID)
+	}
+
+	// A computed member under a licence title is the account's grant only when
+	// the plan creates that account in the grant's own module: the title is
+	// built from the account, so a plan that computes the member from ANOTHER
+	// service account of the module — the orphan below, whose account_id is not
+	// the licence one — would otherwise be covered on the strength of a name it
+	// only claims, and the cover would report a binding no reader can hold to
+	// the account.
+	orphan := licenceGrantPlan(true, "roles/storage.objectViewer", read)
+	orphan.ResourceChanges[0].Change.After["account_id"] = "fugaro-something-else"
+	if got := c.NotCovered(orphan, nil); len(got) == 0 {
+		t.Errorf("a computed member with no %s account beside it is covered: the licence condition is only this account's grant", LicenceAccountID)
+	}
+}
+
+// TestALicenceConditionTitleNamesItsOwnAccount: the second half of the rule
+// licenceGrant applies to the renewal job's two bucket bindings (plan K4.2),
+// and the half no other test of this package reads. The account's ID is a fixed
+// literal — the module's variable validation pins it, LicenceAccountID — so
+// nothing about a licence grant is derived from its member, and the TITLE's
+// suffix is what says whose condition the plan claims to be writing.
+//
+// Without this check a grant titled for another account would be read as this
+// account's own and covered: the member is the renewal job's, the role is one
+// of its two, and the expression is the builder's own bytes for this run's
+// bucket, so every other step of licenceGrant passes. The consequence is the
+// one the read grant's three names exist to bound — the account would hold a
+// condition of its own naming under the ordinary update confirmation, and the
+// cover would report the grant that was written rather than the one the plan's
+// title announces.
+//
+// The first row is the control: the module's own title, on the module's own
+// bytes, is still the module's grant, so the two foreign-title rows cannot pass
+// by a check that refuses every licence-shaped title.
+//
+// Mutation (verified, run and restored): deleting licenceGrant's
+// `id != LicenceAccountID` return covers both foreign-title rows — the first
+// two fail with "NotCovered = nil" — and leaves the control green, which is
+// what makes those two rows the pin on the check rather than on the bytes
+// around it.
+func TestALicenceConditionTitleNamesItsOwnAccount(t *testing.T) {
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	const foreign = LicenceAccountID + "-old"
+	for _, tc := range []struct {
+		name    string
+		role    string
+		cond    map[string]any
+		covered bool
+	}{
+		{"the read title names this account", "roles/storage.objectViewer",
+			cond(gcp.LicenceReadConditionTitle(LicenceAccountID), gcp.LicenceReadCondition(cbBucket)), true},
+		{"the read title names another account", "roles/storage.objectViewer",
+			cond(gcp.LicenceReadConditionTitle(foreign), gcp.LicenceReadCondition(cbBucket)), false},
+		{"the write title names another account", "roles/storage.objectUser",
+			cond(gcp.LicenceWriteConditionTitle(foreign), gcp.LicenceWriteCondition(cbBucket)), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.NotCovered(licenceGrantPlan(false, tc.role, tc.cond), nil)
+			if tc.covered {
+				if len(got) != 0 {
+					t.Errorf("NotCovered = %q, want the module's own grant", got)
+				}
+				return
+			}
+			join := strings.Join(got, "\n")
+			if len(got) == 0 {
+				t.Fatal("NotCovered = nil, want a refusal: the title's account is the only thing that says whose condition this is")
+			}
+			if want := "which is not the installation's licence account"; !strings.Contains(join, want) {
+				t.Errorf("NotCovered = %q, want it to contain %q", got, want)
+			}
+		})
+	}
+}
+
+// TestLicenceAccountIsRefusedAComputedRole: checkGrant's computed-role branch
+// for the renewal job's account (plan K4.2), which the dynamic class's own test
+// does not reach (it names the intake and the credentials service). The job's
+// Secret Manager role is this module's own custom role (fugaroLicenceRenewal),
+// written as a literal in licence.tf, and licenceSecretGrant's whole check is
+// the container that literal is bound on: a role the plan cannot name, bound on
+// whatever container the plan likes, is a Secret Manager reach nobody can hold
+// to that one container, and it would ride the ordinary update confirmation.
+// The refusal names the account, so an operator's read of it says which grant
+// to write by name.
+//
+// Every type is refused, not just the secret binding the reason is about: the
+// branch is reached from the member's kind, before the type's row is looked up,
+// so a computed role on a bucket or a project binding — where the account has
+// no role at all — stops with the account's own sentence rather than with the
+// table's.
+//
+// Mutation (verified, run and restored): deleting the `kind == toLicence`
+// return in checkGrant's unknown-role case makes all four rows stop for the
+// table's own reason instead of the account's — "a role that is not known and
+// no custom role is created with it" — and each fails on the wanted sentence,
+// which is what makes this test the pin on that branch rather than on the
+// refusals around it.
+func TestLicenceAccountIsRefusedAComputedRole(t *testing.T) {
+	// The installation's project is proj-1234, as licenceMember is named
+	// (isLicenceMember reads the member and Projects[0], in that order).
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	for _, typ := range []string{"google_project_iam_member", "google_secret_manager_secret_iam_member", "google_storage_bucket_iam_member", "google_cloud_run_v2_service_iam_member"} {
+		after := map[string]any{"member": licenceMember, "bucket": cbBucket, "secret_id": "fugaro-project-proj-1234-licence-renewal-0e382f732fd21bbd"}
+		ch := rc(typ, after, map[string]any{"role": true}, "create")
+		got := c.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+		if len(got) == 0 {
+			t.Errorf("%s: a computed role to the installation's licence renewal job is covered: its own custom role is written as a literal and the container it is bound on is what the cover checks (plan K4.2)", typ)
+			continue
+		}
+		if want := "a computed role to the installation's licence renewal job"; !strings.Contains(strings.Join(got, "\n"), want) {
+			t.Errorf("%s: a computed role to the renewal job stopped for another reason: %q, want %q", typ, got, want)
+		}
 	}
 }
 
