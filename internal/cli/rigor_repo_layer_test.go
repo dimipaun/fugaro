@@ -59,20 +59,27 @@ workflows:
       build: go build ./...
 `
 
-// rigorRepoMode is the mode a checkout's own file sets, read with the loader of
-// that file rather than out of its text: the key the write landed on is
-// `rigor.default`, and a test that searched the bytes for "default:" would pass
-// on the project layer's spelling of the same key.
-func rigorRepoMode(t *testing.T, path string) rigor.Mode {
+// rigorRepoBlock is the `rigor:` block a checkout's own file carries, read with
+// the loader of that file rather than out of its text: the two keys the writes
+// land on are `rigor.default` and `rigor.areas`, and a test that searched the
+// bytes for "default:" would pass on the project layer's spelling of the same
+// key.
+func rigorRepoBlock(t *testing.T, path string) config.Rigor {
 	t.Helper()
 	cfg, problems := config.Parse([]byte(readFileString(t, path)))
 	if len(problems) > 0 {
 		t.Fatalf("the checkout's file does not read after the write: %s", problems[0].String())
 	}
 	if cfg.Rigor == nil {
-		return ""
+		return config.Rigor{}
 	}
-	return cfg.Rigor.Default
+	return *cfg.Rigor
+}
+
+// rigorRepoMode is the mode a checkout's own file sets.
+func rigorRepoMode(t *testing.T, path string) rigor.Mode {
+	t.Helper()
+	return rigorRepoBlock(t, path).Default
 }
 
 // TestRigorSetRepoLayerWritesTheCheckout is the red step: `--layer repo` writes
@@ -124,6 +131,26 @@ func TestRigorSetRepoLayerWritesTheCheckout(t *testing.T) {
 	}
 	if changed := modelsUseGit(t, dir, "diff", "--name-only"); changed != "fugaro.yaml" {
 		t.Errorf("the working tree's changed files are %q, want only fugaro.yaml", changed)
+	}
+
+	// The layer's other key, through the same door: `rigor.areas` is the second
+	// of the two a repository spells, and the acceptance names both. The rule is
+	// written whole — its glob, its name and its mode together — so the three
+	// fields are read back through the checkout's loader and not searched for in
+	// the bytes, and the same file is the only one the second write touches.
+	out, _, err = execute(t, "rigor", "set", "critical", "--area", "src/**", "--name", "core", "--layer", "repo", "--repo", "owner/repo-a")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	rules := rigorRepoBlock(t, path).Areas
+	if len(rules) != 1 || rules[0].Match != "src/**" || rules[0].Name != "core" || rules[0].Mode != rigor.Critical {
+		t.Errorf("the checkout's rigor.areas reads %+v, want one rule src/** named core at critical:\n%s", rules, readFileString(t, path))
+	}
+	if !strings.Contains(out, "owner/repo-a's working tree and nowhere else") {
+		t.Errorf("the area write does not say where the change is:\n%s", out)
+	}
+	if changed := modelsUseGit(t, dir, "diff", "--name-only"); changed != "fugaro.yaml" {
+		t.Errorf("the two writes changed %q, want only fugaro.yaml", changed)
 	}
 }
 
