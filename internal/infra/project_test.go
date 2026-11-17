@@ -266,6 +266,13 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 	if CoordinatorAccountID != tf.CoordinatorAccountID || has(tf.FugaroAccounts, CoordinatorAccountID) {
 		t.Errorf("the coordinator's writer %s must be tf.CoordinatorAccountID (%s), its own kind, and not one of tf.FugaroAccounts", CoordinatorAccountID, tf.CoordinatorAccountID)
 	}
+	// The resident orchestrator is the coordinator's case one step over: one
+	// account of its own, granted section 4.3's rows one binding at a time. It
+	// must NOT be in tf.FugaroAccounts, because every rule that admits that set
+	// admits an account for every job — and this one is never a launcher.
+	if OrchestratorAccountID != tf.OrchestratorAccountID || has(tf.FugaroAccounts, OrchestratorAccountID) {
+		t.Errorf("the resident orchestrator %s must be tf.OrchestratorAccountID (%s), its own kind, and not one of tf.FugaroAccounts", OrchestratorAccountID, tf.OrchestratorAccountID)
+	}
 	// The project's build identity (B5, D2301) is one literal in two packages
 	// for the reason the coordinator's is: the module creates the account under
 	// this ID, this package derives the address from it, and the cover reads a

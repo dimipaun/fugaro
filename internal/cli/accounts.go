@@ -93,6 +93,33 @@ type accountsListDoc struct {
 	// it always did, and the read is names only: no alias here is resolved, and
 	// no token is read or printed.
 	Aliases map[string]string `json:"aliases,omitempty"`
+	// Credentials is the credentials block, each entry with the half that serves
+	// it: what a pool's members may list and a craft's access may name, which is
+	// exactly what the names above are NOT (config.ClaudeAccountTokenNames drops
+	// a key credential's name, because it is no account a --token run may name).
+	// A read that listed the accounts alone therefore left the block invisible,
+	// and which of a project's two halves — the credentials service or a run's
+	// own gateway — carries a credential is decided by the entry's type alone
+	// (config.CredentialServingPath), so it is answerable offline, out of the
+	// config, besides the type (D1671).
+	//
+	// Names, types and paths only: no secret ID and no value (F27), and no
+	// account's token container is named. It is additive — a member added within
+	// this document's own version (D848) — so a reader of an older release sees
+	// exactly the document it always did, and a machine with no credentials block
+	// carries none.
+	Credentials []accountsCredential `json:"credentials,omitempty"`
+}
+
+// accountsCredential is one entry of the credentials block as fugaro accounts
+// ls reports it: the name it is declared under, its type, and the half that
+// serves a credential of that type (config.CredentialServingPath, spelled as
+// the config constant: CredentialPathCredsvc or CredentialPathRunner, and "" for
+// a type nothing places, which the loader refuses).
+type accountsCredential struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	ServingPath string `json:"serving_path"`
 }
 
 // accountState is one account's state as fugaro accounts ls --json reports it:
@@ -118,6 +145,15 @@ less every name the credentials block declares a key credential
 (config.ClaudeAccountTokenNames), whose value is the key its provider issued
 under the credential's own derived secret and not a Claude account's token at
 all.
+
+The credentials block itself is printed after the names, one line per entry, as
+the name it is declared under, its type and the half of a run that serves it
+("the credentials service" or "a run's own gateway", config.CredentialServingPath):
+those entries are what a pool's members may list and a craft's access may name,
+so which half carries a credential — and therefore which half has to hold the
+value — is readable here, out of the config and offline, without opening the
+file. A machine with no credentials block prints the names alone. --json carries
+the same three fields per entry under "credentials".
 
 The names are a local, read-only lookup, offline whenever a project config is
 already selected on this machine: it reads the local config file the CLI would
@@ -221,6 +257,7 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 		// and a caller holding onto it may not reach the config the command
 		// loaded.
 		doc.Aliases = maps.Clone(lc.ClaudeAccountAliases)
+		doc.Credentials = accountsCredentials(lc.Credentials)
 	}
 	doc.States, doc.StateNote, err = accountsStates(ctx, lc, names, note)
 	if err != nil {
@@ -234,6 +271,34 @@ func accountsLs(cmd *cobra.Command, o accountsOptions) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: %s\n", doc.StateNote)
 	}
 	return printAccounts(cmd.OutOrStdout(), doc, o.asJSON)
+}
+
+// accountsCredentials is the credentials block as this read reports it: each
+// entry's name, its type and the path that serves it. The order is the names'
+// order, sorted, because it is what the two readings of this same document
+// beside it do — the accounts and the aliases — and a listing an operator diffs
+// against the file is not the place for a third convention.
+func accountsCredentials(creds []config.Credential) []accountsCredential {
+	out := make([]accountsCredential, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, accountsCredential{Name: c.Name, Type: c.Type, ServingPath: config.CredentialServingPath(c.Type)})
+	}
+	slices.SortFunc(out, func(a, b accountsCredential) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
+// accountsCredentialServingText is where one credential's calls go out, as a
+// person reads it: the same words a pool's own listing uses for the same two
+// halves (accountsPoolServingText), because a credential's path is decided by
+// its type alone (config.CredentialServingPath) and the two reads may not answer
+// it differently. A type neither half serves is spelled out rather than left as
+// an empty word — config.ValidateCredentials refuses such a type, but this read
+// does not assume a check this process may not have run (nameCell's own reason).
+func accountsCredentialServingText(typ string) string {
+	if path := config.CredentialServingPath(typ); path != "" {
+		return accountsPoolServingText([]string{path})
+	}
+	return "nothing serves it"
 }
 
 // accountsStateBudget bounds the whole state read of `fugaro accounts ls`: the
@@ -368,7 +433,8 @@ func nameCell(n string) string {
 }
 
 // printAccounts writes doc: the names alone when no state was read, and the
-// plan's state column beside them when one was.
+// plan's state column beside them when one was, then the credentials block and
+// the aliases.
 func printAccounts(w io.Writer, doc accountsListDoc, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
@@ -381,6 +447,9 @@ func printAccounts(w io.Writer, doc accountsListDoc, asJSON bool) error {
 				return err
 			}
 		}
+		if err := printCredentials(w, doc); err != nil {
+			return err
+		}
 		return printAliases(w, doc)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -392,7 +461,27 @@ func printAccounts(w io.Writer, doc accountsListDoc, asJSON bool) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	if err := printCredentials(w, doc); err != nil {
+		return err
+	}
 	return printAliases(w, doc)
+}
+
+// printCredentials writes the credentials block after the account names, one
+// line per entry: NAME (TYPE, served by PATH). It is not a third column of the
+// table above it — a credential is not an account and one may not be read as the
+// other, which is the whole reason a key credential's name is dropped from the
+// accounts (config.ClaudeAccountTokenNames) — and the line says which half
+// serves the entry in words rather than in a column that would need the header
+// this command has never printed. A machine with no credentials block prints
+// nothing here, byte for byte as before.
+func printCredentials(w io.Writer, doc accountsListDoc) error {
+	for _, c := range doc.Credentials {
+		if _, err := fmt.Fprintf(w, "%s (%s, served by %s)\n", nameCell(c.Name), pluginwire.Printable(c.Type), accountsCredentialServingText(c.Type)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // printAliases writes each alias and the account it stands for, one line each,

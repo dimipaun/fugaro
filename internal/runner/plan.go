@@ -117,7 +117,7 @@ func (r *run) resolveLevelsForcing(force []policy.Level) (config.Levels, error) 
 	}
 	in := config.LevelInputs{
 		Mode:           mode,
-		Floor:          r.policy.ReviewFloor(mode),
+		Floor:          r.policy.ReviewFloorFor(mode, r.layersRigor),
 		Task:           r.spec.ReviewLevels,
 		Recipe:         r.rcp,
 		CatalogDefault: r.derived,

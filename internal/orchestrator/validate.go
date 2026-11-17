@@ -54,6 +54,30 @@ var headRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 // document and the fold is what makes the two agree.
 var specRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,43}$`)
 
+// externalRE is a work item's external id: the ticket it came from outside
+// Fugaro with, `github:<owner>/<repo>#<n>` (D2728). It is the dedupe key the
+// whole backlog hangs on — one issue is one item, so a mirroring loop meets
+// itself here — which is why the shape is one spelling and nothing else: the
+// owner and the name are lower-case as the installation's own App answers
+// them (gitprov/github's AppRepositories lower-cases them), they are the
+// ASCII class a repository name is written with, and the number is the
+// issue's, from one. It is a key the ingest builds and writes as built, not a
+// spelling of something a person typed, so it is checked for shape and never
+// folded: a fold here would make two spellings of one ticket one key in the
+// ingest and two keys on the node.
+//
+// `github:` is the only host, because the Issues adapter is GitHub's alone
+// (D2718): a second host here would have to mean a second ingest, and a key
+// that named a host nothing reads is a key nothing can dedupe.
+var externalRE = regexp.MustCompile(`^github:[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*#[1-9][0-9]{0,18}$`)
+
+// bodySHA256RE is a ticket body's SHA-256 as an item stores it: sixty-four
+// lower-case hex digits, the plain sum and not the `sha256:`-prefixed digest
+// this package writes for a spec (D2720). It is a hash of text read from
+// outside, so it is a shape and never free text: what a person approves is
+// the body they were shown, and this is what says the two are one.
+var bodySHA256RE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 // specInRE is the same shape as a patch may write it, either case. Its class
 // is ASCII and nothing else, so a name carrying a character outside it is
 // refused rather than folded into one that passes — which is the whole of the
@@ -171,6 +195,13 @@ func ValidateState(s State) error {
 		return fmt.Errorf("%w: %d work items, at most %d", ErrTooLarge, len(s.WorkItems), MaxWorkItems)
 	}
 	seen := make(map[string]bool, len(s.WorkItems))
+	// An external id is unique across the project's nodes and not only within
+	// this one (D2728): a mirroring loop is closed by the ingest finding the
+	// item that already carries the key, and a second item with it anywhere
+	// would be the duplicate the key exists to prevent. This node can see only
+	// its own items, so it is here that one node refuses to hold two of them,
+	// and the ingest is what holds the key unique across the rest (B4).
+	seenExternal := make(map[string]string, len(s.WorkItems))
 	for _, w := range s.WorkItems {
 		if err := validateItem(s, w); err != nil {
 			return err
@@ -179,6 +210,13 @@ func ValidateState(s State) error {
 			return fmt.Errorf("%w: two work items share the id %q", ErrInvalid, safetext.OneLine(w.ID))
 		}
 		seen[w.ID] = true
+		if w.External == "" {
+			continue
+		}
+		if other, dup := seenExternal[w.External]; dup {
+			return fmt.Errorf("%w: %q and %q carry the external id %s, and one ticket is one item", ErrInvalid, safetext.OneLine(other), safetext.OneLine(w.ID), safetext.OneLine(w.External))
+		}
+		seenExternal[w.External] = w.ID
 	}
 	if len(s.Decisions) > MaxDecisions {
 		return fmt.Errorf("%w: %d decisions, at most %d", ErrTooLarge, len(s.Decisions), MaxDecisions)
@@ -277,6 +315,17 @@ func validateItem(s State, w WorkItem) error {
 	}
 	if w.Spec != "" && !specRE.MatchString(w.Spec) {
 		return fmt.Errorf("%w: the spec of %q is %q, not a plan folder name", ErrInvalid, w.ID, safetext.OneLine(w.Spec))
+	}
+	if w.External != "" && !externalRE.MatchString(w.External) {
+		return fmt.Errorf("%w: the external id of %q is %q, not github:<owner>/<repo>#<n>", ErrInvalid, w.ID, safetext.OneLine(w.External))
+	}
+	if w.BodySHA256 != "" && !bodySHA256RE.MatchString(w.BodySHA256) {
+		return fmt.Errorf("%w: the body hash of %q is not a SHA-256 in lower-case hex", ErrInvalid, w.ID)
+	}
+	if w.PlanTask != "" {
+		if p := task.PlanTaskProblem(w.PlanTask); p != "" {
+			return fmt.Errorf("%w: the plan task of %q %s", ErrInvalid, w.ID, p)
+		}
 	}
 	if w.Brief == "" {
 		return fmt.Errorf("%w: the work item %q carries no brief", ErrInvalid, w.ID)
@@ -607,6 +656,17 @@ func validateUpsert(op WorkItemOp) error {
 	if op.Spec != nil {
 		if _, ok := specName(*op.Spec); !ok {
 			return fmt.Errorf("%w: the spec %q is not a plan folder name", ErrInvalid, safetext.OneLine(*op.Spec))
+		}
+	}
+	if op.External != nil && !externalRE.MatchString(*op.External) {
+		return fmt.Errorf("%w: the external id %q is not github:<owner>/<repo>#<n>", ErrInvalid, safetext.OneLine(*op.External))
+	}
+	if op.BodySHA256 != nil && !bodySHA256RE.MatchString(*op.BodySHA256) {
+		return fmt.Errorf("%w: the body hash is not a SHA-256 in lower-case hex", ErrInvalid)
+	}
+	if op.PlanTask != nil {
+		if p := task.PlanTaskProblem(*op.PlanTask); p != "" {
+			return fmt.Errorf("%w: the plan task %s", ErrInvalid, p)
 		}
 	}
 	if op.Phase != nil && !op.Phase.Known() {

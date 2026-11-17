@@ -78,7 +78,9 @@ func TestAPIRoutesComeFromTheRegistry(t *testing.T) {
 	if _, known := apiRoutes.lookup(http.MethodPost, RouteWebhook); !known {
 		t.Errorf("the merchant's route is not in the API's table, want it registered beside every area's")
 	}
-	if got := f.deliver(Event{}); got.Code != http.StatusOK {
+	// The body is one this service does not act on, so the answer is the
+	// ceiling's own 200 and nothing else is claimed about it here.
+	if got := f.deliver(Event{ID: "evt-1", OccurredAt: f.now, Subscription: "sub-1"}); got.Code != http.StatusOK {
 		t.Errorf("the merchant's route answered %d, want 200: it is mounted from the table", got.Code)
 	}
 

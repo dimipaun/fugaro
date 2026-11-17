@@ -319,8 +319,15 @@ func TestWizardResumesAtTheUnansweredQuestion(t *testing.T) {
 			stdin: "\nBad Name!\nBad Name!\nBad Name!\n",
 			o:     optionsFor(setupQuestions[0].flag),
 			at:    setupQuestions[2].what,
-			reO:   optionsFor(setupQuestions[2].flag),
-			reIn:  "\n\n\n",
+			// The rerun is the same run resumed: the flag it was given is
+			// still answered by it, and the question it stopped at is answered
+			// too.
+			reO: optionsFor(setupQuestions[0].flag, setupQuestions[2].flag),
+			// Two questions are answered by their flags now, and the rest are
+			// the table's own answers — read from it rather than written out,
+			// so a question the table gains is answered here instead of
+			// stopping the resumed run at a row this case never heard of.
+			reIn: stdinExcept(setupQuestions[0].flag, setupQuestions[2].flag),
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

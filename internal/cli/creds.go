@@ -153,8 +153,9 @@ NAME is a credential the service can issue, in the document's own spelling:
   ` + config.ClaudeOAuthToken + `                    the default Claude account's OAuth token (tier A)
   ` + config.ClaudeOAuthTokenPrefix + `<account>       a named Claude account's OAuth token (tier A)
   ` + config.AnthropicSecret + `                the project's Anthropic API key (tier B)
+  ` + config.CredentialSecretPrefix + `<name>` + config.CredentialKeySuffix + `        one declared credential's own key (tier B): the service-served half of a credential the credentials block declares ` + config.CredentialTypeAnthropic + `, and the ONE NAME this command REFUSES for a type the runner path serves (` + config.CredentialTypeOpenRouter + `), whose key is mounted in the job that spends it rather than read from here. It is read by a credentials service from ` + keyCredentialSince + ` on: where the service that serves the bundle is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
   ` + config.GitHubAppKeySecret + `                  the GitHub App's private key (no tier: the mint signs with it)
-  ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, and every other Bitbucket run's job still uses its own mounted copy until the flip)
+  ` + config.BitbucketSecret + `                   the upstream Bitbucket token (no tier: the git proxy issues this entry for the repositories the published node admits with proxy: true, whose jobs mount no copy of their own, and every other Bitbucket repository's job keeps its own mounted copy)
   ` + credsvc.BitbucketReadConsumerSecret + `             the Bitbucket read consumer (no tier: the service's read mint exchanges it for a read-scoped token): a YAML mapping of key, secret and workspace, one field per line, so redirect it from a file — the hidden prompt takes one line
   ` + config.ProviderKeySecret + `                 the project's provider credential (tier C: the service's provider route authenticates upstream with it): a YAML mapping of key, base_url and auth, one field per line, so redirect it from a file — the hidden prompt takes one line. It is read by a credentials service from ` + providerEntrySince + ` on: where the service that serves the bundle is older, this write is refused and ` + "`fugaro update`" + ` is the one command that moves it
   ` + config.BitbucketTokenPrefix + `<name>   a typed Bitbucket access token (no tier: the service's git proxy issues this entry for the requests the published node's coverage admits, R13): the ONE NAME this command CHECKS before it writes, and the one whose write carries a record beside the entry. See "A typed Bitbucket token" below
@@ -689,6 +690,19 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 	if err != nil {
 		return err
 	}
+	// A key credential's own derived name is a bundle key of this command's
+	// (MC23, D1670), and which HALF serves the credential is what decides
+	// whether this document is where its value belongs: the credentials service
+	// reads the bundle, and the runner path's types are served by the job's own
+	// mounts. Judged here — after the project's config is read and before the
+	// container is opened, before the document is fetched and before the value
+	// is read — so a name whose half is not this one is refused with nothing
+	// touched and nothing typed at a terminal.
+	if credName, ok := config.CredentialBySecret(name); ok {
+		if err := credsKeyCredentialHalfRefusal(lc, name, credName); err != nil {
+			return err
+		}
+	}
 	// The record and the identity are this command's to write and nobody
 	// else's, and both of them are local: the shared config carries no
 	// bitbucket_tokens block (it is operator-only, localcfg's Shared), and the
@@ -744,9 +758,19 @@ func credsSet(cmd *cobra.Command, o credsOptions, name string, generate bool, bt
 	if family {
 		familyEntry = name
 	}
+	// A key credential's own entry is the third (MC23, D1670): the family is
+	// spelled for every write that is not one of its own, the way the Bitbucket
+	// token family's is, so the sentence names the family rather than one
+	// credential's container.
+	keyEntry := config.CredentialSecretPrefix + "<name>" + config.CredentialKeySuffix
+	keyCredential := false
+	if cred, ok := config.CredentialBySecret(name); ok {
+		keyEntry, keyCredential = config.CredentialSecret(cred), true
+	}
 	if req := bundleReaderRequirement(
 		bundleEntryReader{entry: config.ProviderKeySecret, since: providerEntrySince, held: kind == credsvc.KindProvider || bundleHoldsProviderEntry(before.raw)},
 		bundleEntryReader{entry: familyEntry, since: bitbucketTokenSince, held: family || bundleHoldsFamilyEntry(before.raw)},
+		bundleEntryReader{entry: keyEntry, since: keyCredentialSince, held: keyCredential || bundleHoldsKeyCredentialEntry(before.raw)},
 	); req != nil {
 		if err := refuseAnEntryTheServiceCannotRead(ctx, lc, req.entry, req.since); err != nil {
 			return err
@@ -1080,6 +1104,66 @@ func credsNameRefusal() error {
 		config.ReviewSigningKeySecret(config.DefaultClaudeAccount), config.ClaudeOAuthTokenPrefix, config.ReviewSigningKeySuffix, readConsumerShape, providerShape)
 }
 
+// credsKeyCredentialHalfRefusal refuses `fugaro creds set` on a key
+// credential's own derived name when the half that serves the credential's type
+// is not the bundle (D1670, MC23). The bundle is one of the two halves a run is
+// served by, and the type is what puts a credential on one of them
+// (config.CredentialServingPath), so the entry this command would write is
+// either the one the credentials service offers a craft's calls or a copy no
+// call of that type ever reads.
+//
+// The three states, in the order the config answers them:
+//
+//   - a key type the service serves (anthropic): this document is where its
+//     value goes, and the write is admitted — it is the tier-B entry the
+//     service offers under the credential's name, exactly as it offers the
+//     project's own Anthropic key;
+//   - a key type the runner serves (openrouter): refused, because what carries
+//     that key to a call is the job's own mount (internal/infra's SecretMounts,
+//     built from this very config) — and the refusal says so rather than
+//     leaving the operator to wonder where the key went, since the container
+//     `fugaro accounts add` stored it in is what the mount reads;
+//   - a name no credentials entry declares, or one declared `claude-oauth`:
+//     refused, because the bundle holds no credential of that name
+//     (keyCredentialDeclarationRefusal, which `fugaro secrets set` answers the same
+//     two states with).
+func credsKeyCredentialHalfRefusal(lc *localcfg.Config, secret, name string) error {
+	if err := keyCredentialDeclarationRefusal(lc, secret, name); err != nil {
+		return err
+	}
+	cred, _ := config.CredentialNamed(lc.Credentials, name)
+	if config.CredentialServingPath(cred.Type) == config.CredentialPathCredsvc {
+		return nil
+	}
+	return userErr("%s is the key of %s, which is declared %s, and the runner path serves that type: its key is mounted in the job that spends it — internal/infra builds that mount from this installation's config, out of this very container — so the bundle is not where its value goes, and no caller of the credentials service ever reads an entry for it. A run whose craft's access names %s is served from the job's own mount, which is the container this command would have written; fugaro accounts add --type %s says where that mount reads it",
+		pluginwire.Printable(secret), pluginwire.Printable(name), pluginwire.Printable(cred.Type), pluginwire.Printable(name), pluginwire.Printable(cred.Type))
+}
+
+// keyCredentialDeclarationRefusal is the refusal a name of the key credential
+// namespace takes when the config declares no such key credential (MC22, MC23):
+// the two states it can be in, each answered with what the owner would have to
+// do instead.
+//
+// It is one function because it is one rule at two write paths — `fugaro
+// secrets set credential-<name>-key` refuses the container as a project-wide
+// secret (projectWideRefusal), and `fugaro creds set` refuses the entry
+// (credsKeyCredentialHalfRefusal) — and an operator who meets both commands must
+// not read two stories about the same name. The name the first state asks for is
+// the credential's, which is what `accounts add` takes, and never the secret's.
+// nil is the config's answer that the name IS a declared key credential's.
+func keyCredentialDeclarationRefusal(lc *localcfg.Config, secret, name string) error {
+	cred, declared := config.CredentialNamed(lc.Credentials, name)
+	switch {
+	case !declared:
+		return userErr("%s is a key credential's own secret name, and this project declares no credential %s: declare one with '%s accounts add %s --type openrouter' (or --type anthropic), which stores its key under this name itself",
+			pluginwire.Printable(secret), pluginwire.Printable(name), selfCommand(), pluginwire.Printable(name))
+	case !config.KeyCredentialType(cred.Type):
+		return userErr("%s is a key credential's own secret name, and %s is declared %s: a credential of that type stores its value under its Claude account's name (%s), so nothing would read this one — its type is changed in the file, where a type is a decision",
+			pluginwire.Printable(secret), pluginwire.Printable(name), pluginwire.Printable(cred.Type), pluginwire.Printable(config.ClaudeAccountSecret(name)))
+	}
+	return nil
+}
+
 // bundleEntryReader is one entry of the bundle the guard below judges: the key,
 // the first release whose credentials service can read it, and whether the
 // document this write leaves in place holds it.
@@ -1325,6 +1409,18 @@ func bundleHoldsProviderEntry(raw []byte) bool {
 func bundleHoldsFamilyEntry(raw []byte) bool {
 	return bundleHoldsKey(raw, func(key string) bool {
 		_, ok := config.BitbucketTokenAccount(key)
+		return ok
+	})
+}
+
+// bundleHoldsKeyCredentialEntry reports whether it holds any entry of the key
+// credential family (MC23, D1670): the guard is about the family and not about
+// one name, because a document carrying credential-team-a-key is a document
+// only a service that reads the family can load whichever credential this write
+// is setting.
+func bundleHoldsKeyCredentialEntry(raw []byte) bool {
+	return bundleHoldsKey(raw, func(key string) bool {
+		_, ok := config.CredentialBySecret(key)
 		return ok
 	})
 }

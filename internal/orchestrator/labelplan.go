@@ -69,11 +69,11 @@ type labelItem struct {
 // it ended failed, and neither for any other phase.
 //
 // The five phases outside those two carry neither because none of them reads
-// as a job in flight: queued has no run at all, review is set only by a patch
-// and an item sits in it with no job running, and blocked, done and cancelled
-// are endings. A pull request whose run ended well therefore carries no status
-// label, which is the spec's own answer: success is already signalled by the
-// draft becoming ready.
+// as a job in flight: queued has no run at all, review is an item whose run
+// has ended and whose pull request waits for a merge (D2705), and blocked,
+// done and cancelled are endings. A pull request whose run ended well therefore
+// carries no status label, which is the spec's own answer: success is already
+// signalled by the draft becoming ready.
 func phaseToLabels(p Phase) []string {
 	switch p {
 	case PhaseRunning:

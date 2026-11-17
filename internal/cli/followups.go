@@ -450,8 +450,10 @@ func followUpsFiledBy(filed map[string]string, g followUpGroup) (string, bool) {
 // Two answers are dropped and the run resolves its own instead. A block no
 // reader may trust (rigor not in the vocabulary, an unknown layer or moment) is
 // not a decision anybody made (RigorRecord.Bounded). And hotfix is off the
-// rigor axis and is an operator's own run, reached under the base branch's
-// opt-in and never through a filed task (D12, D1844).
+// rigor axis and is the mode an operator asks for on the run that needs it
+// (rigor.Mode.PerRun), so a filed task never carries it (D1844): the task is a
+// launch that asked for nothing, and it reaches hotfix by saying so on its own
+// `fugaro run --mode hotfix`.
 //
 // The mode is carried as it is and nothing beside it: the paths are the ones the
 // parent's own diff measured, and the request the runner applies is raise-only

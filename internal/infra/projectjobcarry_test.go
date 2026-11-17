@@ -433,6 +433,12 @@ func TestCarriedProfileKeepsThePolicyAndLosesOnlyItsJob(t *testing.T) {
 		t.Fatalf("the carried review composition was refused: %v", err)
 	}
 	for _, name := range slices.Sorted(maps.Keys(review)) {
+		// The implicit default review job of a provider is the project's own, not
+		// a variant of the carried profile: it carries that profile's name by
+		// design and is composed whenever a repository of its provider exists.
+		if slices.ContainsFunc(ImplicitReviewProviders, func(p string) bool { return name == ImplicitReviewJobName(p) }) {
+			continue
+		}
 		if job := review[name]; job.Profile == projectpolicy.DefaultProfileName {
 			t.Errorf("the carried profile derived a review variant (%s): its variants are the deployed ones the carry keeps", name)
 		}

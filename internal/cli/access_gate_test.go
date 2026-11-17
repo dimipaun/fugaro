@@ -270,6 +270,109 @@ func TestAccessBudgetShowIsAProjectRead(t *testing.T) {
 	}
 }
 
+// TestAccessReposLsIsAProjectRead: the enrolment view is the project's own
+// (D2414, and F19's project-level reads) — every repository the project knows,
+// the published allow-list and what has run on the installation — so listing it
+// is read by a project-scope role, the way the spend document is. A
+// repository-scoped grant covers its repositories' runs and logs, and the
+// project's enrolment is not among them; `--json` prints the same view of the
+// same read, so the refusal is made before either form is written.
+//
+// The positive control is beside the refusals: a gate that refused everyone
+// would pass every case above it.
+func TestAccessReposLsIsAProjectRead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		role  accesslib.Role
+		scope string
+	}{
+		{"a repository viewer", accesslib.RoleViewer, accessRepoCanon},
+		{"a repository admin", accesslib.RoleAdmin, accessRepoCanon},
+		{"an all-repos admin", accesslib.RoleAdmin, "all-repos"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSeenFixture(t)
+			accessAs(t, f.db, accessAdminAddr,
+				userStored(t, accessMember(t, accessAdminAddr), tc.role, tc.scope))
+			_, _, err := execute(t, "project", "repos", "ls")
+			accessRefused(t, err, "listing them", "needs viewer at project scope")
+		})
+	}
+	t.Run("the --json form is refused at the same place", func(t *testing.T) {
+		f := newSeenFixture(t)
+		accessAs(t, f.db, accessAdminAddr,
+			userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleViewer, accessRepoCanon))
+		out, _, err := execute(t, "project", "repos", "ls", "--json")
+		accessRefused(t, err, "listing them", "needs viewer at project scope")
+		if out != "" {
+			t.Errorf("the refused --json form printed a document: %q", out)
+		}
+	})
+	f := newSeenFixture(t)
+	accessAs(t, f.db, accessAdminAddr,
+		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleViewer, "project"))
+	if _, _, err := execute(t, "project", "repos", "ls"); err != nil {
+		t.Fatalf("a project viewer could not list the project's repositories: %v", err)
+	}
+}
+
+// TestAccessReposStatusIsAProjectRead: `project repos status` answers with the
+// project's own material — the published allow-list, this machine's config for
+// every repository and each one's credential containers — so it is asked at
+// project scope (D2414, F19's project-level reads), like the spend document
+// above. A repository-scoped grant, and an all-repos one, hold none of it.
+//
+// The refusal has to land before the first read, which is why the legs assert
+// more than the sentence: nothing is printed, and the Secret Manager fake's
+// version-list count is still zero. A gate that refused only after walking
+// every repository would leave the document in the caller's hands.
+//
+// Mutation (verified, run and restored): delete the accessGateProjectRead call
+// from runProjectReposStatus — every leg below fails: there is no refusal, the
+// document is printed, and the containers are listed for a caller who may not
+// see them.
+func TestAccessReposStatusIsAProjectRead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		role  accesslib.Role
+		scope string
+	}{
+		{"a repository viewer", accesslib.RoleViewer, accessRepoCanon},
+		{"a repository admin", accesslib.RoleAdmin, accessRepoCanon},
+		{"an all-repos admin", accesslib.RoleAdmin, "all-repos"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			noAgentSession(t)
+			f, sm := statusFixture(t)
+			seedGitHubAppKey(t, sm)
+			accessAs(t, f.db, accessAdminAddr,
+				userStored(t, accessMember(t, accessAdminAddr), tc.role, tc.scope))
+			out, _, err := execute(t, "project", "repos", "status", "github/acme/app", "--json")
+			accessRefused(t, err,
+				"the enrolment's state is a project-level read", "reading the enrolment", "viewer at project scope")
+			if strings.TrimSpace(out) != "" {
+				t.Errorf("the refused read printed a document:\n%s", out)
+			}
+			if n := sm.VersionsListCalls(); n != 0 {
+				t.Errorf("the refused read listed a credential container's versions %d times, want none", n)
+			}
+		})
+	}
+	// A project viewer holds it, and the answer it gets is the nine rows of the
+	// repository it named: the gate admits the read it is written for rather
+	// than refusing every caller.
+	noAgentSession(t)
+	f, sm := statusFixture(t)
+	seedGitHubAppKey(t, sm)
+	accessAs(t, f.db, accessAdminAddr,
+		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleViewer, "project"))
+	out, _, _ := execute(t, "project", "repos", "status", "github/acme/app", "--json")
+	doc := statusDocOf(t, out)
+	if len(doc.Repos) != 1 || len(doc.Repos[0].Rows) != 9 {
+		t.Fatalf("a project viewer got %+v, want the nine rows of the repository it named", doc.Repos)
+	}
+}
+
 // TestAccessReposAllReposAdminCannotEditTheAllowList: the allow-list is what
 // admits a repository to the project (F19 names `project repos add/rm` among
 // the project-level actions), so an admin of every enrolled repository still

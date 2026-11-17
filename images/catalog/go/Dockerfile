@@ -8,9 +8,9 @@
 # away (D1208): the entry's own Dockerfile finishes the checkout and warms what
 # the job would otherwise pay for, and the engine gains no bake mode.
 #
-# The checkout arrives as the named build context `fugaro-checkout`: the catalog
-# build's clone step clones this repository in a build of Fugaro's own, from the
-# pinned base digest, and exports the checkout there (B8), so this definition
+# The checkout arrives under the name `fugaro-checkout`: the catalog build's
+# clone step clones this repository in a build of Fugaro's own, from the pinned
+# base digest, and tags the checkout with that name (B8), so this definition
 # never clones with a credential of its own — a definition that mounts one is
 # refused by name, with the line it is written on (B9, D2311). The step resets
 # the checkout to the commit the copied definition was taken from, so a push to
