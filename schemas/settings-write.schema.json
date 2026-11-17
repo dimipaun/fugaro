@@ -2,11 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/settings-write.schema.json",
   "title": "Fugaro settings write",
-  "description": "The document `fugaro settings set|unset … --dry-run --json` prints: what one edit would do and how the write path classifies it, with nothing written, no backup left and no confirmation asked (D1106). It is the document the console's confirmation window is drawn from, so every member is one the CLI produced and the consumer computes nothing. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version. A member an edit does not produce is left out rather than written empty: the four entry members (D1164) are written by an entry write alone, so the document of a scalar write is exactly the shape version 1 has always had and both an older consumer and an older document stay readable.",
+  "description": "The document `fugaro settings set|unset … --dry-run --json` prints: what one edit would do and how the write path classifies it, with nothing written, no backup left and no confirmation asked (D1106). It is the document the console's confirmation window is drawn from, so every member is one the CLI produced and the consumer computes nothing. Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version. A member an edit does not produce is left out rather than written empty: the four entry members (D1164) are written by an entry write alone, so the document of a scalar write is exactly the shape version 1 has always had and both an older consumer and an older document stay readable. The one document that is not about one edit is the run document: a `fugaro secrets set` that names more than one record value — two of its record flags, or one flag naming two values — prints one document carrying the run's own facts and one record per value in `records`, and the values may all belong to one key, so there is no single key to name and `key` is left out there. Both members are additions to version 1 and no document that carries `key` means anything else than it did.",
   "type": "object",
   "required": [
     "version",
-    "key",
     "layer",
     "path",
     "changed",
@@ -25,7 +24,7 @@
     "key": {
       "type": "string",
       "minLength": 1,
-      "description": "The key the edit names, as the command line spelled it, with the characters this program drops from anything it prints (safetext.Field) removed."
+      "description": "The key the edit names, as the command line spelled it, with the characters this program drops from anything it prints (safetext.Field) removed. It is absent from a run that prints more than one record and from no other document: a run's records are one per value it named, so two of them may carry this same member, and each value's own `key` is in `records`. Where the member is present it is never empty, so a consumer that reads it reads the same fact version 1 has always answered with — the console refuses a document without it rather than drawing a window from one, which is the fail-closed direction for the run document it never asks for."
     },
     "layer": {
       "enum": [
@@ -89,6 +88,14 @@
         "type": "string"
       },
       "description": "The members the entry carries beside the field that addresses it, by name: an object list's entry is one mapping and this is the rest of it, while a map's entry is the one member entry_key names and this is empty. Left out of a document that is not an entry write, and of one that writes an entry with no member beside its key field."
+    },
+    "records": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "$ref": "#"
+      },
+      "description": "**The records of a run: one document per value the invocation named, in the order the flags named them, so a key named twice appears twice.** It is present only in the document a run prints when it has more than one record (`fugaro secrets set` with two or more of `--expires`, `--rotation-days`, `--bitbucket-api-root` and `--remove-bitbucket-api-root` names two or more values, and one flag naming two roots — comma-separated or repeated — is such a run on its own), which is why it holds two or more: one write answers with its own document, the shape version 1 has always had, and makes no list of one. Each element is a document of this same shape, about one of the values the run named — two of them about the same `key` when the run named that key twice — with its own `key`, `old` and `new` — so a consumer reads a record exactly where it reads a single edit's. **The records are the run in order**: each record's `old` is the state the records before it leave in the file and the last record's `new` is what the write leaves, because a dry run writes nothing and carries that state from one record to the next — a record worked out from the file on disk would state a diff the run never makes. The members outside this one are the run's own: `layer` and `path` are the file every record of the run lands in (these are one command's local config keys, so a run cannot reach two files), `changed` and `widening` are whether any record changes the file or widens a limit, and `why` is the first record's sentence for a widening. `key` is absent, and `old` and `new` are empty, because the run names no single key: the values are the records' own. No member here carries a secret's value — a record is what this machine knows about a secret, never the secret (D1171)."
     }
   }
 }

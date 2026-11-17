@@ -113,7 +113,7 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	// the rigor mode: a daemon declares no paths and asks for no mode, so the
 	// run resolves its rigor from the configuration alone, which is what a
 	// launch nobody typed can honestly say.
-	o := &runOptions{repo: spec.Repo, recipe: spec.Recipe, tier: spec.RigorTier, runID: runID, title: spec.Title}
+	o := &runOptions{repo: spec.Repo, recipe: spec.Recipe, tier: spec.RigorTier, runID: runID, title: spec.Title, planTask: spec.PlanTask}
 	plan, err := resolveAttemptPlan(ctx, l.env, o, 0, l.stderr, false)
 	if err != nil {
 		return "", nil, err
@@ -122,6 +122,27 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	if err != nil {
 		return "", nil, err
 	}
+	// The item's external id, which no flag carries and only this launch
+	// writes: it is the ticket the item came from, and the pull request of a
+	// run for it names that ticket so a merge closes it (B5, D2727). It is
+	// dropped rather than refused against a job image whose runner cannot read
+	// it (externalSkew), because what the drop costs is one `Fixes` line and
+	// what a refusal costs is the approved attempt — so it is set here, before
+	// every gate that judges the task and before createTask writes it, and the
+	// task the runner reads is the one this launch decided on.
+	//
+	// The plan task above is the other half of the same pair and is passed
+	// through runOptions instead, because it is a field `fugaro run` also
+	// writes (--plan-task) and its gate is therefore the command's own. It
+	// lands in task.json and in launch.json — the two records `plan status`
+	// joins a daemon's run to its node by, and the ones the --plan-task
+	// duplicate refusal reads (F38, B7). An item's plan task is never dropped:
+	// it is part of what a person approved, so an image whose runner cannot
+	// read it is refused by that gate in freshLaunchGates (planTaskSince),
+	// exactly as `fugaro run --plan-task` is, and the approved attempt is not
+	// spent on a run that dies at bootstrap.
+	ts.External = spec.External
+	externalSkew(ctx, l.env, slug, ts, nil, l.stderr)
 	// The project layer goes into the task's own copy, the way `fugaro run`
 	// puts it there: the runner resolves the run's configuration from the
 	// task and nowhere else, so a launch that skipped this would start a run

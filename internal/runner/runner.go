@@ -283,6 +283,16 @@ type run struct {
 	// the Firebase identity it is read with, so the node is read once, decoded
 	// once and its token taken once (projectpolicy.go).
 	projPolicy policyRead
+	// routedClaude is the switch applyRouting applied to this run's pins, nil
+	// when it applied none (no switch, or a state with nothing to act on: the
+	// gateway off, via direct, via auto under a Vertex run or with an Anthropic
+	// key in the job). A pin written after that loop — a replay arm's
+	// challenger, which can only be written once the levels are resolved — is
+	// routed through this (routeModel), because a pin the switch names has to
+	// name the route's own ID wherever it is written: the run would otherwise
+	// carry two spellings of one model, and the gateway would have no route for
+	// the one the arm's stage pins (abreplay.go's applyReplayLevel).
+	routedClaude *config.RoutingClaude
 	// job is the identity this run adopted from the Cloud Run job it is in,
 	// computed and matched in admissionCheck (projectjob.go, plan task 3.3):
 	// the (profile, provider, account) the job's own name was computed from.
@@ -336,7 +346,14 @@ type run struct {
 	// governance block it ignores has been written: the line is about the
 	// build, so a run says it once however many stages it has (guarded by mu).
 	ignoredGovernanceSaid bool
-	stageExtra            func(stage string) (violations []string, tokens int64)
+	// checkpointCall is whether the halt this run ended on left a checkpoint
+	// report for the stopping agent to answer, which is what the checkpoint
+	// stage runs for (governance_hook.go, checkpoint_stage.go, T7.3). It is
+	// set only by a stage hook's own decision, so a stop no checkpoint call
+	// may follow — a stage's own timeout, a cap, the review-scope stop —
+	// leaves it false (guarded by mu).
+	checkpointCall bool
+	stageExtra     func(stage string) (violations []string, tokens int64)
 	// sess is the run's session with the budget backend; nil when the run
 	// has none. frozen is set when the agent loop is over, after which a
 	// halt from the backend changes nothing. Both guarded by mu.
@@ -494,6 +511,12 @@ type run struct {
 	// plan is derived from (applyChallenger); the routing switch rewrites it
 	// with the run's own pins (pinSlots). Empty for every other run.
 	championCoder string
+	// replay is the review level a reviewer arm replays (abreplay.go, D728),
+	// empty for every other run: a challenger whose pair varies a review slot
+	// runs no coding loop at all — it reviews the champion's recorded patch at
+	// this level with the challenger model and publishes nothing (B1.2). It is
+	// set at bootstrap, before anything reads a model, and never cleared.
+	replay policy.Level
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -845,9 +868,23 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		r.runEvaluateMode(runCtx)
 	case r.review:
 		r.runReviewMode(runCtx)
+	case r.replay != "":
+		// A pair at a review slot's challenger (abreplay.go, D728): one review
+		// of the champion's recorded patch and nothing else — no implement, no
+		// fix, no test and no push. A review run is never a challenger arm
+		// (readArm), so this arm is only ever reached by a run of its own.
+		r.runReviewReplay(runCtx)
 	default:
 		r.runAgentLoop(runCtx)
 	}
+	// The stop's own last call, before anything that cannot make one: a
+	// governance halt asks the stopping agent for the three fields of its
+	// checkpoint report, from a fresh session, and the answers go into the
+	// report the halt left (checkpoint_stage.go, T7.3). It runs after the mode
+	// loop, which is the moment the stopped stage's agent process is gone, and
+	// before freezeHalts and closeGateway, which it needs a live gateway to
+	// make its call through.
+	r.checkpointStage(runCtx)
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
@@ -2216,7 +2253,7 @@ func clearStateDir(stateDir string) error {
 	if err := verify.ClearState(stateDir); err != nil {
 		return err
 	}
-	for _, name := range []string{prFile, followupFile} {
+	for _, name := range []string{prFile, followupFile, discoveredFile} {
 		if err := os.Remove(filepath.Join(stateDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("removing stale %s: %w", name, err)
 		}
@@ -3074,6 +3111,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
+	}
+	// The reviewer arm's own model, after the policy has resolved every level
+	// (resolveLevels, inside resolvePolicy) and before checkBudget judges the
+	// pins: the challenger is the slot level's reviewer, so it is written into
+	// that level's block and judged as agent.levels.lN.model, the path the
+	// run's allow-list, price table and provider policy read for a level's own
+	// model (checkLevels, levelModelPath) — and the path the stage itself
+	// reads it from (stageModel). Written after the resolution rather than
+	// before it: the resolution is what says which levels run at all, and a
+	// level the run does not run has no stage for a replay to be.
+	if r.replay != "" {
+		if err := r.applyReplayLevel(); err != nil {
+			return err
+		}
 	}
 	// The tier the task carries and the expectation the policy just resolved
 	// for it (tier.go). Here, and not earlier: the expectation is the run's
@@ -3994,6 +4045,12 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
+		// The review-scope stop is asked before the round's call and never
+		// after it (T7.3): a reviewer about to be handed a range covering files
+		// this run never changed is a round the run must not buy at all.
+		if !r.beforeReview(ctx, "review") {
+			return false
+		}
 		// The loop counts the review rounds it starts, across every enabled
 		// level: it is what the time half of the stop rule asks before it
 		// fires (stopNow), so a run whose first stage ate its budget still
@@ -4142,6 +4199,11 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
+			return false
+		}
+		// Asked exactly as seniorLoop asks it, and for the same reason: level
+		// 3's round reads the same range, so a moved one stops it here (T7.3).
+		if !r.beforeReview(ctx, stageAdversarial) {
 			return false
 		}
 		// Counted exactly as seniorLoop counts it, and never per level: the
@@ -4470,6 +4532,12 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// whose clock ran out starts no round of it either (item 6b — the
 			// stop is the run's, not one level's).
 			return r.firstLineStop(sessionID)
+		}
+		// The review-scope stop, asked before the round's call like the two
+		// outer loops' (T7.3). It is not the stop rule's time half, so it is
+		// not firstLineStop: a governance stop has already recorded itself.
+		if !r.beforeReview(ctx, "review_first") {
+			return sessionID, false
 		}
 		// Counted as seniorLoop counts its rounds: the stop's guard and its
 		// time half read the run's review rounds, never one level's.
@@ -5183,7 +5251,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.beginGatewayStage(name)
 		done := make(chan struct{})
 		watching.Add(1)
-		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		go func() { defer watching.Done(); r.watchHalt(stageCtx, done, name) }()
 		if p := r.sidecarProc(); p != nil {
 			// The sidecar is watched with the same shape and for the same
 			// reason, and it can only be here with the gateway: a sidecar
@@ -5262,7 +5330,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.mu.Unlock()
 	}
 	if r.gw != nil && !direct {
-		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
+		r.recordGatewayStageCost(ctx, name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 	} else if direct {
 		r.recordAccountStageCost(name, res.CostUSD)
 	} else {
@@ -6193,7 +6261,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// same pull request left behind; an ending that returns above this line (a
 	// push that failed, a pull request closed during the run) writes nothing
 	// and leaves the last word about this pull request standing.
-	r.recordChangeSetVerdict(ctx, pr, verdict)
+	//
+	// The commit and its test go with it, and they are THIS run's: a follow-up
+	// pushes to the member's branch and answers on the member's record, so the
+	// head it pushed is the one the set's step must compare the pull request
+	// against (D3).
+	r.recordChangeSetVerdict(ctx, pr, verdict, sha, pushedVerified(records, sha))
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)

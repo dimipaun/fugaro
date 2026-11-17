@@ -204,6 +204,20 @@ type Config struct {
 	// them, and only this one is the key that has to be judged. Like the fields
 	// above it is never part of the file or of SHA256.
 	RepoMergeJudgeCraftSet bool `yaml:"-" json:"-"`
+	// RepoWorkflowABSet is the workflows of the repository's own file whose
+	// text writes an ab: key, at any value: the question RepoRigorSet answers
+	// for rigor:, asked once per workflow because the key is one per workflow
+	// (workflows.<name>.ab, the ask for an A/B reviewer arm, O12 of
+	// docs/review-levels-ab-jobmax), and Workflow.AB cannot answer it — an
+	// explicit null (`ab:`, which decodes to no block at all) is the same line
+	// to a runner older than workflowABSince as a full block, since the file is
+	// decoded whole with KnownFields and the key alone is what that decoder
+	// refuses, exactly as setsSecurity's null is. It is the names and not a
+	// bool because each gate names the keys it refuses (internal/cli's
+	// workflowABNames), and it is sorted so the same file always answers the
+	// same list. Like the fields above it is never part of the file or of
+	// SHA256.
+	RepoWorkflowABSet []string `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's
@@ -918,6 +932,19 @@ type Workflow struct {
 	// Inputs caps what a launcher may attach to a run of this workflow
 	// (design artifact-runs.md §4). Binaries before 0.8.0 refuse the key.
 	Inputs Inputs `yaml:"inputs"`
+	// AB is the A/B reviewer arm this workflow asks for (WorkflowAB, the
+	// owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12): the
+	// review level a second run replays over this workflow's champion.
+	//
+	// It is a workflow key and not a top-level one, and the launch that
+	// asks for the arm is fugaro run's own: an arm at a review slot is a
+	// second run of the workflow's own review, and no CLI flag asks for it,
+	// so a file that writes the key asks for it on every launch of that
+	// workflow and a file that writes none is every workflow today. The
+	// json tag is what Config.SHA256 hashes, so it is omitempty like every
+	// other key a file may leave out: a file that asks for no arm hashes
+	// exactly as it did before the key existed.
+	AB *WorkflowAB `yaml:"ab,omitempty" json:"ab,omitempty"`
 }
 
 // Checkout values of a workflow (design generic-tool.md §2, G3;

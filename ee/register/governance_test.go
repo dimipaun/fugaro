@@ -50,7 +50,7 @@ func TestTaggedBinaryWiresTheGovernance(t *testing.T) {
 		structNu string
 	}{
 		{"SetGovernance", map[string]string{"Defaults": "Defaults", "Tighten": "Tighten"}, policyPkg, "GovernanceFuncs"},
-		{"SetStage", map[string]string{"Timeout": "Timeout", "TimedOut": "TimedOut"}, runnerPkg, "StageFuncs"},
+		{"SetStage", map[string]string{"Timeout": "Timeout", "TimedOut": "TimedOut", "Stopped": "Stopped", "Before": "Before"}, runnerPkg, "StageFuncs"},
 	} {
 		t.Run(seam.call, func(t *testing.T) {
 			var calls []string

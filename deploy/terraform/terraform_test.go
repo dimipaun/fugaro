@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -271,12 +272,15 @@ func TestNoProjectLevelSecretAccessor(t *testing.T) {
 	})
 }
 
-// The tag mover role lets a repository's build move an existing tag, which
-// needs artifactregistry.tags.delete, and nothing more: no version or
-// package delete. It is granted on the build account's two registries and
-// nowhere else — its own, and the installation's shared one, where a shared
+// The tag mover role lets a build move an existing tag, which needs
+// artifactregistry.tags.delete, and nothing more: no version or package
+// delete. It is granted on a registry and nowhere else — a repository's build
+// account on its own and on the installation's shared one, where a shared
 // image is promoted and a catalog image's content tag (the definition's own
-// sha256) is moved again on a rebuild — never on the project.
+// sha256) is moved again on a rebuild, and, since B6, the project's build
+// identity on that same shared registry, because the catalog build that moves
+// a content tag runs as the project and not as a repository whose root may be
+// gone (D2301) — never on the project.
 func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 	roles, grants := 0, 0
 	walk(t, func(path string, b []byte) {
@@ -300,37 +304,59 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 		}
 		for _, typ := range []string{"google_project_iam_member", "google_artifact_registry_repository_iam_member"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
-				if !strings.Contains(blk.body, "tag_mover") {
+				// The role is named two ways: the repository module reads it
+				// from the installation's own role_ids, and the installation
+				// module spells the literal path its own apply is planned
+				// against (a computed role reaches the plan as unknown).
+				if !strings.Contains(blk.body, "tag_mover") && !strings.Contains(blk.body, "fugaroTagMover") {
 					continue
 				}
 				grants++
 				if typ != "google_artifact_registry_repository_iam_member" {
-					t.Errorf("%s: %s grants the tag mover role through %s: it is a repository-level grant, on the build account's own registries", path, blk.name, typ)
+					t.Errorf("%s: %s grants the tag mover role through %s: it is a registry-level grant, on the build account's own registries", path, blk.name, typ)
 					continue
 				}
-				// The member is the repository's own build account either way:
-				// an account the module creates, never a person, a job account
-				// or another repository's build.
-				if !hasAttr(blk.body, "member", "google_service_account.build.member") {
-					t.Errorf("%s: %s grants the tag mover to a member that is not the repository's own build account", path, blk.name)
-				}
 				switch path {
-				case "gcp/modules/repo/build.tf":
-					if !hasAttr(blk.body, "repository", "google_artifact_registry_repository.images.repository_id") {
-						t.Errorf("%s: %s must grant the tag mover on the repository's own registry", path, blk.name)
+				case "gcp/modules/installation/build_identity.tf":
+					// B6: the project's build identity holds it on the shared
+					// registry, which is the role the per-repository build
+					// account held there until this task — a catalog build
+					// moves the moving latest and the definition's sha256 tag
+					// of an entry whose repository root may be gone (D2301).
+					if blk.name != "google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover" {
+						t.Errorf("%s: %s grants the tag mover in the installation module and is not B6's one grant of it (build_identity_shared_tag_mover)", path, blk.name)
 					}
-				case "gcp/modules/repo/registry.tf":
-					if !hasAttr(blk.body, "repository", "var.installation.shared_registry") {
+					if !hasAttr(blk.body, "member", "google_service_account.build_identity[0].member") {
+						t.Errorf("%s: %s grants the tag mover to a member that is not the project's build identity", path, blk.name)
+					}
+					if !hasAttr(blk.body, "repository", "google_artifact_registry_repository.shared.repository_id") {
 						t.Errorf("%s: %s must grant the tag mover on the installation's shared registry", path, blk.name)
 					}
 				default:
-					t.Errorf("%s: %s grants the tag mover role on neither the repository's own registry nor the installation's shared one", path, blk.name)
+					// The member is the repository's own build account: an
+					// account the module creates, never a person, a job
+					// account or another repository's build.
+					if !hasAttr(blk.body, "member", "google_service_account.build.member") {
+						t.Errorf("%s: %s grants the tag mover to a member that is not the repository's own build account", path, blk.name)
+					}
+					switch path {
+					case "gcp/modules/repo/build.tf":
+						if !hasAttr(blk.body, "repository", "google_artifact_registry_repository.images.repository_id") {
+							t.Errorf("%s: %s must grant the tag mover on the repository's own registry", path, blk.name)
+						}
+					case "gcp/modules/repo/registry.tf":
+						if !hasAttr(blk.body, "repository", "var.installation.shared_registry") {
+							t.Errorf("%s: %s must grant the tag mover on the installation's shared registry", path, blk.name)
+						}
+					default:
+						t.Errorf("%s: %s grants the tag mover role on neither the repository's own registry nor the installation's shared one", path, blk.name)
+					}
 				}
 			}
 		}
 	})
-	if roles != 1 || grants != 2 {
-		t.Errorf("found %d tag mover roles and %d grants, want 1 role and 2 grants (the repository's own registry, modules/repo/build.tf, and the installation's shared one, modules/repo/registry.tf)", roles, grants)
+	if roles != 1 || grants != 3 {
+		t.Errorf("found %d tag mover roles and %d grants, want 1 role and 3 grants (the repository's own registry, modules/repo/build.tf; the installation's shared one, modules/repo/registry.tf; and, since B6, the project's build identity on that same shared registry, modules/installation/build_identity.tf)", roles, grants)
 	}
 }
 
@@ -417,26 +443,33 @@ func TestRemoteRepositoryIsARemotePullThroughProxyOfGhcr(t *testing.T) {
 	}
 }
 
-// TestRemoteRepositoryReaderGrants: exactly two reader grants on the new
+// TestRemoteRepositoryReaderGrants: exactly three reader grants on the new
 // remote repository, and nothing else. The operators' (the run that pins
 // reads the verified digest back through the proxy with their own
-// credentials, design §3.2) and each repository's build account's (Cloud
+// credentials, design §3.2), each repository's build account's (Cloud
 // Build pulls the derived build's step image and its FROM through it,
-// design §6). Neither writes it: the packages are public, so nothing in
-// the repository is ever written (§2.3, §5.2).
+// design §6) and — since B6 — the project's build identity's, which is what
+// a catalog build pulls those same images as once its repository's root is
+// retired (modules/installation/build_identity.tf). None writes it: the
+// packages are public, so nothing in the repository is ever written
+// (§2.3, §5.2).
 //
-// Both must name the remote repository and nothing that matches
+// All three must name the remote repository and nothing that matches
 // TestMirrorRunsAsUserNotBuildAccount's own substring test for "on the
 // base registry" — that test reads a grant as being on fugaro-base when
 // its body contains "base_registry" or "repository.base.".
 // The count is the whole point, so it is taken over EVERY iam_member whose
-// body names ghcr rather than over the two blocks by name: a third grant
-// added anywhere — a writer, a second reader, a grant on another resource
-// that happens to name the repository — is a failure here.
+// body names ghcr rather than over the blocks by name: a fourth grant added
+// anywhere — a writer, another reader, a grant on another resource that
+// happens to name the repository — is a failure here.
 func TestRemoteRepositoryReaderGrants(t *testing.T) {
-	want := map[string]string{ // "path|resource" -> the member it must grant
+	// "path|resource" -> the member it must grant.
+	const identityGhcr = "gcp/modules/installation/build_identity.tf|" +
+		"google_artifact_registry_repository_iam_member.build_identity_ghcr_reader"
+	want := map[string]string{
 		"gcp/modules/installation/iam.tf|google_artifact_registry_repository_iam_member.ghcr_reader": "toset(var.operators)",
 		"gcp/modules/repo/build.tf|google_artifact_registry_repository_iam_member.build_ghcr":        "google_service_account.build.member",
+		identityGhcr: "google_service_account.build_identity[0].member",
 	}
 	seen := map[string]bool{}
 	walk(t, func(path string, b []byte) {
@@ -506,20 +539,37 @@ func TestSharedRegistryRepoIDMatchesTheModule(t *testing.T) {
 		t.Errorf("found %d google_artifact_registry_repository.shared blocks in %s, want exactly 1", found, path)
 	}
 
-	// The installation module grants nobody on it: its writer is each
-	// repository's build account and its readers are each repository's job
-	// accounts, granted by that repository's own root. A member here would be
-	// a grant to that principal on every repository's shared images at once.
+	// The installation module grants exactly ONE principal on it, and that is
+	// B6's move: the project's build identity, which a catalog build runs as
+	// and which no repository's root creates (it outlives them all, D2301).
+	// Two grants and no third, and the member of both is that account.
+	//
+	// The rule the assertion used to state whole is unchanged for everybody
+	// else: a per-repository principal here — a repository's build account, or
+	// its job accounts — would be a grant to it on every repository's shared
+	// images at once, which is why its writer and readers are granted by that
+	// repository's own root (modules/repo/registry.tf).
+	installGrants := 0
 	walk(t, func(p string, b []byte) {
 		if !strings.HasPrefix(p, "gcp/modules/installation/") {
 			return
 		}
 		for _, blk := range resourceBlocks(t, p, b, "google_artifact_registry_repository_iam_member") {
-			if strings.Contains(blk.body, "repository.shared") || strings.Contains(blk.body, gcp.SharedRegistryRepoID()) {
-				t.Errorf("%s: %s grants a member on the shared registry: it is granted per repository, by that repository's root (modules/repo/registry.tf)", p, blk.name)
+			if !strings.Contains(blk.body, "repository.shared") && !strings.Contains(blk.body, gcp.SharedRegistryRepoID()) {
+				continue
+			}
+			installGrants++
+			if !hasAttr(blk.body, "member", "google_service_account.build_identity[0].member") {
+				t.Errorf("%s: %s grants a member on the shared registry that is not the project's build identity: the per-repository principals are granted there by their own repository's root (modules/repo/registry.tf), and a grant to one of them here would reach every repository's shared images at once", p, blk.name)
+			}
+			if !hasAttr(blk.body, "count", "local.credentials_service_on ? 1 : 0") {
+				t.Errorf("%s: %s is not gated on the credentials service: the registry reach belongs to the account a catalog build runs as, and an installation that runs none plans neither", p, blk.name)
 			}
 		}
 	})
+	if installGrants != 2 {
+		t.Errorf("found %d grants on the shared registry in the installation module, want 2 (the project's build identity's writer and tag mover, B6): a third is a reach nobody classified", installGrants)
+	}
 }
 
 // Destroying the Terraform config must never turn off an API the project
@@ -946,12 +996,16 @@ func skipString(code string, i int) int {
 // module's own validation pins the job's name to.
 func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	re := regexp.MustCompile(`job_name=~\\"\^([a-z0-9-]+)\\"`)
-	seen, reports := 0, 0
+	seen, reports, licences := 0, 0, 0
 	walk(t, func(path string, b []byte) {
 		for _, m := range re.FindAllSubmatch(b, -1) {
 			seen++
-			if prefix := string(m[1]); prefix == reportsJobPrefix {
+			switch prefix := string(m[1]); prefix {
+			case reportsJobPrefix:
 				reports++
+				continue
+			case licenceJobPrefix:
+				licences++
 				continue
 			}
 			for _, slug := range []string{"bitbucket-acme-sandbox", strings.Repeat("a", 80)} {
@@ -967,6 +1021,9 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	if reports != 1 {
 		t.Errorf("found %d reports-job name filters, want the reports alert's one", reports)
 	}
+	if licences != 1 {
+		t.Errorf("found %d licence-renewal name filters, want the licence job's alert and no other", licences)
+	}
 	// ... and that prefix is the one the module's own validation pins the job's
 	// name to, which is the line this test can read while the job's Go name is
 	// internal/infra's (R7): a filter matching a prefix the module would not
@@ -977,6 +1034,29 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	}
 	if !strings.Contains(string(vars), `startswith(var.reports.job, "`+reportsJobPrefix+`")`) {
 		t.Errorf("the reports alert filters on %q, which is not the prefix the module's own validation pins the job's name to", reportsJobPrefix)
+	}
+	// The licence job's filter is held to the name the update WRITES instead:
+	// its job name is not pinned in variables.tf (the block's `job` is the
+	// input, and the validation refuses only the fugaro- prefix `fugaro runs
+	// ls` counts as a workflow job), so the one line that says what the job is
+	// called is the fixture the installation root's golden plan is made from —
+	// internal/infra's own installation-coordinator.tfvars.json, the document
+	// `fugaro update` plans with on an installation whose coordinator's job is
+	// deployed, which is every installation this alert exists for.
+	var fixture struct {
+		Licence struct {
+			Job string `json:"job"`
+		} `json:"licence"`
+	}
+	b, err := os.ReadFile(filepath.Join("..", "..", "internal", "infra", "testdata", "installation-coordinator.tfvars.json"))
+	if err != nil {
+		t.Fatalf("reading the licence job's tfvars fixture: %v", err)
+	}
+	if err := json.Unmarshal(b, &fixture); err != nil {
+		t.Fatalf("parsing the licence job's tfvars fixture: %v", err)
+	}
+	if fixture.Licence.Job != licenceJobPrefix {
+		t.Errorf("the licence alert filters on %q, but the job `fugaro update` plans is %q (internal/infra/testdata/installation-coordinator.tfvars.json): a filter matching a name no update writes watches for a job nobody creates", licenceJobPrefix, fixture.Licence.Job)
 	}
 }
 
@@ -1701,12 +1781,15 @@ var (
 	// expression worth admitting by name here rather than by shape.
 	// google_service_account.build_identity[0] is the project's build identity
 	// (B5, D2301): the one account a shared repository's catalog build runs as,
-	// created beside the credentials service and holding exactly one row —
-	// roles/run.invoker on that service (build_identity.tf) — which is also why
-	// the module renders its email into the service's build class rather than
-	// spelling an address in Go. Its reach is that row and nothing wider: no
-	// role on any repository's registry, and no other grant in this tree names
-	// it.
+	// created beside the credentials service. Its reach is the credentials
+	// service's invoker bit, the writer and tag mover on the ONE shared
+	// registry, the reader on the two registries a build's own steps pull
+	// from, the definitions read, one record write and one provider-credential
+	// accessor per repository of the catalog check's input, and the one
+	// project-level role a build's own step logs need (roles/logging.logWriter,
+	// B6) — no role on any repository's own registry, and nothing wider. The
+	// module also renders its email into the service's build class rather than
+	// spelling an address in Go.
 	// var.workspace_service_account is the member's own workspace_pin's
 	// account, and the Firebase root's one grant to it is the read-only
 	// database role (modules/firebase/workspace_access.tf, W7). It is the ONE
@@ -1748,7 +1831,7 @@ var (
 	// object, so it is read as the email it is rather than as a reference to a
 	// resource: the account belongs to the installation, and the repository
 	// root is a different apply of a different directory.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports|licence)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -1811,6 +1894,14 @@ const (
 // internal/infra's (R7), which is why the literal lives here and not in
 // internal/backend/gcp beside CheckJobName's.
 const reportsJobPrefix = "fugarorpt-"
+
+// licenceJobPrefix is the name prefix the installation module's own licence
+// job carries (licence.tf, plan K4.2 of docs/licence-key-v2): the job's alert
+// filters on it, and TestCheckJobPrefixMatchesGo reads the name back off the
+// fixture `fugaro update` writes, so a filter watching a job no update creates
+// fails there. The job's Go name is internal/infra's (LicenceJob), for the
+// reports job's reason, which is why the literal lives here.
+const licenceJobPrefix = "fugarolicence"
 
 // memberAllowed is allowedMemberExprs plus the one exception above, and it is
 // the single decision every IAM block of this tree is held to.

@@ -116,6 +116,13 @@ type StageResult struct {
 	// complete up front (the Firebase root needs the installation's
 	// outputs), and the view says so.
 	After string `json:"after,omitempty"`
+	// Undone is the check's own Undone (Status): a stage that skipped without
+	// doing its work rather than one that found nothing to do. State is one
+	// word for the two, and this is what tells them apart — a caller settling
+	// a record of the steps a machine still owes reads it, and so does a
+	// reader of the document. Written only when it is true, so a run with no
+	// such stage reports what it always did.
+	Undone bool `json:"undone,omitempty"`
 }
 
 // Failure is the stage a run stopped at, in one line each.
@@ -347,7 +354,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			l.fail(name, err)
 			return nil
 		}
-		r := StageResult{Name: name, State: st.State, Detail: l.redact(oneLine(st.Detail))}
+		r := StageResult{Name: name, State: st.State, Detail: l.redact(oneLine(st.Detail)), Undone: st.Undone}
 		switch st.State {
 		case Done, Skipped:
 		case Blocked:
@@ -592,7 +599,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		detail := l.redact(oneLine(st.Detail))
 		switch st.State {
 		case Done, Skipped:
-			l.record(StageResult{Name: name, State: st.State, Detail: detail})
+			l.record(StageResult{Name: name, State: st.State, Detail: detail, Undone: st.Undone})
 			continue
 		case Blocked:
 			l.record(StageResult{Name: name, State: Blocked, Detail: detail})

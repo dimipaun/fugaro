@@ -197,6 +197,15 @@ func TestBuildTagScanCatchesPlants(t *testing.T) {
 // published images (R6, G9). Under T27 (b) a job needs no key at all, and when
 // enforcement ships the entitlement travels in the task as a claim; a COPY or
 // an ARG naming one is how it would come back.
+//
+// It carries K4.2's half of the same claim as well (licenceNamed). The renewal
+// job runs an image this repository already publishes — the coordinator's, one
+// CLI binary serving the sweep, the front door and the renewal — so the licence
+// must not be in it for the same reason the secret must not be: what makes the
+// job safe to create on every installation is that it holds nothing until a
+// person runs `fugaro licence set`, and an image with the licence baked in
+// would hold one installation's entitlement for every installation that pulls
+// it.
 func TestRunImagesCarryNoKey(t *testing.T) {
 	for _, name := range publishedImages {
 		t.Run(name, func(t *testing.T) {
@@ -258,6 +267,16 @@ func TestRunImagesCarryNoKeyScanCatchesPlants(t *testing.T) {
 	t.Run("a COPY of a credential-shaped path", func(t *testing.T) {
 		body := insertBefore(t, readDockerfile(t, "credentials"), buildRun, "COPY ./model-credentials /run/model-credentials\n")
 		refused(t, "an image copying a credential-shaped path", "credentials", body, "model-credentials")
+	})
+
+	t.Run("a COPY of the licence object", func(t *testing.T) {
+		body := insertBefore(t, readDockerfile(t, "history"), buildRun, "COPY ./fugaro/licence.json /run/licence.json\n")
+		refused(t, "an image copying the licence the renewal job writes", "history", body, "licence.json")
+	})
+
+	t.Run("an ARG naming the licence document", func(t *testing.T) {
+		body := insertBefore(t, readDockerfile(t, "base"), buildRun, "ARG FUGARO_LICENCE_JSON\n")
+		refused(t, "an image taking the licence from an ARG", "base", body, "FUGARO_LICENCE_JSON")
 	})
 }
 
@@ -476,6 +495,20 @@ func dockerfileBuildTagGaps(name, body string) []string {
 // shape is how one would come back.
 var keyNamed = regexp.MustCompile(`(?i)(^|[^a-z])(key|secret|token|password|passwd|credential)s?([^a-z]|$)`)
 
+// licenceNamed matches a COPY source or an ARG name that reads THE LICENCE into
+// the image (K4.2). The licence is key material — it is the object
+// `fugaro licence renew --job` reads and writes in the runs bucket, and the
+// document `fugaro licence set` puts there — so an image that carried it would
+// hand every job running that image one installation's entitlement, which is
+// the opposite of what the renewal job is for: that job reads its secret from
+// Secret Manager and its key from the bucket at run time, as its own account.
+//
+// The suffixes are what keep this honest. `licence` on its own is a FEATURE
+// name — a future ARG FUGARO_LICENCE_IMAGE or FUGARO_LICENCE_REGION is a
+// legitimate build argument — so what is refused is a name that carries a
+// document or a key rather than the word.
+var licenceNamed = regexp.MustCompile(`(?i)licen[cs]e[._-]?(key|json|pem|jws|jwt|secret|token)`)
+
 // dockerfileKeyGaps reports every COPY source and ARG that names key material
 // in one image's Dockerfile.
 func dockerfileKeyGaps(name, body string) []string {
@@ -485,13 +518,13 @@ func dockerfileKeyGaps(name, body string) []string {
 		switch fields[0] {
 		case "ARG":
 			for _, w := range fields[1:] {
-				if keyNamed.MatchString(w) {
+				if keyNamed.MatchString(w) || licenceNamed.MatchString(w) {
 					gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile reads key material into the image with `ARG %s` (R6, G9)", name, w))
 				}
 			}
 		case "COPY":
 			for _, w := range copySources(fields) {
-				if keyNamed.MatchString(w) {
+				if keyNamed.MatchString(w) || licenceNamed.MatchString(w) {
 					gaps = append(gaps, fmt.Sprintf("images/%s/Dockerfile puts key material in the image by copying %s (R6, G9)", name, w))
 				}
 			}

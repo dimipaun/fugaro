@@ -500,6 +500,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 // their bodies, in sentences of their own, which the run's own error carries.
 var closedStdinNoFixture = map[string]string{
 	"fugaro ab":                "refuses: the edition is not in this build",
+	"fugaro apply":             "owes nothing in this world, which holds no record: the whole of what a bare run does is the answer of a run with nothing to apply, and it reaches its own body to print it",
 	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
 	"fugaro accounts alias":    "is a name for set and rm: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
@@ -507,9 +508,9 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
 	"fugaro backends":          "is a name for ls and use: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
-	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
+	"fugaro backlog add":       "refuses from inside its body: a bare run names --title, which is the one line it files an item from",
 	"fugaro backlog index":     "reads docs/backlog, which this world has no checkout to hold",
-	"fugaro backlog list":      "reads docs/backlog, which this world has no checkout to hold",
+	"fugaro backlog list":      "prints the no-project-config refusal",
 	"fugaro budget prices":     "prints the built-in price list with no project selected",
 	"fugaro budget show":       "prints the no-project-config refusal",
 	"fugaro config example":    "prints the example fugaro.yaml",
@@ -549,6 +550,7 @@ var closedStdinNoFixture = map[string]string{
 	// node the fixture's database holds (none) and the cached briefs of the
 	// machine it runs on, which this harness does not fixture.
 	"fugaro orchestrator ls":     "lists what this world's database and this machine's cache directory hold: no orchestrator node here, and the cache files are the machine's own",
+	"fugaro orchestrator serve":  "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro orchestrator state":  "reads project aurora's state node out of the fixture's database, which holds none yet, and prints what an empty state is",
 	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",

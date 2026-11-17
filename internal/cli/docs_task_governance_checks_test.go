@@ -6,17 +6,17 @@ import (
 	"testing"
 )
 
-// Checks 135, 136 and 139 — the task-governance work's owner-run checks — as
-// the register writes them.
+// Checks 135 to 139 — the task-governance work's owner-run checks — as the
+// register writes them.
 //
 // The work takes the check block 135–144 (docs/task-governance/implementation-plan.md
-// §2, "Check numbers this plan takes"). Three of it are registered here, all by
-// task T3.5: 135, a per-repository job account's read of its own run record and
-// its refusal of a sibling's; 136, the report run's own pull request, which is
-// run only after T3.3's finalize guard merges; and 139, what an agent ID
-// distinguishes in a gateway run's log, which gates T7.2. 137 and 138 are task
-// T7.5's and are not written yet, and 140–144 stay reserved, so the register
-// must carry neither a row nor a section for any of them.
+// §2, "Check numbers this plan takes"). Five of it are registered here: 135, 136
+// and 139 by task T3.5 — 135, a per-repository job account's read of its own run
+// record and its refusal of a sibling's; 136, the report run's own pull request,
+// which is run only after T3.3's finalize guard merges; and 139, what an agent ID
+// distinguishes in a gateway run's log, which gates T7.2 — and 137 and 138 by
+// task T7.5: the stage budget stop and the fan-out stop. 140–144 stay reserved,
+// so the register must carry neither a row nor a section for any of them.
 //
 // What these tests hold, and why the register needs each one: a check is
 // registered by two things — a row in the summary table and a `## Check N`
@@ -32,13 +32,13 @@ import (
 // The red step is this file run against a register that has a section but not
 // its row: the pairing is what fails, and it names the number.
 
-// taskGovernanceRegisterChecks are the three checks this work registers now, and
-// taskGovernanceReservedChecks the seven that stay unwritten. They are held
+// taskGovernanceRegisterChecks are the five checks this work registers, and
+// taskGovernanceReservedChecks the five that stay unwritten. They are held
 // apart because the failure modes are opposite: a registered check missing half
 // its registration, and a reserved check that acquired one.
 var (
-	taskGovernanceRegisterChecks = []string{"135", "136", "139"}
-	taskGovernanceReservedChecks = []string{"137", "138", "140", "141", "142", "143", "144"}
+	taskGovernanceRegisterChecks = []string{"135", "136", "137", "138", "139"}
+	taskGovernanceReservedChecks = []string{"140", "141", "142", "143", "144"}
 )
 
 // taskGovernanceCheckRowRE matches a register summary row's first cell: the
@@ -67,9 +67,9 @@ func taskGovernanceSection(t *testing.T, register, number string) string {
 	return section
 }
 
-// TestDocsTaskGovernanceChecksAreRegistered: each of the three checks has both
+// TestDocsTaskGovernanceChecksAreRegistered: each of the five checks has both
 // halves of its registration — a row in the summary table and a `## Check N:`
-// section below it — and each half says the check has not been run. The three
+// section below it — and each half says the check has not been run. All five
 // are owner-run, so a section that read as a pass would be a live claim nobody
 // made.
 func TestDocsTaskGovernanceChecksAreRegistered(t *testing.T) {
@@ -101,16 +101,16 @@ func TestDocsTaskGovernanceChecksAreRegistered(t *testing.T) {
 	for _, number := range taskGovernanceRegisterChecks {
 		i := strings.Index(register[at:], "\n## Check "+number+":")
 		if i < 0 {
-			t.Errorf("%s writes Check %s's section out of order: the three are one block and read in the order the numbers give", liveChecksDoc, number)
+			t.Errorf("%s writes Check %s's section out of order: the five are one block and read in the order the numbers give", liveChecksDoc, number)
 			continue
 		}
 		at += i
 	}
 }
 
-// TestDocsTaskGovernanceReservedChecksStayReserved: 137 and 138 are task
-// T7.5's and 140–144 stay reserved, so the register carries neither a row nor a
-// section for them. A number that acquired a row while its task is unwritten is
+// TestDocsTaskGovernanceReservedChecksStayReserved: 140–144 stay reserved, so
+// the register carries neither a row nor a section for any of them. A number
+// that acquired a row while its task is unwritten is
 // a check a reader would try to run, and the register's own rule is that a
 // reserved number is never given a subject until the work that holds it starts.
 func TestDocsTaskGovernanceReservedChecksStayReserved(t *testing.T) {
@@ -125,7 +125,7 @@ func TestDocsTaskGovernanceReservedChecksStayReserved(t *testing.T) {
 	}
 
 	// The block is read from the plan that claims it: 135–144 are the plan's
-	// numbers, 137 and 138 are T7.5's, and 140–144 are reserved and unused.
+	// numbers, 135–139 are written, and 140–144 are reserved and unused.
 	plan := flattenDoc(readDoc(t, "docs/task-governance/implementation-plan.md"))
 	for _, want := range []string{
 		"Checks 135–144",
@@ -135,8 +135,8 @@ func TestDocsTaskGovernanceReservedChecksStayReserved(t *testing.T) {
 			t.Errorf("docs/task-governance/implementation-plan.md no longer says %q: the register's rows are this work's block, and the block is what says which numbers are reserved", want)
 		}
 	}
-	// The count of rows the register carries for the block is the three
-	// registered checks and nothing else: a fourth number appearing under this
+	// The count of rows the register carries for the block is the five
+	// registered checks and nothing else: a further number appearing under this
 	// work's block is a check nobody allocated.
 	rows := 0
 	for _, number := range []string{"135", "136", "137", "138", "139"} {
@@ -156,7 +156,7 @@ func TestDocsTaskGovernanceReservedChecksStayReserved(t *testing.T) {
 // the reading: only the standalone `belong` is another installation's name.
 var taskGovernanceOtherInstallationRE = regexp.MustCompile(`\bbelong\b|EdgeWeb|EdgeServer`)
 
-// TestDocsTaskGovernanceChecksNameTheSandboxOnly: the three checks are the
+// TestDocsTaskGovernanceChecksNameTheSandboxOnly: the five checks are the
 // sandbox installation's, so each section says so — the register spells that
 // installation `fugaro` (project `fugaro-dev`, the sandbox repository) or, where
 // a name would be a placeholder, just "sandbox" — and every line that names

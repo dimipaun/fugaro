@@ -2182,7 +2182,12 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 // Mutation (run, restore): make the comparison the whole rule again — drop
 // the infra.SharedJobProvider(pr.Provider) half of the guard — and the launch
 // is made on the Bitbucket profile's job, which no installation has.
+//
+// Bitbucket is withheld from the shared-job list for the length of this test:
+// I1 admitted it, so the state this pins is the one an installation whose list
+// is narrower than the tree's is in (withholdSharedJobProvider).
 func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
+	withholdSharedJobProvider(t, "bitbucket")
 	f := newProjectJobFixture(t)
 	const bbRepo = "acme/bb"
 	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
@@ -2395,6 +2400,25 @@ func admitSharedJobProvider(t *testing.T, provider string) {
 	t.Helper()
 	prev := sharedJobProvider
 	sharedJobProvider = func(kind string) bool { return kind == provider || prev(kind) }
+	t.Cleanup(func() { sharedJobProvider = prev })
+}
+
+// withholdSharedJobProvider puts the process in the state an installation
+// whose list is narrower than the tree's is in: no shared job serves this
+// provider, so its repositories keep the jobs they have always had. The tree
+// admitted github alone until I1, and the tests that pin what a launch does
+// where no shared job serves the provider were written against that list; I1
+// admits bitbucket too (internal/infra's list is now both of
+// config.Providers), so they withhold it here rather than reading a state the
+// tree no longer has.
+//
+// The branch is still one a provider can reach the tree on: a kind added to
+// config.Providers is admitted by no shared job until the deployer's list
+// carries it, which is what every provider was until its own flip.
+func withholdSharedJobProvider(t *testing.T, provider string) {
+	t.Helper()
+	prev := sharedJobProvider
+	sharedJobProvider = func(kind string) bool { return kind != provider && prev(kind) }
 	t.Cleanup(func() { sharedJobProvider = prev })
 }
 
@@ -2693,7 +2717,13 @@ func TestRunRepoWithoutItsCheckoutKeepsThePerRepositoryJob(t *testing.T) {
 // Mutation (run, restore): read the policy before the provider, and let the
 // profile question refuse a launch whose provider no shared job serves — the
 // launch is refused and no jobs.run call is made.
+//
+// Bitbucket is withheld from the shared-job list for the length of this test,
+// the state it was written against: I1 admitted it, and a launch of a
+// repository whose provider has no shared job still asks this question first,
+// whatever the list holds (withholdSharedJobProvider).
 func TestNoCheckoutBitbucketKeepsItsPerRepositoryJob(t *testing.T) {
+	withholdSharedJobProvider(t, "bitbucket")
 	f := newProjectJobFixture(t)
 	const bbRepo = "acme/bb"
 	addRepoToConfig(t, f.cloudFixture, bbRepo, "bitbucket")
