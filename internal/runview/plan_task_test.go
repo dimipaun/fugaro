@@ -97,6 +97,15 @@ var planTaskReaders = map[string]string{
 	"internal/orchestrator/state.go":    "defines WorkItem.PlanTask, the node of a plan the item stands for",
 	"internal/orchestrator/validate.go": "applies task.PlanTaskProblem to the id a patch writes, the shape rule the launcher applies on write",
 	"internal/orchestrator/patch.go":    "the upsert op that carries a plan's node id into the state",
+	// The import of a plan's graph (D2704): it writes the id as an item's
+	// plan_task, and matches on it so an item the daemon adopted for the same
+	// task is linked rather than duplicated (D2746). What the match decides is
+	// which item of the plan's own node an edge names, and both sides are items
+	// already in that node -- the adopted one written by the daemon from a
+	// launch record, the one this import would write arriving unapproved -- so
+	// nothing is admitted, budgeted or granted by it, and it refuses rather
+	// than guesses when one plan task stands under two items.
+	"internal/orchestrator/planimport.go": "writes a plan's task id as an item's plan_task, and matches on it to link an adopted item rather than duplicate it (D2746)",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module
