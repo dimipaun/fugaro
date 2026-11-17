@@ -15,7 +15,8 @@ as_of: v0.25.0
 | Set up and update from the command line | Fugaro provisions everything it needs in your own Google Cloud project from the command line, and brings the whole installation to a new version the same way. The update reports which known issues it resolves. | Available | ✓ | ✓ | ✓ |
 | Manage the repositories a project holds | The repositories enrolled in a project are added, removed, listed and checked with one command each, and the check says what is left of an enrolment a step done out of order left half-finished. A removal undoes the enrolment and leaves a run that is going alone. | Coming soon | ✓ | ✓ | ✓ |
 | Drive Fugaro from Claude Code | Fugaro's commands are driven from Claude Code through a plugin installed for you, and the plugin says when an update is due. In a managed project the agent runs the cloud-changing commands itself, behind a deterministic gate instead of a prompt. | Available | ✓ | ✓ | ✓ |
-| A model that did not write the code reviews it | Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not. A pull request can also be reviewed on its own, with the review depth chosen for the project. | Coming soon | ✓ | ✓ | ✓ |
+| A model that did not write the code reviews it | Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not. | Available | ✓ | ✓ | ✓ |
+| Review a pull request on its own, at a chosen depth | A pull request can be reviewed by a separate review job, with the review depth chosen for the project and a second model offered as the reviewer. | Coming soon | ✓ | ✓ | ✓ |
 | Choose the model and the account behind every stage | Each stage of a run can use a different model and a different account, with named accounts, aliases that can be repointed, and a vision model that reads pictures for a coder that cannot. | Coming soon | ✓ | ✓ | ✓ |
 | Change any setting with a command | Every setting at every level — local, repository and project — is read and changed by a command, so no configuration file is edited by hand. | Coming soon | ✓ | ✓ | ✓ |
 | One write path behind every setting | A setting is changed through one write path, whichever command owns the field, so a field with invariants or a publish step is written only by the command that understands it. A generic write to a field another command owns is refused, naming the command to use. | Coming soon | ✓ | ✓ | ✓ |
@@ -26,23 +27,23 @@ as_of: v0.25.0
 | Connect Bitbucket with the token you have | A workspace, project or repository access token can be used to reach Bitbucket, and each token reaches only what it was granted. | Coming soon | ✓ | ✓ | ✓ |
 | Commits credited to the person who asked | A commit the agent makes is authored by the person who launched the run, and carries trailers that tie it back to the run and the model that produced it. | Coming soon | ✓ | ✓ | ✓ |
 | See which work a pull request belongs to | The pull requests Fugaro opens are labelled with the state of the run and the work it came from, so a list of pull requests says at a glance what each one is. | Coming soon | ✓ | ✓ | ✓ |
-| Your credentials stay in your own cloud | Model and forge credentials are held by a service in your own project, and a job is given the access it needs when it starts rather than a stored key. A workflow's own secret is stored once for the project and reaches only the runs allowed to use it. | Coming soon | ✓ | ✓ | ✓ |
+| Your credentials stay in your own cloud | Model and forge credentials are held by a service in your own project, and a workflow's own secret is stored once for the project and reaches only the runs allowed to use it. | Coming soon | ✓ | ✓ | ✓ |
+| A run is handed its access, not a stored key | A job is given the access it needs when it starts, through a broker in your own project, rather than a stored key. | Coming soon | ✓ | ✓ | ✓ |
 | Say what counts as security-sensitive | A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such. | Coming soon | ✓ | ✓ | ✓ |
 | Decide who may launch and cancel | A project grants roles — viewer, operator and admin — each with a scope, so a person can read, launch or cancel only within the projects and repositories they were given. | Available | ✓ | ✓ | ✓ |
 | Find out what went wrong | A failed command's log can be read by a local diagnostic agent, and what it finds can be sent to the issue tracker from the command line. An issue already filed can be followed up to see what happened to it. | Available | ✓ | ✓ | ✓ |
-| Explain a failure with your project's own credential | When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else. | Planned | ✓ | ✓ | ✓ |
+| Explain a failure with your project's own credential | When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else. | Coming soon | ✓ | ✓ | ✓ |
 | Reports on how your runs are going | Every run ends with a classified failure, and a periodic digest reports what a project's runs did — the failures, the spend and the patterns worth acting on. | Coming soon | ✓ | ✓ | ✓ |
+| Recorded spend matches what the provider billed | A run's spend is settled on the cost the model provider reports, priced conservatively where the provider reports none, and an alarm is raised when settled and estimated spend drift apart. | Coming soon | ✓ | ✓ | ✓ |
 | Runs share a project's jobs | A project's runs share a small pool of jobs and image caches instead of one job per repository, and what each run may reach is decided per job. | Coming soon | ✓ | ✓ | ✓ |
-| Let Fugaro work through your queue | An orchestrator works through a queue of tasks on its own, keeps its state in the cloud rather than on a machine, and pauses when a repository refuses it. | Coming soon | ✓ | ✓ | ✓ |
+| Let Fugaro work through your queue | An orchestrator works through a queue of tasks on its own, keeps its state in the cloud rather than on a machine, and pauses when a repository refuses it. | Available | ✓ | ✓ | ✓ |
+| Know when the work will be ready and what it will cost | A task graph shows a range for when the work will be ready and roughly what it will cost, and ad hoc items join the same graph as nodes. The estimate is informational and reserves no budget. | Coming soon | ✓ | ✓ | ✓ |
 | Pull requests that stop converging | When a pull request stops converging, the orchestrator escalates through a ladder of rungs — rebase and retest, resume, one stronger pass, merge with follow-ups, or split — instead of retrying forever. | Coming soon | ✓ | ✓ | ✓ |
 | Read the docs, the support matrix and the change log | The public site carries the documentation, a matrix of what Fugaro supports on each platform and integration, and a change log of what every release brought. | Available | ✓ | ✓ | ✓ |
 | The desktop console | A desktop app for macOS and Linux shows a project's settings, its runs and its coordinator queue, and reads the same data the command line does. | Available | — | ✓ | ✓ |
-| The console on Windows | The console runs on Windows with the command line inside a Linux distribution, so the same screens work on a Windows machine. | Coming soon | — | ✓ | ✓ |
 | See how releases depend on each other | A graph draws the project's releases and tasks as boxes, with the dependencies between them and the path that matters. | Available | — | ✓ | ✓ |
 | Fugaro on your phone | A mobile app shows your projects, tasks and runs, and pairs a device with your installation to sign in. | Coming soon | — | ✓ | ✓ |
 | Reach a project from any agent | A hosted endpoint exposes a project's tasks, runs and reports to an agent outside Fugaro, over a protocol the agent already speaks. | Coming soon | — | ✓ | ✓ |
-| A signed-in web app for accounts and keys | The web app behind the site manages an account, its organisations and its workspaces, the keys it holds, and the records of what was bought. | Coming soon | — | ✓ | ✓ |
-| Buy and manage a plan | A paid plan is bought and managed online, and an installation is activated with the key it issues. Seats, renewal and lapse are all reported. | Coming soon | — | ✓ | ✓ |
 | Group projects into a workspace | Several projects can be grouped into a workspace with its own budget, so a team's projects share one cap and one view. | Available | — | ✓ | ✓ |
 | Catch a runaway run early | Every task carries a tier, and a run that spends far more than its tier expects is stopped and reported instead of running to its cap. | Coming soon | — | ✓ | ✓ |
 | Compare models on the same task | Another model can be run against the same task beside the first, and the results are scored and reported together. | Available | — | ✓ | ✓ |
@@ -112,7 +113,18 @@ as_of: v0.25.0
     {
       "id": "review-and-fix",
       "name": "A model that did not write the code reviews it",
-      "explanation": "Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not. A pull request can also be reviewed on its own, with the review depth chosen for the project.",
+      "explanation": "Every run is reviewed by a model other than the one that wrote the code, and a triage step decides which findings hold the merge and which do not.",
+      "status": "available",
+      "plans": {
+        "community": true,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "review-on-its-own",
+      "name": "Review a pull request on its own, at a chosen depth",
+      "explanation": "A pull request can be reviewed by a separate review job, with the review depth chosen for the project and a second model offered as the reviewer.",
       "status": "coming-soon",
       "plans": {
         "community": true,
@@ -233,7 +245,18 @@ as_of: v0.25.0
     {
       "id": "credentials-and-secrets",
       "name": "Your credentials stay in your own cloud",
-      "explanation": "Model and forge credentials are held by a service in your own project, and a job is given the access it needs when it starts rather than a stored key. A workflow's own secret is stored once for the project and reaches only the runs allowed to use it.",
+      "explanation": "Model and forge credentials are held by a service in your own project, and a workflow's own secret is stored once for the project and reaches only the runs allowed to use it.",
+      "status": "coming-soon",
+      "plans": {
+        "community": true,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "runs-handed-their-access",
+      "name": "A run is handed its access, not a stored key",
+      "explanation": "A job is given the access it needs when it starts, through a broker in your own project, rather than a stored key.",
       "status": "coming-soon",
       "plans": {
         "community": true,
@@ -278,7 +301,7 @@ as_of: v0.25.0
       "id": "cloud-diagnosis-job",
       "name": "Explain a failure with your project's own credential",
       "explanation": "When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else.",
-      "status": "planned",
+      "status": "coming-soon",
       "plans": {
         "community": true,
         "team": true,
@@ -289,6 +312,17 @@ as_of: v0.25.0
       "id": "run-reports",
       "name": "Reports on how your runs are going",
       "explanation": "Every run ends with a classified failure, and a periodic digest reports what a project's runs did — the failures, the spend and the patterns worth acting on.",
+      "status": "coming-soon",
+      "plans": {
+        "community": true,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "billed-spend-matches",
+      "name": "Recorded spend matches what the provider billed",
+      "explanation": "A run's spend is settled on the cost the model provider reports, priced conservatively where the provider reports none, and an alarm is raised when settled and estimated spend drift apart.",
       "status": "coming-soon",
       "plans": {
         "community": true,
@@ -311,6 +345,17 @@ as_of: v0.25.0
       "id": "orchestrator",
       "name": "Let Fugaro work through your queue",
       "explanation": "An orchestrator works through a queue of tasks on its own, keeps its state in the cloud rather than on a machine, and pauses when a repository refuses it.",
+      "status": "available",
+      "plans": {
+        "community": true,
+        "team": true,
+        "enterprise": true
+      }
+    },
+    {
+      "id": "orchestrator-estimates",
+      "name": "Know when the work will be ready and what it will cost",
+      "explanation": "A task graph shows a range for when the work will be ready and roughly what it will cost, and ad hoc items join the same graph as nodes. The estimate is informational and reserves no budget.",
       "status": "coming-soon",
       "plans": {
         "community": true,
@@ -352,17 +397,6 @@ as_of: v0.25.0
       }
     },
     {
-      "id": "console-on-windows",
-      "name": "The console on Windows",
-      "explanation": "The console runs on Windows with the command line inside a Linux distribution, so the same screens work on a Windows machine.",
-      "status": "coming-soon",
-      "plans": {
-        "community": false,
-        "team": true,
-        "enterprise": true
-      }
-    },
-    {
       "id": "release-graph",
       "name": "See how releases depend on each other",
       "explanation": "A graph draws the project's releases and tasks as boxes, with the dependencies between them and the path that matters.",
@@ -388,28 +422,6 @@ as_of: v0.25.0
       "id": "agent-access",
       "name": "Reach a project from any agent",
       "explanation": "A hosted endpoint exposes a project's tasks, runs and reports to an agent outside Fugaro, over a protocol the agent already speaks.",
-      "status": "coming-soon",
-      "plans": {
-        "community": false,
-        "team": true,
-        "enterprise": true
-      }
-    },
-    {
-      "id": "portal",
-      "name": "A signed-in web app for accounts and keys",
-      "explanation": "The web app behind the site manages an account, its organisations and its workspaces, the keys it holds, and the records of what was bought.",
-      "status": "coming-soon",
-      "plans": {
-        "community": false,
-        "team": true,
-        "enterprise": true
-      }
-    },
-    {
-      "id": "plans-and-keys",
-      "name": "Buy and manage a plan",
-      "explanation": "A paid plan is bought and managed online, and an installation is activated with the key it issues. Seats, renewal and lapse are all reported.",
       "status": "coming-soon",
       "plans": {
         "community": false,
