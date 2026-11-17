@@ -247,7 +247,17 @@ func chainApply(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, se
 	if err != nil {
 		return err
 	}
-	return applyRunRecord(cmd, r, lc, sel.Path, pending, recorded, names, applyOptions{chain: true})
+	// The run's account is filed under the command the person ran (D1351): the
+	// steps' lines are this command's answer, and a run filed under `fugaro
+	// apply`'s name while the person ran `fugaro models add` would be a log
+	// they never think to look in. door is this command's own name — the one
+	// its own lines are printed under (`fugaro workspace cap set`) — and the
+	// log's name is that name with dashes for the spaces, the shape
+	// report.OpenLog accepts and the shape the census holds for the doors that
+	// hand their run to a converge of their own.
+	run := stepRunFor(cmd, doorLogName(door), cmd.ErrOrStderr())
+	defer run.close()
+	return applyRunRecord(cmd, r, run, lc, sel.Path, pending, recorded, names, applyOptions{chain: true})
 }
 
 // chainSavedLine is what a command says when --no-apply left the steps owed

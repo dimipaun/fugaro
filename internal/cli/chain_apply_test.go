@@ -130,9 +130,11 @@ func TestModelsAddChain(t *testing.T) {
 			t.Errorf("models add answered %q over a change whose step it ran:\n%s", forbidden, all)
 		}
 	}
-	if !strings.Contains(all, "fugaro models add") {
-		t.Errorf("the step was not run under this command's own name:\n%s", all)
-	}
+	// The run is the command's own and not `fugaro apply`'s, and the thing
+	// that says so is the log it files (D1351: a run is filed under the name a
+	// person typed): one log, under this command's name, which is the name the
+	// door the chain opens its reporter with is converted to.
+	onlyLog(t, "models-add")
 	price, ok := publishedPolicy(t, f).Prices[modelsChainID]
 	if !ok {
 		t.Fatalf("the node does not price %s after models add: the publish did not run", modelsChainID)
@@ -195,9 +197,9 @@ func TestWorkspaceWritesChain(t *testing.T) {
 		out, errOut, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50")
 		all := chainPrinted(out, errOut)
 		workspaceAssertSavedNotLive(t, "workspace cap set", all, err)
-		if !strings.Contains(all, "fugaro workspace cap set") {
-			t.Errorf("the run does not name the command the person ran:\n%s", all)
-		}
+		// The run is filed under the command the person ran (D1351): one log,
+		// under this command's own name and not `fugaro apply`'s.
+		onlyLog(t, "workspace-cap-set")
 		lc, err := localcfg.Parse([]byte(readFileString(t, owner)))
 		if err != nil {
 			t.Fatal(err)

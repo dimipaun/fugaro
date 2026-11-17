@@ -258,7 +258,16 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	if len(pending.Names()) == 0 {
 		return applyNothing(cmd, lc, path, pending, recorded, o)
 	}
-	return applyRunRecord(cmd, r, lc, path, pending, recorded, pending.Names(), o)
+	// The run's account is the reporter's, filed under this command's name
+	// (D1351, D1354): the steps it runs are the loop's, and a command that ran
+	// a converge without a reporter of its own would print a second account of
+	// the same run beside the one the census expects. The name is written here
+	// and not built in the runner below, because the reporter's census
+	// (report_exempt.go) reads the name off this call site, and a door whose
+	// name is built at run time is an entry it cannot hold.
+	run := stepRunFor(cmd, "apply", cmd.ErrOrStderr())
+	defer run.close()
+	return applyRunRecord(cmd, r, run, lc, path, pending, recorded, pending.Names(), o)
 }
 
 // applyRunRecord is the run itself: names, each once, in the order the record
@@ -271,15 +280,12 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 // r is the run the caller opened, with the workdirs lock already held: the lock
 // is the caller's, because what a run reads before the lock is the caller's own
 // question (a command that owes nothing runs no step, and `fugaro apply` reads
-// the record for that answer).
-func applyRunRecord(cmd *cobra.Command, r *initRun, lc *localcfg.Config, path string, pending *apply.Pending, recorded bool, names []string, o applyOptions) error {
+// the record for that answer). run is the reporter the caller opened for it,
+// under its own door's name, and the caller is the one that closes it: the
+// name a log is filed under is a literal at that door's call site and never a
+// string this runner builds (report_exempt.go's census reads it there).
+func applyRunRecord(cmd *cobra.Command, r *initRun, run *stepRun, lc *localcfg.Config, path string, pending *apply.Pending, recorded bool, names []string, o applyOptions) error {
 	io := r.o
-	// The run's account is the reporter's, filed under this command's name
-	// (D1351, D1354): the steps it runs are the loop's, and a command that ran
-	// a converge without a reporter of its own would print a second account of
-	// the same run beside the one the census expects.
-	run := stepRunFor(cmd, r.o.door, cmd.ErrOrStderr())
-	defer run.close()
 	// The reporter is this command's: the steps print one line each through it,
 	// and the closing line is printed where this command's own run ends
 	// (ReportBorrowed below). A converge invoked here with a reporter of its
