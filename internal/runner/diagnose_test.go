@@ -312,9 +312,15 @@ func readRunObject(t *testing.T, h *harness, key string) []byte {
 // model call, so a bundle that changed in the bucket between the launch and the
 // run is never diagnosed.
 //
-// Mutation (drop the expected hash from the download, or accept a part the
-// manifest does not account for): the model is called with the swapped bytes
-// and the call count is non-zero.
+// The table covers both halves of the check, because each is the only thing
+// that catches its own case: three bodies of a length other than the manifest's
+// are caught by the size beside the hash, and the last case — the same body
+// length, different bytes — is caught by the hash alone.
+//
+// Mutation (drop the expected hash from the download): the last case is called
+// with the swapped bytes and its call count is non-zero. Mutation (drop the
+// expected size): the three different-length cases pass the download and reach
+// the model.
 func TestDiagnoseStageRefusesAMismatchedPart(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -324,6 +330,7 @@ func TestDiagnoseStageRefusesAMismatchedPart(t *testing.T) {
 		{"another body", "evidence/log.txt", []byte("fugaro update failed: something else entirely\n")},
 		{"a truncated body", "evidence/log.txt", []byte("fugaro update")},
 		{"a body one byte longer", "evidence/log.txt", []byte("fugaro update failed: no such file\n\n")},
+		{"another body of the same length", "evidence/log.txt", []byte("fugaro update failed: no such FILE\n")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newHarnessFiles(t, renderCfg(t, "", ""), diagnoseSpec(t), nil)
