@@ -134,7 +134,7 @@ fugaro secrets set claude-oauth-token
 
 **Named Claude accounts (optional).** The operator may hold more than one Claude account in their local config (`claude_accounts`; never in `fugaro.yaml`) — `fugaro secrets ls --repo --json` then lists more than one name starting `claude-oauth-token-`. Ask which this repository's `agent.auth: oauth` workflow should use, and write `agent.oauth_token: <name>` under `agent`, the part after `claude-oauth-token-`; never guess one, which `fugaro run` refuses when the config does not list this repository under it.
 
-An account with no stored token is not usable: the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent, which declares it, stores the token under `claude-oauth-token-<name>` and converges this repository's job set. With `--type claude-oauth` the name is also a **credential** a pool may list; the credentials, the pools, the **aliases** (`fugaro accounts alias set`), the **switch** (`fugaro accounts switch`) and the crafts are the operator's own writes, refused to a session. Minting a *second* account's token is not yet verified.
+An account with no stored token is not usable: the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent, which declares it, stores the token under `claude-oauth-token-<name>` and converges this repository's job set. `--type claude-oauth|anthropic|openrouter` makes the name a **credential** a pool may list; the credentials, the pools, the **aliases** (`fugaro accounts alias set`), the **switch** (`fugaro accounts switch`) and the crafts are the operator's own writes, refused to a session. Minting a *second* account's token is not yet verified.
 
 ## 9. Hand off
 
