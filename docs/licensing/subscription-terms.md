@@ -819,8 +819,8 @@ Quebec language clause, the late-payment rate, resellers and the merchant of rec
    definition is gone, and the Subscription is not described in the licence's words); whether the
    licence files need a matching revision is counsel's.
 9. **The revision of 2026-11-17** (subscriptions plan task S0.4, after the owner recorded that
-   counsel closed its review round): applied to sections 1.3, 6.3, 6.4 and 10.2 on rulings T15,
-   T13, T26 and T25, as the note above the agreement states. Items of that task's list that no
+   counsel closed its review round): applied to sections 1.3, 6.3 and 10.2 on rulings T15, T13 and
+   T26, as the note above the agreement states. Items of that task's list that no
    answer on file states, and which are therefore **not applied**: whether section 6.1 puts the key
    requirement as the Software's behaviour or as the Customer's obligation; whether the
    mixed-licence binary needs a note, and whether a command that initiates no Job needs a seat in
