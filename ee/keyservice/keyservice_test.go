@@ -59,17 +59,13 @@ const (
 	openSourceOrg    = "code.example/acme/widget"
 	applicantAddress = "dev@acme.example"
 
-	// The admin page's own fixtures (S3.4): the account the project's sign-in
-	// answers as the owner's, the plan an Order Form mints under, and the page's
-	// own secret, which is obviously not a real one — the deploy holds the
-	// secret and the account, and a test names its own of both.
+	// The deployment's own fixtures: the account the project's sign-in answers as
+	// the owner's, the plan an Order Form mints under, and the secret a forgery is
+	// signed with — another deployment's, of the same shape, so an event carrying
+	// it is refused by the signature alone.
 	ownerAccount       = "owner@fugaro.example"
 	enterprisePlanName = "enterprise"
-	adminSecret        = "fake-admin-secret-0123456789"
-	// otherAdminSecret is what a forgery is signed with: another secret of the
-	// same shape, so a token carrying it is refused by the signature alone.
-	otherAdminSecret = "not-this-deploys-secret-0123456789"
-	stepUpCode       = "step-up-code"
+	otherDeploySecret  = "not-this-deploys-secret-0123456789"
 
 	// The portal's own deploy values (plan P1.0). None of them is a real one,
 	// and the three that are secret-shaped are the fixture's own strings rather

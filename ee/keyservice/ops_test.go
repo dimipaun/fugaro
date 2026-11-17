@@ -469,8 +469,8 @@ func TestMintNeedsAFreshSignIn(t *testing.T) {
 
 // TestOperationsMintsQueueOverTheRate: D454's cap is per tier and per window,
 // and a request over it is **queued rather than lost** — P5.1 carries the rule
-// from `admin.go`'s page, and the queue is this API's own because a mint at this
-// door has no application behind it to wait in. The term is served from the
+// from the retired admin page, and the queue is this API's own because a mint at
+// this door has no application behind it to wait in. The term is served from the
 // instant it is served and never from the instant it was asked for, so the queue
 // holds the request and not a licence.
 func TestOperationsMintsQueueOverTheRate(t *testing.T) {
