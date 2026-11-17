@@ -76,9 +76,11 @@
  * page was built and held out of the deploy (`firebase.json`'s `ignore`, and the exemption
  * `website/test/consent.mjs` kept). The card below closes that: what the three forms take, that
  * they post to the licence service rather than to this host, how long the service keeps what it
- * takes, and the merchant of record as a recipient of a buyer's data. None of it is written here
- * for the first time — counsel's Subscription Terms §7.5(b) states what the Key Service collects,
- * the design's §7.3 (`docs/design/key-signing-service.md`) states the retention rule and obliges
+ * takes — the drop of a link's dead application, and the request a person decides on, which the
+ * queue keeps whole and mails the owner — and the merchant of record as a recipient of a buyer's
+ * data. None of it is written here for the first time — counsel's Subscription Terms §7.5(b)
+ * states what the Key Service collects, the design's §7.3
+ * (`docs/design/key-signing-service.md`) states the retention rule and obliges
  * the notice to name the recipient, and the service's own code drops a dead application's
  * personal data — and `website/test/privacy.mjs` rule 9 holds each sentence to the source that
  * makes it true, the forms' own fields included. The owner approved the whole of it with the
@@ -321,9 +323,19 @@ const repo = site.facts.repository
           when it is followed. It drops the address, the domain and the repository URLs once the
           link can no longer be followed — it has been used, the application was refused, or its
           window closed — and what is left of the application is the link's digest, the plan and
-          the instant. The record of a key it issued keeps the key's own facts and the address the
-          key was mailed to, because a renewal, a seat change or a question about the key is
-          answered from it.
+          the instant.
+        </p>
+        <p>
+          Not every request is one a link answers. The manual form, and the free-seat and
+          open-source requests the checks send to a person, are kept with what they carried: the
+          address, the domain, the text you wrote and the repository URLs stay beside the decision
+          made on them. The owner is mailed a notification carrying them when one arrives, so the
+          request is read. This notice states no period for a request a person decided on.
+        </p>
+        <p>
+          The record of a key it issued keeps the key's own facts and the address the key was
+          mailed to, because a renewal, a seat change or a question about the key is answered from
+          it.
         </p>
         <p>
           A <strong>Team</strong> subscription is bought online from <strong>Paddle</strong>, the
@@ -412,10 +424,11 @@ const repo = site.facts.repository
           rather than yours. The crash reports and anonymous usage above: deleting the app does not
           remove them, and Google holds them for the Fugaro project, under the policy linked above.
           Uninstalling the app stops the sending. It does not take a report already sent out of
-          Google's hands. And what you send when you ask for a key, which the licence service drops
-          once the link can no longer be followed, as the key sign-up card above says. The issue
-          tracker is where to ask about a report already sent, or about what the licence service
-          still holds of yours.
+          Google's hands. And what you send when you ask for a key: the licence service drops a
+          request once the link can no longer be followed, as the key sign-up card above says, and
+          keeps the request a person decided on with the address, the text and the repository URLs
+          it carried. The issue tracker is where to ask about a report already sent, or about what
+          the licence service still holds of yours.
         </p>
       </div>
 

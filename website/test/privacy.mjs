@@ -106,8 +106,10 @@
 //      collects (the Subscription Terms, section 7.5(b)), the merchant of record as a recipient
 //      of a buyer's data (the design's section 7.3), and "for how long", which is the service's
 //      own code — the address, the domain and the repository URLs are dropped once the link can
-//      no longer be followed (`keySignupFailures`). A field the forms grow and the statement
-//      does not state is refused, and so is a sentence about a field they have dropped.
+//      no longer be followed, and a request a person decides on is kept whole and mailed to the
+//      owner (`keySignupFailures`, which reads the Application record and the queue's own
+//      notification for the second half). A field the forms grow and the statement does not state
+//      is refused, and so is a sentence about a field they have dropped.
 //
 // It reads the built artifact and the repository's sources, standard library only, no network
 // (Global Constraint 4). The built half comes from `dist/`; `FUGARO_GATES_DIST` points it
@@ -1139,7 +1141,10 @@ export function shapeFailures(html, shared, own = '') {
 // now accounts for the page, and this rule is what holds the statement's words to the things that
 // make them true: the forms' own fields, counsel's list in the Subscription Terms, the design's
 // sentence about the merchant of record, and the service's own code — which is the only place
-// "and for how long" is a fact rather than a promise.
+// "and for how long" is a fact rather than a promise. That last half is two rules and not one: a
+// verification's personal data is dropped (`dropPersonal`), and a request a person decides on is
+// NOT — the queue keeps the whole Application and mails its facts to the owner, which is the
+// record and the call the card's own two sentences about it are held to.
 
 /** The page the three forms are on, as the statement links it and the build serves it. */
 export const KEYS_PAGE_URL = '/keys/'
@@ -1176,11 +1181,27 @@ export const SIGNUP_SERVICE = 'ee/keyservice/service.go'
 export const SIGNUP_DROP_COMMENT = 'Email, Domain, Organisation and Repositories are **personal data and they go**'
 export const SIGNUP_DROP_FUNCTION = 'func (s *Service) dropPersonal(ctx context.Context, v Verification) {'
 
+/** The other half of the retention, and the half the drop above does NOT reach: a request a person
+ * decides on (§4.5's queue) is a different record from the verification a link is about, and
+ * nothing clears it — `decide` writes the answer and keeps the request whole, and `enqueue` mails
+ * the owner the applicant's own facts so the request is read at all. `SIGNUP_APPLICATION` is that
+ * record, `SIGNUP_QUEUE_ALERT` the mail it is announced by and `SIGNUP_QUEUE_NOTIFY` the call that
+ * sends it, so the card's two sentences about the queue are held to the three of them. */
+export const SIGNUP_QUEUE = 'ee/keyservice/queue.go'
+export const SIGNUP_APPLICATION = 'type Application struct {'
+export const SIGNUP_APPLICATION_FIELDS = Object.freeze(['Email', 'Detail', 'Repositories'])
+export const SIGNUP_QUEUE_ALERT = 'func queueAlert(intakeURL string, a Application) Alert {'
+export const SIGNUP_QUEUE_NOTIFY = 'return s.alerts.Notify(ctx, queueAlert(s.cfg.URL, a))'
+/** The card's own words for it, each held in both directions: the page may say a decided request
+ * is kept while the store holds one, and may say the owner is mailed it while the queue sends it. */
+export const SIGNUP_KEPT_PHRASE = 'kept with what they carried'
+export const SIGNUP_ALERT_PHRASE = 'mailed a notification carrying them'
+
 /** Every way the statement and the key sign-up disagree, or []. `page` is the built privacy
  * page's markup and the rest are the repository's own files, each as text. The fields are read
  * off the built keys page rather than typed here twice, because the form is the artifact a reader
  * fills in and the statement is a claim about it. */
-export function keySignupFailures({ page, keysPage, terms, design, store, service }) {
+export function keySignupFailures({ page, keysPage, terms, design, store, service, queue }) {
   const out = []
   const text = page.replace(/\s+/g, ' ')
   const fields = new Set(
@@ -1253,6 +1274,39 @@ export function keySignupFailures({ page, keysPage, terms, design, store, servic
   if (!saysDrop) {
     out.push(
       `the privacy page's key sign-up card does not say what happens to an application's own data "once the link can no longer be followed": ${SIGNUP_STORE} says the address, the domain and the repository URLs go then, and a page that stated what the forms collect and never what becomes of it is the half of the notice a reader asks for second`,
+    )
+  }
+  // The queue's half, which the drop above does not reach: a request a person decides on is kept
+  // with what it carried, and the owner is mailed it. The page may say either only while the
+  // record and the mail are the tree's, and the tree may hold them only while the page says so.
+  const at = store.indexOf(SIGNUP_APPLICATION)
+  if (at < 0) {
+    out.push(
+      `${SIGNUP_STORE} no longer declares an Application: the card says a request a person decides on is kept with the address, the text and the repository URLs it carried, and this record is what keeps it — a store that stopped holding one leaves the sentence describing a request nothing has`,
+    )
+  } else {
+    const declared = store.slice(at).split('\n}')[0]
+    for (const field of SIGNUP_APPLICATION_FIELDS) {
+      if (!declared.includes(field)) {
+        out.push(
+          `${SIGNUP_STORE}'s Application no longer holds ${JSON.stringify(field)}: the card says a request a person decides on is kept with the address, the text and the repository URLs it carried, and each of the three is a field of this record`,
+        )
+      }
+    }
+  }
+  if (!queue.includes(SIGNUP_QUEUE_ALERT) || !queue.includes(SIGNUP_QUEUE_NOTIFY)) {
+    out.push(
+      `${SIGNUP_QUEUE} no longer builds and sends the owner's notification for a queued request: the card says the owner is mailed a notification carrying the request's own facts, and a queue that stopped mailing one leaves that sentence standing on nothing — an unannounced request is one nobody reads`,
+    )
+  }
+  if (!text.includes(SIGNUP_KEPT_PHRASE)) {
+    out.push(
+      `the privacy page's key sign-up card does not say a request a person decides on is ${JSON.stringify(SIGNUP_KEPT_PHRASE)}: ${SIGNUP_STORE}'s Application holds the address, the text and the repository URLs after the decision, and a card that stated only the drop would tell a reader that everything a form takes goes`,
+    )
+  }
+  if (!text.includes(SIGNUP_ALERT_PHRASE)) {
+    out.push(
+      `the privacy page's key sign-up card does not say the owner is ${JSON.stringify(SIGNUP_ALERT_PHRASE)} when a request reaches the queue: ${SIGNUP_QUEUE}'s queueAlert mails the applicant's own facts to the owner, who is a recipient of them — and a request the Terms promise will be looked at is one a reader is owed the route of`,
     )
   }
   return out
@@ -1397,6 +1451,7 @@ test('the statement accounts for the key sign-up, and the sign-up is the one the
     design: repoFile(SIGNUP_DESIGN),
     store: repoFile(SIGNUP_STORE),
     service: repoFile(SIGNUP_SERVICE),
+    queue: repoFile(SIGNUP_QUEUE),
   })
   assert.deepEqual(failures, [], `the key sign-up and the statement disagree:\n  ${failures.join('\n  ')}`)
 })
@@ -2057,6 +2112,7 @@ test('a statement without the key sign-up card, or one of its facts, is refused,
     design: repoFile(SIGNUP_DESIGN),
     store: repoFile(SIGNUP_STORE),
     service: repoFile(SIGNUP_SERVICE),
+    queue: repoFile(SIGNUP_QUEUE),
   }
   const page = privacyPage().html
   assert.deepEqual(keySignupFailures({ page, ...sources }), [], 'the real page and the real sources disagree before any defect is planted')
@@ -2076,26 +2132,57 @@ test('a statement without the key sign-up card, or one of its facts, is refused,
     'a statement that never says what happens to an application\'s data was not refused',
   )
   assert.ok(bare.some((line) => line.includes(`no link to ${KEYS_PAGE_URL}`)), 'a statement with no route to the page the forms are on was not refused')
+  assert.ok(
+    bare.some((line) => line.includes(JSON.stringify(SIGNUP_KEPT_PHRASE))) && bare.some((line) => line.includes(JSON.stringify(SIGNUP_ALERT_PHRASE))),
+    'a statement with no key sign-up card was not refused for the queue: a request a person decides on is kept whole, and a card that stated only the drop tells a reader that everything a form takes goes',
+  )
 
   // Each fact alone, in the direction the page owns: dropping one sentence of the card is the
   // refusal that sentence's rule names.
-  for (const gone of [MERCHANT_OF_RECORD, ...Object.values(KEY_SIGNUP_FIELDS), 'once the link can no longer be followed']) {
+  for (const gone of [
+    MERCHANT_OF_RECORD,
+    ...Object.values(KEY_SIGNUP_FIELDS),
+    'once the link can no longer be followed',
+    SIGNUP_KEPT_PHRASE,
+    SIGNUP_ALERT_PHRASE,
+  ]) {
     const without = keySignupFailures({ page: page.split(gone).join(''), ...sources })
     assert.ok(without.length > 0, `a statement that dropped ${JSON.stringify(gone)} was not refused`)
   }
 
   // And the other direction, on the sources the card is written from: a design that stopped
-  // obliging the notice to name the recipient, a Terms that stopped listing the sign-up data, and
-  // a service that stopped dropping a dead application's personal data each leave a sentence of
-  // the page standing on nothing.
+  // obliging the notice to name the recipient, a Terms that stopped listing the sign-up data, a
+  // service that stopped dropping a dead application's personal data, and a store or a queue that
+  // stopped keeping and announcing the request a person decides on each leave a sentence of the
+  // page standing on nothing.
   for (const [field, phrase, why] of [
     ['design', MERCHANT_RECIPIENT_SENTENCE, 'the design no longer obliges the notice to name a recipient'],
     ['terms', SIGNUP_TERMS_CLAUSE, 'the Terms no longer list what the Key Service collects'],
     ['store', SIGNUP_DROP_COMMENT, 'the store no longer states the drop'],
     ['service', SIGNUP_DROP_FUNCTION, 'the service no longer applies the drop'],
+    ['store', SIGNUP_APPLICATION, 'the store no longer declares the request the queue keeps'],
+    ['queue', SIGNUP_QUEUE_ALERT, 'the queue no longer builds the owner\'s notification'],
+    ['queue', SIGNUP_QUEUE_NOTIFY, 'the queue no longer sends the owner\'s notification'],
   ]) {
     const without = keySignupFailures({ page, ...sources, [field]: sources[field].replace(phrase, '') })
     assert.ok(without.length > 0, `a ${field} that dropped ${JSON.stringify(phrase)} (${why}) was not refused`)
+  }
+
+  // A field of the kept request gone: the record is what the card's sentence about it is, so a
+  // record that stopped holding the address, the text or the repositories is the sentence's own
+  // half missing rather than a page that overstates. The edit is made inside the Application
+  // declaration, because three other records of this store carry a field of the same name.
+  const withoutApplicationField = (text, field) => {
+    const at = text.indexOf(SIGNUP_APPLICATION)
+    const end = text.indexOf('\n}', at)
+    return text.slice(0, at) + text.slice(at, end).replace(`\t${field}`, '\tGone') + text.slice(end)
+  }
+  for (const field of SIGNUP_APPLICATION_FIELDS) {
+    const without = keySignupFailures({ page, ...sources, store: withoutApplicationField(sources.store, field) })
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(field))),
+      `an Application that dropped its ${field} field was not refused: the card says a decided request is kept with the address, the text and the repository URLs it carried`,
+    )
   }
 
   // The forms themselves: a field the page gained and the statement does not state, and a field
