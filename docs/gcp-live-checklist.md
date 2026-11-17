@@ -1119,6 +1119,8 @@ probe account carries predefined grants only).
 | 662 | `pair revoke` deletes the pairing key's cloud copy, and the pairing's messages **stop verifying in the cloud** ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.7, its step **2b**; task **P5.1e** is the copy and the deletion, and **D111** and **Global Constraint 4** are the custody the copy widens): with the copy in place the pass acts on a message from the phone **once** — the positive half, without which "messages stop verifying" measures nothing — and after `fugaro pair revoke --uid <uid>` the Secret Manager version the service reads is **destroyed** (not merely disabled, and not merely rotated: a disabled version is still readable by a principal granted `versions.access` on the parent, which is the design's own sentence) and the phone's next message is **refused in the cloud, with no action taken and no execution started**. What it does not settle is said in its own section: deleting the copy un-reads nothing, so what it ends is the **service's** ability to verify and to forge, not a reader's | See "Check 662" below; **you** run it, with a **real phone** on a **sandbox installation** whose module is applied, **never `belong`**, and **no agent runs any step of it** | The positive half is **one message the pass acts on** — the launch Check 661 runs is the cheapest, and this check may be run directly after it — so at most **one run is billable**; every other step is a read or the revoke itself, and **no value is read on any path and no line of the check prints one**. The revoke is steps 1, 2, 2b and 3: the device node, the Auth user, **the Secret Manager version** and the laptop's keychain item. Restore is **re-pairing**: `fugaro pair` issues a new device uid and a new key, and the old pairing stays revoked. A launch already claimed continues — the caps, not the revocation, bound it. **OWNER-RUN, NOT RUN.** |
 | 663 | The `orch` account is refused the grants §4.3 does not list ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.3, §4.5's E4 and §6's never-list; task **P5.1b** writes the account and its **piecemeal** bindings): read from the project's actual IAM and then probed with a token **for that account** — the account is **not in `var.launchers`** (no `roles/firebasedatabase.viewer`, `roles/datastore.viewer` or `roles/serviceusage.serviceUsageConsumer`, and a read of another mailbox or of `config/admin/devices/**` over the RTDB API is **denied by the rules** rather than answered with a `null`, which is what that viewer role — an IAM read that bypasses the rules — would give it); `setIamPolicy` and `iam.roles.*` are refused and the deployer is **not impersonable**; a write at the **runs-bucket root** is refused (the launcher's condition is `runs/`, `tokens/` and `issues/` only, so the marker that permits a managed apply is unwritable) **while the read of it is not**, which the design says in its own words; `secretmanager.secrets.list` and `versions.list` succeed and `versions access` on a model, git or App secret is refused; and the same token **does** list the installation's jobs, which is the positive control a check of nothing but refusals would not have | See "Check 663" below; **you** run it, on a **sandbox installation** with the module applied and your own credential, **never `belong`**, and **no agent runs any step of it** | Reads and probes: **no model call, no run and nothing billable** — two IAM policy reads, one bucket listing, one RTDB `GET` and the refusals. The one write attempted at the bucket root is a **throwaway object of your own, never the marker itself**, because a probe that succeeds must not leave a marker behind. The probes run with a token minted for the account, which needs you to hold `roles/iam.serviceAccountTokenCreator` on it: that grant is **added by hand for the check and removed afterwards**, and deleting the throwaway object is the other half of the restore. **OWNER-RUN, NOT RUN.** |
 | 581 | A multi-repository catalog build and the leak scan ([`docs/shared-jobs-default/`](shared-jobs-default/implementation-plan.md), its **Check 581** and task **B4**; **D2301** for a build baking every repository the project's map puts on the entry, and **B3**/**R2** for the scan that stands before the promote): one catalog entry the project's image map puts two repositories on is built through Cloud Build, from the checkout its Dockerfile belongs to — the CLI refuses a build from any other repository by name — and the build's own record is read back: its note names every repository the map puts on the entry, its steps carry `catalog-scan` with SUCCESS before `promote`, the build itself ends SUCCESS, and the entry records the digest that build reported it made | See "Check 581" below; `bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-581_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call) | **One billable Cloud Build**, of an entry the catalog already lists, which promotes that entry's image; the check writes no entry, no mapping and no switch, launches no run and opens no pull request. **OWNER-RUN, NOT RUN.** |
+| 590 | The three Bitbucket token types, and what the verifier says for each ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; **U1**, **U2** and **U5** are the open questions it answers, and **R14** with **O7** — the repository token's 403 at `/user`, confirmed 2026-11-13 — is the row the other two are read against): a **repository**, a **project** and a **workspace** access token are each added to the sandbox installation through the release's own add path (`fugaro creds set bitbucket-token--<name> --type … --coverage …`, whose check runs **before** anything is written, **D2352**) — and each one is then asked Bitbucket itself: what `GET /2.0/user` answers and what its `kind` says there (**U1**), which scopes Bitbucket reports for it (**U2**), and whether a project token is accepted as `x-token-auth` for git over HTTPS and as `Bearer` for REST (**U5**). **U6** — whether a project token covers a repository moved into its project later — is **not** this check's: it is Check 180's, which moves the repository, and this check records no row for it | See "Check 590" below; `bash scripts/live-checks/check590.sh --repo <workspace>/<sandbox repo> --token-file <path> --project-token-file <path> --workspace-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check590_test.sh` drives it against fake `fugaro` and `git` beside a fake Bitbucket Cloud on a loopback port (the `curl` is the real one, and it has nowhere else to go) only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev` and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as the repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | Three `creds set` writes into the sandbox installation (three bundle keys and three records), a handful of Bitbucket API calls and three git reads: **no run is launched, no model call is made and nothing is built**. The published policy node is untouched, so nothing this check writes is visible to a run until you republish (`fugaro update --repo`) — which the check deliberately does not do. Each token file is read once, at mode 0600, and no value is printed or put on a command line; the Restore removes the scratch directory and every file a value was written into, and what stays is the three bundle keys and the three records the `verifier-*` rows name (`fugaro creds rm bitbucket-token--<name>`). **USER-RUN, NOT RUN.** |
+| 591 | Which of the installation's Bitbucket tokens serves **which** repository, and the one 403 a caller at your terminal can force ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; the selection rules **R2**, **R9**, **R12** and **C1.13**, the plan's **D2355**, and the service's own refusal **`unverified_run_identity`** for a caller that is not a run): with a **repository** token recorded for one sandbox repository and a **project** token recorded for the other — two repositories of **one** Bitbucket project, so two repositories, two tokens and one installation make the choice a real one — two runs (one per repository, because the released CLI has **no change-set launch**: `fugaro run --change-set` is Subscription Edition and not available in any build) are launched, waited for and read: the credentials service's **own audit lines** name the credential that served each run's git and Bitbucket-API calls, and the two must be **different** tokens. One call of the check's own, made on the route a run's git traffic takes with an identity token and **no** run identity, must be answered **403 `unverified_run_identity`** — the service refuses a caller that is not a run of the installation before any route and therefore before any token is chosen, which is the only 403 a check at your terminal can force (a coverage refusal is HTTP 400 with its class on the audit line) | See "Check 591" below; `bash scripts/live-checks/check591.sh --repo <workspace>/<first repo> --other-repo <workspace>/<second repo> --token-file <path> --project-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check591_test.sh` drives it against fake `gcloud`, `fugaro`, `git` and one loopback server answering both faces of the service only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev`, region `us-east5`, and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as either repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | **TWO full runs**: each clones, implements, reviews and opens a pull request, so two runs' worth of model spend, two branches and two pull requests on the two sandbox repositories — the block names each one and the Restore is to decline them. Both repositories must be **on the credentials-service switch** (`agent.auth: cascade`), which the audit rows are where you read. Beyond the runs: a handful of read-only Bitbucket API calls, two `fugaro creds ls` reads, one `gcloud logging read` per run (retried while Cloud Logging catches up, which lags the request by seconds), and ONE request that is refused. **No write to the installation**: no `creds set`, no policy publish and no `fugaro update` — every call of the check's own is a read, plus the one that is refused. Each token file is read once, at mode 0600, and no value is printed or put on a command line — the identity token it mints is written into a 0600 file and from there into a 0600 curl config. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -20592,3 +20594,234 @@ project's own, as `fugaro doctor` reports it, or the one an installation whose `
 scan, and the one to take again whenever the bake plan, the catalog build's steps or `images/scan.sh`
 change — the same reading **I2**'s hermetic test takes with a credential service in place of the cloud. Its
 own test is the offline half (`bash scripts/live-checks/check-581_test.sh`), and it is what CI runs.
+
+## Check 590: the three Bitbucket token types, and what the verifier says for each (installation `fugaro` only, the sandbox workspace `dimi_bmb`, sandbox repositories only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CK** of the Bitbucket token-types plan
+([bitbucket-token-types/implementation-plan.md](bitbucket-token-types/implementation-plan.md), its
+"Checks 590 and 591"), and **run by the owner** at their own terminal. The script is
+`scripts/live-checks/check590.sh`, with the test that drives it against fakes
+(`scripts/live-checks/check590_test.sh`, run by `go test ./scripts`). **No agent runs any step of it**, and
+none has: every row it reads is a live Bitbucket answer, a real record in the sandbox installation's bundle,
+and what the release's own add path wrote.
+
+**What the check settles.** A repository access token, a project access token and a workspace access token
+are three credentials a run may be served by, and the release admits all three (`internal/config`'s
+`BitbucketTokenTypes`). What only live tokens settle is what each one **answers**, and the release's own
+**add path** is run three times beside those answers:
+
+- **U1 — whether the type has an identity at `GET /2.0/user`.** One row per type
+  (`U1-repository`, `U1-project`, `U1-workspace`): the status, and the `kind` Bitbucket names in the body
+  when it is one of the four access-token documents. A **403** is the design's own answer for a repository
+  token — "This API is not accessible by this authentication mechanism", accepted as an access token with no
+  identity there (**R14**, **O7**, confirmed 2026-11-13) — and is recorded as the fact for the other two
+  types as well rather than as a failure; a 200 with a kind and no readable name is a FAIL, because an
+  identity the add-time check would record as none while Bitbucket returns one is a record this check cannot
+  vouch for; a 401 or a 404 is a FAIL (the token itself is not accepted); anything else is UNVERIFIED.
+- **U2 — which scopes Bitbucket reports.** One row per type, read from the response's scope header: the
+  header names both write scopes (`repository:write` and `pullrequest:write`) beside a read scope (PASS), or
+  it names fewer (FAIL — a token that cannot push and open a pull request is not one a run can be served
+  by), or the answer carries no header at all (UNVERIFIED). A repository token's `/user` answer is a
+  refusal, so when that answer carries no header the scopes are read off the same token's read of the
+  sandbox repository instead, and the row says so. Only scope **names** out of this check's own set are
+  printed, never the header's value.
+- **U5 — a project token as `x-token-auth` for git over HTTPS and as `Bearer` for REST.** One row, from two
+  reads made with the **same** token: `git ls-remote --heads` against the sandbox repository with the token
+  in a 0600 git config's `http.extraHeader`, and one REST read of the same repository. Both holding is what
+  settles it: one credential for both halves of a run's traffic.
+- **The release's own add path, once per type** (`verifier-repo`, `verifier-project`, `verifier-workspace`):
+  `fugaro creds set bitbucket-token--<name> --type … --coverage …` with the value on **stdin**, whose check
+  runs **before** anything is written (**D2352**) and whose `--json` document is the record that was left —
+  its type, its coverage entries, the identity the check read and whether the write scopes were proven
+  (**D2353**: they are not, and `write_verified=true` is a FAIL whatever else the document says). A refusal
+  from the add path is a reading of the **token**, not of the check: the check stops, and the refusal is
+  what the reconciliation's U rows are read against.
+- **U6 is not this check's.** Whether a project token covers a repository moved into its project **later**
+  is Check 180's, which moves the repository as one of its steps; this check records no row for it and does
+  not claim it.
+
+**Prerequisites.** Installation `fugaro` with GCP project `fugaro-dev` and the Bitbucket sandbox workspace
+`dimi_bmb`, all three hard-coded and overridable by `CHECK590_INSTALLATION`, `CHECK590_GCP_PROJECT` and
+`CHECK590_WORKSPACE`; `belong` is refused by name as the installation, as the workspace and as the
+repository's workspace, and the installation the doctor reports must be the one you named, in the GCP
+project this check hard-codes (it never reads `gcloud config get-value project`). **Three** sandbox tokens of
+that workspace — a repository token whose coverage is one repository, a project token created in that
+repository's Bitbucket project, and a workspace token — each in its own file, **one line and nothing else,
+at mode 0600**. Every one of the three must read the repository you point `--repo` at: that is read first,
+and a token that cannot read it stops the check before any answer about it is taken. A project token's
+record needs the project's **UUID** (braces included) or its **key**, and neither both: the UUID is what
+Bitbucket matches, the key is display. Needs `bash`, `mktemp`, `python3`, `curl`, `git` and `fugaro` on
+PATH — **not** `gcloud`, and **not** a checkout: nothing here launches a run.
+
+**Run Check 590 before Check 591.** Its three writes name the records `bitbucket-token--ck590-repo`,
+`bitbucket-token--ck590-project` and `bitbucket-token--ck590-workspace`, and the first two are exactly what
+Check 591's defaults are, so 591 follows 590 with no record names to pass.
+
+**What you type** (plan first — `--dry-run` prints the plan and touches nothing):
+
+```bash
+bash scripts/live-checks/check590.sh \
+  --repo dimi_bmb/<sandbox repo> \
+  --token-file <the repository token's file> \
+  --project-token-file <the project token's file> \
+  --workspace-token-file <the workspace token's file> \
+  --project-uuid <the project's UUID>
+```
+
+then the same without `--dry-run`, and paste the `CHECK 590 RESULT` block back.
+
+**What the block reads.** `installation` (the doctor's answer, and the sandbox name it must be);
+`inputs` (the three files' modes and sizes, that all three read the repository, and the repository's
+Bitbucket project); `xtrace` (that the shell this ran in was not tracing — `bash -x` prints every command,
+so a traced run is refused rather than read); the six `U1-*` and `U2-*` rows above; `verifier-repo`,
+`verifier-project` and `verifier-workspace` (the add path's own document, per type); `U5-project`; and
+`restore`. **Exit 0** is every criterion measured and holding, **1** is a measured criterion that did not
+hold, **2** is the check stopping before it could measure everything (a missing tool, a file that is not
+0600, a token that does not read the repository, an add path that refused), and **3** is a run that reached
+the end with at least one row reading UNVERIFIED. Only an all-PASS block is a PASS.
+
+**What it costs, and what it leaves.** Three `creds set` writes into the sandbox installation — three bundle
+keys, three local records and three identities in the credential state — a handful of read-only Bitbucket
+API calls and three git reads: **no run is launched, no model call is made and nothing is built**. The
+published policy node is **not** touched, so none of it is visible to a run until you republish
+(`fugaro update --repo` for the repository, which this check deliberately does not run for you). The token
+files are the one place the values live: they are read once, and no value is printed, put on a command line
+or written anywhere but the 0600 configs inside the scratch directory.
+
+**Restore.** The scratch directory and every file a value was written into — removed on the way out,
+including from the exit trap on a Ctrl-C, and the `restore` row is that reading (a FAILed row names what to
+remove by hand). What stays is what the check exists to leave: the three bundle keys and the three records,
+which are Check 591's premise. Remove them with `fugaro creds rm bitbucket-token--<name>` when you are done
+with Check 591. **USER-RUN, NOT RUN: no agent runs any step of it.**
+
+## Check 591: which of the installation's Bitbucket tokens serves which repository, and the one 403 a caller at your terminal can force (installation `fugaro` only, region `us-east5`, the sandbox workspace `dimi_bmb`, sandbox repositories only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **CK** of the Bitbucket token-types plan
+([bitbucket-token-types/implementation-plan.md](bitbucket-token-types/implementation-plan.md), its
+"Checks 590 and 591"), and **run by the owner** at their own terminal, **after Check 590** — its defaults
+name Check 590's own records. The script is `scripts/live-checks/check591.sh`, with the test that drives it
+against fakes (`scripts/live-checks/check591_test.sh`, run by `go test ./scripts`). **No agent runs any step
+of it**, and none has: both rows it exists for are the credentials service's own audit lines and its own
+refusal.
+
+**What the check settles.** The release serves each proxied request with the **narrowest** token whose
+recorded coverage admits the repository (**R2**, **D2355**): a repository token before a project token, and
+a project token only for the repositories its own project lookup confirms. What only live tokens settle is
+that the choice really happens **per request and per repository** — and the credentials service's own
+**audit line** is the only place the name of the token that served a request is written down (**R9**,
+**C1.13**). Two rows carry it:
+
+- **`swap`** — two runs of one installation, on two repositories of **one** Bitbucket project, served by
+  **two different tokens**: the run on the first repository by the repository token recorded for it, the run
+  on the second by the project token. Both runs are launched with `fugaro run`, waited for with
+  `fugaro runs ls` until each row is terminal, and required to have **pushed** and opened a pull request —
+  a run that never reached the proxy settles nothing. **The released CLI has no change-set launch**
+  (`fugaro run --change-set` is Subscription Edition and not available in any build yet), so a
+  "two-repository job" here is **two launches of one task**, one per repository. Which token served each
+  run is read from the **service's own lines** for that run and from nothing the run reported: a run's model
+  calls (`purpose=forward`) are filtered out of the reading, so only the git and Bitbucket-API lines are
+  compared. A set naming **both** tokens for one run is a PASS with its own sentence: a token the store
+  holds is skipped for the next narrowest (**R12**), which is the stated price of the swap and not a
+  failure.
+- **`refusal`** — the ONE 403 a check at your terminal can force from the service. A call on the route a
+  run's git traffic takes (`GET /v1/bitbucket/proxy/<repo>.git/info/refs?service=git-upload-pack`) carrying
+  an **identity token** and **no run identity** must be answered **HTTP 403 `unverified_run_identity`**: the
+  service refuses a caller that is not a run of the installation **before any route** and therefore before
+  any token is chosen, which is the trust boundary that makes "a job never receives a token" true. A run
+  cannot earn that 403 — an identity that is not admitted is refused the same way, and a **coverage**
+  refusal is HTTP 400 with its class on the audit line — which is why this is the one refusal a check can
+  force rather than observe.
+
+**The premises it reads first**, which are what make the swap a real choice rather than a wording of this
+check's: with the two tokens to hand, it asks Bitbucket directly and records that the **repository** token
+reads the first repository and is **refused** (403 or 404) at the second, while the **project** token reads
+**both** — and `fugaro creds ls --json` is read to confirm the two records are the ones these sentences
+assume (each present, of its type, the repository token covering the first repository **alone** and not the
+second, the project token covering both). **The `bundle` row is the one that stops the check before
+anything is launched**: a record that is missing, mistyped, does not admit the repository it is recorded
+for, or — the one this check exists to keep honest — whose coverage **also** admits the second repository
+(the narrowest token would then serve both and the swap would not happen), each of them a FAIL with the two
+`creds set` commands that fix it and the republish that carries a coverage to the node. The Bitbucket reads
+themselves do not stop it: a repository token that reaches **both** repositories is a PASS with its own
+sentence — the strong premise wants a token created for the first repository alone, and the reading is then
+the design's narrowest-first order over the **records** rather than a necessity at Bitbucket — and a project
+token that does not reach the second is a FAIL row that the block carries beside whatever the runs then
+show.
+
+**Prerequisites.** Installation `fugaro` with GCP project `fugaro-dev`, region `us-east5`, and the Bitbucket
+sandbox workspace `dimi_bmb` — hard-coded and overridable by `CHECK591_INSTALLATION`,
+`CHECK591_GCP_PROJECT`, `CHECK591_REGION` and `CHECK591_WORKSPACE`; `belong` is refused by name as the
+installation, as the workspace and as either repository's workspace, and the installation the doctor reports
+must be the one you named in the GCP project this check hard-codes. **Two** sandbox repositories of the
+**same** Bitbucket project, with **Check 590's two records** in the installation
+(`bitbucket-token--ck590-repo` covering the first alone, `bitbucket-token--ck590-project` covering the
+second), each token in its own file, one line at mode 0600. Both repositories must be **on the
+credentials-service switch** (`agent.auth: cascade` for each, with the service deployed and a model
+credential in its bundle) — a repository off the switch holds its own Bitbucket token and writes no audit
+line, so its row reads UNVERIFIED and the block is INCOMPLETE (exit 3) rather than a finding about the
+selection. Needs `bash`, `mktemp`, `python3`, `curl`, `gcloud` and `fugaro` on PATH — **no checkout and no
+`git`**: the runs clone and push in the cloud, and this check runs no git of its own. `gcloud` must be
+authenticated as an account that may read **Cloud Logging** on `fugaro-dev` (`roles/logging.viewer` or a
+role holding `logging.views.access`) and describe the credentials service: a `gcloud logging read` that is
+refused is a row saying gcloud itself did not answer, and the block is INCOMPLETE (exit 3). **Wall clock.**
+The two runs are the cost of this check and they are not instant: each is a full run, so plan the same kind
+of time a run takes anywhere else in this register, and the block's `run-a` and `run-b` rows say when each
+one ended.
+
+**What you type** (plan first — `--dry-run` prints the plan and touches nothing):
+
+```bash
+bash scripts/live-checks/check591.sh \
+  --repo dimi_bmb/<the repository token's sandbox repo> \
+  --other-repo dimi_bmb/<the repository only the project token reaches> \
+  --token-file <the repository token's file> \
+  --project-token-file <the project token's file> \
+  --project-uuid <the project's UUID>
+```
+
+then the same without `--dry-run`, and paste the `CHECK 591 RESULT` block back. `--repo-token-name` and
+`--project-token-name` name the two records if they are not Check 590's own names.
+
+**What the block reads.** `installation` (the doctor's answer, and the sandbox name it must be); `inputs`
+(the two files' modes and sizes, read into two 0600 curl configs); `bundle` (the two records as
+`fugaro creds ls --json` reports them: present, of their type, and the coverage each admits — the repository
+token admitting the first repository and not the second, the project token admitting the second);
+`xtrace` (a traced shell is refused, because `bash -x` prints every command); `premise-repo` and
+`premise-project` (the four direct Bitbucket reads above); `run-a` and `run-b` (each run reached a terminal
+row, pushed its branch and opened a pull request); `audit-a` and `audit-b` (the credential NAMEs on the
+service's git and Bitbucket-API lines for each run, the lines' own repository and purposes, and any refusal
+line with its class — UNVERIFIED when the run's lines carry no git or Bitbucket-API line at all, which is
+what a repository off the switch leaves); `swap` (the two readings are two different tokens); `refusal` (the
+one forced 403, and the wire type it carries); `restore`. **Exit 0** is every criterion measured and
+holding, **1** is a measured criterion that did not hold — the two runs served by one token is the finding
+this check exists for — **2** is the check not being able to measure (a missing tool, a record that is not
+the one the premise needs, a launch or a listing that did not answer), and **3** is a run that reached the
+end with at least one row reading UNVERIFIED. Only an all-PASS block is a PASS.
+
+**The swaps it can read, and what each means.** Both runs served by the **project** token is a FAIL: with a
+usable repository token recorded for the first repository alone, the narrowest-first order makes that token
+the one its traffic gets — read the records' coverage, the node they were published to (`fugaro update`
+publishes a record's coverage, and a record this machine holds alone is invisible to every run) and the
+token's status. Both runs served by the **repository** token is a FAIL too, and the row says which of the
+two readings it is: the premises above read that token as refused at the second repository, so either those
+requests were not served by it or the premise row is the row to read first. Both served by a token neither
+record names is a FAIL with the bundle row beside it. One run served by two tokens (R12's fallback) is a
+PASS.
+
+**What it costs, and what it leaves.** **Two full runs**, each cloning, implementing, reviewing and opening
+a pull request on a sandbox repository — two runs' worth of model spend on the installation's budget, two
+branches and two pull requests — plus a handful of read-only Bitbucket API calls, two `fugaro creds ls`
+reads, one `gcloud logging read` per run (retried while Cloud Logging catches up, since ingestion lags the
+request by seconds) and ONE request that is refused. **No write is made to the installation**: no
+`creds set`, no policy publish and no `fugaro update` — every call of the check's own is a read, plus the
+one that is refused. The token files are the one place the values live: each is read once, into a 0600 curl
+config inside the scratch directory, and the identity token the check mints for its refused call is written
+into a 0600 file and from there into a second 0600 curl config; no value is printed or put on a command
+line.
+
+**Restore.** The scratch directory, the two curl configs and the identity token's own two files — removed
+on the way out, including from the exit trap on a Ctrl-C, and the `restore` row is that reading (a FAILed
+row names what to remove by hand). What is left is what the runs made: **two branches and two pull requests
+on the two sandbox repositories**, which the block names — decline each pull request and delete its branch,
+and the runs' own records stay, which is what `fugaro runs ls` shows. **USER-RUN, NOT RUN: no agent runs
+any step of it.**
