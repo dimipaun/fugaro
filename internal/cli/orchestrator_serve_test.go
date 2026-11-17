@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,35 @@ func TestOrchestratorServeIsHidden(t *testing.T) {
 	}
 	if serve.Flags().HasFlags() {
 		t.Error("orchestrator serve takes a flag: this process's whole configuration is its environment, and a flag would be a second way to start it")
+	}
+}
+
+// TestOrchestratorServiceEnvIsTheDeploymentsOwn holds the two spellings of this
+// service's environment to each other, in both directions: the three names this
+// process reads are the three orchestrator.tf sets on the container, and the
+// module sets nothing beside them. The direction that matters is the module
+// setting a name this command does not read — a fact an operator would believe
+// was in effect — and the other is a name this command reads that nothing sets,
+// which is a service that refuses to start on a deployment that is right.
+//
+// internal/infra/tf's orchestratorServiceEnv is the third side of the triangle,
+// and it is held to the module by that package's own test (the cover's
+// allow-list refuses a container setting a name outside it, which is what makes
+// the module's list a boundary rather than a convention).
+func TestOrchestratorServiceEnvIsTheDeploymentsOwn(t *testing.T) {
+	tf := readRepoFile(t, "deploy/terraform/gcp/modules/installation/orchestrator.tf")
+	inModule := map[string]bool{}
+	for _, m := range regexp.MustCompile(`name\s*=\s*"(FUGARO_[A-Z0-9_]+)"`).FindAllStringSubmatch(tf, -1) {
+		inModule[m[1]] = true
+	}
+	for _, n := range orchestratorServiceEnvNames {
+		if !inModule[n] {
+			t.Errorf("this command reads %s, which orchestrator.tf does not set on the service: the service would refuse to start on a deployment that is right", n)
+		}
+		delete(inModule, n)
+	}
+	for n := range inModule {
+		t.Errorf("orchestrator.tf sets %s, which this command does not read: an operator would believe the fact was in effect and the process would never look at it", n)
 	}
 }
 
