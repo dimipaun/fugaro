@@ -1620,7 +1620,7 @@ for an answer.
   **as they are, table and all** (**D1441**), and a stored report **may name run ids** — the id is
   what makes a flagged row actionable with `fugaro diagnose RUN`, and E1 changed where a report lives
   rather than what it carries (**D1442**). That is why the answer on a **public** designated
-  repository (D2752) needs no redaction step here and why the plan carries none.
+  repository (D2753) needs no redaction step here and why the plan carries none.
 - **Depends on:** R11 (what it stored) and R14 (the designation it reads). **Red step:**
   `TestCommitReportsRecipeIsInTheCatalog` fails while the catalog has no `commit-reports.yaml`, and
   `TestCommitReportsRefusesADesignationOfAnotherRepository` fails against a step that commits
