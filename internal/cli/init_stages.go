@@ -276,6 +276,13 @@ func initStages(e *initEngine) []initflow.Stage {
 	// its own write and leave the upgrade for a second command
 	// (init_rules_stage.go, the owner's rule of 2026-10-30).
 	stages = append(stages, newRulesStage(e))
+	// The owner's own cache-price keys, renamed in place, before the policy
+	// stage as the plan puts it (SA4.2) and before the writes made from this
+	// config later in the run: the rename is applied to the config the run
+	// holds, so the policy node and the run's own write of the file are made
+	// from the renamed copy. The node is the same either way — its prices are
+	// the folded multipliers, not key names (update_model_prices.go).
+	stages = append(stages, newModelPricesStage(e))
 	e.policy = newPolicyMigrateStage(e)
 	// The run's own local-config write drops the read this stage's plan is made
 	// from (initRun.writeConfig), so the stage is reachable from there too.
@@ -322,8 +329,9 @@ func initStages(e *initEngine) []initflow.Stage {
 	stages = append(stages, newCheckoutStage(e))
 	// The login unit that runs the orchestrator daemon: `fugaro setup` writes
 	// the first one (init_orchestrator_stage.go, the owner's Q2 answer of
-	// 2026-11-04) and `fugaro update` re-renders one already installed and
-	// never installs one (update_unit_stage.go, T7's ruling of 2026-11-05).
+	// 2026-11-04) and `fugaro update` installs one where a machine has none
+	// and re-renders one already installed (update_unit_stage.go, T7's ruling
+	// of 2026-11-05 as amended by D2700 of 2026-11-16).
 	// The two are one stage — the loop takes one stage per name, and the
 	// canonical order holds one slot for it — and the door is what decides
 	// which of them this run gets, the way the door decides the project
@@ -422,6 +430,15 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// names its jobs in the credentials service's table (the same run grants
 	// them roles/run.invoker on that service: makeOnboardingRepoEntry).
 	e.makeOnboardingRepoEntry()
+	// The default job profile of every provider this project's repositories
+	// use joins the local config here, before the first stage plans, so that
+	// the installation stage — the one that turns profiles into project jobs —
+	// deploys their jobs in this same update (S5). It is after the onboarding
+	// entry above so that the repository this run onboards is one of the
+	// providers in use, and before the loop for the reason syncAccess is
+	// below it: the config every stage of this run reads is the one this run
+	// writes.
+	e.createDefaultProfiles()
 	// The managed project's read, once for the whole run: it is what the run's
 	// one confirmation and the steps the gate does not judge ask about
 	// (update_managed.go's gateRun), and it is made before the first stage so
@@ -1629,8 +1646,11 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// built before the images stage, and the base image both scheduled
 			// jobs run FROM is one of the things that stage moves — a job this
 			// apply left at the image the run started with would lag an entire
-			// `fugaro update` behind.
-			next, err := installOptions(e.r.o, e.lc)
+			// `fugaro update` behind. installSpec and not installOptions, for
+			// the reason the repository stage reads it that way too: a config
+			// this run cannot compose the default profile's job from must not
+			// stop a stage of a converging update.
+			next, err := installSpec(e.r.o, e.lc, e.r.warn)
 			if err != nil {
 				return err
 			}
@@ -1668,7 +1688,18 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 // tfvars carry no block at all, has nothing to move and answers with the
 // sentence rather than an apply. It asks the same predicate the move does
 // (credentialsImageStale), so the two can never disagree about whether there is
-// anything to do.
+// anything to move.
+//
+// The image is not the only thing this stage settles. The shared project jobs'
+// switch is read from the local config's per-repository records, and two
+// writers move them inside a run that applies the installation root: the
+// upgrade backfill (init.go's install, after that root's first apply) and the
+// repository stage's own record write. A run whose records have moved past the
+// jobs its spec holds has a grant to make that no later apply of this run would
+// otherwise make, and a launcher that reads the records live has already been
+// told to use it (ProjectJobsCredentialsServiceStale) — so that run answers with
+// an apply rather than the sentence, and the root is planned once more with the
+// switch re-derived (installRoot).
 func newCredentialsStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.CredentialsService, isolate: true,
 		skip: func() string {
@@ -1687,10 +1718,22 @@ func newCredentialsStage(e *initEngine) *engineStage {
 				return ""
 			case doc == nil:
 				return "the installation's tfvars carry no credentials service"
-			case !credentialsImageStale(ver, image):
-				return "the recorded image is already this release's"
+			case credentialsImageStale(ver, image):
+				return ""
+			case infra.ProjectJobsCredentialsServiceStale(e.spec.ProjectJobs, e.lc):
+				// The image is this release's and the run still has an apply to
+				// make: the records the shared project jobs' switch is read from
+				// moved after the last apply of this root — the upgrade backfill
+				// writes them at the end of the installation stage, and the
+				// repository stage writes the checkout it converges — so a
+				// profile the launcher now hands the service's address has no
+				// roles/run.invoker grant on it yet, and the run it is handed to
+				// halts at the front door (D143). This stage is the run's only
+				// further apply of the installation root, so the grant lands
+				// here or on a second `fugaro update`.
+				return ""
 			}
-			return ""
+			return "the recorded image is already this release's"
 		},
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {

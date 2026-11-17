@@ -593,6 +593,104 @@ func (r *run) reviewDiffSize(ctx context.Context) DiffSize {
 	return size
 }
 
+// The status letters §4.2's readings need: a path the range adds, one it
+// deletes — which is what a move of a tracked file looks like under
+// --no-renames — and one whose type it changes, which is what a tracked
+// symlink or gitlink replaced by a regular file arrives as.
+const (
+	statusAdded       = 'A'
+	statusDeleted     = 'D'
+	statusTypeChanged = 'T'
+)
+
+// modeGitlink is the mode of a submodule's entry: the tree holds a commit id
+// where a blob would be, so there are no bytes at that path to read — what a
+// `--raw` row or a diff prints for one is a pointer, and no reading of it has a
+// payload to refuse.
+const modeGitlink = "160000"
+
+// rawChange is one path in a range, as `git diff --raw` reports it: how the
+// range changed it, the mode its new side has, and both blob ids the row
+// carries — the old side's, all zeroes for a path the base does not hold, and
+// the new side's, all zeroes for one HEAD does not.
+//
+// The new mode is read because a row's letter alone does not say whether there
+// are bytes at that path to be read at all: a typechange's new side may be a
+// symlink or a gitlink, where a blob id sits in a place whose content is a path
+// name or a commit id (addedBinaries).
+type rawChange struct {
+	path    string
+	status  byte
+	newMode string
+	oldBlob string
+	newBlob string
+}
+
+// rawChanges reads which paths a range changed, how, and both their blob ids:
+// `git diff --raw -z --no-renames --no-abbrev <rng>`.
+//
+// It is a second reading of the range beside diffSize's numstat one, and not a
+// replacement: numstat is what says whether git calls a path binary, and this
+// is what says which paths were *added* and what the blobs were before and
+// after (F14). The two are separate git invocations, so nothing may pair them
+// by position — see addedBinaries, which pairs them by path.
+//
+// `--no-renames` so a move arrives as a delete and an add rather than as a
+// status letter a reader has to know, and `--no-abbrev` so the ids a move is
+// recognised by are whole: the default abbreviation is briefly read, and two
+// different blobs whose prefixes agree would make a move of a tracked file look
+// like an addition of new bytes.
+func rawChanges(ctx context.Context, repo *gitops.Repo, rng string) ([]rawChange, error) {
+	out, err := sessionGit(ctx, repo, "diff", "--raw", "-z", "--no-renames", "--no-abbrev",
+		"--no-ext-diff", "--no-textconv", "--end-of-options", rng)
+	if err != nil {
+		return nil, err
+	}
+	return parseRawDiff(out)
+}
+
+// parseRawDiff reads `git diff --raw -z`'s output: one header and one path per
+// changed path, NUL-separated — "…<status>\0<path>\0" — where the header is
+// ":<old mode> <new mode> <old blob> <new blob> <status>".
+//
+// The header and the path are paired positionally, which is the one pairing git
+// itself is making here (the output has no other shape), and it is not the
+// pairing that matters: what must never be positional is the pairing of this
+// reading with the numstat reading of the same range (addedBinaries).
+func parseRawDiff(out string) ([]rawChange, error) {
+	fields := strings.Split(out, "\x00")
+	changes := make([]rawChange, 0, len(fields)/2)
+	for i := 0; i < len(fields); i++ {
+		meta := fields[i]
+		if meta == "" {
+			// The empty piece a NUL-terminated listing ends with.
+			continue
+		}
+		if i+1 >= len(fields) || fields[i+1] == "" {
+			return nil, fmt.Errorf("reading the changed paths: %q carries no path", meta)
+		}
+		i++
+		c, err := parseRawMeta(meta, fields[i])
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, c)
+	}
+	return changes, nil
+}
+
+// parseRawMeta reads one `--raw` header against the path that follows it. The
+// shape is fixed under --no-renames — four fields and a one-letter status — so
+// a header that is not that shape is a git whose reading this is not, refused
+// rather than read past.
+func parseRawMeta(meta, path string) (rawChange, error) {
+	fields := strings.Fields(meta)
+	if len(fields) != 5 || !strings.HasPrefix(fields[0], ":") || len(fields[4]) != 1 {
+		return rawChange{}, fmt.Errorf("reading the changed paths: %q is not a --raw header", meta)
+	}
+	return rawChange{path: path, status: fields[4][0], newMode: fields[1], oldBlob: fields[2], newBlob: fields[3]}, nil
+}
+
 // parseNumstat reads `git diff --numstat -z`'s output: one record per
 // changed path, "<added>\t<deleted>\t<path>", where a binary file's counts
 // are both "-". It returns the changes in git's own order and the totals

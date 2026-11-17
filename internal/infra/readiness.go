@@ -28,10 +28,12 @@ const (
 	MissingSecret MissingKind = "secret"
 	// MissingImage is the job's image, not built yet.
 	MissingImage MissingKind = "image"
-	// MissingNote is not a gate at all: something the run will need in one
-	// case, reported so it is not a surprise later (the optional Anthropic
-	// key: the job deploys without it, and a call that needs Anthropic is
-	// refused until a key is stored).
+	// MissingNote is not a gate at all: something a person should read about
+	// this deploy, reported so it is not a surprise later — what the run will
+	// need in one case (the optional Anthropic key: the job deploys without it,
+	// and a call that needs Anthropic is refused until a key is stored), or a
+	// name the deploy leaves alone and no step can be printed for (D2313's
+	// ignored repository-level secret).
 	MissingNote MissingKind = "note"
 	// MissingFirebase is a job that does not carry both the RTDB URL and the
 	// Firebase web key — carries neither, or only one of the two — so a run
@@ -113,16 +115,30 @@ func dropMount(ws WorkflowSpec, logical string) {
 	}
 }
 
-// dropModelMounts removes from a job's mounts every variable that carries a
-// model credential (config.IsModelSecretEnv: the Claude OAuth token, the
-// Anthropic key, a provider's key). It is what an installation that has opted
-// in to the credentials service (D146, D147) gets: the service holds those
-// credentials and reads them as its own account, modules/workflow/sa.tf drops
-// the job account's accessor on each, and a job that still MOUNTED one would
-// not deploy at all — Cloud Run checks the mounting account's read access on
-// every secret it is given, so the mount and the grant have to go together
-// (C1.20; the module's local.job_secret_names is the other half of the same
-// rule).
+// dropModelMounts removes from a job's mounts the variables that carry the
+// model credentials the credentials service serves to it — served is
+// ModelSecretsServed's answer for this repository, and it is the same value
+// the tfvars carry (RepoSpec.ModelSecretsServed), so the mount this drops and
+// the accessor modules/workflow/sa.tf takes away are one answer:
+//
+//   - all: every variable config.IsModelSecretEnv names — the Claude OAuth
+//     token, the Anthropic key, each provider key.
+//   - anthropic: the two named model credentials (config.ModelSecretEnvs) and
+//     never a provider key: a provider's key is FORWARDED rather than
+//     attached by the route that spends it, so the service hands back no
+//     provider credential, and a mount taken away for one would leave the
+//     run's own route with nothing to spend (R6, D1634).
+//   - none: nothing, which is also what its one caller's guard answers before
+//     the call (workflow()): the empty case is one this function refuses as
+//     well, because the state it would otherwise produce is a job of the very
+//     repository the release must leave untouched without the credential its
+//     runs read.
+//
+// A job whose account keeps its accessor while a mount goes, or the reverse,
+// is a job Cloud Run refuses to create: it checks the mounting account's read
+// access on every secret it is given, so the mount and the grant have to go
+// together (C1.20; the module's local.job_secret_names is the other half of the
+// same rule).
 //
 // It is deliberately not dropMount: that one also deletes the name from
 // SecretIDs, and here the CONTAINER has to stay. The job's model secret is
@@ -132,9 +148,24 @@ func dropMount(ws WorkflowSpec, logical string) {
 // its destruction (which prevent_destroy refuses, failing the whole plan) and
 // make Retirements report a live container as retired. Only the mount goes;
 // the container is left exactly where it is.
-func dropModelMounts(ws *WorkflowSpec) {
+// `none` is answered here rather than left to the caller: it is the value a
+// switched `api-key` or `oauth` repository carries on this branch, so a caller
+// that lost its guard would take away the credential a run of exactly the
+// repository this release must not touch still reads (D2072, G17). The arm is
+// the empty answer, and a value this release does not know is answered the same
+// way: fail closed toward keeping the mount, never toward dropping it.
+func dropModelMounts(ws *WorkflowSpec, served string) {
+	var held func(string) bool
+	switch served {
+	case config.ModelSecretServedAll:
+		held = config.IsModelSecretEnv
+	case config.ModelSecretServedAnthropic:
+		held = func(env string) bool { return slices.Contains(config.ModelSecretEnvs, env) }
+	default:
+		return
+	}
 	for env := range ws.SecretEnv {
-		if config.IsModelSecretEnv(env) {
+		if held(env) {
 			delete(ws.SecretEnv, env)
 		}
 	}
@@ -192,6 +223,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 	maps.Copy(out.Secrets, ex.ExtraSecrets)
 	versions := map[string]bool{} // secret ID → has an enabled version
 	var missing []Missing
+	// The names D2313 ignores for this repository, collected as the workflow
+	// loop meets them and reported once below: one sentence about the file, not
+	// one per workflow that declares the name.
+	var ignored []string
 	hasVersionID := func(id string) (bool, error) {
 		ok, seen := versions[id]
 		if !seen {
@@ -293,10 +328,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			// mount up and every other Bitbucket repository keeps it (G9).
 			// Both halves are read — the fact from the published node, the
 			// names from config.ProxiedGitSecretNames — because either alone
-			// would be a drop nobody asked for. The list is empty on this
-			// branch, which is B1.13 part two's switch: this loop is inert
-			// until that release fills it, and the accessor half in
-			// modules/workflow/sa.tf turns on with it.
+			// would be a drop nobody asked for. The list names the Bitbucket
+			// token since the flip (B1.13 part two), so this loop drops the
+			// mount for a proxied repository and for no other, and the
+			// accessor half in modules/workflow/sa.tf drops with it.
 			if spec.BitbucketProxied {
 				for _, logical := range config.ProxiedGitSecretNames {
 					dropMount(ws, logical)
@@ -309,6 +344,13 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		}
 		var reasons []gate
 		var unresolved []string
+		// The names D2313 ignores for THIS workflow's job, which the job's own
+		// environment states below (runner.IgnoredSecretsVar): the runner is the
+		// last reader that could still demand a value for one of them, and its
+		// mounts cannot tell it which they are — a job the credentials service
+		// serves mounts none of its workflow's secrets (B3.8) — so the plan
+		// says it rather than leaving it to be inferred.
+		var ignoredHere []string
 		for _, logical := range uniqueSecrets(ws) {
 			ok, err := hasVersion(logical)
 			if err != nil {
@@ -325,6 +367,27 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				return RepoSpec{}, nil, err
 			}
 			if resolved {
+				continue
+			}
+			// D2313: a repository-level secret is accepted and ignored, and
+			// this is where that reaches the job. No store can be named for
+			// such a name — the branch above would have found the project's
+			// copy if this repository could mount one, and both
+			// repository-scope forms of `fugaro secrets set` answer the
+			// ruling's notice — so its absence is not a gate: the fix below
+			// would print a command that stores nothing, and a job held back
+			// for it is a repository that can never be brought up. The mount
+			// goes with the gate, because a secret_key_ref on a container with
+			// no version is a job Cloud Run refuses to create — the shape the
+			// optional Anthropic key's branch below has for the same reason.
+			// The CONTAINER is untouched: out.Secrets was built before this,
+			// and it is what var.repo.secrets carries, so nothing plans a
+			// prevent_destroy container's destruction and the value a
+			// returning feature wants is still there (D2313).
+			if ignoredRepoSecret(spec, logical) {
+				dropMount(ws, logical)
+				ignored = append(ignored, logical)
+				ignoredHere = append(ignoredHere, logical)
 				continue
 			}
 			if OptionalSecret(logical) {
@@ -356,6 +419,17 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			}
 			unresolved = append(unresolved, logical)
 			reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: %s", logical, fix)})
+		}
+		// The job's own environment states which of its workflow's secrets the
+		// ruling ignored (D2313), for the runner's reader
+		// (runner.IgnoredSecretsVar): the value is the names and not the
+		// variables, because the name is the file's own identity for the secret
+		// and the one this loop decided about. Written only when there is one: a
+		// job whose plan ignored no name carries no such variable and the runner
+		// reads its mounts instead, so nothing here claims the plan had spoken
+		// where it had nothing to say.
+		if len(ignoredHere) > 0 && ws.Env != nil {
+			ws.Env[runner.IgnoredSecretsVar] = strings.Join(ignoredHere, ",")
 		}
 		// D11: project-centric mode requires the Firebase backend, and there
 		// is no other way to detect the mode (plan task 1.4 step 2). The
@@ -544,6 +618,18 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			missing = append(missing, Missing{Workflow: name, Kind: r.kind, Reason: r.reason, Deployed: exists})
 		}
 		out.Workflows[name] = ws
+	}
+	// D2313's line about this repository, asked once for the repository and
+	// never per workflow: a name two workflows declare is one fact about the
+	// file, and an oauth repository mounts one name in several variants of the
+	// same job. It is the ruling's own sentence — the one `fugaro validate`
+	// warns the file's block with, over the same names — because the whole of
+	// what a person can do about it is the thing that sentence names: store the
+	// value once for the project, or add the project-wide entry that would
+	// admit this repository to one.
+	if len(ignored) > 0 {
+		slices.Sort(ignored)
+		missing = append(missing, Missing{Kind: MissingNote, Reason: config.RepoSecretsIgnoredNotice(slices.Compact(ignored))})
 	}
 	if spec.Check != nil {
 		var unresolved []string

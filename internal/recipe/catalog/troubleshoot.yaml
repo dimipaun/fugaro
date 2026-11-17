@@ -1,0 +1,9 @@
+version: 1
+name: troubleshoot
+description: "Reads the evidence a failed command left and answers with the cause and the fix. No coder pass, no review and no pull request."
+use_when: "The cloud tier of fugaro troubleshoot launches it, on this machine's own project, when the machine has no login of its own. Never the recipe for a task: it diagnoses one failure and delivers the answer as a file."
+mode: artifact
+steps:
+  - diagnose: {}
+outputs:
+  globs: ["out/diagnosis.md", "out/diagnosis.json"]

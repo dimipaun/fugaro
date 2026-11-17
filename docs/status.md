@@ -12,50 +12,49 @@ How this page is written
 
 # Fugaro: status of every spec under docs/
 
-As of 2026-11-15, read from `main`, the open pull requests and each plan's task list (the plans' own status lines are stale in about 30 folders). "About" marks an approximate count; **owner-run** is a live check or step only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. Released: CLI 0.24.1 (a hotfix of 0.24.0, Uakari), console 0.122.0 (Strawberry). CLI 0.25.0 (Vole) and console 0.123.0 (Tangerine) are scoped; the 0.25.0 release has begun (its Highlights are merged, #2739) and is not yet tagged: main's `images` workflow is red (run 43707175223) until #2770, the fix run's draft, lands. There are 44 open pull requests (this one excepted): 13 live, 0 ready, 27 stalled and 4 orphan, which the run records could not place (#2606, #2717, #2798, #2811). Thirteen runs were live at the count, one on each live pull request: six follow-ups and reviews (#2799, #2800, #2801, #2802, #2804, #2809), a review of two merged CLI changes (#2812) and the six tasks of feature-matrix and forge-labels (#2803, #2805, #2806, #2807, #2808, #2810).
+As of 2026-11-17 15:10 UTC, read from `main` at `9e7f32203` (#3014), the open pull requests and each plan's task list (the plans' own status lines are stale in about 30 folders). "About" marks an approximate count; **owner-run** is a live check or step only the owner performs. Each folder's README links to this page for its current state. The sections run from the nearest to done to the furthest; the finished specs are at the end. Released: CLI 0.25.0 (Vole, tagged and published 2026-11-15; its website promotion succeeded; the last CLI tag), console 0.122.0 (Strawberry). Console 0.123.0 (Tangerine) is scoped and not yet tagged. CLI 0.26.0 is not yet cut. Its gate is triage-loud (merged: #2829, #2849 and #2910), repos-management RE0 to RE5 (RE0 to RE3 merged; RE4 is draft #2984, live, and RE5 is not started), composite-commands AP3 to AP6 (AP3 is draft #2816, stalled; AP4 to AP6 not started) and config-ownership (13 of its 22 tasks left, M3 among them as draft #3021); so what is left of the gate is RE4, RE5, AP3 to AP6 and those 13. RE6 and Check 620 are owner-run after the release and are not a gate. The B1.13 flip (#2166) merged 2026-11-17 after Check 191 passed every pre-flip row it can measure; Check 192, its `--after-flip` half, is owner-run, and #2166's operator steps are items 9 and 10 of `docs/releases/v0.26.0.md`. **Main is red**: CI run 44095738572, on `aec03d5e3` (#3050), failed. It failed `TestTestTimeReportScript` (the test-time report script lists test files by an absolute path; draft #3052 is its fix, live) and `TestLiveCheckScripts` (the `check91` happy path). The run before it, 44089697868 on `daa2190bc`, failed the two runner goldens that #3050 then fixed; the red fixes of #3041 and #3050 are merged, and no run has passed since `aff354fdd` (#3005, run 44021692018). The test-time fix #3052 has merged since that run. The red-main fixes merged since the sweep of #2961 are #2963, #2965, #2991, #2992, #3002, #3003, #3004, #3005, #3041 and #3050. There are 48 open pull requests (this one excepted), read from `fugaro watch --once` at 15:10 UTC (the live ones) and from GitHub (draft or not): 29 are live (#2690, #2771, #2851, #2873, #2912, #2928, #2974, #2984, #3038, #3044, #3048, #3049, #3053, #3054, #3056, #3058, #3059, #3060, #3061, #3062, #3063, #3064, #3065, #3066, #3067, #3068, #3069, #3070 and #3072); 8 are ready, not a draft and no run going (#2660, #2784, #2817, #2969, #2999, #3009, #3047 and #3057), which rests on their not being drafts, since a ready-looking one a run left a blocking finding on would be stalled and this sweep did not re-read each last outcome; and 11 are stalled (drafts with no run going: #2816, #2900, #3010, #3011, #3016, #3021, #3023, #3024, #3029, #3030 and #3046). Four of the 48 carry no plan task (#2912, #2999, #3047 and #3069: a fix, the owner's mapping corrections and a record fix); the others are named in their rows. Runs live with no pull request yet: periodic-reviews R14 (7e80), the periodic-reviews plan's shared-files fix (df5b) and the tier warning's charged_as (e800). The orchestrator is installed under launchd and replaces `/jobmax`. This sweep reads the 97 commits merged since the sweep of #2961 against each plan's task list.
 
 ## Nearly There (NT)
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| credentials-service | about 32/36 | owner checks; Check 96 holds C2.3 |
-| go-to-market | 9/12 | owner G2.5, and two more |
-| licence-key-v2 | 19/26 | K4.1's follow-up (live, draft #2804) and the orphan draft #2606, the earlier copy of the renewal work that #2650 merged; K2.6 superseded by the portal; the rest of K0–K7 not started or open (K3.4 held on TN1); D2130–D2146 answered 2026-11-11 except D2145 (default) (D2134 (amended by TN2) and D2144 not the recommendation), and all K* tasks approved 2026-11-13; TN1 seat enforcement is not in 0.24.0 (owner); owner Checks 560–564 not run |
-| licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c); the next Terms version is draft #2798 (orphan, for counsel) |
-| stateless-orchestrator | 19/20 | O19 (approved, no longer blocked: the W-side marker `halt.workspace_refusal` merged as #2730, so a run the workspace refused is told apart in the run record; not started); owner Checks 301 to 304 and 305 (O16b) |
-| task-governance | 27/31 | 4 left, all in `ee/governance` |
+| binary-allow-rule | 10/11 | AR7 not started; all approved 2026-11-15 |
+| bitbucket-token-types | 18/19 | CK (Checks 590 and 591: the two owner-run scripts are draft #3038, live; the owner runs them) |
+| bitbucket-workspace-token | 9/12 | T1.4, T2.4 and T2.7 (T2.2 was carried by shared-jobs-default S1 and S4, both merged; T2.9 is closed as replaced by the service's rules, D1981, and is not counted in the 12); T2.4 and its phase-3 half rewritten for the proxy (a shared Bitbucket job holds no token) and approved to launch 2026-11-16 |
+| forge-authorship-images | 18/25 | 7 left, all agent tasks approved 2026-11-16 (owner-run A5 and the unscheduled C8b/C8c stay out); D3 (draft #3061, live), the rest not started; D650–D653 answered 2026-11-16 as recommended; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
+| forge-labels | 8/9 | T7 and owner Check 640, both waiting on the daemon's identity to the credentials service (E10b, draft #2928, live) |
+| go-to-market | 11/12 | owner G2.5 |
+| licence-key-v2 | 19/26 | K2.6 superseded by the portal; K6.1 dropped 2026-11-16 (the key is set only by `fugaro licence`, no wizard step, no-prompt policy); K4.2 is draft #2873 (live), the rest of K0–K7 not started or open (K3.4 held on TN1); D2130–D2146 answered 2026-11-11 except D2145 (default) (D2134 (amended by TN2) and D2144 not the recommendation), and all K* tasks approved 2026-11-13; TN1 seat enforcement is not in 0.24.0 (owner); owner Checks 560–564 not run |
+| licensing | 21/23 | owner-run only: L0.2's allow-list and status, the Terms publication's L4.3, L5.1 T3(c); the next Terms version is a redline with counsel (merged as #2798) |
+| mobile | about 51/67 | P5.1c (draft #3011, stalled), P5.1d, P5.1f and P5.1g (approved 2026-11-14, not started; P5.1f no longer waits on P4.1), P5.2.4 (draft #3054, live) and P5.2.6 to P5.2.10 (approved 2026-11-14, not started), P5.3.3 (draft #2900, stalled), P5.3.5 and P5.3.7 (approved 2026-11-14, not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
+| model-crafts | 24/26 | MC25 (ready #3009), MC26 (stays owner-run) and the activation plan for the four known limits, all approved 2026-11-16; F27, D1660–D1671 and D1673 were all answered as recommended on 2026-11-17, and D1672 on 2026-11-15 (A, then B and C together in one release, then D), so no decision is open; owner Checks 420 to 422 (written as one script each; 420 and 421 ran 2026-11-15, premise not met and no run launched — both wait on the crafts, credentials and pools being published into the policy node, which the activation plan is to close; 422 not run) and the activation plan's own Checks |
+| outer-loop-escalation | 15/18 | E10b (draft #2928, live), E14 and E15 (owner-run), not started unless a draft is named; D2046 ruled 2026-11-13: `escalation.ready_drafts` is on by default; owner Checks 540 to 542 |
+| periodic-reviews | 12/17 | R9 (unblocked and launchable: the owner answered E6 on 2026-11-17, a designated repository plus a folder set by the owner in the project layer, public allowed, the launcher hands the bytes in, and its design has merged as #3039), the three tasks that design added, R14, R15 and R16 (not started), and R5 (owner-run); owner Check 136; owner Check 340 ran a third time on 2026-11-13 and exited 1 (the reports job needs only slug-level listings); the revised Check is merged (#2524) and the owner runs it again |
+| review-levels-ab-jobmax | about 27/35 | A/B reviewer slot; the orchestrator replaces `/jobmax` (2026-11-16): J1.2, J1.3 and T1.1 to T1.3 closed as superseded and not counted in the 35, T3.1 and V1.3 waiting on a re-plan against the orchestrator and the config-ownership registry; B1.2 (draft #2771, live) and B1.4 (ready #2660) are open; X1 waits on T3.1 |
+| spend-accuracy | 20/23 | 3 left, all agent tasks approved 2026-11-16: SA1.4 (ready #2969), SA2.3 (draft #2974, live; SA2.1 has merged, so it is no longer held) and SA6.1 (draft #3053, live); D2640–D2651 answered 2026-11-15 (D2643 not the recommendation; four amended after review); OR1 and Checks 650–651 (script written, #2971) owner-run |
+| task-governance | 27/31 | 4 left, all in `ee/governance`; T7.3 is ready (#2817) |
 
 ## Work in progress (WIP)
 
 | Spec | Merged | Left |
 | --- | --- | --- |
-| binary-allow-rule | 5/11 | AR1 (stalled, draft #2782) and AR3 to AR7, not started; all approved 2026-11-15 |
-| bitbucket-token-types | 12/19 | T7 (stalled, draft #2593); T10 to T12, T14 and I1 not started; CK (Checks 590 and 591) owner-run |
-| bitbucket-workspace-token | 7/13 | T1.4, T2.2, T2.4, T2.6 and T2.7 |
-| composite-commands | 2/10 | AP3 to AP10, not started; depends on no-prompt-policy |
-| feature-matrix | 0/12 | all tasks approved 2026-11-15; C1 (live, draft #2806), T2 (live, draft #2807) and T4c (live, draft #2803) are in flight; then T1, T3, T4a (after C1; T4a also after T4c), then I1, T4b, T7, then T5 and T6 (owner-run, never dispatched), then CR1 (counted in the 12, raised only if T6 raises it); D2440–D2449 answered; no check taken; no after-deploy step |
-| forge-authorship-images | 12/25 | 13 left; the image-setup overlap is C6 and C8's C8b/C8c, not about 16 — [reconciliation-image-setup.md](forge-authorship-images/reconciliation-image-setup.md) |
-| forge-labels | 0/9 | all tasks approved 2026-11-15; T1 (live, draft #2805), T8 (live, draft #2808) and T9 (live, draft #2810) are in flight; T2 to T6 not started; T7 and Check 640 wait on the daemon's identity to the credentials service (E10b); owner Check 640 |
-| mobile | about 40/67 | P5.1a to P5.1h (approved 2026-11-14, not started; P5.1f also waits on P4.1), P5.2.1 to P5.2.10 (approved 2026-11-14, not started), P5.3.2 to P5.3.7 (approved 2026-11-14; P5.3.4 stalled, draft #2742, the rest not started), P5.4 (unscheduled); owner P2.3 and P4.4 |
-| model-crafts | 10/26 | MC11 to MC26, the activation plan for the four known limits, none approved (D1660–D1672 are the owner's; recording the answer to D1672 is live, draft #2799); owner Checks 420 to 422 (written as one script each; not run) and the activation plan's own Checks |
-| outer-loop-escalation | 12/18 | E6 (stalled, draft #2498), E10b, E12 to E14, E15 (owner-run), not started; D2046 ruled 2026-11-13: `escalation.ready_drafts` is on by default; owner Checks 540 to 542 |
-| periodic-reviews | 9/14 | R8 to R11; owner Check 136; owner Check 340 ran a third time on 2026-11-13 and exited 1 (the reports job needs only slug-level listings); the revised Check is merged (#2524) and the owner runs it again |
-| portal | 17/42 | owner P0.1 to P0.6; P2.1 (stalled, draft #2569); P3.5's second-click follow-up (stalled, draft #2778); not started: P1.7, P2.2, P2.4, P3.1 to P3.3, P3.6 (the renew entitlement gate), P4.1 to P4.3, P5.1, P5.2, P6.1 to P6.3, P7.1, P9.3, P9.4 |
-| repos-management | 0/7 | RE0 to RE6, none approved (D2400–D2417 written to a recommendation, none answered); RE3 adopts draft #2690 (stalled, the earlier brief's RE1) |
-| review-job | 5/10 | RJ8 (stalled, draft #2671), RJ4 (stalled, draft #2784); RJ5, RJ9, RJ10 not started and not approved; owner Checks 610 and 611 |
-| review-levels-ab-jobmax | about 26/40 | A/B reviewer slot, `auto_launch`; B1.2 (stalled, draft #2771), B1.4 (stalled, draft #2660), J1.3 (stalled, draft #2766) and X1 (stalled, draft #2765) are open |
-| rigor-command | 3/10 | R6 (docs), R7 (the hotfix gate; stalled, draft #2538), W (`setup` asks the rigor mode; stalled, draft #2576); R2 to R5 closed 2026-11-10 as duplicates of settings-commands and config-management, so the spec is mostly superseded but not wholly |
-| rigor-modes | about 24/40 | T7.1, T8.1, T8.3; the overlay plan LV1 to LV7 is unblocked in principle (LD2: the level wins), but LV1.1's type-naming and record-version rulings are still open |
-| secrets-brokering | 30/65 | B1.13 flip (stalled, draft #2166, held on Check 191, which the owner is rerunning now that repo-level account admission is on main; its refusal attempts made without a model are draft #2783, stalled), B1.15, B1.16; owner Checks 191 and 192; B2.3–B2.9, B3.3–B3.10, B4.2–B4.11, B5.2–B5.9 (all approved 2026-11-10, each with its own gate; owner Checks 193–197); a level-3 review of B2.2 is live, draft #2809; dynamic-delivery subfolder: owner DS0.3 (Checks 510 and 511) |
-| shared-jobs-default | 6/32 | 26 left; S5 (stalled, draft #2753), B2 (stalled, draft #2769) and M1 (stalled, draft #2768) are open, the rest not started; owner Checks 191, 192, 580, 581 and 582 |
-| subscriptions | about 22/51 | the rest not started or open; 10 owner-run; TN1 seat enforcement is not in 0.24.0 (owner) |
+| composite-commands | 2/10 | AP3 (draft #2816, stalled); AP4 to AP10 not started, AP5 and AP6 waiting on AP3; depends on no-prompt-policy; AP3 to AP6 are in the 0.26.0 gate |
+| config-ownership | 9/22 | all tasks approved 2026-11-15; 13 left: S1 (draft #2851, live), N2 free to start, N4 (draft #3010, stalled); W1, W2, W3 and K1 on composite AP5, A2 and K2 on composite AP6; M3 (draft #3021, stalled) and M4 (free now that #2576 and #2538 have merged); then I1 and D1; D2611, D2613, D2614, D2616 and T3, T5 answered 2026-11-15; no owner check; after deploy: `fugaro update` |
+| orchestrator-graph-estimates | 11/39 | 28 left, all approved 2026-11-16: X4 (draft #3060), R4 (draft #3063), R7 (draft #3059), G1 (draft #3064), E1 (draft #3065), S2 (draft #3062), G2 (draft #3067), E2 (draft #3066), B1 (draft #3068) and B7 (draft #3070) are open and live, and R8 is ready #3057, the rest not started (R3, R5, R6, G4, E3, E4, S3 to S6, B2 to B5, B9, B10, W1); D2700–D2747 answered 2026-11-16 (D2720 not the recommendation; the decisions amended after review await the owner's confirmation, O4); Checks 700–703 owner-run |
+| portal | 26/42 | owner P0.1 to P0.6; P4.3 (draft #3016, stalled), P3.2 (draft #3058, live) and P5.1 (draft #3072, live); not started: P2.4, P5.2, P6.1 to P6.3, P9.3, P9.4 |
+| repos-management | 4/7 | RE4 (draft #2984, live) and RE5 (not started), both in the 0.26.0 gate; RE6 owner-run after 0.26.0, with Check 620, not a gate; the earlier brief's RE1 is still an open draft, #2690 (live; RE1 and RE3 have merged under #2932 and #2939); all approved 2026-11-15 and D2400–D2417 answered the same day |
+| review-job | 6/10 | RJ4 (ready #2784); RJ5, RJ9, RJ10 not started and not approved; owner Checks 610 and 611 |
+| rigor-modes | about 25/40 | T7.1 (not started), T8.1 (the rigor live check, Check 127 written: draft #3044, live); the overlay plan LV1 to LV7 is unblocked in principle (LD2: the level wins), but LV1.1's type-naming and record-version rulings are still open |
+| secrets-brokering | 42/65 | B1.16; owner Check 192 (the --after-flip half; the flip itself merged as #2166 on 2026-11-17, after Check 191 passed its pre-flip rows, and its operator steps are release notes 9 and 10); B2.6–B2.9, B3.6 (Check 194 written, draft #3049, live), B3.7–B3.10, B4.2–B4.11 and B5.6–B5.9 (all approved 2026-11-10, each with its own gate; owner Checks 193–197); dynamic-delivery subfolder: owner DS0.3 (Checks 510 and 511) |
+| shared-jobs-default | 17/32 | 15 left: I1 (draft #3024, stalled), B6 (draft #3023, stalled) and B4 (Check 581 written, draft #3029, stalled) are open, S6, S7, S8, S10, N1 to N3, M2 and M4 to M7 not started; owner Checks 191, 192, 580, 581 and 582 |
+| subscriptions | about 24/51 | S0.4 and S8.4 are done (S0.4 merged as #3043; the owner ruled on 2026-11-17 that counsel has closed S8.4, recorded by #3042); S7.1 (draft #3046, stalled) and S7.3 (draft #3048, live) are open, the rest not started or open, all agent tasks approved 2026-11-16 (entity-gated tasks and the 10 owner-run stay gated); TN1 seat enforcement is not in 0.24.0 (owner) |
+| troubleshoot-cloud | 6/12 | 6 left, all agent tasks approved 2026-11-16: T-TC5 (draft #3030, stalled) and T-TC6 (draft #3056, live) are open, T-TC7 to T-TC9 not started; T-TC10 is owner-run |
 
 ## To do or parked
 
 | Spec | State |
 | --- | --- |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
-| troubleshoot-cloud | 0/12: plan only (spec, reconciliation and plan merged as #2723), no task approved; T-TC10 is owner-run; a fix to the plan is live, draft #2800 |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
 ## Done
@@ -66,7 +65,7 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | accounts-add | owner checks LC1 to LC4 |
 | api-key-review | owner Check 330 (AK8); AK9 and AK10 are folded into model-crafts MC6 (F26, D1638) |
 | bitbucket-credentials | owner Check 149; 148's read half parked by the owner 2026-11-14 until the coordinator job is deployed (`fugaro update --firebase-project <id> --coordinator`) (Check 145 ran 2026-11-14: U3 shows the read token reaches past its workspace; the owner accepted the reach, D360 and D361 stand) (S2, D1961); T3.3's trust paths (S3 is otherwise superseded by the secrets-brokering proxy chain, 2026-11-10) |
-| c39-review-identity | owner live check (Check 530; its script is draft #2626, stalled) |
+| c39-review-identity | owner live check (Check 530; its script, merged as #2626, is on main and not yet run) |
 | catalog-build-context | none |
 | central-orchestrator | superseded by stateless-orchestrator |
 | cli-output-console-graph | owner Checks 310 (with its `--scratch` mode), 311, 313 and 314 (all scripts on main), not yet run |
@@ -81,14 +80,16 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | console-windows | owner Check 119 |
 | contract-first-decoupling | none |
 | coordinator | P7 and P8 re-planned under mcp-server |
+| credentials-service | none (no agent task is left; the owner-run Checks 91, 92, 94, 95, 96 and 99 are the owner's to run or record (Check 90 ran 2026-10-21), and Check 96 holds C2.3's flip, which waits on the deployed service minting a token) |
 | diagnose-agent | owner Checks 410 to 412 |
-| ee-reorg | owner E3.4 (Checks 200 and 201, scripts on main, not yet run; a fix to Check 200's test is live, draft #2801); E4.1 deferred |
+| ee-reorg | owner E3.4 (Checks 200 and 201, scripts on main, not yet run); E4.1 deferred |
 | failure-classes | owner Check 350 |
+| feature-matrix | T6 is done (the owner read the preview on 2026-11-17, no footnote, O1 answered) and CR1 is not raised, so it is not counted; the owner's mapping corrections are ready #3047 (mapping only); D2440–D2449 answered; no check taken; no after-deploy step |
 | how-to | not a spec |
 | image-env | owner Check 291 (script on main, not yet run) |
 | image-setup-skill | owner Checks 500 and 501 |
 | in-job-review | historical; delivered through cloud-senior-review, review-levels and api-key-review |
-| issue-mine | owner Checks 470 to 472 |
+| issue-mine | owner Checks 470 to 472: all ran 2026-11-14 and none has passed in full (470 passed in part, its issue-record read and two human steps unmeasured; 471 failed its cache-cleared row; 472 passed on an empty store, not at size), so re-runs are owner-run |
 | issues-resolved-on-update | none |
 | managed-agent-converge | none |
 | mcp-server | M9 parked (D936, the fence declined, no release schedules it); M11 declined (2026-11-09) |
@@ -100,16 +101,18 @@ As of 2026-11-15, read from `main`, the open pull requests and each plan's task 
 | post-review-triage | owner TR13 (Checks 490 to 492; the scripts are on main, not yet run) |
 | project-image-catalog | none |
 | project-workflow-secrets | none |
+| rigor-command | none (R2 to R5 were closed 2026-11-10 as duplicates of settings-commands and config-management, which win; every live task has merged) |
 | roles-scopes | owner live check that a viewer cannot launch or cancel (not yet run) |
 | run-limit-carry-over | owner-run live check (named, not numbered: a chain that halts at its dollar cap, continued with `--continues`, reports a smaller remaining than it started with) |
 | run-without-checkout | no live check covers a launch from outside a checkout |
 | security-classification | none |
 | settings-commands | none |
-| setup-wizard | owner Checks 27 (script on main; a fix to its Firestore location is live, draft #2802) and 111 |
+| setup-wizard | owner Checks 27 (script on main) and 111 |
 | short-run-ids | owner SR13 (Check 440 as a script and Check 441 as the register's steps, on main, not yet run) |
+| stateless-orchestrator | owner Checks 301 to 305 (O16b; 301 deferred); the orchestrator is installed under launchd and replaces /jobmax, and its state is stale (goal not set) |
 | troubleshoot-issue | none |
 | vision-model | owner Checks 520 and 521, not run |
-| website | W3.3 explainer video (parked), owner Check 69 |
+| website | W3.3 explainer video (parked), owner Check 69c (not written yet; 69a and 69b passed 2026-11-15) |
 | website-changelog | WC4 lands with the next release |
 | windows-cli | superseded by console-windows |
 | workspaces | none |

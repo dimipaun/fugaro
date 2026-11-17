@@ -1720,6 +1720,136 @@ run "credentials_service_on_provider_keys" {
   }
 }
 
+# The same workflow with the service on and model_secrets_served `none`, which
+# is what B2.3 writes for an `api-key` or `oauth` repository whose credential
+# the bundle does not hold yet: every mount stays and every accessor with it
+# (D2072, G17). The input is Go's answer for the repository
+# (infra.ModelSecretsServed), so the two halves cannot disagree; this run is
+# where the module's own half of it is planned, and it is what a tfvars that
+# omits the key does NOT mean — the variable's default is `all`, which is the
+# run above.
+run "model_secrets_served_none_keeps_the_model_accessors" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    name           = "web"
+    repo_label     = var.bitbucket.repo.label
+    workflow = merge(var.bitbucket.repo.workflows.web, {
+      secret_env = merge(var.bitbucket.repo.workflows.web.secret_env, {
+        ANTHROPIC_API_KEY          = "anthropic-api-key"
+        FUGARO_PROVIDER_KEY_OPENAI = "openai-api-key"
+      })
+    })
+    secrets = merge(var.bitbucket.repo.secrets, {
+      anthropic-api-key = "fugaro-acme-sandbox-anthropic-api-key-3c1f0a9e6b7d2458"
+      openai-api-key    = "fugaro-acme-sandbox-openai-api-key-7d4b2e8c5a1f9036"
+    })
+    runs_bucket          = var.bitbucket.installation.runs_bucket
+    job_runner_role      = var.bitbucket.installation.role_ids.job_runner
+    credentials_service  = { name = "fugaro-credentials", region = "us-east5" }
+    model_secrets_served = "none"
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token    = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe      = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+      claude-oauth-token = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      anthropic-api-key  = "fugaro-acme-sandbox-anthropic-api-key-3c1f0a9e6b7d2458"
+      openai-api-key     = "fugaro-acme-sandbox-openai-api-key-7d4b2e8c5a1f9036"
+    })
+    error_message = "with model_secrets_served `none` the job account keeps the accessor on every model credential it mounts: the service serves this repository nothing, so a credential taken away here is a run with no key to spend (D2072, G17)"
+  }
+  assert {
+    condition = tomap({ for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name => e.value_source[0].secret_key_ref[0].secret
+      if length(e.value_source) > 0 }) == tomap({
+      CLAUDE_CODE_OAUTH_TOKEN    = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      FUGARO_BITBUCKET_TOKEN     = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      SANDBOX_PROBE              = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+      ANTHROPIC_API_KEY          = "fugaro-acme-sandbox-anthropic-api-key-3c1f0a9e6b7d2458"
+      FUGARO_PROVIDER_KEY_OPENAI = "fugaro-acme-sandbox-openai-api-key-7d4b2e8c5a1f9036"
+    })
+    error_message = "and every mount stays with it: a mount the account cannot resolve is a job Cloud Run refuses to create (C2.3), and the address that would replace the credential is the one this repository was not switched to use"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "the job account still gains its one invoker grant on the service: the switch is on, and B2.3 hands out the URL with the mounts kept"
+  }
+}
+
+# The `anthropic` arm, which B2.7's flip turns on for the auths in
+# config.ServiceServedAuths: the service serves this repository the Anthropic
+# key or the account's token, and NO provider key — a provider's key is
+# forwarded by the route that spends it rather than handed back (R6, D1634), so
+# a FUGARO_PROVIDER_KEY_ mount and the accessor on it stay with the job. The
+# named model credentials are ABSENT from this workflow's secret_env because
+# Go's own drop has already taken their mounts out of the tfvars
+# (internal/infra's dropModelMounts, which is the half that decides what a
+# container declares), and what is planned here is the accessor half.
+run "model_secrets_served_anthropic_keeps_the_provider_key" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    name           = "web"
+    repo_label     = var.bitbucket.repo.label
+    workflow = merge(var.bitbucket.repo.workflows.web, {
+      secret_env = merge(var.bitbucket.repo.workflows.web.secret_env, {
+        FUGARO_PROVIDER_KEY_OPENAI = "openai-api-key"
+      })
+    })
+    secrets = merge(var.bitbucket.repo.secrets, {
+      openai-api-key = "fugaro-acme-sandbox-openai-api-key-7d4b2e8c5a1f9036"
+    })
+    runs_bucket          = var.bitbucket.installation.runs_bucket
+    job_runner_role      = var.bitbucket.installation.role_ids.job_runner
+    credentials_service  = { name = "fugaro-credentials", region = "us-east5" }
+    model_secrets_served = "anthropic"
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+      openai-api-key  = "fugaro-acme-sandbox-openai-api-key-7d4b2e8c5a1f9036"
+    })
+    error_message = "under the `anthropic` arm the provider key keeps its accessor and its mount: the service hands back no provider credential, so a job that lost this one could not reach its provider at all (R6, D1634)"
+  }
+}
+
 # The same workflow with the opt-in OFF, which is every installation until
 # C1.20 lands: the job account keeps accessor on every secret it mounts — the
 # model credential included — and no service exists to invoke (D147).
@@ -1763,6 +1893,136 @@ run "credentials_service_off_job" {
   assert {
     condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 0
     error_message = "with the credentials service off there is no service to invoke, so no invoker grant"
+  }
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.service) == 0
+    error_message = "with the credentials service off the module grants the service's account nothing: the per-container grants of D2074 hang on the same null the accessor drop does"
+  }
+}
+
+# D2074 (B3.3): with the service ON, the service's OWN account may read every
+# workflow secret this job mounts — one accessor per container, beside the
+# job's own grant and never a move of it. What the service reads them for is
+# B3.4 (a run whose job no longer mounts a secret fetches it from the service);
+# this run is the reach the service is given to do it, and it is the half the
+# repository root's plan carries: the container set is the job's own mounts, so
+# the two cannot drift apart (deploy/terraform's
+# TestServiceWorkflowSecretGrantsMatchTheJobsMounts holds the source of both to
+# each other and this holds the planned objects).
+#
+# The account is the installation's own output (modules/installation/
+# outputs.tf, the service account's email): a repository root never derives it,
+# and the member is that email spelled as an IAM member.
+run "credentials_service_reads_the_jobs_containers" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = {
+      name    = "fugaro-credentials"
+      region  = "us-east5"
+      account = "fugaro-credentials@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.service : k => m.secret_id }) == tomap({
+      claude-oauth-token = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
+      bitbucket-token    = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe      = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "the service's account must hold an accessor on every secret this job mounts — the model credential it serves (claude-oauth-token), the git credential, and the workflow's own secret — one container per mount, keyed by its logical name, and no container the job does not mount"
+  }
+  assert {
+    condition = alltrue([for m in google_secret_manager_secret_iam_member.service :
+      m.project == "proj-1234" &&
+      m.role == "roles/secretmanager.secretAccessor" &&
+    m.member == "serviceAccount:fugaro-credentials@proj-1234.iam.gserviceaccount.com"])
+    error_message = "each grant is a secret-level secretAccessor in this project to the account the installation's outputs carry, and to nothing else"
+  }
+  assert {
+    condition = (length(google_secret_manager_secret_iam_member.service) == length([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e if length(e.value_source) > 0]) &&
+    toset([for m in google_secret_manager_secret_iam_member.service : m.secret_id]) == toset([for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.value_source[0].secret_key_ref[0].secret if length(e.value_source) > 0]))
+    error_message = "the two sets are equal, container for container: the service may read each secret the job's own container mounts and no other, so a mount added or dropped without the grant (or the other way round) fails here"
+  }
+  assert {
+    condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
+      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
+      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+    })
+    error_message = "the job's own grant is untouched: with the service on it is exactly what C1.18 leaves — the model credential's accessor gone, the rest kept — and the service's grants sit beside it on the same containers"
+  }
+}
+
+# The inert half of D2074, and the reason `account` is optional rather than
+# required: an installation applied before the outputs carried it has no
+# account to grant to, and a repository root planned against one must plan
+# exactly what it planned — no new grant at all. That is what makes this
+# release harmless on an installation the owner has not re-applied yet; a
+# required attribute would instead fail every repository root's plan until
+# they did.
+run "credentials_service_without_an_account_reads_nothing" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+    credentials_service = {
+      name   = "fugaro-credentials"
+      region = "us-east5"
+    }
+  }
+
+  override_resource {
+    target          = google_service_account.job
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = length(google_secret_manager_secret_iam_member.service) == 0
+    error_message = "the service's account is unknown on an installation whose outputs predate it, so no grant is planned: an empty for_each creates nothing, and the plan is the one this root planned before D2074 existed"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
+    error_message = "the rest of the opt-in is unchanged with the account missing: the job account still gains its invoker grant, and only the account-bearing grant waits for the installation's next apply"
   }
 }
 
@@ -2004,22 +2264,21 @@ run "credentials_service_on_build_keeps_the_app_key" {
 }
 
 # The Bitbucket token's flip list, with the per-repository fact true — the
-# meaning of the input is the published node's block (G15), and nothing
-# derives it into a tfvars yet (B1.8b is that task, in internal/infra). The
-# list is EMPTY on this branch — the
-# flip is B1.13 part two, after the owner's go on Check 191 — so nothing moves
-# for a proxied repository either: the job keeps its accessor on
-# bitbucket-token and the container keeps the mount its runner reads the token
-# from. The model credential's accessor is gone (C1.18's half, identified by
-# variable) and its mount stays (C1.20 is the task that removes it), exactly as
-# in credentials_service_on_provider_keys.
+# meaning of the input is the published node's block (G15), and internal/infra
+# derives it into the tfvars (B1.8b). The list carries bitbucket-token since
+# the flip (B1.13 part two; the release the proxy chain ships in, the owner's
+# ruling of 2026-11-09), so a proxied repository's job gives the accessor and
+# the mount up together: its runner reads no token at all (B1.7) and the
+# service puts the credential on the wire. The model credential's accessor is
+# gone (C1.18's half, identified by variable) and its mount stays (C1.20 is the
+# task that removes it), exactly as in credentials_service_on_provider_keys.
 #
-# This run is the guard on the gate. Filling proxied_git_secret_names in the
-# module without the release that moves the runner's read to the service (B1.7,
-# and config.ProxiedGitSecretNames with it) fails every assertion here, on
-# purpose: the accessor and the mount would go while the job still reads the
-# token, which is a job Cloud Run refuses to create.
-run "proxied_bitbucket_keeps_its_token_with_the_empty_list" {
+# This run is the guard on the gate. It fails if the flip list is emptied
+# again, and it fails if the fact stops gating: with the input ignored, every
+# Bitbucket repository of an opted-in installation would lose the token its
+# runner reads, and with the list read as the opt-in alone the drop would reach
+# the non-proxied run below.
+run "proxied_bitbucket_gives_up_its_token" {
   command = plan
 
   module {
@@ -2052,19 +2311,17 @@ run "proxied_bitbucket_keeps_its_token_with_the_empty_list" {
 
   assert {
     condition = tomap({ for k, m in google_secret_manager_secret_iam_member.job : k => m.secret_id }) == tomap({
-      bitbucket-token = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
-      sandbox-probe   = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+      sandbox-probe = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
     })
-    error_message = "with the flip list empty, a proxied repository's job account keeps its accessor on the Bitbucket token: the drop is what the flip fills the list for (B1.8), and taking it away now would leave the container mounting a secret it cannot resolve (F1)"
+    error_message = "with the flip list carrying bitbucket-token, a proxied repository's job account holds no accessor on the Bitbucket token: the service holds that credential for this repository, and a mount the account cannot resolve is a job Cloud Run refuses to create (B1.13 part two, F1)"
   }
   assert {
     condition = tomap({ for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name => e.value_source[0].secret_key_ref[0].secret
       if length(e.value_source) > 0 }) == tomap({
       CLAUDE_CODE_OAUTH_TOKEN = "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201"
-      FUGARO_BITBUCKET_TOKEN  = "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba"
       SANDBOX_PROBE           = "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
     })
-    error_message = "with the flip list empty the container mounts exactly what it mounted before the module knew the repository was proxied — the Bitbucket token among them: the mount goes with the accessor, and the flip is what moves both (B1.8, C2.3)"
+    error_message = "a proxied repository's container mounts no Bitbucket token: the mount goes with the accessor, and nothing else moves — the model credential's mount stays until C1.20 and the workflow's own secret stays (B1.13 part two, C2.3)"
   }
   assert {
     condition     = length(google_cloud_run_v2_service_iam_member.credentials) == 1
@@ -2075,13 +2332,10 @@ run "proxied_bitbucket_keeps_its_token_with_the_empty_list" {
 # The same repository with the fact FALSE — the value a tfvars that never
 # mentions it carries (bitbucket_proxied is optional and false), and the one
 # every repository of an installation whose node admits nothing as proxied
-# sends. It keeps the token too, list filled or not: the drop is keyed on the
-# repository, never on the installation's opt-in alone (G9). With the list
-# EMPTY on this branch the two runs cannot tell the input's clause apart from
-# its absence — nothing is dropped either way — so the clause itself is pinned
-# where it is written, by TestProxiedGitSecretNamesMatchTheModule in
-# deploy/terraform, which reads the module source, and WHAT a filled list does
-# is planned and evaluated by that package's
+# sends. It keeps the token, list filled: the drop is keyed on the repository,
+# never on the installation's opt-in alone (G9). The two runs are what tells
+# the input's clause from its absence, and WHAT a filled list does is planned
+# and evaluated by deploy/terraform's
 # TestFilledProxiedListDropsMountAndAccessor and
 # TestFilledProxiedListKeepsNonProxiedRepositories
 # (deploy/terraform/proxied_git_test.go, under `-tags terraform`).

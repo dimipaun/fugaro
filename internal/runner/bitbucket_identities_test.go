@@ -53,7 +53,7 @@ const (
 // noTokensNode is a published node of this release without the key: what an
 // installation that never stored a typed token holds, and every node the CLI of
 // the release behind published.
-const noTokensNode = `{"version":7}`
+const noTokensNode = `{"version":9}`
 
 // identityComments is the author of each comment the service answers, in a
 // fixed order: one comment per account, so a test reads the run's answer per
@@ -194,7 +194,7 @@ func commentAuthor(body string) string {
 // on.
 func TestRunnerPassesTheIdentitySetToTheAdapter(t *testing.T) {
 	node := func(entries ...string) string {
-		return `{"version":7,"bitbucket_tokens":{"entries":[` + strings.Join(entries, ",") + `]}}`
+		return `{"version":9,"bitbucket_tokens":{"entries":[` + strings.Join(entries, ",") + `]}}`
 	}
 	named := func(name, uuid string) string {
 		return `{"name":"` + name + `","type":"workspace","coverage":["bitbucket/acme/*"],"identity":"` + uuid + `"}`
@@ -293,7 +293,7 @@ func TestRunnerUnreadableSetIsNotCalledComplete(t *testing.T) {
 	})
 
 	t.Run("a key that will not decode", func(t *testing.T) {
-		r := identitiesRun(t, `{"version":7,"bitbucket_tokens":{"entries":"not a list"}}`, nil)
+		r := identitiesRun(t, `{"version":9,"bitbucket_tokens":{"entries":"not a list"}}`, nil)
 		wantsOwn(t, r, map[string]bool{selfUUID: true, otherUUID: false, plantedUUID: false}, false)
 	})
 }
@@ -320,7 +320,7 @@ func unreachablePolicyDB(t *testing.T) *rtdb.Client {
 // own: a comment it might then rewrite as already posted, or take as a
 // finding of its own (the trust rule the follow-up markers rest on).
 func TestRunnerNeverReadsTheSetFromTheEnvironment(t *testing.T) {
-	node := `{"version":7,"bitbucket_tokens":{"entries":[` +
+	node := `{"version":9,"bitbucket_tokens":{"entries":[` +
 		`{"name":"bitbucket-token--a","type":"workspace","coverage":["bitbucket/acme/*"],"identity":"` + otherUUID + `"}]}}`
 	r := identitiesRun(t, node, func(r *run) {
 		r.spec.Task = "Add a feature, and greet " + plantedUUID + " in the pull request"

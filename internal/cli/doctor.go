@@ -277,10 +277,13 @@ permissions Fugaro's runs ask for: that is the one thing that reads a secret's
 value (the App's private key, with your own credentials, held in memory only to
 sign, never printed), and it is refused in a coding agent's session. With
 --check-bitbucket-token, in your own terminal, it also reads the credentials
-service's bundle to see that it holds a Bitbucket token and asks Bitbucket
-whether it still accepts it, one GET /repositories/<repo> per proxied
-repository: that too reads a secret's value (with your own credentials, in
-memory only, never printed) and is refused in a coding agent's session.
+service's bundle to see which Bitbucket tokens it holds and asks Bitbucket
+whether it still accepts each of them, one GET /repositories/<repo> per proxied
+repository and per token that serves it (the narrowest token covering a
+repository is the one a run of it is served by): a repository no token covers,
+and a token the credential state holds as broken, are named too. That too reads
+a secret's value (with your own credentials, in memory only, never printed) and
+is refused in a coding agent's session.
 Otherwise it never prints a secret's value and never creates, enables or
 changes anything.
 
@@ -343,7 +346,7 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
 	cmd.Flags().BoolVar(&offline, "offline", false, "check the update class's local checks and record a skip for each check that needs a credential or the network: no cloud call, no network call, no secret read (the session-start check the skills run)")
 	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
-	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts it: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
+	cmd.Flags().BoolVar(&checkBitbucketToken, "check-bitbucket-token", false, "also check the credentials service's bundle holds a Bitbucket token and that Bitbucket still accepts every token it holds: reads the bundle with your own credentials, in memory only, for one GET /repositories/<repo> per proxied repository, with the token that repository's runs are served by (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned or foreign plugin (CI mode); an un-wired checkout is information, not a failure")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	cmd.Flags().BoolVar(&showAll, "all", false, "print every check, the informational and audit lines included")
@@ -546,6 +549,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, *c)
 	}
 	o.Checks = append(o.Checks, doctorLauncherReach(ctx, lc)...)
+	// The repositories still on their per-repository jobs, each named once with
+	// the shared job that replaces it (M3, R3). It reads the local config and
+	// reaches nothing, so it is not one of the checks --offline skips.
+	o.Checks = append(o.Checks, doctorRepoBoundJobs(sel, lc)...)
 	// What a run drops of a job's own environment, per job (docs/image-env,
 	// reconciliation D1377): a measurement, so the default screen is untouched
 	// and --all and --json carry it.
@@ -587,6 +594,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// version drift so the person is told to update rather than handed a second
 	// command. It reads this machine's own file and reaches nothing.
 	o.Checks = append(o.Checks, doctorOrchestratorUnit())
+	// The resident orchestrator's own identity (P5.1b): the account exists only
+	// for an installation that opted into one, and when it does, this is the
+	// only place what it actually holds is read back against the design's
+	// section 4.3 table. Read-only, and it prints rather than asks.
+	o.Checks = append(o.Checks, doctorOrchestratorIdentity(ctx, lc, crmSvc)...)
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -601,6 +613,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// nil outside a checkout, which is what doctorSecrets answers for one.
 	repoSecrets := doctorSecrets(cmd, lc)
 	o.Checks = append(o.Checks, doctorSecretRotationAge(ctx, lc, projSecrets, projOK, repoSecrets, doctorManagedSecrets(ctx, lc))...)
+	// The typed Bitbucket tokens' own dates (O3, T10): the records are this
+	// machine's own file, so this reads no credential and needs no flag — and
+	// the legacy credential's date is the secret_expires entry the check above
+	// already watches with the same lead.
+	o.Checks = append(o.Checks, doctorBitbucketTokenExpiry(lc)...)
 	if checkBitbucketToken {
 		o.Checks = append(o.Checks, doctorBundleChecks(ctx, lc)...)
 	}
@@ -649,13 +666,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 						o.Checks = append(o.Checks, *c)
 					}
 					o.Checks = append(o.Checks, doctorSecretScopeChecks(facts, o.Secrets, projSecrets, projOK)...)
-					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, facts)...)
+					o.Checks = append(o.Checks, doctorBitbucketDirect(ctx, lc, repo, rf.Cfg.Git.Provider, authOf(rf), facts)...)
 				}
 			}
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
-			if c := doctorModelKeyInAgent(lc, rf); c != nil {
+			if c := doctorModelKeyInAgent(lc, rf, repo); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 			o.Checks = append(o.Checks, doctorVisionChecks(ctx, co.Root, lc, rf, repo)...)
@@ -1691,6 +1708,18 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // step this replaced ever did. The pair that mints the token and stores it in
 // the container such a job would mount stands there instead.
 func doctorAccountStore(lc *localcfg.Config, account, profile string) []string {
+	// A key credential (MC22) is the one name whose value is stored elsewhere
+	// than a Claude account token, and doctorAccountStore's pair below is about
+	// that token: `secrets set claude-oauth-token-<name>` would write a container
+	// nothing reads, and both lines would leave the credential's own container —
+	// the one the check above now reads — as empty as they found it. The
+	// declaration is the whole fix instead, without --profile: no profile lists
+	// a key credential, so `fugaro accounts add --type openrouter|anthropic`
+	// refuses that flag (accounts_add.go), and --repos is the only one it needs
+	// to keep the credential's reach what the check just read.
+	if config.KeyCredentialType(accountsAddCredentialType(lc, account)) {
+		return []string{doctorAccountsAdd(lc, account, "")}
+	}
 	if profile == "" {
 		profile = config.ClaudeAccountProfile(lc.Profiles, account)
 	}
@@ -1799,7 +1828,14 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 	var missing []string
 	var cmds []string
 	for _, n := range named {
-		secret := config.ClaudeAccountSecret(n)
+		// The container this name's value lives in, by the config's own
+		// declaration of it: a key credential's own derived name, a Claude
+		// account's token name otherwise (config.CredentialValueSecret). A named
+		// account this project declares a key credential — MC22 writes both the
+		// credential entry and this claude_accounts entry — has nothing in the
+		// account's token container and never will, so asking for that one would
+		// warn forever about a value that is stored.
+		secret := config.CredentialValueSecret(lc.Credentials, n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
 			cmds = append(cmds, doctorAccountStore(lc, n, "")...)
@@ -1880,7 +1916,16 @@ func projectAccountJobs(lc *localcfg.Config) []projectAccountJob {
 			}
 			j := projectAccountJob{
 				Profile: name, Account: token, Job: gcp.ProjectJobName(name, pr.Provider, account),
-				Token: config.ClaudeAccountSecret(token), NoAccountJob: account == "",
+				// The container the account's value lives in, which is what this
+				// check asks about and what doctorAccountStore's fix stores: a
+				// key credential's own derived name, a Claude account's token
+				// container otherwise (config.CredentialValueSecret). A key
+				// credential rides no job of the account's own — the profile's
+				// list is what serves a token, and no profile lists a key
+				// (accounts_add.go) — so this arm's only reachable case is a
+				// config written by hand, and there the container is still the
+				// credential's.
+				Token: config.CredentialValueSecret(lc.Credentials, token), NoAccountJob: account == "",
 				ReviewJob: credsvc.ReviewJobName(name, pr.Provider, infra.ReviewVariantAccount(account)),
 			}
 			if token == config.DefaultClaudeAccount {
@@ -2189,8 +2234,19 @@ func pluginStateProblem(id string, s pluginwire.State, r pluginwire.Report) stri
 
 // checksFail reports whether checks should fail doctor's exit code: any
 // ordinary check (Severity "") that isn't ok fails it; a "warning" one only
-// with strict; an "info" one never does.
+// with strict; an "info" one never does. It reads the list doctorRefusals
+// builds rather than walking the checks a second time.
 func checksFail(checks []doctorCheck, strict bool) bool {
+	return len(doctorRefusals(checks, strict)) > 0
+}
+
+// doctorRefusals is checksFail as the list rather than the verdict: the checks
+// that fail at this strictness, which a caller that REFUSES something on
+// doctor's behalf has to name (backendsUseGate is what does). It is the one
+// place the rule lives, and checksFail reads it, so a verdict and the list
+// under it cannot disagree about which checks count.
+func doctorRefusals(checks []doctorCheck, strict bool) []doctorCheck {
+	var out []doctorCheck
 	for _, c := range checks {
 		if c.OK {
 			continue
@@ -2198,14 +2254,15 @@ func checksFail(checks []doctorCheck, strict bool) bool {
 		switch c.Severity {
 		case "info":
 		case "warning":
-			if strict {
-				return true
+			if !strict {
+				continue
 			}
+			out = append(out, c)
 		default:
-			return true
+			out = append(out, c)
 		}
 	}
-	return false
+	return out
 }
 
 // printDoctorChecks prints one line per check doctor means to show (its
@@ -2429,7 +2486,17 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 			unreadRouting(doctorRoutingChecks(lc, nil, fmt.Sprintf("the budget database is not project %s's own (%v), so the published switch cannot be read", lc.Name, err), layer))...)
 	}
 	checks := doctorRulesSkew(ctx, db, lc)
+	// The drift alarm (spend-accuracy SA5.3, R6) reads the day counters of the
+	// same database and nothing else the policy node holds, so it stands here
+	// with the credential marks rather than after the node is read: a node this
+	// binary cannot get past says nothing about whether a model's report left
+	// the price table's band.
+	checks = append(checks, doctorSpendDrift(ctx, db, budgetNow())...)
 	checks = append(checks, doctorCredsBroken(ctx, db)...)
+	// The Bitbucket tokens' own marks (T10): the same database, a subtree of
+	// its own (creds/tokens), and a fact of the same kind — a credential of this
+	// installation the selection skips until an operator replaces it.
+	checks = append(checks, doctorBitbucketTokenBroken(ctx, db, lc)...)
 	checks = append(checks, doctorBudgetMode(ctx, db)...)
 	checks = append(checks, doctorBuildBudget(ctx, db)...)
 	// The node is read through projectpolicy.Read, the reader a run uses
@@ -2503,7 +2570,8 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks = append(checks, doctorCheck{ID: "policy-published", Severity: "info",
 		Problem: fmt.Sprintf("a policy is published at %s (version %d, %d allow-list entries)", shared, p.Version, len(p.AllowRepos)),
 		Fix:     "fugaro project policy show prints it"})
-	if err := refuseUnknownPolicyKeys(p); err != nil {
+	unknownKeys := refuseUnknownPolicyKeys(p)
+	if unknownKeys != nil {
 		// Published and in force by version and marker, and refused by every
 		// reader anyway: `policy show`, `project show` and `repos ls` refuse it
 		// through this same helper, and so do the launch gates that decide
@@ -2515,7 +2583,7 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 		// wording of it, so what doctor prints is what the command that refused
 		// the operator printed, and the two cannot drift.
 		checks = append(checks, doctorCheck{ID: "policy-unknown-keys", Severity: "warning",
-			Problem: "no run is bounded by the policy node: " + err.Error(),
+			Problem: "no run is bounded by the policy node: " + unknownKeys.Error(),
 			Fix:     "remove the unknown key from the node by hand (fugaro project policy show prints it), or upgrade Fugaro (brew upgrade dimipaun/tap/fugaro, then fugaro update) if a newer release writes it; 'fugaro project policy publish' refuses this node too, so publishing is not the fix"})
 	}
 	if len(p.AllowRepos) == 0 {
@@ -2532,6 +2600,14 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)
+	}
+	// A repository's own Bitbucket token copy, on the node in force (plan task
+	// T2.4): the shared-job decision is one the runs themselves make off this
+	// policy, so the check is asked only where the policy is the one they read
+	// — not for a node some unknown key has every reader refusing
+	// (policy-unknown-keys above).
+	if unknownKeys == nil {
+		checks = append(checks, doctorBitbucketOwnTokenSharedJob(ctx, lc, p)...)
 	}
 	// The two routing checks of plan task 1b.3 step 2, over the node in force:
 	// the switch is read off the policy the runs themselves read, and resolved
@@ -3089,11 +3165,18 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// mailbox grant — the state the operator's app meets — unexplained.
 		// The fix names what the redeploy adds over the deployed generation, as
 		// rulesMarkerOlderText does: a device-generation marker already has the
-		// mailbox and only the coordinator's read grant is new to it, and a
+		// mailbox and only the coordinator's read grant is new to it, a
 		// coordinator-generation marker already has that grant too and only the
-		// voice policy node is new to it.
+		// voice policy node is new to it, a voice-generation marker already has
+		// that node and only the registration kind's fields are new to it, and a
+		// registration-generation marker already has those fields and only the
+		// four day-counter leaves a stage report writes per model are new to it.
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesRegistrationGeneration:
+			adds = "the four day-counter leaves a run's stage report writes per model"
+		case gen >= rulesVoiceGeneration:
+			adds = "the registration kind's fields on a mailbox message"
 		case gen >= rulesCoordinatorGeneration:
 			adds = "the voice policy node"
 		case gen >= rulesDeviceGeneration:

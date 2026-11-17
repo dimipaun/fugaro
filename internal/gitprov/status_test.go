@@ -206,3 +206,51 @@ func TestStripStatusNoSectionIsIdentity(t *testing.T) {
 		}
 	}
 }
+
+// TestChangeSetStatusSectionListsSiblingPRs: the change-set block is how the
+// runs launched together find each other (D1), so every sibling is named with
+// its own pull request, and the run whose section this is says which member it
+// is — a reader of one member's pull request has no other way to tell. A
+// sibling whose pull request the caller cannot name says so: the block a
+// member run writes itself is incomplete by construction (it reaches only its
+// own repository's prefixes, SECURITY.md), and a blank there would read as a
+// member that opened none.
+func TestChangeSetStatusSectionListsSiblingPRs(t *testing.T) {
+	members := []ChangeSetMember{
+		{Repo: "acme/app", RunID: "a1b2", PR: "https://github.com/acme/app/pull/7"},
+		{Repo: "acme/other", RunID: "c3d4", PR: "https://github.com/acme/other/pull/9"},
+		{Repo: "acme/third", RunID: "e5f6"},
+	}
+	got := ChangeSetLine("a1b2", "a1b2", members)
+	want := "**Change set** `a1b2`: 3 runs, one per repository, held in draft until every member is ready\n" +
+		"- `acme/app` run `a1b2` (this run)\n" +
+		"- `acme/other` run `c3d4`: https://github.com/acme/other/pull/9\n" +
+		"- `acme/third` run `e5f6`: its pull request is not known to this run\n"
+	if got != want {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	// Read from the other member's section, the same block marks the other
+	// run: the marker follows selfRunID and not the member list's order.
+	if other := ChangeSetLine("a1b2", "c3d4", members); !strings.Contains(other, "- `acme/other` run `c3d4` (this run)\n") ||
+		!strings.Contains(other, "- `acme/app` run `a1b2`: https://github.com/acme/app/pull/7\n") {
+		t.Fatalf("the other member's section = %q", other)
+	}
+	// The block is section text and nothing else: cleaning it leaves every
+	// line a reader was meant to see.
+	if cleaned := strings.Join(cleanSection(got)[1:], "\n"); cleaned != strings.TrimSuffix(want, "\n") {
+		t.Fatalf("the block cleaned to %q, want %q", cleaned, strings.TrimSuffix(want, "\n"))
+	}
+}
+
+// TestChangeSetLineEmpty: a run in no set has no block, and the section it
+// writes is the one it wrote before the field existed -- a launch that is in
+// no set carries no ChangeSet, and a line saying "no change set" would put the
+// word in every pull request of the installation.
+func TestChangeSetLineEmpty(t *testing.T) {
+	if got := ChangeSetLine("", "a1b2", []ChangeSetMember{{Repo: "acme/app", RunID: "a1b2"}}); got != "" {
+		t.Fatalf("a set with no name rendered %q", got)
+	}
+	if got := ChangeSetLine("a1b2", "a1b2", nil); got != "" {
+		t.Fatalf("a set with no members rendered %q", got)
+	}
+}

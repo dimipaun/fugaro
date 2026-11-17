@@ -199,6 +199,10 @@ type StageReport struct {
 	// against no cap (C1.16, D140). It is disjoint from Used, and the
 	// stage's whole model figure is their sum.
 	Notional pricing.Micros
+	// NotionalBy is Notional by serving model (F23): the tier-A spend reads
+	// per model as the billed part does through ByModel, so one model's
+	// notional dollars can be told from its billed ones.
+	NotionalBy map[string]pricing.Micros
 	// ByTier is the settled money by credential tier (C1.16, D140): the
 	// per-call split the by-tier counters are written from. Its keys are the
 	// tiers as the service spells them -- TierB and TierC, "B" and "C", what
@@ -208,14 +212,32 @@ type StageReport struct {
 	// the spelling the service sent. A tier-A call is Notional and is in no
 	// key here, and a call that did not go through the service is in none
 	// either: it is real money but no tier.
-	ByTier        map[string]pricing.Micros
-	ByModel       map[string]pricing.Micros // by serving model
-	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
-	Reported      pricing.Micros            // what providers said their calls cost: for comparison, and the floor under an unpriced tier's charge
-	Unreconciled  pricing.Micros            // charged from reservations, not from reported usage
-	Overrun       pricing.Micros            // charged above the calls' reservations
-	WouldHalt     int                       // observe: calls enforce would have refused
-	UsageUnparsed int                       // 2xx calls settled at their reservation
+	ByTier       map[string]pricing.Micros
+	ByModel      map[string]pricing.Micros // by serving model
+	ByRoute      map[string]pricing.Micros // by provider route (Claude calls have none)
+	Reported     pricing.Micros            // what providers said their calls cost: for comparison, and the floor under an unpriced tier's charge
+	Unreconciled pricing.Micros            // charged from reservations, not from reported usage
+	Overrun      pricing.Micros            // charged above the calls' reservations
+	// ReportedBy is what providers said this stage's calls cost, by serving
+	// model (F7): Reported split the way ByModel splits the charge, so a
+	// reader with no stage logs can put a model's charge beside its report.
+	// No route fee is in it, a call with no report adds nothing, and
+	// Reported is its sum.
+	ReportedBy map[string]pricing.Micros
+	// TableLoBy and TableHiBy are what the price table would have charged
+	// the calls an upstream reported a cost for, at the selected tier's
+	// cheapest and dearest ends, by serving model, with no route fee
+	// (D2650, SA1.6). They are the band a report is read against, which is
+	// why a call with no report is in neither: the table settled it, so its
+	// charge would only make the band agree with itself.
+	TableLoBy map[string]pricing.Micros
+	TableHiBy map[string]pricing.Micros
+	// UnreportedCalls counts this stage's settled calls whose response
+	// carried no provider cost: how much of ReportedBy and of the band the
+	// report is actually over.
+	UnreportedCalls int
+	WouldHalt       int // observe: calls enforce would have refused
+	UsageUnparsed   int // 2xx calls settled at their reservation
 	// StreamsCut is how many of this stage's streamed calls the upstream's
 	// own end ended before their terminal event: the model was answering, the
 	// agent read a stream that closed before completion, and neither this
@@ -226,7 +248,13 @@ type StageReport struct {
 	// stream the route dropped from one that failed for a reason about the
 	// work (internal/runner's one transient retry).
 	StreamsCut int
-	Tokens     int64    // reported tokens: input, cache writes, cache reads and output
+	Tokens     int64 // reported tokens: input, cache writes, cache reads and output
+	// TokensBy is Tokens by serving model (F25), keyed as ByModel's dollars
+	// are so that one model's dollars and its tokens share a row in what a
+	// reader draws from the stage. The run record's model_tokens keeps its
+	// own keys -- the model the gateway priced each call under -- and its
+	// meaning.
+	TokensBy   map[string]pricing.Usage
 	Violations []string // what the stage asked for that isn't allowed, first first
 	// ServiceTiers are the usage.service_tier values this stage's responses
 	// reported that the table has no multiplier for ("priority" among them),
@@ -342,6 +370,17 @@ type Ledger struct {
 	// own. A call whose usage the gateway could not read is in no key, as it
 	// is in no total above. Empty for a run that read no usage at all.
 	ModelTokens map[string]pricing.Usage
+	// ReportedBy, TableLoBy and TableHiBy are the run's report and table
+	// band by serving model, and UnreportedCalls the calls that carried no
+	// report (F24, D2650); the meanings are the stage report's own fields'.
+	// They are the run-level figures a reader takes rather than a sum of the
+	// stages' reports: a call that settles after its stage's report was
+	// taken is in them, and it is in no stage report at all. No route fee is
+	// in the report or in either end of the band.
+	ReportedBy      map[string]pricing.Micros
+	TableLoBy       map[string]pricing.Micros
+	TableHiBy       map[string]pricing.Micros
+	UnreportedCalls int
 }
 
 // Server is a running gateway.
@@ -410,8 +449,18 @@ type Server struct {
 	// the same `usageRead`, so the per-model sums and the cache totals are
 	// the same tokens counted two ways, exactly.
 	modelTokens map[string]pricing.Usage
-	halt        *Halt
-	haltMsg     string
+	// reportedBy, tableLoBy, tableHiBy and unreportedCalls are the run's
+	// per-model report and table band and the calls that carried no report
+	// (F24, D2650), with the stage report's own fields' meanings. They are
+	// kept beside used and notional for the reason modelTokens is: a call
+	// that settles after its stage's report was taken is in the run's
+	// figures, and summing the stages' reports would drop it.
+	reportedBy      map[string]pricing.Micros
+	tableLoBy       map[string]pricing.Micros
+	tableHiBy       map[string]pricing.Micros
+	unreportedCalls int
+	halt            *Halt
+	haltMsg         string
 	// haltDelivered records that the halt was sent on haltCh (which is then
 	// closed): the gateway delivers one halt per server, and a stage limit's
 	// stop is delivered before any run-wide halt can be.
@@ -479,6 +528,9 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		haltCh: make(chan Halt, 1),
 
 		modelTokens: map[string]pricing.Usage{},
+		reportedBy:  map[string]pricing.Micros{},
+		tableLoBy:   map[string]pricing.Micros{},
+		tableHiBy:   map[string]pricing.Micros{},
 		ended:       map[string]StageReport{},
 		countSlots:  make(chan struct{}, maxCountsInFlight),
 	}
@@ -669,7 +721,9 @@ func (s *Server) Ledger() Ledger {
 
 func (s *Server) ledgerLocked() Ledger {
 	l := Ledger{Granted: pricing.Micros(math.MaxInt64), Used: s.used, Notional: s.notional, Reserved: s.reserved,
-		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens)}
+		CacheReadTokens: s.cacheRead, CacheWriteTokens: s.cacheWrite, ModelTokens: copyUsage(s.modelTokens),
+		ReportedBy: copyMicros(s.reportedBy), TableLoBy: copyMicros(s.tableLoBy), TableHiBy: copyMicros(s.tableHiBy),
+		UnreportedCalls: s.unreportedCalls}
 	if s.o.Lease != nil {
 		l.Granted = s.granted
 	} else if s.o.Mode == Enforce {
@@ -692,15 +746,34 @@ func copyUsage(by map[string]pricing.Usage) map[string]pricing.Usage {
 	return out
 }
 
+// copyMicros is copyUsage for a per-model dollar figure, and a copy for the
+// same reason: the ledger's report and band are what a reader holds, and the
+// next call's settle must not change them under it.
+func copyMicros(by map[string]pricing.Micros) map[string]pricing.Micros {
+	if len(by) == 0 {
+		return nil
+	}
+	out := make(map[string]pricing.Micros, len(by))
+	for m, v := range by {
+		out[m] = v
+	}
+	return out
+}
+
 // BeginStage starts allowing st's models. A stage still running is ended
 // without waiting.
 func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stage = &stageState{st: st, agents: map[string]struct{}{}, rep: StageReport{
-		ByTier:  map[string]pricing.Micros{},
-		ByModel: map[string]pricing.Micros{},
-		ByRoute: map[string]pricing.Micros{},
+		ByTier:     map[string]pricing.Micros{},
+		ByModel:    map[string]pricing.Micros{},
+		ByRoute:    map[string]pricing.Micros{},
+		NotionalBy: map[string]pricing.Micros{},
+		ReportedBy: map[string]pricing.Micros{},
+		TableLoBy:  map[string]pricing.Micros{},
+		TableHiBy:  map[string]pricing.Micros{},
+		TokensBy:   map[string]pricing.Usage{},
 	}}
 	// The stage is begun before a limit sees it: a limit that keeps per-stage
 	// state of its own is told which stage it is now about, and the reports
@@ -719,7 +792,12 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
+		return StageReport{
+			ByTier: map[string]pricing.Micros{}, ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{},
+			NotionalBy: map[string]pricing.Micros{}, ReportedBy: map[string]pricing.Micros{},
+			TableLoBy: map[string]pricing.Micros{}, TableHiBy: map[string]pricing.Micros{},
+			TokensBy: map[string]pricing.Usage{},
+		}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -758,6 +836,11 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	for k, v := range st.rep.ByRoute {
 		rep.ByRoute[k] = v
 	}
+	rep.NotionalBy = copyMicros(st.rep.NotionalBy)
+	rep.ReportedBy = copyMicros(st.rep.ReportedBy)
+	rep.TableLoBy = copyMicros(st.rep.TableLoBy)
+	rep.TableHiBy = copyMicros(st.rep.TableHiBy)
+	rep.TokensBy = copyUsage(st.rep.TokensBy)
 	rep.Violations = append([]string(nil), st.rep.Violations...)
 	rep.ServiceTiers = st.rep.ServiceTiers.clone()
 	return rep

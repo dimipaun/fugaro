@@ -475,17 +475,22 @@ func scalarConfigDiff(job, now map[string]string) string {
 }
 
 // scalarConfigEnv drops infra.PlatformEnv's keys, the two JSON-valued keys
-// (providers, model_prices) and runner.SecretEnvsVar from a job's or a
-// spec's env. SecretEnvsVar is a derived list of mounted variable NAMES, not
-// a local-config value in its own right: it also reflects the repository's
-// own fugaro.yaml (its workflow's committed secrets, its agent.auth), which
-// fugaro update --repo refreshes from the checkout, not from an edited local
-// project config, so comparing it here would flag drift this note is not
-// about. infra.ImageEntryEnv is dropped for the same reason: it is the
-// catalog entry the deploy chose from the published catalog, which this note's
-// spec is built without, so a job deployed from a published catalog would
-// read as drifted on every plain update. A changed local-config provider
-// already shows up directly, through providersDiff, with or without this key.
+// (providers, model_prices) and the two derived lists the runner reads out of
+// a job's environment, runner.SecretEnvsVar and runner.IgnoredSecretsVar, from
+// a job's or a spec's env. SecretEnvsVar is a derived list of mounted variable
+// NAMES, not a local-config value in its own right: it also reflects the
+// repository's own fugaro.yaml (its workflow's committed secrets, its
+// agent.auth), which fugaro update --repo refreshes from the checkout, not from
+// an edited local project config, so comparing it here would flag drift this
+// note is not about. IgnoredSecretsVar is the second list of the same kind
+// (D2313): the repository-level secret NAMES the plan that deployed the job
+// left out of its mounts, which that same file and the versions its containers
+// hold decide, so it is excluded on the same terms. infra.ImageEntryEnv is
+// dropped for the same reason: it is the catalog entry the deploy chose from
+// the published catalog, which this note's spec is built without, so a job
+// deployed from a published catalog would read as drifted on every plain
+// update. A changed local-config provider already shows up directly, through
+// providersDiff, with or without this key.
 func scalarConfigEnv(env map[string]string) map[string]string {
 	out := make(map[string]string, len(env))
 	for k, v := range env {
@@ -497,6 +502,7 @@ func scalarConfigEnv(env map[string]string) map[string]string {
 	delete(out, infra.ModelProvidersEnv)
 	delete(out, infra.ModelPricesEnv)
 	delete(out, runner.SecretEnvsVar)
+	delete(out, runner.IgnoredSecretsVar)
 	delete(out, infra.ImageEntryEnv)
 	return out
 }

@@ -50,6 +50,18 @@ repos:
 // in a config home of its own, with modelsLocalExtra appended.
 func modelsFixture(t *testing.T) string {
 	t.Helper()
+	return modelsFixtureWith(t, modelsLocalExtra)
+}
+
+// modelsLocalExtraCheapest is modelsLocalExtra's route with the policy spelled
+// out, the shape whose row is charged the cheapest end of its tier.
+var modelsLocalExtraCheapest = strings.Replace(modelsLocalExtra, "    route_fee_pct: 5\n", "    route_fee_pct: 5\n    price_policy: cheapest\n", 1)
+
+// modelsFixtureWith is for the tests that need the route spelled differently:
+// the cheapest end's own words and numbers need price_policy: cheapest, now
+// that an unset one is highest (D2644).
+func modelsFixtureWith(t *testing.T, extra string) string {
+	t.Helper()
 	home := t.TempDir()
 	isolateProjects(t, home)
 	path := writeProject(t, "aurora", "aurora-gcp")
@@ -57,7 +69,7 @@ func modelsFixture(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, []byte(modelsLocalExtra)...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, []byte(extra)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
@@ -455,9 +467,11 @@ func TestModelsLsWithoutAProjectConfig(t *testing.T) {
 // TestModelsLsShowsCatalogAgeAndSpread: a catalog-priced row carries the
 // catalog's own date and age, and the spread the row is charged over — the
 // dearest endpoint of the tier against the price charged (design D6, P11) —
-// so the owner can see the size of what a cheapest bound leaves.
+// so the owner can see the size of what a cheapest bound leaves. The route
+// spells that bound out: an unset price_policy is highest (D2644), and a row
+// at the top of its range leaves nothing above it to size.
 func TestModelsLsShowsCatalogAgeAndSpread(t *testing.T) {
-	home := modelsFixture(t)
+	home := modelsFixtureWith(t, modelsLocalExtraCheapest)
 	modelsCheckout(t, home, "owner/repo-a", modelsRepoYAML)
 	// A clock inside the catalog's 30-day window, so the row is priced at the
 	// cheapest end and there is an undercharge to size.

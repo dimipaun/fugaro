@@ -251,6 +251,13 @@ func TestBundleHoldsTheAppKeyAndAnAccountNamedAfterIt(t *testing.T) {
 		{"the app key twice", config.GitHubAppKeySecret + ": " + fakeCred(t, "x") + "\n" + config.GitHubAppKeySecret + ": " + fakeCred(t, "y") + "\n"},
 		{"two spellings of one account", config.ClaudeOAuthToken + ": " + fakeCred(t, "x") + "\n" +
 			config.ClaudeAccountSecret(config.DefaultClaudeAccount) + ": " + fakeCred(t, "y") + "\n"},
+		// A key credential's container and the account of the same name are
+		// the same NAME, so they are one credential written twice (MC22,
+		// MC23): the schema admits both keys — no bound of it can say two
+		// patterns must not co-occur — and the loader is the one that refuses,
+		// which is why this case is pinned here and not in the row table above.
+		{"a key credential and the account of the same name", config.CredentialSecret("team-a") + ": " + fakeCred(t, "x") + "\n" +
+			config.ClaudeAccountSecret("team-a") + ": " + fakeCred(t, "y") + "\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := ParseBundle([]byte(tc.doc))
@@ -1426,6 +1433,26 @@ func TestBundleSchemaMatchesTheLoader(t *testing.T) {
 		{"a named Bitbucket token whose value is a mapping", bitbucketFamilyEntry + ":\n  key: " + fakeCred(t, "x") + "\n"},
 		{"many Bitbucket tokens at the count bound", manyTokens.String()},
 		{"one Bitbucket token over the count bound", tooManyTokens.String()},
+		// The key credential's own container (MC22, MC23): the secret a
+		// service-served credential's value is stored under, which the service
+		// reads as a model credential of tier B — the second spelling of a
+		// model entry, and the one whose name is the CREDENTIAL's rather than
+		// the document key's. Its whole key is bounded by the family's own
+		// numbers (the prefix, MaxClaudeAccountNameLen and the suffix), so the
+		// schema admits no name the loader refuses and refuses none it takes.
+		{"a key credential", config.CredentialSecret("team-a") + ": " + fakeCred(t, "x") + "\n"},
+		{"a key credential name at the account length rule's bound", config.CredentialSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen)) + ": " + fakeCred(t, "x") + "\n"},
+		{"a key credential name one byte over the account length rule", config.CredentialSecret(strings.Repeat("a", config.MaxClaudeAccountNameLen+1)) + ": " + fakeCred(t, "x") + "\n"},
+		{"a dash-heavy key credential name the regex admits and the length rule refuses", config.CredentialSecret("a"+strings.Repeat("-a", 30)) + ": " + fakeCred(t, "x") + "\n"},
+		{"a key credential name outside the account rule", config.CredentialSecret("9ci") + ": " + fakeCred(t, "x") + "\n"},
+		{"the key credential family with no name at all", config.CredentialSecretPrefix + config.CredentialKeySuffix + ": " + fakeCred(t, "x") + "\n"},
+		{"the key credential namespace without the key suffix", config.CredentialSecretPrefix + "team-a: " + fakeCred(t, "x") + "\n"},
+		{"a key credential whose value is a mapping", config.CredentialSecret("team-a") + ":\n  key: " + fakeCred(t, "x") + "\n"},
+		// The account namespace can spell a key credential's own container name
+		// character for character (no doubled dash is involved), and both sides
+		// read that spelling as the account it is: the two families overlap,
+		// which is why the duplicate rule below is keyed on the resolved name.
+		{"the account namespace spelling a key credential", config.ClaudeAccountSecret(config.CredentialSecret("team-a")) + ": " + fakeCred(t, "x") + "\n"},
 		// The read consumer (F21) is the one credential of the document whose
 		// value is not a string, so it is the one key the schema names under
 		// `properties` — which is what exempts it from `additionalProperties`

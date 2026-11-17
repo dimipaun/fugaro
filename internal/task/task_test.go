@@ -807,6 +807,46 @@ func TestSpecMode(t *testing.T) {
 	}
 }
 
+// TestReviewClassFieldRefusedOutsideArtifactMode covers Spec.ReviewClass
+// (docs/troubleshoot-cloud T-TC12, D2411): the cloud diagnosis's launch writes
+// the marker on a mode: artifact spec, and that is the only spec the decoder
+// accepts it on. That bound is the field's whole protection inside this
+// package: the marker admits a run to the review-only job variant — the
+// container that holds no App key and no Claude token — so a spec that is not
+// the diagnosis's shape must not reach that container by setting a boolean.
+// Mode: review is refused by the same rule rather than admitted: it is already
+// the review class, and nothing writes the field beside it.
+//
+// Mutation (drop the review-class arm from Validate): every refused case below
+// parses, and a mode: implement spec can claim the review class.
+func TestReviewClassFieldRefusedOutsideArtifactMode(t *testing.T) {
+	const head = `{"version":1,"run_id":"20261015-120000-a1b2","repo":"acme/app","ref":"main","task":"x"`
+	for _, mode := range []string{"", "implement", "review", "evaluate"} {
+		in := head + `,"mode":"` + mode + `","review_class":true}`
+		if _, err := Parse([]byte(in)); err == nil || !strings.Contains(err.Error(), "review_class is only for mode artifact") {
+			t.Errorf("mode %q with review_class: err = %v, want a refusal naming the artifact mode", mode, err)
+		}
+	}
+	in := head + `,"mode":"artifact","review_class":true}`
+	spec, err := Parse([]byte(in))
+	if err != nil {
+		t.Fatalf("the diagnosis's own spec was refused: %v", err)
+	}
+	if !spec.ReviewClass || spec.Mode != recipe.ModeArtifact {
+		t.Fatalf("parsed mode %q review_class %v, want the artifact mode and the review class", spec.Mode, spec.ReviewClass)
+	}
+	// Additive: an unset field is omitted, so every spec that is not a
+	// diagnosis is byte-identical to what the previous release wrote.
+	data, err := json.Marshal(&Spec{Version: 1, RunID: "20261015-120000-a1b2", Repo: "acme/app", Ref: "main",
+		Task: "x", Mode: recipe.ModeArtifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "review_class") {
+		t.Fatalf("an unset review class is written: %s", data)
+	}
+}
+
 // TestSpecInputsValidate is the decoder's own arm for the attached-files list
 // (design artifact-runs.md §4, plan Task 6): the three fields are all
 // required and structural — a name, a size that cannot be negative, and a
@@ -1377,6 +1417,206 @@ func TestSpecWithoutABIsByteIdentical(t *testing.T) {
 	const want = `{"version":1,"run_id":"20261029-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
 	if string(data) != want {
 		t.Fatalf("a spec with no ab block is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
+	}
+}
+
+// TestSpecWithoutContextIsByteIdentical: a launch that names no context
+// repository writes no context_repos key at all, so its task.json is
+// byte-for-byte what the release before this field wrote — which is what keeps
+// every launch that names none readable by a runner older than the field,
+// whose Parse refuses the whole spec over an unknown key (Spec.ContextRepos,
+// D613).
+func TestSpecWithoutContextIsByteIdentical(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261116-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261116-120000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Fatalf("a spec with no context repository is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
+	}
+	s.ContextRepos = []string{"owner/repo-b"}
+	data, err = json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"context_repos":["owner/repo-b"]`) {
+		t.Fatalf("a spec naming a context repository does not carry it: %s", data)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if len(back.ContextRepos) != 1 || back.ContextRepos[0] != "owner/repo-b" {
+		t.Fatalf("ContextRepos round-tripped as %v", back.ContextRepos)
+	}
+}
+
+// TestContextReposProblem: the shape rule of one context repository is one
+// function with two readers (the launcher at --context and Spec.Validate when
+// the runner reads a stored task back), and it is the repository rule itself —
+// owner/name, no "." or ".." element — so a repository the policy can admit is
+// a repository a task may name.
+func TestContextReposProblem(t *testing.T) {
+	for _, tc := range []struct{ repo, want string }{
+		{"acme/lib", ""},
+		{"owner/repo-a", ""},
+		{"acme/group/lib", ""},
+		{"", "must look like owner/name"},
+		{"acme", "must look like owner/name"},
+		{"/acme/lib", "must look like owner/name"},
+		{"acme/..", "must look like owner/name"},
+		{"acme/../lib", "must look like owner/name"},
+		{"acme/li b", "must look like owner/name"},
+	} {
+		got := ContextReposProblem(tc.repo)
+		if tc.want == "" && got != "" {
+			t.Errorf("ContextReposProblem(%q) = %q, want ok", tc.repo, got)
+		}
+		if tc.want != "" && !strings.Contains(got, tc.want) {
+			t.Errorf("ContextReposProblem(%q) = %q, want %q", tc.repo, got, tc.want)
+		}
+	}
+}
+
+// TestValidateContextRepos: the task's own bound is five repositories, each
+// held to ContextReposProblem's rule, none of them twice. It is defence in
+// depth behind the launcher's flag, the way the review_prs rule is: a
+// hand-built task.json is refused by the runner at bootstrap rather than run
+// against a claim the launcher would not have minted.
+func TestValidateContextRepos(t *testing.T) {
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20261116-120000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	}
+	five := []string{"a/1", "b/2", "c/3", "d/4", "e/5"}
+	for _, tc := range []struct {
+		name  string
+		repos []string
+		want  string
+	}{
+		{"none", nil, ""},
+		{"five", five, ""},
+		{"six", append(append([]string(nil), five...), "f/6"), "must name 1 to 5 repositories"},
+		{"an empty list", []string{}, "must name 1 to 5 repositories"},
+		{"one that is not a repository", []string{"acme"}, "must look like owner/name"},
+		{"one twice", []string{"acme/lib", "acme/lib"}, "repeats"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := base()
+			if tc.repos != nil {
+				s.ContextRepos = tc.repos
+			}
+			err := s.Validate()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want a refusal naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestSpecWithoutChangeSetIsByteIdentical: a launch that is in no change set
+// writes no change_set key at all, so its task.json is byte-for-byte what the
+// release before this field wrote — which is what keeps every launch outside a
+// change set readable by a runner older than the field, whose Parse refuses the
+// whole spec over an unknown key (Spec.ChangeSet, D616, D642).
+func TestSpecWithoutChangeSetIsByteIdentical(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261116-140000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"version":1,"run_id":"20261116-140000-abcd","repo":"owner/repo-a","ref":"main","task":"do it","overrides":{}}`
+	if string(data) != want {
+		t.Fatalf("a spec in no change set is not byte-identical to the previous release's:\n got %s\nwant %s", data, want)
+	}
+	s.ChangeSet = &ChangeSet{ID: "20261116-140000-abcd", Members: []ChangeSetMember{
+		{Repo: "owner/repo-a", RunID: "20261116-140000-abcd"},
+		{Repo: "owner/repo-b", RunID: "20261116-140001-beef"},
+	}}
+	data, err = json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = `"change_set":{"id":"20261116-140000-abcd","members":[{"repo":"owner/repo-a","run_id":"20261116-140000-abcd"},{"repo":"owner/repo-b","run_id":"20261116-140001-beef"}]}`
+	if !strings.Contains(string(data), key) {
+		t.Fatalf("a spec in a change set does not carry it:\n got %s\nwant %s", data, key)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("parse of %s: %v", data, err)
+	}
+	if back.ChangeSet == nil || back.ChangeSet.ID != s.ChangeSet.ID || len(back.ChangeSet.Members) != 2 {
+		t.Fatalf("ChangeSet round-tripped as %+v", back.ChangeSet)
+	}
+	if m, ok := back.ChangeSet.Member("owner/repo-b"); !ok || m.RunID != "20261116-140001-beef" {
+		t.Fatalf("Member(owner/repo-b) = %+v, %v", m, ok)
+	}
+	if _, ok := back.ChangeSet.Member("owner/repo-c"); ok {
+		t.Fatal("Member(owner/repo-c) found a member the set does not name")
+	}
+}
+
+// TestValidateChangeSet: a change set is at least two repositories and at most
+// MaxChangeSetMembers, each a canonical repository with a run ID, none twice,
+// the ID naming its first member's run, and the run's own repository in the
+// list. Defence in depth behind the launcher's flag, as the context_repos rule
+// is: a hand-built task.json is refused by the runner at bootstrap (D642).
+func TestValidateChangeSet(t *testing.T) {
+	base := func() *Spec {
+		return &Spec{Version: 1, RunID: "20261116-140000-abcd", Repo: "owner/repo-a", Ref: "main", Task: "do it"}
+	}
+	two := func() []ChangeSetMember {
+		return []ChangeSetMember{
+			{Repo: "owner/repo-a", RunID: "20261116-140000-abcd"},
+			{Repo: "owner/repo-b", RunID: "20261116-140001-beef"},
+		}
+	}
+	five := []ChangeSetMember{
+		{Repo: "owner/repo-a", RunID: "20261116-140000-abcd"},
+		{Repo: "a/1", RunID: "20261116-140001-beef"},
+		{Repo: "b/2", RunID: "20261116-140002-beef"},
+		{Repo: "c/3", RunID: "20261116-140003-beef"},
+		{Repo: "d/4", RunID: "20261116-140004-beef"},
+	}
+	for _, tc := range []struct {
+		name string
+		set  *ChangeSet
+		want string
+	}{
+		{"none", nil, ""},
+		{"two", &ChangeSet{ID: "20261116-140000-abcd", Members: two()}, ""},
+		{"five", &ChangeSet{ID: "20261116-140000-abcd", Members: five}, ""},
+		{"an id that is not a run id", &ChangeSet{ID: "cs-1", Members: two()}, "must look like 20260926-221530-a1b2"},
+		{"one member", &ChangeSet{ID: "20261116-140000-abcd", Members: two()[:1]}, "must name 2 to 5 members"},
+		{"six members", &ChangeSet{ID: "20261116-140000-abcd", Members: append(append([]ChangeSetMember(nil), five...), ChangeSetMember{Repo: "e/5", RunID: "20261116-140005-beef"})}, "must name 2 to 5 members"},
+		{"an empty member list", &ChangeSet{ID: "20261116-140000-abcd", Members: []ChangeSetMember{}}, "must name 2 to 5 members"},
+		{"an id that is not the first member's run", &ChangeSet{ID: "20261116-140000-ffff", Members: two()}, "is not its first member's run"},
+		{"a member that is not a repository", &ChangeSet{ID: "20261116-140000-abcd", Members: []ChangeSetMember{{Repo: "acme", RunID: "20261116-140000-abcd"}, {Repo: "owner/repo-b", RunID: "20261116-140001-beef"}}}, "must look like owner/name"},
+		{"a member with a bad run id", &ChangeSet{ID: "20261116-140000-abcd", Members: []ChangeSetMember{{Repo: "owner/repo-a", RunID: "run-1"}, {Repo: "owner/repo-b", RunID: "20261116-140001-beef"}}}, "must look like a run ID"},
+		{"a repository twice", &ChangeSet{ID: "20261116-140000-abcd", Members: []ChangeSetMember{{Repo: "owner/repo-a", RunID: "20261116-140000-abcd"}, {Repo: "owner/REPO-A", RunID: "20261116-140001-beef"}}}, "repeats owner/repo-a"},
+		{"this run's repository missing", &ChangeSet{ID: "20261116-140000-abcd", Members: []ChangeSetMember{{Repo: "owner/repo-b", RunID: "20261116-140000-abcd"}, {Repo: "owner/repo-c", RunID: "20261116-140001-beef"}}}, "does not name this run's repository owner/repo-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := base()
+			s.ChangeSet = tc.set
+			err := s.Validate()
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Validate = %v, want a refusal naming %q", err, tc.want)
+			}
+		})
 	}
 }
 

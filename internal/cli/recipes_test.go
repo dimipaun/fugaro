@@ -224,6 +224,7 @@ func TestRecipesLsLayers(t *testing.T) {
 		{Name: "default", Source: "catalog"},
 		{Name: "escalate", Source: "catalog"},
 		{Name: "lint-fix", Source: "catalog"},
+		{Name: "merge-judge", Source: "catalog"},
 		{Name: "pick", Source: "catalog"},
 		{Name: "premium", Source: "catalog"},
 		{Name: "rebase", Source: "catalog"},
@@ -232,6 +233,7 @@ func TestRecipesLsLayers(t *testing.T) {
 		{Name: "solo", Source: "catalog"},
 		{Name: "standard", Source: "catalog"},
 		{Name: "test-and-fix", Source: "catalog"},
+		{Name: "troubleshoot", Source: "catalog"},
 	}
 	if len(doc.Recipes) != len(want) {
 		t.Fatalf("rows = %+v", doc.Recipes)

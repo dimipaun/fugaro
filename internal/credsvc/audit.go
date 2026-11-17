@@ -250,6 +250,109 @@ const (
 	// identity and is not a job of this installation (callerWithoutJobPurpose,
 	// repositoryOnlyPurpose).
 	PurposeLabel = "label"
+	// PurposeBuildToken is the read-only installation token a catalog build is
+	// answered with (B1, D2301): ONE token covering the repositories of the
+	// entry its request named, which the service read from the published image
+	// map.
+	//
+	// The credential a line of this purpose names is the App key the service
+	// mints with — the same credential a mint, a read mint, a merge mint and a
+	// label call name — and the purpose is what tells the five acts apart. It is
+	// not a model credential of the cascade and has no tier, so a line for it
+	// names a credential and no tier (credentialWithoutTier).
+	//
+	// Its caller is the project's build identity (B5), which holds no run
+	// identity and is not a job of this installation (callerWithoutJobPurpose).
+	// Its line carries NO repository: the act is one token over several, and a
+	// line naming one of them would say the mint was for that one. So the
+	// purpose is deliberately not one of repositoryOnlyPurpose's, and its line
+	// names neither a repository nor a run.
+	PurposeBuildToken = "build_token"
+	// PurposeBuildGrant is the Bitbucket half of the same act (B1, R6, D2302):
+	// the service pairs a build's identity to the repositories of the entry its
+	// request names and answers a proxy grant, and the build holds no token at
+	// all — what a call presents at the proxy is the build's own ID token.
+	//
+	// It names no credential, and a grant that GRANTS therefore writes no
+	// StatusOK line: StatusOK requires a credential (checked), and this act
+	// issues none — the pairing is what the build's git traffic is served
+	// against. It is the slip grant's own shape (PurposeSlipGrant), and for the
+	// same reason. The purpose is still one this service has an act for, so
+	// every refusal of the Bitbucket half after the caller is verified is
+	// recorded with it, which is what an operator greps to see a build that
+	// could not be paired.
+	//
+	// Its caller is the project's build identity (callerWithoutJobPurpose) and
+	// its line carries no repository, for PurposeBuildToken's reason.
+	PurposeBuildGrant = "build_grant"
+	// PurposeBuildGit is one request of a BUILD's git traffic that this service
+	// forwarded to bitbucket.org (B1, rule 9): the data plane of the identity
+	// PurposeBuildGrant pairs. It is PurposeGit's act for a caller that is not
+	// a run — the build clones and fetches the entry's repositories, and the
+	// service forwards with the installation's own Bitbucket token (R9), which
+	// is the credential a line of this purpose names, and it names no tier
+	// (credentialWithoutTier) for the same reason.
+	//
+	// It is the purpose of a build's git calls and not of its Bitbucket REST
+	// ones (PurposeBuildBitbucket), so the operator's lines tell the two apart
+	// exactly as a run's do. Its caller is the project's build identity
+	// (callerWithoutJobPurpose, which is what admits a line with a caller and
+	// no job at all), and its line carries a repository and no run
+	// (repositoryOnlyPurpose): the repository is the pairing's own answer for
+	// this call — the one the call is served for — and a build holds no run
+	// identity for a line to name.
+	PurposeBuildGit = "build_git"
+	// PurposeBuildBitbucket is one Bitbucket REST call of a BUILD that this
+	// service forwarded to api.bitbucket.org (B1, rule 9), and it is
+	// PurposeBitbucketAPI's act for the same caller: the entry's build reads
+	// what its bake steps need, and a write of it is refused under the
+	// read-only identity the pairing is served as (proxyIdentity). Its
+	// credential and its other rules are PurposeBuildGit's.
+	PurposeBuildBitbucket = "build_bitbucket_api"
+	// PurposeBuildProxy is a BUILD's proxy call whose kind could not be named:
+	// the classification (internal/gitproxy) refused the path, so whether the
+	// call was git's or the Bitbucket API's is a fact this service does not
+	// have, and neither PurposeBuildGit nor PurposeBuildBitbucket may be
+	// written for it.
+	//
+	// It exists because the run route's answer to the same question — a
+	// purpose-less line — is not admissible for a build: the line's only
+	// subject is a verified CALLER (a build holds no run and no job), and
+	// naming a caller without a job is a purpose's own property
+	// (callerWithoutJobPurpose), so an empty purpose here would leave a refusal
+	// of a verified build recorded nowhere at all. What the line says instead
+	// is the act it was: a proxy call of the project's build identity, which is
+	// what an operator greps for a build that reached this route with a path
+	// the service does not classify.
+	//
+	// Its line names no credential (nothing was classified, so which of the two
+	// the call would have been served with is as unknown as its kind: see
+	// credentialWithoutTier), and it carries no repository for the same reason
+	// — the repository a build may even ask for is read off the classification
+	// the call did not get.
+	PurposeBuildProxy = "build_proxy"
+	// PurposeContextToken is the read-only installation token a RUN is answered
+	// with for its context repositories (C5b, D613): one token per App
+	// installation over the repositories the run's own identity names and
+	// reads, which is the reach the run has beyond its own repository and the
+	// only one it has.
+	//
+	// The credential a line of this purpose names is the App key the service
+	// mints with — the same credential a mint, a read mint, a merge mint, a
+	// label call and a build's mint name, and the purpose is what tells the six
+	// acts apart. It is not a model credential of the cascade and has no tier,
+	// so a line for it names a credential and no tier (credentialWithoutTier).
+	//
+	// Its caller IS a job of this installation — the launching run's — so it is
+	// not one of callerWithoutJobPurpose's, and its line carries the run and
+	// the job like a mint's. It carries the run's OWN repository and never one
+	// of the context repositories: which repositories a call was served for is
+	// a property of the call and not of the run, and a line that named one of
+	// them would read as a mint for that repository's own run. The refusal a
+	// call is refused for names the repository it was refused for, and the
+	// purpose is what tells an operator that a run read beyond its own
+	// repository at that instant.
+	PurposeContextToken = "context_token"
 )
 
 // ValidPurpose reports whether purpose is one this service issues a credential
@@ -257,7 +360,9 @@ const (
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
-		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel:
+		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel,
+		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
+		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken:
 		return true
 	}
 	return false
@@ -271,10 +376,15 @@ func ValidPurpose(purpose string) bool {
 // for a Bitbucket token, the bundle's Bitbucket token a git or a
 // Bitbucket-API line names (B1.5), and the container a workflow-secrets line
 // names (B3.2) — the Secret Manager entry a workflow secret's value stands in,
-// which the cascade never selected and which is therefore at no tier. None is a
+// which the cascade never selected and which is therefore at no tier — and the
+// same key again under a build's mint (B1, PurposeBuildToken). None is a
 // model credential, none is spent on a call, and none therefore has a tier — so
 // a line of one of these purposes names a credential and NO tier, and a tier on
 // it is a tier this service never assigned.
+//
+// The build's GRANT (PurposeBuildGrant) is deliberately not one of these: it
+// names no credential at all — a grant issues none — so the both-or-neither
+// rule below holds its two empty fields and needs no exemption.
 //
 // It is one function because the two rules that read it (the tier refusal and
 // the both-or-neither rule, checked) have to agree about who the exemption
@@ -285,7 +395,10 @@ func credentialWithoutTier(purpose string) bool {
 		purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeGit ||
 		purpose == PurposeBitbucketAPI || purpose == PurposeMergeMint ||
-		purpose == PurposeWorkflowSecret || purpose == PurposeLabel
+		purpose == PurposeWorkflowSecret || purpose == PurposeLabel ||
+		purpose == PurposeBuildToken || purpose == PurposeBuildGit ||
+		purpose == PurposeBuildBitbucket || purpose == PurposeBuildProxy ||
+		purpose == PurposeContextToken
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
@@ -298,11 +411,17 @@ func credentialWithoutTier(purpose string) bool {
 // rule and the StatusOK line's "a run and a job, or neither" rule are relaxed
 // for them and for no other purpose — a job purpose that dropped its job is
 // still refused, which is what TestReadMintAuditShapeRefusedUnderJobPurposes
-// pins for the shape BB4 adds.
+// pins for the shape BB4 adds. The project's build identity is the sixth of
+// them (B1): it is the account a catalog build runs as, and it holds no run
+// identity either, so every purpose of its own is here — the two the build
+// route answers under and the three a build's proxy calls are recorded under.
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
-		purpose == PurposeMergeMint || purpose == PurposeLabel
+		purpose == PurposeMergeMint || purpose == PurposeLabel ||
+		purpose == PurposeBuildToken || purpose == PurposeBuildGrant ||
+		purpose == PurposeBuildGit || purpose == PurposeBuildBitbucket ||
+		purpose == PurposeBuildProxy
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
@@ -312,9 +431,18 @@ func callerWithoutJobPurpose(purpose string) bool {
 // — so the both-or-neither rule that ties a repository to its run (checked) is
 // relaxed for these purposes alone, and a repository recorded under any other
 // purpose is refused exactly as it is today.
+//
+// A build's proxy purposes are the third group (B1, rule 9): the repository
+// their lines carry is the pairing's answer for that call, and a build holds no
+// run identity for a line to tie it to — which is the whole shape of the build
+// class, and why its two issuing purposes (PurposeBuildToken,
+// PurposeBuildGrant) are deliberately NOT here: their acts are one credential
+// over several repositories, or no credential at all.
 func repositoryOnlyPurpose(purpose string) bool {
 	return purpose == PurposeBitbucketRead || purpose == PurposeGitHubRead ||
-		purpose == PurposeMergeMint || purpose == PurposeLabel
+		purpose == PurposeMergeMint || purpose == PurposeLabel ||
+		purpose == PurposeBuildGit || purpose == PurposeBuildBitbucket ||
+		purpose == PurposeBuildProxy
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —

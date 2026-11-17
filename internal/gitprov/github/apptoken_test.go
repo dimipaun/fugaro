@@ -13,6 +13,7 @@ import (
 	"maps"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -218,6 +219,55 @@ func TestMintInstallationTokenBuildPermissions(t *testing.T) {
 	}
 }
 
+// TestMintRepositoriesToken: one token over two repositories (D2301). The
+// fixture pins the whole of the mint — the installation found through one of
+// the repositories, and ONE access_tokens request whose repositories are
+// exactly the two asked for — so a body that covered one repository, or the
+// owner's every repository, fails here rather than at a build that cloned
+// something it was not given.
+func TestMintRepositoriesToken(t *testing.T) {
+	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "build_repositories_token.json"))
+	tok, exp, err := MintRepositoriesToken(context.Background(), Options{
+		Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}, []string{"web", "api"}, BuildTokenPermissions())
+	if err != nil || tok != "ghs_fixture_build_token" || !exp.Equal(now.Add(time.Hour)) {
+		t.Fatalf("MintRepositoriesToken = %q %s %v", tok, exp, err)
+	}
+	// The three shapes this function refuses rather than sending to GitHub: a
+	// name that is an owner/name pair (the endpoint takes names within one
+	// owner), the same repository twice, and no repository at all. Each is a
+	// call whose answer would not be the reach the caller asked for.
+	for _, tc := range []struct {
+		name  string
+		repos []string
+	}{
+		{name: "owner/name is not a name", repos: []string{"acme/web"}},
+		{name: "the same repository twice", repos: []string{"web", "web"}},
+		{name: "no repository", repos: nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, err := MintRepositoriesToken(context.Background(), Options{
+				Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+				HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+			}, tc.repos, BuildTokenPermissions()); err == nil {
+				t.Error("a request that names no mintable repository was minted")
+			}
+		})
+	}
+	if _, _, err := MintRepositoriesToken(context.Background(), Options{
+		Owner: "acme", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL, Now: func() time.Time { return now },
+	}, []string{"web"}, nil); err == nil {
+		t.Error("minted without permissions")
+	}
+	if _, _, err := MintRepositoriesToken(context.Background(), Options{
+		AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL, Now: func() time.Time { return now },
+	}, []string{"web"}, BuildTokenPermissions()); err == nil {
+		t.Error("minted with no owner")
+	}
+}
+
 // TestRevokeInstallationToken: the token's own end. GitHub revokes an
 // installation token at DELETE /installation/token, authenticated with the
 // token itself -- the App's JWT is not needed, and the endpoint revokes the
@@ -406,5 +456,152 @@ func TestPersonReadPermissionsCoverAFileRead(t *testing.T) {
 	}
 	if maps.Equal(CoordinatorTokenPermissions(), want) {
 		t.Error("the coordinator's set is the person read set: the two are two declarations, so a change to either cannot widen the other")
+	}
+}
+
+// TestContextTokenIsReadOnly is C5b's red step (D613): a run's context
+// repositories are READ, and the token that reads them carries the two
+// permissions a read needs and no third.
+//
+// Two halves, and the second is what makes the first a boundary rather than a
+// coincidence. The set is pinned as a map — contents: read and metadata: read,
+// nothing else, and a copy, so a caller mutating what it was handed cannot
+// widen what the next caller asks GitHub for. And the mint itself is driven
+// against a fixture whose recorded bodies are exactly that set (the fixture
+// server refuses a request body that is not the one it holds), so the read-only
+// set is not merely declared here but is what reaches the API: a change to
+// ContextTokenPermissions that left this test's map alone would still fail on
+// the fixture, and a change that widened the map fails on the map.
+//
+// What it is NOT is any other class's set. A context token is the run's own
+// reach beyond its repository and not the build's, the shadow's, the
+// coordinator's or a person's read — each is a declaration of its own, and
+// reusing one would make a change to that one widen this.
+func TestContextTokenIsReadOnly(t *testing.T) {
+	want := map[string]string{"contents": "read", "metadata": "read"}
+	perms := ContextTokenPermissions()
+	if !maps.Equal(perms, want) {
+		t.Fatalf("ContextTokenPermissions() = %v, want %v", perms, want)
+	}
+	for name, level := range perms {
+		if level != "read" {
+			t.Errorf("the context mint asks GitHub for %s: %s, and a run reads its context repositories and never writes them", name, level)
+		}
+	}
+	perms["contents"] = "write"
+	perms["issues"] = "read"
+	if again := ContextTokenPermissions(); !maps.Equal(again, want) {
+		t.Errorf("ContextTokenPermissions() after a caller mutated its copy = %v, want %v", again, want)
+	}
+	for _, other := range []struct {
+		name string
+		set  map[string]string
+	}{
+		{name: "a run's", set: RunTokenPermissions()},
+		{name: "the coordinator's", set: CoordinatorTokenPermissions()},
+		{name: "a review's", set: ReviewTokenPermissions()},
+		{name: "a person's read", set: PersonReadTokenPermissions()},
+	} {
+		if maps.Equal(other.set, want) {
+			t.Errorf("the context mint's set is %s set: the two are two declarations, so a change to either cannot widen the other", other.name)
+		}
+	}
+	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "context_token.json"))
+	tokens, err := MintContextTokens(context.Background(), Options{
+		AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}, []string{"acme/web", "acme/api"}, ContextTokenPermissions())
+	if err != nil {
+		t.Fatalf("MintContextTokens: %v", err)
+	}
+	// The fixture's own request body is the read-only set, so reaching here is
+	// GitHub having been asked for exactly it — and the answer is that token,
+	// named for the repositories it covers, in the caller's order.
+	if len(tokens) != 1 || tokens[0].Token != "ghs_fixture_context_token_1" ||
+		!tokens[0].ExpiresAt.Equal(now.Add(time.Hour)) {
+		t.Fatalf("MintContextTokens = %+v, want the fixture's one token expiring %s", tokens, now.Add(time.Hour))
+	}
+	if want := []string{"acme/web", "acme/api"}; !slices.Equal(tokens[0].Repositories, want) {
+		t.Errorf("the token covers %v, want %v", tokens[0].Repositories, want)
+	}
+	// A set the caller must supply, and an App that must be named: a context
+	// mint that asked for no permission would be a token with GitHub's own
+	// default reach, which is wider than any set here.
+	if _, err := MintContextTokens(context.Background(), Options{
+		AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL, Now: func() time.Time { return now },
+	}, []string{"acme/web"}, nil); err == nil {
+		t.Error("minted without permissions")
+	}
+	if _, err := MintContextTokens(context.Background(), Options{
+		PrivateKey: key(t), BaseURL: srv.URL, Now: func() time.Time { return now },
+	}, []string{"acme/web"}, ContextTokenPermissions()); err == nil {
+		t.Error("minted with no App ID")
+	}
+}
+
+// TestContextTokenOnePerInstallation: one token per App INSTALLATION, because
+// that is the granularity GitHub's API has — a token is minted at
+// /app/installations/{id}/access_tokens and covers repositories within one
+// owner — and a run's context list may name repositories under two owners
+// (C5a admits five, and nothing in a task says they share an owner).
+//
+// So a list of three repositories under two owners is two tokens, each scoped
+// to its own owner's repositories, and each mint is its own installation lookup
+// and its own access_tokens POST — which is what the fixture's strict order
+// proves: four exchanges in the order this mint makes them, and a fifth request
+// of any kind fails the test as an unused exchange or an unexpected one.
+//
+// The order of the answer is the caller's list's, and the repositories of each
+// token are the caller's spelling of them: a caller matching the answer to its
+// own list must not have to know how the grouping worked.
+func TestContextTokenOnePerInstallation(t *testing.T) {
+	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "context_token_two_installations.json"))
+	tokens, err := MintContextTokens(context.Background(), Options{
+		AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}, []string{"acme/web", "north/iceberg", "acme/api"}, ContextTokenPermissions())
+	if err != nil {
+		t.Fatalf("MintContextTokens: %v", err)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("MintContextTokens returned %d tokens, want one per installation (2): %+v", len(tokens), tokens)
+	}
+	if tokens[0].Token != "ghs_fixture_context_token_1" || tokens[1].Token != "ghs_fixture_context_token_2" {
+		t.Errorf("the tokens are %q and %q, want the fake's two", tokens[0].Token, tokens[1].Token)
+	}
+	// The first group is the owner the list named first, and its repositories
+	// are that owner's two in the order they appeared — the third name of the
+	// list belongs to the second group and not to the first.
+	if want := []string{"acme/web", "acme/api"}; !slices.Equal(tokens[0].Repositories, want) {
+		t.Errorf("the first token covers %v, want %v", tokens[0].Repositories, want)
+	}
+	if want := []string{"north/iceberg"}; !slices.Equal(tokens[1].Repositories, want) {
+		t.Errorf("the second token covers %v, want %v", tokens[1].Repositories, want)
+	}
+	// What a context list may not be: an owner with no repository, a name that
+	// is not owner/name, and the same repository twice. Each is a list whose
+	// grouping could not be undone by the caller reading the answer, and each
+	// is refused before GitHub is reached — the fixture would see a request it
+	// does not hold if any of them got through.
+	for _, tc := range []struct {
+		name  string
+		repos []string
+	}{
+		{name: "no repository", repos: nil},
+		{name: "an owner with no repository", repos: []string{"acme/"}},
+		{name: "a bare name", repos: []string{"web"}},
+		{name: "a nested group", repos: []string{"acme/web/sub"}},
+		{name: "the same repository twice", repos: []string{"acme/web", "acme/web"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := MintContextTokens(context.Background(), Options{
+				AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+				HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+			}, tc.repos, ContextTokenPermissions()); err == nil {
+				t.Error("a list that names no mintable context repository was minted")
+			}
+		})
 	}
 }

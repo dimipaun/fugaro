@@ -198,7 +198,9 @@ write_fake_fugaro() { # dir
 # asks "Type the GCP project's ID: " and reads the line the pty wrote — then
 # writes the project, its buckets, its job, its secrets, its images, its billing
 # link and its Firestore location into $FAKE27_DIR/state, so every read-back the
-# check makes is a reading of what this fake really leaves behind.
+# check makes is a reading of what this fake really leaves behind. With a
+# terminal it also holds the wizard's rigor question against the run, which is
+# the one question with no suggestion (rigor_or_wait below).
 #
 # `version`, `update` and `doctor` answer as the check needs: a release number, a
 # stage list that reads `No changes` on the second converge, and doctor's own
@@ -224,6 +226,27 @@ has() { # flag
   shift
   for a in "$@"; do [ "$a" = "$want" ] && return 0; done
   return 1
+}
+# rigor_or_wait MODE ARGS...: the wizard's rigor question (task W, D900), which
+# is the ONE question with no suggestion — Enter is not an answer, so a run that
+# reaches it without --rigor waits there until CHECK27-RUNNER kills it at the
+# mode's own timeout, and the row it makes (the plan-only row, the wizard row) is
+# the finding. This fake models that wait rather than the flag, so a check that
+# dropped --rigor is caught by a row instead of passing on a silence.
+# FAKE27_NO_RIGOR=<MODE> makes the fake treat that run as if the flag were not
+# there, which is how a case proves this is a guard and not a decoration.
+#
+# Only a run at a terminal is held here: one with no terminal is REFUSED by the
+# fake's own tty check instead, naming the flags it cannot answer with, which is
+# what the real CLI does with it.
+rigor_or_wait() { # mode args...
+  local mode=$1
+  shift
+  if [ "${FAKE27_NO_RIGOR:-}" = "$mode" ] || [ -z "$(flag --rigor "$@" || true)" ]; then
+    printf "the project's rigor mode decides how much review every run of it gets; type one of them (this is the one question of the wizard with no suggestion, so Enter is not an answer):\n"
+    printf "Type the project's rigor mode: "
+    sleep 600
+  fi
 }
 # row_line STATUS NAME [DETAIL], one plan-view row as initflow draws it
 # (loop.go's row): two spaces, the status in a column of 14, the name in one of
@@ -340,6 +363,12 @@ version)
   ;;
 setup)
   if has --plan-only "$@"; then
+    # A plan-only run is a first run like any other and asks the wizard's
+    # questions too, the rigor one among them — the check answers it with
+    # --rigor pro, and a run that reaches the question without it waits here.
+    if [ "$tty" = yes ]; then
+      rigor_or_wait plan "$@"
+    fi
     if [ -n "${FAKE27_PLAN_NO_STAGES:-}" ]; then
       row_line 'will do' installation
     else
@@ -372,6 +401,8 @@ setup)
     printf '%s\n' "$answer" >"$state/id-typed"
     printf 'CONFIRM: creating %s, and adding Firebase to it\n' "$answer"
   fi
+  # After the project's ID, where the real wizard asks it: the rigor question.
+  rigor_or_wait create "$@"
   # The wizard's own billing banner, with the account in it: a real create run
   # with `--link-billing` prints that confirmation (step 12), after its question
   # and before it creates anything. It is the account ID's own way into a
@@ -696,12 +727,19 @@ test_the_create_run_is_given_a_real_terminal() {
   setup_case tty
   run27_default
   expect_status "$status" 0 "a full run"
-  local create neg up up2
+  local create plan neg up up2
   # `|| true` on every read of the fake's call log: pipefail plus `set -e` would
   # otherwise end the suite at the assignment when a call is missing, and the
   # `expect_contains` below is what has to say so.
   create=$(grep 'setup --name' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$create" "tty=yes" "the create run is at a real terminal"
+  # The wizard's rigor question has no suggestion, so BOTH first runs have to
+  # answer it with the flag: the create run and the plan-only run (which the fake
+  # holds at the question like the real CLI, so a missing flag is a killed run
+  # and a FAILed row rather than a quiet pass).
+  plan=$(grep 'setup --create-project' "$dir/state/calls.fugaro" | head -1 || true)
+  expect_contains "$plan" "--rigor pro" "the plan-only run's rigor answer"
+  expect_contains "$create" "--rigor pro" "the create run's rigor answer"
   neg=$(grep -- '--yes' "$dir/state/calls.fugaro" | head -1 || true)
   expect_contains "$neg" "tty=no" "the negative run has no terminal at all"
   # The two updates are told apart on purpose: the FIRST is the owner's own run
@@ -853,6 +891,32 @@ test_a_plan_only_that_blocks_is_killed_and_fails() {
   expect_status "$status" 2 "a plan-only run that blocked"
   expect_contains "$(fact_line plan-only)" "FAIL" "the plan-only row"
   expect_contains "$(fact_line plan-only)" "blocked waiting for an answer" "the row says what a wait means"
+}
+
+# The rigor question is the wizard's ONE question with no suggestion, so a run
+# that reaches it with nothing typed under it waits there until the runner kills
+# it. Both first runs are answered with --rigor pro, and these two cases are what
+# says the flag is what keeps them from hanging: the fake is made to behave as if
+# it were not passed, and the row a real hang makes has to be the one that comes
+# back — the plan-only row and the wizard row, each naming the kill.
+test_a_plan_only_run_left_at_the_rigor_question_is_a_fail() {
+  setup_case plan-no-rigor
+  RUN27_ENV=(FAKE27_NO_RIGOR=plan)
+  PLAN_SECONDS=2
+  run27_default
+  expect_status "$status" 2 "a plan-only run left at the rigor question"
+  expect_contains "$(fact_line plan-only)" "FAIL" "the plan-only row"
+  expect_contains "$(fact_line plan-only)" "blocked waiting for an answer" "the row says what a wait means"
+}
+
+test_a_create_run_left_at_the_rigor_question_is_a_fail() {
+  setup_case create-no-rigor
+  RUN27_ENV=(FAKE27_NO_RIGOR=create)
+  CREATE_SECONDS=2
+  run27_default
+  expect_status "$status" 2 "a create run left at the rigor question"
+  expect_contains "$(fact_line wizard)" "FAIL" "the wizard row"
+  expect_contains "$(fact_line wizard)" "was killed" "the row says the run was killed"
 }
 
 test_the_negative_that_is_not_refused_is_a_fail() {
@@ -1369,6 +1433,38 @@ test_a_run_records_its_project_and_the_next_one_refuses_another() {
   expect_no_calls "the second run makes no tool call"
 }
 
+test_a_run_adds_its_project_to_the_sections_own_vars_env() {
+  setup_case root-project-append
+  # The file the section's own guard block writes is the file a person who
+  # followed the steps by hand already has, and it records C= alone
+  # (`[ -f "$CHK27/vars.env" ] || printf 'C=%s\n'` in the block). The check's own
+  # write must ADD the project to that file rather than leave it as the block
+  # left it: that line is the whole of what arms the guard for the next run, and
+  # a case that only ever starts from no file cannot see it — the fresh path
+  # writes the file either way, so a write that replaced the block's file and
+  # dropped the project would still pass there.
+  mkdir -p "$dir/root"
+  printf 'C=%s\n' "$dir/root/config" >"$dir/root/vars.env"
+  run27_default
+  expect_status "$status" 0 "a run over the section's own vars.env"
+  expect_no_fails "a run over the section's own vars.env"
+  local recorded
+  recorded=$(cat "$dir/root/vars.env")
+  expect_contains "$recorded" "CHK27_PROJECT=$PROJECT" \
+    "the project the run added to the file the section's block wrote"
+  # C= is what the block's own write puts there, and the check's file is the
+  # block's file: one that led with the project would be a second shape for a
+  # file two writers share.
+  [ "$(printf '%s\n' "$recorded" | head -1)" = "C=$dir/root/config" ] ||
+    fail "the run's write moved C= off the first line of $dir/root/vars.env: got $(printf '%s' "$recorded" | tr '\n' '|')"
+  : >"$dir/state/calls.gcloud"
+  : >"$dir/state/calls.fugaro"
+  run27 --project fugaro-live-chk27-b --billing-account "$ACCOUNT" --repo "$REPO"
+  expect_status "$status" 2 "a second run against another throwaway, over the file the first one armed"
+  expect_contains "$out" "records CHK27_PROJECT=$PROJECT" "the row names the project the first run added"
+  expect_no_calls "the armed guard stops the second run before any tool call"
+}
+
 test_the_negative_uses_a_config_root_of_its_own() {
   setup_case neg-root
   run27_default
@@ -1469,6 +1565,8 @@ t test_a_dry_run_that_is_refused_records_no_dry_run_row
 t test_a_plan_only_run_that_creates_the_project_is_a_fail
 t test_a_plan_only_run_that_prints_no_stages_is_a_fail
 t test_a_plan_only_that_blocks_is_killed_and_fails
+t test_a_plan_only_run_left_at_the_rigor_question_is_a_fail
+t test_a_create_run_left_at_the_rigor_question_is_a_fail
 t test_the_negative_that_is_not_refused_is_a_fail
 t test_the_negative_that_created_the_id_is_a_fail
 t test_a_create_that_never_asks_the_project_id_is_a_fail
@@ -1509,6 +1607,7 @@ t test_a_vars_env_recording_the_same_project_is_accepted
 t test_a_vars_env_naming_another_project_is_refused
 t test_a_vars_env_recording_only_the_root_is_accepted
 t test_a_run_records_its_project_and_the_next_one_refuses_another
+t test_a_run_adds_its_project_to_the_sections_own_vars_env
 t test_the_negative_uses_a_config_root_of_its_own
 t test_usage_and_arguments
 t test_a_region_that_is_not_one_is_refused

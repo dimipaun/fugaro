@@ -62,7 +62,11 @@ installation on it.
 
 It writes claude_accounts.<name>.allow_data_to — the repositories the account's
 token may be used by, and the field every other rule is built on — and adds the
-name to one profile's claude_accounts, so the profile's jobs may serve it.
+name to one profile's claude_accounts, so the profile's jobs may serve it. A key
+credential (--type openrouter or anthropic) is added to no profile's list and
+gets no job of its own: that list is what serves an account's Claude OAuth
+token, and a key credential's value is stored under the credential's own derived
+secret name, which no job mounts yet.
 
 --repos defaults to this checkout's origin repository. A profile that lists
 accounts must write its own allow_repos, and every account it lists must cover
@@ -73,18 +77,29 @@ silently is what that rule exists to prevent.
 --type declares the name as a typed credential as well, in this prefix's
 credentials block: the entry that lets a pool list the name as a member
 (fugaro accounts pool add). claude-oauth is the type this command's token step
-serves. vertex is built in and is never defined, and the two types the spec
-lists as future work are refused in words that say so. A type whose key no
-command stores yet is refused too: the entry would name a credential no run
-could authenticate with. Without the flag nothing but claude_accounts and the
-profile is written, which is what this command has always done.
+serves; openrouter and anthropic are the two key types, and a key is read the
+same way the token is — from stdin, or at the hidden prompt on your terminal —
+and stored project-wide under the credential's own derived secret name
+(credential-<name>-key) rather than the account's, so --profile is refused with
+them, and so is a name a profile already lists: a profile's list is what deploys
+the job mounting the account's token, and that job would read a container
+nothing writes. Take the name off that list first (fugaro accounts rm <name>
+--profile <profile>) or declare the key credential under another name. vertex is
+built in and is never
+defined, and the two types the spec lists as future work are refused in words
+that say so. What carries a key credential's key to a model call is not
+installed by this command yet: the credential is declared and its key stored,
+and a run serves it once that half ships. Without the flag nothing but
+claude_accounts and the profile is written, which is what this command has
+always done.
 
 Then it converges, in one command and behind the one sentence it prints: the
-token is stored project-wide as a new version of the account's own secret, the
-account's broken mark is cleared, and the publisher, the job set and this
-checkout's repository root are converged — the same stages fugaro update runs,
-invoked here rather than forked. It ends on the line that says what is left,
-which is a fugaro run and never an update.
+value is stored project-wide as a new version of the secret the name derives
+(the account's own Claude OAuth token, or, with --type, the credential's own
+key), the account's broken mark is cleared, and the publisher, the job set and
+this checkout's repository root are converged — the same stages fugaro update
+runs, invoked here rather than forked. It ends on the line that says what is
+left, which is a fugaro run and never an update.
 
 --claude runs Anthropic's own claude setup-token on your own terminal first,
 so the login is the one you would have run yourself: it gets your stdin, stdout
@@ -113,9 +128,9 @@ step no plan admits.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.repos, "repos", "", "the repositories the token may be used by, as owner/name,owner/name (default: this checkout's origin)")
-	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one)")
+	f.StringVar(&o.profile, "profile", "", "the profile whose claude_accounts gains the name (default: the only profile, when there is exactly one); refused for a key credential, which is added to no profile's list")
 	f.BoolVar(&o.claude, "claude", false, "run Anthropic's own claude setup-token login on this terminal first, then paste the token at the hidden prompt")
-	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth, the one type this command's token step serves (without it, the name is declared in claude_accounts alone, as it always was)")
+	f.StringVar(&o.typ, "type", "", "declare the name as a typed credential too, so a craft or a pool may spend it: claude-oauth (this command's OAuth token step), or a key type (openrouter or anthropic), whose value is read the same way and stored under the credential's own derived secret name (without it, the name is declared in claude_accounts alone, as it always was)")
 	f.BoolVar(&o.ask, "ask", false, "in a project whose marks say it is managed, ask the confirmation this declaration would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed")
 	return cmd
 }
@@ -137,20 +152,13 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// (config.ValidateCredentials): the sentence for a type that does not ship,
 	// for the built-in vertex and for an empty or unknown type is the one the
 	// loader prints for the same entry in the file, so the two cannot part
-	// company.
+	// company. The three types it admits are the three this command can store a
+	// value for: the Claude OAuth token of the account below, and the key of
+	// the two types whose value lands under the credential's own derived name
+	// (accountsAddSecretName, MC22).
 	if o.typ != "" {
 		if ps := config.ValidateCredentials([]config.Credential{{Name: name, Type: o.typ}}); len(ps) > 0 {
 			return userErr("%s", ps[0].Message)
-		}
-		// Only the Claude OAuth type has a secret this command can store, and a
-		// credential entry is inert config: nothing would be written that
-		// authenticates, and a pool naming the name would be admitted at load
-		// (config.ValidatePools sees the entry) and fail at a run. So a type
-		// whose key has no command yet is refused here, before the file is
-		// read, rather than half-declared.
-		if o.typ != config.CredentialTypeClaudeOAuth {
-			return userErr("--type %s: a credential of this type authenticates with a key, and no command stores one under a credential's own name yet — this command's secret step is the Claude OAuth token's, and a %s entry written without one would be a name no run could authenticate with and a pool would still be allowed to list; declare it when that path ships (today a key is the project's, and fugaro secrets set stores it there); nothing was written",
-				pluginwire.Printable(o.typ), pluginwire.Printable(o.typ))
 		}
 	}
 
@@ -183,8 +191,61 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	if err != nil {
 		return err
 	}
-	profile, err := accountsAddProfile(o.profile, lc)
-	if err != nil {
+	// A key credential's name is NOT a Claude account token, and the profile's
+	// list is the list that serves one: profiles.<p>.claude_accounts is what
+	// deploys the per-account job whose environment carries
+	// CLAUDE_CODE_OAUTH_TOKEN, and what publishes accounts.<name>.allow_repos at
+	// all (projectpolicy.DeriveAccounts derives that block from these lists).
+	// The container such a job mounts — claude-oauth-token-<name> — is never
+	// written for a key credential (accountsAddSecretName: its value lives under
+	// the credential's own derived name), so listing the name here would deploy a
+	// job that reads an empty token, advertise the name in `fugaro accounts ls`
+	// and in the node as a run's account, and leave doctor's own
+	// claude-accounts-stored check with a fix line no run of it could ever clear.
+	// What bounds a key credential is claude_accounts.<name>.allow_data_to, which
+	// the edit below writes, and what carries its value to a call is the serving
+	// half of its type (D1670, MC23) — never a job of the account's own.
+	typ := accountsAddSecretType(lc, name, o.typ)
+	// --claude is refused for a key credential, and it is refused for the VALUE
+	// and not for the terminal: the login is Anthropic's, run so that the token
+	// pasted at the hidden prompt below is the one it just printed
+	// (accounts_add_login.go). Against a key credential that token is not the
+	// credential's — the value here is the key its provider issued — so the run
+	// would store a Claude OAuth token under credential-<name>-key as if it were
+	// that key, and neither the container nor the credential's own reader could
+	// tell the two apart afterwards. The type is the resolved one and not the
+	// flag's (accountsAddSecretType): a re-run of an account an earlier run
+	// declared a key credential carries no --type and is refused here too.
+	if o.claude && config.KeyCredentialType(typ) {
+		return userErr("--claude runs Anthropic's own claude setup-token login and then stores the token it printed, and %s is a key credential (%s): the value this command stores for it is the key its provider issued, which would be replaced by the login's Claude token under %s, and nothing could tell the two apart afterwards. Run this again without --claude, and paste the key its provider issued at the same hidden prompt; nothing was written",
+			pluginwire.Printable(name), pluginwire.Printable(typ), config.CredentialSecret(name))
+	}
+	profile := ""
+	if config.KeyCredentialType(typ) {
+		if o.profile != "" {
+			return userErr("--profile %s: profiles.<p>.claude_accounts serves a Claude account TOKEN to a run, and %s is a key credential — its value is stored under %s and no job mounts it as CLAUDE_CODE_OAUTH_TOKEN, so this would deploy a job reading an empty token. What bounds the key is claude_accounts.%s.allow_data_to, which this command writes either way; drop --profile",
+				pluginwire.Printable(o.profile), pluginwire.Printable(name), config.CredentialSecret(name), pluginwire.Printable(name))
+		}
+		// The other half of that state, and the one no flag of this run shows: a
+		// name a profile ALREADY lists is the file's, not this run's, so refusing
+		// --profile alone would leave the very job the paragraph above is about
+		// deployable. The edit below writes claude_accounts.<name>.allow_data_to
+		// and nothing else, so the entry lands beside a list that still serves the
+		// name: the node keeps accounts.<name>, the job set keeps the variant, and
+		// where the name was an OAuth account before — the ordinary conversion
+		// this path exists for — claude-oauth-token-<name> still holds a version,
+		// so a run launched onto that job authenticates as a token the owner has
+		// just declared to be a provider's key. A refusal printed with the fix
+		// asks nothing (no-prompt spec rule 1), and the fix is the one command
+		// that edits that list alone (`accounts rm --profile`, which the list's
+		// owner runs at their own terminal): `settings set` has no key for a
+		// profile's claude_accounts — the registry lists the name and the command
+		// refuses it — so naming one would be a remedy nobody can carry out.
+		if serving := config.ClaudeAccountProfile(lc.Profiles, name); serving != "" {
+			return userErr("profiles.%s.claude_accounts already lists %s, and that list is what serves a Claude account TOKEN to a run: %s is a key credential, whose value is the key its provider issued under %s, so the job it deploys would mount claude-oauth-token-%s — a container nothing writes for it — and a run launched on that job would authenticate as whatever that container still holds. Take the name out of that profile's list first (`fugaro accounts rm %s --profile %s`), or declare the key credential under another name; nothing was written",
+				pluginwire.Printable(serving), pluginwire.Printable(name), pluginwire.Printable(name), config.CredentialSecret(name), pluginwire.Printable(name), pluginwire.Printable(name), pluginwire.Printable(serving))
+		}
+	} else if profile, err = accountsAddProfile(o.profile, lc); err != nil {
 		return err
 	}
 	old, err := settingsReadDocument(settingsTarget{kind: settingsDocLocal, path: sel.Path})
@@ -334,15 +395,23 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	// the declaration and nothing else, and with the sentence naming the command
 	// its owner runs at their own terminal (spec §4.2).
 	if marker := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); marker != "" {
-		return accountsAddTokenStep(name)
+		return accountsAddTokenStep(name, typ)
 	}
 	if profile == "" {
-		fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)
+		if config.KeyCredentialType(typ) {
+			serves := "the credentials service, which reads the value from the bundle `fugaro creds set` writes"
+			if config.CredentialServingPath(typ) == config.CredentialPathRunner {
+				serves = "the run's own gateway, whose job of the provider of that name mounts the key once that provider entry exists"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "no job is deployed for %s: a key credential is not a run's Claude account token, so no profile lists it — what carries its key to a call is the half its type is served by: %s\n", pluginwire.Printable(name), serves)
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)
+		}
 	}
 	// The converge (spec §2.2 steps 5–8). It runs on the file the edit above
 	// wrote — the stages read it, and the account is in it — and on its bytes,
 	// which the engines take for the same reason `fugaro update` does.
-	return accountsAddConverge(cmd.Context(), cmd, after, sel.Path, next, name, profile, repos)
+	return accountsAddConverge(cmd.Context(), cmd, after, sel.Path, next, name, o.typ, profile, repos)
 }
 
 // accountsAddRepos is the repository list: the flag, or the checkout the
@@ -387,6 +456,40 @@ func accountsAddCredentialType(lc *localcfg.Config, name string) string {
 		}
 	}
 	return ""
+}
+
+// accountsAddSecretType is the type whose value this run stores: the --type the
+// command was given, or, when it was given none, the type the config already
+// declares the name with (accountsAddCredentialType). The second half is not a
+// convenience. A re-run carries no --type for the ordinary reasons — a
+// rotation, and the fix line `fugaro doctor` prints (doctorAccountsAdd), which
+// names no type — and what such a run meets is a name a previous run already
+// declared a key credential: deciding from the empty flag alone would store
+// that credential's key under the account's own claude-oauth-token-<name>,
+// which is the container the account's job mounts as CLAUDE_CODE_OAUTH_TOKEN.
+// The container belongs to the credential, whatever this run's flag said.
+func accountsAddSecretType(lc *localcfg.Config, name, typ string) string {
+	if typ != "" {
+		return typ
+	}
+	return accountsAddCredentialType(lc, name)
+}
+
+// accountsAddSecretName is the secret that type's value is stored under: the
+// account's own derived Claude OAuth token name for claude-oauth — and for a
+// name no credential claims, which is the default account this command has
+// always written — or the credential's own derived key name for the two key
+// types (MC22). The two are different credentials under one name: a key
+// credential is not the account's token, and a value stored under the account's
+// name would be handed to every job that already mounts it. Which derivation
+// each type's own reader uses is the one config keeps (config.CredentialSecret
+// beside config.ClaudeAccountSecret), so the store here and a later read of the
+// same value cannot name two secrets.
+func accountsAddSecretName(name, typ string) string {
+	if config.KeyCredentialType(typ) {
+		return config.CredentialSecret(name)
+	}
+	return config.ClaudeAccountSecret(name)
 }
 
 // accountsAddProfile is the profile whose claude_accounts gains the name: the
@@ -562,20 +665,36 @@ func accountsAddWhat(lc *localcfg.Config, name, profile string, beyond []string,
 	if profile != "" {
 		what += fmt.Sprintf("; profile profiles.%s.claude_accounts += %s", pluginwire.Printable(profile), pluginwire.Printable(name))
 	}
-	what += fmt.Sprintf("; secret a new version of %s (project-wide)", config.ClaudeAccountSecret(name))
-	if repos, ok := accountsAddPublishedRepos(lc, name); ok {
+	what += fmt.Sprintf("; secret a new version of %s (project-wide)", accountsAddSecretName(name, accountsAddSecretType(lc, name, typ)))
+	// A key credential (MC22) is in none of the three clauses below the way an
+	// account's token is: no profile lists it, so the node carries no
+	// accounts.<name> entry for it, no job of its own exists, and what a run
+	// beyond this checkout may reach is the credential's reach — its key sent to
+	// a call, not a token printed by a run. The sentence says each of those in
+	// the word that belongs to it rather than the account's word (D1670).
+	keyType := config.KeyCredentialType(accountsAddSecretType(lc, name, typ))
+	if repos, ok := accountsAddPublishedRepos(lc, name); ok && !keyType {
 		what += fmt.Sprintf("; publish accounts.%s.allow_repos = [%s] into the policy node", pluginwire.Printable(name), strings.Join(repos, ", "))
+	} else if keyType {
+		what += "; publish the policy node from the config this writes, which carries no accounts entry for it"
 	} else {
 		what += "; publish the policy node from the config this writes"
 	}
-	if profile != "" {
+	switch {
+	case profile != "":
 		what += fmt.Sprintf("; deploy %s (and its service account)",
 			pluginwire.Printable(gcp.ProjectJobName(profile, lc.Profiles[profile].Provider, name)))
-	} else {
+	case keyType:
+		what += "; deploy no job: a key credential rides no job of its own"
+	default:
 		what += "; deploy no job: no profile serves it yet"
 	}
 	if len(beyond) > 0 {
-		what += fmt.Sprintf("; a launcher that may start a run on %s can have that run print %s's token", strings.Join(beyond, ", "), pluginwire.Printable(name))
+		if keyType {
+			what += fmt.Sprintf("; a launcher that may start a run on %s can have that run use %s's key", strings.Join(beyond, ", "), pluginwire.Printable(name))
+		} else {
+			what += fmt.Sprintf("; a launcher that may start a run on %s can have that run print %s's token", strings.Join(beyond, ", "), pluginwire.Printable(name))
+		}
 	}
 	return what
 }

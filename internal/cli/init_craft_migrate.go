@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -77,10 +78,47 @@ func stageCraft(stage string) string {
 // What it writes is shown by the local config's own diff; only the keys that
 // need a person are returned, because a line per derived key would bury them.
 func migrateCraftKeys(c *localcfg.Config) []string {
-	if c == nil || (len(c.ClaudeAccounts) == 0 && c.DefaultClaudeAccount == "" && len(c.ClaudeAccountStages) == 0) {
+	if c == nil {
+		return nil
+	}
+	derivePathPools(c)
+	if len(c.ClaudeAccounts) == 0 && c.DefaultClaudeAccount == "" && len(c.ClaudeAccountStages) == 0 {
 		return nil
 	}
 	return deriveCraftAccesses(c, deriveCraftCredentials(c))
+}
+
+// derivePathPools splits every pool of the installation's own config whose
+// members span the two halves of a run into one pool per half, and repoints the
+// crafts that named it to the half their own model routes to (activation plan
+// MC21, D1668 and D1673).
+//
+// It runs on every write of the local config and so on `fugaro update`, and it
+// is what keeps the config readable: from this release a published node refuses
+// a pool whose members cross (config.ValidatePublishedPools), and the config
+// side has to name the same halves the node's own step does or the next publish
+// flips a craft back. The rule itself is one, in internal/craft
+// (craft.SplitCrossPathPools), and this is the config's use of it.
+//
+// It says nothing: what it writes is the local config's own diff, exactly as the
+// keys MC4's conversion derives are. A pool an installation holds is not a state
+// a person has to be told about twice — the split is complete when it is
+// written, and the file says nothing about it the next time.
+//
+// It runs BEFORE the account keys are converted, and that order is the point: a
+// derived pool takes a name a credential may not also take, and
+// deriveCraftCredentials refuses an account whose name a pool already holds.
+func derivePathPools(c *localcfg.Config) {
+	pools, access, splits := craft.SplitCrossPathPools(c.Pools, c.Credentials, c.Crafts, c.Routing, c.Providers)
+	if len(splits) == 0 {
+		return
+	}
+	c.Pools = pools
+	for _, name := range config.CraftNames {
+		if to, repointed := access[name]; repointed {
+			setCraftAccess(&c.Crafts, name, to)
+		}
+	}
 }
 
 // deriveCraftCredentials turns the installation's named Claude accounts into
@@ -230,6 +268,16 @@ func deriveCraftAccesses(c *localcfg.Config, refused map[string]string) []string
 		if own := c.Crafts.Of(craft).Access; own != "" {
 			continue
 		}
+		// A craft this vocabulary holds no stage for has nothing to derive:
+		// merge-judge (E6), whose one stage is the runner's own merge_judge and
+		// not one of config.RunStages, so no key of the older vocabulary speaks
+		// for it, and any crafts.merge-judge the file holds is left as the owner
+		// wrote it. Nothing is reported about it either: the notes below are
+		// about stages that disagree and an account no credential stands for,
+		// and a craft with no stage has neither.
+		if len(names[craft]) == 0 {
+			continue
+		}
 		// Every stage of the craft has to run on one account for the craft to
 		// hold it: a stage that names none runs on the default, and the craft
 		// speaks for all of them.
@@ -327,8 +375,10 @@ func installationAccounts(c *localcfg.Config, stages []string) []string {
 }
 
 // allEqual reports whether every name is the same. It is asked of a craft's
-// stages and never of an empty list, which every craft has at least one of
-// (stageCraft covers config.RunStages).
+// stages and never of an empty list: stageCraft covers config.RunStages, so a
+// craft none of them maps to is the caller's to skip before this is asked —
+// merge-judge, whose one stage is the runner's own and not an account stage at
+// all (deriveCraftAccesses).
 func allEqual(names []string) bool {
 	return !slices.ContainsFunc(names, func(name string) bool { return name != names[0] })
 }
@@ -372,6 +422,12 @@ func craftAccessDefined(c *localcfg.Config, name string) bool {
 
 // setCraftAccess writes one craft's access, leaving its model half alone: the
 // two halves are set separately (spec §3).
+//
+// Every name of config.CraftNames has a case, and that is a requirement rather
+// than a convenience: the callers walk that list, so a craft with no case is one
+// whose derived access is dropped without a word — the coder's pool would be
+// split and the merge judge's left naming it. TestEveryCraftCanBeWrittenAnAccess
+// holds the switch to the list.
 func setCraftAccess(crafts *config.Crafts, craft, access string) {
 	switch craft {
 	case config.CraftCoder:
@@ -382,5 +438,7 @@ func setCraftAccess(crafts *config.Crafts, craft, access string) {
 		crafts.SeniorReview.Access = access
 	case config.CraftSecurityReview:
 		crafts.SecurityReview.Access = access
+	case config.CraftMergeJudge:
+		crafts.MergeJudge.Access = access
 	}
 }

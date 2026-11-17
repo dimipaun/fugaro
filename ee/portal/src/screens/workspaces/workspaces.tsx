@@ -80,6 +80,14 @@ function day(value: string): string {
 const REFRESH_MARKER = 'licence'
 const REFRESH_VALUE = 'changed'
 
+// The two asks a workspace with no licence offers, as the API registers them:
+// the trial's own door and the open-source programme's (ee/keyservice's
+// `RouteTrial` and `RouteAPIOpenSource`). They are named here rather than
+// written at the button because the paths and the bodies are one contract and a
+// typo in either is a request the API answers 404 `no_route` about.
+const TRIAL_PATH = '/trial'
+const OPEN_SOURCE_PATH = '/open-source'
+
 /**
  * The query the marker leaves behind, or null when this address carries none.
  *
@@ -230,9 +238,28 @@ export function WorkspacesScreen({ client }: WorkspacesScreenProps) {
     })
   }
 
-  function ask(path: string, workspaceId: string): Promise<void> {
+  /** The trial ask names the **Firebase project id** and never the workspace's
+   * own id (K2.7's `TrialCall`): what a trial licenses is an installation, and
+   * the portal's workspace id — the 43-character one this screen draws — means
+   * nothing to the intake. */
+  function trial(projectId: string): Promise<void> {
     return run(async () => {
-      await client.request(path, { method: 'POST', body: { workspace_id: workspaceId } })
+      await client.request(TRIAL_PATH, { method: 'POST', body: { workspace_id: projectId } })
+      await reload()
+    })
+  }
+
+  /** The open-source ask names the repositories the licence would cover, one
+   * entry each (`OpenSourceCall`), split here the way the API splits them: a
+   * pasted list arrives with blank lines in it, and a blank line is not a
+   * repository. */
+  function openSource(repositories: string): Promise<void> {
+    const lines = repositories
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '')
+    return run(async () => {
+      await client.request(OPEN_SOURCE_PATH, { method: 'POST', body: { repositories: lines } })
       await reload()
     })
   }
@@ -296,7 +323,8 @@ export function WorkspacesScreen({ client }: WorkspacesScreenProps) {
             onBind={bind}
             onReveal={reveal}
             onDownload={download}
-            onAsk={ask}
+            onTrial={trial}
+            onOpenSource={openSource}
             onCopy={copy}
           />
         ))
@@ -387,7 +415,8 @@ function Card({
   onBind,
   onReveal,
   onDownload,
-  onAsk,
+  onTrial,
+  onOpenSource,
   onCopy,
 }: {
   workspace: Workspace
@@ -397,10 +426,17 @@ function Card({
   onBind: (entitlementId: string, projectId: string) => Promise<void>
   onReveal: (workspaceId: string) => Promise<void>
   onDownload: (workspaceId: string) => Promise<void>
-  onAsk: (path: string, workspaceId: string) => Promise<void>
+  onTrial: (projectId: string) => Promise<void>
+  onOpenSource: (repositories: string) => Promise<void>
   onCopy: (value: string) => void
 }) {
   const [projectId, setProjectId] = useState('')
+  // The trial's own field and the ask's own lines. They are separate from the
+  // binding's `projectId` above because they mean different things: the trial's
+  // id is what the licence is asked for, and the binding's is what the licence
+  // is attached to afterwards.
+  const [trialProjectId, setTrialProjectId] = useState('')
+  const [repositories, setRepositories] = useState('')
   return (
     <section className="workspace" aria-label={workspace.name}>
       <h2>{workspace.name}</h2>
@@ -417,61 +453,100 @@ function Card({
         <Revealed bundle={bundle} workspace={workspace} onCopy={onCopy} />
       )}
 
-      {entitlement === null ? null : workspace.project_id === null ? null : (
-        <>
-          {entitlement.air_gapped ? (
-            licence === null ? (
-              <button type="button" onClick={() => void onDownload(workspace.id)}>
-                Get the licence file
-              </button>
-            ) : (
-              // A data URL rather than a fetched object: the file is signed text
-              // that holds no secret (D2206), so there is nothing to revoke and
-              // nothing to keep alive, and the same bytes are offered every time.
-              <a
-                download="fugaro-licence.txt"
-                href={`data:text/plain;charset=utf-8,${encodeURIComponent(licence.licence)}`}
-              >
-                Download the licence file
-              </a>
-            )
-          ) : (
-            <button type="button" onClick={() => void onReveal(workspace.id)}>
-              Reveal the key
-            </button>
-          )}
+      {entitlement === null || workspace.project_id === null ? null : entitlement.air_gapped ? (
+        licence === null ? (
+          <button type="button" onClick={() => void onDownload(workspace.id)}>
+            Get the licence file
+          </button>
+        ) : (
+          // A data URL rather than a fetched object: the file is signed text
+          // that holds no secret (D2206), so there is nothing to revoke and
+          // nothing to keep alive, and the same bytes are offered every time.
+          <a
+            download="fugaro-licence.txt"
+            href={`data:text/plain;charset=utf-8,${encodeURIComponent(licence.licence)}`}
+          >
+            Download the licence file
+          </a>
+        )
+      ) : (
+        <button type="button" onClick={() => void onReveal(workspace.id)}>
+          Reveal the key
+        </button>
+      )}
 
-          {entitlement.air_gapped ? null : (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault()
-                void onBind(entitlement.id, projectId.trim())
-              }}
-            >
-              <label htmlFor={`rebind-${workspace.id}`}>Firebase project id</label>
-              <input
-                id={`rebind-${workspace.id}`}
-                name="project_id"
-                required
-                value={projectId}
-                onChange={(event) => {
-                  setProjectId(event.target.value)
-                }}
-              />
-              <button type="submit">Rebind</button>
-            </form>
-          )}
-        </>
+      {/* The binding is offered to a licence whose workspace has a key behind it
+          but names no project, as well as to one that has moved project: a
+          trial's licence is granted for a project and claims none of it — the
+          trial route writes no project id, because only a binding may, and only
+          after it probes the installation (D2204, D2205, TN-P1) — so the form is
+          what attaches it. A licence whose workspace has no key behind it yet is
+          the "Not bound yet" section's, which carries the one instruction that
+          finishes that job; offering it here as well would put two bindings for
+          one licence on one screen. */}
+      {entitlement === null || entitlement.air_gapped || workspace.bound_at === null ? null : (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            void onBind(entitlement.id, projectId.trim())
+          }}
+        >
+          <label htmlFor={`rebind-${workspace.id}`}>Firebase project id</label>
+          <input
+            id={`rebind-${workspace.id}`}
+            name="project_id"
+            required
+            value={projectId}
+            onChange={(event) => {
+              setProjectId(event.target.value)
+            }}
+          />
+          <button type="submit">{workspace.project_id === null ? 'Bind' : 'Rebind'}</button>
+        </form>
       )}
 
       {entitlement === null ? (
         <>
-          <button type="button" onClick={() => void onAsk('/trial', workspace.id)}>
-            Start a trial
-          </button>
-          <button type="button" onClick={() => void onAsk('/opensource', workspace.id)}>
-            Request an open-source licence
-          </button>
+          {/* The id the trial is asked for is the Firebase project id and not
+              this workspace's own: what a trial licenses is an installation. */}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              void onTrial(trialProjectId.trim())
+            }}
+          >
+            <label htmlFor={`trial-${workspace.id}`}>Firebase project id</label>
+            <input
+              id={`trial-${workspace.id}`}
+              name="workspace_id"
+              required
+              value={trialProjectId}
+              onChange={(event) => {
+                setTrialProjectId(event.target.value)
+              }}
+            />
+            <button type="submit">Start a trial</button>
+          </form>
+
+          {/* The repositories the licence would cover, one to a line, as the
+              API's own body reads them (`OpenSourceCall`). */}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              void onOpenSource(repositories)
+            }}
+          >
+            <label htmlFor={`opensource-${workspace.id}`}>Repositories</label>
+            <textarea
+              id={`opensource-${workspace.id}`}
+              name="repositories"
+              value={repositories}
+              onChange={(event) => {
+                setRepositories(event.target.value)
+              }}
+            />
+            <button type="submit">Request an open-source licence</button>
+          </form>
         </>
       ) : null}
     </section>

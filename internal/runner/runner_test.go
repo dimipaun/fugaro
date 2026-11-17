@@ -1375,3 +1375,43 @@ func TestUnreviewedRunIsNotFailed(t *testing.T) {
 		t.Errorf("the pull request is ready: %+v", pr)
 	}
 }
+
+// TestARunThatLeavesABuildProductIsADraft is the other answer of the rule's
+// one question, through the same harness as
+// TestARunThatAddsAnAdmittedImageIsReady (binaryrule_e2e_test.go): the same
+// steps, the same passing suite, the same shipped review, and the one
+// difference is the bytes. A compiled artifact the run left in the checkout is
+// not the run's work — nothing admits it, since this project published no list
+// at all — so finalize holds it out of its leftover commit and fails the run,
+// and what a person gets is the draft the reason names it in (#1476's refusal,
+// spec.md §4.1).
+//
+// The two runs are read as a pair on purpose: the admitted one ends ready and
+// this one ends a draft, so a change that stopped reading the rule at all (both
+// ready) or that read it as a readiness gate (both draft) fails one of the two.
+func TestARunThatLeavesABuildProductIsADraft(t *testing.T) {
+	const path = "test_dup_case2"
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, committing(func(t *testing.T, req agent.Request) { compiledBinary(t, req, path) }), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("record = status %s, outcome %s, reason %q; want a draft: the artifact is a build's product and no list admits it", rec.Status, rec.Outcome, rec.Reason)
+	}
+	for _, want := range []string{path, "it is not text"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Errorf("reason = %q; want it to name %q", rec.Reason, want)
+		}
+	}
+	files := branchFiles(t, h, rec.Branch)
+	if slices.Contains(files, path) {
+		t.Errorf("the branch carries the artifact finalize held out of its commit: %v", files)
+	}
+	if !slices.Contains(files, "feature.txt") {
+		t.Errorf("the branch does not carry the run's own work: %v", files)
+	}
+	if pr := onlyPR(t, h.provider); !pr.Draft {
+		t.Errorf("the pull request is ready although the run was refused: %+v", pr)
+	}
+}

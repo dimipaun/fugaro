@@ -111,6 +111,13 @@ var jsonCases = map[string]jsonCase{
 			return []string{"budget", "prices"}
 		},
 	},
+	"budget reconcile": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			jsonCloud(t)
+			return []string{"budget", "reconcile", "--from", "2026-10-12", "--to", "2026-11-16", "--repo", "acme/app"}
+		},
+	},
 	"budget show": {
 		reads: true,
 		run: func(t *testing.T) []string {
@@ -289,11 +296,50 @@ var jsonCases = map[string]jsonCase{
 			return []string{"managed", "status", "--project", "aurora"}
 		},
 	},
+	// The mailbox consumer's --json is one document per pass, and --once is the
+	// one pass this pin can hold it to. The fixture is the world a pass needs:
+	// a pairing the config names and a keychain of the test's holding its key,
+	// and one message in its inbox so the document it prints is a pass over
+	// something rather than an empty one.
+	"mailbox": {
+		run: func(t *testing.T) []string {
+			f := newMailboxFixture(t, "")
+			f.writeAction(t, "msg-1", mailboxNowMs())
+			return []string{"mailbox", "--once"}
+		},
+	},
+	// The sweeper's --json is one document for the run, and a different document
+	// from the consumer's pass: the mailbox it walked, what it deleted and what
+	// it kept. --dry-run is the write-free run of that same body, so this pin
+	// takes it: a prompt a day past D118's TTL is named among the deleted, which
+	// is what says the run reached its own work rather than a refusal before it.
+	"mailbox sweep": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := newMailboxFixture(t, "")
+			f.announce(t, "p-old", time.Now().Add(-73*time.Hour).UnixMilli())
+			return []string{"mailbox", "sweep", "--dry-run"}
+		},
+	},
 	"models ls": {
 		reads: true,
 		run: func(t *testing.T) []string {
 			jsonCloud(t)
 			return []string{"models", "ls"}
+		},
+	},
+	"escalation ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "ls"}
+		},
+	},
+	"escalation show": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			escalationRig(t)
+			return []string{"escalation", "show", escalationItemID}
 		},
 	},
 	"models search": {
@@ -392,6 +438,31 @@ var jsonCases = map[string]jsonCase{
 			// this run needs the block a project with a profile carries.
 			modelsWriteHomeWith(t, projectProfileExtra)
 			return []string{"project", "profile", "show"}
+		},
+	},
+	"project repos ls": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The enrolment view's own reads: this machine's config, the
+			// published node, and the two durable places a run is recorded in —
+			// the runs bucket and spendDaily, which the seen fixture stands up
+			// empty. A project that admits nothing and has seen nothing still
+			// prints a document, and that is what this pin asks about: the shape
+			// the console reads, not the rows in it.
+			newSeenFixture(t)
+			return []string{"project", "repos", "ls"}
+		},
+	},
+	"project repos status": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			// The enrolment's own fixture: a published allow-list admitting one
+			// repository and the container its run mounts. The command names
+			// the repository rather than walking every one, so the pin reads
+			// the nine rows of one screen.
+			_, sm := statusFixture(t)
+			seedGitHubAppKey(t, sm)
+			return []string{"project", "repos", "status", "github/acme/app"}
 		},
 	},
 	"project routing show": {

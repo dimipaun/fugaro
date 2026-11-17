@@ -18,19 +18,26 @@ import (
 // a node or a layer serves from runs the stages `fugaro update` runs, in
 // process, before it returns (item 9, composite D1561/D1566 amended by D2602).
 // What the command states is the write; which stages that write owes is the
-// hook's own reading of the store it landed in (D2615), so no caller encodes a
-// stage name and a stage renamed in initflow moves with no caller edited.
+// hook's own reading of the two facts the contract names for it — the store the
+// write landed in, and whether the key's writer says the node serves it
+// (docs/contracts/config-ownership.md §3, D2615) — so no caller encodes a stage
+// name and a stage renamed in initflow moves with no caller edited.
 
 // afterWriteChange is what a semantic command hands runAfterWrite: the
 // settings key it wrote, as `fugaro settings` spells it, and the store the
 // value went into (settings.Store).
 //
-// The two fields are the whole of the interface on purpose. The store is the
-// input of the stage choice — the policy stage for a key the node is served
-// from, the layer stage for a project-layer key, both for a change that
-// touches both (D2615) — and the key is what a stage's own refusal and the
-// not-yet-live sentence name. A value never travels here: it is in the file
-// the command wrote, and a second copy would be a second source.
+// The two fields are the whole of the interface on purpose. The key is what a
+// stage's own refusal and the not-yet-live sentence name, and it is also how the
+// key's writer is found — settings.WriterOf, which matches the patterns a key
+// falls under, and not settings.Lookup, which matches a key spelling only and so
+// answers nothing for `pools.team.owner`. The store is where the write landed:
+// it is the conformance assertion (D2610), and it is one of the two facts the
+// stages are read from, the other being Writer.Node of the writer the key finds.
+// The store alone cannot be the whole choice — a pool's store is local, that
+// being where its argv writes, while the published node serves it, and one
+// {key, store} cannot say both (D2615). A value never travels here: it is in the
+// file the command wrote, and a second copy would be a second source.
 type afterWriteChange struct {
 	Key   string
 	Store settings.Store

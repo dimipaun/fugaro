@@ -179,15 +179,17 @@ mobile app reads nothing of this. No console or mobile task is in this plan.
 ## 11. The crafts, and the keys a run reads today
 
 A second model vocabulary exists beside this one (the model-crafts work,
-[project-claude-accounts.md](../project-claude-accounts.md) §14): a run's four **crafts** — coder,
-first-line review, senior review, security review — each carry a model (`agent.crafts.<craft>.model`
+[project-claude-accounts.md](../project-claude-accounts.md) §14): a run's five **crafts** — coder,
+first-line review, senior review, security review, merge judge — each carry a model (`agent.crafts.<craft>.model`
 in a repository's `fugaro.yaml`, or the project layer's `defaults.agent.crafts`) and an **access**,
 the credential or pool their calls go out on. `fugaro craft ls` reads both halves, offline.
 
-This spec is unchanged by it, and the boundary is one sentence: **a craft's model half is not yet
-what a run runs.** A run takes its models from `agent.models` and `agent.levels` (§6, §2), so
-`fugaro models use` is still the command that decides what a run codes and reviews with, and a craft
-that sets a model sets it for the read that shows it. A craft's **access** is a different family's
-key, written by the owner's own commands and never by this one
+This spec is unchanged by it, and the boundary is one sentence: **a craft's model is a rung above
+the keys this spec writes.** A stage's model is the first rung that answers, most specific first: a
+task's model grade, a review level's own model (`agent.levels.l1/l2/l3.model`, §6), the craft's
+model, `agent.models.<role>` and `agent.model`. So `fugaro models use` writes the rungs **below** a
+craft's model and still decides what every stage of a repository whose crafts name no model runs,
+while a craft that names one runs that model and `fugaro models use` no longer moves it. A craft's
+**access** is a different family's key, written by the owner's own commands and never by this one
 ([project-claude-accounts.md](../project-claude-accounts.md) §12–§13); `fugaro models use` writes
 `agent.models.<role>` and nothing else.

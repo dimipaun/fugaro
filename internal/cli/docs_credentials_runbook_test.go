@@ -118,16 +118,19 @@ func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 //
 // Mutations (verified, run and restored): the header paragraph deleted → FAIL
 // on every pin; the retired "ships dormant" paragraph put back → FAIL, on the
-// ban; the "and no other" clause of the wiring sentence softened to include
-// shared project jobs → FAIL; the other-auth-modes clause deleted → FAIL.
+// ban; the wiring sentence's clause naming the shared project job the switch
+// also reaches deleted, leaving "a repository's own job and on no other" →
+// FAIL; the other-auth-modes clause deleted → FAIL.
 func TestDocsCredentialsRunbookSaysWhatTheLaunchWires(t *testing.T) {
 	flat := flattenDoc(readDoc(t, credentialsRunbook))
 	for _, want := range []string{
 		"the launch wires the service",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
 		"a per-repository job of a repository whose root has been re-applied with the switch on carries its address",
+		"so does the shared project job a switched profile sends its runs to",
 		"shared project job",
 		"byte for byte what it was",
+		"refuses the class whole",
 		"serviceUpstream",
 		"fails",
 		"infra_error",

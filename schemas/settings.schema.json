@@ -227,6 +227,9 @@
       "type": "object",
       "description": "Every key of the registry and its built-in default, the DEFAULT column's own source (D841). A generator would be a go generate step a release must remember and a diff nobody reads, so this is written out and pinned to settings.Rows() by TestSettingsSchema in schemas_test.go.",
       "properties": {
+        "ab.rate": {
+          "default": "unset = the project layer's ab.rate, or 0: no run is a challenger"
+        },
         "agent.adversarial_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.AdversarialDefault)"
         },
@@ -242,6 +245,12 @@
         },
         "agent.crafts.coder.model": {
           "default": "unset = required: the coder implements, so a run needs its model"
+        },
+        "agent.crafts.merge-judge.access": {
+          "default": "unset = the coder's access"
+        },
+        "agent.crafts.merge-judge.model": {
+          "default": "unset = the coder's model"
         },
         "agent.crafts.review.access": {
           "default": "unset = the coder's access"
@@ -517,6 +526,12 @@
         "crafts.coder.model": {
           "default": "unset = required: the coder implements, so a run needs its model"
         },
+        "crafts.merge-judge.access": {
+          "default": "unset = the coder's access"
+        },
+        "crafts.merge-judge.model": {
+          "default": "unset = the coder's model"
+        },
         "crafts.review.access": {
           "default": "unset = the coder's access"
         },
@@ -535,11 +550,47 @@
         "crafts.senior-review.model": {
           "default": "unset = required: the senior review is the second opinion a run needs"
         },
+        "credential_cascade.backoff.cap": {
+          "default": "unset = 5h: the longest that wait doubles to (projectpolicy.DefaultBackoffCap); a cap below the initial wait is refused, because a probe schedule that never doubles retries a credential with no reset time for ever (D153)"
+        },
+        "credential_cascade.backoff.initial": {
+          "default": "unset = 15m: the first wait a credential is held for when its exhaustion reported no reset time, doubling from there (projectpolicy.DefaultBackoffInitial)"
+        },
+        "credential_cascade.concurrency_per_token": {
+          "default": "unset = 1: one run at a time may hold a shared credential, and the written 0 is no cap at all (projectpolicy.DefaultConcurrencyPerToken, D142)"
+        },
+        "credential_cascade.fallback": {
+          "default": "unset = oauth-only: a run waits for the shared token's reset and never falls over to the paid tiers, and the written auto is the value that does — the node refuses it unless the budget block enforces a per-run ceiling above zero (D152)"
+        },
+        "credential_cascade.stop_after_exhaustion_per_window": {
+          "default": "unset = true: a run stops rather than spending the project's money on a credential that has exhausted its window, and only the written false opts out (D142)"
+        },
+        "credential_cascade.wait_threshold": {
+          "default": "unset = 15m: how long a run waits for an exhausted credential's reset before it fails over to the next tier (projectpolicy.DefaultWaitThreshold); under oauth-only there is no tier to fail over to, so the run waits for the earliest reset whatever the threshold says"
+        },
         "credentials.*.name": {
           "default": "unset = required: the name a craft's access and a pool's members speak"
         },
         "credentials.*.type": {
           "default": "unset = required: the provider that serves it, one of openrouter, anthropic, claude-oauth"
+        },
+        "credentials.backoff.cap": {
+          "default": "unset = 5h: the longest wait the doubling reaches (projectpolicy.DefaultBackoffCap)"
+        },
+        "credentials.backoff.initial": {
+          "default": "unset = 15m: the first wait of a credential backed off with no reset time (projectpolicy.DefaultBackoffInitial)"
+        },
+        "credentials.concurrency_per_token": {
+          "default": "unset = 1: how many runs may hold one shared credential at a time (projectpolicy.DefaultConcurrencyPerToken), where a written 0 is no cap at all"
+        },
+        "credentials.fallback": {
+          "default": "unset = oauth-only: a run does not fail over to the paid tier (projectpolicy.FallbackOAuthOnly), and the one value that spends the project's money is written by an operator"
+        },
+        "credentials.stop_after_exhaustion_per_window": {
+          "default": "unset = true: a credential exhausted within its window stops the runs that need it (projectpolicy.Credentials.StopsAfterExhaustion)"
+        },
+        "credentials.wait_threshold": {
+          "default": "unset = 15m: how long a run waits for an exhausted credential's reset before failing over (projectpolicy.DefaultWaitThreshold)"
         },
         "credentials_service.url": {
           "default": "unset = none: the credentials service is not deployed"
@@ -745,6 +796,9 @@
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
         },
+        "issue_sync": {
+          "default": "unset = none: no repository's issues are ingested into the project's backlog, and no item opens an issue of its own"
+        },
         "issues.nudge_after_days": {
           "$comment": "localcfg.DefaultIssuesNudgeAfterDays",
           "default": "7"
@@ -809,6 +863,12 @@
         },
         "layer.defaults.agent.crafts.coder.model": {
           "default": "unset = defaults.agent.model"
+        },
+        "layer.defaults.agent.crafts.merge-judge.access": {
+          "default": "unset = none: only the local config and the policy node name a credential"
+        },
+        "layer.defaults.agent.crafts.merge-judge.model": {
+          "default": "unset = the coder's model"
         },
         "layer.defaults.agent.crafts.review.access": {
           "default": "unset = none: only the local config and the policy node name a credential"
@@ -1191,10 +1251,28 @@
         "model_prices.*.cache_read": {
           "default": "unset = the built-in price"
         },
+        "model_prices.*.cache_read_mult": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.cache_read_per_m": {
+          "default": "unset = the built-in price"
+        },
         "model_prices.*.cache_write_1h": {
           "default": "unset = the built-in price"
         },
+        "model_prices.*.cache_write_1h_mult": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.cache_write_1h_per_m": {
+          "default": "unset = the built-in price"
+        },
         "model_prices.*.cache_write_5m": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.cache_write_5m_mult": {
+          "default": "unset = the built-in price"
+        },
+        "model_prices.*.cache_write_5m_per_m": {
           "default": "unset = the built-in price"
         },
         "model_prices.*.image_tokens": {
@@ -1222,6 +1300,15 @@
         "name": {
           "default": "unset = the file is refused (name: is required)"
         },
+        "node_removals.craft_credentials": {
+          "default": "unset = none: silence in this file keeps the node's credentials, so a credential is removed by naming it here (D2607, F22); the name stays recorded until the node no longer holds it"
+        },
+        "node_removals.crafts": {
+          "default": "unset = none: silence in this file keeps the node's crafts, so a craft is removed by naming it here (D2607, F22)"
+        },
+        "node_removals.pools": {
+          "default": "unset = none: silence in this file keeps the node's pools, so a pool is removed by naming it here (D2607, F22)"
+        },
         "orchestrator.batch_size": {
           "default": "unset = 10 (policy.DefaultBatchSize)"
         },
@@ -1239,6 +1326,9 @@
         },
         "orchestrator.spawn_per_minute": {
           "default": "unset = 2 (policy.DefaultSpawnPerMinute)"
+        },
+        "orchestrator_enabled": {
+          "default": "unset = true: the project's daemon launches runs, and a written false hands orchestration back to the person and their agent"
         },
         "planning.decoupling": {
           "$comment": "config.DefaultPlanningDecoupling",
@@ -1342,6 +1432,9 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
+        },
+        "rigor_pending": {
+          "default": "unset = none: the wizard's rigor answer has been written into the project layer"
         },
         "routing.claude.models": {
           "default": "unset = none"
@@ -1516,6 +1609,9 @@
         },
         "workflows.*.job_profile": {
           "default": "unset = the project policy's default job profile"
+        },
+        "workflows.*.needs": {
+          "default": "unset = none: the job needs no tag of the entry the run picks"
         },
         "workflows.*.profile": {
           "default": "unset = the project layer's default_profile"

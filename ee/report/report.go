@@ -21,9 +21,12 @@
 //   - A row every one of whose records was unreadable carries no measurement:
 //     it is marked unreadable and its money columns read "n/a" (null in JSON),
 //     never the 0 the sums would carry.
-//   - The runner records one dollar figure per model, billed or notional. By
-//     model, a day with no billed spend counts it all as notional, a day with
-//     no notional as billed, and a mixed day splits it in the day's
+//   - A day's model rows carry their own notional leaf from the generation
+//     that grants it (RS8), and the billed figure there is the rest of the
+//     model's dollars, never below zero. Only a day without the leaf is read
+//     the old way: the runner recorded one dollar figure per model then, so a
+//     day with no billed spend counts it all as notional, a day with no
+//     notional as billed, and a mixed day splits it in the day's
 //     billed:notional proportion.
 //   - Every string that came from the database goes through safetext.Strip,
 //     in every output.
@@ -123,8 +126,10 @@ type Report struct {
 	By Dim
 	// NoHours: run-hours are not known (run-record totals): n/a, never 0.
 	NoHours bool
-	// MixedModelDays: a by-model day had both billed and notional spend, so
-	// its models' dollars were split in that day's proportion.
+	// MixedModelDays: a by-model day had both billed and notional spend and
+	// carried no notional leaf of its own, so its models' dollars had to be
+	// split in that day's proportion. A day whose models record their notional
+	// is exact and is not this.
 	MixedModelDays bool
 	Rows           []Row
 	Totals         Row
@@ -229,8 +234,8 @@ func Build(recs []Rec, d Dim) Report {
 			for k, m := range r.ByModel {
 				a := get(k, "")
 				a.row.Key = Text(unkey(k))
-				billed, notional := splitModel(r.DayRecord, m.Micros)
-				if r.SpentMicros > 0 && r.NotionalMicros > 0 {
+				billed, notional := modelDollars(r.DayRecord, m)
+				if !m.NotionalSet && r.SpentMicros > 0 && r.NotionalMicros > 0 {
 					mixed = true
 				}
 				a.row.Spent = satAdd(a.row.Spent, billed)
@@ -337,6 +342,25 @@ func modeKey(m string) string {
 		return string(mode)
 	}
 	return ModeNone
+}
+
+// modelDollars is one model's recorded dollars of a day as billed and
+// notional. A day that recorded the model's notional leaf says so itself
+// (RS8), and the leaf is the truth about the notional part: the rest of the
+// model's figure is billed, clamped at zero because a run in flight on an
+// image older than the leaf writes its notional dollars into micros alone, so
+// the leaf can, until that run ends, exceed the part of micros it explains
+// (docs/spend-accuracy/day-leaves.md). A day without the leaf keeps
+// splitModel's proportioning.
+func modelDollars(r budget.DayRecord, m budget.ModelTotals) (billed, notional budget.Micros) {
+	if !m.NotionalSet {
+		return splitModel(r, m.Micros)
+	}
+	notional = m.Notional
+	if billed = m.Micros - notional; billed < 0 {
+		billed = 0
+	}
+	return billed, notional
 }
 
 // splitModel splits one model's recorded dollars of a day into billed and

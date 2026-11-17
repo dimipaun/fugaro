@@ -115,6 +115,12 @@ func TestGrantRulesMatrix(t *testing.T) {
 	// service's invoker, and every other cell refuses it.
 	const verifier = "serviceAccount:" + VerifierAccountID + "@proj-1.iam.gserviceaccount.com"
 	const coordinator = "serviceAccount:" + CoordinatorAccountID + "@proj-1.iam.gserviceaccount.com"
+	// The project's build identity (B5, D2301) is a sixth, and it is in this
+	// map for the verifier's reason: its one row is the same service's invoker
+	// bit, that row's grant needs no condition for the check to accept it, so
+	// every other cell of the table has to refuse it here rather than in a test
+	// of its own.
+	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	all := map[string]bool{}
 	for _, row := range grantRules {
 		for k := range row {
@@ -127,7 +133,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	for typ, row := range grantRules {
 		for key := range all {
 			role := grantRoleString(key)
-			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier} {
+			for kind, member := range map[who]string{toPeople: person, toAccounts: account, toDeployer: "serviceAccount:" + DeployerAccount("proj-1"), toCredentials: credentials, toCoordinator: coordinator, toVerifier: verifier, toBuildIdentity: buildIdentity} {
 				want := row[key]&kind != 0
 				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
 				if acct := deployerGrantAccountFor(typ, role); acct != "" {
@@ -225,7 +231,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toOrchestrator|toBuildIdentity) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -344,8 +350,13 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		repo    = "google_artifact_registry_repository_iam_member"
 		secret  = "google_secret_manager_secret_iam_member"
 		runjob  = "google_cloud_run_v2_job_iam_member"
+		runsvc  = "google_cloud_run_v2_service_iam_member"
 		logview = "google_logging_log_view_iam_member"
 	)
+	// The project's build identity (B5, D2301), whose one row the cells below
+	// pin: the invoker bit on the credentials service, and no role of any
+	// other row.
+	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
 		typ, role, member string
 		covered           bool
@@ -376,6 +387,9 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{secret, "roles/secretmanager.secretAccessor", account, true},
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
+		// The project's build identity's one row (B5, D2301): the same role on
+		// the SERVICE type, which is the whole of what the account may hold.
+		{runsvc, "roles/run.invoker", buildIdentity, true},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -400,6 +414,13 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
 		{project, "roles/storage.objectAdmin", person, false},
+		// The build identity is refused every role but its one row (B5,
+		// D2301): a bucket write — which is how a registry writer, the role a
+		// later task adds to this table on purpose, would look if it were
+		// widened into a row silently — and the invoker bit on the type that
+		// is not the service it invokes.
+		{bkt, "roles/storage.objectUser", buildIdentity, false},
+		{runjob, "roles/run.invoker", buildIdentity, false},
 		{project, "roles/secretmanager.secretAccessor", account, false},
 		{project, "roles/iam.serviceAccountUser", person, false},
 		{project, "projects/proj-1/roles/fugaroTokenMinter", person, false},
@@ -817,6 +838,86 @@ func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
 			t.Errorf("listed on the review screen: %s to the coordinator's writer: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
 		}
+	}
+}
+
+// The project's build identity (B5, D2301) is its own kind of principal for
+// the credentials account's reason: as one of FugaroAccounts every toAccounts
+// row would have accepted it, so one confirmation would have covered handing
+// the identity a shared repository's catalog build runs as a job runner's
+// role, the history account's datastore.user or a build account's registry
+// writer. What a catalog build does need of the registry is a role another
+// task adds to this table deliberately; before that, its whole reach is the
+// one row below — roles/run.invoker on the credentials service, the class the
+// service answers the build route for.
+//
+// The table alone does not hold that: TestGrantRulesMatrix computes its
+// expectation from the table under test, so it follows a row that gains the
+// kind. This is the hand-written half — the one row the account may hold,
+// asserted over every (type, role) cell of grantRules and then for real
+// through the cover, role by role — and TestGrantRulesPinnedCells pins the
+// positive cell and two refusals beside it.
+func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
+	const build = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
+
+	if slices.Contains(FugaroAccounts, BuildIdentityAccountID) {
+		t.Errorf("the project's build identity is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation would then cover granting the identity a catalog build runs as a job runner's role or a build account's registry writer")
+	}
+	// The one row it may hold, and nothing else: a second row that gains
+	// toBuildIdentity is a role this account may be granted, which is a
+	// decision the account's own task makes and not one a widened row makes
+	// silently.
+	allowed := map[string]map[string]bool{
+		"google_cloud_run_v2_service_iam_member": {"roles/run.invoker": true},
+	}
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if (w&toBuildIdentity != 0) != allowed[typ][key] {
+				t.Errorf("%s %s: toBuildIdentity is %v, want %v — the build identity invokes the credentials service and holds no other role of the installation", typ, key, w&toBuildIdentity != 0, allowed[typ][key])
+			}
+		}
+	}
+	for typ, row := range allowed {
+		for key := range row {
+			if grantRules[typ][key]&toBuildIdentity == 0 {
+				t.Errorf("%s %s does not accept the build identity, so the module's own grant of it is refused and init cannot cover the plan that creates the account", typ, key)
+			}
+		}
+	}
+
+	// ... and the cover, role by role: every role of every row, the roles the
+	// table names for other kinds of principal included, plus roles no row
+	// names at all.
+	roles := map[string][]string{}
+	for typ, row := range grantRules {
+		for key := range row {
+			roles[typ] = append(roles[typ], grantRoleString(key))
+		}
+	}
+	roles["google_project_iam_member"] = append(roles["google_project_iam_member"],
+		"roles/owner", "roles/editor", "roles/logging.logWriter", "roles/storage.objectAdmin",
+		"projects/proj-1/roles/fugaroEverything")
+	for typ, list := range roles {
+		for _, role := range slices.Sorted(slices.Values(list)) {
+			after := map[string]any{"member": build, "role": role, "bucket": "fugaro-runs-proj-1"}
+			withCondFor(after, typ, role, false)
+			ch := rc(typ, after, map[string]any{}, "create")
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+			want := allowed[typ][mustRoleKey(t, role)]
+			if (len(got) == 0) != want {
+				t.Errorf("%s: %s to the build identity: NotCovered = %q, covered want %v", typ, role, got, want)
+			}
+		}
+	}
+
+	// The account is the installation's: the module creates it in the plan's
+	// own project, so the same account ID in the Firebase project is somebody
+	// else's and no row accepts it. (A suffixed address in this project is an
+	// ordinary job account of the run — the toAccounts reading — which is why
+	// the ID is exact in the row above rather than a prefix.)
+	ch := rc("google_cloud_run_v2_service_iam_member", map[string]any{"member": "serviceAccount:" + BuildIdentityAccountID + "@fp-2.iam.gserviceaccount.com", "role": "roles/run.invoker"}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+		t.Errorf("the build identity of another project: roles/run.invoker is covered, and the module creates %s@proj-1 alone", BuildIdentityAccountID)
 	}
 }
 
@@ -2196,5 +2297,203 @@ func TestViewerRoleHasNoCancelPermission(t *testing.T) {
 	}
 	if !slices.Contains(FugaroRoles, ViewerRole) {
 		t.Errorf("FugaroRoles does not name %s, so a plan that creates it is not covered", ViewerRole)
+	}
+}
+
+// TestOrchestratorAccountIsItsOwnPrincipalKind: the resident orchestrator's own
+// account (mobile plan task P5.1b; the mobile orchestrator design's §4.3) is a
+// principal of its own kind, like the credentials service's, the
+// coordinator's, the front door's and the intake's, and for their reason plus
+// one of its own: as one of FugaroAccounts every toAccounts row would have
+// accepted it, and this is the account that holds iam.serviceAccounts.signJwt
+// on the budget signer — "may mint is exactly may launch", and signJwt signs
+// any claim set for any uid, so it can be the phone and the consumer. A plan
+// that rode a toAccounts row would be one job account's reach away from that.
+//
+// Its table is the design's and nothing else, and the table is the test: five
+// cells across four resource types — the launcher's project role, the job
+// runner's role on the installation's jobs, the token-minter role on the signer
+// ACCOUNT (another project's, which the design grants on purpose), and the runs
+// bucket's two grants the launchers hold (a conditional write and an
+// unconditional read). A cell added is a grant the design's never-list did not
+// price; a cell removed is a row of its table the account cannot reach.
+//
+// The narrowing is what the rows cannot say, so each covered case is written
+// the way the module writes it: the write is under the LAUNCHERS' condition on
+// this run's bucket and no other, and the read is unconditional because
+// listing an object needs a permission no object-name condition can grant.
+// Everything else is refused, and the three the design's eleventh never-rule
+// names by hand — roles/firebasedatabase.viewer, roles/datastore.viewer and
+// roles/serviceusage.serviceUsageConsumer, which is what membership of
+// var.launchers would have bought — are three of the cases below.
+//
+// Mutation (run, restore): give any other row the toOrchestrator bit and the
+// table loop fails; drop the isOrchestratorMember case from checkGrant and the
+// covered cases fail (the account reads as an address nobody listed, and the
+// review screen's answer is a rule that fires); drop the objectUser case from
+// bucketCondition and the write is refused; widen the member predicate to any
+// project and the lookalike case is covered.
+func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
+	const bucketName = "fugaro-runs-proj-1"
+	const member = "serviceAccount:" + OrchestratorAccountID + "@proj-1.iam.gserviceaccount.com"
+	const signer = "fugaro-token-signer@fp-2.iam.gserviceaccount.com"
+	if slices.Contains(FugaroAccounts, OrchestratorAccountID) {
+		t.Errorf("the resident orchestrator's account is one of FugaroAccounts, so every toAccounts row accepts it — including the rows carrying a job's project reach, on an account that may mint a token as any uid (design §4.3, E4)")
+	}
+
+	want := []string{
+		"google_project_iam_member|" + customKey + "fugaroLauncher",
+		"google_cloud_run_v2_job_iam_member|" + customKey + "fugaroJobRunner",
+		"google_service_account_iam_member|" + customKey + "fugaroTokenMinter",
+		"google_storage_bucket_iam_member|roles/storage.objectUser",
+		"google_storage_bucket_iam_member|roles/storage.objectViewer",
+		"google_secret_manager_secret_iam_member|roles/secretmanager.secretAccessor",
+	}
+	var got []string
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if w&toOrchestrator != 0 {
+				got = append(got, typ+"|"+key)
+			}
+		}
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the cells carrying toOrchestrator are %v, want exactly %v: the account holds the design's §4.3 table — the launcher's role, the job runner's, the token minter's, the runs bucket's two grants, and P5.1e's per-secret accessor on the pairing key's one container — and a cell beside them is a grant the never-list has not priced (design §6 rule 11)", got, want)
+	}
+
+	launcherCond := []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition(bucketName), "description": nil}}
+	jobCond := []any{map[string]any{"title": "fugaro-x", "expression": gcp.BucketCondition(bucketName, gcp.JobBucketPrefixes, "acme-0123456789abcdef"), "description": nil}}
+	for _, tc := range []struct {
+		what    string
+		typ     string
+		after   map[string]any
+		unknown map[string]any
+		covered bool
+	}{
+		{"the launcher's project role, as the module writes it", "google_project_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroLauncher", "project": "proj-1"}, map[string]any{}, true},
+		{"the job runner's role on an installation job, as the root writes it", "google_cloud_run_v2_job_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroJobRunner"}, map[string]any{}, true},
+		// A role the plan leaves UNKNOWN is refused where no custom role is
+		// created with it in the same module: nobody reading the plan can name
+		// the role, and the root spells it out as a literal for exactly this
+		// reason — internal/infra's plan test pins that the literal equals the
+		// role_id of the role the same plan creates.
+		{"the job runner's role left unknown by the plan", "google_cloud_run_v2_job_iam_member",
+			map[string]any{"member": member}, map[string]any{"role": true}, false},
+		{"the token minter's role on the signer account, in the Firebase project", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-2/serviceAccounts/" + signer}, map[string]any{}, true},
+		// The row is the signer ACCOUNT and not the role alone: signJwt on any
+		// other account is that account (a self-signed JWT is an access token
+		// for its issuer), so a plan that moved the grant — to a job account
+		// whose secrets are the model credentials, or to any other account of
+		// the run — is refused rather than covered by the role's cell
+		// (orchestratorMinterGrant).
+		{"the token minter's role on a job account instead of the signer", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/proj-1/serviceAccounts/fugaro-history@proj-1.iam.gserviceaccount.com"}, map[string]any{}, false},
+		{"the token minter's role on the reaper account", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroTokenMinter", "service_account_id": "projects/proj-1/serviceAccounts/fugaro-reaper@proj-1.iam.gserviceaccount.com"}, map[string]any{}, false},
+		{"the token minter's role on an account the plan leaves unknown", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter"}, map[string]any{"service_account_id": true}, false},
+		{"the token minter's role on a signer lookalike in a project that is not this run's", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-9/serviceAccounts/fugaro-token-signer@fp-9.iam.gserviceaccount.com"}, map[string]any{}, false},
+		{"the runs bucket's conditional write, under the launchers' own condition", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName, "condition": launcherCond}, map[string]any{}, true},
+		{"the runs bucket's read, unconditioned", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectViewer", "bucket": bucketName}, map[string]any{}, true},
+		// P5.1e: the pairing key's cloud copy, and this is the row the design
+		// states as the exception the symmetric tag forces (§6 rule 5). It is
+		// the per-secret row and never the project-wide one — the case below
+		// is the same role, moved to the project, and it stays refused.
+		{"the per-secret accessor on the pairing key's container", "google_secret_manager_secret_iam_member",
+			map[string]any{"member": member, "role": "roles/secretmanager.secretAccessor", "secret_id": "fugaro-orch-pairing"}, map[string]any{}, true},
+		{"the project-wide accessor, which is the credentials service's alone", "google_project_iam_member",
+			map[string]any{"member": member, "role": "roles/secretmanager.secretAccessor", "project": "proj-1"}, map[string]any{}, false},
+
+		// The design's eleventh never-rule, named by hand: these three are what
+		// being a member of var.launchers would have granted, and the whole
+		// point of the account's own kind is that no row carries them.
+		{"the rules-bypassing read every mailbox in the installation", "google_project_iam_member",
+			map[string]any{"member": member, "role": "roles/firebasedatabase.viewer", "project": "proj-1"}, map[string]any{}, false},
+		{"the spend history's read", "google_project_iam_member",
+			map[string]any{"member": member, "role": "roles/datastore.viewer", "project": "proj-1"}, map[string]any{}, false},
+		{"the consumer bit that comes with the list", "google_project_iam_member",
+			map[string]any{"member": member, "role": "roles/serviceusage.serviceUsageConsumer", "project": "proj-1"}, map[string]any{}, false},
+
+		// The credentials service's invoker, which Q13's answer (2026-10-19)
+		// took OUT of the table: the run presents its own job token (D134) and
+		// the orchestrator never calls the service.
+		{"the credentials service's invoker", "google_cloud_run_v2_service_iam_member",
+			map[string]any{"member": member, "role": "roles/run.invoker", "project": "proj-1"}, map[string]any{}, false},
+
+		// The write, moved: another bucket, another condition, or none.
+		{"the write with no condition at all", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName}, map[string]any{}, false},
+		{"the write under a job's own prefix condition", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName, "condition": jobCond}, map[string]any{}, false},
+		// The title on its own is not the condition: a grant carrying the
+		// launchers' title with an expression over the whole bucket —
+		// objects/, and so the bucket root, where the managed marker
+		// fugaro/managed.json is written (design §6 rule 2) — reads as the
+		// launchers' row to anything that compares titles, and is not it.
+		{"the write under the launchers' title with a whole-bucket expression", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": bucketName,
+				"condition": []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": "resource.name.startsWith(\"projects/_/buckets/" + bucketName + "/objects/\")", "description": nil}}}, map[string]any{}, false},
+		{"the write under the launchers' condition on another bucket", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectUser", "bucket": "someone-elses-bucket", "condition": launcherCond}, map[string]any{}, false},
+		{"the read under a condition", "google_storage_bucket_iam_member",
+			map[string]any{"member": member, "role": "roles/storage.objectViewer", "bucket": bucketName, "condition": launcherCond}, map[string]any{}, false},
+
+		// A type with no custom role for this kind, and the role of another
+		// project's installation: the account is proj-1's and nobody else's.
+		{"a custom role on a type the table carries none for", "google_secret_manager_secret_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroLauncher"}, map[string]any{}, false},
+		{"the launcher's role to a lookalike in another project", "google_project_iam_member",
+			map[string]any{"member": "serviceAccount:" + OrchestratorAccountID + "@fp-2.iam.gserviceaccount.com", "role": "projects/proj-1/roles/fugaroLauncher", "project": "proj-1"}, map[string]any{}, false},
+	} {
+		ch := rc(tc.typ, tc.after, tc.unknown, "create")
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+		if (len(got) == 0) != tc.covered {
+			t.Errorf("%s: NotCovered = %q, covered want %v", tc.what, got, tc.covered)
+		}
+	}
+
+	// A role the plan leaves UNKNOWN, beside a custom role it creates in this
+	// same module: refused here for the intake's and the credentials service's
+	// reason one kind over, and this is the case that needs the refusal — the
+	// table's project row names a custom role for this kind (fugaroLauncher), so
+	// without the branch a plan that created ANY of the installation's custom
+	// roles beside the grant would cover a project role nobody can name, which
+	// is a project-wide reach (the intake's write role is create, delete and
+	// version-add for every container of the project, and its name-prefix
+	// condition is a thing this walk has no role to read). The account's rows
+	// are literals for this reason.
+	created := customRole(IntakeSecretsRole, "proj-1", []any{"secretmanager.secrets.create", "secretmanager.secrets.delete", "secretmanager.versions.add"})
+	computed := rc("google_project_iam_member", map[string]any{"member": member, "project": "proj-1"}, map[string]any{"role": true}, "create")
+	computedGot := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{created, computed}}, nil)
+	if len(computedGot) == 0 || !strings.Contains(strings.Join(computedGot, "\n"), "a computed role to the resident orchestrator's account") {
+		t.Errorf("a project role left unknown, beside the intake's own custom role created in the same plan: NotCovered = %q, want the computed role refused by name — a role the plan cannot name cannot be held to the design's section 4.3 table", computedGot)
+	}
+
+	// Listed on the review screen by mistake, it is still not a person: the
+	// never-rule is about the list's GRANTS, so an operator who put the
+	// account's address on var.launchers would get the account every role the
+	// list is bound with, which is exactly what the module must not do.
+	listed := Cover{Projects: testCover.Projects, Listed: []string{member}, Region: testCover.Region, Buckets: testCover.Buckets}
+	for _, tc := range []struct {
+		role    string
+		covered bool
+	}{
+		{"projects/proj-1/roles/fugaroLauncher", true},
+		{"roles/firebasedatabase.viewer", false},
+		{"roles/datastore.viewer", false},
+		{"roles/serviceusage.serviceUsageConsumer", false},
+	} {
+		ch := rc("google_project_iam_member", map[string]any{"member": member, "role": tc.role, "project": "proj-1"}, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
+			t.Errorf("listed on the review screen: %s to the resident orchestrator: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
 	}
 }

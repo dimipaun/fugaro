@@ -634,16 +634,25 @@ func (r *Repo) CommitAll(ctx context.Context, msg string) (bool, error) {
 // NewPaths lists the paths the checkout holds that no commit has and that a
 // commit would carry: the untracked ones git would add (`git ls-files --others
 // --exclude-standard`, ignored ones aside) and the ones the index holds that HEAD
-// does not (`git diff --name-only --no-renames --diff-filter=A HEAD`, the working
+// does not (`git diff --name-only --no-renames --diff-filter=AT HEAD`, the working
 // tree against HEAD, which sees a file added with `git add -N` as well). Both read
 // NUL-separated, so a path with a newline in it survives.
 //
 // The second listing is not an afterthought: a file the agent `git add`-ed and
 // never committed is new all the same, is absent from `--others` because it is
-// in the index, and is exactly what a commit would carry first. A path in
-// neither listing is one the base commit already holds — the run's own, however
-// much it changed — or one git ignores, which `git add -A` skips the same way,
-// so a path this call does not return cannot reach the commit either.
+// in the index, and is exactly what a commit would carry first. `T` is in the
+// filter beside `A` for the same reason: a typechange is a path HEAD and the
+// checkout disagree about the *kind* of, so one of the two entries is a symlink
+// or a gitlink, which holds no bytes at that path. Where that entry is HEAD's —
+// the base tracks a symlink or a submodule — the file the checkout holds there
+// is one no commit has, and `git add -A` carries it as it carries an addition;
+// where that entry is the checkout's, the path is a symlink the caller reads as
+// the path name it commits (stray.go's rule, which reads it rather than refusing
+// it). A path in
+// neither listing is one the base commit already holds a *file* at — the run's
+// own, however much it changed — or one git ignores, which `git add -A` skips
+// the same way, so a path this call does not return cannot reach the commit
+// either.
 func (r *Repo) NewPaths(ctx context.Context) ([]string, error) {
 	untracked, err := r.gitRaw(ctx, "ls-files", "--others", "--exclude-standard", "-z")
 	if err != nil {
@@ -656,7 +665,7 @@ func (r *Repo) NewPaths(ctx context.Context) ([]string, error) {
 	// `diff --cached` and is in the index, so neither listing would name it, and
 	// --no-renames keeps a new file that merely resembles a deleted tracked one
 	// an addition rather than a rename the filter drops.
-	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", "HEAD")
+	staged, err := r.gitRaw(ctx, "--no-replace-objects", "diff", "--name-only", "--no-renames", "--diff-filter=AT", "-z", "HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -1016,6 +1025,32 @@ const RunBranchPrefix = "fugaro/"
 // OriginURL returns the URL of the checkout's origin remote.
 func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 	return r.git(ctx, "remote", "get-url", "origin")
+}
+
+// NoPushURL is what a checkout that must never be pushed from sets its push
+// URL to (DisablePush): a path that is no repository, so a push opens nothing.
+//
+// It is set, not removed, because git has no empty push URL: a remote without
+// a pushurl falls back to its fetch URL, and `remote get-url --push` answers
+// with that URL — so "no push URL" is not a state git can be put in, and a
+// reader could not tell it from a fetch URL that is a push target. An inert URL
+// is a state it can be put in: the read answers with it (a caller holding every
+// push URL to its own question sees the substitute and refuses the checkout),
+// and a push to it fails.
+const NoPushURL = "file:///dev/null"
+
+// DisablePush points the checkout's origin push URL at NoPushURL, leaving the
+// fetch URL alone. The clone still reads through it, including the blobs a
+// blobless clone fetches on demand, and nothing a push in the checkout does
+// opens the repository it was cloned from.
+//
+// A read-only context repository is cloned with a read-only token besides, but
+// a token is the weaker of the two guarantees: a push that reaches a repository
+// at all is one D613 refuses, whatever credential it carries, and the checkout
+// is one an agent's own git runs in.
+func (r *Repo) DisablePush(ctx context.Context) error {
+	_, err := r.git(ctx, "remote", "set-url", "--push", "origin", "--", NoPushURL)
+	return err
 }
 
 // PushURLs returns every URL a push to the checkout's origin remote would go
@@ -1384,4 +1419,374 @@ func (r *Repo) tipBelongsToRun(ctx context.Context, tip string) (bool, error) {
 		return false, err
 	}
 	return slices.Contains(strings.Split(reflog, "\n"), tip), nil
+}
+
+// BakedGitOrigin is the origin a checkout the image baked records, read from
+// the file and after the shapes this package cannot reset such a checkout from
+// are refused (ResetBakedGit).
+//
+// `git remote get-url origin` (OriginURL) answers with the URL this environment
+// would open — it applies the run's own url.*.insteadOf rules, which route a
+// provider's URL through the run's forwarder or, in a test, to a local
+// repository. That is a property of the run. What a caller asking which
+// repository an image's checkout is a checkout OF wants is what the image
+// wrote, so the key is read from the checkout's own configuration.
+func (r *Repo) BakedGitOrigin(ctx context.Context) (string, error) {
+	if err := r.refuseUnresettableBakedGit(ctx); err != nil {
+		return "", err
+	}
+	return r.git(ctx, "config", "--get", "remote.origin.url")
+}
+
+// refuseUnresettableBakedGit refuses the five shapes of a baked .git that
+// ResetBakedGit cannot put into the fixed state it writes, each for its own
+// reason and each named in the refusal so the run's halt says which one it met.
+//
+// A .git that is a FILE (a linked worktree, a submodule's checkout, a
+// --separate-git-dir clone) names a git directory outside this directory: the
+// configuration, the hooks and the refs this package replaces are then not the
+// ones git reads for the checkout. .git/objects/info/alternates makes the
+// objects of a store outside the checkout available as if they were in it, so
+// what a read of a commit answers with is not what this checkout holds.
+// .git/commondir is the same statement as the file above, written down.
+// A configuration or a hook directory under .git/modules is a submodule's own,
+// read by git for that submodule: what such a configuration says (a URL to
+// fetch from, a hook to run) is the image's and no reset of the top-level .git
+// reaches it — and a symbolic link there hides one of those outside the
+// checkout, which git follows and no walk of the directory does, a commondir or
+// an objects/info/alternates there being the two above over again, pointed out
+// of the submodule's own git directory. A submodule's
+// WORKING DIRECTORY is the fifth shape, and it is the
+// same statement one step out: git keeps a submodule's git directory elsewhere
+// and the .git file in that directory names where — normally under this
+// checkout's own .git/modules — so a .git file naming any other directory keeps
+// that directory, and the configuration git reads from it for the submodule,
+// past the reset: clean -ffdx never reaches the path (it is tracked), and the
+// run's own git reads that configuration in the checkout, where a
+// core.fsmonitor the image wrote there is a command of the image's that runs.
+func (r *Repo) refuseUnresettableBakedGit(ctx context.Context) error {
+	git := filepath.Join(r.Dir, ".git")
+	info, err := os.Lstat(git)
+	if err != nil {
+		return fmt.Errorf("%s has no .git: %w", r.Dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is a file or a link naming a git directory outside the checkout, so the configuration and hooks git reads for it are not the ones in it", git)
+	}
+	if _, err := os.Lstat(filepath.Join(git, "commondir")); err == nil {
+		return fmt.Errorf("%s names another repository's git directory as the one shared by this checkout", filepath.Join(git, "commondir"))
+	}
+	if _, err := os.Lstat(filepath.Join(git, "objects", "info", "alternates")); err == nil {
+		return fmt.Errorf("%s makes objects from a store outside the checkout available as this checkout's", filepath.Join(git, "objects", "info", "alternates"))
+	}
+	if err := refuseSubmoduleState(filepath.Join(git, "modules")); err != nil {
+		return err
+	}
+	return r.refuseSubmoduleWorktrees(ctx)
+}
+
+// refuseSubmoduleWorktrees refuses a submodule whose working directory holds a
+// .git naming a git directory this checkout's own .git/modules does not hold:
+// git reads that directory's configuration for the submodule, so the image's
+// core.fsmonitor there is a command of the image's that the run's own git makes
+// — its status runs the submodule's own status — and no reset of the top-level
+// .git reaches it.
+//
+// The paths are HEAD's tree's gitlinks and the index's together, which is
+// exactly what clean -ffdx leaves alone: a nested repository git does not track
+// is removed with the rest of the untracked tree, and one it does track is a
+// submodule — and the index the clean reads is not the index read here. The
+// index is the image's, and an entry the image dropped from it (update-index
+// --force-remove) is one the reset's own reset --hard HEAD puts back, before the
+// clean that then leaves that path alone. HEAD's gitlinks are what such an entry
+// comes back as, so the same rule is applied to them, and only where the path is
+// in the worktree at all: a gitlink whose directory is absent puts nothing of
+// the image's in front of the run. A submodule inside a
+// submodule needs no walk of its own here: its git directory is a submodule's
+// own, which refuseSubmoduleState refuses for its configuration at any depth.
+//
+// core.fsmonitor is turned off for the read of the index alone, because reading
+// the index is enough to make git run a configured one and the image's
+// configuration is still in place here: the fixed one is written below, after
+// this refusal. A read of HEAD's tree reads no index, so no such flag is needed
+// there.
+func (r *Repo) refuseSubmoduleWorktrees(ctx context.Context) error {
+	var paths []string
+	seen := map[string]bool{}
+	collect := func(out []byte) {
+		for _, entry := range strings.Split(string(out), "\x00") {
+			meta, path, ok := strings.Cut(entry, "\t")
+			if !ok || !strings.HasPrefix(meta, "160000 ") || seen[path] {
+				continue
+			}
+			seen[path] = true
+			paths = append(paths, path)
+		}
+	}
+	out, err := r.gitRaw(ctx, "-c", "core.fsmonitor=false", "ls-files", "--stage", "-z")
+	if err != nil {
+		return err
+	}
+	collect(out)
+	// A checkout the image baked before its first commit has no HEAD to read, and
+	// nothing for a reset to put back either.
+	if _, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err == nil {
+		out, err := r.gitRaw(ctx, "ls-tree", "-r", "-z", "HEAD")
+		if err != nil {
+			return err
+		}
+		collect(out)
+	}
+	modules := filepath.Join(r.Dir, ".git", "modules")
+	for _, path := range paths {
+		dotGit := filepath.Join(r.Dir, filepath.FromSlash(path), ".git")
+		info, err := os.Lstat(dotGit)
+		if errors.Is(err, os.ErrNotExist) {
+			continue // the submodule is not checked out: nothing of the image's is here
+		}
+		if err != nil {
+			return err
+		}
+		target := dotGit
+		if !info.IsDir() {
+			if target, err = submoduleGitdir(dotGit); err != nil {
+				return err
+			}
+		}
+		if !inDir(modules, target) {
+			return fmt.Errorf("%s names the git directory %s, which this checkout's own .git/modules does not hold, so the configuration git reads for the submodule there is not one this run resets", dotGit, target)
+		}
+	}
+	return nil
+}
+
+// submoduleGitdir is the git directory a submodule's .git file names: the path
+// after "gitdir:", resolved against the directory the file is in, which is how
+// git resolves it.
+func submoduleGitdir(dotGit string) (string, error) {
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return "", err
+	}
+	target, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return "", fmt.Errorf("%s does not name a git directory", dotGit)
+	}
+	if target = strings.TrimSpace(target); target == "" {
+		return "", fmt.Errorf("%s names no git directory", dotGit)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(dotGit), target)
+	}
+	return filepath.Clean(target), nil
+}
+
+// inDir reports whether path is dir or lies under it. The comparison is
+// textual, on cleaned paths: what decides whether the checkout's own
+// .git/modules holds a directory is the path the .git file names.
+func inDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+// refuseSubmoduleState reports the first submodule configuration file or
+// non-empty hook directory under modules, at any depth: a submodule's git
+// directory can hold both, and both are read by git for that submodule rather
+// than for the checkout this package resets. A commondir or an
+// objects/info/alternates file there is refused for the same reason: the first
+// names the git directory git reads that configuration from — an external one,
+// whose configuration is then the one that counts — and the second makes an
+// external store's objects the submodule's, the two shapes the top-level .git
+// is refused for above.
+//
+// A symbolic link at modules or anywhere under it is refused as well, and it is
+// the same statement: git reads the directory a link names — that is how a
+// submodule's .git file finds its git directory in the first place — so an
+// image that leaves one here has its configuration read by the run's git while
+// that configuration sits outside the checkout. Neither this walk nor the
+// worktree check below would see it: a walk does not follow a link, and a .git
+// file naming a path under .git/modules reads as one this checkout holds, the
+// link being what puts it elsewhere. Git writes no link there itself, so what is
+// refused is only a shape no checkout it wrote can hold.
+func refuseSubmoduleState(modules string) error {
+	info, statErr := os.Lstat(modules)
+	if errors.Is(statErr, os.ErrNotExist) {
+		return nil
+	}
+	if statErr == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symbolic link, so the configuration git reads through it is outside the checkout this reset reaches", modules)
+	}
+	return filepath.WalkDir(modules, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symbolic link, so the configuration git reads through it is outside the checkout this reset reaches", path)
+		}
+		if !d.IsDir() {
+			if d.Name() == "config" {
+				return fmt.Errorf("%s is a submodule's configuration, which git reads for that submodule", path)
+			}
+			// A commondir names the git directory git reads that configuration
+			// from, and an alternates file the store it reads objects from: both
+			// are the top-level .git's own two shapes, refused above, one level in.
+			if d.Name() == "commondir" {
+				return fmt.Errorf("%s names another git directory as the one shared by the submodule, so the configuration git reads for it is not one this checkout holds", path)
+			}
+			if strings.HasSuffix(filepath.ToSlash(path), "/objects/info/alternates") {
+				return fmt.Errorf("%s makes objects from a store outside the checkout available as the submodule's", path)
+			}
+			return nil
+		}
+		if d.Name() == "hooks" {
+			entries, err := os.ReadDir(path)
+			if err != nil {
+				return err
+			}
+			if len(entries) > 0 {
+				return fmt.Errorf("%s is a submodule's hook directory", path)
+			}
+		}
+		return nil
+	})
+}
+
+// ResetBakedGit puts a checkout the image baked into the fixed state this run
+// works from, and is D2308's reset. It replaces what the image's build left in
+// the checkout with what the run writes itself:
+//
+//   - .git/config and .git/config.worktree are replaced — the first by a
+//     configuration holding the origin remote alone, whose URL is remote (the
+//     clone URL this run computed for its own repository) and whose
+//     core.hooksPath is hooksDir. A credential helper, a url.*.insteadOf, a
+//     pushurl, a remote whose name is a URL, a filter driver and an include of
+//     another file all live in the configuration, so replacing the file closes
+//     every one of those doors at once — including a spelling this package's
+//     own readers (pushRewrite, PushURLs, CredentialURL) do not know.
+//   - .git/hooks is removed, and hooksDir is emptied and re-made: the hooks the
+//     image's build installed are the ones the agent's own git would run on its
+//     commits (the stamp's pass-throughs chain to whatever the checkout
+//     configures, runner's writeStampHooks), and the directory the run points
+//     git at is one the image never wrote to.
+//   - every refs/replace entry and .git/info/grafts are deleted, the replace
+//     refs through git so the ones the image packed into packed-refs go too:
+//     both substitute the object a read answers with, so a checkout carrying
+//     one makes every commit this run reads — a base, a head, a diff — name
+//     something other than what it holds.
+//   - .git/index is removed and rebuilt by `reset --hard HEAD`, which puts
+//     every tracked file back at the commit HEAD names. The index is also where
+//     a skip-worktree bit lives — what a sparse-checkout build sets, and what
+//     an edit marked skip-worktree leaves behind — and git keeps the
+//     working-tree copy of such a file through every checkout this run makes
+//     afterwards: left in place, the build's edit to it would reach the agent's
+//     tree, and the agent's own edit to it would never be staged. The reset is
+//     what also makes the clean below safe: with no index git finds nothing
+//     tracked, and the clean would remove the tree's every file.
+//   - everything git does not track is removed from the working tree (clean
+//     -ffdx, which is where the ignored files go too): what the entry's build
+//     left behind is not the repository's, and an ignored build output that
+//     stayed would reach the agent and its build.
+//
+// The tree is left at the commit HEAD names, not at the fetched one: the run's
+// own checkout of the task's ref (bootstrap's CheckoutNewBranch, a hard reset
+// onto the fetched ref) is what puts it at the fetched state, and it must run
+// for a checkout and a ref this run did not choose.
+//
+// The fixed configuration is written before any git of this package runs on
+// the checkout, because a configuration is also how git is made to run a
+// command (core.fsmonitor, a filter driver) — with the image's configuration
+// still in place, the clean below would be a command the image chose, in the
+// environment this run's git carries.
+//
+// remote is the run's own clone URL and hooksDir a directory outside the
+// checkout that this run owns; both are written into the configuration, so git
+// fetches and pushes where the run decided and resolves no hook the image
+// left. Nothing here reads or needs a credential: no fetch is made and no
+// remote is contacted.
+func (r *Repo) ResetBakedGit(ctx context.Context, remote, hooksDir string) error {
+	if err := r.refuseUnresettableBakedGit(ctx); err != nil {
+		return err
+	}
+	if remote == "" || hooksDir == "" {
+		return errors.New("a baked checkout is reset to a remote and a hook directory, and one of them is empty")
+	}
+	git := filepath.Join(r.Dir, ".git")
+	if err := os.RemoveAll(filepath.Join(git, "hooks")); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(git, "config")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(filepath.Join(git, "config.worktree")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(git, "config"), []byte(bakedConfig(remote, hooksDir)), 0o644); err != nil {
+		return err
+	}
+	if err := r.dropReplaceRefs(ctx); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(git, "refs", "replace")); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(git, "info", "grafts")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(filepath.Join(git, "index")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	// A checkout whose HEAD names no commit yet — a repository the image baked
+	// before its first commit — has nothing to put back, and is left to the
+	// run's own checkout of the ref it fetched.
+	if _, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err == nil {
+		if _, err := r.git(ctx, "reset", "--quiet", "--hard", "HEAD"); err != nil {
+			return err
+		}
+	}
+	if _, err := r.git(ctx, "clean", "-ffdx", "--quiet"); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(hooksDir); err != nil {
+		return err
+	}
+	return os.MkdirAll(hooksDir, 0o755)
+}
+
+// bakedConfig is the configuration ResetBakedGit writes: the origin remote the
+// run clones from, with the refspec that gives every branch a remote-tracking
+// ref (the image's own clone is --single-branch, and a run fetches a base
+// branch, a reviewed pull request's head and its own ref), and the hook
+// directory the run owns. Values are quoted, so a path with a space in it is a
+// value and not a syntax error.
+func bakedConfig(remote, hooksDir string) string {
+	return fmt.Sprintf("[core]\n\thooksPath = %s\n[remote \"origin\"]\n\turl = %s\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
+		quoteConfigValue(hooksDir), quoteConfigValue(remote))
+}
+
+// quoteConfigValue renders v as the value of a configuration entry, which git
+// reads as a quoted string with backslash escapes (git-config(1)).
+func quoteConfigValue(v string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(v) + `"`
+}
+
+// dropReplaceRefs deletes every refs/replace entry through git, so an entry the
+// image packed into .git/packed-refs goes with the loose ones — removing the
+// directory alone would leave a packed replacement in place, and a replacement
+// is exactly what makes this run's reads answer with another commit.
+func (r *Repo) dropReplaceRefs(ctx context.Context) error {
+	out, err := r.git(ctx, "for-each-ref", "--format=%(refname)", "refs/replace/")
+	if err != nil {
+		return err
+	}
+	var in strings.Builder
+	for _, ref := range strings.Split(out, "\n") {
+		if ref = strings.TrimSpace(ref); ref != "" {
+			fmt.Fprintf(&in, "delete %s\n", ref)
+		}
+	}
+	if in.Len() == 0 {
+		return nil
+	}
+	_, err = r.gitIn(ctx, in.String(), "update-ref", "--stdin")
+	return err
 }

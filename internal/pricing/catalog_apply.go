@@ -21,7 +21,7 @@ type CatalogRoute struct {
 	Name       string
 	Models     []string // the model IDs this route claims, already resolved
 	RequireZDR bool     // price the ZDR-eligible endpoints only (the default)
-	Policy     string   // "cheapest" (also ""), or "highest"
+	Policy     string   // "highest" (also ""), or "cheapest"
 
 	// Overridden is the subset of the models this route claims that the owner
 	// has priced by hand under model_prices. Such a model keeps the file's
@@ -72,10 +72,17 @@ type CatalogRoute struct {
 //     through Table.With and so nothing else would raise it), the two cache
 //     writes to DefaultCacheWrite5m/1h, and web search to 0 — the one
 //     dimension with no conservative fold (design D7(a), plan P12).
+//   - The row carries the selected tier's whole range beside the bound it
+//     charges: Model.Lo and Model.Hi are the cheapest and the dearest end
+//     of that tier, compiled by the same rules as the charged bound (cache
+//     ratios taken at each end's own prices), so the range the bound leaves
+//     is on the row and not only in its provenance (design D6).
 //   - A ratio above MaxMultiplier gets no row either, with the model, the
 //     dimension, both prices and the file's date recorded in Table.Refused,
 //     never a clamp: clamping down would under-price and clamping up would
-//     hide a model the table cannot express.
+//     hide a model the table cannot express. An end the table cannot state
+//     fails the row the same way even where the charged bound is fine: a
+//     floor or a ceiling nobody can trust is not a band.
 //   - A checked_at past catalog.StaleAfter forces the selected tier's
 //     maximum whatever the policy, and marks the row stale: an old catalog
 //     over-counts, and never under-prices (design D10, P7).
@@ -177,9 +184,13 @@ func catalogModel(id string, r CatalogRoute, e catalog.Entry, source, checkedAt 
 			return Model{}, fmt.Errorf("%s is routed to %s with require_zdr: true, but the built-in price catalog has no ZDR-eligible endpoint for it: set require_zdr: false on the route, or price the model under model_prices", id, r.Name)
 		}
 	}
-	bound := "min"
-	if r.Policy == "highest" {
-		bound = "max"
+	// The unset policy is highest (D2644): the charge is what the caps and
+	// the ledger are computed from, so the end that cannot under-count a
+	// call OpenRouter serves from a dearer endpoint is the safe default.
+	// cheapest stays selectable, spelled out on the route.
+	bound := "max"
+	if r.Policy == "cheapest" {
+		bound = "min"
 	}
 	if stale {
 		// A stale catalog charges the safe end whatever the policy asked
@@ -190,10 +201,18 @@ func catalogModel(id string, r CatalogRoute, e catalog.Entry, source, checkedAt 
 	if err != nil {
 		return Model{}, err
 	}
+	lo, err := catalogRates(id, tier, "min", checkedAt)
+	if err != nil {
+		return Model{}, err
+	}
+	hi, err := catalogRates(id, tier, "max", checkedAt)
+	if err != nil {
+		return Model{}, err
+	}
 	inMax, outMax := tierMax(tier)
 	return Model{
 		ID: id, ContextTokens: e.ContextTokens, MaxOutputTokens: e.MaxOutputTokens,
-		Rates: rates,
+		Rates: rates, Lo: lo, Hi: hi,
 		Catalog: &CatalogPrice{
 			Tier: name, Bound: bound, Endpoints: e.Endpoints, ZdrEndpoints: e.ZDREndpoints,
 			Source: source, CheckedAt: checkedAt, Stale: stale,
@@ -216,7 +235,9 @@ func tierMax(tier map[string]catalog.Bound) (in, out float64) {
 // catalogRates is the tier's bound compiled into rates: input and output
 // are the bound's prices, each cache dimension is the bound's price over
 // the bound's input price, and a dimension the tier does not price takes
-// its fold value.
+// its fold value. Both bounds are compiled the same way, so a row's two
+// ends are comparable with its charge rather than a partial figure beside
+// it.
 func catalogRates(id string, tier map[string]catalog.Bound, bound, checkedAt string) (Rates, error) {
 	at := func(dim string) (float64, bool, error) {
 		b, ok := tier[dim]

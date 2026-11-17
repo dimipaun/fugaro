@@ -3,10 +3,12 @@ package gateway
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1282,5 +1284,267 @@ func TestServiceClientBoundsTheWaitForHeaders(t *testing.T) {
 	case <-f.Ended(0):
 	case <-time.After(2 * time.Second):
 		t.Error("the held call was not cut by the bound")
+	}
+}
+
+// The cases below are Service.Post's own: the client B3.4's runner fetch calls,
+// which carries a call that is not a model call to a route of the credentials
+// service and hands its status and answer back. They call the method directly
+// rather than through a started gateway, because what they pin is the wire the
+// call travels on -- and Post is the one service call that leaves a run before
+// any gateway stage exists.
+
+// workflowSecretPostCall is one call a Post case's stand-in received: what it
+// was asked for and what it carried.
+type workflowSecretPostCall struct {
+	method string
+	path   string
+	header http.Header
+	body   string
+}
+
+// workflowSecretPostSecrets are the values a refusal on this route must never
+// name: the two identities the call itself travels with, and the body it was
+// sent with. There is no gateway token here, because a Post case starts no
+// gateway and mints none.
+func workflowSecretPostSecrets(t *testing.T, body string) []string {
+	t.Helper()
+	return []string{serviceIDToken(t), serviceRunToken(t), body}
+}
+
+// workflowSecretPostStub is the service these cases are pointed at: it records
+// every call it receives and answers what the case set. Post is a client of the
+// wire and nothing here speaks the route's contract, so the path, the body and
+// the answer are the case's own.
+type workflowSecretPostStub struct {
+	mu     sync.Mutex
+	calls  []workflowSecretPostCall
+	status int
+	answer string
+}
+
+func (s *workflowSecretPostStub) start(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		s.mu.Lock()
+		s.calls = append(s.calls, workflowSecretPostCall{method: r.Method, path: r.URL.Path, header: r.Header.Clone(), body: string(b)})
+		status, answer := s.status, s.answer
+		s.mu.Unlock()
+		if status == 0 {
+			status = http.StatusOK
+		}
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, answer)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func (s *workflowSecretPostStub) seen() []workflowSecretPostCall {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]workflowSecretPostCall(nil), s.calls...)
+}
+
+// workflowSecretService is the identity Post calls are signed with: the job's
+// own ID token, the run's identity, the job's name and, when a case holds one,
+// the two halves of the run's slip.
+func workflowSecretService(t *testing.T, edit func(*Service)) Service {
+	t.Helper()
+	s := Service{
+		IDToken:    func(context.Context) (string, error) { return serviceIDToken(t), nil },
+		RunIDToken: func() string { return serviceRunToken(t) },
+		Job:        serviceJob,
+	}
+	if edit != nil {
+		edit(&s)
+	}
+	return s
+}
+
+// workflowSecretPath is the route the cases below call. It is the test's own
+// and deliberately not the contract's: this package cannot import
+// internal/credsvc (credsvc imports this package), so the path and the body are
+// the caller's, and what is pinned here is the wire they travel on.
+const workflowSecretPath = "/v1/a-route"
+
+// TestWorkflowSecretPostSendsTheCall (B3.4): the fetch's call is the model
+// path's call in everything but its route -- the job's own Google ID token as
+// the bearer, the run's identity, the job's name, the caller's body and path
+// verbatim -- and it carries no credential of the run's own and none of the
+// model path's headers.
+func TestWorkflowSecretPostSendsTheCall(t *testing.T) {
+	const answer = `{"env":"A_VAR","value":"the-answer-this-route-serves"}`
+	stub := &workflowSecretPostStub{status: http.StatusOK, answer: answer}
+	body := []byte(`{"env":"A_VAR"}`)
+
+	status, got, err := workflowSecretService(t, nil).Post(context.Background(), stub.start(t), workflowSecretPath, body)
+	if err != nil || status != http.StatusOK || string(got) != answer {
+		t.Fatalf("Post = %d, %q, %v", status, got, err)
+	}
+	calls := stub.seen()
+	if len(calls) != 1 {
+		t.Fatalf("the service was called %d times", len(calls))
+	}
+	call := calls[0]
+	if call.method != http.MethodPost || call.path != workflowSecretPath || call.body != string(body) {
+		t.Errorf("the service was asked %s %s %q", call.method, call.path, call.body)
+	}
+	if got := call.header.Get("Authorization"); got != "Bearer "+serviceIDToken(t) {
+		t.Errorf("the job's ID token didn't travel as the bearer credential (got %d bytes)", len(got))
+	}
+	if got := call.header.Get(HeaderRunIdentity); got != serviceRunToken(t) {
+		t.Errorf("%s = %q, want the run's identity", HeaderRunIdentity, got)
+	}
+	if got := call.header.Get(HeaderRunJob); got != serviceJob {
+		t.Errorf("%s = %q, want %q", HeaderRunJob, got, serviceJob)
+	}
+	for _, k := range []string{"x-api-key", HeaderTier, HeaderCredential, HeaderSwitch, HeaderSlip, HeaderSlipClaim} {
+		if got := call.header.Values(k); len(got) > 0 {
+			t.Errorf("the fetch's call carries %s = %q, which it neither has nor needs", k, got)
+		}
+	}
+	if got := call.header.Get("Content-Type"); got != "application/json" {
+		t.Errorf("Content-Type = %q", got)
+	}
+}
+
+// TestWorkflowSecretPostCarriesTheSlipsTwoHalves: a run that holds a slip presents
+// both halves of it on the fetch, and one that holds half of one presents
+// nothing at all -- it is refused before any call is made. A call that carried
+// an id with no claim, or a claim with no id, would be a claim the run never
+// took, presented to the service as the run's own.
+func TestWorkflowSecretPostCarriesTheSlipsTwoHalves(t *testing.T) {
+	t.Run("both halves travel", func(t *testing.T) {
+		stub := &workflowSecretPostStub{}
+		sv := workflowSecretService(t, func(s *Service) { s.SlipID, s.SlipClaim = "slip-1", "slip-claim-1" })
+		if _, _, err := sv.Post(context.Background(), stub.start(t), workflowSecretPath, []byte("{}")); err != nil {
+			t.Fatal(err)
+		}
+		calls := stub.seen()
+		if len(calls) != 1 {
+			t.Fatalf("the service was called %d times", len(calls))
+		}
+		if id, claim := calls[0].header.Get(HeaderSlip), calls[0].header.Get(HeaderSlipClaim); id != "slip-1" || claim != "slip-claim-1" {
+			t.Errorf("the slip travelled as %q / %q", id, claim)
+		}
+	})
+
+	for _, half := range []struct {
+		name         string
+		id, claim    string
+		halfTheError string
+	}{
+		{name: "an id with no claim", id: "slip-1", halfTheError: "half a slip"},
+		{name: "a claim with no id", claim: "slip-claim-1", halfTheError: "half a slip"},
+	} {
+		t.Run(half.name, func(t *testing.T) {
+			stub := &workflowSecretPostStub{}
+			sv := workflowSecretService(t, func(s *Service) { s.SlipID, s.SlipClaim = half.id, half.claim })
+			_, _, err := sv.Post(context.Background(), stub.start(t), workflowSecretPath, []byte("{}"))
+			if err == nil || !errors.Is(err, errServiceUnidentified) || !strings.Contains(err.Error(), half.halfTheError) {
+				t.Fatalf("Post = %v, want a refusal naming %q", err, half.halfTheError)
+			}
+			if len(stub.seen()) != 0 {
+				t.Error("a call with half a slip reached the service")
+			}
+		})
+	}
+}
+
+// TestWorkflowSecretPostRefusalsNeverNameTheAnswer: everything that can go wrong
+// before the call is answered is one of the run's own refusals, and none of
+// them names a value -- the answer does not exist yet, and the caller's body is
+// never in one. The three cases are the three the call cannot be sent with: a
+// base URL that is not the service's, a job name the service could not read,
+// and a path that is not a path.
+//
+// A refusal the service itself answers is NOT an error: the status and the
+// answer are handed back for the caller to read (it relays the contract's own
+// code and drops the message beside it).
+func TestWorkflowSecretPostRefusalsNeverNameTheAnswer(t *testing.T) {
+	const body = `{"env":"A_VAR"}`
+	for _, tc := range []struct {
+		name string
+		base string
+		path string
+		edit func(*Service)
+		want string
+	}{
+		{name: "a base that is not the service's", base: "http://creds.example.invalid", path: workflowSecretPath, want: "must be https"},
+		{name: "a base that is no URL at all", base: "://creds", path: workflowSecretPath, want: "scheme and a host"},
+		{name: "a job the service could not read", base: "", path: workflowSecretPath, edit: func(s *Service) { s.Job = "not a job name" }, want: "cannot present its identity"},
+		{name: "a path that is not a path", base: "", path: "v1/a-route", want: "isn't a path"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &workflowSecretPostStub{}
+			base := tc.base
+			if base == "" {
+				base = stub.start(t)
+			}
+			sv := workflowSecretService(t, tc.edit)
+			_, _, err := sv.Post(context.Background(), base, tc.path, []byte(body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Post = %v, want a refusal naming %q", err, tc.want)
+			}
+			assertNoSecret(t, "the refusal", err.Error(), workflowSecretPostSecrets(t, body))
+			if len(stub.seen()) != 0 {
+				t.Error("a call that could not be signed reached the service")
+			}
+		})
+	}
+
+	t.Run("a service that cannot be reached", func(t *testing.T) {
+		gone := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		url := gone.URL
+		gone.Close()
+		_, _, err := workflowSecretService(t, nil).Post(context.Background(), url, workflowSecretPath, []byte(body))
+		if err == nil || !strings.Contains(err.Error(), "could not be reached") {
+			t.Fatalf("Post = %v, want a refusal saying the service could not be reached", err)
+		}
+		assertNoSecret(t, "the refusal", err.Error(), workflowSecretPostSecrets(t, body))
+	})
+
+	t.Run("the service's own refusal is handed back, not raised", func(t *testing.T) {
+		const refusal = `{"error":"state_unavailable","message":"the record cannot be read"}`
+		stub := &workflowSecretPostStub{status: http.StatusServiceUnavailable, answer: refusal}
+		status, answer, err := workflowSecretService(t, nil).Post(context.Background(), stub.start(t), workflowSecretPath, []byte(body))
+		if err != nil || status != http.StatusServiceUnavailable || string(answer) != refusal {
+			t.Fatalf("Post = %d, %q, %v", status, answer, err)
+		}
+	})
+}
+
+// TestWorkflowSecretPostBoundsTheAnswer: the answer is read to a bound,
+// so a route that answers with a stream, or with a body far larger than the one
+// value it serves, is an error rather than a value this run keeps reading. The
+// error names the bound and never what it read.
+func TestWorkflowSecretPostBoundsTheAnswer(t *testing.T) {
+	stub := &workflowSecretPostStub{answer: strings.Repeat("a", maxServiceAnswerBytes+1)}
+	status, answer, err := workflowSecretService(t, nil).Post(context.Background(), stub.start(t), workflowSecretPath, []byte("{}"))
+	if err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("Post = %d, %v, want a refusal naming the bound", status, err)
+	}
+	if answer != nil || len(answer) != 0 {
+		t.Errorf("an over-long answer came back to the caller (%d bytes)", len(answer))
+	}
+}
+
+// TestWorkflowSecretPostClientHoldsTheHeaderBound: Post's client is the model path's,
+// so a service that accepts the connection and never answers is cut by the same
+// response-header bound -- a fetch must not sit on a dead connection until the
+// run's own deadline. It is asserted on the client itself because the bound is
+// ten minutes and a case cannot wait for it.
+func TestWorkflowSecretPostClientHoldsTheHeaderBound(t *testing.T) {
+	tr, ok := serviceCallClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("the Post client's transport is %T", serviceCallClient.Transport)
+	}
+	if tr.ResponseHeaderTimeout != serviceResponseHeaderTimeout || tr.ResponseHeaderTimeout <= 0 {
+		t.Fatalf("the Post client's response-header bound is %s (want %s)", tr.ResponseHeaderTimeout, serviceResponseHeaderTimeout)
+	}
+	if serviceCallClient.CheckRedirect == nil {
+		t.Fatal("the Post client follows redirects, which would carry the job's ID token to whatever host a Location names")
 	}
 }

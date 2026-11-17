@@ -835,6 +835,77 @@ func TestConfigPublishRefusesTheBinariesKey(t *testing.T) {
 	}
 }
 
+// TestCascadeCarrierIsNeverSharedConfig: the local config grows three carriers
+// in this release (N1, D2607) — the cascade under `credential_cascade` (F23:
+// the node's `credentials` member is the cascade, while here `credentials` is
+// already the list of typed ones), the ladder's `model_grades`, and the
+// explicit-unset record `node_removals` — and none of the three is publishable.
+// They cross to a run through the policy node, which the owner writes and the
+// runner fails closed on. The cascade's fallback decides whether a run may
+// spend the project's money at all (D152), a grade names the model a rung runs
+// and the credential or pool its calls go out on, and the removals are the
+// destructive one: a launcher who could write them into the file it can write
+// would be deleting pools, credentials and crafts of the project's node. Both
+// doors are closed here as they are for the binaries block — the reader refuses
+// each key (sharedForbidden) and the publisher never writes it, because
+// localcfg's Shared nils all three.
+//
+// The published object in the fixture is the launcher's half and the case the
+// refusal exists for: an object carrying these keys is refused and replaced,
+// never merged, so the launcher's own cascade, grades and removals never
+// survive in the file every teammate reads.
+func TestCascadeCarrierIsNeverSharedConfig(t *testing.T) {
+	for _, k := range []string{"credential_cascade", "model_grades", "node_removals"} {
+		if !slices.Contains(sharedForbidden, k) {
+			t.Errorf("sharedForbidden does not name %s, so a published %s: would be decoded and read", k, k)
+		}
+		_, err := ParseShared([]byte(validShared()+k+": {}\n"), sharedAnchor)
+		if err == nil {
+			t.Fatalf("a published shared config carrying %s: was accepted", k)
+		}
+		for _, want := range []string{k, "never published", "fugaro update"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal of %s does not name %q: %v", k, want, err)
+			}
+		}
+	}
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	block := "credential_cascade: {fallback: auto, wait_threshold: 90s}\n" +
+		"model_grades:\n  strong: {model: anthropic/claude-sonnet-5.5, access: acme-main}\n" +
+		"node_removals:\n  pools: [acme-pool]\n"
+	writePublished(t, dir, publishedWithOtherRepo+block)
+	if _, err := localcfg.Parse([]byte(publishedWithOtherRepo + block)); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	f.appendConfig(t, block)
+	lc := publishable(t)
+	if lc.CredentialCascade == nil || lc.ModelGrades == nil || lc.NodeRemovals == nil {
+		t.Fatalf("the local fixture states none of the three: %+v", lc)
+	}
+	var warned []string
+	if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "refused") || !strings.Contains(warned[0], "credential_cascade") {
+		t.Errorf("warnings = %q", warned)
+	}
+	got, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The values are checked beside the keys: a publish that moved a block into
+	// a section of its own would be the same leak under another name.
+	for _, s := range []string{"credential_cascade", "model_grades", "node_removals", "acme-pool", "anthropic/claude-sonnet-5.5", "90s"} {
+		if strings.Contains(string(got), s) {
+			t.Errorf("the shared config carries %q, which the launcher who wrote it must not be able to state:\n%s", s, got)
+		}
+	}
+	if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].Provider != "github" {
+		t.Errorf("published repos = %v; want only the local acme/app", r)
+	}
+}
+
 // TestSharedConfigRefusesARepositoryAccountList: a repos entry's own
 // claude_accounts is the repository-level half of the trust anchor T1 keeps in
 // the operator-only local config — it is what admits a repository whose runs
@@ -923,7 +994,12 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// into the shared file would be choosing what code every teammate's runs
 	// run -- the catalog's own reason, one step out -- and the triage switch
 	// decides which of a review round's findings hold a pull request back
-	// (D1854), which is the floor's reason one level down.
+	// (D1854), which is the floor's reason one level down. `rigor_pending` is
+	// the wizard's rigor answer waiting for the Layer stage to write it into the
+	// project layer (task W of docs/rigor-command/implementation-plan.md, D900),
+	// and it is refused for the floor's reason read from the other end: the mode
+	// is how much review every run of the project gets, so a launcher who could
+	// write the key would be choosing that for every teammate.
 	//
 	// `backend` joined the list with the enable (plan
 	// 2026-10-19-compute-backend.md Task 10 step 4), for a reason of the same
@@ -932,7 +1008,7 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// choice into the shared file would move every teammate with no local
 	// config onto VMs with a block that same launcher chose and no check ever
 	// saw.
-	for _, k := range []string{"image_map", "bake_repos", "triage", "backend"} {
+	for _, k := range []string{"image_map", "bake_repos", "triage", "rigor_pending", "backend"} {
 		if !slices.Contains(sharedForbidden, k) {
 			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
 		}
@@ -951,9 +1027,13 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"image_map", "image_map:\n    acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
+		{"rigor_pending", "rigor_pending: critical\n"},
 		{"backend", "backend: cloud-batch\n"},
 		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
 		{"bitbucket_tokens", "bitbucket_tokens:\n    - {name: ci, type: repo, coverage: [belong/edgeweb]}\n"},
+		{"credential_cascade", "credential_cascade: {fallback: auto}\n"},
+		{"model_grades", "model_grades:\n    strong: {model: anthropic/claude-sonnet-5.5, access: acme-main}\n"},
+		{"node_removals", "node_removals:\n    pools: [acme-pool]\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, err := localcfg.Parse([]byte(validShared() + tc.yaml))

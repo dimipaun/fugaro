@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner approved every task on 2026-10-30, with these
+**Ruling 2026-11-16: the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`. J1.2, J1.3 and T1.1–T1.3 are closed as superseded (no `jobmax.auto_launch` is built); T3.1 and V1.3 are WAITING on a re-plan against the orchestrator and the config-ownership registry and are not approved to launch as written; V1.2 is unchanged. X2 and Check 273, which measure J1.2's skill, are not touched here and are the owner's to close or re-point.** **Status as of 2026-11-10: in progress, about 24/40 merged; see [docs/status.md](../status.md) for the current table.** The owner approved every task on 2026-10-30, with these
 exceptions: T2.1 and T2.2 stay draft until the processor is named (O4); O1 and O2 are counsel's; T3.2
 (O6), the checks X1 and X2 write (270–273) and every OWNER-RUN part below are the owner's. The owner
 also named L5.2's model: `claude-opus-5-5` as this repository's level-2 reviewer. *(**Superseded
@@ -240,7 +240,7 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Red step:** `TestLevelsL3BounceSkipsL2` fails because the runner rejects the step.
 - **Reviewer:** opus + mandatory independent review (readiness).
 - **Commit:** `runner: review level 3, its bounce, and readiness by the highest level`.
-- **Done (PR #1578).** Red first: `TestLevelsL3BounceSkipsL2` failed because the runner rejects the step — a recipe carrying an `adversarial` step is refused at bootstrap until L4.2 runs it. The plan gains the adversarial arm (after the review step, never L2 between it and the bounce) and `checkPlan` was narrowed to the two things the levels require of a plan: no plan skips the senior review, and no plan drops a step a resolved level needs. The stage itself is the plan's step run through `stageOnce` with its own prompt (`AdversarialPrompt`, the senior brief plus the level's focus) and the level's own model and effort (`stageModel`, `applyStageEffort`, so `agent.EffortVars` reaches a Claude stage and never a provider route, D725). `applyLevels` runs at bootstrap, after the routing switch — level 1's own answer is read off the coder's model (`Agent.FirstLineOn`), so a resolution taken before the rewrite would drop the cheap loop for exactly the runs a switch routed — so a hand-written task meets `config.ResolveLevels`' refusals (the floor, the same-model guard, the effort set) before any stage starts; the allow-list is the run's own gate's (`checkBudget`'s `checkLevels(CheckAllowed)`), which judges each level's model as `agent.levels.lN.model` — a list handed to the resolver instead is a membership test that knows no routes and would refuse a routed level model the run may use. Readiness is the highest enabled level's last round (`decidingReview`), with an enabled outer level that did not ship holding the pull request back (`heldBackLevel`, `heldBackReason`, D727) and a mode raised at finalize still blocking (T3.5); a level whose round is missing decides nothing, so the run stays a draft. The PR body's `review levels:` line names each level's verdict, round and head, and the focus beside the level it belongs to. The version rule moved: `adversarialSince` is 0.16.0, not 0.15.0, because 0.15.0 shipped with the step parsing but no runner running it (a 0.15.0 run stopped at planning) — L4.2 missed that tag.
+- **Done (PR #1578).** Red first: `TestLevelsL3BounceSkipsL2` failed because the runner rejects the step — a recipe carrying an `adversarial` step is refused at bootstrap until L4.2 runs it. The plan gains the adversarial arm (after the review step, never L2 between it and the bounce) and `checkPlan` was narrowed to the two things the levels require of a plan: no plan skips the senior review, and no plan drops a step a resolved level needs. The stage itself is the plan's step run through `stageOnce` with its own prompt (`AdversarialPrompt`, the senior brief plus the level's focus) and the level's own model and effort (`stageModel`, `applyStageEffort`, so `agent.EffortVars` reaches a Claude stage and never a provider route, D725). `applyLevels` runs at bootstrap, after the routing switch — level 1's own answer is read off the coder's model (`Agent.FirstLineOn`), so a resolution taken before the rewrite would drop the cheap loop for exactly the runs a switch routed — so a hand-written task meets `config.ResolveLevels`' refusals (the floor, the same-model guard, the effort set) before any stage starts; the allow-list is the run's own gate's (`checkBudget`'s `checkModels(CheckAllowed)`), which judges each level's model as `agent.levels.lN.model` — a list handed to the resolver instead is a membership test that knows no routes and would refuse a routed level model the run may use. Readiness is the highest enabled level's last round (`decidingReview`), with an enabled outer level that did not ship holding the pull request back (`heldBackLevel`, `heldBackReason`, D727) and a mode raised at finalize still blocking (T3.5); a level whose round is missing decides nothing, so the run stays a draft. The PR body's `review levels:` line names each level's verdict, round and head, and the focus beside the level it belongs to. The version rule moved: `adversarialSince` is 0.16.0, not 0.15.0, because 0.15.0 shipped with the step parsing but no runner running it (a 0.15.0 run stopped at planning) — L4.2 missed that tag.
 
 #### L4.5 A model per review level in routing
 
@@ -360,6 +360,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### J1.2 The `/jobmax` skill (D729, D730 as ruled)
 
+**Closed as superseded 2026-11-16 (the owner's ruling): the orchestrator (`fugaro:orchestrator`) replaces `/jobmax`, so no `jobmax` skill is written.** Nothing below is built from this task; its text is kept as the record.
+
 - **Files:** `plugin/skills/jobmax/SKILL.md` (new), `plugin/jobmax_skill_test.go` (new), `plugin/plugin_test.go` (it pins exactly five skills), `plugin/skills/parallelism/SKILL.md` (the `/jobmax` exception to "one yes per batch", only with the opt-in on), `plugin/.claude-plugin/plugin.json` (description).
 - **Interfaces:**
   - **The opt-in.** It reads the project's `jobmax.auto_launch` (J1.3) from `fugaro project show --json`. Off, unset or unreadable means the `parallelism` rule applies: one yes for the whole batch, with the runs and the worst case shown. On means it launches with no question, inside the guardrails below.
@@ -378,6 +380,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Commit:** `plugin: /jobmax launches every ready task of a plan`.
 
 #### J1.3 The owner's opt-in: `jobmax.auto_launch` (D730 as ruled)
+
+**Closed as superseded 2026-11-16 (the owner's ruling): the orchestrator replaces `/jobmax`, so no `jobmax.auto_launch` is built and D730's opt-in has nothing to switch.** Nothing below is built from this task; its text is kept as the record.
 
 - **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/localcfg_test.go`, `internal/cli/project_cmd.go` (the owner's publish into `settings`, and `project show --json`), `internal/cli/project_enroll_test.go` (where `project show` is tested), `console/docs/json-contract.md`.
 - **Interfaces:** `jobmax: { auto_launch: false }` in the owner's project config, decoded strictly: a boolean, default `false`, and any other key under `jobmax:` refused. It is published only by the owner, into the same owner-written `settings` node as the crash switch (O9 as ruled), never through the launcher-writable shared configuration. The owner can turn it off again at any time. `fugaro project show --json` prints `settings.jobmax_auto_launch: true|false|null`, and `null` (unreadable) means off.
@@ -400,6 +404,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T1.1 The `settings` node and the switch `telemetry.crash_reports` (D732, D734, O9 as ruled)
 
+**Closed as superseded 2026-11-16 (the owner's ruling): with J1.3 gone the `settings` node has no second tenant, and the owner-written switches are re-planned against the config-ownership registry (docs/config-ownership), which is where an owner-only value now lives.** Nothing below is built from this task; its text is kept as the record.
+
 - **Files:** `internal/localcfg/localcfg.go`, `internal/localcfg/shared.go` (`Shared()` is a deny-list: it sets `Telemetry = nil` as it does `UpdateCheck`), `internal/cli/sharedcfg.go` (`sharedForbidden`), `internal/localcfg/localcfg_test.go`, `internal/cli/project_cmd.go` (the owner's publish writes `settings`), `internal/budget/rules/rules.json.tmpl` (the rules entry), `internal/budget/rules/rules_test.go`, `internal/budget/rules/emulator_test.go`.
 - **Interfaces:** produces `localcfg.Telemetry{CrashReports *bool}` (nil means true) in the owner's project config. The owner's `fugaro project policy publish` writes it to a neutral **`settings` node beside the budget node** in the installation's database. The rules let the owner write it, let any signed-in user of the installation read it, and let nothing else write it. It never goes through the launcher-writable shared configuration. The owner asked why the earlier recommendation put the switch under `budget show`. The reason was only that `budget show` was the online read the console already ran; the switch is not a budget fact, and the node is neutral by the owner's ruling.
 - **Tests:** `TestTelemetryCrashReportsDefaultTrue`, `TestTelemetryNotInShared`, `TestTelemetrySharedForbidden`, `TestPublishWritesSettings`, and the rules tests: the owner writes, a user reads, a user cannot write, and a run token cannot write.
@@ -412,6 +418,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 
 #### T1.2 `fugaro project show --json` prints the settings (O9 as ruled)
 
+**Closed as superseded 2026-11-16 (the owner's ruling): it printed T1.1's node, which is not built; the same reading is re-planned with the registry.** Nothing below is built from this task; its text is kept as the record.
+
 - **Files:** `internal/cli/project_cmd.go`, `internal/cli/project_enroll_test.go`, `console/docs/json-contract.md`.
 - **Interfaces:** the document gains `settings: { crash_reports: true|false|null }`. `null` means the node could not be read (offline, signed out, no database), and the console then sends nothing (D734).
 - **Tests:** `TestProjectShowSettings`, `TestProjectShowSettingsUnknownIsNull`.
@@ -421,6 +429,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Commit:** `project show: the installation's settings`.
 
 #### T1.3 The console may run `fugaro project show --json` (O9 as ruled)
+
+**Closed as superseded 2026-11-16 (the owner's ruling): it allow-listed T1.2's argv, which is not built; the allow-list row is re-planned with the registry.** Nothing below is built from this task; its text is kept as the record.
 
 - **Files:** `console/src/main/ipc.ts` (`CONSOLE_OPERATIONS` gains the exact argv), `console/src/main/spawn.ts` if its allow-list lists argvs, their pinning tests in `console/test/unit/`, `docs/design/desktop-console.md` (the §5.1 table).
 - **Interfaces:** a new allow-listed argv, `project show --json`, which `.claude/rules/console.md` marks security-sensitive: an independent review, its pinning tests and the §5.1 row.
@@ -457,6 +467,8 @@ Every task's reviewer tier is **standard** unless marked otherwise.
 - **Commit:** `website, README: the console's crash-report statement`.
 
 #### T3.1 The app: opt-out Crashlytics, no Analytics (D731, D734)
+
+**WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it reads T1.1's `settings` node, now closed, so it is re-planned later against the orchestrator and the config-ownership registry. D731 and D734 stand.
 
 - **Files:** `mobile/package.json` and `mobile/package-lock.json` (drop `@react-native-firebase/analytics`), `mobile/app.config.js`, `mobile/src/app-config.test.js` and `mobile/src/app-config.ids.test.js` (they pin the analytics plugin), `mobile/firebase.json` (`crashlytics_auto_collection_enabled: false`, Analytics keys removed), `mobile/src/telemetry/index.js` (new: the module's only entry point), `mobile/src/telemetry/crash.js` (new: the one `setCrashlyticsCollectionEnabled(` call, from the settings node), `mobile/src/telemetry/crash.test.js` (new), `mobile/src/telemetry/scan.test.js` (new: the §7.4 scan as amended in T0.1, since P7.2/P7.3 are unbuilt — **amended 2026-11-11: P7.2 is built and P7.3 is not**, P7.2 having landed ahead of T0.1's amendment (the sequencing is recorded in `docs/plans/2026-10-19-mobile-telemetry.md`'s P7.2 section), so this scan lands beside P7.2's `notice.test.js`), `mobile/src/telemetry/notice.js` and `mobile/src/telemetry/notice.test.js` (**added 2026-11-11**: P7.2's statement names Analytics while the app ships it, and `notice.test.js` reads `mobile/package.json` and fails until the clause leaves with the package — so this task's removal empties the statement of it), `website/src/pages/privacy.astro` (the app paragraph: Crashlytics, opt-out, no Analytics) and `website/test/privacy.mjs` (its `APP_TELEMETRY` list names the analytics package, so the page and the test move with the package in one task), `docs/releases/mobile/` (the release's notes).
 - **Interfaces:** after sign-in, the app reads `settings/crash_reports` from the installation's database (T1.1's node; O9 as ruled), and follows later changes while signed in. Before sign-in, or if the node cannot be read, collection stays off and unsent reports are deleted (U2).
@@ -519,6 +531,8 @@ processor (O4). No agent edits the Terms.
 - **Commit:** `console: the spend-rate gauge, hour sparklines and cap bars`.
 
 #### V1.3 The iterations bar on the Run screen
+
+**WAITING on a re-plan, 2026-11-16 (the owner's ruling), not approved to launch as written:** it depends on T1.2 and J1.3, both closed, so it is re-planned later against the orchestrator and the config-ownership registry.
 
 - **Files:** `internal/cli/diagnose.go` and its test (the document the Run screen reads), `console/docs/json-contract.md`, `console/src/shared/schema.ts` (`RECORD_KEYS`; `closed()` refuses unknown keys), `console/src/renderer/screens/run.ts`, `console/src/renderer/theme/screens.css`, `console/test/unit/run.test.ts`, `docs/design/console-styling.md`.
 - **Interfaces:** `diagnose --json` gains each level's rounds used and its cap. No console decoder reads `reviews` today. The Run screen draws one bar per level.
