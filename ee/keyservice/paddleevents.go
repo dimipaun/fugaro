@@ -320,6 +320,7 @@ func canonicalEvent(n paddleNotification, mode Mode) (Event, bool) {
 		Subscription: n.subscriptionID(),
 		Organisation: n.custom("org_id"),
 		WorkspaceID:  n.custom("workspace_id"),
+		CustomerID:   n.Data.CustomerID,
 		Seats:        n.seats(),
 		TermDays:     n.termDays(),
 	}

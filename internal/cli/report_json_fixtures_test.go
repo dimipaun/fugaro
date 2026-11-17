@@ -107,7 +107,8 @@ var jsonCases = map[string]jsonCase{
 	"backlog list": {
 		reads: true,
 		run: func(t *testing.T) []string {
-			return []string{"backlog", "list", "--dir", backlogFixture(t)}
+			newOrchestratorFixture(t)
+			return []string{"backlog", "list"}
 		},
 	},
 	"budget preview": {

@@ -394,6 +394,12 @@ func theRunsConfirmation(t *testing.T, spec InstallationSpec) tf.Cover {
 	if host, err := RegistryHost(lc); err == nil {
 		c.Registry, _, _ = strings.Cut(host, "/")
 	}
+	// The licence renewal job's container too, when the spec carries one: it is
+	// the one grant the cover reads a target for (licenceSecretGrant), and
+	// init_review.go's cover sets it from the same field.
+	if spec.Licence != nil {
+		c.LicenceRenewalSecret = spec.Licence.RenewalSecret
+	}
 	_, c.Owner, _ = strings.Cut(lc.ImageSource, "/")
 	return c
 }

@@ -179,6 +179,7 @@ const MODULES: readonly string[] = Object.freeze([
   'renderer/graph/model.js',
   'renderer/graph/layout-client.js',
   'renderer/graph/layout.js',
+  'renderer/graph/move.js',
   'renderer/skeleton.js',
   'renderer/screens/reading.js',
   'renderer/section.js',

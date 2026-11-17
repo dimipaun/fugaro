@@ -256,7 +256,7 @@ func LoadDir(root string) ([]Item, error) {
 
 // Load reads every item in the folder dir. It is LoadDir's body: the folder is
 // a parameter there so a caller that is not standing at a repository root —
-// `fugaro backlog list --dir`, and the folder's own guards over a synthetic
+// `fugaro backlog index --dir`, and the folder's own guards over a synthetic
 // tree — reads the same way.
 func Load(dir string) ([]Item, error) {
 	entries, err := os.ReadDir(dir)

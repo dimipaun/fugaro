@@ -159,19 +159,52 @@ type CatalogDefinition struct {
 	SHA256       string `json:"sha256"`
 }
 
+// BuildIdentityAccountID is the project's build identity (B5, D2301): the ONE
+// service account of an installation that its catalog builds run as, created
+// by the same apply that turns the credentials service on
+// (deploy/terraform/gcp/modules/installation/build_identity.tf, whose
+// account_id is this literal).
+//
+// It is a per-PROJECT account and not a repository's, and that is why a
+// catalog build runs as it (B6): a repository's build account
+// (BuildServiceAccountID) is derived from the repository and dies with the
+// repository's root, while a catalog entry may name a repository whose root is
+// gone and whose images are still built — M2 retires every root — so the
+// account a build of that entry runs as has to outlive every repository the
+// entry names.
+//
+// internal/infra's BuildIdentityAccountID is the same literal on the apply's
+// side, and TestCatalogBuildRunsAsTheBuildIdentity pins the two together.
+const BuildIdentityAccountID = "fugaro-build-identity"
+
+// BuildIdentityEmail is the address of the project's build identity in
+// gcpProject, which is the value a CatalogBuildSpec carries: the claim is
+// computed here from the literal above and the project (a service account's
+// email is <id>@<project>.iam.gserviceaccount.com), never read back from the
+// installation, so the account a build is submitted as is a fact of this
+// package and of the module's own account_id.
+func BuildIdentityEmail(gcpProject string) string {
+	return BuildIdentityAccountID + "@" + gcpProject + ".iam.gserviceaccount.com"
+}
+
 // CatalogBuildSpec is one build of a catalog entry's image (PIC4): the
-// entry, the repository whose build account runs it, the source the image
-// bakes and the definition the build reads from the bucket (PIC3).
+// entry, the project's build identity it runs as, the source the image bakes
+// and the definition the build reads from the bucket (PIC3).
 type CatalogBuildSpec struct {
 	// Entry is the entry's name: it names the image (catalog-<Entry>), the
 	// copied definition (config.CatalogDockerfileKey) and the record
 	// (CatalogRecordKey). It is never taken as a key from the caller.
 	Entry string
-	// Slug is the repository whose build account runs the build and holds the
-	// provider credential the clone step clones with; the entry's own build
-	// is handed that checkout and no secret of the repository's (B9, D2311).
-	// Its grant covers builds/<Slug>/ (the record) and, read-only, the copied
-	// catalog definitions (CatalogReadCondition).
+	// Slug is the repository whose provider credential the clone step clones
+	// with, and whose record prefix (builds/<Slug>/catalog/) the build writes
+	// and the daily check reads; the entry's own build is handed that checkout
+	// and no secret of the repository's (B9, D2311). It is not the account the
+	// build runs as — that is the project's build identity (B6), one for the
+	// whole installation — because a repository's build account dies with the
+	// repository's Terraform root (M2 retires every one of them) while its
+	// entries and their builds stay. Its grant covers builds/<Slug>/ (the
+	// record) and, read-only, the copied catalog definitions
+	// (CatalogReadCondition).
 	Slug string
 	// GitProvider, RepoURL, BaseBranch, GitSecretID, GitUser and
 	// GitHubAppID are the entry's source repository, as BuildSpec's are: the
@@ -229,8 +262,9 @@ type CatalogBuildSpec struct {
 	// D1402). "" is a submitter that states none, and the record writes it as
 	// it was given it.
 	TemplateSalt string
-	// ServiceAccount is the email of the repository's build account
-	// (BuildServiceAccountID), which the build runs as.
+	// ServiceAccount is the email of the project's build identity
+	// (BuildIdentityEmail), which the build runs as: one account for the
+	// installation, never a repository's (B6).
 	ServiceAccount string
 	MachineType    string
 	// Bucket is the runs bucket as gs://<name>: it holds the copied
@@ -907,7 +941,7 @@ func (s CatalogBuildSpec) check(project string) error {
 	for _, f := range []struct{ name, v string }{
 		{"catalog entry", s.Entry}, {"repository slug", s.Slug}, {"repository URL", s.RepoURL},
 		{"base branch", s.BaseBranch}, {"base image", s.Base}, {"image", s.Image},
-		{"git credential secret", s.GitSecretID}, {"build service account", s.ServiceAccount},
+		{"git credential secret", s.GitSecretID}, {"build identity", s.ServiceAccount},
 		{"runs bucket", s.Bucket},
 	} {
 		if f.v == "" {
@@ -986,14 +1020,16 @@ func (s CatalogBuildSpec) check(project string) error {
 	if err := s.checkSmokeSpec(); err != nil {
 		return err
 	}
-	// The build account holds the repository's secrets and writes its
-	// registry; any other account (the retired shared one, another
-	// repository's, a job's) is refused.
-	if want := BuildServiceAccountID(s.Slug) + "@" + project + ".iam.gserviceaccount.com"; s.ServiceAccount != want {
-		return fmt.Errorf("the build service account %s is not the repository's build account %s", s.ServiceAccount, want)
+	// The build runs as the project's build identity (B6, D2301), which holds
+	// the shared registry's writer and tag-mover roles; any other account (a
+	// repository's, a job's, the retired shared one, another project's
+	// identity) is refused, because the installation grants those roles to
+	// this one account and to nothing else.
+	if want := BuildIdentityEmail(project); s.ServiceAccount != want {
+		return fmt.Errorf("the build service account %s is not the project's build identity %s", s.ServiceAccount, want)
 	}
 	// Only the entry's own image in the installation's shared registry of
-	// this project, which this repository's build account writes.
+	// this project, which this build writes.
 	host, _, ok := strings.Cut(s.Image, "/"+SharedRegistryRepoID()+"/")
 	m := registryHostRE.FindStringSubmatch(host)
 	if !ok || m == nil || m[2] != project || s.Image != host+"/"+SharedRegistryRepoID()+"/catalog-"+s.Entry {
@@ -1039,13 +1075,14 @@ func (s CatalogBuildSpec) checkSmokeSpec() error {
 // It repeats the entry-level checks rather than sharing check's, because
 // check's are interleaved with a build's own in the order its errors are
 // reported in. What it asks for is only what this run reads: the entry (its
-// record's own prefix), the repository the build account belongs to, and the
-// runs bucket. No clone URL, no base branch, no credential secret and no
-// provider — nothing here clones, reads or pushes anything.
+// record's own prefix), the repository whose record it writes, the project's
+// build identity it runs as and the runs bucket. No clone URL, no base
+// branch, no credential secret and no provider — nothing here clones, reads
+// or pushes anything.
 func (s CatalogBuildSpec) checkPrebuilt(project string) error {
 	for _, f := range []struct{ name, v string }{
 		{"catalog entry", s.Entry}, {"repository slug", s.Slug},
-		{"build service account", s.ServiceAccount}, {"runs bucket", s.Bucket},
+		{"build identity", s.ServiceAccount}, {"runs bucket", s.Bucket},
 	} {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
@@ -1060,8 +1097,8 @@ func (s CatalogBuildSpec) checkPrebuilt(project string) error {
 	if err := s.checkSmokeSpec(); err != nil {
 		return err
 	}
-	if want := BuildServiceAccountID(s.Slug) + "@" + project + ".iam.gserviceaccount.com"; s.ServiceAccount != want {
-		return fmt.Errorf("the build service account %s is not the repository's build account %s", s.ServiceAccount, want)
+	if want := BuildIdentityEmail(project); s.ServiceAccount != want {
+		return fmt.Errorf("the build service account %s is not the project's build identity %s", s.ServiceAccount, want)
 	}
 	// The record step composes its JSON with printf and no escaping, and the
 	// entry's reference is one of the two values it carries: it is checked
