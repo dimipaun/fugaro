@@ -1678,7 +1678,10 @@ func TestRefundRevokesTheKey(t *testing.T) {
 func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	f, _ := renewing(t)
 	refunded := f.purchase("evt-1", "acme.example", 5, 365)
-	untouched := f.purchase("evt-2", "widget.example", 3, 30)
+	// The licence this refund must not reach: another workspace's, because two
+	// purchases in one workspace are one licence under D2204 and the second
+	// supersedes the first (heldKeyIn).
+	untouched, _, _ := heldKeyIn(t, f, PolicyTeamMonthly, "widget-workshop")
 	// Two renewals, so the licence the refund names has been succeeded twice: the
 	// chain the walk has to follow is three keys long. Each term is written as
 	// paid for before the rotation is asked for it, and written directly rather
@@ -1691,8 +1694,8 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 	third, _ := renewThroughTheEndpoint(t, f, second.KeyID, secondSecret)
 	// The two successors are left naming no subscription, which is the shape a
 	// rotation written before the record carried one has: the walk's subscription
-	// step cannot reach them, so what this test pins from here on is the other
-	// step of D2147 — the `rotation:<key>` the successor's own source is.
+	// step cannot reach them, and what reaches them from here on is F29's own rule
+	// — the licence the record of every key names (P3.6).
 	setSubscription(t, f, second.KeyID, "")
 	setSubscription(t, f, third.KeyID, "")
 
@@ -1708,8 +1711,8 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 			t.Errorf("the entry for %s is %+v, want %q at the event's own instant %s", keyID, entry, ReasonRefund, at)
 		}
 	}
-	if _, held, _ := f.store.Revocation(context.Background(), untouched.KeyID); held {
-		t.Errorf("the refund of %s withdrew the key %s as well, want another licence's key left alone", refunded.KeyID, untouched.KeyID)
+	if _, held, _ := f.store.Revocation(context.Background(), untouched); held {
+		t.Errorf("the refund of %s withdrew the key %s as well, want another licence's key left alone", refunded.KeyID, untouched)
 	}
 	if got := len(f.revocations()); got != 3 {
 		t.Errorf("§8's list holds %d entry(ies), want the three keys of the chain", got)
@@ -1751,7 +1754,11 @@ func TestARefundRevokesTheWholeRotationChain(t *testing.T) {
 func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 	f, _ := renewing(t)
 	refunded := f.purchase("evt-1", "acme.example", 5, 30)
-	untouched := f.purchase("evt-2", "widget.example", 3, 30)
+	// The licence this refund must not reach: one bound in another workspace,
+	// because two purchases in one workspace are one licence under D2204 — the
+	// second supersedes the first — and a case whose subject is the line between
+	// two licences needs two of them (heldKeyIn).
+	untouched, _, _ := heldKeyIn(t, f, PolicyTeamMonthly, "widget-workshop")
 
 	f.advance(20 * day)
 	minted, renewed, err := f.svc.Renew(context.Background(), refunded.Subscription)
@@ -1768,15 +1775,17 @@ func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 		t.Fatalf("the seat change minted %d key(s), want one", len(records)-before)
 	}
 	reissued := records[len(records)-1].KeyID
-	// The endpoint's rotation of that key, so the walk also has to reach one it
-	// found by subscription: the rotation names the key it replaces and stamps
-	// the subscription beside it. The term it hands out is the one the merchant's
-	// next renewal would pay for, written here directly so that the keys of this
-	// licence stay the four this test names.
-	theSubscriptionCovers(t, f, minted.Record.KeyID)
-	rotated, _ := renewThroughTheEndpoint(t, f, minted.Record.KeyID, minted.RenewalSecret)
+	// The endpoint's rotation of the seat change's key, so the walk also has to
+	// reach one it found by subscription: the rotation names the key it replaces
+	// and stamps the subscription beside it. It is asked with the licence's own
+	// secret, which the merchant's renewal and the seat change both kept (D2200),
+	// and the term it hands out is the one the merchant's next renewal would pay
+	// for, written here directly so that the keys of this licence stay the four
+	// this test names.
+	theSubscriptionCovers(t, f, reissued)
+	rotated, _ := renewThroughTheEndpoint(t, f, reissued, f.secretOf(t, f.mintedKeys()[0]))
 	if rotated.KeyID == reissued {
-		t.Fatalf("the endpoint's rotation of %s minted the seat change's key %s", minted.Record.KeyID, reissued)
+		t.Fatalf("the endpoint's rotation of %s minted the seat change's key %s", reissued, reissued)
 	}
 
 	at := f.now
@@ -1791,8 +1800,8 @@ func TestARefundRevokesEveryKeyOfTheLicence(t *testing.T) {
 			t.Errorf("the entry for %s is %+v, want %q at the event's own instant %s", keyID, entry, ReasonRefund, at)
 		}
 	}
-	if entry, held, _ := f.store.Revocation(context.Background(), untouched.KeyID); held {
-		t.Errorf("the refund of %s withdrew the key %s (%+v), want another licence's key left alone", refunded.KeyID, untouched.KeyID, entry)
+	if entry, held, _ := f.store.Revocation(context.Background(), untouched); held {
+		t.Errorf("the refund of %s withdrew the key %s (%+v), want another licence's key left alone", refunded.KeyID, untouched, entry)
 	}
 	if got := len(f.revocations()); got != 4 {
 		t.Errorf("§8's list holds %d entry(ies), want the four keys of the refunded licence", got)

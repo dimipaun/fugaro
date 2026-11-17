@@ -593,7 +593,6 @@ func TestRevokedKeyIsNeverRenewed(t *testing.T) {
 	}
 }
 
-
 // renewThroughTheEndpoint renews one key the way the customer's job does and
 // answers the successor's record and the secret it was mailed with: a renewal is
 // a new key id and a new secret (D2135), and a test that walks a chain needs both.
