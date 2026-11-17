@@ -6261,7 +6261,12 @@ func (r *run) finalize(ctx context.Context) error {
 	// same pull request left behind; an ending that returns above this line (a
 	// push that failed, a pull request closed during the run) writes nothing
 	// and leaves the last word about this pull request standing.
-	r.recordChangeSetVerdict(ctx, pr, verdict)
+	//
+	// The commit and its test go with it, and they are THIS run's: a follow-up
+	// pushes to the member's branch and answers on the member's record, so the
+	// head it pushed is the one the set's step must compare the pull request
+	// against (D3).
+	r.recordChangeSetVerdict(ctx, pr, verdict, sha, pushedVerified(records, sha))
 	r.updateCost()
 	r.narrowText = r.narrowSummary(ctx)
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)
