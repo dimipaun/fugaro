@@ -77,6 +77,12 @@ type Secrets struct {
 	// best-effort — the write is already verified when it is attempted, so a
 	// refused disable is reported and the command still succeeds.
 	FailDisableWith int
+	// FailDestroyWith, when non-zero, makes versions/N:destroy answer that HTTP
+	// status and destroy nothing: the refusal the revocation step 2b has to
+	// report rather than pass over (mobile plan task P5.1e), since a version
+	// the caller believes is gone and is not keeps verifying the messages of a
+	// pairing nobody holds any more.
+	FailDestroyWith int
 	// FailVersionsAfter makes every version list after the first n answer
 	// 403 PERMISSION_DENIED: the read a step past the label calls makes,
 	// which a test cannot name by ID because the same secrets are read
@@ -177,6 +183,29 @@ func (f *Secrets) Latest(id string) []byte {
 		return nil
 	}
 	return append([]byte(nil), s.versions[len(s.versions)-1]...)
+}
+
+// EnabledVersions returns every ENABLED version's value of secret id, oldest
+// first: what a client that reads the whole container sees, which for the
+// pairing keys is the set a cloud consumer verifies with (keychain.Cloud's
+// Keys). A DESTROYED version is not in the answer and neither is one a
+// DisableVersions call took, so a test asserts what the consumer would verify
+// with rather than which calls were made.
+func (f *Secrets) EnabledVersions(id string) [][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.secrets[id]
+	if s == nil {
+		return nil
+	}
+	var out [][]byte
+	for i := range s.versions {
+		if s.state(i+1) != "ENABLED" {
+			continue
+		}
+		out = append(out, append([]byte(nil), s.versions[i]...))
+	}
+	return out
 }
 
 // VersionsListCalls is how many version lists the fake has served, successful
@@ -374,6 +403,10 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		s := f.secrets[m[2]]
 		if s == nil || version(s, m[3]) == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		if f.FailDestroyWith != 0 {
+			writeError(w, f.FailDestroyWith, http.StatusText(f.FailDestroyWith), "injected failure")
 			return
 		}
 		f.destroys = append(f.destroys, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])

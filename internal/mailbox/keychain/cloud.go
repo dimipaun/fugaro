@@ -95,7 +95,7 @@ type cloudRecord struct {
 func (c *Cloud) Put(ctx context.Context, deviceUID string, key Key) error {
 	payload, err := json.Marshal(cloudRecord{UID: deviceUID, Key: string(key.Bytes())})
 	if err != nil {
-		return backendErr("building the pairing record: " + err.Error())
+		return cloudBackend("building the pairing record: " + err.Error())
 	}
 	_, err = c.svc.Projects.Secrets.AddVersion(c.parent, &secretmanager.AddSecretVersionRequest{
 		Payload: &secretmanager.SecretPayload{Data: base64.StdEncoding.EncodeToString(payload)},
@@ -213,22 +213,22 @@ func (c *Cloud) record(ctx context.Context, name string) (string, Key, error) {
 		return "", Key{}, cloudErr(err, nil)
 	}
 	if r.Payload == nil {
-		return "", Key{}, backendErr("the version " + name + " carries no payload")
+		return "", Key{}, cloudBackend("the version " + name + " carries no payload")
 	}
 	raw, err := base64.StdEncoding.DecodeString(r.Payload.Data)
 	if err != nil {
-		return "", Key{}, backendErr("the version " + name + " is not base64")
+		return "", Key{}, cloudBackend("the version " + name + " is not base64")
 	}
 	var rec cloudRecord
 	if err := json.Unmarshal(raw, &rec); err != nil {
-		return "", Key{}, backendErr("the version " + name + " is not a pairing record")
+		return "", Key{}, cloudBackend("the version " + name + " is not a pairing record")
 	}
 	if rec.UID == "" {
-		return "", Key{}, backendErr("the version " + name + " names no device uid")
+		return "", Key{}, cloudBackend("the version " + name + " names no device uid")
 	}
 	key, why := keyFrom([]byte(rec.Key))
 	if why != "" {
-		return "", Key{}, backendErr("the version " + name + " holds no key: " + why)
+		return "", Key{}, cloudBackend("the version " + name + " holds no key: " + why)
 	}
 	return rec.UID, key, nil
 }
@@ -237,6 +237,30 @@ func (c *Cloud) record(ctx context.Context, name string) (string, Key, error) {
 // that is not there: the operator asking why nothing was written is owed the
 // name to look for.
 func noCloud(parent string) error { return fmt.Errorf("%w: %s", ErrNoCloud, parent) }
+
+// cloudFailure is a container the caller could not use, and it is ErrBackend
+// under a sentence of its own. **The sentinel is shared and the words are not**:
+// ErrBackend is the key source's availability row — the row mac.go's §8.3 exit
+// and the commands' exit codes are written against — so a container that could
+// not be read or written has to answer `errors.Is(err, ErrBackend)` exactly as an
+// item that could not be, or the two key sources would classify differently for
+// no reason a caller can see. What it must NOT answer with is ErrBackend's own
+// text, which says "the OS keychain could not be used": this failure is a
+// project's Secret Manager, and an operator sent to their laptop's keychain for
+// it is sent to fix the wrong thing.
+type cloudFailure struct{ why string }
+
+func (e cloudFailure) Error() string {
+	return "keychain: the installation's pairing-key container could not be used: " + e.why
+}
+
+func (e cloudFailure) Unwrap() error { return ErrBackend }
+
+// cloudBackend is backendErr's shape for this file: the failure described by
+// what is safe to say, and never a byte of a key. It carries no item, because
+// this source holds every pairing's key at once — which is the container and not
+// an item, so the container is what a refusal names.
+func cloudBackend(why string) error { return cloudFailure{why: why} }
 
 // isNotFound is a Secret Manager call that answered 404: the container is not
 // there. It is read as the absence the caller asked about rather than as a
@@ -264,5 +288,5 @@ func cloudErr(err error, payload []byte) error {
 		return nil
 	}
 	forms := redact.Forms([]string{string(payload)})
-	return backendErr(safetext.Field(redact.ReplaceAll(err.Error(), forms)))
+	return cloudBackend(safetext.Field(redact.ReplaceAll(err.Error(), forms)))
 }
