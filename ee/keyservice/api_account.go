@@ -21,6 +21,13 @@ package keyservice
 // membership and asking an owner is what they can do about it — the same split
 // the members screen makes with `not_permitted`.
 //
+// An organisation that is not a customer's is the third refusal and the one the
+// caller's own standing cannot answer: the operations organisation and a
+// reseller's are not deleted from a portal screen, by their owner least of all
+// (`errOrganisationNotDeletable`). It is a 403 like the role's, with its own
+// sentence: the caller is a member of the organisation and knows it is there, so
+// there is nothing a 404 would hide.
+//
 // Both routes answer 204 and nothing else: what was deleted is not a shape to
 // answer with, and a client that needs to know what is left reads the list it
 // always reads (`GET /orgs`).
@@ -90,6 +97,8 @@ func refuseDeletion(w http.ResponseWriter, err error) {
 		refuseAPI(w, http.StatusNotFound, "not_found", "This organisation is not one you may delete.")
 	case errors.Is(err, errDeletionNotPermitted):
 		refuseAPI(w, http.StatusForbidden, "not_permitted", "Only an organisation's owner may delete it.")
+	case errors.Is(err, errOrganisationNotDeletable):
+		refuseAPI(w, http.StatusForbidden, "not_permitted", "Only a customer organisation can be deleted.")
 	case errors.Is(err, errSoleOwner):
 		refuseAPI(w, http.StatusConflict, "sole_owner", "You are the only owner of an organisation, so it cannot be left without one. Delete that organisation, or make somebody else an owner, and then delete your account.")
 	case errors.Is(err, ErrSSORequired), errors.Is(err, ErrDirectoryNotPinned):

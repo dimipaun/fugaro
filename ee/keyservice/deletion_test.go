@@ -334,6 +334,66 @@ func TestOrgDeletionRevokesAndCancels(t *testing.T) {
 	}
 }
 
+// TestOnlyACustomerOrganisationIsDeleted: the door deletes a customer's
+// organisation and no other, whoever is asking.
+//
+// The operations organisation is the portal's own reach across every customer
+// and a reseller's belongs to a partner; the person who "owns" either is an
+// ordinary signed-in caller seeded as its owner (P2.2), so the ownership the
+// route checks is true of them and is not a permission to end it. Without the
+// type, that press removes every operator's membership, the organisation's
+// invitations, its workspaces and the organisation itself — the portal losing
+// the organisation its own operations are read through.
+//
+// Nothing moves on the refusal, which is the half a case can see: the request is
+// refused before the merchant is asked to cancel anything and before the first
+// record is written.
+func TestOnlyACustomerOrganisationIsDeleted(t *testing.T) {
+	f := newDeletionFixture(t)
+	for _, held := range []struct {
+		id, name, orgType string
+	}{
+		{"org-ops", "Fugaro operations", orgTypeOperations},
+		{"org-partner", "Northwind resellers", orgTypeReseller},
+	} {
+		org := f.seededOrganisation(held.id, held.name, held.orgType, danaUID, danaEmail, roleOwner)
+		workspace := f.seedWorkspace("ws-"+held.id, org.ID, held.name)
+		f.memberOf(org.ID, erinUID, erinEmail, roleMember)
+		f.actsAs(danaUID, danaEmail, signInGoogle)
+
+		rec := f.deleteOrg(org.ID)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("deleting the %s organisation %s as its owner answered %d: %s", held.orgType, held.id, rec.Code, rec.Body)
+		}
+		if code := f.refused(rec); code != "not_permitted" {
+			t.Errorf("the refusal is %q, want %q: the caller is a member of the organisation and knows it is there, so a 404 would hide what they can already see", code, "not_permitted")
+		}
+		if _, present := f.organisation(org.ID); !present {
+			t.Errorf("the %s organisation is gone, and it is not a customer's to delete", held.orgType)
+		}
+		if _, present := f.membership(org.ID, danaUID); !present {
+			t.Errorf("the membership of the %s organisation's owner is gone after a refused deletion", held.orgType)
+		}
+		if _, present := f.membership(org.ID, erinUID); !present {
+			t.Errorf("another member of the %s organisation is gone after a refused deletion", held.orgType)
+		}
+		if _, present := f.workspace(workspace.ID); !present {
+			t.Errorf("the %s organisation's workspace is gone after a refused deletion", held.orgType)
+		}
+		if len(f.paddle.cancelled) != 0 {
+			t.Errorf("the merchant was asked to cancel %v, and the refusal is made before any cancellation", f.paddle.cancelled)
+		}
+	}
+
+	// And the same press on a customer's organisation still goes through: the
+	// refusal is the type and not ownership in general.
+	org, _ := f.payingWorkspace(t, billingSeats)
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+	if rec := f.deleteOrg(org.ID); rec.Code != http.StatusNoContent {
+		t.Fatalf("deleting a customer organisation answered %d: %s", rec.Code, rec.Body)
+	}
+}
+
 // TestOrgDeletionRevokesTheSubscriptionsKeys: the walk reaches a key by every
 // route there is to one, and this is the route that is not the licence's id.
 //

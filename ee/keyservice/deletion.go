@@ -19,6 +19,11 @@ package keyservice
 // are the records removed — the memberships, the invitations, the workspaces and
 // the organisation itself.
 //
+// **Only a customer's organisation is one of these.** The operations
+// organisation is the portal's own reach across its customers and a reseller's
+// belongs to a partner, so neither is deleted from a portal screen by the person
+// who owns it (deleteOrganisation).
+//
 // **What is kept is the sales record.** The checkout transactions, the
 // merchant's origin records, the raw events, the ledger and the subscriptions
 // stay where they stand (spec §Legal: "retaining only sales records legally
@@ -97,6 +102,13 @@ var (
 	// holds, and it is the one act in the portal that cannot be undone by
 	// anybody but a person signing up again, so it is the owner's alone.
 	errDeletionNotPermitted = errors.New("keyservice: only an organisation's owner may delete it")
+	// errOrganisationNotDeletable is an organisation the portal does not delete
+	// on anybody's word: the operations organisation, which is the portal's own
+	// reach across its customers, and a reseller's, which is a partner's. Neither
+	// is a customer's to end, and the refusal is a 403 rather than a 404 because
+	// the one caller who can reach it is a member of the organisation and already
+	// knows it is there.
+	errOrganisationNotDeletable = errors.New("keyservice: only a customer organisation may be deleted")
 	// errAccountNotDeleted is the Identity Toolkit's own failure: the sign-in
 	// is still there, so the account is not gone and the request can be made
 	// again.
@@ -227,6 +239,18 @@ func (s *Service) deleteOrganisation(ctx context.Context, actor Caller, organisa
 		// for the same reason: which organisation ids exist is a list of the
 		// portal's customers.
 		return errNoSuchOrganisation
+	}
+	// A customer's organisation is the only one this door deletes, and the type
+	// is checked before the role because it is the object's own standing rather
+	// than the caller's: the operations organisation is how the portal's own
+	// operators read across every customer (spec §Operations) and a reseller's is
+	// a partner's, so neither is ended from a portal screen. An operations owner
+	// is an ordinary signed-in caller seeded as one (P2.2's seed), which is why
+	// the ownership check above says nothing about this: without the type, that
+	// person deletes the operations organisation and with it every operator's
+	// membership, its invitations and its workspaces.
+	if org.Type != orgTypeCustomer {
+		return errOrganisationNotDeletable
 	}
 	if membership.Role != roleOwner {
 		return errDeletionNotPermitted
