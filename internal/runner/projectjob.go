@@ -102,9 +102,10 @@ const (
 //     recipe (D2402) on the same credential-less variant (D2403), and the mode
 //     alone would make it a coding-class run the variant's doors halt. The
 //     mode still wins where the two would disagree — a mode: review spec is a
-//     review whatever this field says — and task.Validate refuses the field
-//     outside mode: artifact, so no other launch claims the class by writing
-//     it alone.
+//     review whatever this field says — task.Validate refuses the field
+//     outside mode: artifact, and resolveRecipe refuses a spec carrying it
+//     against a recipe that holds no diagnose step (runner.go), so no other
+//     run claims the class.
 //
 // Every reader of the class reads it here — checkJobClass, the second door on
 // the same credential (checkProjectReviewJobAccount), and the model path

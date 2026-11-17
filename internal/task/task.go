@@ -283,9 +283,12 @@ type Spec struct {
 	//
 	// It never overrides the mode — a spec whose mode is review is a review
 	// whatever this field says — and Validate refuses it unless the mode is
-	// recipe.ModeArtifact, so no other launch can claim the class by setting
-	// the field alone. The real protection is that one launcher writes it: no
-	// repository's fugaro.yaml sets it and no flag does.
+	// recipe.ModeArtifact. Setting the field alone is not enough to be a
+	// diagnosis: the runner refuses a spec that carries it against a resolved
+	// recipe holding no diagnose step (resolveRecipe, internal/runner/
+	// runner.go), which is the half this decoder cannot see, since the recipe
+	// is not resolved here. The real protection is that one launcher writes
+	// the field: no repository's fugaro.yaml sets it and no flag does.
 	//
 	// The field is additive, and a runner before the release that reads it
 	// refuses the whole spec (Parse decodes with DisallowUnknownFields), so

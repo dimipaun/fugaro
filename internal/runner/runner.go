@@ -2874,6 +2874,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s is not mode: review, but the task names pull requests to review", rrec.Name)
 	case !r.review && rcp.Mode == recipe.ModeReview:
 		return fmt.Errorf("recipe %s is mode: review, but the task names no pull request to review", rrec.Name)
+	// The review-class marker is the diagnosis's, and a diagnosis is the one
+	// run the review-only variant carries without being a review (docs/
+	// troubleshoot-cloud D2411): task.Spec.ReviewClass is what checkJobClass
+	// and checkProjectReviewJobAccount read, so a task carrying it is admitted
+	// to that container and its model calls take the credentials service's
+	// review class (reviewClassRun, gateway.go). The step that makes a run a
+	// diagnosis is the diagnose one, and task.Validate cannot see it — it pins
+	// the field to mode: artifact and no more — so a mode: artifact spec naming
+	// a render recipe would run that recipe's stages in the variant's container,
+	// its model calls served by the class's credential rather than its own
+	// account's, and so past the allow_repos that bounds the latter. Refused
+	// before any stage, keyed on the RESOLVED recipe and not on what the task
+	// claims, because a repository recipe read by name at this run's base is the
+	// recipe that would run.
+	case spec.ReviewClass && !recipe.UsesDiagnose(rcp):
+		return fmt.Errorf("recipe %s holds no diagnose step, and this task claims the review class (review_class): that marker admits a run to the review-only job variant, whose container mounts no App key and no Claude token and whose model calls the credentials service serves as the review class's, and the only run of it that is not a review is the diagnosis the diagnose step runs. The run stops before any stage", rrec.Name)
 	}
 	// A follow-up continues a pull request: it inherits that PR's branch
 	// and base, pushes to the branch and reports on the PR. A mode:
