@@ -256,26 +256,40 @@ func TestChangeSetGateTheJobImage(t *testing.T) {
 	}
 }
 
-// TestChangeSetRefusedUntilSettleExists: nothing in this release flips a change
-// set's pull requests ready, and the draft hold is the whole point of creating
-// one (D614) — so a build that HAS the code still refuses the flag, in its own
-// words, rather than creating a set whose pull requests nothing can lift
-// (D616). The two answers are judged here together because only one of them is
+// TestChangeSetLaunchesOnceSettleExists: the release that ships the settle step
+// is the one that lifts D1's refusal. A set whose members' pull requests nothing
+// could flip ready would stay in draft for good — the draft hold (D614) is the
+// whole point of creating one — so a build without the step still refuses the
+// flag, in D522's sentence, and a build with it launches the set (D616).
+//
+// The two answers are judged here together because only one of them is
 // reachable through the command in any one build: a test binary of this package
 // never loads ee/register (only cmd/fugaro does), so Edition() is core whatever
-// tag the binary carries.
-func TestChangeSetRefusedUntilSettleExists(t *testing.T) {
-	core := changeSetRefusal(Edition())
+// tag the binary carries. The tagged launch is driven with the marker set the
+// way ee/register's init sets it, so what the command does with the flag is
+// judged and not just the sentence it prints.
+func TestChangeSetLaunchesOnceSettleExists(t *testing.T) {
+	core := changeSetRefusal(EditionCore)
 	if !strings.Contains(core, "Subscription Edition") {
 		t.Fatalf("the refusal an untagged build prints = %q, want D522's paid-feature sentence", core)
 	}
-	tagged := changeSetRefusal(EditionEE)
-	if tagged == core {
-		t.Fatal("a tagged build prints the untagged build's refusal")
+	if tagged := changeSetRefusal(EditionEE); tagged != "" {
+		t.Fatalf("a build that has the settle step still refuses --change-set: %q", tagged)
 	}
-	for _, want := range []string{"--change-set", "settle", "draft"} {
-		if !strings.Contains(tagged, want) {
-			t.Errorf("the refusal a tagged build prints does not say %q: %q", want, tagged)
+
+	f := changeSetFixture(t)
+	setMaxParallel(t, 5)
+	fixedRunIDs(t)
+	old := editionEE
+	editionEE = true
+	t.Cleanup(func() { editionEE = old })
+	if _, _, err := execute(t, "run", "--change-set", "--repo", changeSetRepos[0], "--repo", changeSetRepos[1], "Add a feature"); err != nil {
+		t.Fatalf("a build with the settle step refused the change set launch: %v", err)
+	}
+	for i, repo := range changeSetRepos {
+		spec := readSpecOf(t, f.cloudFixture, mustSlug("github", repo), changeSetRunIDs[i])
+		if spec.ChangeSet == nil || spec.ChangeSet.ID != changeSetRunIDs[0] {
+			t.Fatalf("%s's task carries %+v, want the set named by the first member's run %s", repo, spec.ChangeSet, changeSetRunIDs[0])
 		}
 	}
 }

@@ -247,9 +247,9 @@ type runOptions struct {
 	// left draft for the settle step to flip once every member is verified.
 	// False (the default) is the ordinary single-repository launch, whose task
 	// carries no change set at all and stays byte-identical to what the
-	// previous release wrote. Refused by every build until the settle step
-	// ships, which is what keeps a set from being created that nothing could
-	// lift out of draft (changeSetRefusal).
+	// previous release wrote. Refused by a build without the settle step, which
+	// is what keeps a set from being created that nothing could lift out of
+	// draft (changeSetRefusal).
 	changeSet bool
 	// title is --title, as the task stores it: the run's own job title
 	// (task.Spec.Title), the one line every surface that names a run shows
@@ -470,7 +470,7 @@ func newRunCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringArrayVar(&o.repos, "repo", nil, "repository as owner/name, or a path inside its checkout (default: this checkout's origin); repeatable only with --change-set, which launches one run per repository named, 2 to "+fmt.Sprint(task.MaxChangeSetMembers))
-	f.BoolVar(&o.changeSet, "change-set", false, "launch one run per repository named by --repo (2 to "+fmt.Sprint(task.MaxChangeSetMembers)+") as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings. Part of Fugaro Subscription Edition, and not available yet in any build: the settle step that flips a set's pull requests ready ships after this release, and a set launched now would stay in draft with nothing able to lift it")
+	f.BoolVar(&o.changeSet, "change-set", false, "launch one run per repository named by --repo (2 to "+fmt.Sprint(task.MaxChangeSetMembers)+") as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings, each left in draft for the settle step to make ready once every member is verified. Part of Fugaro Subscription Edition")
 	f.StringVar(&o.ref, "ref", "", "base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main))")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
@@ -2751,24 +2751,22 @@ func contextReposFlag(o *runOptions) error {
 
 // changeSetRefusal says why this build does not launch a change set, and ""
 // when it does (plan task D1; reconciliation-image-setup D616 as amended).
-// Two answers, in this order: an untagged build has no change sets at all —
-// the settle step and the ordering are `ee/` behaviour, and the flag is
-// refused the way a paid command is, in D522's sentence — and a tagged one
-// still refuses the flag until the settle step ships, because a set whose
-// members' pull requests nothing can flip ready would be stuck in draft for
-// good, and the draft hold (D614) is the whole point of creating one.
+// One answer: an untagged build has no change sets at all — the settle step
+// and the ordering are `ee/` behaviour, and the flag is refused the way a paid
+// command is, in D522's sentence. A tagged one has the step the draft hold
+// (D614) needs — `fugaro coordinator settle` — so it launches the set, and a
+// set is a set whose pull requests something can lift.
 //
 // The edition is a parameter rather than a call to Edition() inside, so that
 // both answers are reachable from one test binary: a test of this package
 // builds without ee/register (only cmd/fugaro imports it), so Edition() is
-// core here whatever tag the test binary carries, and the refusal a tagged
-// BUILD gives — the sentence every release until D3 prints — would otherwise
-// never be judged by the release that ships it.
+// core here whatever tag the test binary carries, and the launch a tagged
+// BUILD makes would otherwise never be judged by the release that ships it.
 func changeSetRefusal(edition string) string {
 	if edition != EditionEE {
 		return "--change-set is part of Fugaro Subscription Edition; this build does not include it"
 	}
-	return "--change-set is not available yet in any build: the settle step that flips a change set's pull requests ready is not part of this release, and a set created now would keep its pull requests in draft with nothing able to lift them; it opens with the release that ships that step"
+	return ""
 }
 
 // changeSetExcludes are the flags a change set refuses, each with the reason
@@ -2776,16 +2774,16 @@ func changeSetRefusal(edition string) string {
 // request, a run ID, a chain, a batch of attempts — and a change set is a
 // launch of several fresh runs at once (D613's linked runs), so applying one
 // to every member would either name a run that is not the member's or mean
-// something the caller did not ask for. --json is here because the set's
-// several launches have no single document: the document a set answers with is
-// the settle step's to define, and a shape published now would be one this
-// release cannot fill (a field never changes meaning).
+// something the caller did not ask for. --json is here because a launch of
+// several runs has no single document to print: the document a set answers with
+// is the settle step's (one report for the set, once its members have shipped),
+// and a launch has one run per member.
 var changeSetExcludes = []struct{ name, why string }{
 	{"pr", "a change set is a launch of fresh runs, one per repository, and --pr continues one pull request of one repository"},
 	{"attempts", "a change set launches one run per repository itself, and --attempts launches several of one repository"},
 	{"run-id", "a change set mints one run ID per member, the first of which is the set's own ID"},
 	{"continues", "each member begins a chain of its own, and --continues joins a chain that exists"},
-	{"json", "the several runs a change set launches have no single document yet"},
+	{"json", "the several runs a change set launches have no single document"},
 }
 
 // noteRigorRequest says, once per launch, when --mode asks for an on-axis mode
