@@ -6973,8 +6973,8 @@ ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "Check 80 stopped: n
 [ -d "$ROOT/mobile/src/voice" ] || { echo "Check 80 stopped: there is no mobile/src/voice/ in this checkout, so nothing on the phone speaks the reply (P3.5)" >&2; exit 1; }
 grep -q 'var mailboxHandOff = func(context.Context, mailboxOffer) error { return nil }' "$ROOT/internal/cli/mailbox.go" && {
   echo "Check 80 stopped: the consumer's hand-off to the orchestrator is still the no-op seam — internal/cli/mailbox.go's mailboxHandOff returns nil and its own comment says 'the channel between the two is not in this tree'; a message the consumer reads therefore reaches no orchestrator and 'the orchestrator acts' cannot be observed. The hand-off is the orchestrator's own channel (a pipe, a file, a socket — its to choose) and is still to be written" >&2; exit 1; }
-grep -rq -- '--orchestrator' "$ROOT/internal/cli" || {
-  echo "Check 80 stopped: no --orchestrator flag is written anywhere in internal/cli, so the resident orchestrator docs/mobile/design/always-on-orchestrator.md names cannot be turned on: deploy/terraform/gcp/modules/installation/orchestrator.tf ships its account (P5.1b) behind a var.orchestrator whose own description says it 'has no CLI writer yet', and the service's own revision is P5.1c, which is not built" >&2; exit 1; }
+grep -rq --include='*.go' --exclude='*_test.go' -- '--orchestrator' "$ROOT/internal/cli" || {
+  echo "Check 80 stopped: no --orchestrator flag is written anywhere in internal/cli's own sources (tests are not a writer: they name the flag this guard looks for), so the resident orchestrator docs/mobile/design/always-on-orchestrator.md names cannot be turned on: deploy/terraform/gcp/modules/installation/orchestrator.tf ships its account (P5.1b) behind a var.orchestrator whose own description says it 'has no CLI writer yet', and the service's own revision is P5.1c, which is not built" >&2; exit 1; }
 echo "Check 80 ready: the phone, the consumer and the orchestrator are all on this tree — this check speaks one message and follows it to the spoken reply, and no key, no keychain value and no credential is printed by it"
 ```
 
@@ -7802,7 +7802,7 @@ echo "Check 86 ready: the session is up and the pipeline is silent by design (D2
 ## Check 87: multi-account switching with no cross-leakage — two real installations on one phone, one of them `belong` (installation `fugaro` and `belong`, your own phone, at your own terminal; run by you; NOT RUN)
 
 **NOT RUN.** Task P4.2 writes this check and running it is the owner's; the row is a later addition to the 80–89 block (**added by hand**), and the register's own allocation
-paragraph — *"80 and 83–88 are still unwritten and belong to Task P4.2"* — counts it there. Its subject is **D114** — an account *is* an installation (one Firebase project, one Auth
+paragraph names **80 and 83–88** as Task **P4.2**'s — written by it into this file on 2026-11-17 — and counts the seven there. Its subject is **D114** — an account *is* an installation (one Firebase project, one Auth
 `uid`, one Fugaro project name), several held as **separate, non-overlapping** entries with a switcher that **tears down the previous account's listeners and caches before it opens
 the next** — and **D126**, which names the **multi-account isolation rule** as one of the pure functions tested against fakes with no runtime and no network. **`belong` is the owner's
 own installation, added by hand, and no agent touches it** (F31, Global Constraint 11); this check names it as one of the two, and its guard refuses an agent's session and refuses

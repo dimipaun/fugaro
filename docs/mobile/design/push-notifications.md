@@ -1329,7 +1329,7 @@ the register text's writer**, as the plan allocated it, and this design's refusa
 stands; what the plan now does is put the allocation itself to the owner as a question, since
 P5.2 is approved and P4.2 is not.)* So the register entry for 88 is written by P4.2, in the register's own block form, under
 the plan's rule that a check is never run before its text is in the register; the check is
-**run by the owner only if the owner builds push**. This design **names Check 88 and did not write it**,
+**run by the owner only if the owner builds push**. This design **names Check 88 and does not write it**,
 and it did not move the writing to a task that may never be scheduled; P4.2 wrote it, and it is
 **owner-run — no agent performs any step of it**.
 

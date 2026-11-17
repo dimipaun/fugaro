@@ -332,7 +332,7 @@ func TestDocsMobileChecklistHasChecks80And83To88(t *testing.T) {
 		},
 		{
 			n:     "83",
-			row:   []string{"never `belong`", "P4.1"},
+			row:   []string{"never `belong`", "P4.2"},
 			stops: []string{"[ -f \"$ROOT/internal/mailbox/ledger.go\" ]", "createMailboxClient", "P3.6"},
 		},
 		{
@@ -424,7 +424,7 @@ func TestDocsMobileChecklistHasChecks80And83To88(t *testing.T) {
 	section87 := docSection(t, path, doc, "## Check 87:")
 	for _, want := range []string{
 		"CHK87_OWNER_RUN=yes",
-		"no agent touches `belong`",
+		"no agent touches belong",
 		"internal/agentenv",
 		// The markers the gate reads, held to the list internal/agentenv carries
 		// rather than typed: a marker the tree adds is one this pin and the gate
