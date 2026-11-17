@@ -218,12 +218,14 @@ func verifyTable(rec *runstore.Record) string {
 }
 
 // verifyTimeLine is the line under the verify table: what the run's
-// verifications add up to, and the share of the run's wall clock that is.
+// verifications add up to, and the share of the run's wall clock that is. It is
+// the one figure neither table gives, since the stage table's rows cannot be
+// added up to reach it — each of them times a stage its verifications sit
+// inside, and the run's own clock also covers finalize.
 //
-// The share is left out rather than guessed when the record states no clock
-// (wallClockSeconds). It is never above 100% where it is printed: the records
-// are written by the stages the report's own table times, and the clock it is
-// read against is the stages' sum whenever the run's ends do not state one.
+// The share is left out rather than guessed when the record states no clock at
+// all (wallClockSeconds): a rebase run records no stage and has no finished_at
+// yet, so its total stands alone rather than over a zero.
 func verifyTimeLine(rec *runstore.Record, total float64) string {
 	line := "**Verify time:** " + secsText(total)
 	if wall := wallClockSeconds(rec); wall > 0 {
