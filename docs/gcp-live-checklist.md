@@ -13205,14 +13205,16 @@ CHECK 191 RESULT END (exit 2)
 theirs, so the block's fixed key order prints each of them `FAIL — not reached`. `dry-run` is the
 `--dry-run` mode's own row: a real run takes no such step either, so the same order prints it
 `FAIL — not reached` while a dry run passes it (`FACT dry-run: PASS`) — a row of the other mode rather
-than a reading about the proxy. `review-run` printed the **old** wording of its row, because the owner
-ran a stale checkout: `main`'s script since **#2990** records an empty reading of that row as **not
-measurable** (exit 2, the owner's own ruling) rather than as a FAIL, since a review-mode run has no route
-to the credentials service at all. That row is the run's one unmeasured reading, and it is what set the
-exit `2`: the rows that read `FAIL — not reached` were never recorded, so they neither fail the run nor
-move its exit code. What the run leaves on the sandbox is pull request **#80** of
-`edgeappinc/fugarosandbox` and the branch behind it: they **stay** on that repository and are the owner's
-to delete, because this check holds no Bitbucket credential of its own.
+than a reading about the proxy. `review-run` printed the **pre-#2990** reason for its row, because the
+owner ran a stale checkout: #2990 rewrote that reason and widened the condition that reaches it, and
+moved nothing else. Both versions record an empty reading of that row through the same **unmeasured**
+path — a review-mode run has no route to the credentials service at all — so the block prints the row
+`FAIL`, that row being no pass and nothing to read as one, and the run ends `2`, the owner's own ruling
+for it. That row is the run's one unmeasured reading, and it is what set the exit `2`: the rows that read
+`FAIL — not reached` were never recorded, so they neither fail the run nor move its exit code. What the
+run leaves on the sandbox is pull request **#80** of `edgeappinc/fugarosandbox` and the branch behind it:
+they **stay** on that repository and are the owner's to delete, because this check holds no Bitbucket
+credential of its own.
 
 **Written by task B1.11** of the secrets-brokering plan
 ([secrets-brokering/implementation-plan.md](secrets-brokering/implementation-plan.md), its "B1.11: Checks
