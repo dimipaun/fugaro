@@ -601,15 +601,18 @@ func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 	}
 }
 
-// fullFacts is a node's fact table at its bound: MaxFacts facts, none of them
-// the merge read's own.
-func fullFacts() map[string]orchestrator.Fact {
-	facts := make(map[string]orchestrator.Fact, orchestrator.MaxFacts)
-	for i := range orchestrator.MaxFacts {
+// factsUpTo is a node's fact table with n facts on it, none of them the merge
+// read's own.
+func factsUpTo(n int) map[string]orchestrator.Fact {
+	facts := make(map[string]orchestrator.Fact, n)
+	for i := range n {
 		facts[fmt.Sprintf("fact_%d", i)] = orchestrator.Fact{Value: "a fact a person set", By: orchestrator.Daemon}
 	}
 	return facts
 }
+
+// fullFacts is that table at its bound: MaxFacts facts.
+func fullFacts() map[string]orchestrator.Fact { return factsUpTo(orchestrator.MaxFacts) }
 
 // TestFullFactTableStillLetsTheMergeLand: the fact a missing read consumer
 // leaves rides in the same patch as the moves the same cadence read, and a node
@@ -647,5 +650,52 @@ func TestFullFactTableStillLetsTheMergeLand(t *testing.T) {
 	}
 	if len(h.lines.lines) != 1 || !strings.Contains(h.lines.lines[0], mergeBitbucket) {
 		t.Errorf("the cadence left the lines %q, and the fact it could not record is one line naming the repository", h.lines.lines)
+	}
+}
+
+// TestQueuedFactsCountTowardsTheBound: the bound the node refuses is over the
+// state the patch makes, so a fact this cadence has already queued for one
+// repository is one the next repository's fact does not fit beside — a guard
+// that reads only the facts on the node lets the second one through and the
+// state refuses the whole patch, the moves in it included. Two unreadable
+// repositories and a merged pull request are the case: with a fact to spare,
+// one repository's fact is recorded and the other's is a line, and the merge
+// lands (G3, D2705).
+func TestQueuedFactsCountTowardsTheBound(t *testing.T) {
+	const other = "workspace/other"
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	one, itOne := mergeReviewItem("wi-one", mergeBitbucket, mergeRunA, approvedAt)
+	two, itTwo := mergeReviewItem("wi-two", other, mergeRunB, approvedAt)
+	gh, itGH := mergeReviewItem("wi-gh", mergeRepo, mergeRunC, approvedAt)
+	s := tickState(t, now, []orchestrator.WorkItem{one, two, gh}, []orchestrator.Intent{itOne, itTwo, itGH})
+	s.Facts = factsUpTo(orchestrator.MaxFacts - 1)
+	h := newMergeHarness(t, s, now)
+	h.reader.reports = []orchestrator.RunReport{
+		mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14), mergeReport(mergeRunC, 16),
+	}
+	h.reads.noList[mergeBitbucket], h.reads.noList[other] = true, true
+	h.reads.stateErr[mergeKey(mergeBitbucket, 12)] = orchestrator.ErrMergeNoReadConsumer
+	h.reads.stateErr[mergeKey(other, 14)] = orchestrator.ErrMergeNoReadConsumer
+	h.reads.states[mergeKey(mergeRepo, 16)] = orchestrator.MergeMerged
+
+	rep := h.step()
+
+	if got := h.mergePhase("wi-gh"); got != orchestrator.PhaseDone {
+		t.Errorf("the item is %q, and its pull request merged: a fact that no longer fits must not carry the move down with it", got)
+	}
+	if rep.Merged != 1 {
+		t.Errorf("the cycle moved %d items out of review, and one of them merged", rep.Merged)
+	}
+	for _, id := range []string{"wi-one", "wi-two"} {
+		if got := h.mergePhase(id); got != orchestrator.PhaseReview {
+			t.Errorf("the item %s is %q, and a read that could not be made says nothing about its pull request", id, got)
+		}
+	}
+	if got := len(h.state().Facts); got != orchestrator.MaxFacts {
+		t.Errorf("the node carries %d facts, and one of the two the cadence owes it fits", got)
+	}
+	if len(h.lines.lines) != 1 || !strings.Contains(h.lines.lines[0], other) {
+		t.Errorf("the cadence left the lines %q, and the fact that did not fit is one line naming its repository", h.lines.lines)
 	}
 }

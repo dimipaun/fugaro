@@ -150,6 +150,20 @@ func (c *cycle) merge(ctx context.Context) error {
 	return c.commit(ctx, next)
 }
 
+// mergeFacts is what one cadence has done about the missing read consumer: the
+// repositories it has answered for — the fact queued, or the one line saying
+// the node will not take it — and how many fact ops it has queued in the patch
+// it is building.
+//
+// The count is what the fact bound is read against beside the facts the node
+// already carries: what ValidateState refuses is the state the patch makes, so a
+// fact queued for one repository is one the next repository's fact does not fit
+// beside.
+type mergeFacts struct {
+	answered map[string]bool
+	queued   int
+}
+
 // mergeOps is one cycle's whole turn at the read: every repository's items in
 // `review`, each repository read at most once per cadence, as the ops that
 // record what the hosts answered and the one fact an unreadable installation
@@ -157,13 +171,11 @@ func (c *cycle) merge(ctx context.Context) error {
 func (c *cycle) mergeOps(ctx context.Context) []Op {
 	seams := &c.tick.Merge
 	mem := seams.memory()
-	// recorded is the repositories this cycle has already answered for — the
-	// missing consumer's fact written, or the one line saying the node is too
-	// full to take it — seeded from the node: the fact is the record and the
-	// node is where it lives, so a write that did not land is a fact the next
-	// cycle writes, and a daemon that restarted does not write what is already
-	// there.
-	recorded := map[string]bool{}
+	// answered starts empty every cycle and the node is what it is seeded from
+	// instead: the fact is the record and the node is where it lives, so a write
+	// that did not land is a fact the next cycle writes, and a daemon that
+	// restarted does not write what is already there.
+	facts := &mergeFacts{answered: map[string]bool{}}
 	var ops []Op
 	for _, g := range mergeGroups(c.state) {
 		if !mem.due(g.repo, c.now) {
@@ -173,7 +185,7 @@ func (c *cycle) mergeOps(ctx context.Context) []Op {
 		// that would not answer is a host to ask again in a minute, not one to
 		// ask again on the next wake.
 		mem.markRead(g.repo, c.now)
-		ops = append(ops, c.mergeRepo(ctx, seams, recorded, g)...)
+		ops = append(ops, c.mergeRepo(ctx, seams, facts, g)...)
 	}
 	return ops
 }
@@ -249,7 +261,7 @@ type mergeItem struct {
 // listing of what the host reports open, and a `get` for each item the listing
 // does not carry (D2742) — or for each item at all, where the host has no
 // listing (Bitbucket).
-func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, recorded map[string]bool, g mergeGroup) []Op {
+func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, facts *mergeFacts, g mergeGroup) []Op {
 	items, err := c.mergeItems(ctx, g)
 	if err != nil {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
@@ -258,7 +270,7 @@ func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, recorded map[s
 	}
 	open, supported, err := seams.Reader.ListOpen(ctx, g.repo)
 	if err != nil {
-		return c.mergeRefusal(ctx, seams, recorded, g.repo, err)
+		return c.mergeRefusal(ctx, seams, facts, g.repo, err)
 	}
 	var ops []Op
 	for _, it := range items {
@@ -271,7 +283,7 @@ func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, recorded map[s
 		}
 		state, err := seams.Reader.State(ctx, g.repo, it.number)
 		if err != nil {
-			ops = append(ops, c.mergeRefusal(ctx, seams, recorded, g.repo, err)...)
+			ops = append(ops, c.mergeRefusal(ctx, seams, facts, g.repo, err)...)
 			continue
 		}
 		if op, ok := c.mergeOp(g.repo, it, state); ok {
@@ -349,29 +361,35 @@ func (c *cycle) mergeOp(repo string, it mergeItem, state MergeState) (Op, bool) 
 //
 // The items are left in `review` by both: a read that failed is not an answer,
 // and the wait it was reading for goes on.
-func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, recorded map[string]bool, repo string, err error) []Op {
+func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, facts *mergeFacts, repo string, err error) []Op {
 	if !errors.Is(err, ErrMergeNoReadConsumer) {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
 			repo, safetext.OneLine(err.Error())))
 		return nil
 	}
 	key := mergeFactKey(repo)
-	if _, ok := c.state.Facts[key]; ok || recorded[repo] {
+	if _, ok := c.state.Facts[key]; ok || facts.answered[repo] {
 		return nil
 	}
-	recorded[repo] = true
+	facts.answered[repo] = true
 	// A node at its fact bound is a node this op cannot land on: the state that
 	// carries one fact more is the state ValidateState refuses, and the refusal
 	// takes the whole patch with it — which is the patch the same cadence's
-	// merged pull requests move their items in. The move is what must land and
-	// the fact is the diagnostic, so the fact is what is dropped when it does
-	// not fit; the line is what the person reads instead, and the read is made
-	// again on the next cadence, so a node with room again records it then.
-	if len(c.state.Facts) >= MaxFacts {
-		warnMerge(ctx, seams, fmt.Sprintf("the missing read consumer of %s is not recorded, and the node is at its %d facts: set one with `fugaro creds set bitbucket-read-consumer`",
+	// merged pull requests move their items in. The facts this cadence has
+	// queued for other repositories are a part of that state and not of the
+	// node, so they are counted here beside it: the bound is over what the patch
+	// makes, and a guard reading the node alone would let the second
+	// repository's fact through and lose the patch to the state it built. The
+	// move is what must land and the fact is the diagnostic, so the fact is what
+	// is dropped when it does not fit; the line is what the person reads
+	// instead, and the read is made again on the next cadence, so a node with
+	// room again records it then.
+	if len(c.state.Facts)+facts.queued >= MaxFacts {
+		warnMerge(ctx, seams, fmt.Sprintf("the missing read consumer of %s is not recorded: the node's facts reach their bound of %d with the ones this cadence queues; set one with `fugaro creds set bitbucket-read-consumer`",
 			repo, MaxFacts))
 		return nil
 	}
+	facts.queued++
 	return []Op{{Op: OpFactSet, Fact: &FactOp{Key: key, Value: mergeFactValue(repo)}}}
 }
 
