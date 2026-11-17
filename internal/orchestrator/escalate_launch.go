@@ -170,7 +170,17 @@ type LadderLog interface {
 // package's: E10b adds its files beside this one and hands its own function to
 // LadderSeams. A hook that returns an error ends the item's turn in the cycle
 // the way an error of the executor's own would.
-type LadderBeyond func(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error
+//
+// What it answers besides the error is whether it made a move: a run it
+// started, a landing it made, a landing's owed work it replayed, a split. A
+// hook that read a head and found nothing it may do — a pull request that is
+// already merged with nothing left to file, a gate that waits for a person, a
+// judge that vetoed, a run of its own still going — made no move, and the cycle
+// that called it did no work either. The distinction is the cycle's own: what
+// counts a hook's work is Report.Escalated, and a hook whose every return read
+// as a move would make an item the ladder can never finish read as progress
+// every cycle, which is the breaker defeated for good (D1228).
+type LadderBeyond func(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error)
 
 // escalate is one cycle's turn at the ladder: every item on the node, walked as
 // far as the facts take it.
@@ -423,10 +433,22 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 // pause the daemon over a ladder that is working (D1228). A hook that fails is
 // not counted: the cycle ends failed, and the streak is what that failure is.
 //
+// Only a hook that moved is counted, and the hook is what says so (LadderBeyond
+// answers the move with its error): a hook that read the head and found nothing
+// to do here did the cycle's work in no sense, and counting that return would
+// make the count meaningless in the one place it matters most. An item the
+// ladder has finished with — the pull request at its head is merged — is left at
+// rung 3 by the ledger and answered with rung 3 by every later decision, so a
+// hook re-entering it reads the same merged pull request every cycle: counting
+// each of those would report progress for ever and no streak would ever reach
+// the breaker at all (D1228).
+//
 // A rung 3 hook that waits asks its own question rather than reading as an idle
 // daemon — the ladder's question about the item is on the node from the cycle
 // the hook first waits on (mergeQuestionOp) — so what the count leaves for the
-// breaker is only the cycle the hook could not act on at all.
+// breaker is only the cycle the hook could not act on at all. The item a hook
+// has finished with is not left to the breaker either: the hook stops it, and
+// the cycle after it finds an item the ladder reads no further rungs for.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
 	if c.tick.Ladder.Beyond == nil {
 		runID := w.RunID
@@ -435,13 +457,16 @@ func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.St
 		}
 		return c.ladderSay(ctx, w, step, reason, runID)
 	}
-	if err := c.tick.Ladder.Beyond(ctx, w, step, reason, read); err != nil {
+	acted, err := c.tick.Ladder.Beyond(ctx, w, step, reason, read)
+	if err != nil {
 		if rerr := c.reread(ctx); rerr != nil {
 			return errors.Join(err, rerr)
 		}
 		return err
 	}
-	c.rep.Escalated++
+	if acted {
+		c.rep.Escalated++
+	}
 	return c.reread(ctx)
 }
 

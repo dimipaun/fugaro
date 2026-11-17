@@ -147,12 +147,12 @@ func (s MergeSeams) Beyond() LadderBeyond {
 	return s.beyond
 }
 
-func (s MergeSeams) beyond(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
+func (s MergeSeams) beyond(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error) {
 	if read.Running != "" {
 		// A run of the ladder's is under way for this item and has not
 		// reported. What it answers with is the next cycle's, and acting over
 		// it would judge a head that run's own push may be about to move.
-		return nil
+		return false, nil
 	}
 	switch step.Rung {
 	case escalation.R3:
@@ -160,7 +160,7 @@ func (s MergeSeams) beyond(ctx context.Context, item WorkItem, step escalation.S
 	case escalation.R4:
 		return s.split(ctx, item, step, reason, read)
 	}
-	return nil
+	return false, nil
 }
 
 // MergeReader gathers what the rung 3 gate is decided on for one item at one
@@ -706,34 +706,37 @@ func merged(out MergeOutcome, code string) MergeOutcome {
 // after that is one Apply of one op list — the ledger, the question or the
 // follow-ups — and then the line, which is the order E10a uses and the one a
 // re-run can repeat: the state write is what a second cycle sees, and the line
-// is written under a name derived from the head and the step.
-func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
+// is written under a name derived from the head and the step. The one write
+// after the line is the stop a merge leaves behind (see the end of the
+// function): it is the write that ends this hook's own recoverability, so it
+// comes once everything a cycle after it would have to redo has landed.
+func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error) {
 	now, ok := s.Now()
 	if !ok {
-		return ErrNoServerTime
+		return false, ErrNoServerTime
 	}
 	st, err := s.Node.State(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if cur, ok := st.Item(item.ID); ok {
 		item = cur
 	}
 	launches, err := s.launches(ctx, item.ID, read.HeadSHA)
 	if err != nil {
-		return err
+		return false, err
 	}
 	said, err := s.said(ctx, item.ID, read.HeadSHA)
 	if err != nil {
-		return err
+		return false, err
 	}
 	mr, err := s.Read.MergeAt(ctx, item, read.HeadSHA)
 	if err != nil {
-		return err
+		return false, err
 	}
 	landed, err := s.landed(ctx, item.ID, read.HeadSHA)
 	if err != nil {
-		return err
+		return false, err
 	}
 	in := MergeInput{
 		Item: item, Step: step, Head: read.HeadSHA, Read: mr, Launches: launches,
@@ -748,11 +751,11 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 		// retry — a read that did not happen is not a refusal to merge.
 		pr, err := s.Host.PullRequest(ctx, mr.Number)
 		if err != nil {
-			return err
+			return false, err
 		}
 		checks, err := s.Host.Checks(ctx, mr.Number, in.Head)
 		if err != nil {
-			return err
+			return false, err
 		}
 		in.PR, in.CI = &pr, gitprov.ChecksState(checks)
 	}
@@ -764,7 +767,7 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 	case MergeLaunchReview, MergeLaunchJudge:
 		id, err := s.launch(ctx, now, item, step, out, in.Head)
 		if err != nil {
-			return err
+			return false, err
 		}
 		runID, launched = id, true
 	case MergeLand:
@@ -778,11 +781,11 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 			Transition: mergeLandingTransition(in.Head),
 			Text:       "escalation: " + mergeLandingPhase,
 		}); err != nil {
-			return err
+			return false, err
 		}
 		code, err := s.land(ctx, in)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if code != "" {
 			out = merged(out, code)
@@ -809,13 +812,13 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 	}
 	if len(ops) > 0 {
 		if err := s.Node.Apply(ctx, ops); err != nil {
-			return err
+			return false, err
 		}
 	}
 	line := "escalation: " + ladderMove(step, reason, runID) + " " + mergeLine(out)
 	entry := Entry{Subject: item.ID, Transition: mergeTransition(step.Rung, out.Kind, in.Head), Text: line}
 	if err := s.Log.Append(ctx, entry); err != nil {
-		return err
+		return false, err
 	}
 	if moved {
 		// One comment per move and not one per cycle: the move is what the
@@ -844,7 +847,43 @@ func (s MergeSeams) merge(ctx context.Context, item WorkItem, step escalation.St
 	case told != nil:
 		s.say(ctx, *told)
 	}
-	return nil
+	if out.Kind == MergeLand || out.Kind == MergeAlready {
+		// The item is over: the merge at its head is a fact of the host's, and
+		// the ladder has nothing left to do for an item whose work has landed —
+		// or for one it finds landed, whether the landing was its own replay's
+		// or a person's.
+		//
+		// Without this the item is walked for ever: the ledger keeps it at rung
+		// 3 (a rung passed is a rung the item has spent, and neither the
+		// decision nor this file walks back off it), escalation.Decide answers an
+		// item at rung 3 with rung 3, and ladderReentrant enters that rung every
+		// cycle because the sequence is one — so the hook reads the same merged
+		// pull request on every tick of the daemon's life, polling the host and
+		// holding the breaker's streak at progress (D1228). Cancelled and not
+		// done because the state's table has no failed or blocked item reaching
+		// done (state.go's CanMoveTo, the spec's own table): queued is the only
+		// other phase it allows from there, and that one would hand the merged
+		// work back to the item's own loop.
+		//
+		// A write of its own, and the last of the three, because stopping the
+		// item is what ends the landing's recoverability: the marker this head
+		// carries is what a cycle after a lost outcome line finishes the landing
+		// from (landed, Replay), and that cycle is a cycle this hook is entered
+		// on — an item already stopped is one the ladder reads no further rungs
+		// for. So the line, the comment and the person a ceiling tells all land
+		// first, and the write that cannot be taken back comes after them.
+		if err := s.Node.Apply(ctx, []Op{cancelItemOp(item.ID)}); err != nil {
+			return false, err
+		}
+	}
+	// What this cycle moved, read off the outcome rather than off the writes:
+	// the two launches are a run started, the landing is the merge itself, and
+	// a replay is the work a landing whose write was lost still owed. Everything
+	// else the gate reaches — a wait, a veto, a launch it may not make, a
+	// refusal a host answered — leaves the item where it stands and is the next
+	// cycle's, and a merge this ladder did not make with nothing left to file
+	// moved nothing at all.
+	return launched || out.Kind == MergeLand || out.Replay, nil
 }
 
 // launch starts one rung 3 run and answers the id it was minted under. The id is

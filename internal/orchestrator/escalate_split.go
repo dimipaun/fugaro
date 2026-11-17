@@ -39,21 +39,21 @@ import (
 // the write landed therefore finds the item cancelled — the ladder reads no
 // further rungs for it — and still files nothing twice, because the split item's
 // name is derived from the item's id (G4).
-func (s MergeSeams) split(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
+func (s MergeSeams) split(ctx context.Context, item WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) (bool, error) {
 	now, ok := s.Now()
 	if !ok {
-		return ErrNoServerTime
+		return false, ErrNoServerTime
 	}
 	st, err := s.Node.State(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if cur, ok := st.Item(item.ID); ok {
 		item = cur
 	}
 	mr, err := s.Read.MergeAt(ctx, item, read.HeadSHA)
 	if err != nil {
-		return err
+		return false, err
 	}
 	out := splitOutcome(mr)
 	moved := ladderReached(item) != step.Rung
@@ -71,12 +71,12 @@ func (s MergeSeams) split(ctx context.Context, item WorkItem, step escalation.St
 		ops = append(ops, newItemOp(splitID(item.ID), splitTitle(item), splitBrief(item, scope), item))
 	}
 	if err := s.Node.Apply(ctx, ops); err != nil {
-		return err
+		return false, err
 	}
 	line := "escalation: " + ladderMove(step, reason, item.RunID) + " " + mergeLine(out)
 	entry := Entry{Subject: item.ID, Transition: mergeTransition(step.Rung, out.Kind, read.HeadSHA), Text: line}
 	if err := s.Log.Append(ctx, entry); err != nil {
-		return err
+		return false, err
 	}
 	if moved {
 		// The rung starts no run, so the comment names the item's own run:
@@ -89,7 +89,10 @@ func (s MergeSeams) split(ctx context.Context, item WorkItem, step escalation.St
 	if told != nil {
 		s.say(ctx, *told)
 	}
-	return nil
+	// Rung 4 always moves: the item is stopped and the scope is filed or asked
+	// for, which is the whole of what the rung is, and the item a cycle reads
+	// after it is one the ladder reads no further rungs for.
+	return true, nil
 }
 
 // splitOutcome is rung 4's outcome: the same kind either way — the item is

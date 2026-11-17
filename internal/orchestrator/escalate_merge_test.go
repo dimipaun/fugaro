@@ -70,10 +70,15 @@ type mergeStub struct {
 	commentErr error
 	loggedErr  error
 	appendErr  error
-	launched   []orchestrator.LadderRequest
-	comments   []string
-	lines      []orchestrator.Entry
-	written    map[string]bool
+	// appendErrOn is the one transition whose line this log refuses, and "" for
+	// a log that takes every line. A test that needs a landing's marker down and
+	// its outcome line lost sets it to that line's transition: appendErr refuses
+	// every line, which would refuse the marker before the host was ever asked.
+	appendErrOn string
+	launched    []orchestrator.LadderRequest
+	comments    []string
+	lines       []orchestrator.Entry
+	written     map[string]bool
 }
 
 func newMergeStub(t *testing.T) *mergeStub {
@@ -100,6 +105,9 @@ func (m *mergeStub) LadderComment(_ context.Context, _ orchestrator.WorkItem, bo
 func (m *mergeStub) Append(_ context.Context, e orchestrator.Entry) error {
 	if m.appendErr != nil {
 		return m.appendErr
+	}
+	if m.appendErrOn != "" && e.Transition == m.appendErrOn {
+		return errors.New("the log would not take this line")
 	}
 	m.lines = append(m.lines, e)
 	m.written[orchestrator.EntryID(e.Subject, e.Transition)] = true
@@ -289,7 +297,7 @@ func (m *mergeHarness) act(id string, step escalation.Step, reason escalation.Re
 	if beyond == nil {
 		m.t.Fatalf("the merge seams answered no hook, and every seam but the sink is set")
 	}
-	if err := beyond(context.Background(), itemAt(m.t, m.state(), id), step, reason, read); err != nil {
+	if _, err := beyond(context.Background(), itemAt(m.t, m.state(), id), step, reason, read); err != nil {
 		m.t.Fatalf("the rung %s hook ended as %v", step.Rung, err)
 	}
 }
@@ -1195,6 +1203,65 @@ func TestR3ReplayFinishesALostLanding(t *testing.T) {
 	})
 }
 
+// TestR3ALostLandingLineLeavesTheItemWalkable is the order a landing's writes
+// are made in, read at the one place it shows: the stop that ends the item is
+// also the write that ends the landing's recoverability, so it comes last. A
+// cycle whose outcome line the log refuses leaves the item at rung 3 — the
+// marker is down before the host is asked, which is what a replay reads — and
+// the cycle after it finishes the landing and stops the item.
+//
+// Mutation: stop the item in the landing's own op list, beside the ledger and
+// the follow-ups, and the cycle after the refused line finds an item the ladder
+// reads no further rungs for: the outcome line never lands and the person a Pro
+// ceiling owes is told nothing, because the replay is the only cycle that would
+// have told them.
+func TestR3ALostLandingLineLeavesTheItemWalkable(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	read := mergePass(headA)
+	read.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeRoutinePath, Key: mergeFinding}}
+	read.Verdict.FollowUps = []runstore.MergeJudgeFollowUp{{Key: mergeFinding, Importance: runstore.MergeJudgeMinor}}
+	m.reader.reads["wi-1"] = read
+	m.host.head, m.host.checks = headA, mergeGreen()
+
+	step := r3Step(escalation.CeilingAutoMergeNotify)
+	m.stub.appendErrOn = "ladder-r3-land-" + headA[:8]
+	beyond := m.seams.Beyond()
+	if beyond == nil {
+		t.Fatal("the merge seams answered no hook, and every seam but the sink is set")
+	}
+	if _, err := beyond(context.Background(), itemAt(t, m.state(), "wi-1"), step, escalation.ReasonR2Clean, r3Read(headA)); err == nil {
+		t.Fatalf("the landing ended clean, and the log refused the line it writes last")
+	}
+	if !slices.Equal(m.host.merged, []string{headA}) {
+		t.Fatalf("the host merged %v, and the merge is asked for before the line", m.host.merged)
+	}
+	if got := m.item("wi-1").Phase; got == orchestrator.PhaseCancelled {
+		t.Fatalf("the item is %s, and a landing whose line was lost is one the cycle after it finishes", got)
+	}
+	if len(m.sink.got) != 0 {
+		t.Fatalf("the sink was told %+v, and the cycle that could not write the line reached nobody", m.sink.got)
+	}
+
+	// The log takes lines again, the host holds the merge and nothing has said
+	// this head is merged: that is the replay, and the replay is what stops the
+	// item.
+	m.stub.appendErrOn = ""
+	m.host.state = gitprov.PRMerged
+	m.act("wi-1", step, escalation.ReasonR2Clean, r3Read(headA))
+
+	m.stub.line("ladder-r3-merged-" + headA[:8])
+	if got := m.item("wi-1").Phase; got != orchestrator.PhaseCancelled {
+		t.Fatalf("the item is %s after the replay, and the merge this ladder finished with is over", got)
+	}
+	if _, ok := m.state().Item("wi-1-fu-" + mergeFinding); !ok {
+		t.Fatalf("the replay left no follow-up for the finding the merge did not block: %+v", m.state().WorkItems)
+	}
+	if len(m.sink.got) != 1 || m.sink.got[0].Kind != orchestrator.NotifyMergedNeedsReview {
+		t.Fatalf("the sink was told %+v, and the person a Pro ceiling owes is told by the replay", m.sink.got)
+	}
+}
+
 // TestR3ALandingIsTheLaddersOwn is what a replay must not do: read a person's
 // own merge as the ladder's. The gate refusing at a head is the case that shows
 // why the item's ledger cannot answer the question — the item reaches rung 3 at
@@ -1784,9 +1851,12 @@ func TestR3TickReentersTheRung(t *testing.T) {
 	}
 
 	// The host says the head is merged, which is what a landing leaves behind:
-	// the cycle after it reads a merged pull request and does nothing — no
-	// second merge, no ready, no question, nothing for a person. What it does
-	// read is the pull request itself, which is how it learns the head landed.
+	// the cycle after it reads a merged pull request, stops the item — the merge
+	// at its head is the end of the rung 3 sequence, and an item left at the
+	// rung is one every later cycle walks again — and does nothing else at the
+	// host: no second merge, no ready, no question, nothing for a person. What
+	// it does read is the pull request itself, which is how it learns the head
+	// landed.
 	m.host.state = gitprov.PRMerged
 	calls := len(m.host.calls)
 	cycle(mergePass(headA))
@@ -1993,27 +2063,33 @@ func TestR4CycleWritesAfterTheHooksWrite(t *testing.T) {
 // TestR3HookCyclesDoNotTripTheBreaker: a cycle whose whole work was the hook's
 // is a cycle that did something, and the breaker has to read it that way. The
 // moves these rungs make are landed through the hook's own seam and counted
-// nowhere else in the Step, so a cycle the hook was entered for reports nothing
-// done at all unless the hook's return counts — and three of those in a row
-// reach the threshold and put the breaker's question on the node, which pauses
-// the plan and the ladder daemon-wide over a ladder that is working (D1228,
-// Report.Escalated).
+// nowhere else in the Step, so a cycle the hook moved the item on reports
+// nothing done at all unless the hook's own answer counts — and three of those
+// in a row reach the threshold and put the breaker's question on the node, which
+// pauses the plan and the ladder daemon-wide over a ladder that is working
+// (D1228, Report.Escalated).
+//
+// The three cycles here are rung 3's whole sequence, one move each: the review
+// D2043 requires, the judge a scored head gets, and the landing. The other side
+// of the count — the cycles a rung 3 hook is read for and moved nothing on — is
+// the merged pull request below (TestR3MergedPullRequestLeavesTheItemStopped).
 //
 // Mutation: drop c.rep.Escalated++ from ladderBeyond's hook branch and the first
 // cycle below reports CycleEmpty, and the third leaves the breaker's question on
 // the node.
 func TestR3HookCyclesDoNotTripTheBreaker(t *testing.T) {
 	now := o6Now()
-	m := newMergeHarness(t, now, []string{mergeReviewRun, mergeReviewRun, mergeReviewRun},
+	m := newMergeHarness(t, now, []string{mergeReviewRun, mergeJudgeRun},
 		mergeItem("wi-1", r3Ledger(now, headA, 2)))
 	m.host.head, m.host.checks = headA, mergeGreen()
 
 	// Nothing scored at the head, which is where a rung 3 item stands before
-	// D2043's review: the hook's first cycle launches it, and the cycles after
-	// that read the launch back off the log and wait on it.
+	// D2043's review; then the review came back scored and the judge is owed;
+	// then the verdict is in and the head lands.
 	uncovered := mergePass(headA)
 	uncovered.Scored, uncovered.ReviewRun = false, ""
-	m.reader.reads["wi-1"] = uncovered
+	judged := mergePass(headA)
+	judged.JudgeRun = ""
 
 	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
 		"wi-1": reading(rigor.POC, 4*time.Hour, headA),
@@ -2033,10 +2109,11 @@ func TestR3HookCyclesDoNotTripTheBreaker(t *testing.T) {
 		Breaker:  &breaker,
 	}
 
-	// The threshold's own number of cycles, every one of them the hook's: the
-	// item stands at rung 3, and the rung it is at is the one the hook re-enters
-	// for as long as the sequence runs.
-	for i := range orchestrator.BreakerThreshold {
+	// The threshold's own number of cycles, every one of them a move the hook
+	// made: the item stands at rung 3 throughout, and the rung it is at is the
+	// one the hook re-enters for as long as the sequence runs.
+	for i, read := range []orchestrator.MergeReading{uncovered, judged, mergePass(headA)} {
+		m.reader.reads["wi-1"] = read
 		rep, err := tick.Step(context.Background())
 		if err != nil {
 			t.Fatalf("cycle %d ended as %v, and the hook acted on it", i+1, err)
@@ -2045,11 +2122,80 @@ func TestR3HookCyclesDoNotTripTheBreaker(t *testing.T) {
 			t.Fatalf("cycle %d reports %+v, and a cycle the hook was entered for moved the item", i+1, rep)
 		}
 	}
-	if len(m.stub.launched) != 1 {
-		t.Errorf("the hook launched %+v, and the review the first cycle starts is the head's only one", m.stub.launched)
+	if len(m.stub.launched) != 2 {
+		t.Errorf("the hook launched %+v, and one head spends one review and one judge", m.stub.launched)
+	}
+	if !slices.Equal(m.host.merged, []string{headA}) {
+		t.Errorf("the host merged %v, and the sequence ends in the landing of the judged head", m.host.merged)
 	}
 	if orchestrator.BreakerOpen(m.state(), now) {
 		t.Fatalf("three cycles the hook acted on asked a person to look at a ladder that is working: %+v", m.state().Decisions)
+	}
+}
+
+// TestR3MergedPullRequestLeavesTheItemStopped is the other side of the count:
+// the cycle that reads a pull request already merged at the head has nothing to
+// do for the item and must read as one that did nothing, and the item it finds
+// merged must not be walked again.
+//
+// Neither half is free. The ledger keeps an item at rung 3 — the rung a landing
+// is written at is the rung a later decision answers from, and nothing carries
+// an item to rung 4 but the judge — so the item that is not stopped is one the
+// hook re-enters on every tick of the daemon's life: the host is asked for the
+// pull request and its checks for ever, and a hook whose clean return counted as
+// a move would report progress for ever, which is the breaker defeated in the
+// one state that never ends (D1228).
+//
+// Mutation: drop the cancelItemOp from merge's landing branch and the item is
+// left failed at rung 3, so every cycle below reads the host again and the item
+// is never over; count every clean hook return as a move again and the first
+// cycle reports CycleProgress where the item it found merged moved nothing.
+func TestR3MergedPullRequestLeavesTheItemStopped(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, nil, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	m.reader.reads["wi-1"] = mergePass(headA)
+	// A pull request the ladder did not land: no marker of its own, and the
+	// host's word for it is the merge. It is D1245's gate read at a head whose
+	// merge is not this ladder's, which is where the item that is never stopped
+	// loops.
+	m.host.head, m.host.checks, m.host.state = headA, mergeGreen(), gitprov.PRMerged
+
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
+		"wi-1": reading(rigor.POC, 4*time.Hour, headA),
+	}}
+	seams := l.seams(escalation.DefaultThresholds())
+	seams.Beyond = m.seams.Beyond()
+	tick := &orchestrator.Tick{
+		Store:    m.node,
+		Runs:     ladderNoRuns{},
+		Launcher: &o6Launcher{},
+		Mint:     func(time.Time) (string, error) { return mergeRun, nil },
+		Caps:     o6Caps(),
+		Now:      clockAt(now),
+		Ladder:   seams,
+		Notifier: m.sink,
+	}
+
+	for i := range orchestrator.BreakerThreshold {
+		rep, err := tick.Step(context.Background())
+		if err != nil {
+			t.Fatalf("cycle %d ended as %v", i+1, err)
+		}
+		if rep.Escalated != 0 || rep.Outcome != orchestrator.CycleEmpty {
+			t.Fatalf("cycle %d reports %+v, and a cycle that found the pull request merged moved nothing", i+1, rep)
+		}
+	}
+	if len(m.host.merged) != 0 {
+		t.Errorf("the host merged %v, and a pull request that is already merged is not merged again", m.host.merged)
+	}
+	if got := m.item("wi-1").Phase; got != orchestrator.PhaseCancelled {
+		t.Fatalf("the item is %s, and the item a merge is behind is over", got)
+	}
+	// The item is terminal, so the cycles after the first read no host at all:
+	// the poll is three reads of the pull request and its checks if the item is
+	// left standing, and one of them here, from the cycle that stops it.
+	if len(m.host.calls) != 2 {
+		t.Fatalf("the host was asked %v, and a stopped item is no reason to ask it anything", m.host.calls)
 	}
 }
 
