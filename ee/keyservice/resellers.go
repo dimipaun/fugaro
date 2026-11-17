@@ -477,6 +477,16 @@ func (s *Service) createCustomerOrganisation(ctx context.Context, actor Caller, 
 	// ones by being a reseller, and every organisation this path makes is one a
 	// person could otherwise mint in a loop. Both counts are taken before the id
 	// is minted, so a refusal writes nothing at all.
+	//
+	// It is held from the counts to the write, as a sign-up holds it (signUpMu):
+	// each count is a query and the write is a transaction beside it, so two
+	// creations of a burst would each read a count that does not hold the other's
+	// organisation yet and the day's limit would be passed by racing it. The
+	// account's own count is the sign-up's own count, so this takes the sign-up's
+	// lock rather than a second one: a sign-up in flight beside a creation reads
+	// the same stale number.
+	s.signUpMu.Lock()
+	defer s.signUpMu.Unlock()
 	if err := s.refuseAnotherOrganisation(ctx, actor.UID, now); err != nil {
 		return WireOrganisation{}, err
 	}

@@ -23,6 +23,7 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -878,5 +879,53 @@ func TestAResellersOrganisationsAndInvitationsAreBounded(t *testing.T) {
 	f.advance(orgLimitWindow + time.Hour)
 	if rec := f.apiAsCaller(http.MethodPost, apiResellerCustomersPath, `{"name":"Customer Five"}`); rec.Code != http.StatusCreated {
 		t.Errorf("creating a customer after the day passed answered %d: %s", rec.Code, rec.Body)
+	}
+}
+
+// burstCustomerDocs is burstCountDocs' window at the count this path takes: the
+// link read a customer creation makes (refuseAnotherCustomer) waits for the burst
+// it is part of, so the window between that count and the write beside it is the
+// one the case reads rather than the one a scheduler happened to leave open. A
+// read that arrives alone waits the window out, which is what makes a burst that
+// ran one creation after another still read the window.
+type burstCustomerDocs struct {
+	*burstCountDocs
+}
+
+func (d *burstCustomerDocs) Query(ctx context.Context, collection string, where Where) ([]Doc, error) {
+	if collection == resellerCustomersCollection {
+		d.burstCountDocs.waitForTheBurst()
+	}
+	return d.burstCountDocs.Docs.Query(ctx, collection, where)
+}
+
+// TestConcurrentCustomerCreationsRespectTheDailyLimit: F35's day under the one
+// thing that can break it, for this path as for a sign-up — a reseller's people
+// creating customers from many places at once. The count is a query and the write
+// beside it is a transaction, and without the lock the whole burst reads a count
+// that holds none of the others' organisations and makes as many as it sent
+// requests. The window is widened at the count itself (burstCustomerDocs).
+func TestConcurrentCustomerCreationsRespectTheDailyLimit(t *testing.T) {
+	const burst = 8
+	f := newFixtureWith(t, Production, func(b *fixture) {
+		b.deps.Docs = &burstCustomerDocs{burstCountDocs: newBurstCountDocs(b.docs, burst)}
+	})
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+
+	codes := together(burst, func(i int) *httptest.ResponseRecorder {
+		return f.apiAsCaller(http.MethodPost, apiResellerCustomersPath, fmt.Sprintf(`{"name":"Customer %d"}`, i))
+	})
+
+	if got := answered(codes, http.StatusCreated); got != orgDailyLimit {
+		t.Errorf("%d of %d concurrent creations were answered 201, want the day's %d: %v", got, burst, orgDailyLimit, codes)
+	}
+	if got := answered(codes, http.StatusTooManyRequests); got != burst-orgDailyLimit {
+		t.Errorf("%d of %d creations carried the day's refusal, want %d: %v", got, burst, burst-orgDailyLimit, codes)
+	}
+	// The reseller organisation the case seeded, and the day's customers: a burst
+	// is not a way to hold more.
+	if got := len(f.organisations()); got != orgDailyLimit+1 {
+		t.Errorf("the burst left %d organisation(s), want the reseller and the day's %d", got, orgDailyLimit)
 	}
 }
