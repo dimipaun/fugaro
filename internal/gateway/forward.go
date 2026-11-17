@@ -1227,7 +1227,19 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// and is the dearer case of the two: the table's maximum rates times
 	// SurpriseMultiplier.
 	if dims := t.acc.unpricedDims(); len(dims) > 0 {
-		surprise := false
+		// A surprise prices the call whatever else the response named, and
+		// the report is only a floor under that charge (O6), so a tier's own
+		// warning must not claim the call settled on it. Read before the loop
+		// because the warning below is written as each tier is seen, while
+		// the charge itself is decided after it.
+		surprise := slices.ContainsFunc(dims, func(d unpriced) bool { return !d.tier })
+		// settles: the charge below is the provider's own figure (D2640).
+		// Only a complete call on a route that reported one, with no
+		// surprise priced against it and a report inside ten times the
+		// reservation, settles there; a report past that is the malformed
+		// case (D2641), which the table's own charge prices instead.
+		settles := pr != nil && t.acc.hasReported && !partial && !surprise &&
+			pricing.WithFee(t.acc.reported, fee) <= satMul(w, malformedReportMultiple)
 		for _, d := range dims {
 			if !d.tier {
 				rates, surprise = s.o.Prices.Max(), true
@@ -1240,19 +1252,21 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 			}
 			mult = max(mult, int64(pricing.ConservativeTierMultiplier))
 			o.charge.serviceTier = d.value
+			// The line the reader uses to explain the figure ends on what
+			// the charge actually turns out to be (below): the report a
+			// complete call settles on (D2640), the dearer of the multiple
+			// and a report that only floors the charge -- a partial call, or
+			// a complete one the response also priced as a surprise -- or
+			// the multiple alone, where the report is past ten times the
+			// reservation and the table's charge is what settles the call
+			// (D2641).
 			chargedAs := fmt.Sprintf("%dx the rates the call is priced at", mult)
 			if pr != nil && t.acc.hasReported {
-				if partial {
-					// A partial call is charged the multiple, and the
-					// provider's own report only floors it (below), so the
-					// line the reader uses to explain the figure says the
-					// figure may be the dearer of the two.
-					chargedAs += ", or the provider's reported cost with the route fee if dearer"
-				} else {
-					// A complete call settles on the report itself (D2640),
-					// so the multiple is not the figure to expect: the line
-					// says what the call settled on.
+				switch {
+				case settles:
 					chargedAs += ", or the provider's reported cost with the route fee, which is what the call settled on, floored at the row's cheapest end"
+				case partial || surprise:
+					chargedAs += ", or the provider's reported cost with the route fee if dearer"
 				}
 			}
 			s.log.Warn("budget: service tier not priced", "model", logValue(serving), "service_tier", d.value,

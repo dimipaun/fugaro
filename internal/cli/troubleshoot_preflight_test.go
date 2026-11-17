@@ -253,6 +253,75 @@ func TestTroubleshootPreflightRefusesWhatTheLaunchRefuses(t *testing.T) {
 	}
 }
 
+// TestTroubleshootPreflightRefusesAnImageThatCannotRunTheStep is T-TC6's red
+// step: the diagnose step is a step kind no job image older than diagnoseSince
+// knows, and the tier's launch runs the catalog recipe that holds it, so the
+// runner of such an image refuses the whole recipe at bootstrap — after the
+// container was started and the bundle uploaded — rather than skipping the
+// step. The pre-flight refuses the diagnosis at the person's terminal instead,
+// naming the release that carries the step and the update that brings the
+// image to it (F18, D2401).
+//
+// The boundary is the constant's own, on both judges the launch has: one
+// release below it is refused, the constant itself is admitted, and a base
+// image that is not a release is not judged at all — the rule every gate here
+// takes for an image whose runner cannot be shown.
+func TestTroubleshootPreflightRefusesAnImageThatCannotRunTheStep(t *testing.T) {
+	below := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, diagnoseSince, -1)
+	f := preflightFixture(t, "off")
+	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", below)
+	err := runPreflight(t, f, preflightSpec())
+	if err == nil {
+		t.Fatalf("the pre-flight admitted a job image built from %s, whose runner's step list has no diagnose in it", below)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("the refusal's exit code: %v", err)
+	}
+	for _, want := range []string{
+		diagnoseSubject + " needs a job image whose runner knows " + diagnoseKnows,
+		"fugaro " + diagnoseSince + " or later",
+		below,
+		"fugaro update",
+		"in your own terminal window",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal is not the gate's own sentence, %q is not in:\n%v", want, err)
+		}
+	}
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+diagnoseSince)
+	if err := runPreflight(t, f, preflightSpec()); err != nil {
+		t.Fatalf("the release that carries the step was refused: %v", err)
+	}
+	writeBuildRecord(t, f.cloudFixture, appSlug, "web", "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-1a2b3c")
+	if err := runPreflight(t, f, preflightSpec()); err != nil {
+		t.Fatalf("a base image that is not a release was refused: %v", err)
+	}
+
+	// The same step on a checkout: clone workflow, whose job has no derived
+	// image and so no build record: the gate raises checkCloneImageSince's
+	// threshold on base_images.base itself, the image the clone job and the
+	// review-only variant beside it both run.
+	g := preflightFixture(t, "off")
+	g.appendConfig(t, "credentials_service: { url: "+credentialsServiceFixtureURL+" }\n")
+	projectJobCheckoutYAML(t, projectJobRepoYAML)
+	removeBucketFile(t, g.cloudFixture, imagecheck.RecordKey(appSlug, "web"))
+	// The fixture's own base image is this release's, so the clone arm is
+	// admitted first and the refusal below is the moved image and not a gate
+	// that refuses everything.
+	if err := runPreflight(t, g, preflightSpec()); err != nil {
+		t.Fatalf("the release that carries the step was refused on a clone workflow: %v", err)
+	}
+	setBaseImage(t, shiftRelease(t, diagnoseSince, -1))
+	err = runPreflight(t, g, preflightSpec())
+	if err == nil {
+		t.Fatal("the pre-flight admitted a checkout: clone job image whose runner's step list has no diagnose in it")
+	}
+	if !strings.Contains(err.Error(), "fugaro "+diagnoseSince+" or later") {
+		t.Fatalf("the clone arm's refusal does not name the release that carries the step: %v", err)
+	}
+}
+
 // TestTroubleshootPreflightLaunchesNothing: the judgement is reads alone. No
 // job is asked for, no execution exists, no token is minted and not one object
 // of the runs bucket is written or removed — which is what lets the tier be

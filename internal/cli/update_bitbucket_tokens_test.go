@@ -223,7 +223,7 @@ func TestPolicyPublishWritesTheTokensIdentity(t *testing.T) {
 }
 
 // TestUpdateInFlightLineNamesTheBitbucketTokensPublish: the step this task adds
-// to the update's one line about the runs in flight. The policy stage writes
+// to the update's note about the runs in flight. The policy stage writes
 // the node's bitbucket_tokens key, and a PROXIED call re-reads that node on
 // every request it serves (internal/credsvc/bitbucketproxy.go), where the
 // runner's own read is memoized at bootstrap — so the first call after the
@@ -258,27 +258,27 @@ func TestUpdateInFlightLineNamesTheBitbucketTokensPublish(t *testing.T) {
 	}
 	t.Run("a proxied call re-reads the node the key was just published in", func(t *testing.T) {
 		got := line(t, proxiedNode(), true)
-		for _, want := range []string{"1 run in flight", "the Bitbucket tokens this update publishes", "re-reads on every request"} {
+		for _, want := range []string{"1 run in flight", "bitbucket tokens:", "a different token"} {
 			if !strings.Contains(got, want) {
-				t.Errorf("the line does not say %q over a run whose proxied calls re-read the node this update publishes:\n%s", want, got)
+				t.Errorf("the note does not say %q over a run whose proxied calls re-read the node this update publishes:\n%s", want, got)
 			}
 		}
 		if strings.Contains(got, "no step reaches them") {
-			t.Errorf("the line claims no step can reach a run in flight, over the node this update rewrites:\n%s", got)
+			t.Errorf("the note claims no step can reach a run in flight, over the node this update rewrites:\n%s", got)
 		}
 	})
 	t.Run("no record, no key", func(t *testing.T) {
 		got := line(t, proxiedNode(), false)
-		if strings.Contains(got, "Bitbucket tokens") {
-			t.Errorf("the line names the Bitbucket tokens over a project whose config names none, so this update publishes no such key:\n%s", got)
+		if strings.Contains(got, "bitbucket tokens") {
+			t.Errorf("the note names the Bitbucket tokens over a project whose config names none, so this update publishes no such key:\n%s", got)
 		}
 	})
 	t.Run("a node that does not proxy", func(t *testing.T) {
 		node := currentPolicyNode()
 		node["bitbucket_token"] = map[string]any{"allow_repos": []string{"bitbucket/workspace-a/repo-a"}}
 		got := line(t, node, true)
-		if strings.Contains(got, "Bitbucket tokens") {
-			t.Errorf("the line names the Bitbucket tokens over a project whose Bitbucket calls never reach the credentials service, so no call re-reads the node:\n%s", got)
+		if strings.Contains(got, "bitbucket tokens") {
+			t.Errorf("the note names the Bitbucket tokens over a project whose Bitbucket calls never reach the credentials service, so no call re-reads the node:\n%s", got)
 		}
 	})
 }
