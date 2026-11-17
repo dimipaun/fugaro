@@ -15,9 +15,9 @@
 #   - step 1 and step 2, the wizard's create path, in a directory that is NOT a
 #     checkout: `fugaro setup --name fugaro --region us-east5 --budget-mode
 #     observe --firebase-project <project> --link-billing <account>
-#     --bake-repos`, at a real terminal, with the ONE question a person has to
-#     answer — the GCP project's ID — typed at the pty this script gives it
-#     (readValueIn's "Type the GCP project's ID: "). The project's own
+#     --bake-repos --rigor pro`, at a real terminal, with the ONE question a
+#     person has to answer — the GCP project's ID — typed at the pty this script
+#     gives it (readValueIn's "Type the GCP project's ID: "). The project's own
 #     confirmation banner, the billing banner and the Firestore location's
 #     banner are read and nothing is typed under them (T7, D1540: being at the
 #     terminal is what confirms those), which is exactly what a person sees.
@@ -25,13 +25,20 @@
 #     ends at (step 12 of the section), and `--bake-repos` answers the one
 #     input-phase question this check does not need an answer to: this run is
 #     deliberately outside a checkout, so D5 skips the repository stage and
-#     nothing is baked either way.
+#     nothing is baked either way. `--rigor pro` answers the wizard's other
+#     question — the project's rigor mode (task W, D900) — which is the one
+#     question with NO suggestion, so a pty that never types under it waits there
+#     until this script's own timeout kills the run. `pro` is the mode the CLI
+#     already runs a project that says nothing in (rigor.Default), and the mode
+#     is not what this check is about.
 #   - step 2's deliberate NEGATIVE, on a second drawn id and with no terminal at
 #     all (`fugaro setup --gcp-project <other-id> --name fugaro --yes` with
 #     stdin at /dev/null): the refusal's exit code and text, and that the id
 #     still does not exist, over a config root of its own so nothing it wrote
 #     can reach the installation this check is building.
 #   - step 11's `--plan-only`: the stage list prints, nothing is created, exit 0.
+#     It is a first run like the create one, so it asks the wizard's questions
+#     too and its rigor answer is the same `--rigor pro`.
 #   - step 4's converge and the two `fugaro update --project fugaro` runs: the
 #     second must print `No changes` and exit 0.
 #   - the read-backs the steps state as FACTs, each as its own row: the project
@@ -886,12 +893,16 @@ rows_of() { printf '%s\n' "$1" | grep -v '^[[:space:]]*$' || true; }
 # step_plan_only: Check 27's step 11 — the same create path with --plan-only: the
 # stage list prints, nothing is created, exit 0. Every input is a flag, so the
 # plan is printed without a question; the pty is what --plan-only itself needs
-# (it never takes --yes, since it creates nothing on a flag's word).
+# (it never takes --yes, since it creates nothing on a flag's word). --rigor pro
+# is one of those flags and not a decoration: a plan-only run is a first run and
+# asks the wizard's questions like any other, and the rigor question has no
+# suggestion to take with Enter — drop the flag and this run waits at the
+# question until PLAN_SECONDS has passed and the pty is killed.
 step_plan_only() {
   LOG_FOR_MODE=$PLAN_LOG
   run_pty plan-only "$PLAN_SECONDS" "$WIZARD_DIR" -- \
     fugaro setup --create-project --gcp-project "$P" --name "$N" --region "$REGION" \
-    --firebase-project "$P" --budget-mode observe --link-billing "$A" --bake-repos --plan-only
+    --firebase-project "$P" --budget-mode observe --link-billing "$A" --bake-repos --rigor pro --plan-only
   PLAN_STATUS=$LAST_STATUS
   local named=0 s
   for s in installation firebase images installation-2 secrets plugin; do
@@ -962,6 +973,10 @@ step_negative_run() {
 # `--link-billing` is step 12's flag path to the banner step 3's picker ends at,
 # and `--bake-repos` answers the one input-phase question this run does not need
 # (no checkout, so D5 skips the repository stage and nothing is baked).
+# `--rigor pro` answers the wizard's other question, the project's rigor mode
+# (task W, D900): it is the ONE question with no suggestion, so a pty that never
+# types under it waits there until CREATE_SECONDS has passed and the run is
+# killed — which is what this check did before the flag was passed.
 step_create() {
   LOG_FOR_MODE=$CREATE_LOG
   # Recorded BEFORE the run: what the Restore has to know is that this run was
@@ -971,7 +986,7 @@ step_create() {
   run_pty create "$CREATE_SECONDS" "$WIZARD_DIR" \
     "Type the GCP project's ID" "$P" -- \
     fugaro setup --name "$N" --region "$REGION" --budget-mode observe \
-    --firebase-project "$P" --link-billing "$A" --bake-repos
+    --firebase-project "$P" --link-billing "$A" --bake-repos --rigor pro
   CREATE_STATUS=$LAST_STATUS
   if [ "$CREATE_STATUS" -eq 124 ] || grep -q 'CHECK27-RUNNER: TIMEOUT' "$CREATE_LOG" 2>/dev/null; then
     fact wizard FAIL "the create run did not finish in ${CREATE_SECONDS}s and was killed: something in it waited for an answer this check cannot give. Transcript: $CREATE_LOG"
@@ -1395,8 +1410,8 @@ print_plan() {
   say "  [local, reads] fugaro version — a RELEASE binary, because the images stage mirrors ghcr.io/dimipaun/fugaro-history:<version> and a dev build has no such tag"
   say "  [network, reads] gcloud projects describe $P — the guard that says the throwaway project does not exist yet, and again in the Restore and after each create"
   say "  [network, reads+writes] the whole create path, run at a REAL TERMINAL (a pty) in a directory that is NOT a checkout, with ONE answer typed by this script:"
-  say "      fugaro setup --name $N --region $REGION --budget-mode observe --firebase-project $P --link-billing <the account you gave> --bake-repos"
-  say "    which asks 'Type the GCP project's ID: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them"
+  say "      fugaro setup --name $N --region $REGION --budget-mode observe --firebase-project $P --link-billing <the account you gave> --bake-repos --rigor pro"
+  say "    which asks 'Type the GCP project's ID: ' and is answered '$P'; the project's confirmation banner, the billing banner and the Firestore location's banner are read and nothing is typed under them. --rigor pro answers the wizard's other question, the project's rigor mode, which proposes nothing: nothing types Enter under it"
   say "  [network, reads] gcloud projects describe $P --format='value(projectId,lifecycleState)' (must read $P ACTIVE)"
   say "  [network, reads] gcloud billing projects describe $P --format='value(billingAccountName,billingEnabled)' (must name the account you gave, enabled True)"
   say "  [network, reads] gcloud firestore databases describe --database='(default)' --project=$P --format='value(locationId)' (must read $FIRESTORE_LOCATION, the CLI's own fixed location and not --region)"
@@ -1404,7 +1419,7 @@ print_plan() {
   say "  [network, reads] gcloud artifacts docker images list $REGION-docker.pkg.dev/$P/fugaro-base --include-tags (must name the history image)"
   say "  [network+local, reads] fugaro doctor --project $N --all, with no terminal: exit 0, and its project line must name (GCP $P,"
   say "  [network+local, reads] fugaro update --project $N twice: the FIRST at a real terminal (a step of the converge is confirmed by the person being there, and nothing is typed), the second with no terminal (it must print No changes for every stage and exit 0)"
-  say "  [local, writes] before any of that: fugaro setup --create-project --gcp-project $P --name $N --region $REGION --firebase-project $P --budget-mode observe --link-billing <account> --bake-repos --plan-only at a pty (the stage list prints, nothing is created, exit 0)"
+  say "  [local, writes] before any of that: fugaro setup --create-project --gcp-project $P --name $N --region $REGION --firebase-project $P --budget-mode observe --link-billing <account> --bake-repos --rigor pro --plan-only at a pty (the stage list prints, nothing is created, exit 0)"
   say "  [network, reads] gcloud projects describe $P again after the plan-only run (it must still not exist)"
   say "  [network+local, reads] fugaro setup --gcp-project $OTHER --name $N --yes with stdin at /dev/null, over a config root of its own: it must be REFUSED (project creation is typed, and --yes never covers it), and gcloud projects describe $OTHER must still answer not-found"
   say "and its Restore (also from the exit trap) would run:"

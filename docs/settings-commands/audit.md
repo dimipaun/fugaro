@@ -158,7 +158,7 @@ Paths: `internal/budget/model.go:31-52`.
 | max reserve | `config/limits.maxReserveMicros` (model.go:228-230) | same | `budget set --global --max-reserve` | same | closed |
 | kill switches | `config/kill/global`, `config/kill/repos/<slug>` (model.go:318-327) | `budget show`, `watch` | `budget kill|resume` | not refused | closed |
 | credential marks | `creds/marks/NAME` | `accounts ls --json` | `accounts clear` (accounts.go:409) | not refused, by design | closed |
-| paired devices | `config/admin/devices` (sweep.go:85) | `pair ls --json` | `pair`, `pair revoke` (pair.go:1086) | – | closed |
+| paired devices | `config/admin/devices` (sweep.go:85) | `pair ls --json` | `pair`, `pair revoke` (pair.go:1232) | – | closed |
 
 ### 1.7 Other owner objects
 

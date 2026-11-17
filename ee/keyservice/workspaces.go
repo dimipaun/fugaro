@@ -372,7 +372,7 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 	if err != nil {
 		return WireWorkspace{}, err
 	}
-	answer, err := s.paid(ctx, request, "", source, subscription)
+	answer, err := s.paid(ctx, request, "", source, subscription, entitlement.ID)
 	if err != nil {
 		return WireWorkspace{}, err
 	}

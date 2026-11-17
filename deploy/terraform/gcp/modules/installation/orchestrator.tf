@@ -65,9 +65,20 @@
 # What the account may never do is the design's section 6 and it is not
 # expressible as a comment here: no IAM (nothing this file creates carries
 # setIamPolicy or iam.roles.*), no managed apply (the runs bucket's root is
-# outside the write condition below), no model credential (no secretAccessor,
-# no secret container named anywhere in this file), and no second
+# outside the write condition below), no model credential, and no second
 # installation's nodes (one project, one account).
+#
+# The ONE secret container this file names, and the one secretAccessor it
+# grants, are the pairing key's cloud copy (P5.1e; the design's section 4.2 and
+# its section 6 rule 5). They are not a widening of the row above: the tag is a
+# symmetric HMAC, so the consumer that verifies a phone's messages in the cloud
+# holds the key, and rule 5 states the copy as the exception the tag forces. The
+# grant is the per-secret one on that one container — never the project-wide
+# role, which dynamicSecretsGrant refuses for any account but the credentials
+# service's — and section 4.3's reader table is what the note P5.1e writes in
+# SECURITY.md says out loud: this account is a reader, and so is every project
+# Owner or Editor, whose basic roles carry secretmanager.versions.access past
+# any secret-level policy.
 
 locals {
   # The switch, credentials.tf's and intake.tf's shape: a null variable is an
@@ -91,6 +102,61 @@ resource "google_service_account" "orchestrator" {
   description  = "The installation's resident orchestrator: launches this installation's runs and consumes this installation's mailbox. It holds a grant of its own, assembled one binding at a time, and is deliberately not a member of the launcher list."
 
   depends_on = [google_project_service.this]
+}
+
+# The pairing key's cloud copy (P5.1e; the design's section 4.2 and section 4.7
+# step 2b): ONE container per installation, and one version per pairing inside
+# it, written and destroyed by `fugaro pair` and `fugaro pair revoke` with the
+# operator's own credential. Terraform creates the container and never a
+# version, credentials.tf's rule for the same reason: a pairing key is drawn on
+# the operator's machine and never reaches Terraform or its state
+# (TestNoSecretVersionsInTerraform). A container with no version yet is fine —
+# an installation that has opted in and paired nothing has nothing for the
+# orchestrator to verify with.
+#
+# The labels are `fugaro=managed` and the installation's name, and deliberately
+# NOT fugaro_secret, credentials.tf's reason exactly: that label is what
+# `fugaro update`'s discovery reads to decide which logical secret of the
+# project's secret set a container holds, and this container is not one of those
+# — it is one version per pairing with two writers, neither of them Terraform.
+#
+# prevent_destroy is secrets.tf's rule: an edit that dropped the container must
+# be a hard plan failure rather than a deletion of every pairing's key. The
+# delete that ends a pairing is `fugaro pair revoke`'s, one version at a time.
+resource "google_secret_manager_secret" "pairing_key" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project   = var.project
+  secret_id = "fugaro-orch-pairing"
+  labels = {
+    fugaro         = "managed"
+    fugaro_project = var.fugaro_project
+  }
+
+  replication {
+    auto {}
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [google_project_service.this]
+}
+
+# The reader, and the only one this file grants: the account above, on that one
+# container. It is the per-secret row of section 4.3's table rather than the
+# project-wide accessor, which is what the cover's own rule refuses for every
+# principal but the credentials service's account. The member is written out
+# like every other binding here and for the same reason: the account's `.member`
+# is computed, and a computed member reaches the plan unknown.
+resource "google_secret_manager_secret_iam_member" "orchestrator_pairing_key" {
+  count = local.orchestrator_on ? 1 : 0
+
+  project   = var.project
+  secret_id = google_secret_manager_secret.pairing_key[0].secret_id
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 }
 
 # The launcher's project role: run.jobs.get/list, run.executions.get/list/

@@ -595,6 +595,44 @@ type Policy struct {
 	// it — the daemon that enforces it ships in the same release.
 	Orchestrator *policy.Orchestrator `json:"orchestrator,omitempty"`
 
+	// OrchestratorEnabled is the switch that decides whether the project's
+	// orchestrator daemon launches runs at all (D2701, D2739): the fallback a
+	// person reaches for when the daemon is doing the wrong thing, so that
+	// handing orchestration back to their own session is one write rather than
+	// an uninstall.
+	//
+	// It is a top-level key of the node and deliberately not a member of the
+	// orchestrator block above, which is F35's correction: that block decodes
+	// strictly, so a member inside it would make every reader of the release
+	// behind refuse the WHOLE node — and the node is re-read while runs are in
+	// flight, so that refusal would stop the runs an update promises to leave
+	// alone. An unknown top-level key is listed in UnknownKeys and tolerated
+	// (P8), so a runner or CLI of the release behind reads the rest of the
+	// policy and keeps serving; it simply enforces no switch of its own.
+	//
+	// It is a pointer because the default is on and therefore absent and true
+	// are one statement: a project that never answered writes no member, and
+	// its node is byte for byte what it was before this key existed — while a
+	// project that turned the daemon off is the only one with anything to say
+	// here. False is the only value that can undo the daemon's work, which is
+	// why the key is registered as a ceiling (the registry's Tighten, D2701's
+	// tighten-only rule): a layer that writes false decides, whatever another
+	// layer writes, and no layer may turn it back on over one. OrchestratorOn
+	// is that reading, stated once for every caller — and R3 of the same plan
+	// is where the daemon comes to ask it.
+	OrchestratorEnabled *bool `json:"orchestrator_enabled,omitempty"`
+
+	// IssueSync is the project's issue adapter (D2733): the repositories whose
+	// open issues the daemon ingests into the project's backlog, and whether an
+	// item with no spec of its own opens an issue in return. Its own file
+	// (issuesync.go) carries the block, its rules and the argument for its home
+	// on this node.
+	//
+	// It is a pointer for the reason the switch above is: a project that
+	// configures no adapter writes no member, so its node stays byte for byte
+	// what it was.
+	IssueSync *IssueSync `json:"issue_sync,omitempty"`
+
 	// UnknownKeys lists the top-level keys of the node this Fugaro does not
 	// know, sorted. Decode fills it in and never writes it back (json:"-"):
 	// the keys are tolerated so that a policy a newer Fugaro wrote does not
@@ -624,6 +662,13 @@ var knownTopLevelKeys = map[string]bool{
 	"subscription_spread": true,
 	"orchestrator":        true, "binaries": true,
 	"triage": true,
+	// The daemon's own two (R1 of docs/orchestrator-graph-estimates): the
+	// switch that hands orchestration back (D2701, D2739) and the project's
+	// issue adapter (D2733). Both are top-level keys and not members of a
+	// block, which is what lets a reader of the release behind list them in
+	// UnknownKeys and keep reading the policy (F35, F46).
+	"orchestrator_enabled": true,
+	"issue_sync":           true,
 }
 
 // Budget is the ceiling a run is held to. An absent field is zero and means
@@ -665,10 +710,12 @@ type Provider struct {
 // as constants of this package too so a reader of a policy need not import
 // internal/config to name one.
 const (
-	// PricePolicyCheapest charges the cheapest eligible endpoint's price, and
-	// is what an unset price_policy means (the catalogue's own default).
+	// PricePolicyCheapest charges the cheapest eligible endpoint's price.
 	PricePolicyCheapest = config.PricePolicyCheapest
-	// PricePolicyHighest charges the dearest eligible endpoint's price.
+	// PricePolicyHighest charges the dearest eligible endpoint's price, and
+	// is what an unset price_policy means (D2644: the charge is what the
+	// caps and the ledger are computed from, so the safe end is the one
+	// that cannot under-count a call served from a dearer endpoint).
 	PricePolicyHighest = config.PricePolicyHighest
 )
 
@@ -679,7 +726,7 @@ const (
 func (p Provider) RequireZDROn() bool { return p.ModelProvider.RequireZDROn() }
 
 // EffectivePricePolicy is the policy a route is priced under:
-// PricePolicyCheapest when the policy does not set one (D3). It is the
+// PricePolicyHighest when the policy does not set one (D2644). It is the
 // carrier's own accessor (config.ModelProvider.PricePolicySet), under the
 // name this package's readers use.
 func (p Provider) EffectivePricePolicy() string { return p.ModelProvider.PricePolicySet() }
@@ -1590,6 +1637,22 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 			return nil, true, fmt.Errorf("projectpolicy: triage: %w", err)
 		}
 	}
+	// The daemon's switch and the project's issue adapter are read on their own:
+	// no member of either is judged against another block, and both are held to
+	// their own rules — a bool that is a bool (encoding/json refuses every other
+	// JSON kind for a *bool) and a block that decodes strictly (decodeIssueSync).
+	if eraw, ok := doc["orchestrator_enabled"]; ok && !IsNull(eraw) {
+		if err := json.Unmarshal(eraw, &p.OrchestratorEnabled); err != nil {
+			return nil, true, fmt.Errorf("projectpolicy: orchestrator_enabled: %w", err)
+		}
+	}
+	if iraw, ok := doc["issue_sync"]; ok && !IsNull(iraw) {
+		block, err := decodeIssueSync(iraw)
+		if err != nil {
+			return nil, true, err
+		}
+		p.IssueSync = block
+	}
 	if vraw, ok := doc["verifier_accounts"]; ok && !IsNull(vraw) {
 		if err := json.Unmarshal(vraw, &p.VerifierAccounts); err != nil {
 			return nil, true, fmt.Errorf("projectpolicy: verifier_accounts: %w", err)
@@ -1832,6 +1895,16 @@ func (p *Policy) CloneURL(canonical string) string { return p.CloneURLs[canonica
 // that never answered as one that said no — the opposite of the default the
 // wizard asks with. The zero policy, and a nil one, bake.
 func (p *Policy) BakesRepos() bool { return p == nil || p.BakeRepos == nil || *p.BakeRepos }
+
+// OrchestratorOn reports whether this policy leaves the project's orchestrator
+// daemon launching runs (D2701, D2739). Absent is on, so the answer is a method
+// and not the field: the member is a pointer, and a reader that tested it would
+// read a project that never answered as one that turned the daemon off — the
+// opposite of the default, and the direction that stops a project's runs being
+// launched at all. The zero policy, and a nil one, are on.
+func (p *Policy) OrchestratorOn() bool {
+	return p == nil || p.OrchestratorEnabled == nil || *p.OrchestratorEnabled
+}
 
 // ImageMap is the image_map block of a policy: the catalog entry each of the
 // project's repositories runs, keyed by the repository's canonical name

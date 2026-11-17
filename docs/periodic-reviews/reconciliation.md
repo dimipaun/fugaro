@@ -238,7 +238,7 @@ the one schedule the rulings add is not the one it refuses.**
 | D | Question | Recommendation | The alternative, and its cost |
 | --- | --- | --- | --- |
 | **D960** | Where do a user's reports live? | **In the repository they report, at `docs/fugaro-reviews/<YYYY>/<key>.md` with the generated index beside them** (D321/D324 stand, F2). Reviewable in a pull request, greppable by the next agent, and the one place the figures are not a second copy. **Amended after the owner's ruling, 2026-11-05 (§5, E1) — not the recommendation:** the reports are generated into the project's runs bucket under `reports/`, and committing one anywhere is a separate opt-in run to the project's designated repository or folder. The answer above stands as the 2026-11-04 record. | A central store, or an orphan `fugaro-reviews` branch: unreviewed, invisible to an agent reading the default branch, and a copy that can disagree with the tree the runs came from |
-| **D961** | Do Fugaro's own reports land in this public repository? | **Yes, as D324 answered, and the first ones are written by the owner's own report run** (F14). The dogfooding is the product's best example, and it is what makes `typical-costs.yaml`'s provenance a committed report rather than a hand measurement. **Amended after the owner's ruling, 2026-11-05 (§5, E1/E5):** the reports are written into this installation's `reports/` prefix by the reports job, and landing them in this public repository is the opt-in commit run — which needs this repository to be the project's designated one (E6, Open items). | Keep them out: the feature's own example stays invisible, the website's figures keep a provenance no reader can check, and D324's rationale stays untrue |
+| **D961** | Do Fugaro's own reports land in this public repository? | **Yes, as D324 answered, and the first ones are written by the owner's own report run** (F14). The dogfooding is the product's best example, and it is what makes `typical-costs.yaml`'s provenance a committed report rather than a hand measurement. **Amended after the owner's ruling, 2026-11-05 (§5, E1/E5):** the reports are written into this installation's `reports/` prefix by the reports job, and landing them in this public repository is the opt-in commit run — which needs this repository to be the project's designated one (E6, answered by the owner 2026-11-17: §7, `reports_commit`). | Keep them out: the feature's own example stays invisible, the website's figures keep a provenance no reader can check, and D324's rationale stays untrue |
 | **D962** | What tells a user a report is due? | **`fugaro runs digest --due [--json]`: read-only, offline, no cloud, reading the committed folder in the checkout** (F16), with the due computation moved into `internal/digest` so the CLI and a report run cannot disagree (F17). **The command keeps its answer and its offline reading; the source is re-opened** after the owner's ruling of 2026-11-05 (§5, E8 and Open items): the reports sit in the bucket by default now, and whether the signal reads the bucket, the checkout's folder or both is not decided here. | Nothing, and the cadence stays honour-system prose: a user who is not asking never learns the reports exist, which is exactly the gap the owner's request is about. **Or** a cloud-side read of the runs bucket: it would make the signal need credentials, a project and a network, and it would fail in the one place the skill runs it — an agent's session in a checkout |
 | **D963** | Does the installation report it too? | **Yes: one `doctor` line, `reviews-due`, from the same reading** — an info line when the newest report is more than a period old, a warning line when a closed period has no report at all (F18). Offline, like the other checkout checks. | A separate command only: a user runs `doctor` far more often than they think about reviews, and the nudge is worth one line. A `--security`-style gate instead: it would hide a finding that is not a security one |
 | **D964** | Does the CLI commit, push or open the pull request? | **No. It writes the tree and prints the paths; the commit is the person's or their automation's** (F15). The report run already commits and opens the pull request for a user who wants that (F5). **Unchanged by the 2026-11-05 rulings, and they are its test:** the committing path is a run (§5, E5), not a flag, so `fugaro runs digest` still never commits, pushes or opens a pull request. | `--commit`/`--pr` on the CLI: a second identity that pushes to the user's repository, on whatever branch they happen to be on, with a message the tool chose; and a second implementation of what the runner's digest step already does correctly, including its finalize guard |
@@ -521,7 +521,9 @@ project repo.
 **Whose credentials read the source (answered 2026-11-05, as recommended).** Not the run's: a job account reaches
 `runs/`, `cache/` and `locks/` only, and E4's answer gives `reports/` to **no** job account. The read
 is the **starting person's launcher account**, whose bucket-wide `objectViewer` covers the prefix, and
-how the bytes reach the run is the designated-repo design item's to settle (E6).
+how the bytes reach the run was the designated-repo design item's to settle (E6) — **settled
+2026-11-17: §7, D2754, the launcher hands the objects in with the task**, under a member of its own
+so that no job account ever reads `reports/` and the reports job keeps its one writer.
 
 *Why:* the job's account holds no git credential (E4) and a commit is a reviewed change to a
 repository; the run that makes it is the one path that already has the credential, the identity and
@@ -537,10 +539,19 @@ and is not replaced by this run's.
 project-level material — the cross-repo backlog filing design already speaks of a designated
 repository (`docs/backlog/20261021-01-cross-repo-backlog-filing.md`, D29). It is listed under **Open
 items** in [implementation-plan.md](implementation-plan.md), **no config key is invented for it**,
-and **the committing task (R9) depends on it**.
+and **the committing task (R9) depends on it**. **That is the ruling as it was written, and the
+paragraph below is what became of it.**
 
 *Why:* the target is a project-level policy decision with its own questions (which repository, which
 folder, who may change it), and the reports design is not where those are settled.
+
+**Answered 2026-11-17 — §7.** The owner took all four questions as recommended: **one repository plus
+a folder** (D2750), **the key `reports_commit` on the published policy node, the owner's own to set
+and no repository's or launcher's to widen** (D2751), **policy version 10 with a shape-free step
+migrated in place by `fugaro update`** (D2752), **public allowed, with what a report contains
+documented** (D2753), and **the launcher hands the bytes in — no job account reads `reports/`**
+(D2754). The rows above stand as the ruling; §7 is what the questions they left are answered with,
+and Open item 1 is answered rather than open.
 
 ### E7. The pattern rules read the stored reports (amends D326's reading)
 
@@ -809,3 +820,227 @@ can fire in the week the block first ships, and a class a build does not know co
 rule over the periods' committed blocks, not a search — here read over a closed vocabulary of causes
 instead of over free text (`docs/design/failure-classes.md` §6.2, built by FC7 of
 `docs/failure-classes/implementation-plan.md`).
+
+## 7. The 2026-11-17 reconciliation: the designated repository, and R9 unblocked
+
+**The owner answered Open item 1 — E6, the project's designated repository or folder — on
+2026-11-17, all four questions as recommended** (asked through `AskUserQuestion`, every option the
+recommended one). This section is that answer, and it is the design item E6 asked for: it settles
+the shape, the key, its schema and surface, the version rule, public or not, and how the stored
+reports reach the run that commits them. **[implementation-plan.md](implementation-plan.md)'s `## R9`
+is rewritten to it, and Open item 1 is answered in the Open items rather than left as a question** —
+it stays in its place there, marked answered, so that every citation of "Open item 1" here, in the
+plan and in the register still resolves to the question it named (the shape
+`docs/cloud-senior-review/implementation-plan.md` gives its own answered items) — and three tasks
+come out of this section (**R14**, **R15** and **R16**) while R9 keeps its name and its one job.
+
+Read against `main` at `a03cdbc3` (#3035) on 2026-11-17. **Nothing below is in the tree yet**: the
+key, the recipe and the step are the tasks' work, and this section is the design they are written to.
+
+### 7.1 The four answers
+
+**Every one of these is answered, as recommended, on 2026-11-17.** Each row carries the
+recommendation, the alternative with its cost, and **the owner's dated answer**.
+
+| # | Question | Recommendation, and why | Alternative, and its cost | Owner's answer |
+| --- | --- | --- | --- | --- |
+| **D2750** | What does the project name, and what does one commit run write? | **One repository plus a folder.** The project names **one** repository and **one** folder (default `docs/fugaro-reviews`, D960's layout): the run opens **one** pull request there, each repository's reports under a per-repository subfolder, the project's aggregate beside them, and the index regenerated over the folder the layout names. **No code repository gets a report committed unless it is the designated one** (E1, E5) | A repository per commit — the run would open one pull request per repository, on a branch and under an identity in each, and the project-level aggregate would still have to choose one of them | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
+| **D2751** | Who sets it, and where does the key live? | **The owner, in the published project layer only.** The key is `reports_commit`, a top-level member of the published policy node (`config/policy/shared`, `internal/projectpolicy.Policy`), with `repo` (required) and `dir` (optional, default `docs/fugaro-reviews`). The owner states it in the owner's local project config (the `binaries` carrier, version 8); `fugaro.yaml` has no such key, the launcher-writable project layer file refuses it by name, and **a repository cannot name it or widen it — the merge stays tighten-only** | A repository's own `fugaro.yaml` key, or a launcher-writable layer key: the run's own agent writes `fugaro.yaml`, so the subject of the rule would write the rule, and a launcher-writable target would let any launcher redirect every report of the project | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
+| **D2752** | Which version does the node take? | **Version 10**, one shape-free step, `fugaro update` migrating the node in place (the `binaries` and `model_grades` lockstep, P8; §7.3 for the census and §7.2 for what the bump does and does not buy) | No bump: the member is a top-level key a version-9 reader lists in `UnknownKeys` and decodes past, so nothing refuses it and `fugaro update`'s own convergence is untested for it | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
+| **D2753** | May the designated repository be public? | **Yes, and Fugaro refuses nothing on that ground.** The reports' docs say what a report contains — the period's figures, run costs, failing-test names and finding text, the run ids a flagged row is actionable by, stages and recipes — and what it never carries: no person, no address, no task text, no log line, no secret. A person choosing a public repository weighs a document this design names rather than a guess | A refusal below the owner's own layer (a private-only rule): it would refuse a repository the owner chose for reasons of his own, and the report's content is already a closed list | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
+| **D2754** | How do the stored reports reach the run? | **The launcher hands the bytes in.** `fugaro run --commit-reports` reads `reports/` **with the starting person's own launcher account** and passes the objects in with the task; **no job account reads `reports/`** — the reports job is its one writer (ruling 3, `docs/design/bucket-iam.md` §3) | A read grant for the run's job account on `reports/`: it is the second writer ruling 3 refuses, and a job account holding it is a job account that could also write the store | Recommended -- owner 2026-11-17 (AskUserQuestion: all recommended) |
+
+### 7.2 What the answers fix, in the tree's own terms
+
+**The key: `reports_commit`, on the published policy node, and nothing else's.** It is a top-level
+member of `internal/projectpolicy.Policy` (`json:"reports_commit,omitempty"`), and it is a block of
+two, not a scalar:
+
+- **`repo`** — required, the one repository a report may be committed into, spelled the way the rest
+  of the tree spells a repository (`owner/name`; the run matches it to the repository it is running
+  in through `task.Slug`, so the two cannot disagree about what a repository is). A node whose
+  `reports_commit` has no `repo` is **refused** (`validReportsCommit`, the `validRouting`/`validBudget`
+  shape): a block that designates nothing reads as a designation, and a misspelt member would leave
+  the commit run refused for a reason nobody can see.
+- **`dir`** — optional, the folder inside that repository, `docs/fugaro-reviews` (D960's layout,
+  `digest.Dir`) unless the project says otherwise. It is a path relative to the repository root, held
+  to the same shape check the layout's own paths are (no absolute path, no `..`, no leading `/`).
+
+**Where it lives, and who may write it.** The member is the node's, and the node is written by
+`fugaro project policy publish` and by the publish half of `fugaro update`'s policy stage — the one
+`buildProjectPolicy` both call. The owner states it in **the owner's local project config**
+(`internal/localcfg`, the `binaries:` carrier version 8 established) and neither publish door has a
+second path to keep in step:
+
+- **`fugaro.yaml` has no such key and refuses one** (`internal/config` decodes strictly, so an unknown
+  field is an error; `schemas/fugaro.schema.json` says the key does not exist). This is the
+  load-bearing half, for `binaries`' reason and one more: that file sits in the checkout on the run's
+  own branch, the run's own agent writes it, and a key there would let a prompt-injected agent
+  designate the repository its own reports are committed to.
+- **The project layer file refuses it by name** (`internal/config`'s `layerTopKeys` does not list it).
+  That file is the launcher's to write, and this member decides where every report of the project
+  lands: a launcher-writable target is the widening D2751 refuses.
+- **`fugaro settings set` refuses it** — the generic allowlist (`internal/cli/settings_set.go`) is not
+  widened for it, which is the safe default and not a decision of this design (the Open item 6 shape:
+  saying yes later is one allowlist line and one count).
+- **An agent's `project policy publish` refuses it.** The managed gate's rules judge the node a
+  publish *would* write, and a member no rule reads is refused (`policyUnjudgedRefusal`); that is the
+  right answer here rather than a rule, and it is `binaries`' own answer: **designating a repository
+  is the owner's**, so an agent's publish may not move it at all.
+- **A publish that says nothing leaves the node alone.** An absent `reports_commit` in the owner's
+  config is not a request to remove the published one; taking the designation away on purpose is a
+  written empty block, the same rule D987 gives `binaries`, and the node then carries no member and
+  the launch refuses.
+
+**Its surfaces.** `fugaro project policy show` prints the node's member (the read is the node's).
+`fugaro settings` carries two rows — `reports_commit.repo` and `reports_commit.dir`, the `local`
+layer, the `binaries.*` rows' shape — and `schemas/settings.schema.json` names both, as it names
+`binaries.allow` and `binaries.max_bytes`. Both rows' `Default` sentences state the effect and not the
+value: no repository is designated, so no report may be committed anywhere and the commit run refuses.
+The two rows move the registry's count, which the three count pins named in §7.4 keep.
+
+**The version rule, and what it buys.** The member takes **policy version 10**:
+
+- `projectpolicy.Version` is **10**, and `VersionSince[10]` names **the release that ships it** —
+  `0.26.0` while that release is uncut, and verified against the tag actually cut the way every
+  `…Since` constant in `internal/cli/recipes_skew.go` is (`docs/release.md`'s checklist is the
+  verifier, and the constant's own bullet is written with the constant).
+- **One `migrators` entry, and its step is shape-free** (`shapeFreeSteps[9] = true`): the node keeps
+  its bytes and only the number moves, because a node with no `reports_commit` designates nothing,
+  which is what a project that never named one means. That is version 6's and version 7's shape, not
+  version 9's, and it is what keeps `fugaro update`'s own window from being a refusal: a version-9
+  node is read as it stands by this release's readers, so the update's policy stage and the images
+  stage it sits beside cannot leave a launcher reading a node it refuses (version 8's paragraph in
+  [docs/project-layer.md](../project-layer.md) states the order).
+- **Tests:** `TestVersionSinceCoversEveryVersion` and `TestEveryOlderVersionHasAMigratorOrARefusal`
+  (the two version-bump guards, which a bump with no row or no step fails), and the task's own
+  `TestAReportsCommitNodeWithoutTheMemberDesignatesNothing` and
+  `TestAReportsCommitNodeMigratesInPlaceOnceThePolicyStageRuns` (the convergence the HARD RULE
+  demands: an installation at the previous version converges in `fugaro update` alone).
+
+**What the bump does and does not buy, said plainly**, because a member whose absence is already the
+safe reading does not buy an enforcement the way `binaries` did: a version-9 reader that lists
+`reports_commit` in `UnknownKeys` decodes past it, and since a version-9 binary holds neither the
+recipe nor the flag, it can neither launch the commit nor commit a report — **the member is
+safe-by-default when it is ignored**, and the bump is not what makes the rule true. What the bump is:
+**the lockstep every policy member takes** (P8, and [docs/project-layer.md](../project-layer.md)'s
+version history is where each one is recorded), taken here because this is a project-level policy
+decision whose two doors are one feature — the flag and the node — and because the version is what
+`fugaro update` migrates: an installation whose node is at version 10 and whose binary knows version
+9 refuses the node in one sentence naming the command that fixes it rather than half-serving a policy
+it cannot read. What that costs is stated in the same breath: a job image of the release behind is
+refused a version-10 node (`policyImageGate`, which names `fugaro image refresh`), which is why the
+step is shape-free and why the release that ships this ships the node's migration in the same command.
+
+**Public is allowed, and what a report carries is documented.** Nothing in this design refuses a
+public designated repository (D2753). The three places the reports' own documents state what a report
+is — `docs/periodic-reviews/README.md`, `plugin/skills/working/reference/periodic-reviews.md` and
+`internal/digest`'s index header — say the same closed list, and R9's `commit-reports` entry in
+`docs/recipes.md` gains the one sentence a person reads at the moment of designating one: what the
+committed document holds (the period's figures and the runs behind them, the failing tests' names and
+the findings' text a review wrote, the run ids a flagged row is actionable by, the stage and recipe
+names, the cost) and what it never holds (no person, no address, no task text, no log line, no
+credential). **D969 is the list and it does not move**: what E1 changed is where a report lives, not
+what it carries, and a report committed into a public repository is the same document as the stored
+one (D1442).
+
+**The transfer: the launcher hands the bytes in, and the store keeps its one writer.** This is E5's
+own ruling with the mechanism E6 asked for (D2754):
+
+1. **The read is the starting person's** (`fugaro run --commit-reports`): the launcher lists
+   `reports/<slug>/<YYYY>/<key>.md` for each repository the run's own project serves and
+   `reports/<YYYY>/<key>.md` for the aggregate, through the launcher's bucket-wide `objectViewer`.
+   **`reports/` gains no grant of any kind** — no job account reads it, and the reports job stays its
+   one writer (ruling 3; `docs/design/bucket-iam.md` §3 and R12's IAM section are where the grants
+   are, and this design adds no row to them).
+2. **It hands in what the folder does not already hold.** The launch stands in the designated
+   repository's checkout, so the launcher compares each stored report against the folder its own
+   checkout carries (the reader R1's `--due` already uses) and uploads **every stored report whose
+   name is absent there or whose bytes differ** — an object each, under the run's own prefix
+   (`runs/<slug>/<run-id>/reports/<name>`), written create-only and hashed while uploading, which is
+   `--attach`'s mechanism and its two refusals (`internal/cli/run_attach.go`). The filter is a
+   transfer bound and never a decision: **a stale checkout hands in more, never fewer**, and the run
+   compares again against the clone it makes, so the bytes that reach the branch are the store's
+   whatever the launch handed in.
+3. **The task carries the objects, under a member of its own.** `task.Spec` gains `reports`, a list of
+   `{name, bytes, sha256}` — `task.InputFile`'s own shape, under a member of its own, so that **a
+   report object is never a recipe input**: the `--attach` caps
+   (`DefaultInputFiles`/`DefaultInputBytes`/`DefaultInputTotalBytes`) and its artifact-recipe gate stay
+   exactly what they are, and a `commit-reports` launch refuses `--attach` and a `--attach` launch
+   refuses the recipe. The runner downloads each object **by name** (the reach its account already has
+   for its own `task.json` and for `--attach`'s inputs, and the reason the task names them: the run's
+   account lists nothing), verifies each against the hash it was handed, and refuses a byte whose
+   hash disagrees rather than committing it.
+4. **The run writes the store's documents into the folder and commits them**, and nothing else: the
+   per-repository reports under `<dir>/<slug>/<YYYY>/<key>.md`, the aggregate at
+   `<dir>/<YYYY>/<key>.md` beside them, and the index regenerated over the whole folder
+   (`<dir>/README.md`, the layout's header, one row per file with the repository a row belongs to
+   named when it belongs to one). A report the store overwrote replaces the folder's copy; **a file
+   the folder holds and the store does not is left alone and named in the run's record** — a run never
+   deletes a report, and the store only adds and overwrites. If every stored report is already in the
+   folder with the same bytes, the step ends the run the way the digest step ends a caught-up one
+   (`endWithoutPR`, "every stored report is already in the folder: nothing to commit") rather than
+   opening an empty pull request. **An object's name must be one of those two shapes and nothing
+   else**, and a name outside them is refused before a byte is written: the step commits the path it
+   writes, so the input rule — which admits a dot-prefixed name on purpose, an `--attach` input
+   landing under the git-excluded `inputs/` (`internal/task/task.go:886`) — does not carry over, and
+   neither does the handed-in SHA-256, which only matches the bytes to the hash the task document
+   itself declares.
+
+### 7.3 The census this round takes
+
+**Decisions D2750–D2769.** A `git grep -E 'D27(5|6|7|8|9)[0-9]'` over `main` at `a03cdbc3` finds
+**nothing writing D2750 or any number above it**. The positive control is the block below it: the
+highest number written on `main` is **D2747**, and its own row says the block it sits in is taken —
+"Number blocks taken: decisions **D2700–D2749** (D2700–D2747 used, D2748–D2749 reserved)"
+(`docs/orchestrator-graph-estimates/README.md:14`), so the numbers above a *taken* block are the ones
+a later work takes, not the ones it reserves inside it. This round's block starts at **D2750**, and
+**D2755–D2769 are reserved and unused**. Where this round's five decisions sit is §7.1; they are
+numbered in this folder's own sequence rather than into the D960–D979 block, for the reason §6.3
+gives: that block is written and reserved as this work's, four documents on `main` name it, and the
+rulings that amend decisions take none.
+
+**Checks.** **R9's live check is claimed as Check 343** — the number this work's own `Checks
+340–349` row reserved and this design now claims (§P8) — and **344–349 stay reserved and unused**. The register itself is untouched by
+this design: the task that implements the check writes the register's row and its `## Check 343`
+section, under the number free at that merge, which is the register's own rule for the task that
+implements a check (`docs/gcp-live-checklist.md:586`). The register's highest **written** `## Check`
+section is still **663**, so the census sentence [README.md](README.md)'s Checks 340–349 row carries,
+and `internal/cli/docs_check340_test.go` holds it to the register, do not move.
+
+### 7.4 The tasks this answer adds, and the levels they sit at
+
+Three tasks and one rewrite, all in [implementation-plan.md](implementation-plan.md) Part I:
+
+| Task | What it is | Level | Needs |
+| --- | --- | --- | --- |
+| **R14** | the member: `reports_commit` on the policy node, its carrier in the owner's local project config, version 10 and its shape-free step, `fugaro project policy show`'s read and the managed gate's refusal | 3 | nothing of this plan (the release slot is its only outside dependency) |
+| **R15** | the member's settings surface: the two registry rows, `schemas/settings.schema.json`, the three count pins of `docs/config-management` | 4 | R14 (the rows are its surface) — **and it is R14's sibling rather than part of it because the plan's twelve-file bound is what split them**; it sits at 4 rather than beside R14 at 3 because **a level's tasks run concurrently and every task sits below the tasks it depends on**, and its shared files are R13's at 0 |
+| **R9** | the commit run: the catalog recipe `commit-reports`, its step, the task's `reports` member, the folder's write, the index over it, the runner's own arm, and the recipe's own sentence in `docs/recipes.md` | 4 | R11 (what it stored) and R14 (the designation it reads) |
+| **R16** | the launcher's half of the transfer: `fugaro run --commit-reports`, the read of `reports/`, the upload into the run's prefix, the refusals, the `…Since` constant and the working skill's sentence naming the command | 5 | R9 (there is nothing to hand bytes to before the step exists) and R14 |
+
+**No level holds two writers of one file**, and the new tasks keep that: R14 and R15 share none, and
+neither touches a file R3 or R11 holds at level 3 (`plugin/**`, `internal/cli/runs_reports.go`,
+`internal/digest/store.go`, `internal/digest/patterns.go`, `internal/cli/recipes_skew.go` — which
+**R16** takes at 5, one level apart); **and R15 sits below R14 rather than beside it**, because the
+rows are that member's surface and the level table's own rule is that every task sits below the tasks
+it depends on; R9's files are its own new ones plus
+`internal/task/task.go`, `internal/recipe/recipe.go`, `internal/recipe/catalog_test.go`,
+`internal/runner/runner.go` and `internal/digest/mirror.go`, none of which this folder's own tasks
+write at 3 or 4 — and the one file in the list another work already holds,
+`internal/runner/runner.go`, is FC2's at 1, FC3's at 2 and FC4's at 3, so R9's step arm is its
+**fourth writer and the last**, which Part II §P3 states where it levels the union (the task
+document's JSON Schema is R16's, with the launcher's half, because it is `fugaro run` that writes a
+task document); and R16's list would otherwise hold one file another level already
+holds — `docs/recipes.md`, which R1 took at 1 and **R10 takes at 5**. R16 sits at 5 beside R10, so
+**the two would write one file at one level, which the plan's own rule refuses**. That is why the file
+is R9's instead: **`docs/recipes.md` is in R9's list** (level 4, between R1's and R10's) and R16's
+does not name it. The plan's rules are the plan's own and it is amended where they are stated rather than
+broken in silence: the twelve-file bound is why R14 and R15 are two tasks (and why R9's list stays at
+eleven plus its own tests rather than taking the schema too), and the shared-file rule is why the
+recipe's sentence is R9's.
+
+**What this leaves open, and it is one thing:** **whether `fugaro settings set` may write the
+designation** — the generic allowlist refuses it as R14/R15 ship, which is the safe default and not a
+decision (Open item 6's own shape, one allowlist line and one count when answered). Everything else
+E6 raised is answered above.

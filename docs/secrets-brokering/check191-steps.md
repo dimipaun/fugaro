@@ -1,8 +1,13 @@
 # Checks 191 and 192 — the owner's steps (the Bitbucket proxy end to end, and the flip)
 
 **Status: written by task B1.11 of the secrets-brokering plan; run by the owner, task B1.12 (Check
-191) and the flip's own task (Check 192).** Neither has been run: Check 191 runs on the **released**
-build whose **runner** carries the proxy — **0.22.0**. The plan's Levels table gives the proxy chain
+191) and the flip's own task (Check 192).** **Check 191 has been run** — the owner's own run of
+2026-11-17, on CLI **0.25.0**, every row it can measure before the flip PASSED, recorded in the
+register's "Check 191" section (exit `2`: `review-run` is the row the run could not measure, while the
+`--after-flip` rows and the `--dry-run` row are rows it never reaches — the register says what each of
+them is). **Check 192 has not been run**, and it runs on the release that carries the flip — **0.26.0**,
+since a build without the flip has none of the rows it reads. Check 191 runs on the
+**released** build whose **runner** carries the proxy — **0.22.0**. The plan's Levels table gives the proxy chain
 0.15.0, which has no proxy to measure, and 0.21.0 is the first tag that holds the service's half
 (`internal/credsvc/bitbucketproxy.go` landed 2026-11-07) — but it was cut **without** the runner's,
 which landed in the release after it (`internal/cli/recipes_skew.go`'s `proxySince` names the release
@@ -365,11 +370,24 @@ record names no forwarder of this execution, or its call was never handed to the
 secret carries the label the accessor row is read from. A key
 the run never reached reads `FAIL — not reached`.
 
+**The rows a mode never records.** The block prints its own fixed key list whatever happened, and a mode
+does not record every key in it: Check 191 reads the working run's rows and never Check 192's six (`jobs`,
+`mount`, `accessor`, `doctor`, `run-still-works`, `plain-repo`), nor `dry-run` (only a `--dry-run` plan
+writes that marker); Check 192 reads those six and none of Check 191's — `proxied`, `account-admitted`,
+`run-launch`, `run-outcome`, the seven refusals, `review-run` and `ended-identity` do not exist in that
+mode. Those rows read
+`N/A — not part of this mode (<mode>)`, where `<mode>` is `proxy` for Check 191 and `flip` for Check 192.
+`N/A` is neither a pass nor a failure and settles nothing about the check: the exit code counts a `FAIL`
+alone, so a run whose measured rows all held ends `0` however many `N/A` rows its block carries (seven in
+a Check 191 run, fourteen in a Check 192 one). A key
+the run would have recorded and did not still reads `FAIL — not reached`.
+
 ## If it stops before the end
 
 A stop prints the same block first, with an `aborted` fact naming the reason, and exits `1` (a guard
 that stopped it before it could run) or `2` (it could not measure). A `proxied` row that FAILs ends
-Check 191 the same way — the block prints, every row below it reads `FAIL — not reached`, and nothing
+Check 191 the same way — the block prints, every row below it the mode records reads `FAIL — not
+reached` (the rows this mode never records read `N/A`, as they do in any run), and nothing
 was launched — with the reason in the row itself rather than in an `aborted` fact. The stops worth
 knowing by name:
 

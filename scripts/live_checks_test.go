@@ -22,7 +22,13 @@ import (
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
 // Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
-// Realtime Database behind a fake `curl` for Check 191, fake `gcloud`, `fugaro`
+// Realtime Database behind a fake `curl` for Checks 191 and 193 (193's fake
+// `gcloud` holds a Cloud Run job of each of two repositories, one of them
+// mounting a model credential when the case says the flip has not reached it,
+// and answers the check's Cloud Logging reads with the credentials service's
+// own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
+// so a case can say what served a run, what the run declared and what it was
+// served instead), fake `gcloud`, `fugaro`
 // and `curl` for Check 195 (a small project whose service and account appear and
 // disappear, whose IAM policy names what was granted to it, and whose build ends
 // the way its own step's line says), a fake `gcloud` that
@@ -293,6 +299,22 @@ import (
 // answers something that is not a document, a record naming no execution, a
 // record and a listing that disagree about the execution, a doctor that exits 1
 // (an answer, #2719) and one that does not answer at all.
+// Check 197's fakes are a fake `fugaro` -- a published policy whose one
+// GitHub profile admits one sandbox repository, a `run` that RECORDS the run it
+// was asked for and refuses a repository outside that profile with the
+// launcher's own sentence, and a `runs ls` whose rows carry the execution the
+// job is read out of -- and a fake `gcloud` that serves the job list (a SHARED
+// job of the profile beside the per-repository job a run lands on when its
+// repository selects no profile, with a mode each for a mount that is still
+// there, a named account's token, a plain value, a provider key, a Bitbucket
+// job and a job whose env does not name the service), one job's or one
+// execution's own spec, and the Cloud Logging read whose filter carries the run
+// id and whose lines are the service's own `credsvc: audit` lines, so a case
+// says what served a run, under which verified account, with which credential,
+// tier and purpose, and what a run's own execution kept across a re-apply. Its
+// Bitbucket half is the plan's own "(after D2079)": a case that names no
+// Bitbucket repository, or one no shared Bitbucket job serves, reads those rows
+// as INFO and the run still ends 0.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -313,7 +335,9 @@ var liveCheckScripts = []struct {
 	{"check180.sh", "check180_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
+	{"check193.sh", "check193_test.sh"},
 	{"check195.sh", "check195_test.sh"},
+	{"check197.sh", "check197_test.sh"},
 	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
@@ -424,7 +448,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 171 items on one runner and under a minute each; a split that
+// The suite is 174 items on one runner and under a minute each; a split that
 // dropped one, ran one twice or fell back to everything would show up as a
 // green run that tested less, which is the failure this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {

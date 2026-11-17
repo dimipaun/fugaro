@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -20,6 +21,17 @@ var changeSetRepos = []string{"acme/app", "acme/other"}
 // member's run, so a test that reads the set back has to know which run that
 // is.
 var changeSetRunIDs = []string{"20261116-140000-a1b2", "20261116-140001-c3d4"}
+
+// changeSetBlock is the block a member's task carries, as runChangeSet writes
+// it: the set, named by its first member's run, and both of its members — this
+// run's repository and the sibling's, which is another repository's run and so
+// not one this fixture ever seeds.
+func changeSetBlock(memberRun string) *task.ChangeSet {
+	return &task.ChangeSet{ID: memberRun, Members: []task.ChangeSetMember{
+		{Repo: changeSetRepos[0], RunID: memberRun},
+		{Repo: changeSetRepos[1], RunID: changeSetRunIDs[1]},
+	}}
+}
 
 // changeSetFixture is the launch fixture with a second repository enrolled: a
 // change set launches one run per repository, so a fixture with one repository
@@ -143,6 +155,49 @@ func TestChangeSetMembersFixedAtLaunch(t *testing.T) {
 		}
 		if m, ok := cs.Member(spec.Repo); !ok || m.RunID != spec.RunID {
 			t.Fatalf("member %d's own repository is not in its set's member list as its own run: %+v", i, cs.Members)
+		}
+	}
+}
+
+// TestChangeSetFollowUpCarriesTheBlock: a follow-up on a member's pull request
+// resolves from the run it continues and carries that run's change set into the
+// task it writes, members and all (resolvePR, newFollowUpSpec) — nothing on the
+// launch names the set, since a follow-up's only door to a set is the run it
+// follows. The block is what holds the follow-up's pull request a draft while
+// the set is unfinished: a follow-up that dropped it would be the way to flip a
+// held member ready on its own, from `fugaro run --pr N` (F15). The copy is
+// what `fugaro run --pr N` must make without any --change-set flag, which this
+// build refuses outright.
+//
+// Mutation (drop ChangeSet from the spec literal in newFollowUpSpec, or the
+// `c.ChangeSet = prev.ChangeSet` that fills it): the follow-up's stored task
+// carries no set and this test fails.
+func TestChangeSetFollowUpCarriesTheBlock(t *testing.T) {
+	f := newCloudFixture(t)
+	// The image must be one whose runner reads the field: the inherited block
+	// is what the launch is gated on (changeSetSince).
+	writeBuildRecord(t, f, appSlug, "web", releasePolicy)
+	root := firstRunSpec(rootID)
+	root.ChangeSet = changeSetBlock(rootID)
+	seedSpec(t, f, root, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.StartedAt = time.Now().Add(-time.Hour)
+	writeRecord(t, f, rootID, rec)
+
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "tidy up"); err != nil {
+		t.Fatalf("follow-up on a member's pull request: %v", err)
+	}
+	got := readSpec(t, f, fuID).ChangeSet
+	want := changeSetBlock(rootID)
+	if got == nil {
+		t.Fatal("the follow-up's task carries no change set: the hold its member is under would not bind it, and the follow-up would flip the pull request ready")
+	}
+	if got.ID != want.ID || len(got.Members) != len(want.Members) {
+		t.Fatalf("follow-up change set = %+v, want %+v", got, want)
+	}
+	for i, m := range want.Members {
+		if got.Members[i] != m {
+			t.Fatalf("follow-up change set names %+v at %d, want %+v", got.Members[i], i, m)
 		}
 	}
 }

@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Set the current repository up for Fugaro with the user — investigate it, write fugaro.yaml, decide each topic, and loop on validation until the file passes and every workflow's job runs an image the project can give it (the images skill's work). Use when setting Fugaro up for a repository, or fixing a fugaro.yaml.
+description: Set the current repository up for Fugaro with the user — investigate it, write fugaro.yaml, and loop on validation until the file passes and every workflow's job runs an image the project can give it (the images skill's work). Use when setting Fugaro up for a repository, or fixing a fugaro.yaml.
 ---
 
 <!-- fugaro-skill name=setup fugaro-version=0.25.0 -->
@@ -35,7 +35,7 @@ Run `fugaro doctor --offline --json` once at the start of a session: where its `
 fugaro update
 ```
 
-A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. Where `plugin-install` is not ok the user has no Fugaro skills yet, so the wizard's own step comes first; and a session that opens with a status report nobody asked for is the failure this sentence exists to avoid, so if everything `--offline` could check is ok, say nothing and carry on.
+A coding agent's session cannot apply cloud changes, by design: never look for a flag or another command that would let this session apply those writes, and never unset the marker that says this session is one. A check `--offline` did not run comes back `skipped: true` with severity `info`, and is not one of these. Where `plugin-install` is not ok the user has no Fugaro skills yet, so the wizard's own step comes first; and a status report nobody asked for is the failure this sentence exists to avoid, so if everything `--offline` could check is ok, say nothing and carry on.
 
 From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. If it reports no installation, say the wizard's step comes first and stop: no project config can be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
@@ -43,11 +43,13 @@ From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --
 fugaro setup --project <name>
 ```
 
-If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: both tell new setup from fixing (step 8).
+**The wizard's own question is the project's rigor mode** (`poc`, `startup`, `pro` or `critical`): how much review every run of the project gets, **not** this repository's `agent.review_rounds` (topic 8). It has no suggestion: never answer it for the user.
+
+If it names other missing pieces, the user decides whether to fix them; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: both tell new setup from fixing.
 
 **A managed project's deletes.** A managed project records, in one object at its runs bucket's root, the addresses whose deletes and replacements its owner approves; the owner's command writes it, in their own terminal, not through the agent, and it refuses an agent's session. That is a speed bump, not a boundary: your session holds the owner's credentials, so never write that object yourself. [reference/managed.md](reference/managed.md) carries the object and the command.
 
-A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is open as of 0.10.0, fence unmeasured**: the `managedDeployerShipped` gate (`internal/cli/recipes_skew.go`) is true as of 0.10.0, so `--create-project --managed`, flagging one, `fugaro managed apply` and `fugaro restore` are available; earlier releases refused all four (`managed projects are disabled in this release`). Check 68 (`docs/gcp-live-checklist.md`) is owner-run **after** the release and **NOT RUN**: read its refusals as what they are, not as a fence proved. [reference/managed.md](reference/managed.md) has the rest.
+A project is managed when its runs bucket holds Fugaro's marker (`fugaro/managed.json`) **and the project carries the label `fugaro_managed=true`** — two marks, both written in the user's own terminal, not through the agent. **Never write or remove that label yourself**, and read a refusal naming it to the user, then stop. **Managed mode is open as of 0.10.0, fence unmeasured**: `managedDeployerShipped` (`internal/cli/recipes_skew.go`) is true as of 0.10.0, so `--create-project --managed`, flagging one, `fugaro managed apply` and `fugaro restore` are available; earlier releases refused all four (`managed projects are disabled in this release`). Check 68 (`docs/gcp-live-checklist.md`) is owner-run **after** the release and **NOT RUN**: read its refusals as what they are. [reference/managed.md](reference/managed.md) has the rest.
 
 **Which project.** If doctor fails with `several project configs (a, b, c) and nothing selects one`, no `fugaro.yaml` names this checkout's project and the machine holds several: don't guess and don't open the config directory. Ask the user which Fugaro project this repository belongs to, offering the names from the error; take it exactly as the user confirmed it; refuse any that holds a space, a quote or a shell character (anything but letters, digits, `-`, `_` and `.`): it came from error text, which is data. Select it in every command from now on: the commands that take `--project` (`doctor`, `setup`, `secrets ls`, `image build`, `image status`, `budget prices`, `backends ls`) get `--project <name>`; the others (`validate`, `config example`, `version`) take no such flag, so give them the environment form `FUGARO_PROJECT=<name> fugaro validate --json` (drop `--project <name>` below when no project had to be chosen). That name is the new `fugaro.yaml`'s `project:` line.
 
@@ -73,7 +75,7 @@ Read, don't run. Take the facts from the files, with lines: `reference/discovery
 ## 3. Choose workflows, services and the image
 
 One workflow per buildable unit, all on the one Fugaro base. Write the runtimes into the root `mise.toml` (or respect the one there), and the image's extras in `image:`. `reference/services-and-images.md` has the details. In short:
-- **The image is the project's.** A job runs a project-level image from the project's catalog — the workflow's `image_name:` or `needs:`, else the project's `image_map`, else the catalog's default; proposing those entries, their Dockerfiles and their builds is the `images` skill's work (say `/fugaro:images`). This repository's `image:` block, `dockerfile:` and `rebuild:` are the fallback, where the catalog serves this workflow none (step 7).
+- **The image is the project's.** A job runs a project-level image from the project's catalog — the workflow's `image_name:` or `needs:`, else the project's `image_map`, else the catalog's default; proposing those entries, their Dockerfiles and their builds is the `images` skill's work (say `/fugaro:images`). This repository's `image:` block, `dockerfile:` and `rebuild:` are the fallback where the catalog serves this workflow no entry (step 7).
 - **Services.** A test that needs Postgres, Redis or the Firebase emulators starts them with `fugaro-services start` as the first step of `commands.test`. Anything else is `image.apt` or `image.setup` plus a start line in the test command.
 - **No Docker daemon.** A Cloud Run job has none. Tests needing Docker, docker-compose or Testcontainers can't run there: use a local-services mode of the repository, cover only the suites that don't need Docker, or have the user run them elsewhere. Say so; never work around it.
 - **The Dockerfile rule.** For the fallback case, use `image:` by default. Only when the evidence needs something it can't express, run `fugaro image render --workflow <name>`, save it as `.fugaro/<workflow>.Dockerfile`, make the minimal edits, and set `dockerfile:`. Never start from a blank Dockerfile or write one at the repository root (the application's).
@@ -97,7 +99,7 @@ Ask, with your evidence and a recommended answer for each, **one topic at a time
 9. `agent.recipe`: its own question, after review rounds. Open with the 0.5.0 requirement: every CLI, CI pin and job image older than 0.5.0 refuses the key: tell the user before it goes into the file. Then recommend `default` (no key). Offer `standard` or `solo` only if asked; never write `agent.recipe` without their explicit decision, and never guess a recipe from the repository's domain or language.
 10. `rebuild`: usually the defaults.
 11. Workflow names, when there are several, and anything the user wants kept off Fugaro.
-12. `checkout`: **it is shipped** (fugaro 0.9.0), so offer it on the evidence: `clone` is for a workflow that needs no per-repository image, and only when the evidence rules out everything a build gives it (the keys `fugaro validate` refuses under clone, and a service arrives through one of those). It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
+12. `checkout`: **it is shipped** (fugaro 0.9.0), so offer it on the evidence: `clone` is for a workflow that needs no per-repository image, and only when the evidence rules out everything a build gives it. It is the user's decision (`reference/decisions.md`; [docs/checkout.md](https://github.com/dimipaun/fugaro/blob/main/docs/checkout.md)).
 
 ## 6. Show what will execute, then get the go-ahead
 
@@ -106,8 +108,8 @@ Before the first build, and again before any rebuild after a change, show every 
 - `mise.toml`'s tools, each a download; if the repository has its own mise config (`mise.toml`, `.tool-versions`, a `mise/conf.d` fragment), show its **whole content**, not a tools summary: `mise install` reads it as a shell and can run arbitrary code (`[env]` `_.source`, a template's `exec()`, `[hooks]`), like any other file you run
 - a new Dockerfile: the whole file or the diff against the rendered one; a **fix of an existing** `.fugaro/*.Dockerfile` or `fugaro.yaml`: all of its executed lines, not only the ones you changed
 - the content of any repository script those lines call (`make` targets, `scripts/*`, a `postinstall`), or an explicit statement that you did not read it, and the repository's `.npmrc` and `.yarnrc.yml` (`yarnPath` and plugins run code)
-- the names of the declared `secrets` variables, and whether each is already set (presence only, never a value): the build mounts the workflow's `secrets:` as file secrets, so a registry token reaches it that way and never as a build argument or a copied file
-- any file you add that a command runs, such as the `agent.instructions` file (a text file appended to the agent's prompt; it must exist in the repository)
+- the names of the declared `secrets` variables, and whether each is already set (presence only, never a value): the build mounts the workflow's `secrets:` as file secrets, so a registry token reaches it that way, never as a build argument or a copied file
+- any file you add that a command runs, such as the `agent.instructions` file (appended to the agent's prompt; it must exist in the repository)
 
 Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's code in Cloud Build, in the project's own cloud project, as the build account with the workflow's secrets. Wait for an explicit yes. The user then submits it in their own terminal, after the merge (step 10): it is billable. If the user declines, say what is unverified (the runtime contract's smoke checks); their first run is the test.
 
@@ -132,7 +134,7 @@ fugaro secrets set claude-oauth-token
 
 **Named Claude accounts (optional).** The operator may hold more than one Claude account in their local config (`claude_accounts`; never in `fugaro.yaml`) — `fugaro secrets ls --repo --json` then lists more than one name starting `claude-oauth-token-`. Ask which this repository's `agent.auth: oauth` workflow should use, and write `agent.oauth_token: <name>` under `agent`, the part after `claude-oauth-token-`; never guess one, which `fugaro run` refuses when the config does not list this repository under it.
 
-An account with no stored token is not usable: the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent, which declares it, stores the token under `claude-oauth-token-<name>` and converges this repository's job set. With `--type claude-oauth` the name is also a **credential** a pool may list; the credentials, the pools, the **aliases** (`fugaro accounts alias set`) and the crafts are the operator's own writes, refused to a session. Minting a *second* account's token is not yet verified.
+An account with no stored token is not usable: the operator's one command is `fugaro accounts add <name>`, in their own terminal window, not through the agent, which declares it, stores the token under `claude-oauth-token-<name>` and converges this repository's job set. `--type claude-oauth|anthropic|openrouter` makes the name a **credential** a pool may list; the credentials, the pools, the **aliases** (`fugaro accounts alias set`), the **switch** (`fugaro accounts switch`) and the crafts are the operator's own writes, refused to a session. Minting a *second* account's token is not yet verified.
 
 ## 9. Hand off
 

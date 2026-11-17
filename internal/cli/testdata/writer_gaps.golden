@@ -86,6 +86,7 @@ image_catalog.entries.tools.source.path
 image_catalog.entries.tools.source.repo
 image_catalog.entries.tools.tags
 image_map
+issue_sync
 job_profiles.conformance.allow_repos
 job_profiles.conformance.claude_accounts
 job_profiles.conformance.cpu
@@ -178,6 +179,7 @@ node_removals.craft_credentials
 node_removals.crafts
 node_removals.pools
 orchestrator.decision_model_per_class
+orchestrator_enabled
 pools.conformance.allowed_users
 pools.conformance.legacy_open
 pools.conformance.members

@@ -20,8 +20,8 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {
-      "const": 4,
-      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by an earlier release (0, 1, 2 or 3) to this value, one version at a time: 0 is the node from before the schema carried a version, 1 the node from before the ladder kept its ledger on an item, 2 the node from before a work item carried a spec — the one step that also rewrites stored digests, because `spec` is digested and an approval stored under the old walk would never launch again — and 3 the node from before the ledger named the item it is on, which the reports job's read needs (repo, run_id)."
+      "const": 5,
+      "$comment": "orchestrator.SchemaVersion. Migrate raises a document written by an earlier release (0, 1, 2, 3 or 4) to this value, one version at a time: 0 is the node from before the schema carried a version, 1 the node from before the ladder kept its ledger on an item, 2 the node from before a work item carried a spec — one of the two steps that also rewrite stored digests, because `spec` is digested and an approval stored under the old walk would never launch again — 3 the node from before the ledger named the item it is on, which the reports job's read needs (repo, run_id), and 4 the node from before a work item carried the ticket it came from, that ticket's body hash and its plan task, which rewrites stored digests for the same reason."
     },
     "rev": {
       "type": "integer",
@@ -124,6 +124,22 @@
           "pattern": "^[a-z0-9][a-z0-9-]{0,43}$",
           "description": "The plan's folder under docs/ this work belongs to, which is what the daemon's `spec:<name>` label is built from (docs/forge-labels, R3). Optional: the encoder leaves it out for an item that carries none, and such an item gets no spec label. Stored lower-cased and at most 44 characters, so `spec:` plus the name is at most 49 of GitHub's 50. It is one of the fields a person approves, so an edit to it revokes a standing approval — which is why it is a declaration and not the daemon's to write."
         },
+        "external": {
+          "type": "string",
+          "pattern": "^github:[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*#[1-9][0-9]{0,18}$",
+          "description": "The ticket this item came from outside Fugaro with, `github:<owner>/<repo>#<n>` (D2728). It is the dedupe key of the backlog — one issue is one item, unique across the project's nodes — so the shape is one spelling: lower-case as the installation's GitHub App answers a name, GitHub the only host, and the issue's own number from one. The ingest builds it and writes it as built: it is checked for shape and never folded, since a fold would make two spellings of one ticket two keys here and one in the ingest. Written by the daemon's ingest alone, and part of the spec a person approves."
+        },
+        "body_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "The SHA-256 of the external ticket's body as it was when the item was ingested, lower-case hex and without the `sha256:` prefix a spec digest carries (D2720). The ingest stores this and never the body; the body is read again at launch and an item whose body no longer hashes to this goes back to queued and unapproved, so a run is briefed with what the person approved. Part of the spec a person approves."
+        },
+        "plan_task": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+$",
+          "maxLength": 128,
+          "description": "The plan node this item is, as `<plan>/<task>` in the shape task.PlanTaskProblem checks (D2704), the same shape and the same bound as the launch record's own field (schemas/task.schema.json). It joins the item to its plan graph and to the run that carries it, and it is how an item the daemon adopted meets the import that would otherwise write a second one (D2702). Written by the plan import, and part of the spec a person approves. Two rules of task.PlanTaskProblem the pattern cannot carry are that a '.' or '..' element and a control character are refused."
+        },
         "brief": {
           "type": "string",
           "minLength": 1,
@@ -163,6 +179,10 @@
           "type": "string",
           "maxLength": 600,
           "description": "A line the daemon keeps for whoever reads the item next. It is not part of the spec, so writing one revokes no approval."
+        },
+        "adopted": {
+          "type": "boolean",
+          "description": "Set on an item the daemon wrote for a run already in flight when it took the id over (D2702). The daemon's alone to write, and bookkeeping: it says how the item entered the node rather than what the work is, so it moves no digest. The ladder skips every rung that merges for such an item until a person approves it."
         },
         "escalation": {
           "$ref": "#/$defs/escalation",

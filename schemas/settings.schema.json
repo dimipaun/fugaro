@@ -796,6 +796,9 @@
         "image_source": {
           "default": "unset = none: no base pin has been recorded"
         },
+        "issue_sync": {
+          "default": "unset = none: no repository's issues are ingested into the project's backlog, and no item opens an issue of its own"
+        },
         "issues.nudge_after_days": {
           "$comment": "localcfg.DefaultIssuesNudgeAfterDays",
           "default": "7"
@@ -1324,6 +1327,9 @@
         "orchestrator.spawn_per_minute": {
           "default": "unset = 2 (policy.DefaultSpawnPerMinute)"
         },
+        "orchestrator_enabled": {
+          "default": "unset = true: the project's daemon launches runs, and a written false hands orchestration back to the person and their agent"
+        },
         "planning.decoupling": {
           "$comment": "config.DefaultPlanningDecoupling",
           "default": "true"
@@ -1426,6 +1432,9 @@
         },
         "rigor.default": {
           "default": "unset = pro (rigor.Default)"
+        },
+        "rigor_pending": {
+          "default": "unset = none: the wizard's rigor answer has been written into the project layer"
         },
         "routing.claude.models": {
           "default": "unset = none"

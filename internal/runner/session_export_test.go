@@ -29,6 +29,21 @@ func RestoreSession(t *testing.T, ctx context.Context, d Deps, prev *runstore.St
 	return r.restoreSession(ctx, prev, head)
 }
 
+// FailSessionGit makes every session git read whose argument list matches fail
+// with err, for the rest of t. It is how a test makes one of the runner's own
+// reads unreadable without making the others unreadable too.
+func FailSessionGit(t *testing.T, match func(args []string) bool, err error) {
+	t.Helper()
+	prev := sessionGit
+	sessionGit = func(ctx context.Context, repo *gitops.Repo, args ...string) (string, error) {
+		if match(args) {
+			return "", err
+		}
+		return prev(ctx, repo, args...)
+	}
+	t.Cleanup(func() { sessionGit = prev })
+}
+
 // RecordSessionGit records the argument lists of every git call restore
 // makes, for the rest of t.
 func RecordSessionGit(t *testing.T) func() [][]string {

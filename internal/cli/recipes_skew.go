@@ -819,8 +819,12 @@ var sealRunnerIntroduced = time.Date(2026, 10, 17, 17, 45, 33, 0, time.UTC)
 // has the release checklist verify it. internal/cli/run.go gates a launch
 // that would set a title against an older build record, exactly as it does
 // for a named Claude account (namedTokensSince) and for mode: artifact
-// (artifactsSince); a launch with no --title writes no such field and is
-// never gated.
+// (artifactsSince); a launch that ends with no title at all — no --title,
+// no title inherited from the run it continues and no brief to take one
+// from — writes no such field and is never gated. A plain `--pr` follow-up
+// is not one of those any more: it takes the pull request's title when the
+// host can be read (followUpPRTitle), and the gate then judges that field
+// like any other title's.
 const titlesSince = "0.8.5"
 
 // planTaskSince is the first fugaro release whose runner reads a task's
@@ -3014,7 +3018,7 @@ func refuseClonesNotShipped(repo, cmd, verb string, names []string) error {
 // price_policy — at any value — and may receive repo's code. "Set" is the
 // test, not "different from the default": the omitempty tags write the key
 // whenever the owner wrote it (require_zdr: true and price_policy:
-// cheapest are written too), and ProvidersEnv (internal/runner/providers.go)
+// highest are written too), and ProvidersEnv (internal/runner/providers.go)
 // writes exactly this distinction, so an explicit default breaks an older
 // runner just like the other value does. A provider whose allow_data_to
 // does not cover repo is not in the job's value at all, so it cannot break

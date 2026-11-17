@@ -535,7 +535,7 @@ operator needs is on the node, and **the node's existence is what the rules read
 user whose node is gone is the **sweep's** business (decisions 1 and 2) and is invisible to the rules
 by construction.
 
-### 4.3 `fugaro pair revoke <uid|name>`
+### 4.3 `fugaro pair revoke`
 
 ```
 fugaro pair revoke (--uid UID | --name NAME) [--json] [--project NAME | --gcp-project ID]
@@ -895,6 +895,13 @@ The merged P4.1 plan's §9 states the fence as a **seam**: the code path exists,
 **synthetic** confirmation record, and **it cannot be reached from a real message today**, because
 nothing in the merged tree writes a confirmation record. **P6.7 is the half that reads the record**,
 and this section is the change of state, not a new fence:
+
+*(Amended 2026-11-16: P6.7 has landed, so the seam is behaviour now — the record is re-validated by
+a Go implementation of the merged module's rules, held to the vectors by a parity test over the
+phone's machine, spent action and confirmation ids are kept across a restart, and a record a phone
+minted would be acted on. What is missing is the phone's half: the spoken read-back and the explicit
+"confirm" are P6.12's, so the records exercised today are the simulator's and the tests'. The table
+below is unchanged; it is what P6.7 answers.)*
 
 | The message asks for | P4.1's answer | P6.7's answer |
 | --- | --- | --- |

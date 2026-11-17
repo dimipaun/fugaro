@@ -390,7 +390,7 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		// The wiring, which is what this section had to be rewritten for.
 		"credentialsServiceLaunchEnv",
 		"the launch is what tells a job where it is",
-		"a repository's own job, and no other",
+		"a repository's own job, and the shared project job a switched profile sends its runs to",
 		"byte for byte what it was",
 		"the **other `agent.auth` modes'**",
 		// What the opt-in does to the job's mounts. The section said an

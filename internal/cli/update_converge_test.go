@@ -1660,3 +1660,60 @@ func TestUpdateNeverSendsThePersonToUpdateFromInsideIt(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateConvergesACachePriceWrittenTheOldWay: an installation whose owner
+// priced a cache read by hand, under the key name the release behind documented,
+// reaches this release with `fugaro update` alone — one command, no operator
+// step (the HARD RULE), and no question asked (CLAUDE.md: fugaro asks for
+// nothing). The run renames the key in the owner's own file, keeps the price as
+// it is, and says both things: the rename, and the one warning about a price
+// below the cheapest endpoint the built-in catalog prices that dimension at
+// (SA4.2, SA4.3; R4, RS3).
+//
+// The file is the same fixture the stage's own test uses, and the door here is
+// the whole run: the config `fugaro update` reads and writes is the one this
+// rig left in the XDG projects directory, and the assertions after it are on
+// the bytes that run wrote.
+func TestUpdateConvergesACachePriceWrittenTheOldWay(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	// The keys go in before the copy the door reads is taken: the rig cleared
+	// FUGARO_CONFIG, so the local config this run reads and writes is the
+	// installation's own file in the XDG projects directory.
+	r.appendConfig(t, cacheKeyFixture)
+	registerInstallation(t, r.initRig)
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	path := installationConfigPath()
+	written := string(readFile(t, path))
+	for _, want := range []string{"cache_read_mult: 0.0042", "cache_write_5m_mult: 1.4", "cache_write_1h_mult: 2.5"} {
+		if !strings.Contains(written, want) {
+			t.Errorf("one fugaro update left no %q in %s, so the owner needs a second command for it:\n%s", want, path, written)
+		}
+	}
+	for _, old := range []string{"cache_read:", "cache_write_5m:", "cache_write_1h:"} {
+		if strings.Contains(written, old) {
+			t.Errorf("one fugaro update left %s in %s, so the owner needs a second command for it:\n%s", old, path, written)
+		}
+	}
+	// The stage's own step line says what it did, and the mark on it is an
+	// applied step rather than a question: the run asks nothing about this file
+	// (the assertion stops where the screen cuts a long step line — the whole
+	// of it is in the run's log, and what is asserted past that point is the
+	// file itself).
+	if want := "✔ model-prices renamed model_prices.deepseek/deepseek-v4.1-flash.cache_read ->"; !strings.Contains(out, want) {
+		t.Errorf("the run did not print %q:\n%s", want, out)
+	}
+	// And the warning names both prices: the rename is not silent, and the
+	// price the owner wrote is reported rather than refused.
+	if want := "warning: model_prices.deepseek/deepseek-v4.1-flash.cache_read_per_m is $0.000588 per million tokens"; !strings.Contains(out, want) {
+		t.Errorf("the run did not warn about the price below the catalog's floor (%q), which is the other half of what this release owes the one command the owner runs:\n%s", want, out)
+	}
+	// And the price the node carries is the owner's, unchanged by the rename.
+	// The node is published from the config the run holds, so a migration that
+	// renamed the key in the file and lost the multiplier from that copy would
+	// publish the list default in its place — every call of this model priced
+	// differently from the file the owner reads, with nothing on the screen.
+	if got := convergeNode(t, r).Prices["deepseek/deepseek-v4.1-flash"].CacheRead; got == nil || *got != 0.0042 {
+		t.Errorf("after one fugaro update the published policy prices deepseek/deepseek-v4.1-flash's cache read at %v, want the 0.0042 the owner wrote", got)
+	}
+}
