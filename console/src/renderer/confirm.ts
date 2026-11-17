@@ -342,7 +342,9 @@ export async function mountConfirm(document: ConfirmDocument, bridge: ConfirmBri
     if (subject.confirmNeedsTick) {
       // The tick is a real checkbox beside its own words (D1109), and Confirm is
       // disabled until it is set. It is the console's extra confirmation and not
-      // an argv word -- the write carries no flag -- and the main process
+      // an argv word -- the write's one word is `--no-apply`, and the main
+      // process is what decides whether the child's CLI registers it -- and the
+      // main process
       // enforces the tick again on the way through (`CONFIRM_TICK_NEEDED`), so a
       // document that failed to disable anything still cannot answer a
       // widening's yes unticked.

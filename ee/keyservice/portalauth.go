@@ -277,6 +277,14 @@ func (p PortalSignIn) RequireSSO(caller Caller, rule SSORule) error {
 	return p.Verifier.RequireSSO(signInOf(caller), rule)
 }
 
+// FreshWithin applies the same verifier's freshness rule to a caller this seam
+// answered (D2187). The instant it measures against is the verifier's own clock
+// and not this process's: the rule is P1.3's, and the clock it reads a token's
+// `auth_time` with is the one it was built with.
+func (p PortalSignIn) FreshWithin(caller Caller, within time.Duration) error {
+	return p.Verifier.FreshWithin(signInOf(caller), within)
+}
+
 // signInOf is a caller as the sign-in the rules are written over. The two types
 // carry the same facts — the account, the address, the member the claimed
 // address folds to, the provider, the sign-in's instant, the Identity Platform
@@ -443,12 +451,22 @@ func ssoRefuses(signIn VerifiedSignIn, rule SSORule) error {
 }
 
 // FreshWithin refuses a sign-in that happened longer ago than within (D2187's
-// five minutes for a mint; P5.1's reads are the other caller).
+// five minutes for a reveal; P5.1's reads are the other caller).
 //
 // The age is `auth_time`'s and not the token's `iat`: an ID token lives an hour,
 // so a token minted this minute can attest a sign-in from this morning, and a
 // step-up measured on `iat` would be a step-up over the wrong fact.
 func (v *PortalVerifier) FreshWithin(signIn VerifiedSignIn, within time.Duration) error {
+	return freshSignIn(signIn, within, v.now())
+}
+
+// freshSignIn is the rule itself, over the one fact it reads and the instant it
+// reads it at. It is a package function and not only a method on the verifier
+// for the reason ssoRefuses is: it reads nothing of the verifier — the clock is
+// passed in — which is what lets the API's own seam (api.go's SignInVerifier,
+// which carries a Caller rather than a VerifiedSignIn and whose doubles carry
+// the fixture's clock) apply the same rule rather than a second copy of it.
+func freshSignIn(signIn VerifiedSignIn, within time.Duration, now time.Time) error {
 	if within <= 0 {
 		// A window of nothing is a configuration mistake, and the answer that
 		// keeps it from becoming "everything is fresh" is a refusal.
@@ -457,7 +475,7 @@ func (v *PortalVerifier) FreshWithin(signIn VerifiedSignIn, within time.Duration
 	if signIn.AuthTime.IsZero() {
 		return fmt.Errorf("%w: the token attests no sign-in time, and a step-up over one nobody recorded is no step-up", ErrStaleSignIn)
 	}
-	if signIn.AuthTime.After(v.now().Add(signInClockSkew)) || v.now().Sub(signIn.AuthTime) > within {
+	if signIn.AuthTime.After(now.Add(signInClockSkew)) || now.Sub(signIn.AuthTime) > within {
 		return fmt.Errorf("%w: the sign-in is not within the last %s", ErrStaleSignIn, within)
 	}
 	return nil

@@ -115,14 +115,10 @@ type builtLogName struct {
 var builtLogNames = map[string]builtLogName{
 	"accounts alias rm":  {builder: "accountsAliasLogName"},
 	"accounts alias set": {builder: "accountsAliasLogName"},
-	// The one command whose name is its whole path: runLogName reads a chain's
-	// name off the command a person typed, and this door's own word is written
-	// there as the literal the census can read.
-	"apply":         {builder: "runLogName"},
-	"budget kill":   {builder: "budgetKillLogName"},
-	"budget resume": {builder: "budgetKillLogName"},
-	"setup":         {builder: "doorName", door: "setupDoor"},
-	"update":        {builder: "doorName", door: "updateDoor"},
+	"budget kill":        {builder: "budgetKillLogName"},
+	"budget resume":      {builder: "budgetKillLogName"},
+	"setup":              {builder: "doorName", door: "setupDoor"},
+	"update":             {builder: "doorName", door: "updateDoor"},
 }
 
 // exemptListing is one command D1354 keeps off the reporter because its stdout
@@ -145,7 +141,7 @@ var exemptListings = map[string]exemptListing{
 	"accounts pool ls":     {"a listing: the pools and the members each one walks, printed whole", false},
 	"artifacts ls":         {"a listing: what a run's record says it delivered, as a table or a document", true},
 	"backends ls":          {"a listing: the backends this fugaro knows and the one the project uses", true},
-	"backlog list":         {"a listing: the backlog's items as the index lists them, table or document", true},
+	"backlog list":         {"a listing: the project's backlog items, which node each came from included, table or document", true},
 	"budget preview":       {"a listing: a batch's worst-case spend, as a table or a document", true},
 	"budget prices":        {"a listing: the effective model price table, which is the answer itself", true},
 	"budget reconcile":     {"a listing: a window's charged, reported and table spend per model, table or document", true},

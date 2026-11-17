@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -52,6 +53,19 @@ const verboseFlag = "verbose"
 func reporterFor(cmd *cobra.Command, name string, secrets func() []string) (*report.Reporter, report.Sink) {
 	return openReporter(cmd, name, secrets, false)
 }
+
+// doorLogName is the name a run opened by a door is filed under (D1351): the
+// command path a person typed, one dash for each space.
+//
+// A door's own name is the sentence's — `r.o.doorName()` says "fugaro workspace
+// cap set" — while a log's name is the command's, which is what
+// report.OpenLog accepts and what the reporter's census writes down as each
+// command's value (report_exempt.go). The two cannot be one string, so the
+// door that opens the run converts: a name passed through unaltered would be
+// refused by OpenLog, and the refusal is silent by design (a run that cannot
+// open a log prints everything it printed before), so the command would file
+// no log at all and nothing would say so.
+func doorLogName(door string) string { return strings.ReplaceAll(door, " ", "-") }
 
 // convergeReporter is reporterFor for the converge — `fugaro setup` and
 // `fugaro update` — which is the one family on the brief account: a step's

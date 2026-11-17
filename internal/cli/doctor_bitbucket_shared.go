@@ -127,7 +127,7 @@ func doctorBitbucketSharedRepos(lc *localcfg.Config, p *projectpolicy.Policy) []
 			// the repository on its per-repository job — the one that mounts the
 			// copy. internal/infra.SharedJobProvider is the same predicate the
 			// deployer skips a profile by and the launcher refuses a shared job
-			// with (github alone until Bitbucket is admitted), and it is asked of
+			// with (every kind a repository may use since I1), and it is asked of
 			// the profile's provider, as the launcher asks it.
 			continue
 		}

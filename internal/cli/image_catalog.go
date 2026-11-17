@@ -308,6 +308,15 @@ func catalogEntryDigest(ctx context.Context, env *cloudEnv, records *blobx.Bucke
 	return ""
 }
 
+// imageAddDoor and imageRmDoor are the two commands of this family that run
+// their own chain, in the words the command has rather than in the shape its
+// path takes: the door is what the run is filed and printed under (D1351), and
+// the log's name is that word with dashes for the spaces (doorLogName).
+const (
+	imageAddDoor = "image add"
+	imageRmDoor  = "image rm"
+)
+
 func newImageAddCmd() *cobra.Command {
 	var (
 		o                          cloudOptions
@@ -466,12 +475,17 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	// The change is written and this command runs what makes it live: the
 	// entry's image, the redeploy that pins its digest (D1574) and the catalog
 	// publication (D1561, D1577). The sentence below is printed only for a run
-	// that answered every step — one that could not says so itself, in D1563's
-	// words (chainKeptLine) — so what a person reads is never both "live" and
-	// "still owed".
-	live, err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply)
-	if err != nil || !live {
+	// that ran and answered every step: a step left owed is an error out of the
+	// chain (chainSettle, applyRunRecord), said there in D1563's words with the
+	// command that finishes it, and --no-apply has already said the entry is
+	// saved and not live yet (chainSavedLine) — so what a person reads is never
+	// both "live" and "still owed".
+	if err := chainApply(ctx, cmd, onDisk, localcfg.Selection{Path: path}, imageAddDoor,
+		[]apply.Change{{Kind: apply.Resource, Key: apply.ResourceImage}}, noApply); err != nil {
 		return err
+	}
+	if noApply {
+		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Image %s added and now available to your jobs.\n", pluginwire.Printable(e.Name))
 	return nil
@@ -614,9 +628,16 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string, noApply bool) e
 	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
 		return err
 	}
-	live, err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply)
-	if err != nil || !live {
+	// The removal owes the same steps the add does, through the same chain, and
+	// the sentence below is gated the same way: a step left owed is an error out
+	// of the chain, and --no-apply has said the removal is saved and not live
+	// yet, so this never says a job that still runs the entry no longer does.
+	if err := chainApply(ctx, cmd, onDisk, localcfg.Selection{Path: path}, imageRmDoor,
+		[]apply.Change{{Kind: apply.Resource, Key: apply.ResourceImage}}, noApply); err != nil {
 		return err
+	}
+	if noApply {
+		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Image %s removed and no longer available to your jobs: its built image stays in the registry.\n", pluginwire.Printable(name))
 	return nil

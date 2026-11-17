@@ -483,7 +483,8 @@ export function deployedCSP(repo = REPO) {
  *
  * A gate that holds something about *the site a reader reaches* needs this and not `dist/`
  * alone: a page can be built (and read by every gate here) and not served, which is the state
- * the key request page is in until S7.4 publishes it (S3.3). A pattern is matched the way the
+ * the key request page was in from S3.3 until S7.3 wrote the statement's account of it and took
+ * the `ignore` entry out. A pattern is matched the way the
  * hosting CDN matches it — `*` within one path segment, `**` across segments, `?` one
  * character — so a page is excluded only when the config really excludes it.
  */

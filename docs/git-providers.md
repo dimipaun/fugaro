@@ -112,8 +112,10 @@ Pick the reviewer's `{…}` UUID by display name, and put it in the repository's
 Create a **GitHub App** and install it on the repositories Fugaro serves (design §6.1). It needs these repository permissions:
 - **Contents: Read & write**
 - **Pull requests: Read & write**
-- **Issues: Read**
+- **Issues: Read & write**
 - **Metadata: Read**
+
+Issues is the one Fugaro needs at write because it is not a run that reads and opens them: the credentials service's issue route performs the list, the read and the open itself, minting its own installation token scoped to that one repository, and GitHub serves a repository's issues under the one issue permission. A run's own token still asks for `issues: read` alone, and no job ever holds the write.
 
 These four are all of it: never add **Workflows** (below). Then **install the App on each repository Fugaro serves** (the App's settings page, Install App). When you later change an installed App's permissions, GitHub asks the installation's owner to **accept the change**; until it is accepted the installation keeps the old permissions and runs fail with permission errors.
 

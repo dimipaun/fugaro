@@ -6,21 +6,23 @@
 # check jobs.
 #
 # The account is the project's own and is NOT a repository's build account.
-# Every build the job submits runs as the build account of the repository the
-# entry belongs to, through the actAs grant the repository module makes on it
-# (modules/repo/catalogcheck.tf); this account never builds anything itself, so
-# it holds no registry role, no secret accessor and no key. Its whole reach is
-# the spec in its environment, the five grants below and, in each repository
-# root, the actAs on that repository's build account. One of the five is in the
-# Firebase project and not this one — the database role its build leases are
-# written with (D1554) — and it is created and bound here rather than in the
-# Firebase root, because it is this job's reach and the account is this file's.
+# Every build the job submits runs as the project's build identity (B6, D2301)
+# through the actAs grant below, which is made HERE and not in a repository
+# root: the identity is the installation's, so the grant that lets the check
+# submit a build as it has to outlive M2's retirement of every root, and a
+# grant in a root would die with it. This account never builds anything
+# itself, so it holds no registry role, no secret accessor and no key. Its
+# whole reach is the spec in its environment, the six grants below and the
+# actAs on the build identity. One of the six is in the Firebase project and
+# not this one — the database role its build leases are written with (D1554) —
+# and it is created and bound here rather than in the Firebase root, because it
+# is this job's reach and the account is this file's.
 #
 # No log writer grant: this installation's other jobs — the coordinator's and
 # the history job's — hold none, and the log lines the alert policies match
-# are Cloud Run's own (alert.tf). The builds this job submits run as the build
-# accounts, which hold roles/logging.logWriter where a build's lines need it
-# (modules/repo/build.tf).
+# are Cloud Run's own (alert.tf). The builds this job submits run as the
+# project's build identity, whose own reach this module's build_identity.tf
+# states.
 #
 # Nothing else in the installation changes for it, and it exists only when
 # fugaro update's tfvars carry catalog_check — an installation whose project
@@ -108,8 +110,8 @@ resource "google_storage_bucket_iam_member" "catalog_check_records" {
 # refused, and so is either outside a Cloud Run job. The spec arrives in
 # FUGARO_CATALOG_CHECK_SPEC, and its environment carries the platform
 # variables the repository check job's does (catalog_check.env, written by
-# internal/infra). It mounts no secret: the build it submits reads the git
-# credential as the repository's build account, and this job reads none.
+# internal/infra). It mounts no secret: the builds it submits run as the
+# project's build identity (B6) and this job reads none.
 resource "google_cloud_run_v2_job" "catalog_check" {
   count = var.catalog_check == null ? 0 : 1
 
@@ -177,6 +179,35 @@ resource "google_cloud_run_v2_job" "catalog_check" {
       error_message = "the job's FUGARO_GCP_PROJECT must be the GCP project ${var.project}; run fugaro update"
     }
   }
+}
+
+# The actAs that lets the job submit a build as the project's own build
+# identity, which is the account every build it submits runs as (B6, D2301) —
+# the one account of the installation, created by build_identity.tf in the
+# same apply, and the account whose registry reach the catalog push needs.
+#
+# Why it is here and not in a repository root. Until B6 each build ran as the
+# build account of the repository the entry belongs to, and this job's actAs
+# on it lived in that repository's root (modules/repo/catalogcheck.tf). M2
+# retires every repository root, so a grant there dies with the root — and it
+# has to survive, because the check keeps submitting builds after the roots
+# are gone. The account and the grant that reaches it are both the
+# installation's now, and they are in one module: an installation that
+# replaces this apply and one that never carries a catalog_check both plan
+# neither.
+#
+# The account is a LITERAL path and not google_service_account
+# .build_identity[0].name, for the reason the module's own
+# TestInstallationServiceAccountGrantsNameTheirAccount states: this module
+# creates the deployer, and a service-account grant whose account is computed
+# is one internal/infra/tf's cover refuses to read, which makes the apply ask a
+# confirmation of its own.
+resource "google_service_account_iam_member" "catalog_check_build_identity" {
+  count = var.catalog_check == null || !local.credentials_service_on ? 0 : 1
+
+  service_account_id = "projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountUser"
+  member             = google_service_account.catalog_check[0].member
 }
 
 # roles/run.invoker holds run.jobs.run, which Scheduler's call needs, on this

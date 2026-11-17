@@ -19,9 +19,9 @@
       "model": "claude-sonnet-5-5"
     }
   ],
-  "cost_usd": 0.000447,
+  "cost_usd": 0.004246,
   "cost": {
-    "model_usd": 0.000447,
+    "model_usd": 0.004246,
     "compute_usd": 0,
     "compute_estimated": false,
     "total_usd": 0,
@@ -29,10 +29,10 @@
     "model_basis": "api-list",
     "model_source": "gateway",
     "model_by": {
-      "deepseek/deepseek-v4-flash": 0.000447
+      "deepseek/deepseek-v4-flash": 0.004246
     },
     "route_by": {
-      "openrouter": 0.000447
+      "openrouter": 0.004246
     },
     "reported_usd": 0.0025,
     "reported_by": {
@@ -59,7 +59,7 @@
       "calls": 3,
       "agents": 0,
       "repeats": 0,
-      "model_usd": 0.000447,
+      "model_usd": 0.004246,
       "model": "deepseek/deepseek-v4-flash",
       "served_by": "api-key"
     },

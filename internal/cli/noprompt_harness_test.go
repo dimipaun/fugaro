@@ -508,9 +508,9 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
 	"fugaro backends":          "is a name for ls and use: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
-	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
+	"fugaro backlog add":       "refuses from inside its body: a bare run names --title, which is the one line it files an item from",
 	"fugaro backlog index":     "reads docs/backlog, which this world has no checkout to hold",
-	"fugaro backlog list":      "reads docs/backlog, which this world has no checkout to hold",
+	"fugaro backlog list":      "prints the no-project-config refusal",
 	"fugaro budget prices":     "prints the built-in price list with no project selected",
 	"fugaro budget show":       "prints the no-project-config refusal",
 	"fugaro config example":    "prints the example fugaro.yaml",
@@ -554,6 +554,11 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
 	"fugaro orchestrator import": "refuses its missing -f: a dump is one patch document, and the closed stdin is no document",
+	// The resident service's own entry point, hidden like the credentials
+	// service's and the intake's: what it would read is its three names in the
+	// environment, which the installation module sets on the container and
+	// this world leaves unset (P5.1c).
+	"fugaro orchestrator serve": "refuses without FUGARO_PROJECT in its own environment",
 	// The escalation family reads that same node for the ladder's ledger (E13).
 	// ls takes no argument, and its bare run is the whole command: the fixture's
 	// database holds no work item, so what it says is that no pull request has

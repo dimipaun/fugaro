@@ -31,7 +31,7 @@ package cli
 // rule is checked against the document rather than against the parser that
 // happens to implement it. It also asserts internal/backlog's own Parse accepts
 // every file, which is the other direction: a file the folder's pin reads as
-// well-formed and the tool refuses is a file `fugaro backlog list` cannot show.
+// well-formed and the tool refuses is a file `fugaro backlog index` cannot show.
 //
 // The closing rule is D31's, and it is the folder's pin that holds it (plan
 // T4.7): a `closed` item carries a `## Closed by` section naming the pull
@@ -251,7 +251,7 @@ func TestDocsBacklogItemsFollowTheFormat(t *testing.T) {
 
 		// The other direction: the tool the folder ships has to accept the
 		// same bytes. A file this test reads as well-formed and Parse refuses
-		// is a file `fugaro backlog list` cannot show.
+		// is a file `fugaro backlog index` cannot show.
 		if _, err := backlog.Parse(path, []byte(doc)); err != nil {
 			t.Errorf("%s: internal/backlog.Parse refuses an item the folder's format accepts: %v", path, err)
 		}
@@ -694,8 +694,9 @@ func itemDoc(id, title string) string {
 // believe.
 //
 // What is pinned is that the folder is history and where a new item goes, not
-// what `fugaro backlog add` writes: the CLI still files into this folder today,
-// and the sentence that moves it belongs to the task that changes the command.
+// what `fugaro backlog add` writes: that command writes a work item into the
+// project's backlog node (B1, D2715), and this pin is about the folder's own
+// words rather than about the command.
 //
 // The committed index is not read here: TestDocsBacklogIndexIsCurrent is the
 // regenerate-and-compare pin that holds docs/backlog/README.md to the bytes

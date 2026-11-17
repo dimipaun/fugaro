@@ -83,7 +83,14 @@ import (
 // and the tool log is the child's own. Checks 500 and 501 drive a fake `gcloud`
 // and a fake `fugaro` that logs every call with the directory it was made in, so
 // a case says both what the check measured and that no image was built, no
-// `fugaro update` was answered for the owner and no run was launched. Checks 520
+// `fugaro update` was answered for the owner and no run was launched. Check 581
+// drives those same two fakes over the multi-repository catalog build: a fake
+// `fugaro` that answers `version`, `doctor --json`, `image ls --json`, `image
+// survey --json` and `image build`, printing the submitted line and the bake
+// note the real one prints and marking the entry as built so the second catalog
+// read is the one after it, and a fake `gcloud` that serves the build's own
+// steps -- so a case can bend the map, the note and the steps and say what the
+// check made of each. Checks 520
 // and 521 drive the same two fakes over the vision-model work: a fake `fugaro`
 // whose `doctor --json` carries the `vision-coder` sentence the premise is read
 // from, whose `run --json` launches the run the check follows, whose `runs ls
@@ -298,7 +305,12 @@ import (
 // account, a run or a log view naming belong, a read that fails, hangs or
 // answers something that is not a document, a record naming no execution, a
 // record and a listing that disagree about the execution, a doctor that exits 1
-// (an answer, #2719) and one that does not answer at all.
+// (an answer, #2719) and one that does not answer at all. Check 127's fakes are
+// a fake `fugaro`, a fake `git` and a fake `gh`, each answering out of the
+// case's own documents and logging every call: the check reads a sandbox
+// repository's runs, its config and its pull requests and launches nothing, so
+// a case says which repository each read named and that the backlog index was
+// regenerated in a copy rather than in the checkout.
 // Check 197's fakes are a fake `fugaro` -- a published policy whose one
 // GitHub profile admits one sandbox repository, a `run` that RECORDS the run it
 // was asked for and refuses a repository outside that profile with the
@@ -315,6 +327,27 @@ import (
 // Bitbucket half is the plan's own "(after D2079)": a case that names no
 // Bitbucket repository, or one no shared Bitbucket job serves, reads those rows
 // as INFO and the run still ends 0.
+// Checks 590 and 591 are the Bitbucket token-types owner-run pair. Check 590's
+// fakes are a fake `fugaro` whose `creds set` really answers `--json` (a mode
+// per shape the add path can return: a document whose type is not what was
+// asked for, `write_verified` true, an identity read for a type that has none,
+// and its exit code for a refusal), a fake `git` whose `ls-remote` answers two
+// heads unless the case says it was refused, and a fake
+// Bitbucket Cloud on a loopback port whose `/2.0/user` carries a `kind` and a
+// scope header per token type, one of them a 403 -- so a case bends one answer
+// at a time and says what the block then reads; Check 591's are fake `fugaro`,
+// `gcloud` and `git` (the last failing every call, so a check that ran git of
+// its own shows up) beside one loopback server answering BOTH faces of the real
+// thing: Bitbucket Cloud's API with a different answer for each token type, and
+// the credentials service's front door on the proxy route, whose 403
+// `unverified_run_identity` is the one refusal the check forces. The fake
+// `gcloud` serves the service's own `credsvc: audit` lines for the runs the fake
+// `fugaro` records, filtered by the run id the check put in its own filter, so a
+// case says which token served which repository -- with a lagging mode for the
+// seconds Cloud Logging takes to ingest a line. Both tests write only sentinels
+// and assert that no sentinel survives a run, and both fake servers echo back
+// what they were sent in a hostile mode, so an endpoint's own text can never
+// reach the block.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -357,6 +390,7 @@ var liveCheckScripts = []struct {
 	{"check-410.sh", "check-410_test.sh"},
 	{"check-500.sh", "check-500_test.sh"},
 	{"check-501.sh", "check-501_test.sh"},
+	{"check-581.sh", "check-581_test.sh"},
 	{"check-411.sh", "check-411_test.sh"},
 	{"check-412.sh", "check-412_test.sh"},
 	{"check-c0.sh", "check-c0_test.sh"},
@@ -384,6 +418,9 @@ var liveCheckScripts = []struct {
 	{"check550.sh", "check550_test.sh"},
 	{"check139.sh", "check139_test.sh"},
 	{"check200.sh", "check200_test.sh"},
+	{"check127.sh", "check127_test.sh"},
+	{"check590.sh", "check590_test.sh"},
+	{"check591.sh", "check591_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -448,9 +485,10 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 174 items on one runner and under a minute each; a split that
-// dropped one, ran one twice or fell back to everything would show up as a
-// green run that tested less, which is the failure this pins.
+// The suite is 198 items on one runner (66 scripts, three shards each) and under
+// a minute each; a split that dropped one, ran one twice or fell back to
+// everything would show up as a green run that tested less, which is the failure
+// this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
 	var items []liveCheckShard
 	for _, c := range liveCheckScripts {

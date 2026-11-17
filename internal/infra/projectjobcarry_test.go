@@ -62,11 +62,12 @@ func jobsOfProfile(t *testing.T, jobs map[string]any, name string) map[string]an
 // document that keeps a job no profile of the config declares.
 //
 // Mutations (each run and restored): carry project_jobs alone, and the fast
-// profile's variants are missing below. Dropping the per-profile filter changes
-// nothing here: the fixture's only other jobs are the installation's implicit
-// review job, which this document composes itself under the same name, so the
-// name check skips it either way. What pins the filter is
-// TestCarriedProjectJobsTakesTheNamedProfilesJobsAlone.
+// profile's variants are missing below. Carry every job the record holds rather
+// than the named profiles' — drop the filter — and the standard-bitbucket coding
+// job, which the record holds and this document does not declare, comes back
+// with it, so this test pins the filter too (as
+// TestCarriedProjectJobsTakesTheNamedProfilesJobsAlone does over a record of the
+// account axis).
 func TestCarriedProjectJobsKeepsTheCodingJobAndItsReviewVariants(t *testing.T) {
 	// The installation that deployed the profile's jobs, with a second profile
 	// beside it whose jobs the config below no longer composes either.
@@ -82,11 +83,13 @@ func TestCarriedProjectJobsKeepsTheCodingJobAndItsReviewVariants(t *testing.T) {
 			slices.Sorted(maps.Keys(review)))
 	}
 
-	// The transition: the config declares the bitbucket default alone, which is
-	// the shape installSpec builds — the config's own profiles minus the one
-	// the door could not compose a job for.
-	fresh := projectReviewJobsDocument(t, implicitReviewLC()+
-		"profiles:\n  standard: { provider: bitbucket, cpu: 2, memory: 8Gi, timeout_class: 6h }\n")
+	// The transition: the local config declares no coding profile, which is the
+	// shape installSpec builds — the config's own profiles minus the one the
+	// door could not compose a job for, whose job the installation's record
+	// holds instead of the document. So the document this config composes is the
+	// installation's implicit review job and nothing else, and the profile the
+	// carry is asked for is one no profile of it declares.
+	fresh := projectReviewJobsDocument(t, implicitReviewLC())
 	if got := projectJobsOf(t, fresh); len(got) != 0 {
 		t.Fatalf("the fixture's own document already carries %v, so this test would not be about the carry", slices.Sorted(maps.Keys(got)))
 	}

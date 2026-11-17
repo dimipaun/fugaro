@@ -1356,11 +1356,15 @@ test_a_missing_tool_stops_before_anything_is_called() {
   local dir=$work/notools
   prepare "$dir"
   mkdir -p "$dir/empty"
+  local tool
+  for tool in bash mktemp python3 dirname cat rm mkdir date tr sed grep; do
+    ln -s "$(command -v "$tool")" "$dir/empty/$tool" 2>/dev/null || true
+  done
   status=0
-  env PATH="$dir/empty:/usr/bin:/bin" HOME="$dir/home" TMPDIR="$dir/tmp" \
+  env PATH="$dir/empty" HOME="$dir/home" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_GCLOUD_STATE="$dir/state" \
     CHECK197_REPO="$REPO_ONE" CHECK197_OUTSIDE="$REPO_OUTSIDE" \
-    bash "$script" >"$dir/out" 2>"$dir/err" || status=$?
+    "$dir/empty/bash" "$script" >"$dir/out" 2>"$dir/err" || status=$?
   out=$(cat "$dir/out")
   err=$(cat "$dir/err")
   expect_status "$status" 2 "no gcloud on PATH: the verdict"

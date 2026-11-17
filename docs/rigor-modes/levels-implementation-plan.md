@@ -139,7 +139,7 @@ The approved plan's tasks write some of these files too: T2.2 `prompts.go`; T1.6
 
 ## Checks
 
-No new check number. Slice 8's Check 119 (owner-run) gains one step per level: a throwaway task at each level on the sandbox, and the hand-back artefact read back. The owner runs it; no agent performs any step.
+No new check number. Slice 8's Check 127 (owner-run) gains one step per level: a throwaway task at each level on the sandbox, and the hand-back artefact read back. The owner runs it; no agent performs any step.
 
 ## Open items
 
