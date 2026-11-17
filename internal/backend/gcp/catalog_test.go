@@ -985,9 +985,9 @@ func scanFilesTar(files map[string]string) (*bytes.Buffer, error) {
 // step the derived build has no use for — the clone step, which checks the
 // entry's repository out at the commit the copy pinned, between the step that
 // reads the copied Dockerfile and the step that pins it (D1396), and hands it
-// to the entry's build as a named context (B8). It clones by commit and never
-// by branch: the branch head at build time is the tree the copy pinned only by
-// accident (D1394).
+// to the entry's build as an image of the worker's own (B8). It clones by commit
+// and never by branch: the branch head at build time is the tree the copy pinned
+// only by accident (D1394).
 //
 // An entry that names no context gets the same step, at the commit the copied
 // definition was taken from: its Dockerfile clones with the credential itself
@@ -1082,9 +1082,8 @@ func TestCatalogContextEntryBuildsTheCopiedDockerfile(t *testing.T) {
 // the same one (F23's regression grammar: the build step and what it builds are
 // unchanged, and what changed is where its Dockerfile gets the repository's
 // files from). The clone step is in this request too, at the commit the copied
-// definition was taken from, and it writes the checkout the entry's build
-// copies as a named context — it is not the directory this build step builds
-// from.
+// definition was taken from, and it writes the checkout the entry's build copies
+// as an image — it is not the directory this build step builds from.
 func TestCatalogBuildWithoutAContextBuildsTheCopiedDefinition(t *testing.T) {
 	s := catalogBuildSpec(t)
 	b, err := CatalogBuildRequest("proj-1234", s)
@@ -1104,17 +1103,17 @@ func TestCatalogBuildWithoutAContextBuildsTheCopiedDefinition(t *testing.T) {
 		t.Fatalf("the derived build's _CONTEXT_DIR = %q, want %q", got, contextDirDefault)
 	}
 	// The Dockerfile is the copied one, and the positional context is the
-	// directory it lives in: the checkout the clone step wrote is a named
-	// context and never this build's context argument.
+	// directory it lives in: the checkout the clone step wrote is an image and
+	// never this build's context argument.
 	script := strings.Join(step(t, b, "build").Args, "\n")
 	if !strings.Contains(script, "--file /workspace/context/Dockerfile") || !strings.Contains(script, `--tag "$$candidate" "$$CONTEXT_DIR"`) {
 		t.Fatalf("the build step does not build the copied definition: %q", script)
 	}
-	// The derived build does not get the named context: it clones in its own
+	// The derived build is handed no checkout at all: it clones in its own
 	// Dockerfile, with the credential, which is what a catalog entry may no
 	// longer do (B8 is the catalog path's).
-	if derivedBuild := strings.Join(step(t, derived, "build").Args, "\n"); strings.Contains(derivedBuild, "build-context") {
-		t.Fatalf("the derived build is handed a named context it does not have: %q", derivedBuild)
+	if derivedBuild := strings.Join(step(t, derived, "build").Args, "\n"); strings.Contains(derivedBuild, catalogCloneImage) {
+		t.Fatalf("the derived build is handed a checkout it does not have: %q", derivedBuild)
 	}
 }
 
@@ -1247,19 +1246,25 @@ func TestCatalogBuildRefusesATemplateSaltThatIsNotAHexDigest(t *testing.T) {
 }
 
 // catalogDockerStub is the docker the clone step runs against in the tests
-// below: `docker image inspect` answers a digest, and the clone the step builds
-// leaves a checkout holding whatever TREE writes, where the step asked the
-// build to export it (--output type=local,dest=...). The checkout is in
-// "$CHECKOUT" and the workspace the script's /workspace names is in
+// below: `docker image inspect` answers a digest, the build the step runs has to
+// tag the checkout the entry's build copies, and the create/cp/rm trio an entry
+// that names a context runs unpacks it into the directory the step asked for —
+// where the guard then looks for the context, and where the tree's own
+// "$CHECKOUT" is. The workspace the script's /workspace names is in
 // "$WORKSPACE".
 const catalogDockerStub = `#!/bin/sh
 case "$1" in
 image) echo "sha256:1111"; exit 0 ;;
 build)
+  tagged=
   for a in "$@"; do
-    case "$a" in type=local,dest=*) dest=${a#type=local,dest=} ;; esac
+    [ "$a" = ` + catalogCloneImage + ` ] && tagged=1
   done
-  [ -n "$dest" ] || { echo "the clone's build exports no checkout" >&2; exit 1; }
+  [ -n "$tagged" ] || { echo "the clone's build tags no checkout" >&2; exit 1; }
+  exit 0 ;;
+create) echo "container-1"; exit 0 ;;
+cp)
+  for dest; do :; done
   mkdir -p "$dest" || exit 1
   CHECKOUT="$dest" sh -c "$TREE" || exit 1
   exit 0 ;;

@@ -25,8 +25,8 @@ import (
 // The credential therefore reaches a build the entry has no part in: Fugaro
 // writes this Dockerfile and this script, they are that build's whole context,
 // it is built from the pinned base digest with GIT_CONFIG_NOSYSTEM=1, and what
-// it exports is the checkout as a named build context, which the entry's own
-// build is handed in place of a secret (catalogEntryBuildStep).
+// it exports is the checkout, tagged as an image the worker holds, which the
+// entry's own build copies from in place of a secret (catalogEntryBuildStep).
 //
 // The step alone decides what the credential may be spent on, and it decides it
 // before each fetch rather than trusting the provider: the store file it is
@@ -52,19 +52,34 @@ const (
 	// catalogCloneName is the script's name where the generated build copies it
 	// to, inside the clone stage the entry never shares.
 	catalogCloneName = "/usr/local/lib/fugaro-clone.sh"
-	// catalogCloneDest is where the generated build exports the checkout:
-	// catalogContextRoot, the directory the derived build's own source step
-	// clones into, which a context entry's build step already builds from.
+	// catalogCloneDest is where the step puts the checkout on disk for an entry
+	// that names a build context: catalogContextRoot, the directory the derived
+	// build's own source step clones into, which a context entry's build step
+	// already builds from. A build context is a directory docker tars, so the
+	// image below is unpacked there for one (catalogCloneMaterialize) and the
+	// entry that names no context is spared it.
 	catalogCloneDest = catalogContextRoot
-	// catalogCloneContext is the name the checkout reaches the entry's build
-	// under — `--build-context fugaro-checkout=...`, so an entry's Dockerfile
-	// copies the checkout with `COPY --from=fugaro-checkout` and never clones
-	// with a credential of its own. The name is namespaced rather than a plain
-	// `src` because docker resolves a named context by name wherever a
-	// Dockerfile writes `FROM <name>` or `COPY --from=<name>`: a short, generic
-	// name is one an entry's own stage may already have, and what an entry
-	// meant by it would then be read from somewhere else.
-	catalogCloneContext = "fugaro-checkout"
+	// catalogCloneImage is the name the checkout reaches the entry's build
+	// under: the step tags what its build exports with it, and an entry's
+	// Dockerfile copies the checkout with `COPY --from=fugaro-checkout` instead
+	// of cloning with a credential of its own.
+	//
+	// An image and not a named build context: `--build-context` is a buildx
+	// flag, and the step that builds an entry is the template's plain
+	// `docker build` on a worker that ships the docker CLI and no buildx
+	// (docs/design/base-image.md) — a request that wrote one fails the whole
+	// build at its first flag, which is what an update of the `go` image found
+	// out. Docker resolves the name in `COPY --from=<name>` out of the local
+	// image store before the registry — its default resolve mode is "prefer
+	// local" — and neither build passes --pull, so what an entry copies here is
+	// what this step just built.
+	//
+	// The name is namespaced rather than a plain `src` for the reason a named
+	// context was: docker resolves an image or a stage by that one name wherever
+	// a Dockerfile writes `FROM <name>` or `COPY --from=<name>`, so a short,
+	// generic name is one an entry's own stage may already have, and what the
+	// entry meant by it would then be read from somewhere else.
+	catalogCloneImage = "fugaro-checkout"
 	// catalogCloneCredential is the git credential-store line the credential
 	// step wrote into the fugaro-creds volume: the clone step's own build is
 	// handed it as a file secret and this step removes it when it is done.
@@ -274,15 +289,13 @@ rm -f "$conf"
 // build of the entry's own.
 const catalogTemplateCredentialArg = `--secret "id=git-credentials,src=` + catalogCloneCredential + `"`
 
-// catalogTemplateContextArg is what replaces it: the checkout the clone step
-// exported, as a named build context. It is the derived template's own text,
-// rewritten for this path, and the value reaches the shell from the step's
-// environment (catalogEntryBuildStep) — the directive's own dollar is doubled
-// like every other one in a step's script, because Cloud Build substitutes a
-// config's text: what the shell reads is "$$CLONE_CONTEXT" rewritten to
-// $CLONE_CONTEXT, and a single one here would reach the shell as a
-// substitution this request never declared.
-const catalogTemplateContextArg = `--build-context "` + catalogCloneContext + `=$$CLONE_CONTEXT"`
+// catalogTemplateCredentialLine is that argument as the one line of the build
+// step's script a catalog build takes out: the argument and the backslash that
+// joins it to the line after it. The checkout reaches the entry's build as the
+// image catalogCloneImage instead, which no flag carries — the name is in the
+// worker's image store by the time that build runs — so the line goes and
+// nothing stands in its place.
+const catalogTemplateCredentialLine = catalogTemplateCredentialArg + " \\"
 
 // errTemplateCredentialMoved is what a catalog request answers when the embedded
 // template no longer hands the build step the credential in that one argument.
@@ -377,13 +390,31 @@ docker build --progress plain \
   --build-arg "REPO_HOST=$REPO_HOST" \
   --build-arg "GITHUB_API=$GITHUB_API" \
   --secret "id=git-credentials,src=` + catalogCloneCredential + `" \
-  --output "type=local,dest=` + catalogCloneDest + `" \
+  --tag ` + catalogCloneImage + ` \
   ` + catalogCloneWork + "\n")
 	if context {
+		b.WriteString(catalogCloneMaterialize)
 		b.WriteString(catalogCloneGuard)
 	}
 	return b.String()
 }
+
+// catalogCloneMaterialize is the checkout as a directory, which an entry that
+// names a build context needs and one that names none is spared: the build step
+// hands docker a directory as its context and docker tars what it finds there.
+// The image is the only place the checkout exists, and a container made from it
+// is the one shape the docker CLI unpacks an image's filesystem with — docker cp
+// keeps the ownership the clone set, which is what the entry's own COPY of the
+// same tree would have read.
+//
+// The command given to create is never run — the container is never started, and
+// nothing of this image is executable anyway — but docker refuses to create a
+// container from an image whose final stage, FROM scratch, declares none.
+const catalogCloneMaterialize = `install -d -m 0755 ` + catalogCloneDest + `
+cid=$(docker create ` + catalogCloneImage + ` true)
+docker cp -a "$cid:/." ` + catalogCloneDest + `
+docker rm "$cid"
+`
 
 // catalogCloneGuard is the check the clone step ends with for an entry that
 // names a build context: the directory the build step will hand docker as its
@@ -402,10 +433,11 @@ esac
 `
 
 // catalogEntryBuildStep makes the entry's own build step the one a catalog build
-// runs: the checkout the clone step exported reaches it as the named build
-// context catalogCloneContext, and the git credential the derived template hands
-// its build step is not in this request's build step at all — nor is the volume
-// that holds it, which no step after the clone mounts.
+// runs: the checkout the clone step tagged reaches it as the image
+// catalogCloneImage, which the worker holds by the time this step runs and no
+// flag of this step names, and the git credential the derived template hands its
+// build step is not in this request's build step at all — nor is the volume that
+// holds it, which no step after the clone mounts.
 //
 // Only the credential is taken out here, and no other secret is left to take
 // out: the repository's workflow secrets, declared in its fugaro.yaml, reached a
@@ -419,15 +451,40 @@ func catalogEntryBuildStep(build *cloudbuild.BuildStep) error {
 		if !strings.Contains(arg, catalogTemplateCredentialArg) {
 			continue
 		}
-		if strings.Count(arg, catalogTemplateCredentialArg) != 1 {
-			return errTemplateCredentialMoved
+		script, err := dropCredentialLine(arg)
+		if err != nil {
+			return err
 		}
-		build.Args[i] = strings.Replace(arg, catalogTemplateCredentialArg, catalogTemplateContextArg, 1)
-		build.Env = append(build.Env, "CLONE_CONTEXT="+catalogCloneDest)
+		build.Args[i] = script
 		build.Volumes = nil
 		return nil
 	}
 	return errTemplateCredentialMoved
+}
+
+// dropCredentialLine takes the credential argument out of a build step's script
+// with the whole line that holds it, continuation included: the line the
+// template writes is the argument alone, so what is left of the docker build is
+// every other argument it had and the same line joins them. A template that
+// wrote the credential beside another argument is a template this code no longer
+// knows, and the build is refused rather than left with a command whose flags
+// this function guessed at.
+func dropCredentialLine(script string) (string, error) {
+	lines := strings.Split(script, "\n")
+	found := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) != catalogTemplateCredentialLine {
+			continue
+		}
+		if found >= 0 {
+			return "", errTemplateCredentialMoved
+		}
+		found = i
+	}
+	if found < 0 {
+		return "", errTemplateCredentialMoved
+	}
+	return strings.Join(append(lines[:found], lines[found+1:]...), "\n"), nil
 }
 
 // cloudBuildEscape doubles every dollar of a script the request carries: Cloud
