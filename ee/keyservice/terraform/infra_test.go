@@ -1181,6 +1181,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the API's one grant on the handover ring, which is not the ring the signer role is on",
 		tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the API's reach of the portal's document store, which holds no key",
 		tfNames(servicesRoot, `resource "google_secret_manager_secret_iam_member" "api_reads"`):         "the API's read of the portal's own secrets, which the minter holds none of",
+		tfNames(servicesRoot, `resource "google_project_iam_custom_role" "deletes_signins"`):            "the sign-in deleter, one permission, which holds no key, reads no other user and touches no sign-in setting",
 		tfNames(servicesRoot, `resource "google_project_iam_member" "api_deletes_signins"`):             "the API's deletion of a sign-in for a person who deleted their own account (D2195), which holds no key either",
 	}
 	for _, rel := range tfFiles(t) {
@@ -1337,9 +1338,28 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	signins := tfRootBlock(t, servicesRoot, `resource "google_project_iam_member" "api_deletes_signins"`)
 	tfAttrsAre(t, signins, "the sign-in deletion grant in "+servicesRoot, []struct{ attr, value string }{
 		{"project", "var.project"},
-		{"role", `"roles/firebaseauth.admin"`},
+		{"role", `"projects/${var.project}/roles/${var.deletes_signins_role}"`},
 		{"member", "google_service_account.api.member"},
-	}, "deleting a person's Firebase Auth user is an admin call on the Identity Toolkit (accounts:delete), made by the API through the account it already runs as (D2195): the member is the API's own account and not a second identity, and the role is the predefined one that call is granted by — the same role the history job holds for its own deletion of Auth users. A wider role here reaches every user in the project, and dropping the grant answers the call 403 (Check 571)")
+	}, "deleting a person's Firebase Auth user is an admin call on the Identity Toolkit (accounts:delete), made by the API through the account it already runs as (D2195): the member is the API's own account and not a second identity, and the role is this root's own, holding the one permission that call needs. The predefined role carrying that permission, firebaseauth.admin, also lists and reads every user in the project, creates and updates users and changes the project's sign-in settings, none of which an internet-facing account is given (Check 571). Dropping the grant answers the call 403, which is the difference between a deletion and an account nobody can reach")
+
+	// And the role that grant names, whose permissions are the other half of the
+	// same pair: `accounts:delete` is granted by firebaseauth.users.delete and by
+	// nothing wider, so the custom role holds that one permission — a second one
+	// here is a reach of every user's record or of the project's sign-in settings
+	// handed to the account the internet calls.
+	deleter := tfRootBlock(t, servicesRoot, `resource "google_project_iam_custom_role" "deletes_signins"`)
+	tfAttrsAre(t, deleter, "the sign-in deleter role in "+servicesRoot, []struct{ attr, value string }{
+		{"role_id", "var.deletes_signins_role"},
+		{"permissions", `["firebaseauth.users.delete"]`},
+	}, "the API deletes a sign-in and does nothing else to the directory (D2195): the permission is the one the accounts:delete call needs, and the role id is the variable this root's grant names")
+
+	// And what that grant REACHES: its role is `var.deletes_signins_role`'s
+	// default, which the sweeps above read as text and never pin, so without this
+	// a default naming one of the project's other custom roles hands the API that
+	// role with every block above still reading as written.
+	if got := tfDefaultLiteral(tfVarBlock(t, servicesRoot, "deletes_signins_role")); got != `"fugaroDeletesSignins"` {
+		t.Errorf("services/'s deletes_signins_role default reads as %s, want %s:\nthe deletion grant names the variable, so a default changed here moves the API to another custom role in the project — the handover sealer among them — with the role's one permission and the grant alike still reading as written (D2195, Check 571)", got, `"fugaroDeletesSignins"`)
+	}
 
 	// And the identity each service RUNS as, which is the half a grant sweep
 	// cannot see: a service that runs as another account IS that account, so an

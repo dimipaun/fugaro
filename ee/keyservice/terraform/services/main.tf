@@ -603,13 +603,32 @@ resource "google_project_iam_member" "api_datastore" {
 # A person deleting their own account takes their sign-in with them (D2195), and
 # the act on the Identity Toolkit that does it — `accounts:delete` — is an admin
 # call: the API is the process that makes it, through the account it already runs
-# as, and this is the predefined role that call is granted by. The history job
-# holds the same role for its own deletion of Auth users (the firebase module),
-# and this reaches no key, so Check 571's boundary around the API's other four
-# reaches is where it was.
+# as, and `firebaseauth.users.delete` is the whole of what that call needs.
+#
+# The predefined role that permission comes in, `firebaseauth.admin`, is not that
+# call's reach and is not what this account may hold: it also lists and reads
+# every user in the project, creates and updates users (an address set as
+# verified among them) and changes the project's sign-in settings — its providers
+# and its authorized domains. The internet-facing account holds none of those, so
+# the role is a custom one with the one permission. The history job holds the
+# predefined role for its own deletion of Auth users (the firebase module), where
+# no request reaches the account.
+resource "google_project_iam_custom_role" "deletes_signins" {
+  project     = var.project
+  role_id     = var.deletes_signins_role
+  title       = "Fugaro sign-in deleter"
+  description = "Deletes a sign-in on the Identity Toolkit, which the API does only for the account that asked for its own deletion. The API's service account is its only holder (D2195, Check 571)."
+  permissions = ["firebaseauth.users.delete"]
+
+  depends_on = [google_project_service.this]
+}
+
+# The API's grant of that role, and the whole of it: one member, the account the
+# internet-facing service runs as. It reaches no key, so Check 571's boundary
+# around the API's other four reaches is where it was.
 resource "google_project_iam_member" "api_deletes_signins" {
   project = var.project
-  role    = "roles/firebaseauth.admin"
+  role    = "projects/${var.project}/roles/${var.deletes_signins_role}"
   member  = google_service_account.api.member
 }
 
