@@ -623,7 +623,7 @@ func TestTheCredentialsStageAppliesForAMovedRecord(t *testing.T) {
 	switchReposOntoGitHub(t, r.initRig, "acme/sandbox")
 	r.appendConfig(t, "profiles:\n"+
 		"  { standard: { provider: github, cpu: 2, memory: 8Gi, timeout_class: 6h, allow_repos: [github/acme/sandbox] } }\n")
-	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"+config.GitHubAppKeySecret+": "+credsValue(t, "appkey")+"\n"))
 	// The installation as this run finds it: the service is there, on THIS
 	// release's image, so the stage has no image of its own to move and its
 	// skip has nothing to decide on but the records.
