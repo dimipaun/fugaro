@@ -2,7 +2,7 @@
   "hosting": {
     "public": "website/dist",
     "cleanUrls": true,
-    "ignore": ["**/.*", "keys/**"],
+    "ignore": ["**/.*"],
     "headers": [
       {
         "source": "**",
