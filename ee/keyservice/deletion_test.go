@@ -40,6 +40,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -330,6 +331,54 @@ func TestOrgDeletionRevokesAndCancels(t *testing.T) {
 	}
 	if _, present := heldRecord[checkoutTransaction](f.fixture, checkoutTransactionsCollection, "txn-sub-dana"); !present {
 		t.Error("the checkout's transaction is gone, and it is the record of what was bought and by whom")
+	}
+}
+
+// TestOrgDeletionRevokesTheSubscriptionsKeys: the walk reaches a key by every
+// route there is to one, and this is the route that is not the licence's id.
+//
+// A record written before an issuance carried the entitlement's id names the
+// subscription and nothing else, and it is the shape the refund walk covers too
+// (merchant.go): the join back to the subscription is a query on the licence's
+// id, through the origin record the purchase wrote. A walk that read the
+// licence's own records and stopped leaves this key live — at an installation
+// whose organisation no longer exists, which is the whole of what a deletion is
+// for.
+func TestOrgDeletionRevokesTheSubscriptionsKeys(t *testing.T) {
+	f := newDeletionFixture(t)
+	ctx := context.Background()
+	org, _ := f.payingWorkspace(t, billingSeats)
+	licence := f.onlyEntitlement(t, org.ID)
+	// The key the subscription minted back then: the plan, the buyer, the term
+	// and the subscription, and no entitlement id at all.
+	older := Record{
+		Source:       "txn-before-the-field",
+		KeyID:        "key-before-the-field",
+		Plan:         licence.Row,
+		Subscription: "sub-dana",
+		Organisation: org.ID,
+		Email:        danaEmail,
+		Issued:       f.now.Add(-30 * 24 * time.Hour),
+		Expires:      licence.EndsAt,
+	}
+	if err := f.store.SaveIssuance(ctx, older); err != nil {
+		t.Fatalf("seeding the key the licence's subscription minted before a record named the licence: %v", err)
+	}
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	rec := f.deleteOrg(org.ID)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("deleting the organisation answered %d: %s", rec.Code, rec.Body)
+	}
+
+	withdrawn, found, err := f.store.Revocation(ctx, older.KeyID)
+	switch {
+	case err != nil:
+		t.Fatalf("reading the subscription's key back: %v", err)
+	case !found:
+		t.Error("the key the licence's subscription minted is not withdrawn, so an installation of the deleted organisation runs on")
+	case withdrawn.Reason != ReasonDeletion:
+		t.Errorf("the key was withdrawn as %q, want %q", withdrawn.Reason, ReasonDeletion)
 	}
 }
 

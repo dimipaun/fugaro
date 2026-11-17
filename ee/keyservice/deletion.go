@@ -262,12 +262,18 @@ func (s *Service) deleteOrganisation(ctx context.Context, actor Caller, organisa
 // revokes again — this walk is idempotent — rather than a dead licence with live
 // keys.
 //
-// The walk is the same one a refund takes, and it is written out here rather than
-// shared with that file because the two are tasks of different areas (the plan's
-// P2.4 gives this file and P4.2 gives that one) and because only the keys of the
-// one licence are in question here: there is no event, no subscription and no
-// transaction to resolve, so the entitlement's own id is the whole of what the
-// walk is handed.
+// The coverage is that file's own, step for step, and it is written out here
+// rather than shared with it because the two are tasks of different areas (the
+// plan's P2.4 gives this file and P4.2 gives that one) and because a deletion has
+// no event to resolve: the licence is the whole of what the walk is handed.
+//
+// Every step is a route to a key the customer's installation may be running, and
+// none of them subsumes another: a licence's own keys are the ones its bindings
+// minted, a record naming the licence is one the reissue or the rotation wrote
+// (whose source names the event and not the key it replaced, D2200), a record
+// naming only the licence's SUBSCRIPTION is one written before the entitlement's
+// id was on a record at all, and a rotation's record names the key it replaced
+// and neither the licence nor the subscription.
 func (s *Service) revokeLicence(ctx context.Context, entitlement WireEntitlement, at time.Time) error {
 	records, err := s.store.Issuances(ctx)
 	if err != nil {
@@ -283,18 +289,11 @@ func (s *Service) revokeLicence(ctx context.Context, entitlement WireEntitlement
 		walk = append(walk, keyID)
 		return s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonDeletion, At: at})
 	}
-	// Every record that names this licence, which is what F29 makes a key of it:
-	// the binding's key, the one a seat change or a renewal reissued, the one the
-	// merchant's own renewal minted, and — the step below — the successor a
-	// rotation left behind. It is also every record the binding's own source
-	// names, which is the key a trial mints (api_trial.go writes a binding's
-	// source and no licence of its own) and the ones minted before P3.6 wrote the
-	// field at all.
-	for _, record := range entitlementRecords(records, entitlement.ID) {
-		if err := revoke(record.KeyID); err != nil {
-			return err
-		}
-	}
+	// The licence's own keys first, because they are the keys this licence
+	// actually has: the binding's key, the one a seat change or a renewal
+	// reissued, the key a trial mints (api_trial.go writes a binding's source and
+	// no licence of its own) and the ones minted before P3.6 wrote the field at
+	// all — licenceKeys reads the binding's own source as well.
 	keys, err := s.licenceKeys(ctx, entitlement.ID)
 	if err != nil {
 		return err
@@ -302,6 +301,35 @@ func (s *Service) revokeLicence(ctx context.Context, entitlement WireEntitlement
 	for _, keyID := range keys {
 		if err := revoke(keyID); err != nil {
 			return err
+		}
+	}
+	// Then every record that names this licence, whatever minted it and whatever
+	// its source and subscription say (F29): a record the steps below cannot
+	// follow — a comped or operations grant names no subscription at all — is
+	// still a key the customer's installation may be running.
+	for _, record := range entitlementRecords(records, entitlement.ID) {
+		if err := revoke(record.KeyID); err != nil {
+			return err
+		}
+	}
+	// And every other issuance of the licence's own subscription, which is where
+	// the keys of a licence sold before a record carried the entitlement's id
+	// live: the origin record a purchase wrote names the subscription and the
+	// licence, so the join back to the subscription is a query on the licence's
+	// id. The empty subscription is not a licence — an unsold key names none, so
+	// matching on "" would withdraw every hand-minted key there is.
+	subscription, err := s.licenceSubscription(ctx, entitlement.ID)
+	if err != nil {
+		return err
+	}
+	if subscription != "" {
+		for _, record := range records {
+			if record.Subscription != subscription {
+				continue
+			}
+			if err := revoke(record.KeyID); err != nil {
+				return err
+			}
 		}
 	}
 	// A rotation's record names the key it replaced and not the licence, so the
