@@ -866,6 +866,14 @@ type doctorShort struct {
 // claude_accounts lists has no `accounts add` form to be the whole fix of
 // (doctorAccountStore), so the mint-then-store pair stands beside the one
 // command, which is what those two checks print for it.
+//
+// spend-drift is the entry this table must not have (spend-accuracy SA5.3):
+// doctor emits it once per drifting model under the one ID, and R6 asks the
+// line a reader sees to name the model and the factor it left the price
+// table's band by. A form keyed by the ID alone cannot carry either — the ID
+// is the same for every model — so a short sentence here would be a one-line
+// stand-in that hides the two facts the line exists for, and the check keeps
+// its own sentence, which the default view prints whole.
 var doctorShorts = map[string]doctorShort{
 	"cli-version": {"a newer Fugaro release is available.", ""},
 	"plugin-pin":  {"the Claude Code plugin is pinned to another version than this Fugaro.", ""},
