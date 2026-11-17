@@ -170,6 +170,7 @@ Subcommands:
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
 - `fugaro accounts pool` -- List, declare and remove the named pools a craft's access may name
 - `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
+- `fugaro accounts switch` -- Move every key of this machine's config that names FROM as an account choice to TO
 
 ## `fugaro accounts add`
 
@@ -736,6 +737,66 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--profile` | string | "" | no | the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts switch`
+
+Move every key of this machine's config that names FROM as an account choice to TO
+
+Move every key of this machine's local project config that names FROM as an
+account choice to TO, and converge this installation on the config it writes.
+
+The keys are the whole of what may name an account as a choice:
+
+  default_claude_account
+  stages.<stage>.claude_account
+  crafts.<craft>.access
+  repos.<repo>.claude_accounts
+  profiles.<profile>.claude_accounts
+
+Nothing else in the file is touched: the claude_accounts block keeps both names
+and the credentials block keeps both credentials, so both accounts stay declared
+and a switch takes no token away.
+
+TO must already be declared here — an account of the claude_accounts block,
+never an alias and never a pool — and its allow_data_to must cover every
+repository the keys it takes over serve: each repository whose own
+claude_accounts list names it, and every allow_repos entry of a profile that
+lists it. The refusal names the one command that widens the list.
+
+FROM may be a declared account, the default account (the unsuffixed
+claude-oauth-token secret) or a craft's own credential. It may not be an alias:
+the keys naming one are meant to keep naming it, and fugaro accounts alias set
+moves all of them in one edit. It may not be a pool or one of a pool's members:
+a pool is walked inside a run, at the stage boundary, and a switch may not
+re-resolve what a run spends mid-stage.
+
+Then it converges, in the same command and after the write, exactly as
+fugaro accounts alias set does: the policy node, the job set and this checkout's
+repository root, through the stages fugaro update runs.
+
+A run already in flight keeps the account its launch resolved: nothing here
+rewrites a record, a ledger or a counter (docs/design/update-in-flight.md), and
+a stage already going spends the credential it started with.
+
+--dry-run prints the keys the switch would rewrite, and the diff of the file it
+would write, and writes nothing.
+
+Run this at your own terminal: a switch decides which credential this project's
+stages spend, so a coding agent's session is refused, --yes included.
+
+Usage: `fugaro accounts switch FROM TO`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--dry-run` | bool | `false` | no | print the keys the switch would rewrite and write nothing |
+| `-h`, `--help` | bool | `false` | no | help for switch |
+| `--yes` | bool | `false` | no | confirm the switch without a prompt |
 
 Subcommands:
 
