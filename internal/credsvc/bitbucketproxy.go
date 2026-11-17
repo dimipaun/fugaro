@@ -133,6 +133,14 @@ const maxPRWriteBodyBytes = 1 << 20
 // the bound that keeps an answer that is not one from being held whole.
 const maxPRFactsBytes = 1 << 20
 
+// maxLFSBatchBodyBytes bounds a git-lfs batch call's body, which this route
+// reads before the call is decided (ReadLFSBatch): a download's batch and an
+// upload's are the same POST, and the operation in the body is what tells them
+// apart (R4). A batch is the object list of one transfer, a few kilobytes of
+// JSON, so this is orders of magnitude above one - and a body that needs more
+// is not one of them.
+const maxLFSBatchBodyBytes = 1 << 20
+
 // refusalEncodedBody is this route's own refusal class for a git request whose
 // body is not identity-encoded. It is not one of gitproxy's classes because it
 // is not a rule about what a run may do: it is the transport's own, decided
@@ -449,6 +457,11 @@ func (b bundleTokens) LogValue() slog.Value { return slog.StringValue(b.String()
 //     read in full before anything is decided about it. It is bounded
 //     (maxUpdateRequestBytes), and what was read is kept to be forwarded
 //     unchanged after the rules allowed it.
+//   - a git-lfs batch's body, in the same place and for the same reason: the
+//     operation in it is what tells a download's batch from an upload's, and
+//     the rules decide the call on it (ReadLFSBatch, R4). It is bounded
+//     (maxLFSBatchBodyBytes) and forwarded unchanged once allowed, so the
+//     operation bitbucket.org acts on is the one the rules read.
 //   - the project's published block, and then the decision. Both the repository
 //     the call names and whether this installation proxies it at all are the
 //     block's answer (G3, G9), so nothing is decided before it is read.
@@ -708,6 +721,27 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		pushHead = consumed
 	}
 
+	// A git-lfs batch call's operation, read in front of the decision and
+	// before any credential is chosen: git-lfs's path does not say whether this
+	// POST is a download's batch or an upload's, and the rules decide the call
+	// on the operation its body named (R4, ReadLFSBatch). The body read is what
+	// is forwarded once the rules have allowed it, so nothing of it is rewritten
+	// on the way out.
+	var lfsBody []byte
+	if req.LFS == gitproxy.LFSBatch {
+		operation, consumed, err := gitproxy.ReadLFSBatch(r.Body, maxLFSBatchBodyBytes)
+		if err != nil {
+			// One class for every way the body can be unreadable, as a push's
+			// is: the cause is the operator's (the service's own log line
+			// carries it) and the caller's answer is the class, which is never
+			// a byte of what it sent.
+			s.refuseProxyReason(ctx, w, id, purpose, credential, gitproxy.ReasonCallNotAllowed, err)
+			return
+		}
+		req.LFSOperation = operation
+		lfsBody = consumed
+	}
+
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil || !found {
 		s.refuseUnavailable(ctx, w, id, purpose, credential, "the project's policy could not be read")
@@ -735,8 +769,10 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 
 	// The body a write is checked on and then forwarded. A git push's is the
 	// section already read plus whatever follows it — the pack, streamed and
-	// never held. A REST GET has none, and the REST writes' bodies are short
-	// JSON documents, read whole because the rules read them (CheckPRWrite).
+	// never held. A git-lfs batch's is the whole document the operation was
+	// read out of, which is short and already in hand. A REST GET has none, and
+	// the REST writes' bodies are short JSON documents, read whole because the
+	// rules read them (CheckPRWrite).
 	var (
 		body          io.Reader
 		contentLength = int64(-1)
@@ -746,6 +782,12 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	case req.Kind == gitproxy.KindPush:
 		body = io.MultiReader(bytes.NewReader(pushHead), r.Body)
 		contentLength = r.ContentLength
+	case req.LFS == gitproxy.LFSBatch:
+		// The body was read to decide the call (ReadLFSBatch) and is forwarded
+		// as the very bytes it was read as: the operation is the only part of
+		// it this route looked at, and no byte of it is rewritten.
+		body = bytes.NewReader(lfsBody)
+		contentLength = int64(len(lfsBody))
 	case req.Call == gitproxy.CallPRCreate, req.Call == gitproxy.CallPRUpdate, req.Call == gitproxy.CallPRComment:
 		raw, err := readBoundedBody(r.Body, maxPRWriteBodyBytes)
 		if err != nil {

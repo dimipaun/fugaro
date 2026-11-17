@@ -41,6 +41,12 @@ const nestedOID = "9c1f4c3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a9988776655443322
 // under the remote's own URL.
 func nestedLFSPath(repo, rest string) string { return repo + ".git/info/lfs/objects/" + rest }
 
+// nestedLFSDownload is the batch body a client opens a DOWNLOAD with: the
+// operation the call is decided on (LFSOperation) beside the objects it names.
+// An upload is the same document with "upload" there, which is the call the
+// route refuses (TestProxyRefusesAnLFSBatchUpload).
+const nestedLFSDownload = `{"operation":"download","transfers":["basic"],"objects":[{"oid":"` + nestedOID + `","size":1}]}`
+
 // TestProxyRefusesAnUncoveredSubmoduleRepo is the refusal a submodule earns
 // when its repository is not one the run's profile serves, and the point of it
 // is the sentence: the operator is told WHICH repository the checkout asked
@@ -143,17 +149,19 @@ func TestProxyRefusesAnLFSWrite(t *testing.T) {
 // The batch call and the object download are the protocol's two reads and both
 // go to the repository's own /info/lfs path, with the bundle's token as git's
 // own x-token-auth Basic - the same credential, the same rebuilt host and the
-// same audit line every other call of this route has.
+// same audit line every other call of this route has. The batch's own body is
+// the one a client sends a download with, and it is forwarded exactly as it
+// was read: the operation in it is what the call was decided on.
 func TestProxyForwardsAnLFSReadToTheLFSRoute(t *testing.T) {
-	for _, tc := range []struct{ name, method, suffix, want string }{
-		{"the batch call", http.MethodPost, "batch", "/" + nestedLFSPath(testBitbucketRepo, "batch")},
-		{"an object download", http.MethodGet, nestedOID, "/" + nestedLFSPath(testBitbucketRepo, nestedOID)},
+	for _, tc := range []struct{ name, method, suffix, body, want string }{
+		{"the batch call", http.MethodPost, "batch", nestedLFSDownload, "/" + nestedLFSPath(testBitbucketRepo, "batch")},
+		{"an object download", http.MethodGet, nestedOID, "", "/" + nestedLFSPath(testBitbucketRepo, nestedOID)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, up, token := proxySharedSvc(t)
 			up.answerWith(http.StatusOK, `{"objects":[]}`)
 
-			resp, ans := s.proxySharedCall(t, tc.method, proxyPath(nestedLFSPath(testBitbucketRepo, tc.suffix)), nil, s.slug)
+			resp, ans := s.proxySharedCall(t, tc.method, proxyPath(nestedLFSPath(testBitbucketRepo, tc.suffix)), []byte(tc.body), s.slug)
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("the LFS read answered %d, want 200 (%s)", resp.StatusCode, ans)
 			}
@@ -167,6 +175,9 @@ func TestProxyForwardsAnLFSReadToTheLFSRoute(t *testing.T) {
 			if got.path != tc.want {
 				t.Errorf("the LFS read's upstream path = %q, want %q", got.path, tc.want)
 			}
+			if string(got.body) != tc.body {
+				t.Errorf("the upstream was sent the body %q, want the bytes the caller sent (%q)", got.body, tc.body)
+			}
 			wantAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(bitbucket.GitUsername+":"+token))
 			if got.auth != wantAuth {
 				t.Errorf("the upstream was shown %q, want the bundle's token as git's own x-token-auth Basic", got.auth)
@@ -176,6 +187,53 @@ func TestProxyForwardsAnLFSReadToTheLFSRoute(t *testing.T) {
 				t.Errorf("the audit line = %v, want the git purpose, the bundle's credential and ok", line)
 			}
 			s.noTokenAnywhere(t, token, string(ans))
+		})
+	}
+}
+
+// TestProxyRefusesAnLFSBatchUpload: git-lfs's upload is refused where it
+// actually arrives, and it arrives as the batch call and not as a PUT.
+//
+// A client that uploads objects opens with the same POST a download does and
+// names "upload" in the body's operation; the PUT to the object path that
+// follows is the transfer itself, which a client only makes once the server
+// has answered with upload actions. So a route that classified the path and
+// forwarded the body unread would hand the caller exactly those actions - the
+// run getting a way to write objects into a repository whose refs alone it may
+// move - while the PUT that carries the bytes was refused and never reached.
+// The refusal is call_not_allowed for every identity, a writing one included,
+// and it is taken before a credential is chosen.
+//
+// A batch that names no operation is refused with it: what the call IS is the
+// operation, and a body the rules read no operation out of is a call they did
+// not decide about.
+func TestProxyRefusesAnLFSBatchUpload(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"an upload", `{"operation":"upload","objects":[{"oid":"` + nestedOID + `","size":1}]}`},
+		{"no operation at all", `{"transfers":["basic"],"objects":[{"oid":"` + nestedOID + `","size":1}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, up, _ := proxySharedSvc(t)
+
+			resp, ans := s.proxySharedCall(t, http.MethodPost, proxyPath(nestedLFSPath(testBitbucketRepo, "batch")), []byte(tc.body), s.slug)
+			proxyRefused(t, resp, ans, StatusRequestRefused, ErrorRequestRefused, gitproxy.ReasonCallNotAllowed)
+
+			if n := up.count(); n != 0 {
+				t.Fatalf("the upstream saw %d calls, and a refused batch reaches bitbucket.org never: %+v", n, up.calls())
+			}
+			line := s.onlyAuditLine(t)
+			if line["status"] != ErrorRequestRefused {
+				t.Errorf("the audit line = %v, want the refusal's own wire type", line)
+			}
+			if purpose := auditField(line, "purpose"); purpose != PurposeGit {
+				t.Errorf("the audit line names the purpose %q, want the git purpose this call was classified as", purpose)
+			}
+			// The body is the caller's, and an operation the caller chose is
+			// caller text like any other: it reaches the refusal's class and
+			// no line this service writes.
+			if strings.Contains(s.logs.String(), "upload") {
+				t.Errorf("the operator's line carries an operation the caller sent: %s", s.logs.String())
+			}
 		})
 	}
 }

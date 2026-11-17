@@ -24,6 +24,7 @@ package gitproxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -73,22 +74,33 @@ const (
 // that forwards one rebuilds git-lfs's path out of it (G13), and nothing else
 // reads it.
 //
-// git-lfs's writes are not named here at all, deliberately: the object upload
-// is a PUT to the same object path and the lock calls live under
-// .../info/lfs/locks/, and neither is a call this proxy carries. A call the
-// file does not name is one it refuses (Classify), which is what "an LFS write
-// is refused" means in one place instead of two.
+// git-lfs's other calls are not named here at all, deliberately: the object
+// upload is a PUT to the same object path, an upload's batch is the same POST
+// as a download's with another operation in the body (LFSOperation), and the
+// lock calls live under .../info/lfs/locks/. None of them is a call this proxy
+// carries, and a call the file does not name - or a batch whose body names an
+// operation it does not carry - is one it refuses (Classify, Decide), which is
+// what "an LFS write is refused" means in one place instead of two.
 type LFSKind string
 
 const (
 	// LFSBatch is POST .../<workspace>/<repo>.git/info/lfs/objects/batch: the
 	// request a git-lfs client opens with, which names the objects it wants,
-	// and whose answer carries the href each one is downloaded from.
+	// and whose answer carries the href each one is downloaded from. The path
+	// is the same for a download and for an upload, so the call is only
+	// decided once the body's operation has been read (LFSOperation).
 	LFSBatch LFSKind = "lfs_batch"
 	// LFSObject is GET .../<workspace>/<repo>.git/info/lfs/objects/<oid>: one
 	// object's bytes, which the batch call named by its id.
 	LFSObject LFSKind = "lfs_object"
 )
+
+// LFSOperationDownload is the one operation a git-lfs batch call may name: the
+// client asking for the objects it is about to download. An upload batch is
+// the same POST with "upload" in that field, and it is a write this proxy
+// refuses (R4) - decided on the operation the body named and never assumed
+// from the path.
+const LFSOperationDownload = "download"
 
 // Call names one of the REST calls the Bitbucket adapter makes (G4). The list
 // is the adapter's own traffic and nothing else: internal/gitprov/bitbucket
@@ -216,6 +228,14 @@ type Request struct {
 	// which of git-lfs's two paths to rebuild - from a name of this closed set
 	// and never from a segment of the caller's path (G13).
 	LFS LFSKind
+	// LFSOperation is the operation a git-lfs batch call's body named
+	// (LFSBatch only), read before the rules see the request (ReadLFSBatch)
+	// and empty for every other request. It is a field of its own rather than
+	// part of LFS because it is not in the path: one POST is a download's
+	// batch and an upload's, and only this says which. A batch that names
+	// anything but LFSOperationDownload - an upload, or a body that named no
+	// operation at all, which leaves this empty - is refused by Decide.
+	LFSOperation string
 	// OID is the object a git-lfs object call names (LFSObject only), held to
 	// the shape an object id has (validHash) before it is put here. It is the
 	// one segment of git-lfs's route that is a value rather than a name this
@@ -526,14 +546,18 @@ func lfsShape(segs []string) bool {
 // function names the request and adds no rule of its own (R4, U2).
 //
 // What it does not name is as deliberate as what it does. git-lfs's writes are
-// refused here: the object upload is a PUT to the very path the download GETs,
-// and the locks are POSTs under .../info/lfs/locks/. A run pushes its branch
-// through git-receive-pack, where the rules decide the refs on the update
-// request git sends in front of the pack, and an object upload has no update
-// request to decide on at all - so accepting one would be forwarding a write
-// nothing checked. A lock call is refused for a second reason: git-lfs is
-// never asked for one by anything this tree runs, so a call to it is a call
-// nobody decided on carrying.
+// refused: the object upload is a PUT to the very path the download GETs, the
+// locks are POSTs under .../info/lfs/locks/, and an upload's batch is this
+// same POST with another operation in its body. The first two are refused here
+// - a method or a path this file does not name - and the third is refused by
+// the rule that decides the call (Decide), because the path cannot tell the two
+// batches apart and the body is what does (ReadLFSBatch, LFSOperation). A run
+// pushes its branch through git-receive-pack, where the rules decide the refs
+// on the update request git sends in front of the pack, and an object upload
+// has no update request to decide on at all - so accepting one would be
+// forwarding a write nothing checked. A lock call is refused for a second
+// reason: git-lfs is never asked for one by anything this tree runs, so a call
+// to it is a call nobody decided on carrying.
 //
 // The method is part of the shape rather than something read afterwards: the
 // same path spelled with another method is a request this file has not decided
@@ -792,6 +816,19 @@ func Decide(req Request, id Identity, repo string, block *projectpolicy.Bitbucke
 			return Verdict{Reason: ReasonOtherRepository}
 		}
 	}
+	// A git-lfs batch call is the one fetch whose body says which call it is: a
+	// download's batch and an upload's are the same POST to the same path, and
+	// an upload is a write this route does not carry (R4). An operation that is
+	// not the download - an upload, or a body that named none at all, which
+	// leaves the field empty - is refused here, before a token is chosen and so
+	// before bitbucket.org can answer with the upload actions it would
+	// otherwise hand the run.
+	if req.LFS == LFSBatch && req.LFSOperation != LFSOperationDownload {
+		// The refusal does not turn on whether this identity may write: a run's
+		// objects reach bitbucket.org through the refs it pushes, and an upload
+		// batch is a write nothing read a ref of.
+		return Verdict{Reason: ReasonCallNotAllowed}
+	}
 	switch req.Kind {
 	case KindFetch, KindAdvertisement:
 		// Both are reads of the run's own repository, and the push that may
@@ -991,6 +1028,75 @@ func readWriteBody(body []byte) (*writeBody, bool) {
 	return &w, true
 }
 
+var (
+	// ErrLFSBatchTooLarge is a git-lfs batch body larger than the bound the
+	// caller set: the batch a client sends is a small JSON document, and a
+	// body that needs more than the bound is not one this proxy carries.
+	ErrLFSBatchTooLarge = errors.New("the git-lfs batch body is larger than the allowed size")
+	// ErrLFSBatchMalformed is a git-lfs batch body that is not exactly one
+	// JSON object naming no key twice, or that carries no operation: what the
+	// call IS is the operation, so a body this file cannot read one out of is
+	// a call it has not decided about.
+	ErrLFSBatchMalformed = errors.New("the git-lfs batch body is not a JSON object with an operation")
+)
+
+// ReadLFSBatch reads the operation a git-lfs batch call names out of its body,
+// and returns the body as consumed, byte for byte, so the caller forwards it
+// unchanged once the rules have allowed the call.
+//
+// It reads the body because git-lfs's path does not say which call this is: a
+// download's batch and an upload's are the same POST to
+// .../info/lfs/objects/batch, and the operation in the body is the whole of
+// the difference (R4). The operation is returned rather than judged here -
+// Decide is where a call is refused - and the body is read the way the pull
+// request writes' bodies are: one JSON object, no key named twice, every key
+// the rules read spelled exactly as the protocol spells it (readKeys).
+//
+// max bounds the bytes this takes from r, and a body larger than it is refused
+// rather than held. On refusal the returned bytes are nil: a caller that
+// forwarded what was read before the refusal would be forwarding a request
+// nobody finished checking.
+func ReadLFSBatch(r io.Reader, max int) (string, []byte, error) {
+	if max <= 0 {
+		return "", nil, ErrLFSBatchTooLarge
+	}
+	body, err := io.ReadAll(io.LimitReader(r, int64(max)+1))
+	if err != nil {
+		return "", nil, ErrLFSBatchMalformed
+	}
+	if len(body) > max {
+		return "", nil, ErrLFSBatchTooLarge
+	}
+	operation, ok := lfsBatchOperation(body)
+	if !ok {
+		return "", nil, ErrLFSBatchMalformed
+	}
+	return operation, body, nil
+}
+
+// lfsBatchOperation reads the operation out of a git-lfs batch body. The body
+// must be one JSON object - git-lfs sends one, and a body that is not one has
+// no operation to read - and it is read with the same strictness as a pull
+// request write's: a duplicate key is refused because the parser on the other
+// side may keep the first value where this one keeps the last, which is how an
+// upload could be smuggled past a check that read a download.
+func lfsBatchOperation(body []byte) (string, bool) {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return "", false
+	}
+	if !objectWithoutDuplicateKeys(trimmed) {
+		return "", false
+	}
+	var b struct {
+		Operation string `json:"operation"`
+	}
+	if err := json.Unmarshal(trimmed, &b); err != nil {
+		return "", false
+	}
+	return b.Operation, true
+}
+
 // objectWithoutDuplicateKeys reports whether body is exactly one JSON value
 // that names no object key twice. A decoder's own decoder keeps the last of
 // two values silently, which is what this walks around: every object's keys
@@ -1004,15 +1110,20 @@ func objectWithoutDuplicateKeys(body []byte) bool {
 	return err == io.EOF // nothing after the value
 }
 
-// readKeys are the keys the rules read a write's body by, each in the one
-// spelling bitbucket.Provider sends it. A body that spells one of them in any
-// other case is refused: json.Unmarshal matches a field name case-insensitively
-// and the API on the other side may not, so a "DESTINATION" this file reads as
-// absent is a destination the API may move, and a "SOURCE" it reads as absent
-// is a source a create may open from somewhere else (G12).
+// readKeys are the keys the rules read a body by, each in the one spelling the
+// sender writes it: the fields of a pull-request write's body, which
+// bitbucket.Provider sends (G12), and the operation of a git-lfs batch call
+// (R4). A body that spells one of them in any other case is refused:
+// json.Unmarshal matches a field name case-insensitively and the API on the
+// other side may not, so a "DESTINATION" this file reads as absent is a
+// destination the API may move, a "SOURCE" it reads as absent is a source a
+// create may open from somewhere else, and an "OPERATION" it reads as a
+// download is a batch the git-lfs server may read as one with no operation at
+// all.
 var readKeys = map[string]bool{
 	"source": true, "destination": true, "branch": true,
 	"name": true, "repository": true, "full_name": true,
+	"operation": true,
 }
 
 // foldKey folds an object key the way a decoder's case-insensitive field

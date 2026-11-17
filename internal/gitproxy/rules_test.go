@@ -318,6 +318,11 @@ func TestClassifyLFSBatchAsFetch(t *testing.T) {
 	if batch.LFS != LFSBatch || batch.OID != "" {
 		t.Errorf("the batch classified as %+v, want %q naming no object", batch, LFSBatch)
 	}
+	// The path says a batch and nothing more: a download's and an upload's are
+	// the same POST, so the operation is read out of the body before the rules
+	// see the request (ReadLFSBatch) and the service sets it here. This is the
+	// batch a client opens a FETCH with, so it names the download.
+	batch.LFSOperation = LFSOperationDownload
 	if got := Decide(batch, runIdentity(), jobRepo, admittedBlock()); !got.Allow || got.Reason != string(KindFetch) {
 		t.Errorf("an LFS batch of the run's repository = %+v, want an allow named %q", got, KindFetch)
 	}
@@ -377,6 +382,98 @@ func TestClassifyLFSWritesRefused(t *testing.T) {
 				t.Fatalf("Classify(%s %s) was refused as %q, want %q", tc.method, tc.rawURL, got, ReasonCallNotAllowed)
 			}
 		})
+	}
+}
+
+// TestDecideRefusesABatchThatIsNotADownload: the batch call is the one fetch
+// whose body says which call it is, and only its operation may be the
+// download (R4).
+//
+// A download's batch and an upload's are the same POST to the same path, so a
+// classifier that read the path alone would carry an upload - and an upload is
+// a write: what comes back from bitbucket.org for one is the set of upload
+// actions, which is the run being handed a way to put objects in the
+// repository whose refs alone it may move. The refusal is the class every
+// call this route does not carry earns (call_not_allowed), it is the same for
+// a writing identity and for a read-only one, and a body that named no
+// operation at all is refused with it: a batch whose operation this file did
+// not read is a batch it did not decide about.
+func TestDecideRefusesABatchThatIsNotADownload(t *testing.T) {
+	for _, tc := range []struct{ name, operation string }{
+		{"an upload", "upload"},
+		{"an operation this file does not know", "verify"},
+		{"no operation at all", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := classify(t, "POST", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/batch")
+			req.LFSOperation = tc.operation
+			got := Decide(req, runIdentity(), jobRepo, admittedBlock())
+			if got.Allow || got.Reason != ReasonCallNotAllowed {
+				t.Fatalf("a batch whose operation is %q = %+v, want %q", tc.operation, got, ReasonCallNotAllowed)
+			}
+			// The repository is still what is named first: an upload batch of
+			// another repository is that repository's refusal, and the
+			// operation decides only a call about the run's own.
+			req.Repo = otherRepo
+			if got := Decide(req, runIdentity(), otherRepo, admittedBlock()); got.Allow || got.Reason != ReasonCallNotAllowed {
+				t.Errorf("an upload batch of another repository = %+v, want %q", got, ReasonCallNotAllowed)
+			}
+		})
+	}
+}
+
+// TestReadLFSBatchReadsTheOperation: the operation is what the rules decide the
+// batch on, so reading it is the rule's own step and it is held to the same
+// strictness as a pull-request write's body: exactly one JSON object, no key
+// named twice, and the key spelled as git-lfs spells it.
+//
+// The bytes it read are the body the service forwards, byte for byte, which is
+// why they are returned rather than dropped: what bitbucket.org acts on is the
+// document this file read the operation out of and not a re-encoding of it.
+func TestReadLFSBatchReadsTheOperation(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"a download", `{"operation":"download","transfers":["basic"],"objects":[]}`, "download"},
+		{"an upload", `{"operation":"upload","objects":[]}`, "upload"},
+		{"no operation", `{"transfers":["basic"],"objects":[]}`, ""},
+		{"an operation and nothing else", `{"operation":"download"}`, "download"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operation, consumed, err := ReadLFSBatch(strings.NewReader(tc.body), 1<<16)
+			if err != nil {
+				t.Fatalf("ReadLFSBatch(%s) = %v", tc.body, err)
+			}
+			if operation != tc.want {
+				t.Errorf("the operation = %q, want %q", operation, tc.want)
+			}
+			if string(consumed) != tc.body {
+				t.Errorf("the consumed body = %q, want the bytes it read (%q)", consumed, tc.body)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, body string }{
+		{"an upload named twice", `{"operation":"download","operation":"upload"}`},
+		{"an operation another case", `{"Operation":"download"}`},
+		{"not an object", `["download"]`},
+		{"nothing at all", ``},
+		{"an object that never closes", `{"operation":"download"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operation, consumed, err := ReadLFSBatch(strings.NewReader(tc.body), 1<<16)
+			if !errors.Is(err, ErrLFSBatchMalformed) {
+				t.Fatalf("ReadLFSBatch(%s) = %v, want %v", tc.body, err, ErrLFSBatchMalformed)
+			}
+			if operation != "" || consumed != nil {
+				t.Errorf("ReadLFSBatch(%s) = %q, %q, want nothing: a body the rules refused is not forwarded", tc.body, operation, consumed)
+			}
+		})
+	}
+
+	// A body over the bound is refused rather than held, and the bound is the
+	// caller's: the service's own is maxLFSBatchBodyBytes.
+	big := `{"operation":"download","objects":["` + strings.Repeat("a", 4096) + `"]}`
+	if _, _, err := ReadLFSBatch(strings.NewReader(big), 64); !errors.Is(err, ErrLFSBatchTooLarge) {
+		t.Errorf("a body over the bound = %v, want %v", err, ErrLFSBatchTooLarge)
 	}
 }
 
