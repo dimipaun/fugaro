@@ -161,6 +161,16 @@ func (r *settingsRead) readPolicyLayer(ctx context.Context) {
 // `budget:` block carries, so budget.per_run_usd reads `5` from either side and
 // the ceiling comparison compares two spellings of one value.
 //
+// The credentials cascade (D152, D153) is the second family here, and it is the
+// one family whose store is the node and nothing else: the table's `credentials.*`
+// rows are `LayerPolicy`, and an installation where the node carries no cascade
+// block at all keeps the protective defaults above — so a member the node does
+// not carry is left out of this map for the same reason the budget members are,
+// and `credentials.fallback` reads `auto` exactly as a run of that project would
+// get it. The daemon's switch and the project's issue adapter are the third
+// family of that kind (R1 of docs/orchestrator-graph-estimates): the node is
+// their only store too, so they read out of the same block and by the same rule.
+//
 // A member the node does not carry is left out of the map rather than rendered
 // as the zero value the decode gives it. The node's budget members are not
 // pointers, so an absent node — nothing published, or a node a hand edit left
@@ -185,6 +195,45 @@ func policyValues(p *projectpolicy.Policy) map[string]string {
 	}
 	if p.Budget.AllowedModels != nil {
 		out["budget.allowed_models"] = strings.Join(p.Budget.AllowedModels, ", ")
+	}
+	if c := p.Credentials; c != nil {
+		// Every pointer here is `nil` for a member the node does not carry, and
+		// that is the difference this map keeps: `false` is the written opt-out
+		// of stop_after_exhaustion_per_window and not the absent default, which
+		// is why the struct spells it as a pointer in the first place.
+		if c.Fallback != "" {
+			out["credentials.fallback"] = c.Fallback
+		}
+		if c.WaitThreshold != "" {
+			out["credentials.wait_threshold"] = c.WaitThreshold
+		}
+		if c.Backoff != nil {
+			if c.Backoff.Initial != "" {
+				out["credentials.backoff.initial"] = c.Backoff.Initial
+			}
+			if c.Backoff.Cap != "" {
+				out["credentials.backoff.cap"] = c.Backoff.Cap
+			}
+		}
+		if c.StopAfterExhaustionPerWindow != nil {
+			out["credentials.stop_after_exhaustion_per_window"] = strconv.FormatBool(*c.StopAfterExhaustionPerWindow)
+		}
+		if c.ConcurrencyPerToken != nil {
+			out["credentials.concurrency_per_token"] = strconv.Itoa(*c.ConcurrencyPerToken)
+		}
+	}
+	// The daemon's own two (R1 of docs/orchestrator-graph-estimates, D2701,
+	// D2733, D2739) follow the same rule, and for the switch it is the whole
+	// point of the key: `*bool` is nil for a member the node does not carry and
+	// false for the written opt-out, so a map that rendered nil as `false` would
+	// print every project that never mentioned the switch as a project whose
+	// daemon is stopped. The adapter renders as the node's own JSON, which is
+	// what this read does with a block no file spells.
+	if p.OrchestratorEnabled != nil {
+		out["orchestrator_enabled"] = strconv.FormatBool(*p.OrchestratorEnabled)
+	}
+	if t := jsonText(p.IssueSync); t != "" {
+		out["issue_sync"] = t
 	}
 	return out
 }
@@ -321,15 +370,17 @@ func settingsCapsKey(key string) bool {
 	return strings.HasPrefix(key, "caps.") || strings.HasPrefix(key, "kill.")
 }
 
-// cloudProjectRow is the cloud half of a project row: the caps rows, the ceiling
-// keys a level above the file clamps, and the `unpublished` state the comparison
-// sets. The three are one function because they answer one question — what the
-// cloud says about this key — and a row reaching only one of them is a row that
-// prints a value no run gets.
+// cloudProjectRow is the cloud half of a project row: the caps rows, the rows
+// only the published node stores, the ceiling keys a level above the file
+// clamps, and the `unpublished` state the comparison sets. The four are one
+// function because they answer one question — what the cloud says about this key
+// — and a row reaching none of them is a row that prints a value no run gets.
 func (r *settingsRead) cloudProjectRow(s setting, row settings.Row) setting {
 	switch {
 	case settingsCapsKey(row.Key):
 		s = r.capsRow(s, row)
+	case settingsPolicyOnlyRow(row):
+		s = r.policyRow(s, row)
 	case row.Merge == settings.Tighten:
 		s = r.nodeCeiling(s, row)
 	}
@@ -369,6 +420,41 @@ func (r *settingsRead) capsRow(s setting, row settings.Row) setting {
 	}
 	s.Value, s.Wins, s.State = v, settings.LayerCaps, stateOK
 	s.Levels = []level{{Layer: settings.LayerCaps, Value: v, Outcome: "wins"}}
+	return s
+}
+
+// settingsPolicyOnlyRow reports whether the published node is a row's only
+// store: the row's one layer is `policy`, so no file, no environment and no
+// default is a value a run gets. It is the `credentials.*` family (R1), the
+// cascade the credentials service runs on — the local file's own cascade is a
+// different family (`credential_cascade.*`, N1) because it is a different
+// document, and a row that let either of them stand for the other would print
+// the operator's file as the value a run gets when the node is what decides.
+func settingsPolicyOnlyRow(row settings.Row) bool {
+	return len(row.Layers) == 1 && row.Layers[0] == settings.LayerPolicy
+}
+
+// policyRow is a row whose only store is the published node. It reads the way
+// capsRow reads a row whose only store is the database, and for the same
+// reason: the layer was read and holds the value, it was read and holds none,
+// or it was not read at all. The third is the STATE and nothing else — the row
+// keeps the default with WINS default, which is the answer for a key no layer
+// decided — and the second is the protective default the registry states, which
+// is what a run of that project gets when the node is silent about the key.
+// Reading the node as the row's own layer rather than as a clamp is the whole
+// difference from nodeCeiling: there is no value under it to clamp.
+func (r *settingsRead) policyRow(s setting, row settings.Row) setting {
+	if r.policy.status != stateOK {
+		s.State = r.policy.status
+		return s
+	}
+	v, ok := r.policy.values[row.Key]
+	if !ok {
+		s.State = stateOK
+		return s
+	}
+	s.Value, s.Wins, s.State = v, settings.LayerPolicy, stateOK
+	s.Levels = []level{{Layer: settings.LayerPolicy, Value: v, Outcome: "wins"}}
 	return s
 }
 

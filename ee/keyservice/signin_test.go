@@ -1174,10 +1174,11 @@ func TestSignInFlowTokenFromAnotherProjectIsRefused(t *testing.T) {
 func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 	f, spy := signingIn(t)
 	refunded := f.purchase("evt-signin", signInOrg, 5, 365)
-	// The merchant's own refund of the key the purchase minted, signed as the
-	// merchant signs: the same event TestRefundRevokesTheKey delivers, and the
-	// one thing that happens is §8's entry for that key.
-	if rec := f.event(Event{ID: "evt-refund", Type: EventRefund, KeyID: refunded.KeyID}); rec.Code != http.StatusOK {
+	// The merchant's own refund of the subscription the purchase began, signed as
+	// the merchant signs: Paddle names the subscription and never a key, and what
+	// the event resolves to is the licence whose binding minted the key above
+	// (F16). The one thing that happens is §8's entry for that key.
+	if rec := f.event(Event{ID: "evt-refund", Type: EventRefund, Subscription: "sub-" + signInOrg}); rec.Code != http.StatusOK {
 		t.Fatalf("the refund answered %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 	listed := f.revocations()
@@ -1246,10 +1247,11 @@ func TestTokenFromARefundedSubscriptionStillSignsIn(t *testing.T) {
 // The link a rotation would read **does** exist for a key this flow minted:
 // signInSource writes `signin:<subscription>:<key id>`, which is what a scan of
 // the subscription's issuances would find. What does not exist is that link for
-// the licence's other keys — a purchase, a seat change and a renewal name their
-// record after the merchant's event or the rotated key (renew.go's
-// `rotationSource`), and neither a key's record nor its state names the
-// subscription it was sold for. So a rotation written here would be half of
+// the licence's other keys: the key a paid licence's binding mints is recorded
+// under the binding's own source (workspaces.go's `bindingPrefix`), a seat
+// change's and the merchant's own renewal under the merchant's event or the key
+// they rotated (renew.go's `rotationSource`), and none of them is the `signin:`
+// link this flow's rotation reads. So a rotation written here would be half of
 // K2.3's rule: it would end the bundle an earlier **sign-in** handed out and
 // leave the licence's other bundles live beside it, still renewable, which is
 // eviction a leaked key survives. What a second sign-in should do to a key
@@ -1292,10 +1294,12 @@ func TestTokenFromASecondSignInLeavesTheEarlierKeyLive(t *testing.T) {
 	if !linked {
 		t.Fatalf("no issuance carries %q: the link a rotation would read is not written", signInSource("sub-"+signInOrg, firstClaims.KeyID))
 	}
-	// And it does not exist for the key the merchant sold: that record is named
-	// after the event, and nothing else joins the key to the subscription.
-	if purchased.Source != "evt-signin" {
-		t.Errorf("the purchase's record is named %q, want the merchant's event: this test's other claim is about that record", purchased.Source)
+	// And the record the licence's own key was minted under is the binding's
+	// source, `binding:<entitlement id>:<nonce>` (workspaces.go) and never the
+	// merchant's event id: the purchase mints nothing at all (D2196), so the
+	// event a customer paid by names no record here.
+	if !strings.HasPrefix(purchased.Source, bindingPrefix) {
+		t.Errorf("the licence's key was recorded as %q, want a %q source: the binding is the act that mints a paid licence's key, and the purchase itself mints nothing (D2196)", purchased.Source, bindingPrefix)
 	}
 	for _, record := range records {
 		if record.KeyID == purchased.KeyID && record.Source != purchased.Source {

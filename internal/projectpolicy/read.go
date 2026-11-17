@@ -96,6 +96,36 @@ func ReadCarriedForwardShapeFree(ctx context.Context, db *rtdb.Client) (*Policy,
 	return DecodeCarriedForwardShapeFree(raw)
 }
 
+// ReadStatedVersion reads the version the published node STATES, through Read's
+// own gate and without decoding the node.
+//
+// It exists for the readers that ask whether THIS update raises the node, which
+// neither of the two above can answer: from the step that is not shape-free,
+// Read refuses the node every installation holds while the upgrade runs, and
+// ReadCarriedForward answers with a node stating THIS release's version, so the
+// number the release behind wrote is not in what either returns. `fugaro
+// update`'s line about the runs in flight is that reader — the credentials
+// service's window is open only where the policy stage raises the node in one
+// stage and the service that reads it is replaced in the next — and the
+// version is read off the document's own bytes, as the policy stage's own diff
+// reads it.
+//
+// A node whose version cannot be read at all (not an object, no version, a
+// version below 1) is nodeVersion's *MalformedError, and it is returned rather
+// than guessed at: a caller asking a question about the node treats it as it
+// treats every other refusal.
+func ReadStatedVersion(ctx context.Context, db *rtdb.Client) (int, bool, error) {
+	raw, found, err := readNode(ctx, db)
+	if err != nil || !found {
+		return 0, found, err
+	}
+	v, err := nodeVersion(raw)
+	if err != nil {
+		return 0, true, err
+	}
+	return v, true, nil
+}
+
 // readNode is the two rules above, up to the bytes: the marker gate shared by
 // Read, ReadCarriedForward and ReadCarriedForwardShapeFree.
 func readNode(ctx context.Context, db *rtdb.Client) (json.RawMessage, bool, error) {

@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"encoding/json"
 	"math"
 	"reflect"
 	"strings"
@@ -15,7 +16,8 @@ func baseInput() RollupInput {
 		Day: day,
 		Repos: map[string]RepoDay{
 			"a-1": {Counters: Counters{Spent: 700, Notional: 50, Calls: 7, ByModel: map[string]ModelUse{
-				Key("claude-3.5"): {Micros: 700, In: 10, Out: 5, CR: 1, CW: 2}}}, Repo: "acme/a", CapDaily: mp(5000)},
+				Key("claude-3.5"): {Micros: 700, In: 10, Out: 5, CR: 1, CW: 2,
+					Notional: 50, Rep: 640, TLo: 600, THi: 690, NotionalSet: true}}}, Repo: "acme/a", CapDaily: mp(5000)},
 			"b-1": {Counters: Counters{Spent: 300, Calls: 3}},
 		},
 		Shares: map[string]map[string]RunLedger{
@@ -88,6 +90,53 @@ func b2(m *Micros) Micros {
 		return -1
 	}
 	return *m
+}
+
+// TestRollupCarriesSpendLeaves: the day counters' four per-model spend leaves
+// reach the day record, so `fugaro history rollover` archives them and a
+// reader of the record can tell billed dollars from notional ones (F21).
+func TestRollupCarriesSpendLeaves(t *testing.T) {
+	in := RollupInput{
+		Day: day,
+		Repos: map[string]RepoDay{"a-1": {Counters: Counters{Spent: 900, Notional: 300, Calls: 3, ByModel: map[string]ModelUse{
+			// Two spellings of one model name, which sum into one row.
+			Key("m.1"): {Micros: 400, In: 4, Notional: 150, Rep: 260, TLo: 210, THi: 320, NotionalSet: true},
+			"m%2e1":    {Micros: 300, In: 2, Notional: 100, Rep: 190, TLo: 150, THi: 250, NotionalSet: true},
+			Key("m-2"): {Micros: 200, In: 1},
+		}}}},
+		Shares: map[string]map[string]RunLedger{"a-1": {"r1": {Spent: 900, Notional: 300}}},
+	}
+	r := byslug(t, Rollup(in), "a-1")
+	want := ModelTotals{Micros: 700, In: 6, Notional: 250, Rep: 450, TLo: 360, THi: 570, NotionalSet: true}
+	if got := r.ByModel[Key("m.1")]; got != want {
+		t.Errorf("m.1 = %+v, want %+v", got, want)
+	}
+	if old := r.ByModel[Key("m-2")]; old.Micros != 200 || old.Notional != 0 || old.Rep != 0 || old.TLo != 0 || old.THi != 0 || old.NotionalSet {
+		t.Errorf("a model the day recorded no leaves for = %+v", old)
+	}
+}
+
+// TestNotionalSetOnlyWhenPresent: presence, not the value, is what a reader of
+// the notional leaf reads as "recorded" (RS8), so a gateway-only model's real
+// 0 is kept apart from a day written before the leaf existed.
+func TestNotionalSetOnlyWhenPresent(t *testing.T) {
+	for name, tc := range map[string]struct {
+		node string
+		want ModelUse
+	}{
+		"zero":    {`{"micros":700,"notional":0}`, ModelUse{Micros: 700, NotionalSet: true}},
+		"leaves":  {`{"micros":700,"notional":200,"rep":460,"tlo":430,"thi":520}`, ModelUse{Micros: 700, Notional: 200, Rep: 460, TLo: 430, THi: 520, NotionalSet: true}},
+		"absent":  {`{"micros":700,"in":10}`, ModelUse{Micros: 700, In: 10}},
+		"nothing": {`{"micros":0}`, ModelUse{}},
+	} {
+		var c Counters
+		if err := json.Unmarshal([]byte(`{"byModel":{"m":`+tc.node+`}}`), &c); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := c.ByModel["m"]; got != tc.want {
+			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
+		}
+	}
 }
 
 func TestRolloverIdempotent(t *testing.T) {
@@ -286,9 +335,29 @@ func TestDayRecordFieldRoundTrip(t *testing.T) {
 			t.Errorf("missing field %s", k)
 		}
 	}
+	row, _ := f["byModel"].(map[string]any)["claude-3%2E5"].(map[string]any)
+	for _, k := range []string{"notional", "rep", "tlo", "thi"} {
+		if _, ok := row[k]; !ok {
+			t.Errorf("the model row lacks %s", k)
+		}
+	}
 	back, err := FromFields(f)
 	if err != nil || !reflect.DeepEqual(back, r) {
 		t.Fatalf("err=%v\n%+v\n%+v", err, back, r)
+	}
+	if m := back.ByModel["claude-3%2E5"]; !m.NotionalSet || m.Notional != 50 || m.Rep != 640 || m.TLo != 600 || m.THi != 690 {
+		t.Fatalf("the spend leaves did not round-trip: %+v", m)
+	}
+	// A day written before the leaves existed keeps its rows without them, and
+	// reads back as "not recorded" rather than as a zero (RS8).
+	old := r
+	old.ByModel = map[string]ModelTotals{Key("m.1"): {Micros: 10}}
+	of := old.ToFields()
+	if _, ok := of["byModel"].(map[string]any)["m%2E1"].(map[string]any)["notional"]; ok {
+		t.Fatal("a row without the leaves must not write them")
+	}
+	if b, err := FromFields(of); err != nil || b.ByModel["m%2E1"].NotionalSet || b.ByModel["m%2E1"].Micros != 10 {
+		t.Fatalf("an old day = %+v %v", b.ByModel, err)
 	}
 	// No cap: the field is absent and decodes to nil.
 	r.CapDailyMicros = nil

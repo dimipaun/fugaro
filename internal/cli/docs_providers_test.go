@@ -210,8 +210,9 @@ func TestMultiModelNamesDirectProviders(t *testing.T) {
 // "how to set up OpenRouter" section (the owner asked for exactly this), and
 // the claims in it that a reader acts on -- the account-side setup it links
 // instead of duplicating, which repositories a provider may see, what a pin
-// is refused with, and until which release the two catalog switches are
-// refused -- must be the code's and the linked docs', not prose that drifted.
+// is refused with, and what the two catalog switches cost on a route the
+// deploy accepts -- must be the code's and the linked docs', not prose that
+// drifted.
 // Every assertion is anchored to that section alone (docSection), so a claim
 // that only appears elsewhere in the README does not make this pass.
 func TestReadmeOpenRouterSetup(t *testing.T) {
@@ -320,15 +321,20 @@ func TestReadmeOpenRouterSetup(t *testing.T) {
 
 	// The section's "ship at <release>" sentence is catalogSince, and the
 	// "leave both out" instruction lasts exactly as long as catalogShipped is
-	// false (catalogSwitchSkew, internal/cli/recipes_skew.go). Tying both to
-	// the constants means the one-line PR that ships the two switches -- or
-	// that bumps the release they ship in -- cannot leave the README telling
-	// users to leave the keys out, or the release number wrong.
+	// false (catalogSwitchSkew, internal/cli/recipes_skew.go): the release
+	// that reads the two keys is tagged, so the section must say the switch
+	// deploys and must not tell a reader to leave it out. Tying both to the
+	// constants means the one-line PR that ships the two switches -- or that
+	// bumps the release they ship in -- cannot leave the README telling users
+	// to leave the keys out, or the release number wrong.
 	if !strings.Contains(section, "ship at "+catalogSince) {
 		t.Errorf("the README OpenRouter section does not say require_zdr/price_policy ship at %s (catalogSince)", catalogSince)
 	}
 	if leftOut := strings.Contains(section, "leave both out"); leftOut == catalogShipped {
 		t.Errorf("the README OpenRouter section's \"leave both out\" instruction disagrees with catalogShipped = %v", catalogShipped)
+	}
+	if !strings.Contains(section, "deploys a route that sets either") {
+		t.Error("the README OpenRouter section does not say fugaro update --repo deploys a route that sets require_zdr or price_policy: catalogShipped is true, so the switches are deployable and the section has to say so")
 	}
 
 	// The section states how narrow the catalog is, so a reader knows a model

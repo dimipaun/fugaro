@@ -20,6 +20,18 @@
 # role in this project: it calls a public service, and the check it passes is the
 # API's own rather than the platform's.
 #
+# The audience is `local.api_url` and NOT the target's own `uri`, which is what
+# the two blocks below reach the API over. They are two different strings for one
+# service: Cloud Run answers with its assigned URL — `<service>-<hash>-<code>`
+# under `.a.run.app` — while `local.api_url` is the deterministic
+# `<service>-<project number>.<region>` form main.tf derives for the API's own
+# environment. The API compares the claim exactly (portalauth.go's
+# SchedulerVerifier), so a token minted for the assigned URL is a token every
+# scheduled call is refused for, once the jobs are unpaused and long after the
+# apply that read as a success. The two are one value by construction:
+# FUGARO_SCHEDULER_AUDIENCE is `local.api_url` too, and
+# TestTheSchedulerMintsTheAudienceTheAPIVerifies holds them equal.
+#
 # Neither job calls the minter, and neither names it: the minter's one caller is
 # the API (Check 571).
 
@@ -54,7 +66,7 @@ resource "google_cloud_scheduler_job" "statements" {
 
     oidc_token {
       service_account_email = google_service_account.scheduler.email
-      audience              = google_cloud_run_v2_service.api.uri
+      audience              = local.api_url
     }
   }
 }
@@ -80,7 +92,7 @@ resource "google_cloud_scheduler_job" "reminders" {
 
     oidc_token {
       service_account_email = google_service_account.scheduler.email
-      audience              = google_cloud_run_v2_service.api.uri
+      audience              = local.api_url
     }
   }
 }

@@ -746,13 +746,13 @@ const (
 	TriageSourceCap TriageSource = "cap"
 )
 
-// The two causes a failed triage round records that are not a service's own
-// words (TriageRound.Cause). They are the record's vocabulary and not
+// The causes a triage round records that are not a service's own words
+// (TriageRound.Cause). They are the record's vocabulary and not
 // internal/triage's or internal/runner's, because every reader of the record
 // has to be able to tell a call that never got through from a judge whose
 // answer was unusable without guessing at a service's phrasing: the first is
 // what an auth or upstream failure looks like once the service's text is
-// clipped to its first line, and this pair is what the run itself knows.
+// clipped to its first line, and this triple is what the run itself knows.
 const (
 	// TriageCauseUnreadable is a round whose call answered something shaped
 	// like a verdict that internal/triage's reader refused: a word outside the
@@ -765,6 +765,22 @@ const (
 	// its first token. It is the cause of last resort, so a failed round says
 	// something rather than carrying an empty line beside Failed.
 	TriageCauseNoAnswer = "the call answered nothing"
+	// TriageCauseNoAccount is the one cause a *skipped* round carries rather
+	// than a failed one (TriageRound.Skipped): the triage stage resolved to no
+	// Claude account and the model it would run is one only Anthropic serves
+	// that no provider route claims, so the run's api-key gateway would refuse
+	// the call for the key it does not hold. The call is not made — in that
+	// shape it used to be a stage failure that ended the run, with no round
+	// recorded at all — and the fail-safe stands in for it exactly as it does
+	// for a failure: every finding the mode's table blocks blocks (D1846).
+	//
+	// It names the fix a reader can act on and not the diagnosis alone: a
+	// stage's account reaches it through the published policy's
+	// claude_account_stages key or its default_claude_account, and the triage
+	// key is held out of the published node until the release after the one
+	// that added the stage (config.AccountStageHeldBack), so the operator's
+	// two steps are the ones written here.
+	TriageCauseNoAccount = "no account for triage: the published policy names none (set default_claude_account, then run fugaro update)"
 )
 
 // TriageFailureClause is one failed triage round as one clause of the sentence
@@ -773,7 +789,7 @@ const (
 //
 // It is here, beside the two causes that are the record's own vocabulary and
 // not internal/runner's or internal/cli's, because two readers say it — the
-// pull request's status section (internal/runner's triageFailureLine) and
+// pull request's status section (internal/runner's triageStatusLine) and
 // `fugaro diagnose` (internal/cli's triageFlag) — and one cause read two ways is
 // the drift this exists to prevent. What it says is what the record knows and
 // no more: TriageCauseUnreadable is a judge that ran and whose answer the
@@ -805,10 +821,7 @@ const (
 // the CLI, so a caller that has to escape or clip it does so before calling:
 // the clause is the record's own words and nothing else.
 func TriageFailureClause(level policy.Level, round int, cause string) string {
-	where := fmt.Sprintf("round %d", round)
-	if policy.KnownLevel(level) {
-		where = fmt.Sprintf("round %d of level %s", round, strings.TrimPrefix(string(level), "l"))
-	}
+	where := triageRoundWhere(level, round)
 	switch cause {
 	case TriageCauseUnreadable:
 		return fmt.Sprintf("the judge's answer for %s could not be read", where)
@@ -816,6 +829,44 @@ func TriageFailureClause(level policy.Level, round int, cause string) string {
 		return fmt.Sprintf("the judge did not answer for %s", where)
 	}
 	return fmt.Sprintf("the judge did not answer for %s: %s", where, cause)
+}
+
+// TriageSkipClause is TriageFailureClause's other half: one round the run did
+// not ask at all (TriageRound.Skipped) as one clause of the same sentence, for
+// the same two readers and for the same reason — one fact read two ways is the
+// drift this pair exists to prevent.
+//
+// It is a second function and not a word in the first, because the two rounds
+// are two facts a reader acts on differently: a failed round is a call that
+// went out and bought no verdict, which an installation has to repair, and a
+// skipped one is a call this run knew it could not serve and never made. A
+// reader who saw "the judge did not answer" over a round no call was made for
+// would go looking for an answer that does not exist.
+//
+// The round is named exactly as the failure clause names it, level and all,
+// for the reason stated there. The cause is the record's own words after the
+// colon — for the one cause a skip carries (TriageCauseNoAccount) that is the
+// sentence naming the two steps that give the stage its account — and a skip
+// carrying none (a hand-edited record) says only that triage did not run,
+// which is the most such a record says.
+func TriageSkipClause(level policy.Level, round int, cause string) string {
+	where := triageRoundWhere(level, round)
+	if cause == "" {
+		return "triage did not run for " + where
+	}
+	return fmt.Sprintf("triage did not run for %s: %s", where, cause)
+}
+
+// triageRoundWhere names one triage round for either clause above: its number
+// and the level it belongs to, since the number alone does not say which
+// level's round it is (each level numbers its own from 1, D1847), and the bare
+// number is what a level outside the vocabulary — a hand-edited record — falls
+// back to.
+func triageRoundWhere(level policy.Level, round int) string {
+	if policy.KnownLevel(level) {
+		return fmt.Sprintf("round %d of level %s", round, strings.TrimPrefix(string(level), "l"))
+	}
+	return fmt.Sprintf("round %d", round)
 }
 
 // TriageRecord is what a run's triage decided (docs/post-review-triage, D1850):
@@ -867,13 +918,30 @@ type TriageRound struct {
 	// the flag is what makes that visible rather than a round that looks like
 	// any other.
 	Failed bool `json:"failed,omitempty"`
-	// Cause is why a failed round failed, one line, and empty for a round that
-	// did not. It is the call's own first line where the call answered nothing
-	// a verdict could be read from — an auth or upstream failure, a stream cut
-	// before the answer — and TriageCauseUnreadable where it answered
-	// something shaped like a verdict that the reader refused. Clipped to
-	// MaxTriageLine and dropped for a round that is not failed (NewTriage),
-	// and redacted with both passes where it is written (internal/runner): a
+	// Skipped marks a round no call was made for at all: the triage stage
+	// resolved to no Claude account and the model it would run is one only
+	// Anthropic serves that no provider route claims, so the run's api-key
+	// gateway would refuse the call for the key it does not hold
+	// (TriageCauseNoAccount). It is not Failed — nothing failed, the run chose
+	// not to ask — and it is not an answered round either, which is why it is
+	// a flag of its own: a reader telling "the judge ran and its answer was
+	// unusable" from "the judge was never asked" reads the two off different
+	// members, and the fail-safe stands in for both (D1846).
+	//
+	// It is additive, so a record written before it existed reads false here,
+	// and that is the reading such a record always had: its round either
+	// answered or failed, or — in the shape the skip exists for — the run
+	// ended at the judge's own stage refusal before any round was written.
+	Skipped bool `json:"skipped,omitempty"`
+	// Cause is why a round failed or was skipped, one line, and empty for a
+	// round that neither. It is the call's own first line where the call
+	// answered nothing a verdict could be read from — an auth or upstream
+	// failure, a stream cut before the answer — and TriageCauseUnreadable
+	// where it answered something shaped like a verdict that the reader
+	// refused, and TriageCauseNoAccount for a skipped round, which is the one
+	// cause no call of the run ever wrote. Clipped to MaxTriageLine and
+	// dropped for a round that neither failed nor was skipped (NewTriage), and
+	// redacted with both passes where it is written (internal/runner): a
 	// service's auth error quotes the credential it refused, and this line
 	// reaches the pull request's body.
 	Cause string `json:"cause,omitempty"`
@@ -919,15 +987,15 @@ type TriageEntry struct {
 // MaxTriageEntries — each round's Total is set here, from the entries the
 // caller gave it, so a round the cap cut says how many verdicts it wrote
 // instead of looking like one that read only the first hundred — the reason,
-// the group key and a failed round's cause are clipped to MaxTriageLine, the
-// cause of a round that did not fail is dropped, and a round or an entry a
-// reader
+// the group key and a failed or skipped round's cause are clipped to
+// MaxTriageLine, the cause of a round that neither failed nor was skipped is
+// dropped, and a round or an entry a reader
 // cannot place is dropped: a round with no number, a mode or a level outside
 // its vocabulary, and an entry at a negative index, with no key, no reason, a
 // word outside the two or a source outside the four — an index below 0 names no
 // position in any round, which is the same refusal internal/triage's own reader
 // makes of a verdict. A round whose every entry was dropped is still kept when
-// it is failed, because that is the fact the round carries.
+// it failed or was skipped, because that is the fact the round carries.
 func NewTriage(rounds []TriageRound) *TriageRecord {
 	if len(rounds) == 0 {
 		return nil
@@ -953,10 +1021,11 @@ func NewTriage(rounds []TriageRound) *TriageRecord {
 			entries = append(entries, e)
 		}
 		r.Entries = entries
-		// The cause belongs to a failed round and to no other: a round that
-		// answered a verdict did not fail, and a record whose cause outlived
-		// its flag would read as a failure beside a flag that says otherwise.
-		if !r.Failed {
+		// The cause belongs to a round that failed or was skipped and to no
+		// other: a round that answered a verdict did neither, and a record
+		// whose cause outlived its flags would read as a failure beside flags
+		// that say otherwise.
+		if !r.Failed && !r.Skipped {
 			r.Cause = ""
 		}
 		r.Cause = clipRunes(r.Cause, MaxTriageLine)
@@ -1904,6 +1973,25 @@ type Record struct {
 	// format's version stays 1 (schemas/result.schema.json declares the
 	// property, as it does for StageAccounts).
 	Retries int `json:"retries,omitempty"`
+	// Discovered is what the run found out about the graph while it worked
+	// (docs/orchestrator-graph-estimates/implementation-plan.md X2, D2709):
+	// the items its own work blocks and the items it found it needed, each a
+	// plan task or a footprint path with the run's one-line why, bounded as
+	// discovered.go bounds them. Nothing reads it yet — the daemon that folds
+	// it into the graph is E3 — and it is written because the record is what
+	// survives the run. Absent — never an empty block — for a run that
+	// discovered nothing, which is every record written before this field
+	// existed: the field is additive, so an old reader sees the record it
+	// always saw and the format's version stays 1.
+	Discovered *Discovered `json:"discovered,omitempty"`
+	// ConflictPaths is the paths a rebase or a push of this run met a
+	// conflict on (X2, D2709, D2710): the sign the graph the run worked from
+	// was wrong, which the daemon reads beside the footprints of the items
+	// merged since the attempt began. Bounded at MaxConflictPaths. Absent —
+	// never an empty list — for a run that met none, which is every record
+	// written before this field existed, so an old reader sees the record it
+	// always saw.
+	ConflictPaths []string `json:"conflict_paths,omitempty"`
 }
 
 // PatchName is a run's patch object under its own prefix:

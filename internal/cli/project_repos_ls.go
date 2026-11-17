@@ -196,7 +196,7 @@ func reposLsRowLine(r reposViewRepo) string {
 // would draw the ordinary case — the image this project builds for the
 // repository — as a row whose image nothing resolved. The `""` is a fact about
 // the job and not a read that did not answer (D2410, and the console contract's
-// §6.26 states the member that way); ImageSource is what tells the two apart,
+// §6.27 states the member that way); ImageSource is what tells the two apart,
 // and it is what this cell reads.
 func reposLsImageCell(r reposViewRepo) string {
 	switch r.ImageSource {

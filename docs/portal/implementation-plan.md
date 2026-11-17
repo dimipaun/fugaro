@@ -130,8 +130,10 @@ not exist yet.
 - **P0.5 Build, deploy and seed.** `scripts/deploy-portal.sh --project fugaro-staging --dry-run`, then
   without `--dry-run`. The script runs the Cloud Build of P1.7's two images, deploys both services and the
   hosting site, and seeds the operations organisation with `--seed-operations <owner address>`. Production
-  follows Check 570–575. The seed is the API program's one-time `seed-operations` subcommand (P1.7),
-  run once with the owner's credentials. Depends on: P0.1, P0.2, P0.4, P1.7, P9.2, P2.2.
+  follows Check 570–575. The seed is the API program's one-time `seed-operations` subcommand (P1.7), which
+  the script executes as the services root's seed job (`google_cloud_run_v2_job.seed`): the API's image in
+  the API's own environment, because the subcommand builds the API's service before it writes anything and
+  no terminal holds that environment. Depends on: P0.1, P0.2, P0.4, P1.7, P9.2, P2.2.
 - **P0.6 The live checks.** `scripts/live-checks/check-570.sh` … `check-575.sh` on staging. Depends on:
   P9.4, P0.5, and licence-key-v2's K2.4, K3.2 and K3.3 (Check 570 runs `licence login` and `refresh`).
 
@@ -218,7 +220,9 @@ not exist yet.
   - The services root adds the Firestore database `portal`, the API and minter services, the minter's
     ingress set to internal with the API's account as its only invoker, and the minter's signer grant on
     its ring only. It adds a KMS encrypt/decrypt key for the handover whose decrypter is the API's account
-    only, the secrets' empty containers, and `scheduler.tf` with the statement and reminder jobs **paused**.
+    only, the secrets' empty containers, `scheduler.tf` with the statement and reminder jobs **paused**, and
+    the seed job P0.5 executes (`var.seed_job`: the API's program and image on the API's own environment,
+    because the seed reads the whole of it — P1.7).
   - Also `ee/portal/firestore.rules` (+ `.license`, deny all) and
     `ee/keyservice/terraform/infra_test.go`.
   - Tests: `TestOnlyTheMinterCanSign`, `TestOnlyTheAPIInvokesTheMinter`, `TestMinterIngressIsInternal`,
@@ -246,6 +250,8 @@ not exist yet.
   - Command: `go test ./ee/keyservice/... -run 'TestConfig|TestKMSSigner|TestKMSSealer|TestMinterBinary' -count=1`.
   - The API program has a `seed-operations <address>` subcommand: it writes the operations
     organisation and its first invitation through P2.2's `SeedOperations`, and refuses once seeded.
+    It reads the API's whole environment to build the service it seeds through, so it is executed as
+    a Cloud Run job on that environment (P0.5) and never from a terminal, which holds none of it.
   - Depends on: P1.0, P1.6, P2.2. Commit: `ee: the portal API and minter programs`.
 - **P1.8 The minter's bounded term and policy. SECURITY.**
   - Files: `ee/keyservice/minter.go`, `ee/keyservice/policy.go`, `minter_test.go`, `policy_test.go`.

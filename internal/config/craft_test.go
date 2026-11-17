@@ -317,39 +317,48 @@ func TestPoolCannotCrossTheTwoPaths(t *testing.T) {
 	}
 }
 
-// TestTheReadersLeaveACrossingPoolToTheSplit is the staging this refusal ships
-// under, and it is the test that keeps it deliberate: D1668's rule is the door a
-// pool is WRITTEN through and not a rule of the two readers, because 0.25.0's
-// `accounts pool add` wrote a pool naming both halves and its `accounts pool ls`
-// read it as valid — so a config or a published node that carries one is a
-// document no step of this release can repair, and a reader that refused it
-// would leave an installation that cannot read its own config, `fugaro update`'s
-// own load included. MC21 converges a pool that already crosses — the config in
-// place in `fugaro update`, the published node by a step of the policy chain —
-// and moves the rule into these two functions in the change that lands it, which
-// is this refusal's own release (row 43). This test is what fails if the rule
-// reaches the readers before that step does.
-func TestTheReadersLeaveACrossingPoolToTheSplit(t *testing.T) {
+// TestTheCrossingRefusalHoldsAtTheDoorAndTheNodesRead is the staging this
+// refusal ships under, and it is the test that keeps it deliberate. D1668's rule
+// is held at two doors and at two only: the one a NEW pool is written through
+// (ValidatePoolPaths, whose one caller is `fugaro accounts pool add`) and the
+// read of a PUBLISHED node (ValidatePublishedPools, which projectpolicy's Decode
+// runs), so a node that already carries a crossing is refused by the runner's
+// Read, the credentials service's per-call re-read, `doctor` and `update` rather
+// than served to a selector whose listed order it cannot honour. MC21's node-side
+// step is what makes that read safe: the version-8 node the step migrates is
+// split before Decode sees it, and a node below the carry's floor is refused
+// with the update's own remedy.
+//
+// It is deliberately NOT a rule of ValidatePools, and this test is what fails if
+// it becomes one. ValidatePools is the load of the INSTALLATION's own config —
+// localcfg's validate asks it on every read, and every stage of `fugaro update`
+// parses the file before it writes one — so a rule here would leave the
+// installation unable to read the config its own update splits, which is the
+// broken installation CLAUDE.md's HARD RULE forbids. What protects the config
+// side is the door a new pool comes through, and MC21 converges it by splitting
+// the pools on every write of that file (internal/cli's derivePathPools), so the
+// file is never left carrying a crossing and no read ever has to refuse one.
+func TestTheCrossingRefusalHoldsAtTheDoorAndTheNodesRead(t *testing.T) {
 	pool := Pool{Name: "mixed", Members: []string{"sub-one", "router-one"}, Owner: "owner@example.com"}
+	if ps := ValidatePools([]Pool{pool}, poolCrossingMembers()); len(ps) != 0 {
+		t.Errorf("ValidatePools refuses a pool an earlier release wrote: %v — the installation's own load has to read the file `fugaro update` splits", ps)
+	}
 	for name, ps := range map[string][]Problem{
-		"ValidatePools":          ValidatePools([]Pool{pool}, poolCrossingMembers()),
+		"ValidatePoolPaths":      ValidatePoolPaths([]Pool{pool}, poolCrossingMembers()),
 		"ValidatePublishedPools": ValidatePublishedPools([]Pool{pool}, poolCrossingMembers()),
 	} {
-		if len(ps) != 0 {
-			t.Errorf("%s refuses a pool an earlier release wrote: %v", name, ps)
+		if len(ps) != 1 {
+			t.Errorf("%s answers a crossing pool with %d problem(s), want the one refusal: %v", name, len(ps), ps)
 		}
-	}
-	if ps := ValidatePoolPaths([]Pool{pool}, poolCrossingMembers()); len(ps) != 1 {
-		t.Errorf("the door a pool is written through does not refuse the crossing: %v", ps)
 	}
 }
 
 // TestCrossPathPoolRefusedWithTheSplitSentence pins the ONE sentence D1668 rules
 // the refusal is: it names the two members, the half each is served by, and the
 // fix — two pools, one per half, and each craft's access naming the one its
-// stages need. It is the sentence where the pool is written today, and the one
-// the config's load and the node's read say too once MC21 moves the rule into
-// them, so the operator reads the same thing whichever door they met it at.
+// stages need. It is the sentence the two doors that hold the rule say — the
+// write of a new pool and the read of a published node (MC21) — so the operator
+// reads the same thing whichever door they met it at.
 func TestCrossPathPoolRefusedWithTheSplitSentence(t *testing.T) {
 	creds := []Credential{
 		{Name: "openrouter-x", Type: CredentialTypeOpenRouter},

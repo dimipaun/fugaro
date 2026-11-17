@@ -1063,6 +1063,16 @@ func runInit(r *initRun) error {
 						return err
 					}
 				}
+				// And the jobs of the accounts this config declares a KEY
+				// credential under, which this release composes none for: it is
+				// the same record and the same reason, and a print that left
+				// out the job the next plan keeps would be a reading the owner
+				// cannot trust.
+				if len(spec.CarriedProjectJobAccounts) > 0 {
+					if data, err = infra.CarriedProjectJobAccounts(data, prev, spec.CarriedProjectJobAccounts); err != nil {
+						return err
+					}
+				}
 			}
 		}
 		// Printed without a cloud call, so without discovery: stdout stays
@@ -2806,6 +2816,22 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			}
 		}
 	}
+	// And the jobs of the accounts the config declares a KEY credential under,
+	// on the same records: a name such a credential is declared for gets no job
+	// at all from this release's composer (D1670, the filter ProjectJobs
+	// applies), so a document without the job the state holds is the plan of
+	// that job's destruction — and RefuseProjectJobDeletes stops the whole
+	// update on it, with "restore the profile as it was" as its remedy, which
+	// here is putting back the very name the filter drops the job for.
+	// CarriedProjectJobAccounts keeps each of them, whole, from the record the
+	// release behind deployed them in.
+	if len(spec.CarriedProjectJobAccounts) > 0 {
+		for _, prev := range documents {
+			if vars, err = infra.CarriedProjectJobAccounts(vars, prev, spec.CarriedProjectJobAccounts); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
+		}
+	}
 	// The other key this spec never carries, and for a sharper reason than the
 	// opt-in above: it is the deployer's scope, which is what creates the seven
 	// scoped roles and their seven conditioned bindings, and a document that
@@ -2824,6 +2850,24 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// every run that rewrites the root's settings and is allowed to run.
 	for _, prev := range documents {
 		if vars, err = infra.CarriedManagedDeployerScoped(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
+	// And the resident orchestrator's block, the fifth key this spec never
+	// carries: the account and the bindings of the mobile orchestrator design's
+	// section 4.3, which are the whole of what that account may hold (mobile plan
+	// task P5.1b). No writer in this tree composes the key yet — the variable has
+	// no CLI writer, so the one installation that has the block is one whose
+	// owner put it in terraform.tfvars.json by hand — and every document this
+	// function writes is rebuilt from a spec that does not carry it. Without the
+	// carry the next `fugaro update` of an installation that opted in hands
+	// Terraform a document with no orchestrator block: the plan is the account's
+	// and its bindings' removal, and the removal of a google_service_account is
+	// data-bearing under D1551, so the run is refused and the installation stops
+	// converging — the same shape as the four above, and the same one missed
+	// update.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedOrchestrator(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
@@ -2946,6 +2990,19 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			spec.Launchers, spec.Operators = operators, admins
 		}
 	}
+	// The shared project jobs' switch, derived again here for the same reason
+	// the lists above are read again: the records it is read from move inside a
+	// run that applies this root — the upgrade backfill writes them after this
+	// run's first apply (install), and the repository stage writes the entry of
+	// the checkout it converges — and the plan below is what makes the
+	// roles/run.invoker grant those records are a statement about. The launcher
+	// reads the same records live, so it hands a shared job the service's
+	// address the moment its profile's record says so; an apply left behind the
+	// records would leave that job's account refused at the service's front
+	// door, with nothing for the run to fall back to (D143). It touches one
+	// field and no other (RefreshProjectJobCredentialsService, G17), and it is
+	// a no-op for every run whose records have not moved.
+	spec.ProjectJobs = infra.RefreshProjectJobCredentialsService(spec.ProjectJobs, lc)
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err

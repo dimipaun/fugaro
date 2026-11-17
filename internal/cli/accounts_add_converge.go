@@ -51,7 +51,13 @@ import (
 // down rather than read off the file again: a project whose profiles list the
 // account in more than one place would otherwise report a different profile
 // than the one this run's edit — and its confirmation — were about.
-func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, path string, old []byte, name, profile string, repos []string) error {
+//
+// typ is the --type the command was given, "" when it was given none, and it
+// decides the secret below: a key credential's value is stored under the
+// credential's own derived name and not the account's (accountsAddSecretName,
+// MC22). Every other step is the same one for both — a key credential is
+// declared, bounded and converged exactly as an account is (D1669).
+func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcfg.Config, path string, old []byte, name, typ, profile string, repos []string) error {
 	// The command's own account (CL7a): the steps below print through one
 	// reporter and the run's full output is kept in one log, and both are this
 	// command's — the converge is invoked in-process, so a second run with a
@@ -67,11 +73,15 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	}
 	defer env.Close()
 
-	// Step 5: the secret, project-wide, as a new version of the account's own
-	// ID. It runs after the local config and not before it because
-	// projectWideAccepted refuses a name whose allow_data_to lists no
-	// repository: the field has to exist first (spec §2.2 step 5).
-	version, err := accountsAddStoreSecret(run, cmd, env, name)
+	// Step 5: the secret, project-wide, as a new version of the secret this
+	// run's type owns — resolved from the flag AND from the type the config
+	// declares the name with, so a re-run without --type still writes the
+	// credential's own container (accountsAddSecretType). It runs after the local
+	// config and not before it because projectWideAccepted refuses a name whose
+	// allow_data_to lists no repository: the field has to exist first (spec §2.2
+	// step 5).
+	secret := accountsAddSecretName(name, accountsAddSecretType(after, name, typ))
+	version, err := accountsAddStoreSecret(run, cmd, env, secret)
 	if err != nil {
 		return err
 	}
@@ -110,7 +120,7 @@ func accountsAddConverge(ctx context.Context, cmd *cobra.Command, after *localcf
 	// stage's own (readPolicyNode) and not a second one — nothing is written
 	// here, and a node this reader cannot read says so instead.
 	allow, unpublished := accountsAddNodeAccount(ctx, after, name)
-	accountsAddReport(cmd, after, stages, name, profile, repos, version, mark, check, allow, unpublished)
+	accountsAddReport(cmd, after, stages, name, typ, profile, repos, version, mark, check, allow, unpublished)
 	return nil
 }
 
@@ -143,15 +153,18 @@ func accountsAddNodeAccount(ctx context.Context, lc *localcfg.Config, name strin
 }
 
 // accountsAddStoreSecret runs the project-wide store (secretsSetProjectWide,
-// spec §2.2 step 5) and answers the version it wrote. It opens the step through
-// the one opener both stores share (secretsStoreStep), so this step of the
-// account is `fugaro secrets set`'s own: one line naming the container, a cross
-// carrying the server's error when the store fails, and the run's log beside
-// it. The version then reaches this command's block as the store's answer and
-// not as a line read back out of its output (CL7a): the step and the block are
-// two accounts of one store, and neither is parsed out of the other.
-func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, name string) (string, error) {
-	secret := config.ClaudeAccountSecret(name)
+// spec §2.2 step 5) and answers the version it wrote. secret is the name the
+// credential's value lives under, resolved by the caller from this run's type
+// and from the type the config declares the name with (accountsAddSecretType):
+// it is passed in rather than derived here so the step, the sentence and the
+// block all name the one container. It opens the step through the one opener
+// both stores share (secretsStoreStep), so this step of the account is `fugaro
+// secrets set`'s own: one line naming the container, a cross carrying the
+// server's error when the store fails, and the run's log beside it. The version
+// then reaches this command's block as the store's answer and not as a line read
+// back out of its output (CL7a): the step and the block are two accounts of one
+// store, and neither is parsed out of the other.
+func accountsAddStoreSecret(run *stepRun, cmd *cobra.Command, env *cloudEnv, secret string) (string, error) {
 	return secretsStoreStep(run, secret, func() (string, string, error) {
 		return secretsSetProjectWide(run, cmd, env, secretsOptions{}, secret)
 	})
@@ -391,9 +404,14 @@ func accountsAddCheck(cmd *cobra.Command, repo string) (accountsListDoc, error) 
 // results and the command's own read-back. A step that was skipped says so in
 // the stage's words, so a project with no budget backend is a sentence rather
 // than a silent "published".
-func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, name, profile string, repos []string, version, mark string, check accountsListDoc, allow []string, unpublished string) {
+func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[string]initflow.StageResult, name, typ, profile string, repos []string, version, mark string, check accountsListDoc, allow []string, unpublished string) {
 	w := cmd.OutOrStdout()
-	secret := config.ClaudeAccountSecret(name)
+	// The type this run's value was stored under, resolved exactly as the store
+	// step resolved it: a re-run carries no --type, and both the container this
+	// block names and the last line below are about the credential the config
+	// declares and not about an account's token (accountsAddSecretType).
+	typ = accountsAddSecretType(lc, name, typ)
+	secret := accountsAddSecretName(name, typ)
 	row := func(label, value, rest string) {
 		fmt.Fprintf(w, "%-10s%-18s%s\n", label, pluginwire.Printable(value), rest)
 	}
@@ -420,8 +438,8 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 		row("profile", profile, "profiles."+pluginwire.Printable(profile)+".claude_accounts += "+pluginwire.Printable(name))
 	}
 	row("mark", name, mark)
-	row("publish", "policy node", accountsAddPublishLine(name, stages[initflow.Policy], allow, unpublished))
-	row("deploy", "jobs", accountsAddDeployLine(lc, profile, name, stages[initflow.Installation]))
+	row("publish", "policy node", accountsAddPublishLine(name, typ, stages[initflow.Policy], allow, unpublished))
+	row("deploy", "jobs", accountsAddDeployLine(lc, typ, profile, name, stages[initflow.Installation]))
 	if check.Repo != "" {
 		row("check", "accounts ls", pluginwire.Printable(check.Repo)+" may use: "+strings.Join(check.Accounts, ", "))
 	}
@@ -429,7 +447,56 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 		fmt.Fprintf(w, "%s has no checkout here, so its own repository root was not converged: run `fugaro update` in that checkout (fugaro doctor says whether it matters)\n",
 			pluginwire.Printable(repo))
 	}
+	// The last line is what the owner does next, and for an account it is a run.
+	// It is not for a key credential: such a name is served by no Claude account
+	// job and no `--token NAME` run, so what it says is the HALF that serves its
+	// type and what has to exist before a run is authenticated with it (D1670,
+	// MC23) — a run that cannot authenticate is the one thing a "ready" here
+	// would promise.
+	if config.KeyCredentialType(typ) {
+		fmt.Fprintf(w, "%s\n", accountsAddKeyServingLine(lc, name, typ))
+		return
+	}
 	fmt.Fprintf(w, "Nothing else to run: fugaro run --token %s is ready.\n", pluginwire.Printable(name))
+}
+
+// accountsAddKeyServingLine is the last line for a key credential: the half of
+// a run that serves the credential's type, what carries its key there, and —
+// where that is not already in place — the one step that is left (D1670, MC23,
+// config.CredentialServingPath).
+//
+// The two types are served by the two halves of a run, and neither is a job of
+// the credential's own: the credentials service reads the bundle for the
+// service-served type, and the runner path's key is mounted in the job that
+// spends it. The line therefore names the value's OWN container
+// (config.CredentialSecret, which is where `fugaro accounts add --type` stored
+// it) and then the half, so an operator who meets the credential again — in
+// `fugaro accounts ls`, in a pool, in a run's log — can read out of it where
+// the key goes without a second document.
+//
+// The service-served half needs one write of its own, and the line says so
+// rather than closing on "nothing else to run": the bundle is a document this
+// command does not write (its one writer is `fugaro creds set`, which reads the
+// value itself and is refused in an agent's session), so the credential is
+// stored and not yet served until that write has happened. The runner half
+// needs nothing more once a provider of the credential's name exists — the job
+// mount is built from this config by the next converge of the installation —
+// and with no such provider the line says which one is missing, because a
+// credential nothing spends is what an operator would otherwise discover from a
+// failed run.
+func accountsAddKeyServingLine(lc *localcfg.Config, name, typ string) string {
+	shown := pluginwire.Printable(name)
+	secret := pluginwire.Printable(config.CredentialSecret(name))
+	if config.CredentialServingPath(typ) == config.CredentialPathRunner {
+		if _, served := lc.Providers[name]; !served {
+			return fmt.Sprintf("%s is declared and its key is stored under %s; the runner path serves %s, and its key is mounted in the job of the provider of that name — no providers.%s entry exists yet, so no job mounts it and a run cannot authenticate with it until one does.\n",
+				shown, secret, shown, shown)
+		}
+		return fmt.Sprintf("Nothing else to run: %s is declared and its key is stored under %s, and the job of the provider %s mounts it as that provider's key for the repositories claude_accounts.%s.allow_data_to names.\n",
+			shown, secret, shown, shown)
+	}
+	return fmt.Sprintf("%s is declared and its key is stored under %s. The credentials service serves %s from the bundle it reads, and that bundle is written by one command: run `fugaro creds set %s` at your own terminal to put the value where the service reads it — a run whose craft's access names %s cannot authenticate with it until then.\n",
+		shown, secret, shown, secret, shown)
 }
 
 // accountsAddPublishLine is what the published node now carries for this
@@ -438,10 +505,20 @@ func accountsAddReport(cmd *cobra.Command, lc *localcfg.Config, stages map[strin
 // one thing this line may not do is report it as written. A stage that was
 // skipped prints its own reason, and every other state speaks in the node's
 // terms — the account's list, or the fact that the node does not carry it.
-func accountsAddPublishLine(name string, st initflow.StageResult, allow []string, unpublished string) string {
+//
+// A key credential is the one state whose absence from the node is by design
+// rather than a failure: the accounts block is derived from the profiles'
+// claude_accounts lists (projectpolicy.DeriveAccounts) and no profile lists a
+// key credential, because what that list serves is a run's Claude account
+// token and never a key (accounts_add.go). Saying "not published: the node
+// names no account team-a" there would read as the stage having failed to
+// write what the command asked for.
+func accountsAddPublishLine(name, typ string, st initflow.StageResult, allow []string, unpublished string) string {
 	switch {
 	case st.State == initflow.Skipped:
 		return "skipped: " + oneLine(st.Detail)
+	case config.KeyCredentialType(typ):
+		return "no account entry: a key credential is not served to a run as a Claude account, so the node carries none — its reach is claude_accounts." + pluginwire.Printable(name) + ".allow_data_to"
 	case allow != nil:
 		return "accounts." + pluginwire.Printable(name) + ".allow_repos = [" + strings.Join(allow, ", ") + "]"
 	}
@@ -452,7 +529,12 @@ func accountsAddPublishLine(name string, st initflow.StageResult, allow []string
 // job it names is the one this account's own entry in the job set is: one job
 // and one service account per (profile, provider, account), with
 // secretAccessor on that account's secret and no other account's.
-func accountsAddDeployLine(lc *localcfg.Config, profile, name string, st initflow.StageResult) string {
+//
+// A key credential has no job of its own, and that is not a job missing: the
+// name is in no profile (accounts_add.go), which is exactly what keeps a job
+// from mounting an empty claude-oauth-token-<name> as the account's token. What
+// carries its key to a call is the serving half of its type (D1670, MC23).
+func accountsAddDeployLine(lc *localcfg.Config, typ, profile, name string, st initflow.StageResult) string {
 	switch st.State {
 	case "":
 		return "not run: the stage reported no result"
@@ -468,6 +550,17 @@ func accountsAddDeployLine(lc *localcfg.Config, profile, name string, st initflo
 		return string(st.State) + ": " + oneLine(st.Detail)
 	}
 	if profile == "" {
+		if config.KeyCredentialType(typ) {
+			// Which half serves the type is what the line adds to the fact that
+			// the credential has no job of its own: the job of the provider that
+			// spends a runner-path credential's key mounts it, and a
+			// service-served one is read from the bundle and mounted nowhere
+			// (D1670, MC23).
+			if config.CredentialServingPath(typ) == config.CredentialPathRunner {
+				return "no job: a key credential rides no job of its own — the job of the provider " + pluginwire.Printable(name) + " mounts its key (" + pluginwire.Printable(config.CredentialSecret(name)) + ")"
+			}
+			return "no job: a key credential rides no job of its own — the credentials service serves it from the bundle, and no job mounts it"
+		}
 		return "no job: no profile serves " + pluginwire.Printable(name) + " yet"
 	}
 	// The job's name is gcp.ProjectJobName's — the one function the job set,

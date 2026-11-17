@@ -575,6 +575,51 @@ type Layer struct {
 // map is e.Layer.ReviewFloor, and a mode's levels are asked for here.
 func (e Effective) ReviewFloor(mode rigor.Mode) []Level { return e.Layer.ReviewFloor[mode] }
 
+// ReviewFloorFor is the floor a run at mode is held to, given the mode the
+// layers resolved beside its own request (rigor.LayersMode, "" for every run
+// whose request did not take it off the axis): both rows hold, in the
+// vocabulary's order.
+//
+// A request raises a mode and never lowers a floor (D8, LF5), so a run a
+// request takes to hotfix may not leave the row of the mode the layers
+// resolved behind: an owner floor of `pro l2,l3` is what the owner requires of
+// that repository, and a per-run flag that switched which row applies would
+// lower it — silently, since nothing about the run says the floor was read
+// against another mode. Reading both rows is the only reading that leaves
+// every floor the owner set in force.
+//
+// The slice aliases the merged policy where only one row is read, exactly as
+// ReviewFloor's does, so a caller that appends to the answer clones it first —
+// which is what the two callers already do with a floor (internal/runner's
+// resolveLevelsForcing, the launcher's copy, both forcing level 3 on).
+func (e Effective) ReviewFloorFor(mode, beside rigor.Mode) []Level {
+	return FloorFor(e.Layer.ReviewFloor, mode, beside)
+}
+
+// FloorFor is ReviewFloorFor for a reader that holds the floor as it is
+// written — the map the published policy node and the project layer carry —
+// rather than as a merged Effective: the launcher's own read of the policy,
+// which resolves the levels a launch will run before any run exists
+// (internal/cli's launchReviewLevelsAsk).
+func FloorFor(floor map[rigor.Mode][]Level, mode, beside rigor.Mode) []Level {
+	if beside == "" || beside == mode {
+		return floor[mode]
+	}
+	return unionFloor(floor[mode], floor[beside])
+}
+
+// unionFloor is unionReviewFloor's rule for two rows read out of the merge:
+// every level either names, in the vocabulary's order, in a slice of its own.
+func unionFloor(a, b []Level) []Level {
+	var out []Level
+	for _, l := range Levels {
+		if slices.Contains(a, l) || slices.Contains(b, l) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 // TriageOff reports whether the merged layers turn the triage stage off: any
 // layer that wrote the switch wrote false, which is what an owner's published
 // node does to every repository of an installation and what a repository does

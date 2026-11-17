@@ -127,13 +127,21 @@ const CredsRulesVersion = 1
 func PathOrchestratorRulesMarker() string { return "config/limits/orchestratorRules" }
 
 // OrchestratorRulesVersion is the generation of the orchestrator rules this
-// Fugaro carries: the first document with the top-level /orchestrator subtree.
-// It is 1 because the family is new, and it counts *this family's* changes
-// only — a later orchestrator change bumps it without touching
+// Fugaro carries: 1 was the first document with the top-level /orchestrator
+// subtree, and 2 is the document that adds a rule *under* it — the reports
+// job's read of the ladder's escalation block (E12, F27,
+// docs/outer-loop-escalation). It counts *this family's* changes only — a
+// later orchestrator change bumps it without touching
 // `projectpolicy.RulesVersion`, which is the whole point of keeping them apart.
+//
+// A bump is what the addition needs, and it is the only thing that tells an
+// installation's owner the difference: generation 1's document refuses the
+// reports job every read of the ledger, and a job running against it reads
+// nothing there, so the two documents are not interchangeable and
+// `fugaro update --firebase-project` has to redeploy one to reach the other.
 //
 // A marker above this is a newer Fugaro's; `fugaro update --firebase-project`
 // refuses to deploy this binary's rules over it (internal/infra's DB.Plan),
 // exactly as it does for a `policyRules` marker above
 // `projectpolicy.RulesVersion`.
-const OrchestratorRulesVersion = 1
+const OrchestratorRulesVersion = 2

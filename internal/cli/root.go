@@ -248,6 +248,11 @@ func newCoreRoot() *cobra.Command {
 		// project's orchestrator state (the stateless-orchestrator plan's O5,
 		// D1223). It reads and writes the node its project's daemon keeps.
 		newOrchestratorCmd(),
+		// What the escalation ladder has done to the project's stalled pull
+		// requests (the outer-loop-escalation plan's E13): the ledger E7 keeps
+		// on each work item, read-only. A person's window onto the ladder that
+		// otherwise only the daemon acts on.
+		newEscalationCmd(),
 		// The credentials service's own entry point: hidden, and the only
 		// thing the service's image runs (credentials_serve.go, plan task
 		// C1.14). It is registered like every other command so `fugaro

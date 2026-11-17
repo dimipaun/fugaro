@@ -385,7 +385,7 @@ func TestReposLsRowImageIsTheProjectsOwnOnAnUncuratedCatalog(t *testing.T) {
 
 // TestReposLsRefusesAPolicyNodeItCannotRead: a node that ANSWERED and that this
 // build refuses is the command's failure, with nothing printed in either form —
-// §6.26's exit status, and the half `TestReposLsUnreadablePolicyIsAStateNotAnEmptyList`
+// §6.27's exit status, and the half `TestReposLsUnreadablePolicyIsAStateNotAnEmptyList`
 // beside it does not cover.
 //
 // The two are different states and neither is the other's exception. A read that
