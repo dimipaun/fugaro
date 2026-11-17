@@ -1454,7 +1454,8 @@ no person stands in that path.
 only if `runner.Decide` says so, and the mode changes only what `Decide` is
 given — its policy.** Every mode opens a draft and every mode's ready state is
 Decide's answer, Hotfix included: Hotfix's difference is that its policy tolerates
-more and D12's gate decides whether the run may open at all, not that some other
+more and the operator's own request is what makes a run a Hotfix at all (D12 as
+amended 2026-11-13), not that some other
 act marks it ready. This is today's practice, read correctly: the runner opens the
 draft (`internal/runner/prflow.go`'s `openDraftPR`, `Draft: true`) and marks it
 ready itself, through `provider.UpdatePR` with `Draft: !ready`
@@ -1491,6 +1492,30 @@ the base branch's configuration — never a pull request comment, never a
 follow-up.**
 Why: the mode with the least review must not be reachable from the surface the
 owner already treats as hostile.
+
+**Amended 2026-11-13: the gate is dropped, not built, and `--mode hotfix` needs
+no opt-in.** The owner ruled that there is no way to predict when a hotfix will
+be needed, so the base-branch key this decision named is read by nothing and no
+`rigor.hotfix` gate exists (docs/rigor-command/implementation-plan.md R7, and
+F13's amendment in `docs/rigor-command/reconciliation.md` §2). The half of the
+decision that stands is the one about surfaces: the request is the launch's own
+door — `fugaro run --mode hotfix`, on a first run or on a follow-up — and no
+comment reaches the mode, since a task filed from one never carries it.
+`fugaro rigor set` still refuses to **write** it as a
+default in any form it can write. A hand-written `rigor.default: hotfix` in a
+`fugaro.yaml` still resolves, as it always did; whether that stays reachable is
+the owner's to rule on separately.
+
+**Amended 2026-11-16: the door is the same everywhere, and the fence does not
+apply to it.** The owner ruled that `fugaro run --mode hotfix` takes effect with
+no opt-in *including a coding agent's session and a `--pr` follow-up*, and that
+the fence the rigor-command design writes — the typed project name a lowering
+`fugaro rigor set` asks for, and the diff-and-write-nothing answer a session gets
+for a write outside a repository, both that design's own rules
+(`docs/rigor-command/`) — does not apply to hotfix. So the launch paths are one
+door: the request decides that run and nothing after it, while what those two
+refusals guard is a **layer write** — a mode every later run of the project
+inherits (`fugaro rigor set`, which keeps both refusals).
 
 **Recommended: `fugaro run --mode hotfix` by a person, gated on the base branch's
 configuration (`rigor.hotfix` on, plus the trusted list) — never a PR comment,
@@ -1707,7 +1732,15 @@ the security-sensitive tier**, which includes a built-in set — `.github/workfl
 whatever the repository declares. Paths are declared as `doublestar` globs in the
 `rigor:` block (and, project-wide, in the published policy), each with a mode, and
 the pattern is validated the way config validates patterns today (F9). **A task or
-a follow-up comment cannot lower a mode below a floor, ever** (D6, D8). **The mode
+a follow-up comment cannot lower a mode below a floor, ever** (D6, D8). *(Amended
+2026-11-13: the floor holds a request that moves the mode as well. The only floor
+that exists is `review_floor`, a mode→levels map, and a run reads the row of the
+mode it is at — so a request that takes a run off the axis to `hotfix` is held to
+hotfix's row **and** to the row of the mode the layers resolved for it, both read
+(`policy.Effective.ReviewFloorFor`, D8/LF5's own rule): moving the mode moves no
+floor, and an owner floor of `pro l2,l3` keeps the adversarial step on for that run.
+`fugaro run --mode hotfix` needs no opt-in, task R7 of
+`docs/rigor-command/implementation-plan.md`.)* **The mode
 used is recorded in the PR body and in the run record**, in the same words, so the
 two can be diffed. Reason: the repository's security posture for this tier is
 already written (`docs/credentials-service/implementation-plan.md` Global
