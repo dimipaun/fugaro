@@ -55,6 +55,7 @@ module "installation" {
   licence                   = var.licence
   credentials_service       = var.credentials_service
   intake                    = var.intake
+  voice_service             = var.voice_service
   project_secrets           = var.project_secrets
   managed_deployer_scoped   = var.managed_deployer_scoped
   orchestrator              = var.orchestrator

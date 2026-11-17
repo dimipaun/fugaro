@@ -2893,6 +2893,20 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the voice hop's, the third key this spec never carries, and the one
+	// key of the three the run itself never writes: the block IS the hop's
+	// opt-in (var.voice_service, off unless the installation turns it on), so
+	// nothing here adds it and a document that has none stays without one. What
+	// the carry does is keep an installation that WROTE one, and it is lost here
+	// exactly as badly as the two above: the key plans the hop's service, its
+	// account, its one role binding and its invoker grants away, and with them
+	// the only process that enforces the project's voice policy. Carried forward
+	// present or absent, like the intake's.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedVoiceService(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
 	// And the implicit default review job, on the same documents: the spec
 	// composes it only while the config records one GitHub App ID, so an
 	// installation that has the job and then records two — or none, its last
@@ -3204,6 +3218,13 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			prior, havePrior = o, true
 		}
 	}
+	// The hop's opt-in is the INSTALLATION's and not this machine's, so a
+	// document that carries no block is not the same fact as an installation
+	// without a hop: keepVoiceHop reads the second out of the outputs just read,
+	// before the plan whose document it has to be on disk for.
+	if err := r.keepVoiceHop(wd, prior, havePrior); err != nil {
+		return outs, false, err
+	}
 	if err := checkInstallationName(r.o.name, lc.Name, prior, havePrior); err != nil {
 		return outs, false, err
 	}
@@ -3334,6 +3355,101 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, remote(err)
 	}
 	return outs, false, nil
+}
+
+// keepVoiceHop re-composes the voice hop's block in the installation root's
+// tfvars when this run's document records nothing for it and the installation's
+// own state says it has a hop.
+//
+// It exists because the opt-in is recorded in two places and the run reads only
+// one of them: prepare carries the block forward from the workdir's own
+// document (init.go's CarriedVoiceService), which is THIS machine's copy, while
+// the fact that the installation has a hop at all is the installation's — its
+// Cloud Run service exists, and the module publishes it as the `voice_service`
+// output. A machine that holds no document — a second machine of the
+// installation, or one whose state directory was lost — therefore carried
+// nothing and planned the hop away: the block is what voice.tf's count reads,
+// so a document without one is a plan that removes the service, its account,
+// its one role binding and its public invoker binding, and the guard refuses a
+// delete of them, so the one documented command stopped converging on an
+// installation nobody had asked it to change. That is CLAUDE.md's HARD RULE
+// twice over — `fugaro update` is the whole upgrade, and it is the run that
+// keeps an installation that opted in (SECURITY.md: "an installation runs one
+// only if it asks for it, and `fugaro update` then deploys and keeps it").
+//
+// prior is the installation's own outputs, read by installRoot immediately
+// above the plan this block has to be on disk for, so the read costs nothing
+// extra: a hop in them is the module's voice_service output, which exists
+// exactly while the variable does. havePrior false is a state with no
+// installation yet — a fresh `fugaro setup` — where there is nothing to keep,
+// and an installation that never opted in has no such output and gets no block:
+// this composes nothing out of the local config, which is what makes the hop
+// opt-in rather than default-on like the two services beside it.
+//
+// A document that records the key as null is the owner turning the hop OFF, and
+// it is the one form of "no hop" a run can act on: a missing key is also what a
+// machine that never held the document has, which is what the state read above
+// is for, while the key written as null is a decision the owner made in the
+// installation's own tfvars. So the block is composed only into a document that
+// records nothing at all (infra.VoiceServiceRecorded), and the plan that follows
+// a null is the hop's removal — its service, its account, its public invoker
+// binding and its state read — which is SECURITY.md's "the installation's own
+// switch, which takes the service and its grant away". Composing over it would
+// put the one PUBLIC endpoint of this tree back on every later update.
+//
+// The image is the credentials service's recorded reference, which the document
+// this run composed carries: the three services are one pin of one image, and
+// the run's move of them onto this release's is the credentials-service stage's
+// own (moveCredentialsImage), after the policy stage — the hop reads the same
+// published node the credentials service does, so its revision moves with the
+// service's and never before it. A document with no credentials image (a run
+// that deploys no service at all: an agent's session, a development build, or
+// an installation whose config cannot carry one) gets no block and is told so,
+// because a revision needs an image and this run has none to compose one with.
+//
+// The service's name is the installation's own, read out of the output that
+// says it has a hop at all, and not the constant: the module's variable takes
+// any Cloud Run name, and the name is a force-new attribute of
+// google_cloud_run_v2_service, so composing the default would plan a replace of
+// a service that is named something else — a delete the guard refuses (tf.Guard
+// refuses every replace unless its address is named on --allow-delete), which
+// is the one documented command failing to converge on an installation nobody
+// asked it to change, this time on a machine that named its hop service. The
+// account's ID is the constant, and it can be: it is not a choice the module's
+// variable accepts (variables.tf), which is what keeps the account's one grant
+// the one the cover classifies (internal/infra/tf's isVoiceMember).
+func (r *initRun) keepVoiceHop(wd *infra.Workdir, prior infra.InstallationOutputs, havePrior bool) error {
+	if !havePrior || prior.VoiceService == nil {
+		return nil
+	}
+	doc, err := wd.Vars()
+	if err != nil {
+		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	}
+	recorded, err := infra.VoiceServiceRecorded(doc)
+	if err != nil {
+		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	}
+	if recorded {
+		return nil
+	}
+	image, ok, err := infra.CredentialsServiceImageOf(doc)
+	if err != nil {
+		return userErr("reading the installation's %s: %v", infra.VarsFile, err)
+	}
+	if !ok {
+		r.warn("the installation's own state has a voice hop and this machine's tfvars carry no block for it, and this run has no credentials image to compose one from: the plan below removes the hop — its service, its account, its public invoker binding and its state read — unless var.voice_service is written into the installation's tfvars by hand")
+		return nil
+	}
+	next, err := infra.SetVoiceService(doc, infra.VoiceServiceSpec{
+		AccountID: infra.VoiceAccountID,
+		Service:   prior.VoiceService.Name,
+		Image:     image,
+	})
+	if err != nil {
+		return userErr("setting the voice hop in the installation's %s: %v", infra.VarsFile, err)
+	}
+	return wd.WriteVars(next)
 }
 
 // runsBucketViewers offers to remove project Viewers' read access to the
