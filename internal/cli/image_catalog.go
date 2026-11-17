@@ -12,11 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -313,25 +315,33 @@ func newImageAddCmd() *cobra.Command {
 		dockerfile, branch         string
 		inline, image, description string
 		def                        bool
+		// noApply is the flag addNoApplyFlag registers, read by the run: the
+		// helper both declares the flag and hands back the value it holds, and
+		// that happens after the command is built (D1565).
+		noApply *bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add an image catalog entry to this machine's project config",
 		Long: "Add a named image to the project's image catalog, in this machine's project\n" +
-			"config: the copy fugaro update publishes to the project's policy node\n" +
-			"(image_catalog). The entry's source is a Dockerfile in one of the project's\n" +
-			"repositories (--dockerfile owner/name:path, with --branch), a Dockerfile\n" +
-			"written out here (--inline <file>), or an image that already exists\n" +
-			"(--image <ref>), and its tags are what a repository's needs: is matched\n" +
-			"against. The three are one entry's alternatives and are refused together\n" +
-			"rather than resolved.\n\n" +
-			"Nothing is built and nothing is published here: fugaro image build <name>\n" +
-			"builds the entry's image, and fugaro update publishes the catalog. --default\n" +
-			"marks the entry a job whose repositories name no needs runs; a catalog marks\n" +
-			"one entry, or none.",
+			"config: the copy the project's policy node serves (image_catalog). The entry's\n" +
+			"source is a Dockerfile in one of the project's repositories (--dockerfile\n" +
+			"owner/name:path, with --branch), a Dockerfile written out here (--inline\n" +
+			"<file>), or an image that already exists (--image <ref>), and its tags are\n" +
+			"what a repository's needs: is matched against. The three are one entry's\n" +
+			"alternatives and are refused together rather than resolved.\n\n" +
+			"The entry is added and made live by this one command: its image is built,\n" +
+			"the repository it is read out of is redeployed and the catalog is published,\n" +
+			"so no further command is needed. --no-apply saves the entry and leaves those\n" +
+			"steps to fugaro apply. --default marks the entry a job whose repositories\n" +
+			"name no needs runs; a catalog marks one entry, or none.\n\n" +
+			"In a coding agent's session --inline, --image and --default are refused: what\n" +
+			"they define is executable content the project's jobs run, and a person writes\n" +
+			"it. --dockerfile is read from the project's own repository, where it was\n" +
+			"committed and reviewed, so it is allowed there as it is anywhere else.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runImageAdd(cmd, o, args[0], tags, dockerfile, branch, inline, image, description, def)
+			return runImageAdd(cmd, o, args[0], tags, dockerfile, branch, inline, image, description, def, *noApply)
 		},
 	}
 	f := cmd.Flags()
@@ -342,21 +352,60 @@ func newImageAddCmd() *cobra.Command {
 	f.StringVar(&image, "image", "", "a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is")
 	f.StringVar(&description, "description", "", "what the entry is for, printed by fugaro image ls")
 	f.BoolVar(&def, "default", false, "the entry a job whose repositories name no needs runs (one entry, or none)")
+	noApply = addNoApplyFlag(cmd)
 	addCloudFlags(cmd, &o)
 	return cmd
 }
 
+// imageAddAgentClause is the sentence D1573's refusal is built from, written
+// once so the wording is pinned by a test rather than assembled at the call
+// site: an agent's session is refused the three flags whose content a person
+// has not seen.
+const imageAddAgentClause = "nothing was written: an image catalog entry defined by --inline, --image or --default is executable content the project's jobs run, so it is a person's own entry and not a coding agent's"
+
+// imageAddAgentRefusal is D1573's check, and it is this command's own: an entry
+// defined by --inline (a Dockerfile written out here), --image (a prebuilt image
+// reference) or --default (the entry a job that names no needs runs) is
+// executable content of the kind settingsProfilesRule refuses for profile keys,
+// and a coding agent's session writes none of it. It is not the managed gate's
+// (D1545: that gate judges a write in a managed project, per stage, and this
+// judge has no project in hand) and it does not lean on it: the same three
+// flags refuse in an unmanaged project, with --no-apply and without it, and
+// before the config is read or the file --inline names is opened — an agent
+// queues no entry of this kind for the person's next `fugaro apply` either
+// (D1576's rule, one resource over).
+//
+// --dockerfile is deliberately not in the list: the Dockerfile it names is a
+// file in one of the project's own repositories, committed and reviewed in that
+// repository's history, which is not content a session writes here.
+func imageAddAgentRefusal(cmd *cobra.Command, inline, image string, def bool) error {
+	if inline == "" && image == "" && !def {
+		return nil
+	}
+	m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin()))
+	if m == "" {
+		return nil
+	}
+	return userErr("%s: %s", imageAddAgentClause, initflow.AgentRefusal(m))
+}
+
 // runImageAdd writes the entry into this machine's project config, backing
-// the file up first (userSave, the rule every writer of this file follows).
-// It never publishes: the node is fugaro update's (the HARD RULE), and an
-// entry that reached the cloud from here would be a second publication path
-// beside it.
-func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string, dockerfile, branch, inline, image, description string, def bool) error {
+// the file up first (userSave, the rule every writer of this file follows),
+// and then runs the steps that make it live (spec rule 1, D1561): the catalog
+// image's build, the redeploy of the checkout's repository — which pins the
+// digest that build produced — and the publication of the catalog every run of
+// the project is admitted by.
+func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string, dockerfile, branch, inline, image, description string, def, noApply bool) error {
 	ctx := cmd.Context()
 	// The read of the project config is the operator's own and may fetch the
 	// shared one, so the GODEBUG that prints requests with their credentials
 	// is refused before anything is read (the rule every such command keeps).
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
+	// D1573's refusal comes before the entry is built from the flags and before
+	// anything they name is read: what it refuses is the content itself.
+	if err := imageAddAgentRefusal(cmd, inline, image, def); err != nil {
 		return err
 	}
 	e, err := catalogEntryFromFlags(name, tags, dockerfile, branch, inline, image, description, def)
@@ -406,8 +455,16 @@ func runImageAdd(cmd *cobra.Command, o cloudOptions, name string, tags []string,
 	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "the catalog entry %s is in this machine's project config: fugaro update publishes it, and fugaro image build %s builds its image\n",
-		pluginwire.Printable(e.Name), pluginwire.Printable(e.Name))
+	// The change is written and this command runs what makes it live: the
+	// entry's image, the redeploy that pins its digest (D1574) and the catalog
+	// publication (D1561, D1577). The sentence below is printed only for a run
+	// that answered every step — one that could not says so itself, in D1563's
+	// words (chainKeptLine) — so what a person reads is never both "live" and
+	// "still owed".
+	if err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Image %s added and now available to your jobs.\n", pluginwire.Printable(e.Name))
 	return nil
 }
 
@@ -457,7 +514,11 @@ func catalogEntryFromFlags(name string, tags []string, dockerfile, branch, inlin
 }
 
 func newImageRmCmd() *cobra.Command {
-	var o cloudOptions
+	var (
+		o cloudOptions
+		// noApply is the flag addNoApplyFlag registers, read by the run (D1565).
+		noApply *bool
+	)
 	cmd := &cobra.Command{
 		Use:   "rm <name>",
 		Short: "Remove an image catalog entry from this machine's project config",
@@ -467,19 +528,31 @@ func newImageRmCmd() *cobra.Command {
 			"project's image_map gives it to the repository, or because the tag-cover\n" +
 			"rule picks it for the tags the workflow needs — since that job would then\n" +
 			"be on an image no catalog describes. Point the repository at another entry\n" +
-			"first (image_name: in its fugaro.yaml, or fugaro image map set), run\n" +
-			"fugaro update, and remove the entry after.\n\n" +
+			"first (image_name: in its fugaro.yaml, or fugaro image map set), then\n" +
+			"remove the entry.\n\n" +
+			"The removal is made live by this one command: the repository whose job ran\n" +
+			"the entry is redeployed and the catalog is published without it, so no\n" +
+			"further command is needed. --no-apply saves the removal and leaves those\n" +
+			"steps to fugaro apply.\n\n" +
 			"Nothing is deleted from the registry: the entry's built image stays where\n" +
-			"it is, and the next fugaro update publishes the catalog without the entry.",
+			"it is.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runImageRm(cmd, o, args[0]) },
+		RunE: func(cmd *cobra.Command, args []string) error { return runImageRm(cmd, o, args[0], *noApply) },
 	}
+	noApply = addNoApplyFlag(cmd)
 	addCloudFlags(cmd, &o)
 	return cmd
 }
 
-// runImageRm removes the entry, refusing while a repository's job runs it.
-func runImageRm(cmd *cobra.Command, o cloudOptions, name string) error {
+// runImageRm removes the entry, refusing while a repository's job runs it, and
+// then runs the steps that make the removal live: the same steps `image add`
+// owes, because the resource a change of the catalog acts on is the catalog and
+// not the command (internal/apply's catalogSteps).
+//
+// The catalog image that is built is the one the catalog's remaining entries
+// make up, and the redeploy is the checkout's repository's, exactly as it is
+// after an add (D1574).
+func runImageRm(cmd *cobra.Command, o cloudOptions, name string, noApply bool) error {
 	ctx := cmd.Context()
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
@@ -532,8 +605,10 @@ func runImageRm(cmd *cobra.Command, o cloudOptions, name string) error {
 	if err := userSave(cmd.OutOrStdout(), path, old, next); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "the catalog entry %s is out of this machine's project config: its image stays in the registry, and fugaro update publishes the catalog without it\n",
-		pluginwire.Printable(name))
+	if err := runChangeChain(cmd, onDisk, path, apply.Change{Kind: apply.Resource, Key: apply.ResourceImage}, noApply); err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Image %s removed and no longer available to your jobs: its built image stays in the registry.\n", pluginwire.Printable(name))
 	return nil
 }
 
