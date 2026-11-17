@@ -140,7 +140,14 @@ profiles:
 // project with it.
 func sharedJobE2EPolicy(githubRepos, bitbucketRepos string) string {
 	project := "[" + strings.Trim(githubRepos, "[]") + "," + strings.Trim(bitbucketRepos, "[]") + "]"
+	// The policy's own budget block: a mode a shared job needs. A job that
+	// carries the credentials service's address has every one of its
+	// repositories on the switch, and a repository on the switch reaches the
+	// service through the gateway, which only observe or enforce starts
+	// (D2071): with the mode off the run halts at bootstrap saying exactly
+	// that, and there is no credential of its own to fall back to (D143).
 	return `{"version":` + strconv.Itoa(projectpolicy.Version) + `,"allow_repos":` + project + `,` +
+		`"budget":{"mode":"observe","per_run_usd":20},` +
 		`"bitbucket_token":{"proxy":true,"allow_repos":` + bitbucketRepos + `},` +
 		`"profiles":{` +
 		`"standard":{"provider":"github","allow_repos":` + githubRepos + `,` +
@@ -174,6 +181,7 @@ type sharedJobE2E struct {
 	service *sharedJobE2EService
 	meta    *httptest.Server
 
+	job        infra.ProjectJob
 	store      *runstore.Store
 	bucket     *blobx.Bucket
 	workDir    string
@@ -223,7 +231,7 @@ func sharedJobE2EUp(t *testing.T, provider, repo, policy string) *sharedJobE2E {
 	}
 	e.publishInstallation(t, ctx, lc)
 	e.mintRun(t, ctx)
-	e.env = e.jobEnv(t, job)
+	e.job = job
 	return e
 }
 
@@ -247,8 +255,13 @@ func (e *sharedJobE2E) publishInstallation(t *testing.T, ctx context.Context, lc
 	e.iam.AddSigner(sharedJobE2ESigner)
 	e.itk = gcpfake.NewIdentityToolkit(t, e.iam, sharedJobE2EAPIKey, sharedJobE2EGCPProject)
 	e.db.Set("fugaro/project", lc.Name)
-	e.db.Set(budget.PathMode, "off")
+	e.db.Set(budget.PathMode, "observe")
+	micros := func(v budget.Micros) *budget.Micros { return &v }
+	e.db.Set(budget.PathLimits, budget.Limits{MaxReserveMicros: micros(5_000_000)})
+	e.db.Set(budget.PathCapsGlobal, budget.GlobalCaps{DailyMicros: micros(150_000_000), PerRunMicros: micros(20_000_000)})
 	e.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	e.db.Set(budget.PathCapsRepo(e.slug), budget.RepoCaps{
+		DailyMicros: micros(60_000_000), PerRunMicros: micros(20_000_000), Repo: e.repo})
 	e.publishPolicy(t, e.policy)
 }
 
@@ -296,20 +309,27 @@ func (e *sharedJobE2E) mintRun(t *testing.T, ctx context.Context) {
 	}
 }
 
-// jobEnv is the environment the run is handed: the deployed job's own, which is
-// what a real execution's container carries, plus the three things a platform
-// supplies and a test supplies instead. The metadata server is the job's own
-// identity, and a Bitbucket job's service is the fixture's record — replaced
-// here with the stand-in beside it, which is the one value of the job's
-// environment a test may move.
-func (e *sharedJobE2E) jobEnv(t *testing.T, job infra.ProjectJob) []string {
+// runEnv is the environment the run is handed: the deployed job's own, which is
+// what a real execution's container carries, plus the things a platform
+// supplies and a test supplies instead — a PATH and a HOME, the model key the
+// agent would be given, the metadata server the forwarder reads the job's
+// identity from, and, for a Bitbucket job, the installation's credentials
+// service.
+//
+// The service's address is the one value of the job's environment a test moves:
+// the deployed job names the installation's own service, and the stand-in
+// beside it on loopback takes that place, as a platform supplies the real one.
+func (e *sharedJobE2E) runEnv(t *testing.T) []string {
 	t.Helper()
-	env := make([]string, 0, len(job.Env)+12)
-	for _, k := range sortedKeys(job.Env) {
+	if e.env != nil {
+		return e.env
+	}
+	env := make([]string, 0, len(e.job.Env)+12)
+	for _, k := range sortedKeys(e.job.Env) {
 		if k == providers.EnvCredentialsServiceURL {
 			continue
 		}
-		env = append(env, k+"="+job.Env[k])
+		env = append(env, k+"="+e.job.Env[k])
 	}
 	env = append(env,
 		"PATH="+os.Getenv("PATH"),
@@ -317,13 +337,16 @@ func (e *sharedJobE2E) jobEnv(t *testing.T, job infra.ProjectJob) []string {
 		"ANTHROPIC_API_KEY=test-key",
 	)
 	if e.provider == gitprov.KindBitbucket {
-		e.service = newSharedJobE2EService(t, e.Job)
+		if e.service == nil {
+			e.service = newSharedJobE2EService(t, e.Job, e.remote)
+		}
 		e.meta = sharedJobE2EMetadata(t)
 		env = append(env,
 			providers.EnvCredentialsServiceURL+"="+e.service.srv.URL,
 			"GCE_METADATA_HOST="+strings.TrimPrefix(e.meta.URL, "http://"),
 		)
 	}
+	e.env = env
 	return env
 }
 
@@ -340,7 +363,7 @@ func (e *sharedJobE2E) deps(t *testing.T) runner.Deps {
 	}
 	return runner.Deps{
 		Store: e.store, OpenProvider: open, Agent: &sharedJobE2EAgent{e: e},
-		WorkDir: e.workDir, StateDir: e.stateDir, Env: e.env,
+		WorkDir: e.workDir, StateDir: e.stateDir, Env: e.runEnv(t),
 		// A remote that does not exist: a project job holds no per-repository
 		// remote, so a run that read one instead of computing its clone URL
 		// fails here rather than cloning something nobody named (the fixture
@@ -364,6 +387,7 @@ func (e *sharedJobE2E) deps(t *testing.T) runner.Deps {
 				}
 			},
 		},
+		Spend:               e.spend(t),
 		CancelPoll:          20 * time.Millisecond,
 		ManagedSettingsPath: managed,
 	}
@@ -385,6 +409,20 @@ func (e *sharedJobE2E) layout(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return filepath.Join(e.managedDir, "managed-settings.json")
+}
+
+// spend is the run's own budget mode and cap, as the launcher's environment
+// carries them (runner.SpendFromEnv): observe, which is the mode the published
+// policy names and the weakest one a repository on the credentials service's
+// switch may run under.
+func (e *sharedJobE2E) spend(t *testing.T) runner.Spend {
+	t.Helper()
+	env := map[string]string{runner.BudgetModeEnv: "observe", runner.MaxRunUSDEnv: "20"}
+	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return spend
 }
 
 // run drives a whole run and returns the record it wrote.
@@ -513,13 +551,19 @@ func (e *sharedJobE2E) host(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The other provider's whole host goes nowhere, so a run that cloned
+	// across providers fails locally rather than making a network call. This
+	// run's own host is rewritten only for GitHub: a Bitbucket run's clone URL
+	// is rewritten to its own execution's forwarder by the run's own git
+	// environment, and a second rewrite of the same prefix in the global file
+	// would be a second answer to the same question.
 	absent := filepath.Join(t.TempDir(), "no-such-host")
-	rewrites := map[string]string{
-		"https://github.com/":    absent + "/",
-		"https://bitbucket.org/": absent + "/",
-	}
+	rewrites := map[string]string{}
 	if e.provider == gitprov.KindGitHub {
+		rewrites["https://bitbucket.org/"] = absent + "/"
 		rewrites[url] = bare
+	} else {
+		rewrites["https://github.com/"] = absent + "/"
 	}
 	urlRewrite(t, rewrites)
 	return bare
@@ -546,6 +590,13 @@ func sharedJobE2EWorkflowConfig(t *testing.T, provider string) string {
 	if out == cfg {
 		t.Fatalf("the fixture repository's config no longer writes the secrets block this fixture drops:\n%s", cfg)
 	}
+	// The models a run under a budget must pin (config.CheckPins): the
+	// published policy carries a budget mode, so the coder, the reviewer and
+	// the background model each name a model ID the price table holds.
+	out = strings.Replace(out, "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
+`, 1)
 	out = strings.Replace(out, "provider: github", "provider: "+provider, 1)
 	if !strings.Contains(out, "provider: "+provider) {
 		t.Fatalf("the fixture repository's config no longer writes a github provider:\n%s", cfg)
@@ -634,6 +685,100 @@ func TestSharedJobEndToEndGitHub(t *testing.T) {
 	})
 }
 
+// TestSharedJobEndToEndBitbucket is I1's Bitbucket half, and the clause the
+// switch is for: the same whole run in the shared job the installation deploys
+// for its Bitbucket profile, where the job mounts no Bitbucket token at all
+// (D2302) and every byte of the run's git and REST traffic reaches Bitbucket
+// through the run's own loopback forwarder to the installation's credentials
+// service and nowhere else.
+//
+// Nothing here stands in for the run's own half of that path: the forwarder is
+// the shipped one, it mints the job's ID token from the metadata server the
+// fixture serves, and the adapter that opens the pull request is the shipped
+// proxied one. What stands in is the installation: the service's route answers
+// the two halves a run's traffic has there (git, over the fixture's bare
+// repository, and the REST calls the adapter makes), and it refuses anything
+// that did not arrive under this job's identity, which is what says the
+// forwarder — and not the run's git — put it there.
+func TestSharedJobEndToEndBitbucket(t *testing.T) {
+	admitted := sharedJobE2EPolicy(`["github/`+sharedJobE2EGithubRepo+`"]`, `["bitbucket/`+sharedJobE2EBitbucketRepo+`"]`)
+
+	t.Run("clone, push and open a pull request", func(t *testing.T) {
+		e := sharedJobE2EUp(t, gitprov.KindBitbucket, sharedJobE2EBitbucketRepo, admitted)
+		e.host(t)
+		rec, err := e.run(t, implement("feature"), review("ship", 0))
+		if err != nil {
+			t.Fatalf("the run errored: %v\n%s", err, e.logs.String())
+		}
+		if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+			t.Fatalf("record = %+v: a run the installed proxy serves ends ready\n%s", rec, e.logs.String())
+		}
+		e.assertClonedAndPushed(t, rec, "")
+		// The run reached git and the API through its own forwarder: the
+		// service saw the clone and the push, and then the pull request the
+		// adapter created.
+		if len(e.service.gitCalls) == 0 {
+			t.Error("nothing of the run's git reached the credentials service")
+		}
+		if len(e.service.apiCalls) == 0 {
+			t.Error("none of the run's Bitbucket API traffic reached the credentials service")
+		}
+		if len(e.service.prs) != 1 {
+			t.Fatalf("the service holds %d pull requests, want the one the run opened", len(e.service.prs))
+		}
+		if pr := e.service.prs[0]; pr.Branch != e.branch() {
+			t.Errorf("the pull request's branch is %q, want %q", pr.Branch, e.branch())
+		}
+		// The job holds no token of the provider it serves, and this run was
+		// handed none: nothing it wrote carried one, and the only identity the
+		// service was called under is the job's own.
+		for _, call := range append(append([]sharedJobE2EServiceCall{}, e.service.gitCalls...), e.service.apiCalls...) {
+			if call.auth != "Bearer "+sharedJobE2EJobIDToken {
+				t.Errorf("%s %s reached the service under %q", call.method, call.path, call.auth)
+			}
+		}
+	})
+
+	t.Run("a repository the installed proxy does not serve is refused", func(t *testing.T) {
+		e := sharedJobE2EUp(t, gitprov.KindBitbucket, sharedJobE2EBitbucketRepo, admitted)
+		e.host(t)
+		// The published block admits another repository: a shared job's run has
+		// no token to fall back to, so this is the refusal that stands between
+		// it and a clone with no credential at all (S3's halt).
+		e.publishPolicy(t, sharedJobE2EPolicy(`["github/`+sharedJobE2EGithubRepo+`"]`, `["bitbucket/acme/elsewhere"]`))
+		rec, err := e.run(t, implement("feature"))
+		if err == nil {
+			t.Fatalf("the run was admitted: %+v\n%s", rec, e.logs.String())
+		}
+		if !strings.Contains(err.Error(), "bitbucket/"+sharedJobE2EBitbucketRepo) {
+			t.Errorf("the refusal does not name the repository: %v", err)
+		}
+		if e.cloned() {
+			t.Error("the run cloned a repository the installed proxy does not serve")
+		}
+		if len(e.service.gitCalls) != 0 {
+			t.Errorf("a refused run reached the service: %v", e.service.gitCalls)
+		}
+	})
+
+	t.Run("a baked checkout is reset before the fetch", func(t *testing.T) {
+		e := sharedJobE2EUp(t, gitprov.KindBitbucket, sharedJobE2EBitbucketRepo, admitted)
+		e.host(t)
+		marker := e.bakeCheckout(t)
+		rec, err := e.run(t, implement("feature"), review("ship", 0))
+		if err != nil {
+			t.Fatalf("the run errored: %v\n%s", err, e.logs.String())
+		}
+		if rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("record = %+v: a baked checkout the run can reset is not a refusal\n%s", rec, e.logs.String())
+		}
+		if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the hook the baked checkout carried ran: %v", err)
+		}
+		e.assertClonedAndPushed(t, rec, e.bakedDir(t))
+	})
+}
+
 // cloned reports whether the run made itself a checkout in the work directory.
 func (e *sharedJobE2E) cloned() bool {
 	_, err := os.Stat(filepath.Join(e.workDir, ".git"))
@@ -658,6 +803,19 @@ func (e *sharedJobE2E) assertClonedAndPushed(t *testing.T, rec *runstore.Record,
 	}
 	if head := testutil.Git(t, e.remote, "rev-parse", "refs/heads/"+e.branch()); head == "" {
 		t.Fatalf("the branch %s is not on the remote: the run did not push", e.branch())
+	}
+	// The fetch the run made for itself before it committed: the base it
+	// works on is the remote's, and it is the base the record names.
+	base := testutil.Git(t, e.remote, "rev-parse", "refs/heads/"+rec.BaseBranch)
+	if base == "" {
+		t.Fatalf("the remote holds no base branch %s", rec.BaseBranch)
+	}
+	if fetched := testutil.Git(t, dir, "rev-parse", "origin/"+rec.BaseBranch); fetched != base {
+		t.Errorf("the checkout's origin/%s is %q, want the remote's %q: the run fetches the base it works on",
+			rec.BaseBranch, fetched, base)
+	}
+	if rec.StartSHA != base {
+		t.Errorf("the record starts the run at %q, want the fetched base %q", rec.StartSHA, base)
 	}
 	if rec.HeadSHA == "" {
 		t.Error("the record names no head commit")
@@ -753,10 +911,12 @@ const sharedJobE2EJobIDToken = "job-id-token-shared-job-e2e"
 // its own job identity, through its own forwarder, and that is what the case is
 // about.
 type sharedJobE2EService struct {
-	t    *testing.T
-	job  string
-	bare string
-	srv  *httptest.Server
+	t       *testing.T
+	job     string
+	bare    string
+	root    string
+	backend *cgi.Handler
+	srv     *httptest.Server
 
 	mu       sync.Mutex
 	gitCalls []sharedJobE2EServiceCall
@@ -769,9 +929,15 @@ type sharedJobE2EServiceCall struct {
 	method, path, auth, run, job string
 }
 
-func newSharedJobE2EService(t *testing.T, job string) *sharedJobE2EService {
+func newSharedJobE2EService(t *testing.T, job, bare string) *sharedJobE2EService {
 	t.Helper()
-	s := &sharedJobE2EService{t: t, job: job}
+	testutil.Git(t, bare, "config", "http.receivepack", "true")
+	s := &sharedJobE2EService{
+		t: t, job: job, bare: bare, root: filepath.Dir(bare),
+		backend: &cgi.Handler{
+			Path: filepath.Join(testutil.Git(t, bare, "--exec-path"), "git-http-backend"),
+		},
+	}
 	s.srv = httptest.NewServer(s)
 	t.Cleanup(s.srv.Close)
 	return s
@@ -812,23 +978,20 @@ func (s *sharedJobE2EService) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 // serveGit answers the git half of the route with git's own http-backend over
-// the fixture's bare repository. Nothing here authenticates: the job's identity
-// arrived on the request and was checked above, which is the whole of what a
-// proxied run's git credential is.
+// the fixture's bare repository, the way internal/testutil's HTTP remote does.
+// Nothing here authenticates: the job's identity arrived on the request and was
+// checked above, which is the whole of what a proxied run's git credential is.
+//
+// The caller's path carries the repository the URL names, and the backend is
+// served the path its own project root and repository name spell — the rewrite
+// internal/credsvc's route makes for the same reason.
 func (s *sharedJobE2EService) serveGit(w http.ResponseWriter, r *http.Request) {
-	h := &cgi.Handler{
-		Path: "git",
-		Args: []string{"http-backend"},
-		Env: []string{
-			"GIT_PROJECT_ROOT=" + filepath.Dir(s.bare),
-			"GIT_HTTP_EXPORT_ALL=1",
-			"PATH_INFO=" + gitPathInfo(r.URL.Path, s.bare),
-			"QUERY_STRING=" + r.URL.RawQuery,
-			"REQUEST_METHOD=" + r.Method,
-			"CONTENT_TYPE=" + r.Header.Get("Content-Type"),
-		},
+	s.backend.Env = []string{
+		"GIT_PROJECT_ROOT=" + s.root,
+		"GIT_HTTP_EXPORT_ALL=1",
+		"PATH_INFO=" + gitPathInfo(r.URL.Path, s.bare),
 	}
-	h.ServeHTTP(w, r)
+	s.backend.ServeHTTP(w, r)
 }
 
 // gitPathInfo is the path git's http-backend is served: the bare repository's
@@ -916,6 +1079,16 @@ func (s *sharedJobE2EService) serveAPI(w http.ResponseWriter, r *http.Request, r
 			http.Error(w, "no pull request", http.StatusNotFound)
 			return
 		}
+		// The adapter marks a pull request ready by putting the draft flag
+		// and the title back, and reads the answer: this half applies what
+		// it was asked for, which is what Bitbucket does with a field it
+		// honors (the adapter's own comment covers the host that does not).
+		var in struct {
+			Title string `json:"title"`
+			Draft bool   `json:"draft"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		s.prs[0].Title, s.prs[0].Draft = in.Title, in.Draft
 		_ = json.NewEncoder(w).Encode(s.prs[0])
 	case r.Method == http.MethodPost && strings.HasSuffix(rest, "/comments"):
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
