@@ -693,6 +693,14 @@ func TestUpdateFreshPrintsSecrets(t *testing.T) {
 	}
 	for logical, id := range r.spec.Secrets {
 		line := " secrets set " + logical + " --repo acme/sandbox"
+		if logical == "sandbox-probe" {
+			// A repository-level secret is disabled for a shared job (D2313), so
+			// the update names it as ignored and prints no command to store it.
+			if !strings.Contains(res.stdout, "repository-level secrets ("+logical+") are disabled") || strings.Contains(res.stdout, line) {
+				t.Errorf("%s is not reported as disabled, or still has a store command:\n%s", logical, res)
+			}
+			continue
+		}
 		if !strings.Contains(res.stdout, line) || !strings.Contains(res.stdout, id) {
 			t.Errorf("no command for %s:\n%s", logical, res)
 		}
