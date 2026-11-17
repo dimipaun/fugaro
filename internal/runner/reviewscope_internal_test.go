@@ -262,3 +262,82 @@ func TestReviewScopeNotApplicableToFollowUpReviewAndAutofix(t *testing.T) {
 		}
 	})
 }
+
+// TestReviewScopeReReadKeepsASkippedImplementReason: a run that skipped
+// implement has no implement set, so its record says the comparison does not
+// apply and is never a mismatch (T5.2) — a fact that holds however the branch
+// moves afterwards. A fix round that leaves the narrowed commit behind makes
+// the next round read the recorded range, and the comparison read again over
+// it is still not applicable: the record keeps the run's own reason, nothing
+// halts the round (T7.3), and the paths the range covers beyond the run's own
+// commits are not recorded as a mismatch either.
+//
+// Mutation (read the comparison again for a run that skipped implement): the
+// first subtest's record carries range-moved, and the second's carries
+// range-moved with a non-empty outside — the shape ee/governance's Before
+// halts on, for a scope the plan says never halts.
+func TestReviewScopeReReadKeepsASkippedImplementReason(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("the round reads the recorded range", func(t *testing.T) {
+		repo, _, tip := ownRangeRepo(t, 4)
+		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+		commitFiles(t, repo.Dir, "run.txt")
+		r := scopeRun(repo)
+		r.rec.Gate = "fixed"
+		r.narrowReviewRange(ctx)
+		if r.narrowed() != tip {
+			t.Fatalf("narrowed() = %q, want the autofix run's range narrowed to %s", r.narrowed(), tip)
+		}
+		// The fix round rebases the run's commit onto main, so the narrowed
+		// commit no longer leads to HEAD and the round reads the recorded
+		// range instead.
+		testutil.Git(t, repo.Dir, "rebase", "--quiet", "--onto", "origin/main", tip)
+		rev := r.reviewRev(ctx)
+		if rev != "origin/main" {
+			t.Fatalf("reviewRev = %q, want the recorded origin/main after the rebase", rev)
+		}
+		now := r.reviewScopeNow(ctx, r.narrowed(), rev)
+		if now == nil || now.Applicable || now.WhyNot != runstore.ReviewScopeAutofix {
+			t.Fatalf("scope = %+v, want not applicable with %q", now, runstore.ReviewScopeAutofix)
+		}
+		if r.rec.ReviewScope != now {
+			t.Error("the record does not carry the scope the round reads")
+		}
+	})
+
+	t.Run("a range covering what the run's own commits do not", func(t *testing.T) {
+		repo, _, tip := ownRangeRepo(t, 4)
+		testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "work", "origin/integration")
+		commitFiles(t, repo.Dir, "run.txt")
+		r := scopeRun(repo)
+		r.rec.Gate = "fixed"
+		r.narrowReviewRange(ctx)
+		if r.narrowed() != tip {
+			t.Fatalf("narrowed() = %q, want the autofix run's range narrowed to %s", r.narrowed(), tip)
+		}
+		// The branch is left before the commit the range was narrowed to: the
+		// range the round reads covers the integration branch's own file, which
+		// this run never wrote — the mismatch shape, on a scope that does not
+		// apply.
+		testutil.Git(t, repo.Dir, "reset", "--hard", "--quiet", tip+"~1")
+		rev := r.reviewRev(ctx)
+		if rev != "origin/main" {
+			t.Fatalf("reviewRev = %q, want the recorded origin/main", rev)
+		}
+		covered, err := repo.ChangedFiles(ctx, rev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"integration.txt"}; !slices.Equal(covered, want) {
+			t.Fatalf("the range covers %v, want %v", covered, want)
+		}
+		now := r.reviewScopeNow(ctx, r.narrowed(), rev)
+		if now == nil || now.Applicable || now.WhyNot != runstore.ReviewScopeAutofix {
+			t.Fatalf("scope = %+v, want not applicable with %q", now, runstore.ReviewScopeAutofix)
+		}
+		if len(now.ReviewFiles) != 0 || len(now.Outside) != 0 {
+			t.Errorf("scope covers %v (outside %v), want the reason and no comparison at all", now.ReviewFiles, now.Outside)
+		}
+	})
+}

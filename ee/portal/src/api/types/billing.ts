@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
 // See ee/LICENSE for the terms.
 //
-// The billing mirror and a seat purchase (portal plan P1.4; F20). The shapes
-// are `ee/portal/schemas/billing.schema.json` and their samples are
-// `ee/portal/schemas/fixtures/billing.*.json`, held to each other by
-// `test/types.test.ts`.
+// The billing mirror, a seat purchase and Paddle's own customer portal (portal
+// plan P1.4; F20). The shapes are `ee/portal/schemas/billing.schema.json` and
+// their samples are `ee/portal/schemas/fixtures/billing.*.json`, held to each
+// other by `test/types.test.ts`.
 //
 // The subscription below is a **mirror**: Paddle is where the subscription
 // lives, and this is what the portal last read from its events, so a screen
@@ -33,5 +33,14 @@ export interface SubscriptionSeats {
   seats: number
 }
 
+/**
+ * The session a screen is handed when it asks for Paddle's own customer portal:
+ * the URL a browser is sent to, which is where invoices, payment methods and
+ * cancellation live.
+ */
+export interface CustomerPortal {
+  url: string
+}
+
 /** Everything `billing.schema.json` describes. */
-export type Billing = Subscription | SubscriptionSeats
+export type Billing = Subscription | SubscriptionSeats | CustomerPortal

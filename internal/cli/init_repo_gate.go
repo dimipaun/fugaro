@@ -119,6 +119,15 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 // conditions; this gate is not the exception.
 func (e *initEngine) onboardCovered(o originInfo) bool {
 	r := e.r
+	if !r.o.enrolsByAnswer() {
+		// This door's answer for this row is nobody's to give: `fugaro apply`
+		// runs the steps a management change saved, and a pipe, a script, a
+		// --json run and the console all reach it (D1572), so an owed redeploy
+		// of a repository the config does not list is left for the user rather
+		// than onboarded by the context that happened to run the command
+		// (enrolsByAnswer).
+		return false
+	}
 	if o.Rewritten || !o.standardHost() {
 		// The origin's identity is not the one it claims: git config in the
 		// checkout rewrites it, or its host is not a provider's own. The

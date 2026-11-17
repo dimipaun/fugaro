@@ -8,6 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // levelsRun is the minimal run the review levels' routing needs: an api-key
@@ -198,6 +199,52 @@ func TestRoutingRoutesALevelsOwnModel(t *testing.T) {
 	}
 }
 
+// TestABReplayRoutesTheChallenger: a replay arm's challenger is written into the
+// slot level's block *after* the switch has run (bootstrap's order: resolvePolicy
+// applies the switch, applyReplayLevel writes the challenger once the levels say
+// there is a stage to replay in), so the write has to route the model the way
+// the switch routes a level's own model written before it. A challenger the
+// project routes and that kept the canonical ID would leave the owner's route:
+// the level's pin would name a model no route claims while every other pin named
+// the route's own ID, and the arm's review calls would go direct — the outcome
+// TestRoutingRoutesALevelsOwnModel pins for a level's own model.
+func TestABReplayRoutesTheChallenger(t *testing.T) {
+	const coder, reviewer, challenger, routed = "claude-sonnet-5-5", "claude-opus-5", "claude-fable-5-1", "anthropic/claude-fable-5.1"
+	for _, tc := range []struct {
+		name             string
+		challenger, want string
+	}{
+		{"a challenger the switch names", challenger, routed},
+		// The list is the opt-in (D1a): a challenger it does not name is
+		// written as the task spelled it, exactly as the run's other pins are.
+		{"a challenger the switch does not name", "claude-sonnet-5-5", "claude-sonnet-5-5"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := routedRun(t, &config.RoutingClaude{Via: config.RouteOpenRouter, Models: []string{challenger}}, coder, reviewer)
+			if err := r.applyRouting(r.projPolicy.policy, true); err != nil {
+				t.Fatalf("applyRouting: %v", err)
+			}
+			r.spec = &task.Spec{AB: &task.AB{
+				Arm: task.ABArmChallenger, Slot: task.ABSlotL2,
+				Challenger: tc.challenger, ChampionRun: "20260926-221530-beef",
+			}}
+			r.replay, r.levels = policy.LevelL2, config.Levels{L2: config.ResolvedLevel{On: true}}
+			if err := r.applyReplayLevel(); err != nil {
+				t.Fatalf("applyReplayLevel: %v", err)
+			}
+			if got := r.levelModel(policy.LevelL2); got != tc.want {
+				t.Errorf("level 2's model = %q, want %q", got, tc.want)
+			}
+			if got := r.stagePins("review")["CLAUDE_CODE_SUBAGENT_MODEL"]; got != tc.want {
+				t.Errorf("review pins = %q, want %q", got, tc.want)
+			}
+			if got := r.stageSpec("review").Model; got != tc.want {
+				t.Errorf("the gateway's model for review = %q, want %q: the set and the pins name one model", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestStageRoleAgreesWithConfig: the runner's answer for a stage is
 // config.StageRole's, the adversarial stage included — that function knows it
 // since L4.2 — because level 3 is a review. A stage whose role disagreed with
@@ -290,7 +337,7 @@ func TestRoutingTriageRunsTheReviewersModel(t *testing.T) {
 // The allow-list is deliberately not one of them. The resolver's list is a
 // membership test; the list that bounds a run is config.CheckAllowed's, which
 // admits a route ID where the switch routes the model to it and names the key
-// the owner wrote — a level's own model as agent.levels.lN.model (checkLevels,
+// the owner wrote — a level's own model as agent.levels.lN.model (checkModels,
 // levelModelPath). Filled in here it would refuse a routed level model the run
 // may use, and refuse it before checkBudget judged it, so the resolution writes
 // the level and the run's own gate is what refuses the run — which is what
@@ -313,7 +360,7 @@ func TestRoutingApplyLevelsLeavesTheAllowListToTheRun(t *testing.T) {
 	if got := r.levelModel(policy.LevelL3); got != adversarial {
 		t.Fatalf("level 3's model = %q, want the resolved %q: the level runs, and the run's own gate is what judges it", got, adversarial)
 	}
-	ps := r.checkLevels(func(a config.Agent) []config.Problem {
+	ps := r.checkModels(func(a config.Agent) []config.Problem {
 		return config.CheckAllowed(a, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders())
 	})
 	if len(ps) != 1 || ps[0].Path != "agent.levels.l3.model" {

@@ -820,8 +820,8 @@ func Run(ctx context.Context, req Request) (Diagnosis, error) {
 		return Diagnosis{}, err
 	}
 	d.CostUSD = res.CostUSD
-	d.Signature = redactOutput(d.Signature, secrets)
-	d.Text = redactOutput(d.Text, secrets)
+	d.Signature = RedactOutput(d.Signature, secrets)
+	d.Text = RedactOutput(d.Text, secrets)
 	return d, nil
 }
 
@@ -1008,7 +1008,7 @@ func answerField(line, name string) (string, bool) {
 	return strings.TrimSpace(rest), true
 }
 
-// redactOutput is the last thing that happens to text before a person reads
+// RedactOutput is the last thing that happens to text before a person reads
 // it: the terminal control characters come off first, then both redaction
 // passes, exactly. The order is the point. An escape sequence can stand
 // *inside* a value — a log line whose colour codes land in the middle of a
@@ -1020,13 +1020,17 @@ func answerField(line, name string) (string, bool) {
 //
 // This runs on model output and on nothing else: the log and the configuration
 // the agent reads were redacted before the child ever started, and this is the
-// second look rather than the only one (F20).
-func redactOutput(s string, secrets []string) string {
+// second look rather than the only one (F20). It is exported because the cloud
+// tier's answer is model output too and is read by a command rather than by
+// this package's Run — and the second look there is the one that matters most,
+// since the job that wrote the answer holds the project's secrets and not this
+// machine's.
+func RedactOutput(s string, secrets []string) string {
 	return redact.Report(redact.Text(safetext.Text(s, true), secrets))
 }
 
 func errorText(s string, secrets []string) string {
-	s = safetext.OneLine(redactOutput(s, secrets))
+	s = safetext.OneLine(RedactOutput(s, secrets))
 	if r := []rune(s); len(r) > 300 {
 		s = string(r[:300]) + "..."
 	}

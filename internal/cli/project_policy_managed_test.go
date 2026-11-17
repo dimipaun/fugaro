@@ -845,6 +845,24 @@ func TestAnAgentsPublishMayNotMoveTheBinariesBlock(t *testing.T) {
 		rewriteWith("binaries:\n  allow: [\"brand/*.png\", \"website/public/**\"]\n  max_bytes: 1048576\n"))
 }
 
+// reports_commit: the repository every report of the project is committed into
+// (D2750, D2751; periodic-reviews R14). No rule of this gate reads the member,
+// and that is the right answer here rather than a rule: the decider is the
+// owner, who states the designation in the local project config, and an agent's
+// publish may not move it at all — a session that could would be choosing the
+// repository a commit run opens a pull request in, under the user's own
+// identity, which is the one decision D2751 keeps to the owner. What answers
+// is the rule that closes over every member the others do not read: the block
+// is compared by the member map of the two nodes, so any move a session makes
+// with it is a change no rule judged and is refused by name. The move below is
+// one such; the other direction — the written empty block that takes the
+// designation away — is refused by the same comparison, because what is held to
+// equality is the member and not the direction it moved in.
+func TestAnAgentsPublishRefusesAReportsCommitMember(t *testing.T) {
+	refusedMemberChange(t, "reports_commit", "reports_commit: { repo: acme/reports }\n",
+		rewriteWith("reports_commit: { repo: acme/elsewhere }\n"))
+}
+
 // The plan's §5 wiring property for this command: the gate is read BEFORE the
 // first write. The world that says so is one where the mark read fails — a
 // project this program cannot prove is managed is a project whose

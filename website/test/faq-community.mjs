@@ -1,7 +1,7 @@
 // website/test/faq-community.mjs — the FAQ and the community page (website plan, W1.10).
 //
 // The two pages this file checks are the site's document pages, and the rules they answer to
-// are about what a page may *say* — and, for the community page, how it is *set*. Nine of them
+// are about what a page may *say* — and, for the community page, how it is *set*. Ten of them
 // are checked here, and each one reads its source rather than the page's own copy of it
 // (Review Focus: "the test must read the source, not the generator's own output"):
 //
@@ -71,6 +71,13 @@
 //      `LICENSE` is "the only text that governs" is gone: it stopped being true the day one
 //      file outside it was under another licence, which is what the reserved directory is.
 //      Each refusal has a plant, on the element the defect sits in.
+//  10. **The licence band states what a seat is, and the free seat** (the subscriptions plan's
+//      S7.1; D431–D433, T15). The band says a seat is a person who launches jobs by any means
+//      (D433/T14), and that an organisation with no subscription holds one free evaluation seat,
+//      an individual counting as an organisation of one (D432/T15; the Terms' section 10.2(a)).
+//      These are the facts the licence asks a reader to act on, and a page that states the
+//      licence and stops at it hands a reader a per-seat price with no rule behind it. Each
+//      refusal has a plant, like the ninth rule's.
 //
 // How it reads a page: `npm run check` builds the site before it runs anything here, so the
 // real pages are read from `website/dist/` — the artifact a reader gets, not a rendering of
@@ -943,6 +950,107 @@ test('every licence-element refusal fires on the defect it names', () => {
 
   for (const { what, plant, expected } of cases) {
     const failures = licenceSplitFailures(plant(page))
+    assert.ok(
+      failures.some((line) => expected.test(line)),
+      `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`,
+    )
+  }
+})
+
+// ---- the free seat, and what a seat is (D431-D433, T15; the subscriptions plan's S7.1) -----
+
+/**
+ * The `#licence` band states the licence, and the subscriptions plan's S7.1 gives it the two
+ * facts about that licence a reader is asked to act on — what the code outside the core costs
+ * them, and what one of those costs buys.
+ *
+ *   - **A seat is a person who launches jobs, by any means** (D433/T14). The seat is a pricing
+ *     rule of the Terms (section 5.1), not a technical lock: the MIT core and the command line
+ *     stay free, and what the per-seat price is charged for is a person who initiates a Job,
+ *     through the console, the app, the command line or an agent acting for them.
+ *   - **One free evaluation seat per organisation, an individual counting as an organisation of
+ *     one** (D432/T15; the Terms' section 10.2(a)). The Terms hold that seat for a legal person
+ *     with no Paid Plan, for proof of concept and evaluation, and T15 rules that an individual
+ *     counts as an organisation of one — so business-only does not exclude an open-source
+ *     maintainer or a sole proprietor, and the public-OSI plan of section 10.2(b) is theirs too.
+ *
+ * The band and not the Licence card: the card is the grid's entry that hands a reader the two
+ * licence files, and the band is the section that states what the licence means for a reader who
+ * is not paying. The page carries no figure, the plan's S0.1 scanning it for one (D430, T22).
+ */
+function freeSeatFailures(html) {
+  const out = []
+  const band = bands(html).find((one) => one.id === 'licence')
+  if (band === undefined) {
+    return ['the community page has no `#licence` band, which is the element that states the licence and the free seat (F7; S7.1)']
+  }
+  const text = pageText(band.body)
+
+  // What a seat is (D433/T14), in the words a reader acts on.
+  if (!/\blaunches jobs\b/.test(text)) {
+    out.push(`the \`#licence\` band does not say what a seat is: a seat is a person who launches jobs by any means (D433/T14), and a per-seat licence is a claim a reader cannot check without it`)
+  }
+  // One free seat per organisation with no subscription (D432/T15; the Terms' section 10.2(a)).
+  if (!/\bone free seat\b/.test(text)) {
+    out.push(`the \`#licence\` band names no free seat: one free seat per organisation with no subscription is what a reader evaluating Fugaro is owed (D432/T15; the Terms' section 10.2(a))`)
+  }
+  if (!/\bevaluation\b/.test(text)) {
+    out.push(`the \`#licence\` band does not say the free seat is for evaluation: the Terms hold it for proof of concept and evaluation, so a page that states it without its purpose promises more than the licence grants (D432)`)
+  }
+  // T15: an individual is an organisation of one, which is what makes the seat an individual's.
+  if (!/\borganisation of one\b/.test(text)) {
+    out.push(`the \`#licence\` band does not say an individual counts as an organisation of one: that is T15, and without it an open-source maintainer or a sole proprietor reads the free seat as somebody else's (D432/T15)`)
+  }
+
+  return out
+}
+
+test('the licence band states what a seat is and the free seat', () => {
+  const page = builtPage('community')
+  assert.deepEqual(
+    freeSeatFailures(page),
+    [],
+    `the community page's licence band does not state the seat rule and the free seat (S7.1; D431-D433, T15):\n  ${freeSeatFailures(page).join('\n  ')}`,
+  )
+})
+
+test('every free-seat refusal fires on the defect it names', () => {
+  const page = builtPage('community')
+  assert.deepEqual(
+    freeSeatFailures(page),
+    [],
+    'the free-seat rule fails on the built page, so the cases below are not proving what they name',
+  )
+
+  const BAND = 'the `#licence` band'
+
+  // Each case is one edit to the band — the defect as a later edit would write it — and the
+  // refusal it names.
+  const cases = [
+    {
+      what: `${BAND} without the seat rule`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/\blaunches jobs\b/, 'uses the software')),
+      expected: /the `#licence` band does not say what a seat is/,
+    },
+    {
+      what: `${BAND} without the free seat`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/\bone free seat\b/, 'a seat')),
+      expected: /the `#licence` band names no free seat/,
+    },
+    {
+      what: `${BAND} stating the free seat without its purpose`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/\bevaluation\b/, 'a trial')),
+      expected: /the `#licence` band does not say the free seat is for evaluation/,
+    },
+    {
+      what: `${BAND} without the individual sentence`,
+      plant: (html) => editLicenceElement(html, BAND, (one) => one.replace(/\borganisation of one\b/, 'a small team')),
+      expected: /the `#licence` band does not say an individual counts as an organisation of one/,
+    },
+  ]
+
+  for (const { what, plant, expected } of cases) {
+    const failures = freeSeatFailures(plant(page))
     assert.ok(
       failures.some((line) => expected.test(line)),
       `${what} was not refused (${expected}); the rule said:\n  ${failures.join('\n  ') || '(nothing)'}`,

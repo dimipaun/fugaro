@@ -70,9 +70,13 @@ func TestChangeSetRunStaysDraft(t *testing.T) {
 // pull request, under its own prefix, because that is the record the step that
 // settles the whole set reads from it (D2, D3) — and it is the run's answer, not
 // its pull request's state: the run that shipped is a draft, and it still
-// records `ship`. A member that ended without shipping records the empty verdict
-// over whatever stood there, so that step never settles a pull request on a word
-// no run still stands by.
+// records `ship`. The verdict carries the commit it is about and whether a
+// clean-tree test passed there, because the record outlives the run that wrote
+// it and the run that settles the set cannot see the writer's verify table: the
+// commit is the one the run pushed, and it was verified — which is what the
+// shipped ending means. A member that ended without shipping records the empty
+// verdict over whatever stood there, so that step never settles a pull request
+// on a word no run still stands by.
 func TestChangeSetRunRecordsVerdict(t *testing.T) {
 	ctx := context.Background()
 	h := newHarness(t, "", memberSpec(changeSetFor(runID)))
@@ -90,6 +94,10 @@ func TestChangeSetRunRecordsVerdict(t *testing.T) {
 	if m.Verdict != runstore.VerdictShip {
 		t.Fatalf("a run whose review shipped recorded the verdict %q, want %q: %+v", m.Verdict, runstore.VerdictShip, m)
 	}
+	if m.HeadSHA != rec.PushedHead || !m.Verified {
+		t.Fatalf("the verdict was recorded with head %q verified %v, want the commit it pushed, cleaned and tested: %+v",
+			m.HeadSHA, m.Verified, m)
+	}
 	if rec.PR == nil || m.PRURL != rec.PR.URL || m.At.IsZero() {
 		t.Fatalf("record = %+v, run record = %+v", m, rec.PR)
 	}
@@ -99,7 +107,8 @@ func TestChangeSetRunRecordsVerdict(t *testing.T) {
 
 	// A member that did not ship records the empty verdict over whatever stood
 	// there: the set must never settle a pull request on a word no run still
-	// stands by.
+	// stands by. Its commit goes with the empty word — the commit it pushed,
+	// which nothing verified, so the set's step cannot settle on it either.
 	h = newHarness(t, "", memberSpec(changeSetFor(runID)))
 	rec, err = h.run(t, commitOnly("feature"), review("ship", 0))
 	if err != nil {
@@ -115,6 +124,10 @@ func TestChangeSetRunRecordsVerdict(t *testing.T) {
 	if m.Verdict != "" || m.PRURL == "" {
 		t.Fatalf("a run that did not ship recorded %+v", m)
 	}
+	if m.HeadSHA != rec.PushedHead || m.Verified {
+		t.Fatalf("a run that did not ship recorded head %q verified %v, want the commit it pushed, unverified: %+v",
+			m.HeadSHA, m.Verified, m)
+	}
 }
 
 // TestChangeSetFollowUpKeepsTheHold: a follow-up on a member's pull request
@@ -123,7 +136,10 @@ func TestChangeSetRunRecordsVerdict(t *testing.T) {
 // pull request its set keeps a draft (F15). What it writes is the member's
 // record, under the member run's prefix: the set's membership was fixed at its
 // launch (D642), and this run answers on that member's pull request rather than
-// making itself a member of anything.
+// making itself a member of anything. The commit it records is the one the
+// FOLLOW-UP pushed, with its own test on it: the record is what the settle step
+// compares the member's pull request against, and the member run's own commit
+// is not what the pull request is at any more (D3).
 func TestChangeSetFollowUpKeepsTheHold(t *testing.T) {
 	ctx := context.Background()
 	h := followUpHarness(t, "", nil, implement("feature"), review("ship", 0))
@@ -163,6 +179,13 @@ func TestChangeSetFollowUpKeepsTheHold(t *testing.T) {
 	}
 	if m.RunID != runID || m.SetID != runID || m.Verdict != runstore.VerdictShip || m.PRURL == "" {
 		t.Fatalf("the follow-up recorded %+v", m)
+	}
+	if rec.PushedHead == h.first.PushedHead {
+		t.Fatal("the follow-up pushed nothing, so this test would not tell the two commits apart")
+	}
+	if m.HeadSHA != rec.PushedHead || !m.Verified {
+		t.Fatalf("the follow-up recorded head %q verified %v, want the commit it pushed, tested: %+v",
+			m.HeadSHA, m.Verified, m)
 	}
 	if _, err := h.store.ReadChangeSetMember(ctx); !errors.Is(err, runstore.ErrNotFound) {
 		t.Fatalf("the follow-up recorded a member of its own: %v", err)

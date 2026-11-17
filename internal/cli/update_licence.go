@@ -1,0 +1,98 @@
+package cli
+
+import (
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+)
+
+// update_licence.go is the update's own half of the licence renewal job (plan
+// K4.2 of docs/licence-key-v2), and it is deliberately the smallest half:
+// `fugaro update` is the only command that creates the job, its account and the
+// empty container the renewal secret is written into, and the whole of what it
+// has to decide is whether THIS plan is one the module's own condition admits.
+//
+// What the job is, in one place (infra.LicenceSpec, whose doc comments carry
+// the reasoning): a scheduled `fugaro licence renew --job`, running as its own
+// account, reading and writing one object of the runs bucket — the key — and
+// one Secret Manager container the module creates EMPTY. Nothing in the core
+// reads a key (D524): an installation that buys no licence holds a job that
+// no-ops and says so, an account with two grants and a container with no
+// version in it, which is the state every installation with a coordinator ends
+// up in and the state K3.2's `fugaro licence set` writes into.
+//
+// Why the switch is the coordinator's and not a flag of its own: the job's
+// image is the coordinator's image (one CLI binary serves the sweep, the front
+// door and this job, infra.Licence's spec takes HistoryImage), so an
+// installation that has not opted into the coordinator has no tagged image to
+// run and no job — and `fugaro licence status` says renewal is by hand there
+// (TN5). That is one fact, and both sides read the same one: this function
+// asks spec.Coordinator.DeployJob, which coordinatorJob has just computed from
+// the image's existence and the credentials the sweep needs, and
+// modules/installation/licence.tf asks local.deploy_coordinator. A new flag
+// would be a second switch over one fact, and the pair would drift the first
+// time a run set one and not the other.
+//
+// Nothing here is a prompt, and nothing here may be: on a managed project the
+// plan carries the new resources and the gate applies it, and on every other
+// installation the resources arrive in the ordinary confirmation the update
+// already asks for a plan that creates something (docs/no-prompt-policy). The
+// licence job asks no question of its own, exactly as it has none to ask: it
+// creates a job that does nothing until a person runs `fugaro licence set`.
+
+// licenceJob completes the installation spec's licence renewal job: it is part
+// of the plan exactly where the coordinator's own job is deployed, and the
+// block is dropped where it is not.
+//
+// Dropping it is not decoration. The module reads the same condition, so a
+// block this function leaves in a spec that does not deploy the coordinator's
+// job creates nothing — but it would be a key the run COMPOSES for an
+// installation that asked for nothing, the trap the module's own variable
+// comments name, and it would make the first `fugaro update --firebase-project`
+// of an installation that has just opted in write a document no apply of its
+// reads. With the block dropped, the state every installation that never opted
+// in plans is byte for byte the document the release before this one wrote,
+// which is what makes a converge of such an installation a no-op
+// (TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning).
+//
+// What this function's own answer is NOT is the whole of what the installation
+// holds. The two questions are different, and the second is prepare's
+// (infra.CarriedLicence, the last carry): an installation that has the job —
+// one whose coordinator's readiness held on the run that wrote the block — keeps
+// its record of it in the document across a run whose readiness no longer does,
+// so the plan is never written from a document that forgot a job the
+// installation still holds. What the module plans in that state is unchanged
+// either way: licence.tf reads the block together with the coordinator's own
+// condition (local.licence_on), so a carried block on an installation whose job
+// is not deployed plans nothing, exactly as one this function dropped. Which of
+// the two the switch should follow — whether a readiness recomputed false takes
+// back a job the installation already holds, whose empty container carries
+// prevent_destroy — is a decision about the module's condition, and it is not
+// made here.
+//
+// Both answers are recorded on the run as they are made, and that is the other
+// half of the completion rather than bookkeeping: the plan review reads the
+// block off the run (init_review.go's cover), because the review is asked
+// inside installRoot and installRoot holds a COPY of the spec — so the engine's
+// own spec, which internal/infra's door filled in whenever the coordinator's
+// opt-in is on, is not the spec this plan is written from. It differs on
+// exactly the installations whose block is dropped above, where a review
+// reading the engine's spec would announce as its own a binding to the renewal
+// account that no job of this installation holds
+// (TestTheReviewRefusesABindingWithNoJobToHoldIt), and where the block is
+// filled it is the same answer either way.
+func (r *initRun) licenceJob(lc *localcfg.Config, spec infra.InstallationSpec) (infra.InstallationSpec, error) {
+	if spec.Coordinator == nil || !spec.Coordinator.DeployJob {
+		spec.Licence = nil
+		r.licence = nil
+		return spec, nil
+	}
+	if spec.Licence == nil {
+		l, err := infra.Licence(lc, spec.RunsBucket)
+		if err != nil {
+			return spec, initErr(err)
+		}
+		spec.Licence = &l
+	}
+	r.licence = spec.Licence
+	return spec, nil
+}

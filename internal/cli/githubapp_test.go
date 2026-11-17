@@ -43,7 +43,7 @@ type githubRig struct {
 	srv    *httptest.Server
 }
 
-var fullPerms = map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"}
+var fullPerms = map[string]string{"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read"}
 
 func newGitHubRig(t *testing.T) *githubRig {
 	t.Helper()
@@ -126,12 +126,12 @@ func TestGitHubAppPreCheck(t *testing.T) {
 		if c.Verdict != appFailed {
 			t.Fatalf("%+v", c)
 		}
-		for _, want := range []string{"Contents: Write", "Issues: Read", "Pull requests: Write"} {
+		for _, want := range []string{"Contents: Write", "Issues: Write", "Pull requests: Write"} {
 			if !strings.Contains(c.Problem, want) {
 				t.Errorf("the problem lacks %q: %s", want, c.Problem)
 			}
 		}
-		for _, want := range []string{"add Issues: Read, then accept the new permission on the installation", "add Pull requests: Write", "change Contents to Read and write"} {
+		for _, want := range []string{"add Issues: Write, then accept the new permission on the installation", "add Pull requests: Write", "change Contents to Read and write"} {
 			if !strings.Contains(c.Fix, want) {
 				t.Errorf("the fix lacks %q: %s", want, c.Fix)
 			}
@@ -142,7 +142,7 @@ func TestGitHubAppPreCheck(t *testing.T) {
 	})
 	t.Run("workflows write is a warning, never silence", func(t *testing.T) {
 		g := newGitHubRig(t)
-		g.perms = map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read", "workflows": "write", "administration": "read"}
+		g.perms = map[string]string{"contents": "write", "pull_requests": "write", "issues": "write", "metadata": "read", "workflows": "write", "administration": "read"}
 		c := g.check(t)
 		if c.Verdict != appFine || len(c.Warnings) != 2 || !strings.Contains(c.Warnings[0], "Workflows: Write") || !strings.Contains(c.Warnings[0], "must never have it") ||
 			!strings.Contains(c.Warnings[1], "Administration: Read") {
@@ -259,7 +259,7 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 		g := newGitHubRig(t)
 		g.perms = map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read"}
 		r, out, _ := run(t, g)
-		if !strings.Contains(r.buildHold, "Issues: Read") || !strings.Contains(out, "add Issues: Read, then accept the new permission on the installation") {
+		if !strings.Contains(r.buildHold, "Issues: Write") || !strings.Contains(out, "add Issues: Write, then accept the new permission on the installation") {
 			t.Fatalf("hold %q\n%s", r.buildHold, out)
 		}
 	})

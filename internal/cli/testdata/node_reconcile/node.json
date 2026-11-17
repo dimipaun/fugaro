@@ -1,0 +1,14 @@
+{
+  "version": 7,
+  "budget": { "mode": "enforce", "per_run_usd": 5 },
+  "allow_repos": ["github/acme/app"],
+  "craft_credentials": [
+    { "name": "team-a", "type": "claude-oauth" },
+    { "name": "team-b", "type": "claude-oauth" }
+  ],
+  "craft_pools": [
+    { "name": "node-pool", "members": ["team-a"], "owner": "owner@example.com" },
+    { "name": "loose-pool", "members": ["team-b"], "legacy_open": true }
+  ],
+  "crafts": { "coder": { "access": "node-pool" } }
+}

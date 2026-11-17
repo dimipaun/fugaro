@@ -264,14 +264,18 @@ func (s *Service) recordCheckout(ctx context.Context, record checkoutTransaction
 	return nil
 }
 
-// recordBought writes the licence one checkout's transaction bought onto that
-// transaction's own record, which is what a refund or a chargeback naming the
-// transaction resolves to (F16, F29).
+// recordBought writes what the purchase event states onto that transaction's own
+// record: the licence its money bought, which is what a refund or a chargeback
+// naming the transaction resolves to (F16, F29), and the merchant's customer,
+// which the checkout's own reply does not carry — P4.1's `CreateTransaction`
+// sends the items and the custom data alone and Paddle makes the customer with
+// the transaction, so the event is the only place one arrives from, and the
+// portal's customer-portal session is minted for it (P4.3).
 //
 // A checkout record the store does not hold is left alone: the licence has
 // already been granted by the time this runs, and a `500` would send the
 // merchant back through a purchase that is done rather than fix anything.
-func (s *Service) recordBought(ctx context.Context, transactionID, entitlementID string) error {
+func (s *Service) recordBought(ctx context.Context, transactionID, entitlementID, customerID string) error {
 	record, held, err := getRecord[checkoutTransaction](ctx, s.docs, checkoutTransactionsCollection, transactionID)
 	if err != nil {
 		return err
@@ -280,6 +284,16 @@ func (s *Service) recordBought(ctx context.Context, transactionID, entitlementID
 		return nil
 	}
 	record.EntitlementID = entitlementID
+	// The customer is written only where the event states one. The checkout's own
+	// reply carries none — the transaction is created with the items and the
+	// custom data alone, so Paddle makes the customer with it and the purchase
+	// event is the first thing that names it — and an event that names none (an
+	// older payload, or a merchant that answered differently) leaves whatever the
+	// record already holds rather than emptying the field the portal's session is
+	// minted for.
+	if customer := strings.TrimSpace(customerID); customer != "" {
+		record.CustomerID = customer
+	}
 	doc, err := storedDoc(record)
 	if err != nil {
 		return err

@@ -161,12 +161,26 @@ func (r *run) artifactMode(ctx context.Context) {
 			return
 		}
 	}
-	rec, err := r.runRender(ctx)
-	r.renderRec = renderRecordFor(r.wf.Commands.Render, rec)
-	r.rec.Render = r.renderRec
+	// The one step: the repository's render command, or — for a recipe
+	// holding the diagnose step — the model stage that stands in its place
+	// (D2402). Exactly one of the two runs, and the run records the render
+	// only when the render is what ran: a diagnosis records no render
+	// command, because no command of the repository's ran in it (diagnose.go).
+	step := "render"
+	stageFailed := false
+	var rec runstore.RenderRecord
+	var err error
+	if r.diagnose {
+		step = "the diagnosis"
+		stageFailed, err = r.runDiagnose(ctx)
+	} else {
+		rec, err = r.runRender(ctx)
+		r.renderRec = renderRecordFor(r.wf.Commands.Render, rec)
+		r.rec.Render = r.renderRec
+	}
 	r.updateCost()
 	switch {
-	case err == nil:
+	case err == nil && !stageFailed:
 		if h := r.haltValue(); h != nil {
 			r.endArtifactHalted(ctx, h)
 			return
@@ -198,6 +212,22 @@ func (r *run) artifactMode(ctx context.Context) {
 			break
 		}
 		r.recordEnd(runstore.StatusSucceeded, runstore.OutcomeArtifacts, "", r.rec.Reason)
+	case err == nil:
+		// The stage ran and failed without returning an error of its own: it
+		// wrote its reason and its class on its own (r.stage's fail arm), so
+		// this ends the run from what it wrote rather than from a sentence
+		// built here — endArtifactFailed, the same way the plan stage's own
+		// !ok branch above does. A halt or a cancel that landed while it ran
+		// decides the run first, as both do below.
+		if h := r.haltValue(); h != nil {
+			r.endArtifactHalted(ctx, h)
+			return
+		}
+		if r.isCancelled() {
+			r.endArtifactCancelled(ctx, "cancelled during "+step)
+			return
+		}
+		r.endArtifactFailed(ctx)
 	case r.haltValue() != nil:
 		// A halt that landed while the render ran: recorded by the stage's
 		// own machinery (the budget backend polls independently), and a halt
@@ -208,11 +238,11 @@ func (r *run) artifactMode(ctx context.Context) {
 		r.endArtifactHalted(ctx, r.haltValue())
 		return
 	case r.isCancelled():
-		r.endArtifactCancelled(ctx, "cancelled during render")
+		r.endArtifactCancelled(ctx, "cancelled during "+step)
 		return
 	default:
 		r.recordEnd(runstore.StatusFailed, runstore.OutcomeNone, failure.Unclassified, r.redact(err.Error()))
-		r.d.Log.Warn("the render step failed", "err", r.rec.Reason)
+		r.d.Log.Warn("the artifact step failed", "step", step, "err", r.rec.Reason)
 	}
 	r.skipPR = true
 	r.storeArtifactEnded(ctx)

@@ -53,8 +53,13 @@ var reporterCommands = map[string]string{
 	"accounts rm":        "accounts-rm",
 	"accounts switch":    "accounts-switch",
 	"allow-delete":       "allow-delete",
-	"backlog add":        "backlog-add",
-	"backlog index":      "backlog-index",
+	// The one command that runs what a management command saved for later
+	// (docs/composite-commands, D1560): it runs a subset of the converge's
+	// stages through the loop, so its account of the steps is the reporter's
+	// like `accounts add`'s.
+	"apply":         "apply",
+	"backlog add":   "backlog-add",
+	"backlog index": "backlog-index",
 	// One entry per mutating command, and the raise is one: it rewrites a
 	// run's stored task and records the raise beside it, so its account is a
 	// step like the three below it rather than a listing (D1352).
@@ -136,7 +141,7 @@ var exemptListings = map[string]exemptListing{
 	"accounts pool ls":     {"a listing: the pools and the members each one walks, printed whole", false},
 	"artifacts ls":         {"a listing: what a run's record says it delivered, as a table or a document", true},
 	"backends ls":          {"a listing: the backends this fugaro knows and the one the project uses", true},
-	"backlog list":         {"a listing: the backlog's items as the index lists them, table or document", true},
+	"backlog list":         {"a listing: the project's backlog items, which node each came from included, table or document", true},
 	"budget preview":       {"a listing: a batch's worst-case spend, as a table or a document", true},
 	"budget prices":        {"a listing: the effective model price table, which is the answer itself", true},
 	"budget reconcile":     {"a listing: a window's charged, reported and table spend per model, table or document", true},

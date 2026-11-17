@@ -241,10 +241,9 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 		// The list is what decides, and every provider it admits is served
 		// the same way below: a Bitbucket profile's job mounts no token and
 		// requires the credential proxy (D2302), and GitHub's carries the
-		// App's ID. It holds github alone until I1 admits Bitbucket, which is
-		// what makes this slice merge with no effect on a Bitbucket project
-		// and a release cut midway break nothing (docs/shared-jobs-default
-		// S1's acceptance).
+		// App's ID. It has served both kinds config.Providers names since I1,
+		// the line that put the Bitbucket path in service once the sides it
+		// waited on had landed (docs/shared-jobs-default).
 		if !SharedJobProvider(pr.Provider) {
 			continue
 		}
@@ -952,14 +951,14 @@ func recordedBitbucketRepo(lc *localcfg.Config) bool {
 // carries, and skipping it here is what makes "no job is deployed for it" true
 // rather than an installation `fugaro update` refuses whole.
 //
-// It is github alone until I1 admits Bitbucket (docs/shared-jobs-default), and
-// that is a state of this list rather than of the code below: the Bitbucket
-// path is built and tested (a job that mounts no token and requires the
-// credential proxy, D2302), and the tasks of the slice it belongs to merge
-// behind this list so that a release cut midway changes nothing for a Bitbucket
-// project. I1 is the one-line change — a provider admitted here is served by
-// that path, and this predicate is what tells the launcher the job it computed
-// exists.
+// Both provider kinds a shared job serves are here since I1
+// (docs/shared-jobs-default): the Bitbucket path is built and tested (a job
+// that mounts no token and requires the credential proxy, D2302), and the
+// tasks of its slice merged behind this list so that a release cut midway
+// changed nothing for a Bitbucket project. Admitting a provider here is the
+// one-line change that puts its path in service — a provider admitted here is
+// served by that path, and this predicate is what tells the launcher the job
+// it computed exists.
 //
 // Every kind of config.Providers is answered — the list is the kinds a
 // repository may use — and the test beside this file pins that the two agree,
@@ -1130,11 +1129,11 @@ func credentialsServiceKey(s *CredentialsService) string {
 
 // sharedJobProviders are the provider kinds a shared project job serves
 // (SharedJobProvider). It is a list rather than a comparison so that the test
-// can walk it, and it holds kinds of config.Providers. Bitbucket joins it in
-// I1, when the credentials service pairs a shared job (S2), the runner runs
-// one (S3) and the launcher chooses one (S4) — a provider admitted before
-// those land would deploy jobs nothing could run on.
-var sharedJobProviders = []string{"github"}
+// can walk it, and it holds kinds of config.Providers. Bitbucket joined it in
+// I1, once the credentials service paired a shared job (S2), the runner ran
+// one (S3) and the launcher chose one (S4) — a provider admitted before those
+// landed would deploy jobs nothing could run on.
+var sharedJobProviders = []string{"github", "bitbucket"}
 
 // profilesAsPolicy is the local config's profiles as the policy carries them
 // (projectpolicy.Profile embeds config.JobProfile), so ProjectJobs checks

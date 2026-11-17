@@ -1403,6 +1403,12 @@
         "registry_host": {
           "default": "unset = none: no image has been pinned yet"
         },
+        "reports_commit.dir": {
+          "default": "unset = docs/fugaro-reviews: the report layout's own folder, which a designation that names no folder commits into (D960)"
+        },
+        "reports_commit.repo": {
+          "default": "unset = none: the project commits no report anywhere, and a written empty block is how the owner takes a designation away"
+        },
         "repos.*.base_branch": {
           "default": "unset = the project's base_branch"
         },
@@ -1538,6 +1544,9 @@
         },
         "workflow_secrets.*.proxy": {
           "default": "unset = none: refused, D1275"
+        },
+        "workflows.*.ab.reviewer_arm": {
+          "default": "unset = none: the workflow asks for no A/B reviewer arm"
         },
         "workflows.*.base": {
           "default": "unset = none; the key was removed in 0.7.0"
