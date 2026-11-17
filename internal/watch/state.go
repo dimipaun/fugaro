@@ -6,6 +6,7 @@
 package watch
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -53,6 +54,17 @@ type sample struct {
 // State is everything the view is built from.
 type State struct {
 	Config, Global, Repos, Agents rtdb.Tree
+
+	// Prev is the repository day counters of the day before Day, read by the
+	// command that prints plain frames or --json (internal/cli/watch.go): the
+	// drift line measures a model's reported cost against the table's band
+	// over today and yesterday, which is the only window a reader can build
+	// from per-UTC-day counters (spend-accuracy F30, D2649). The day before
+	// is written by nobody once it is over, so it is not a stream and nothing
+	// folds it in through Apply: SetPrev takes the node whole. The
+	// interactive screen reads no database and leaves it empty, so Build's
+	// drift is a plain and --json line and never one the screen draws.
+	Prev rtdb.Tree
 
 	// Day is the UTC epoch day the two spend streams show (0 until set).
 	Day int64
@@ -120,7 +132,9 @@ func (s *State) tree(src Source) *rtdb.Tree {
 }
 
 // SetDay starts a new day: the two spend trees and the burn windows are
-// emptied (the counters restart at zero, a negative slope is not a rate).
+// emptied (the counters restart at zero, a negative slope is not a rate), and
+// so is Prev, whose day is now two days back: the reader that filled it sees
+// the emptied tree and asks for the day that has just become yesterday.
 func (s *State) SetDay(day int64) {
 	if s.Day == day {
 		return
@@ -128,7 +142,27 @@ func (s *State) SetDay(day int64) {
 	s.Day = day
 	s.Global.Reset()
 	s.Repos.Reset()
+	s.Prev.Reset()
 	s.burn = map[string][]sample{}
+}
+
+// SetPrev replaces Prev with the node raw holds: /spend/<yesterday>/repos, or
+// null (or nothing) for a day that has no repository counters at all. It is
+// the whole node rather than an event, since a day that is over never changes
+// again.
+//
+// A node it cannot read leaves Prev empty, which is what "no previous day" is
+// already: the drift line is a reading of those counters, so a reader that
+// could not have them says nothing rather than refusing a frame whose subject
+// is today's spend.
+func (s *State) SetPrev(raw json.RawMessage) {
+	s.Prev.Reset()
+	if len(raw) == 0 {
+		return
+	}
+	if err := s.Prev.Apply("/", raw, false); err != nil {
+		s.Prev.Reset()
+	}
 }
 
 // Reconnected empties the burn windows: after a (re)connect they start

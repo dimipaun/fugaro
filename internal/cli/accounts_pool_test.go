@@ -510,15 +510,15 @@ pools:
       - router-one
 `
 
-// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the staging this refusal ships
-// under, and the reason it is the write door's rule and not the readers': a
-// config 0.25.0 wrote may hold a pool naming a member of each half, and nothing
-// in this release may refuse it. The read loads the config through the very
-// path `fugaro update` loads it through, so a read that prints is an
-// installation that still works — and it renders the pool with both halves and
-// the boundary its failover is left at rather than hiding a pool the person
-// wrote. The step that splits such a pool into one pool per half is MC21's, and
-// it ships in the same release as this rule (activation plan row 43).
+// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the reason the rule is the write
+// door's and not the config load's: a config 0.25.0 wrote may hold a pool naming
+// a member of each half, and this read must not refuse it. The read loads the
+// config through the very path `fugaro update` loads it through, so a read that
+// prints is an installation that still works — and it renders the pool with both
+// halves and the boundary its failover is left at rather than hiding a pool the
+// person wrote. It stays true after MC21: the split is written by the update's
+// own migration (derivePathPools, on every write of the file) and never by a
+// read, so a config that has not been through an update yet is still read.
 func TestPoolLsReadsAPoolAnEarlierReleaseWrote(t *testing.T) {
 	accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsCrossingPools)
 
@@ -567,39 +567,6 @@ func TestPoolFamilyUnknownSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "want ls, add or rm") {
 		t.Errorf("the refusal does not name the subcommands there are: %v", err)
-	}
-}
-
-// TestAccountsAddTypeRefusesATypeNoRunCouldServe: --type is a definition's own
-// type, so the config's rule judges it — the built-in vertex is never defined,
-// and the two types the spec calls future work are refused in words that say so
-// — and the types whose key no command stores yet are refused rather than
-// half-declared: a credentials entry with no secret is inert config that a pool
-// would still be allowed to list.
-func TestAccountsAddTypeRefusesATypeNoRunCouldServe(t *testing.T) {
-	for _, tc := range []struct{ typ, want string }{
-		{"vertex", "vertex is built in: it needs no secret and exists in every installation, so it is never defined as an entry"},
-		{"openai", "openai is not yet supported"},
-		{"codex-oauth", "codex-oauth is not yet supported"},
-		{"bedrock", "must be one of openrouter, anthropic, claude-oauth"},
-		{"anthropic", "no command stores one under a credential's own name yet"},
-		{"openrouter", "no command stores one under a credential's own name yet"},
-	} {
-		t.Run(tc.typ, func(t *testing.T) {
-			path := accountsPoolHome(t, "")
-			before := readFileString(t, path)
-
-			out, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--type", tc.typ)
-			if err == nil {
-				t.Fatalf("--type %q was accepted:\n%s", tc.typ, out)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("the refusal does not say %q: %v", tc.want, err)
-			}
-			if got := readFileString(t, path); got != before {
-				t.Errorf("the refused write changed the file:\n%s", got)
-			}
-		})
 	}
 }
 

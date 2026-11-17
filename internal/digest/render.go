@@ -13,7 +13,10 @@ import (
 // fenced JSON block a later report's pattern rules read. It is deterministic
 // (G3) -- the same digest gives byte-identical bytes -- and it renders what
 // Build put in d and nothing else, so a report carries no person and no text
-// a record wrote (G1).
+// a record wrote (G1). The one field the caller fills rather than Build is
+// Escalation (E12): the ladder's ledger is not a run record, and a digest the
+// caller left it nil on prints exactly the report it printed before the
+// section existed.
 //
 // The one thing not of d's own fields is the tail a registered extra-section
 // hook returns (section 5.4): a build that registered none, which every core
@@ -84,6 +87,11 @@ func markdownCore(d Digest) []byte {
 		}
 		b.WriteString("\n")
 	}
+
+	// The Escalation section sits before the summary block and not after it:
+	// the block is what a later report's pattern rules parse, and the one
+	// place a section may print is outside it (sectionsMarkdown's reason).
+	b.WriteString(escalationMarkdown(d.Escalation))
 
 	b.WriteString("## Summary\n\n")
 	b.WriteString("```json\n")

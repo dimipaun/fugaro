@@ -352,6 +352,199 @@ func TestModelsUseWritesIntoAFileThatAlreadyFailsValidate(t *testing.T) {
 	}
 }
 
+// modelsUseProviderLevelYAML is the repository file a level's effort is refused
+// over: level 2 runs a model the project's route serves, and a provider stage
+// runs with thinking off, so an effort set there is refused at every launch
+// (D725). The effort is a key this command writes.
+const modelsUseProviderLevelYAML = `version: 1
+project: aurora
+git:
+  provider: github
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: claude-sonnet-5-5
+  levels:
+    l2:
+      model: deepseek/deepseek-v4-pro
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+
+// modelsUseEffortLevelYAML is the other half of the same rule: the effort is
+// already there and the model is one no route serves, so the pin of a provider
+// model onto that level is what a launch would refuse (D725).
+const modelsUseEffortLevelYAML = `version: 1
+project: aurora
+git:
+  provider: github
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: claude-sonnet-5-5
+  levels:
+    l2:
+      model: claude-sonnet-5-5
+      effort: high
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+
+// modelsUseRefusingLevelYAML is a file no launch takes until its owner fixes
+// level 2: the level's model is one the project's route serves and its effort is
+// written, which is the D725 refusal the level rules make — a problem the file
+// already has, so a switch that has nothing to do with it still lands.
+const modelsUseRefusingLevelYAML = `version: 1
+project: aurora
+git:
+  provider: github
+agent:
+  auth: api-key
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: claude-sonnet-5-5
+  levels:
+    l2:
+      model: deepseek/deepseek-v4-pro
+      effort: high
+workflows:
+  web:
+    commands:
+      test: go test ./...
+      build: go build ./...
+`
+
+// modelsUseLayerLevelYAML is the project layer the same two writes are judged
+// in: defaults.agent is the block a repository that names none of its own runs
+// with, so a level's model and effort written there are a launch's own reading
+// of that repository too.
+const modelsUseLayerLevelYAML = "defaults:\n  agent:\n    auth: api-key\n    levels:\n      l2:\n        model: deepseek/deepseek-v4-pro\n"
+
+// modelsUseLayerEffortYAML is that layer with the effort already written and a
+// model no route serves.
+const modelsUseLayerEffortYAML = "defaults:\n  agent:\n    auth: api-key\n    levels:\n      l2:\n        model: claude-sonnet-5-5\n        effort: high\n"
+
+// TestModelsUseRefusesALevelEffortALaunchWouldRefuse: the review levels are
+// judged by the launch's own rules, at both layers, before the write — a level
+// whose model a route serves is refused an effort rather than handed one that
+// every launch of that repository refuses (D725, config.ResolveLevels through
+// validate's reviewLevelProblems). The file is byte-for-byte what it was.
+func TestModelsUseRefusesALevelEffortALaunchWouldRefuse(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		// file is the repository's own fugaro.yaml, empty for a layer write.
+		file string
+		// project is the project the layer belongs to, empty for a repo write.
+		project string
+		layer   string
+	}{
+		{name: "repo", file: modelsUseProviderLevelYAML},
+		{name: "project layer", project: modelsUseProjectExtra, layer: modelsUseLayerLevelYAML},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var args []string
+			var path string
+			if c.project == "" {
+				modelsUseHome(t)
+				path = modelsWriteGitCheckout(t, "owner/repo-a", c.file)
+				args = []string{"models", "use", "owner/repo-a", "agent.levels.l2.effort", "high"}
+			} else {
+				modelsWriteHomeWith(t, c.project)
+				path = settingsWriteLayerFile(t, c.layer)
+				args = []string{"models", "use", "agent.levels.l2.effort", "high", "--layer", "project"}
+			}
+			before := readFileString(t, path)
+
+			_, _, err := execute(t, args...)
+			if err == nil {
+				t.Fatalf("a level's effort a launch refuses was written:\n%s", readFileString(t, path))
+			}
+			for _, want := range []string{"D725", "l2.effort", "openrouter", "deepseek/deepseek-v4-pro"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestModelsUseRefusesAProviderModelOnALevelThatHasAnEffort: the same rule from
+// the other side — the level's effort is already written, so the model a route
+// serves is the key that would be refused at every launch, and it is refused
+// here instead, at both layers, with the file untouched (D725).
+func TestModelsUseRefusesAProviderModelOnALevelThatHasAnEffort(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		file    string
+		project string
+		layer   string
+	}{
+		{name: "repo", file: modelsUseEffortLevelYAML},
+		{name: "project layer", project: modelsUseProjectExtra, layer: modelsUseLayerEffortYAML},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var args []string
+			var path string
+			if c.project == "" {
+				modelsUseHome(t)
+				path = modelsWriteGitCheckout(t, "owner/repo-a", c.file)
+				args = []string{"models", "use", "owner/repo-a", "agent.levels.l2.model", "deepseek/deepseek-v4-pro"}
+			} else {
+				modelsWriteHomeWith(t, c.project)
+				path = settingsWriteLayerFile(t, c.layer)
+				args = []string{"models", "use", "agent.levels.l2.model", "deepseek/deepseek-v4-pro", "--layer", "project"}
+			}
+			before := readFileString(t, path)
+
+			_, _, err := execute(t, args...)
+			if err == nil {
+				t.Fatalf("a provider model a launch refuses was pinned:\n%s", readFileString(t, path))
+			}
+			for _, want := range []string{"D725", "l2.effort", "openrouter", "deepseek/deepseek-v4-pro"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not name %q: %v", want, err)
+				}
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestModelsUseWritesIntoAFileWhoseLevelsAlreadyRefuse is the same rule as
+// TestModelsUseWritesIntoAFileThatAlreadyFailsValidate, for the levels: only a
+// level this write changes is a refusal, so a file whose level 2 already pairs a
+// provider model with an effort — a file no launch takes until its owner fixes
+// that level — still takes the coder's pin, which has nothing to do with it.
+func TestModelsUseWritesIntoAFileWhoseLevelsAlreadyRefuse(t *testing.T) {
+	modelsUseHome(t)
+	path := modelsWriteGitCheckout(t, "owner/repo-a", modelsUseRefusingLevelYAML)
+
+	out, _, err := execute(t, "models", "use", "owner/repo-a", "coder", "vendor/model-x")
+	if err != nil {
+		t.Fatalf("the switch was refused over a level the file already had: %v\n%s", err, out)
+	}
+	after := readFileString(t, path)
+	if !strings.Contains(after, "coder: vendor/model-x") {
+		t.Errorf("the pin was not written:\n%s", after)
+	}
+	if !strings.Contains(after, "effort: high") || !strings.Contains(after, "model: deepseek/deepseek-v4-pro") {
+		t.Errorf("the edit rewrote a line it does not own:\n%s", after)
+	}
+}
+
 // TestModelsUseRefusesAProviderModelUnderOAuth: a provider model is an api-key
 // run's (config.CheckProviderAuth), so a repository whose file runs on oauth is
 // refused the switch rather than handed a pin no launch would take.

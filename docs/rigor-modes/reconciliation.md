@@ -914,28 +914,32 @@ the output work ships, its row and its section, and the sibling test
 forge-authorship-images plan's C6, re-pointed by its owner's answer of
 2026-11-16 — the pin over
 `SECURITY.md`'s paragraph on the source an image carries and who can read it —
-moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_test.go`, the pin over the mobile orchestrator design, landed in the same sweep and its row was moved from 141 to 142 too; `internal/cli/docs_check601_test.go`, the pin over c39-review-identity's owner Check 601 in the register, landed on this branch beside them, so the merged tree holds 144.) They
+moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_test.go`, the pin over the mobile orchestrator design, landed in the same sweep and its row was moved from 141 to 142 too; `internal/cli/docs_check601_test.go`, the pin over c39-review-identity's owner Check 601 in the register, landed on this branch beside them, so the merged tree holds 144.)
+(Amended 2026-11-16: `internal/cli/docs_update_in_flight_test.go`, the pin over
+`docs/design/update-in-flight.md`'s installation row — the resident
+orchestrator's account and section 4.3's bindings ride that step, mobile plan
+task P5.1b — moved the table's row from 144 to 145.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
 
 | Construct | Count | Command |
 | --- | --- | --- |
-| Catalog recipes | 12 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
+| Catalog recipes | 13 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
-| Config scope rows | 113 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
+| Config scope rows | 115 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
 | Layers a configuration key may be set in | 4 | `sed -n '/The layers a key may be set in/,/^)/p' internal/config/scope.go \| grep -c 'In[A-Z]'` |
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 49 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 50 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 144 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 146 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
-| Published project-policy version | 8 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
+| Published project-policy version | 9 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc 'scope = \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
@@ -1010,6 +1014,14 @@ release. Declared beside `digestSince` because a release can ship the stored
 writer without the terminal digest step and the other way round, it added one
 more image-skew `Since` constant and left the image-skew row at 45, so it moves
 to 46.
+
+Amended 2026-11-16: R1 of [docs/config-ownership/](../config-ownership/) gives the
+registry rows to two keys a repository states and nothing managed — its own
+`ab.rate` opt-out of sampling, the one leaf of that block left to the repository,
+and its `workflows.*.needs` reference to an entry of the project's image catalog —
+and both are repository-layer keys, so the scope table gains them as rows and the
+census row above moves by two, to 115 on the tree that also carries main's own two scope rows. No other row of this table moved with
+them.
 
 The **67** is the convention this folder follows: there is no registry test over
 `docs/`, so a folder that wants its documents pinned writes its own file, and

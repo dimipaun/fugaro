@@ -743,9 +743,49 @@ func wordMacro(m string, depth int) (string, error) {
 		// list on another node, so an edit that shortens that list cannot leave
 		// them valid on a message whose tag is absent or badly shaped.
 		return macOK("newData.parent().child('mac')"), nil
+	case "REPORTSJOB":
+		// The reports job's own identity (E12, F27): the one reader of the
+		// ladder's ledger. It is a custom-token claim and deliberately not the
+		// job's service account, because these rules bind client tokens only —
+		// a service account reads the database over IAM, whose binding has no
+		// path-level scope and never reaches this file
+		// (deploy/terraform/gcp/modules/installation/state_read.tf, and the
+		// orchestrator node's own note below), so a grant written for the
+		// account would be a fence that looks like one and is not. The mint is
+		// the job's own half and is not in this release: it takes signJwt on
+		// its own account the way a run's token takes it on the launcher's
+		// (internal/budget/token), and until it exists no token the rules
+		// evaluate carries this claim, so the node is inert rather than open.
+		return reportsJobClaim, nil
 	}
 	return "", fmt.Errorf("unknown macro %s", m)
 }
+
+// reportsJobClaim is the reports job's claim (E12, F27): what may read the
+// escalation block of the ladder's ledger and nothing else of the database.
+//
+// Its shape is TOKEN's project half and nothing more, because the location it
+// is granted at names no subject to bind it to: the node is
+// `orchestrator/$id/...`, and `$id` is the orchestrator's id and not the
+// reader's, so there is no `$mb`-shaped half for the claim to agree with. What
+// it says is therefore "a token minted for this installation's reports job",
+// which is as strong as every other mint here: whoever mints a custom token
+// chooses the claims in it, and a launcher that can mint a run's token can
+// already mint anything TOKEN and RUN are built on.
+//
+// Finding the block is the reader's own job, and the two halves of the path are
+// found differently. `$id` is the project's name — `orchestrator/<project>/…` is
+// what the tree is (`internal/cli`'s orchestratorID: "the orchestrator id is the
+// project's name") and it is the same value this claim compares against, so a
+// reader that holds the claim already knows it. `$item` is a position in the
+// work items array (`orchestrator.State.WorkItems` is a slice), which shifts as
+// items are archived out of it, and the reader may not list it: the node holding
+// the array carries no rule of its own and is refused. So it walks the positions
+// — the array is bounded by `orchestrator.MaxWorkItems`, and each read is one
+// block — and takes what it finds there, which is why the block itself carries
+// the item's `repo` and the run its last move was about (E12): the reader
+// filters and joins on those and never on the position it found the block at.
+const reportsJobClaim = "(auth != null && auth.token.rj != null && auth.token.rj == root.child('fugaro/project').val())"
 
 // PathMCPAuth is the hosted MCP server's own subtree (docs/mcp-server/spec.md
 // §6 and §8; D922, answered and restated on 2026-11-04): the token records —
@@ -983,3 +1023,14 @@ const patternZone = `/^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-]
 func macOK(at string) string {
 	return fmt.Sprintf("(%s.isString() && %s.val().length == %d && %s.val().matches(%s))", at, at, MaxMacLength, at, patternHex)
 }
+
+// PathByModel is the parent of one model's counters under a repository's day
+// counter: `spend/<day>/repos/<slug>/byModel/<model>`, whose leaves are the
+// dollars and the tokens of that model on that day (internal/budget's
+// PathByModel renders the same path for a concrete day, slug and model). The
+// four leaves generation 7 adds hang here, and doctor's sentence for a marker
+// below that generation names them, so the path is written once.
+//
+// It sits at the end of the file for PathMCPAuth's reason: a constant added
+// above those citations moves the lines the tests that resolve them read.
+const PathByModel = "spend/$day/repos/$slug/byModel/$model"

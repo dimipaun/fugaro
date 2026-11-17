@@ -594,6 +594,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// version drift so the person is told to update rather than handed a second
 	// command. It reads this machine's own file and reaches nothing.
 	o.Checks = append(o.Checks, doctorOrchestratorUnit())
+	// The resident orchestrator's own identity (P5.1b): the account exists only
+	// for an installation that opted into one, and when it does, this is the
+	// only place what it actually holds is read back against the design's
+	// section 4.3 table. Read-only, and it prints rather than asks.
+	o.Checks = append(o.Checks, doctorOrchestratorIdentity(ctx, lc, crmSvc)...)
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones
@@ -667,7 +672,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			if c := oauthTokenAllowedCheck(lc, repo, token, authOf(rf)); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
-			if c := doctorModelKeyInAgent(lc, rf); c != nil {
+			if c := doctorModelKeyInAgent(lc, rf, repo); c != nil {
 				o.Checks = append(o.Checks, *c)
 			}
 			o.Checks = append(o.Checks, doctorVisionChecks(ctx, co.Root, lc, rf, repo)...)
@@ -1703,6 +1708,18 @@ func projectSecretAccountOwners(lc *localcfg.Config) map[string]string {
 // step this replaced ever did. The pair that mints the token and stores it in
 // the container such a job would mount stands there instead.
 func doctorAccountStore(lc *localcfg.Config, account, profile string) []string {
+	// A key credential (MC22) is the one name whose value is stored elsewhere
+	// than a Claude account token, and doctorAccountStore's pair below is about
+	// that token: `secrets set claude-oauth-token-<name>` would write a container
+	// nothing reads, and both lines would leave the credential's own container —
+	// the one the check above now reads — as empty as they found it. The
+	// declaration is the whole fix instead, without --profile: no profile lists
+	// a key credential, so `fugaro accounts add --type openrouter|anthropic`
+	// refuses that flag (accounts_add.go), and --repos is the only one it needs
+	// to keep the credential's reach what the check just read.
+	if config.KeyCredentialType(accountsAddCredentialType(lc, account)) {
+		return []string{doctorAccountsAdd(lc, account, "")}
+	}
 	if profile == "" {
 		profile = config.ClaudeAccountProfile(lc.Profiles, account)
 	}
@@ -1811,7 +1828,14 @@ func claudeAccountsStoredCheck(lc *localcfg.Config, repo string, listed []secret
 	var missing []string
 	var cmds []string
 	for _, n := range named {
-		secret := config.ClaudeAccountSecret(n)
+		// The container this name's value lives in, by the config's own
+		// declaration of it: a key credential's own derived name, a Claude
+		// account's token name otherwise (config.CredentialValueSecret). A named
+		// account this project declares a key credential — MC22 writes both the
+		// credential entry and this claude_accounts entry — has nothing in the
+		// account's token container and never will, so asking for that one would
+		// warn forever about a value that is stored.
+		secret := config.CredentialValueSecret(lc.Credentials, n)
 		if !have[secret] {
 			missing = append(missing, pluginwire.Printable(n))
 			cmds = append(cmds, doctorAccountStore(lc, n, "")...)
@@ -1892,7 +1916,16 @@ func projectAccountJobs(lc *localcfg.Config) []projectAccountJob {
 			}
 			j := projectAccountJob{
 				Profile: name, Account: token, Job: gcp.ProjectJobName(name, pr.Provider, account),
-				Token: config.ClaudeAccountSecret(token), NoAccountJob: account == "",
+				// The container the account's value lives in, which is what this
+				// check asks about and what doctorAccountStore's fix stores: a
+				// key credential's own derived name, a Claude account's token
+				// container otherwise (config.CredentialValueSecret). A key
+				// credential rides no job of the account's own — the profile's
+				// list is what serves a token, and no profile lists a key
+				// (accounts_add.go) — so this arm's only reachable case is a
+				// config written by hand, and there the container is still the
+				// credential's.
+				Token: config.CredentialValueSecret(lc.Credentials, token), NoAccountJob: account == "",
 				ReviewJob: credsvc.ReviewJobName(name, pr.Provider, infra.ReviewVariantAccount(account)),
 			}
 			if token == config.DefaultClaudeAccount {
@@ -3128,10 +3161,14 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// rulesMarkerOlderText does: a device-generation marker already has the
 		// mailbox and only the coordinator's read grant is new to it, a
 		// coordinator-generation marker already has that grant too and only the
-		// voice policy node is new to it, and a voice-generation marker already
-		// has that node and only the registration kind's fields are new to it.
+		// voice policy node is new to it, a voice-generation marker already has
+		// that node and only the registration kind's fields are new to it, and a
+		// registration-generation marker already has those fields and only the
+		// four day-counter leaves a stage report writes per model are new to it.
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesRegistrationGeneration:
+			adds = "the four day-counter leaves a run's stage report writes per model"
 		case gen >= rulesVoiceGeneration:
 			adds = "the registration kind's fields on a mailbox message"
 		case gen >= rulesCoordinatorGeneration:

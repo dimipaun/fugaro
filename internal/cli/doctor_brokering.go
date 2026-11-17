@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -108,24 +109,31 @@ func refuseBitbucketTokenReadInAgent(getenv func(string) string) error {
 // grant, can exist for — or nil where the local config does not carry enough
 // to say which those are.
 //
-// A repository whose entry records the switch ON is one whose own apply ran
-// with agent.auth: cascade: infra.CredentialsServiceServes is what wrote that
-// record, and its third condition is exactly that auth, so the record being
-// true is the auth the apply saw. The list is then infra.WorkflowAccounts',
-// the function RepoSpec deploys the jobs from, asked with that same auth
-// rather than with a rule restated here — under cascade it is the default
-// variant of each workflow and no other, so the table's named variants are
-// variants this repository has no job, and no job account, for.
+// A repository whose entry records the switch ON is one whose own apply was
+// made with an auth the switch serves: infra.CredentialsServiceServes is what
+// wrote that record, and its auth condition admits the cascade always and
+// `api-key` or `oauth` under a gateway mode (B2.3). The list is
+// infra.WorkflowAccounts', the function RepoSpec deploys the jobs from, asked
+// with the cascade rather than with a rule restated here — under cascade it is
+// the default variant of each workflow and no other, so the table's named
+// variants are variants this repository has no job, and no job account, for.
+// The cascade is the one auth this reads for a switched repository, and the
+// local config is the INSTALLATION's side, which never holds a repository's
+// fugaro.yaml: a switched `api-key` or `oauth` repository whose own file names
+// Claude accounts may have deployed the variants of those accounts too, and
+// this then counts none of them. That is the direction this row is written to
+// fail in: a variant it does not count is one it does not warn about, where
+// counting one the root never deployed is the false warning the live Check 191
+// stopped on.
 //
 // Every other repository — record false, or no record at all, which the
-// switch's readers treat alike — may be running under any agent.auth, and the
-// local config is the INSTALLATION's side, which never holds a repository's
-// fugaro.yaml: the auth is not knowable here, so the answer is nil and the row
-// keeps the service's whole table for that repository, which is what it
-// compared before. That is not a guess about the repository: the sentence the
-// row prints says in its own words that the switch follows the repository's
-// own agent.auth, and a repository the service is held off for is named there
-// so an operator can see which one the fix has to be run for.
+// switch's readers treat alike — may be running under any agent.auth: the auth
+// is not knowable here, so the answer is nil and the row keeps the service's
+// whole table for that repository, which is what it compared before. That is
+// not a guess about the repository: the sentence the row prints says in its own
+// words that the switch follows the repository's own agent.auth, and a
+// repository the service is held off for is named there so an operator can see
+// which one the fix has to be run for.
 func credentialsServiceDeploys(lc *localcfg.Config, repo string) map[string]bool {
 	r, ok := lc.Repos[repo]
 	if !ok || !r.CredentialsServiceOn() {
@@ -169,14 +177,15 @@ func credentialsServiceDeploys(lc *localcfg.Config, repo string) map[string]bool
 //
 // The no-service state's fix is not an instruction to run something: DON1's
 // deploy is the ordinary `fugaro update`, and it switches nothing on by
-// itself — a run reaches the service only where the bundle holds a model
-// credential and that repository's own root has been re-applied with the
-// switch — so the line says what the deploy does and what the switch then costs
-// the repository (the credential leaves its jobs in every agent.auth mode,
-// which is why a project that switches one on runs its workflows with
-// agent.auth: cascade, and a GitHub run refuses to mint until the bundle holds
-// the App's key) rather than presenting a run that can break workflows as the
-// routine step a doctor line reads as. The two states whose fix is a re-apply
+// itself — a run reaches the service only where the bundle holds what its auth
+// needs and that repository's own root has been re-applied with the switch — so
+// the line says what the deploy does and what the switch then costs the
+// repository rather than presenting a run that can break workflows as the
+// routine step a doctor line reads as. What it costs is not the same sentence
+// for every auth: the switch admits api-key and oauth repositories too (B2.3),
+// so the credential stays mounted in their jobs until the flip (B2.7), and a
+// GitHub run of such a repository refuses to mint until the bundle holds the
+// App's key. The two states whose fix is a re-apply
 // name the same ordinary command: NOT_FOUND, where the installation root is
 // re-applied and the service created, and the empty verify route, whose list is
 // written into the service by that apply and not by a publish.
@@ -213,7 +222,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
 			Problem: fmt.Sprintf("the installation has no credentials service (%s): an ordinary %s deploys one on every installation that can hold it — it needs the installation's Firebase backend and at least one repository job — and writes the block this check reads, so this installation has either not run an update of this release or cannot carry one: either way its runs fetch their model credential the way they did before the service existed, and nothing here is broken or behind", infra.CredentialsServiceName, selfCommand()+" update"),
-			Fix:     "nothing to run for this: where " + selfCommand() + " update does deploy one, the deploy alone switches nothing on — a run reaches it only where the bundle holds a model credential and that repository's own root has been re-applied with the switch, which moves the credential out of its jobs in every agent.auth mode (which is why a project that switches one on runs its workflows with agent.auth: cascade), and a GitHub run of such a repository refuses to mint until the bundle holds the App's key (" + selfCommand() + " creds set github-app-key)"}}
+			Fix:     "nothing to run for this: where " + selfCommand() + " update does deploy one, the deploy alone switches nothing on — a run reaches it only where the bundle holds the credential its auth needs and that repository's own root has been re-applied with the switch, which a cascade repository of any installation that has a service is on, and an api-key or oauth one only where its budget mode is observe or enforce and the bundle holds that credential (the credential is dropped from the job's mounts at the flip, which has not landed: until then a switched job keeps it mounted), and a GitHub run of such a repository refuses to mint until the bundle holds the App's key (" + selfCommand() + " creds set github-app-key)"}}
 	}
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",
@@ -284,16 +293,18 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	// who reads the command alone would run it at a repository the switch is
 	// held off for and get no grant: the grant is written by a repository's own
 	// root and only where CredentialsServiceServes says the switch is on, so a
-	// repository whose agent.auth is not cascade has to be set to it first.
-	// That state is worth saying in the problem too, and it is the one where
-	// the published policy's proxy: true reads as a promise the installation
+	// repository has to hold both conditions the switch adds for its own auth
+	// first — the mode, for the two auths the service serves besides the
+	// cascade, and the bundle entry that auth's runs are served under. That
+	// state is worth saying in the problem too, and it is the one where the
+	// published policy's proxy: true reads as a promise the installation
 	// keeps: nothing about such a repository is brokered, and its runs hold the
 	// Bitbucket token on their own job.
 	return []doctorCheck{{ID: id, Severity: "warning",
-		Problem: fmt.Sprintf("the credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth, so a repository of that list that does not run with agent.auth: cascade has the service held off for it: the published policy's proxy: true is inert there — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
+		Problem: fmt.Sprintf("the credentials service %s is deployed and grants no %s to %s: a run of %s that is on the switch would fail to fetch a model credential%s. The grant follows the switch, and the switch follows the repository's own agent.auth: a repository that runs with agent.auth: cascade reaches the service wherever the installation has one, and one that runs with agent.auth api-key or oauth reaches it only where its budget mode is observe or enforce AND the service's bundle holds the credential its auth needs — %s for api-key, and the token of every account its workflows may run under for oauth. So a repository of that list that is held off has no grant: the published policy's proxy: true is inert for it — it brokers nothing, and its runs hold their own Bitbucket token instead of being served one",
 			infra.CredentialsServiceName, runInvokeRoles[0], strings.Join(missing, ", "), strings.Join(missing, ", "),
-			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0)),
-		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them that runs with an agent.auth other than cascade, set agent.auth: cascade for it first (with a model credential in the service's bundle, " + selfCommand() + " creds set) and run it again: until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
+			noteIfAny("; not read: "+strings.Join(unread, ", "), len(unread) > 0), config.AnthropicSecret),
+		Fix: selfCommand() + " update --repo <each repository named above> (grants each of its job accounts " + runInvokeRoles[0] + " on the service). For one of them the switch is held off until it holds: an api-key or oauth repository needs its budget mode at observe or enforce and the service's bundle to hold the credential its auth needs (" + selfCommand() + " creds set " + config.AnthropicSecret + " for api-key; " + selfCommand() + " creds set " + config.ClaudeOAuthTokenPrefix + "<account> for oauth), and a repository of any other agent.auth has to run with agent.auth: cascade first (with a model credential in the service's bundle, " + selfCommand() + " creds set). Until then the switch is off for that repository, proxy: true is inert, and its runs hold their own Bitbucket token"}}
 }
 
 // doctorCredentialsServiceServing is the rest of
@@ -1416,13 +1427,28 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 // something holds the credential away from it — the budget gateway, which
 // carries an api-key run's key itself (runner.GatewayOn: oauth never goes
 // through it, and vertex and cascade carry no credential of the job's own at
-// all). An installation opted into the credentials service holds every model
-// credential too, and the jobs give their mounts up.
+// all), or the installation's credentials service.
+//
+// The service's half is the SWITCH's own predicate and not the installation's
+// block (B2.2, B2.3, D2071): an `api-key` or `oauth` repository reaches the
+// service only where its budget mode is one the gateway exists in AND the
+// record `fugaro update` left for it says its root was applied with the switch
+// on — which is what a bundle holding the credential its auth needs leaves
+// behind. A switched run's agent environment is built as the cascade's
+// (runner's servedAuth), so no credential of the job's reaches the agent, and
+// that holds although the job's own MOUNT stays until the flip (B2.7, G17).
+// A repository off the switch keeps both, and the line names what the switch
+// is missing: the mode, or the bundle entry the auth's runs are served under.
+//
+// What it may NOT say is that the bundle lacks an entry: the bundle's document
+// is read only behind --check-bitbucket-token (doctorBundleChecks), so the
+// entry is named as the one the switch waits for and never as one doctor
+// found absent.
 //
 // Information, never a failure: an installation that runs without the budget
 // is a legitimate choice, and the line is the reading an owner asked for — the
 // agent's own environment is where a leaked key is worth the most.
-func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile) *doctorCheck {
+func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile, repo string) *doctorCheck {
 	if rf == nil || rf.Cfg == nil {
 		return nil
 	}
@@ -1439,17 +1465,75 @@ func doctorModelKeyInAgent(lc *localcfg.Config, rf *resolvedFile) *doctorCheck {
 	default:
 		return nil
 	}
-	if runner.GatewayOn(auth, lc.BudgetMode()) || lc.CredentialsService != nil {
+	mode := lc.BudgetMode()
+	if runner.GatewayOn(auth, mode) {
 		return nil
 	}
-	why := "the installation has no credentials service to hold it"
+	// The bundle entries this auth's runs are served under, in the bundle's own
+	// spelling (the document key `fugaro creds set` takes): the Anthropic key
+	// for api-key, and every account an oauth repository's workflows may run
+	// under, resolved through this machine's aliases first — exactly the set
+	// the switch's readiness reads (credentialsBundleServes).
+	entries := []string{config.AnthropicSecret}
+	if auth == "oauth" {
+		entries = oauthSwitchBundleEntries(rf.Cfg, lc, repo)
+	}
+	needs := "`" + strings.Join(entries, "`, `") + "`"
+	installed := lc.CredentialsService != nil && lc.CredentialsService.URL != ""
+	local, _ := lc.RepoFor(repo)
+	if runner.ServiceSwitchedAuth(auth) && infra.CredentialsServiceServes(installed, local.CredentialsServiceOn(), auth, mode) {
+		return nil
+	}
+	var why string
+	switch {
+	case mode != policy.ModeObserve && mode != policy.ModeEnforce:
+		// An api-key repository reaches here only in this state — GatewayOn
+		// above is the same mode question asked of its own auth — so the mode
+		// is the reason the gateway, and the service behind it, hold nothing.
+		why = fmt.Sprintf("budget.mode is off, so neither the gateway nor the credentials service behind it holds it: the switch admits an %s repository under budget.mode observe or enforce alone, with %s in the service's bundle", auth, needs)
+	case !installed:
+		why = fmt.Sprintf("the installation has no credentials service to hold it, and the switch would need %s in its bundle", needs)
+	default:
+		why = fmt.Sprintf("the credentials service is held off for this repository: %s records a root as applied with the switch on only where the service's bundle holds %s, and this repository's record does not say it was", selfCommand()+" update --repo", needs)
+	}
+	// The two routes are the auth's own. An api-key run reaches the service
+	// THROUGH the gateway, so turning the budget on holds the key whether or not
+	// a service is deployed, and the service route needs the same mode; an oauth
+	// run never starts a gateway (F30), so the service is the only route there
+	// and the mode is a condition of reaching it rather than a second way out.
+	route := fmt.Sprintf("put the installation's credentials service in front of it (an ordinary %s update deploys it, and its own %s update --repo switches this repository onto it once the budget mode is observe or enforce and the service's bundle holds %s: %s creds set %s)",
+		selfCommand(), selfCommand(), needs, selfCommand(), entries[0])
+	fix := "to take it out of the agent's reach, " + route + " — the gateway is no route of its own, because an oauth run never starts one"
 	if auth == "api-key" {
-		why = "budget.mode is off, so no gateway holds it"
+		fix = "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or " + route + " — the same mode is what the service is reached through"
 	}
 	return &doctorCheck{ID: "model-key-in-agent", Severity: "info",
 		Problem: fmt.Sprintf("this repository's workflows (%s) run with agent.auth %s, and the model credential reaches the agent's own environment as %s (%s)",
 			strings.Join(printableNames(slices.Sorted(maps.Keys(rf.Cfg.Workflows))), ", "), auth, env, why),
-		Fix: "to take it out of the agent's reach, turn the budget on (budget.mode observe or enforce: the gateway holds the key), or put the installation's credentials service in front of it (an ordinary " + selfCommand() + " update deploys it)"}
+		Fix: fix}
+}
+
+// oauthSwitchBundleEntries are the bundle's own DOCUMENT keys for an oauth
+// repository's runs: one per account infra.WorkflowAccounts gives it — the
+// accounts its jobs exist for, which are the accounts a launch may name — with
+// this machine's aliases resolved first, because a name that is an alias would
+// otherwise be held off for an account the bundle does hold
+// (credentialsBundleServes resolves the same way). The spelling is the document
+// key and not the account, because it is what `fugaro creds set` takes and what
+// the service's loader reads back as that account. The set is never empty:
+// AllowedClaudeAccounts always names the default account, which is why the
+// caller may read its first element as a name `fugaro creds set` takes.
+func oauthSwitchBundleEntries(cfg *config.Config, lc *localcfg.Config, repo string) []string {
+	accounts := infra.WorkflowAccounts(cfg, lc, repo)
+	out := make([]string, 0, len(accounts))
+	for _, account := range accounts {
+		if resolved, _ := lc.ResolveAccount(account); resolved != "" {
+			account = resolved
+		}
+		out = append(out, config.ClaudeAccountSecret(account))
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // proxiedBitbucketRepos are the repositories of this installation's local

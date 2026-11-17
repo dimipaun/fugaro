@@ -191,6 +191,16 @@ type Identity struct {
 	// one a follow-up continues, or the one to four a review run reviews.
 	// Empty when it writes none.
 	PRs []int
+	// ContextRepos are the repositories this run READS and never writes (the
+	// fcr claim, C5a): the context repositories the launch recorded, which this
+	// service is the reader of because it cannot read the task and the task
+	// file is writable by the job (D613/F17). They are the boundary the context
+	// mint is held to — a request naming any other repository is refused — and
+	// they are held to their own rule here (contextRepoClaims) rather than
+	// trusted, because this service reads a signature and not the launcher's
+	// intent. Empty on an identity minted without the claim, which is every
+	// launcher before C5a and every run that named no context repository.
+	ContextRepos []string
 	// Job is the Cloud Run job the run reported — the caller's claim, which is
 	// why JobAccount, the verified service account, is the one of the two that
 	// identifies the job — and JobAccount is the account that called: the
@@ -1664,18 +1674,71 @@ func (a *Authenticator) verifyRun(ctx context.Context, tok string, now time.Time
 	if err != nil {
 		return Identity{}, err
 	}
+	contexts, err := contextRepoClaims(claims)
+	if err != nil {
+		return Identity{}, err
+	}
 	if err := a.checkLive(ctx, slug, run, now); err != nil {
 		return Identity{}, err
 	}
 	return Identity{
-		Slug:     slug,
-		Run:      run,
-		Project:  a.cfg.Project,
-		FX:       fx,
-		Launcher: claimString(claims, "rb"),
-		Branch:   branch,
-		PRs:      prs,
+		Slug:         slug,
+		Run:          run,
+		Project:      a.cfg.Project,
+		FX:           fx,
+		Launcher:     claimString(claims, "rb"),
+		Branch:       branch,
+		PRs:          prs,
+		ContextRepos: contexts,
 	}, nil
+}
+
+// contextRepoClaims reads the context-repository claim (fcr, C5a) of a verified
+// run identity, and holds it to its rules.
+//
+// fcr is the list of repositories a run READS and never writes, and it is the
+// whole boundary of the context mint (C5b, D613): the service cannot read the
+// task, and the call it answers names the repositories the CALLER wants rather
+// than the ones it may have — so the list it may be served is this claim, which
+// the launcher minted and signed, and nothing else. That is why a claim this
+// code cannot read is refused rather than read as none, the rule branchClaims
+// keeps for fpr: a claim present but not an array of repository names is not a
+// list this service may treat as empty, because the two answers differ — an
+// empty list refuses every context repository a run has, which is at least
+// fail-closed, while a list read wrongly could serve a repository the launch
+// never named.
+//
+// Every entry is held to the canonical form the launcher writes it in
+// (task.CanonicalRepo, applied by fugaro run before the claim is minted):
+// owner/name, lower-cased, with no "." or ".." element. The rule is applied
+// here as well and not trusted, because a signature says who wrote a claim and
+// never what it may hold: an entry in another spelling would compare unequal to
+// every repository the call names, so a run whose identity held one would be
+// served nothing at all — a refusal an operator could not read, in place of the
+// one this produces.
+//
+// An identity minted without the claim is admitted with an empty list and no
+// error: every launcher before C5a minted one, and the context mint refuses such
+// a run's calls by finding the claim empty — the same way the proxy refuses a
+// push by finding fb empty (B1.4).
+func contextRepoClaims(claims map[string]any) ([]string, error) {
+	if _, present := claims[token.ClaimContextRepos]; !present {
+		return nil, nil
+	}
+	repos, ok := token.ClaimStrings(claims, token.ClaimContextRepos)
+	if !ok || len(repos) > token.MaxContextRepos {
+		return nil, fmt.Errorf("%w: the run identity's fcr is not an array of at most %d context repositories", ErrUnverified, token.MaxContextRepos)
+	}
+	for _, repo := range repos {
+		canonical, err := task.CanonicalRepo(repo)
+		if err != nil || canonical != repo {
+			// Nothing of the entry is repeated: it is caller text of unbounded
+			// length, and the rule it broke is the whole of what an operator
+			// needs to read (the same rule the branch claim's refusal keeps).
+			return nil, fmt.Errorf("%w: the run identity's fcr names a repository that is not a canonical owner/name", ErrUnverified)
+		}
+	}
+	return repos, nil
 }
 
 // branchClaims reads the branch and pull-request claims (fb and fpr, G6) of a

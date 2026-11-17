@@ -106,8 +106,11 @@ var writerProbeLadder = []string{
 // writerProbeListItems are the members a list key is tried with, after the
 // first: an item is one word of the row's own type, and the registry states no
 // type for a row, so a list of GitHub user IDs and a list of labels are told
-// apart by what the document's loader takes.
-var writerProbeListItems = []string{"conformance", "12345", "claude-sonnet-5"}
+// apart by what the document's loader takes. The last is the shape
+// `verifier_accounts` is held to — the bare address a Google ID token's email
+// claim carries (policy.ValidVerifierAccounts), which refuses every word beside
+// it — so a probe of that row measures its writer and not the loader.
+var writerProbeListItems = []string{"conformance", "12345", "claude-sonnet-5", "verifier@example.invalid"}
 
 // writerProbeKey is the concrete spelling a row is probed at.
 func writerProbeKey(key string) string {

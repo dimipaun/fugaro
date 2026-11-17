@@ -86,6 +86,46 @@ func dupLiveRun(t *testing.T, f *cloudFixture, id, planTask string) {
 	}
 }
 
+// dupLiveFollowUpRun stores a run of planTask that is in flight and carries a
+// pull request of its own: a follow-up of pr, which is the one shape where a
+// run going and a pull request are both there, and so the one where a refusal
+// has to choose between the two.
+func dupLiveFollowUpRun(t *testing.T, f *cloudFixture, id, planTask, root string, pr int) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	spec := followUpSpec(id, root, root, pr)
+	spec.PlanTask = planTask
+	if err := s.CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, PlanTask: planTask, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dupLivePRRun stores a run that is in flight on pull request pr and names no
+// plan task: a --pr follow-up launched on its own, which is the command the
+// refusal itself prints (followup.go records o.planTask, empty). Its row
+// carries the pull request and no task, so the guard never matches the run --
+// and the pull request it is going on reads live for every row the guard does
+// see, the finished run that left that pull request among them.
+func dupLivePRRun(t *testing.T, f *cloudFixture, id, root string, pr int) {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	if err := s.CreateTask(ctx, followUpSpec(id, root, root, pr)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // dupFinishedRun stores a run of planTask that ended, leaving pull request pr
 // behind it, with the word the record has for what it left: runstore.OutcomeReady
 // for a pull request it left ready, OutcomeDraft for one it left a draft --
@@ -199,27 +239,217 @@ func TestRunRefusesADuplicatePlanTask(t *testing.T) {
 	})
 }
 
-// TestRunDuplicateRefusalNamesTheWaysOut pins the refusal's three ways out: the
-// pull request a --pr continues, the chain a --retry or a --continues joins,
-// and --allow-duplicate. A guard that only said "refused" would leave the
-// caller to guess, and the guess is what launched the duplicate in the first
-// place.
+// TestRunDuplicateRefusalNamesTheWaysOut pins the refusal's ways out, per shape,
+// because the shapes have different ones: a run of the task that ended and left
+// its pull request is continued by naming that pull request, and a run still in
+// flight is waited for, with the deliberate second attempt as the other thing a
+// caller may do. A guard that only said "refused" would leave the caller to
+// guess, and the guess is what launched the duplicate in the first place;
+// TestRunDuplicateWaysOutRun runs what is printed.
+//
+// No shape names --retry or --continues: every run this guard can name has
+// launched already, so a --retry of it reports already-launched and starts
+// nothing (run.go's existingLaunch), and a --continues of it -- a launch that
+// takes the guard's own way out rather than meeting it (run.go's call site skips
+// the check) -- would start a second run of the very task the refusal just
+// stopped, on a chain whose remaining budget the live run is still spending
+// against. While a run is in flight --pr is missing too, and so is it where the
+// pull request a run of the task left is itself live, a run of it going that the
+// guard did not match: resolvePR refuses a follow-up whose pull request has a run
+// still going, so it would be one more dead end, and waiting -- over the
+// repository, or over that one pull request -- is the whole of both shapes. A way out that does nothing,
+// that is refused itself, or that starts the duplicate by another door, is worse
+// than none.
 func TestRunDuplicateRefusalNamesTheWaysOut(t *testing.T) {
-	f := duplicateRig(t)
-	dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
-	msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
-	for _, want := range []string{
-		"plan task " + duplicatePlan,
-		"nothing was launched",
-		"fugaro run --pr 7",
-		"fugaro run --retry " + task.ShortRun(dupLeft),
-		"--continues " + task.ShortRun(dupLeft),
-		"--allow-duplicate",
-	} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("refusal = %q, want %q in it", msg, want)
+	t.Run("the run left a pull request", func(t *testing.T) {
+		f := duplicateRig(t)
+		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		for _, want := range []string{
+			"plan task " + duplicatePlan,
+			"nothing was launched",
+			"fugaro run --pr 7 --repo acme/app",
+			"run " + task.ShortRun(dupLeft) + " left pull request #7 of acme/app",
+			"--allow-duplicate",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("refusal = %q, want %q in it", msg, want)
+			}
 		}
+		for _, bad := range []string{"--retry", "--continues"} {
+			if strings.Contains(msg, bad) {
+				t.Errorf("refusal names %s, a command that starts nothing here: %q", bad, msg)
+			}
+		}
+	})
+
+	t.Run("the run is still in flight", func(t *testing.T) {
+		f := duplicateRig(t)
+		dupLiveRun(t, f, dupLive, duplicatePlan)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		for _, want := range []string{
+			"plan task " + duplicatePlan,
+			"nothing was launched",
+			"run " + task.ShortRun(dupLive) + " is still pending",
+			"fugaro runs ls --repo acme/app",
+			"--allow-duplicate",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("refusal = %q, want %q in it", msg, want)
+			}
+		}
+		for _, bad := range []string{"--retry", "--continues"} {
+			if strings.Contains(msg, bad) {
+				t.Errorf("refusal names %s while the run is still going, and that launch would start the second run this refusal just stopped: %q", bad, msg)
+			}
+		}
+	})
+
+	t.Run("the run in flight is on a pull request", func(t *testing.T) {
+		// A follow-up run that is still going carries the pull request it
+		// continues, and a --pr of that pull request is refused for as long as
+		// one of its runs is live (resolvePR): waiting is the whole of the way
+		// out here, and the live run is named with it.
+		f := duplicateRig(t)
+		dupLiveFollowUpRun(t, f, dupLive, duplicatePlan, dupLeft, 7)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		for _, want := range []string{
+			"run " + task.ShortRun(dupLive) + " is still pending, on pull request #7 of acme/app",
+			"fugaro runs ls --repo acme/app",
+			"--allow-duplicate",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("refusal = %q, want %q in it", msg, want)
+			}
+		}
+		for _, bad := range []string{"--retry", "--continues", "--pr "} {
+			if strings.Contains(msg, bad) {
+				t.Errorf("refusal names %s while a run of that pull request is still going, and that launch is refused too: %q", bad, msg)
+			}
+		}
+	})
+
+	t.Run("a run going on the pull request a run of the task left", func(t *testing.T) {
+		// A run of the task ended and left pull request 7, and a run of that
+		// pull request is going that this guard never matches: a --pr follow-up
+		// launched without --plan-task, which is the command the refusal itself
+		// prints. resolvePR reads one pull request's runs whatever task they
+		// name, so the --pr the refusal would print here is refused exactly as
+		// it is for a run of the task still going, and the pull request's own
+		// listing is the way out instead.
+		f := duplicateRig(t)
+		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
+		dupLivePRRun(t, f, dupLive, dupLeft, 7)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		for _, want := range []string{
+			"run " + task.ShortRun(dupLeft) + " left pull request #7 of acme/app",
+			"still being worked on",
+			"fugaro runs ls --pr 7 --repo acme/app",
+			"--allow-duplicate",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("refusal = %q, want %q in it", msg, want)
+			}
+		}
+		for _, bad := range []string{"fugaro run --pr", "--retry", "--continues"} {
+			if strings.Contains(msg, bad) {
+				t.Errorf("refusal names %s while a run of that pull request is still going, and that launch is refused too: %q", bad, msg)
+			}
+		}
+	})
+}
+
+// dupRef is the ref the refusal's commands name a run by, and the one the CLI's
+// own lookups take: the runs bucket's <slug>/<run-id>. A bare ending is not
+// one (runstore.Locate refuses it), which is the mistake this pins.
+func dupRef(id string) string { return appSlug + "/" + id }
+
+// TestRunDuplicateWaysOutRun is the other half of the refusal: the commands it
+// prints are ones the CLI accepts and that really do the thing they are printed
+// for. A refusal whose ways out are themselves refused sends the caller into a
+// second error instead of out of the first, which the bare ending they were
+// once printed as did, and a way out the CLI accepts but that launches nothing
+// -- a --retry of a run that already launched -- is the same dead end one step
+// further on. So each arm runs what its shape prints: the launches are held to
+// the execution they start, the listing to itself, and the shapes it must not
+// name while a run is in flight to the duplicate they would start.
+func TestRunDuplicateWaysOutRun(t *testing.T) {
+	t.Run("the run in flight: waiting, and the deliberate second attempt", func(t *testing.T) {
+		f := duplicateRig(t)
+		dupLiveRun(t, f, dupLive, duplicatePlan)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		// What the refusal must not do while the run is going: name a launch
+		// that starts a second run of the same task. `--continues` is exactly
+		// that -- the guard skips it -- so the launch it names would be the
+		// duplicate this refusal just stopped.
+		if strings.Contains(msg, "--continues") {
+			t.Fatalf("refusal names --continues of the run in flight: %q", msg)
+		}
+		// The command it names instead is the listing, which starts nothing.
+		if _, _, err := execute(t, "runs", "ls", "--repo", "acme/app"); err != nil {
+			t.Fatalf("the printed `fugaro runs ls --repo acme/app`: %v", err)
+		}
+		// And the launch it names beside that is a way out rather than another
+		// refusal: the deliberate second attempt it prints happens, because that
+		// is the one the caller asked for.
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "--allow-duplicate", "Add a feature"); err != nil {
+			t.Fatalf("the printed --allow-duplicate way out was refused: %v", err)
+		}
+		if n := len(f.run.Executions()); n != 1 {
+			t.Fatalf("%d executions, want the deliberate second attempt's one", n)
+		}
+	})
+
+	t.Run("a pull request a run left: --pr, as printed", func(t *testing.T) {
+		f := duplicateRig(t)
+		dupFinishedRun(t, f, dupLeft, duplicatePlan, 7, runstore.OutcomeReady)
+		msg := dupRefused(t, f, "already being worked on", "run", "--repo", "acme/app", "--run-id", dupNext, "--plan-task", duplicatePlan, "Add a feature")
+		// Both arguments are read out of the printed sentence, the repository
+		// included: the refusal names the caller's own <owner/name>, and a
+		// launch copied without it is refused outside a checkout or aimed at
+		// whatever repository the caller happens to stand in.
+		pr := dupPrinted(t, msg, "--pr ")
+		repo := dupPrinted(t, msg, "--repo ")
+		ref := dupRef(dupLeft)
+		// The two commands the refusal does not print, each held to what it
+		// really does with the run it would have named -- not to the error it
+		// reports, which the fixture's thin launch record can turn into a
+		// different one: what matters is that the caller gets no run.
+		if _, _, _ = execute(t, "run", "--retry", ref); len(f.run.Executions()) != 0 {
+			t.Fatalf("--retry of a run that already launched started %d execution(s), want none", len(f.run.Executions()))
+		}
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--continues", ref, "--run-id", dupOther, "Add a feature"); err == nil {
+			t.Fatalf("--continues %s was taken, and the refusal must print it then", ref)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions after the two commands the refusal does not print, want none", n)
+		}
+		// And what it does print is a way out rather than another refusal: the
+		// launch it names happens, with the repository it printed.
+		if _, _, err := execute(t, "run", "--pr", pr, "--repo", repo, "--run-id", dupOther, "Add a feature"); err != nil {
+			t.Fatalf("the printed --pr way out was refused: %v", err)
+		}
+		if n := len(f.run.Executions()); n != 1 {
+			t.Fatalf("%d executions, want the follow-up launch's one", n)
+		}
+	})
+}
+
+// dupPrinted is the argument the refusal's message gives to flag, as a caller
+// reading it would copy it: everything between the flag and the next space or
+// closing bracket. The command is read out of the printed sentence rather than
+// rebuilt here, so the test fails on what the caller is actually told.
+func dupPrinted(t *testing.T, msg, flag string) string {
+	t.Helper()
+	i := strings.Index(msg, flag)
+	if i < 0 {
+		t.Fatalf("refusal = %q, want %s in it", msg, flag)
 	}
+	fields := strings.FieldsFunc(msg[i+len(flag):], func(r rune) bool { return r == ' ' || r == ')' || r == ',' })
+	if len(fields) == 0 {
+		t.Fatalf("refusal = %q, want an argument after %s", msg, flag)
+	}
+	return fields[0]
 }
 
 // TestRunDuplicateNeedsNoCodeHostCredential is the guard's shape pinned against
@@ -291,7 +521,7 @@ func TestRunDuplicateCheckFailsOpen(t *testing.T) {
 	}
 	var warn strings.Builder
 	o := &runOptions{planTask: duplicatePlan}
-	if err := planTaskDuplicate(ctx, envOn(t, f, blobx.Wrap(b)), o, appSlug, dupNext, &warn); err != nil {
+	if err := planTaskDuplicate(ctx, envOn(t, f, blobx.Wrap(b)), o, appSlug, "acme/app", dupNext, &warn); err != nil {
 		t.Fatalf("a read the guard cannot make must not refuse: %v", err)
 	}
 	if !strings.Contains(warn.String(), "could not check whether plan task "+duplicatePlan) {
