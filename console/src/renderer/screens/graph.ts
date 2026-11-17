@@ -59,10 +59,11 @@
 // draw, and `graph.test.ts` holds the three equal.
 
 import { UNAVAILABLE_MARK, formatReading } from '../../shared/availability'
+import type { Reading, Unit } from '../../shared/availability'
 import { BUSY_SLOT_CLASS } from '../section'
 import { sanitizeText } from '../../shared/sanitize'
 import type { Sanitized } from '../../shared/sanitize'
-import type { GraphView, PlanNodeView, PlanStatusView, RunView } from '../../shared/schema'
+import type { GraphView, PlanEstimateView, PlanNodeView, PlanRangeView, PlanStatusView, RunView } from '../../shared/schema'
 import { MIN_ENDING, shortRun } from '../../shared/shortid'
 import type { ElementLike } from '../app'
 import { LayoutClient } from '../graph/layout-client'
@@ -203,6 +204,30 @@ export const GRAPH_NO_PLANS = 'this checkout has no plan the console can draw'
  * so the drawing falls back to the list and says why rather than showing an
  * empty frame. */
 export const GRAPH_NO_CANVAS = 'the layout worker did not place this graph, so it is drawn as a list'
+
+/**
+ * GRAPH_ESTIMATE_READY, GRAPH_ESTIMATE_MINUTES and GRAPH_ESTIMATE_NO_HISTORY are
+ * the words of a plan's estimate, and they are the CLI's own: `fugaro plan
+ * status` prints the same line about the same block (`internal/cli/plan.go`,
+ * `planEstimateLine`), so a person reading a terminal and a person reading this
+ * screen read one estimate and not two. What is this screen's is how the figures
+ * between them are drawn -- through `formatReading`, the console's only
+ * formatter (the estimates plan's S4, D2714).
+ */
+export const GRAPH_ESTIMATE_READY = 'ready in'
+export const GRAPH_ESTIMATE_MINUTES = 'min'
+export const GRAPH_ESTIMATE_NO_HISTORY = 'no history yet for'
+
+/** GRAPH_ESTIMATE_TASK and GRAPH_ESTIMATE_TASKS are that sentence's own last
+ * word, singular on the one task the CLI's line would print `1 task` for. */
+export const GRAPH_ESTIMATE_TASK = 'task'
+export const GRAPH_ESTIMATE_TASKS = 'tasks'
+
+/** GRAPH_ESTIMATE_RANGE stands between the two ends of a range: the en dash the
+ * CLI's own line prints, and **not** the em dash `availability.ts` keeps for a
+ * gap -- a range and a stopped series are two different facts, and one mark for
+ * both would read a range as a gap. */
+const GRAPH_ESTIMATE_RANGE = '–'
 
 /** GRAPH_NO_RUN is a node the plan gave no run: the join `plan status` makes
  * found none, so there is nothing to open. */
@@ -2012,10 +2037,53 @@ function nodeCard(
 }
 
 /**
+ * estimateText is one plan's estimate as a person reads it: when the work left
+ * is ready, and what it costs -- or, where the plan's money cannot be stated at
+ * all, how many tasks it is unknown for (D2723).
+ *
+ * **It is this screen's sentence over the document's figures**, and it is the
+ * CLI's own line read for read: `plan status` prints the same words about the
+ * same block (`planEstimateLine`), so the two readings of one plan agree. Every
+ * figure in it is drawn through `formatReading` (the console's only formatter),
+ * which is what makes a range the document half-carried read `n/a–70 min` rather
+ * than a number nobody computed: a range end that is not there is unavailable,
+ * never a zero.
+ *
+ * The minutes are the `count` unit -- whole minutes are all the precision an
+ * estimate has, and the unit word is this file's own -- and the money is the
+ * `usd` unit, so a cost range reads `$3.00–$5.00` with the sign on each end.
+ */
+function estimateText(estimate: PlanEstimateView): string {
+  const ready = `${GRAPH_ESTIMATE_READY} ${rangeText(estimate.readyIn, 'count')} ${GRAPH_ESTIMATE_MINUTES}`
+  const cost = estimate.cost === null ? unknownCostText(estimate.unknownTasks) : rangeText(estimate.cost, 'usd')
+  return `${ready}, ${cost}`
+}
+
+/** rangeText is one range in one unit: its low end, the mark, its high end. */
+function rangeText(range: PlanRangeView, unit: Unit): string {
+  return `${formatReading(range.low, unit)}${GRAPH_ESTIMATE_RANGE}${formatReading(range.high, unit)}`
+}
+
+/** unknownCostText is D2723's answer where the plan's cost could not be computed
+ * at all: the count of tasks there is no figure for, and no number that could be
+ * mistaken for the plan's cost. */
+function unknownCostText(tasks: Reading): string {
+  const word = tasks.value === 1 ? GRAPH_ESTIMATE_TASK : GRAPH_ESTIMATE_TASKS
+  return `${GRAPH_ESTIMATE_NO_HISTORY} ${formatReading(tasks)} ${word}`
+}
+
+/**
  * list is the same model as a list: one section per plan, one heading per
  * release with the same "n of m done" bar, and one row per task -- carrying
  * everything the card carries and the whole title with it (F25: the picture's
  * non-visual equivalent).
+ *
+ * **The estimate is drawn here and not on the canvas**, and that is where the
+ * two drawings differ by design rather than by omission: the canvas gives a plan
+ * no text of its own (its boxes are releases, its groups are streams), so a
+ * figure about a plan has no heading to sit under there, while the list has a
+ * section and a heading per plan. A plan whose document carries no estimate
+ * draws no line at all.
  */
 function list(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
   const element = make(factory, 'div', 'graph-list')
@@ -2026,6 +2094,9 @@ function list(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
     for (const plan of column.plans) {
       const section = cell(element, factory, 'section', 'graph-list-plan')
       drawn(section, factory, 'h2', plan.title, 'graph-list-title')
+      if (plan.estimate !== null) {
+        literal(cell(section, factory, 'p', 'graph-list-estimate'), estimateText(plan.estimate))
+      }
       for (const release of releasesOf(picture, plan).values()) {
         section.append(listRelease(factory, release))
       }

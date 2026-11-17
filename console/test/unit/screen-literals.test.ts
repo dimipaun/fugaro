@@ -284,6 +284,8 @@ const CLOSED_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entry>>
     'barText(release)':
       '`barText` composes "n of m done" from two `formatReading` readings -- the console\'s only formatter, whose unavailable mark is what a release the document gave no counters reads -- and the words around them are this file\'s',
     'barText(box.release)': '`barText`, the same "n of m done" run the chip and the list heading draw, so one rule reads all three',
+    'estimateText(plan.estimate)':
+      '`estimateText` composes the plan\'s estimate line from this file\'s own words (`GRAPH_ESTIMATE_READY`, `GRAPH_ESTIMATE_NO_HISTORY`, the range mark, the unit) and numbers the document carried as `Reading`s (`schema.ts`\'s `planEstimateAt`, every one of them through `readNumber`), drawn through `formatReading` -- so no document *string* is in it, and a range end the document did not carry reads `n/a` rather than a figure',
     line: {
       within: 'nodeCard',
       reason:
