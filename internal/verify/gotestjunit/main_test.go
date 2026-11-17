@@ -11,8 +11,11 @@ import (
 )
 
 // stream is a `go test -json` stream as the go tool writes one: a package that
-// passes, skips and fails, a package that failed to build, and a package with
-// no test files. It is the shape internal/verify's reader has to end up seeing.
+// passes, skips and fails, a package that failed to build, a package with no
+// test files, and a package whose test binary died partway -- its `-timeout`
+// panicked, so TestHang has a `run` event and no outcome at all and the package
+// carries the failure. It is the shape internal/verify's reader has to end up
+// seeing.
 const stream = `{"Time":"2026-11-17T05:22:09.454Z","Action":"start","Package":"probe/a"}
 {"Time":"2026-11-17T05:22:09.455Z","Action":"start","Package":"probe/b"}
 {"ImportPath":"probe/b","Action":"build-output","Output":"# probe/b\n"}
@@ -23,6 +26,13 @@ const stream = `{"Time":"2026-11-17T05:22:09.454Z","Action":"start","Package":"p
 {"Time":"2026-11-17T05:22:09.455Z","Action":"start","Package":"probe/c"}
 {"Time":"2026-11-17T05:22:09.455Z","Action":"output","Package":"probe/c","Output":"?   \tprobe/c\t[no test files]\n"}
 {"Time":"2026-11-17T05:22:09.455Z","Action":"skip","Package":"probe/c","Elapsed":0}
+{"Time":"2026-11-17T05:22:09.456Z","Action":"start","Package":"probe/d"}
+{"Time":"2026-11-17T05:22:09.457Z","Action":"run","Package":"probe/d","Test":"TestHang"}
+{"Time":"2026-11-17T05:22:09.457Z","Action":"output","Package":"probe/d","Test":"TestHang","Output":"=== RUN   TestHang\n","OutputType":"frame"}
+{"Time":"2026-11-17T05:22:09.457Z","Action":"output","Package":"probe/d","Test":"TestHang","Output":"    d_test.go:5: waiting\n","OutputType":"error"}
+{"Time":"2026-11-17T05:22:12.460Z","Action":"output","Package":"probe/d","Output":"panic: test timed out after 3s\n\trunning tests:\n\t\tTestHang (3s)\n","OutputType":"error"}
+{"Time":"2026-11-17T05:22:12.460Z","Action":"output","Package":"probe/d","Output":"FAIL\tprobe/d\t3.005s\n","OutputType":"frame"}
+{"Time":"2026-11-17T05:22:12.460Z","Action":"fail","Package":"probe/d","Elapsed":3.005}
 {"Time":"2026-11-17T05:22:09.457Z","Action":"run","Package":"probe/a","Test":"TestPass"}
 {"Time":"2026-11-17T05:22:09.457Z","Action":"output","Package":"probe/a","Test":"TestPass","Output":"=== RUN   TestPass\n","OutputType":"frame"}
 {"Time":"2026-11-17T05:22:09.457Z","Action":"output","Package":"probe/a","Test":"TestPass","Output":"--- PASS: TestPass (0.00s)\n","OutputType":"frame"}
@@ -44,7 +54,10 @@ const stream = `{"Time":"2026-11-17T05:22:09.454Z","Action":"start","Package":"p
 
 // TestReportReadsTheStream: the report internal/verify reads back holds the
 // tests the stream described, with their outcomes and their package, whichever
-// order the packages arrived in.
+// order the packages arrived in -- and, where a package's own failure left a
+// test without an outcome, the failure that failure implies: TestHang's binary
+// died partway, so nothing else in the stream says it failed, and probe/b never
+// built, so it has no test to name at all.
 func TestReportReadsTheStream(t *testing.T) {
 	var echoed strings.Builder
 	rep, err := read(strings.NewReader(stream), &echoed)
@@ -76,9 +89,11 @@ func TestReportReadsTheStream(t *testing.T) {
 		got[c.ID] = state
 	}
 	want := map[string]string{
-		"probe/a.TestPass": "passed",
-		"probe/a.TestSkip": "skipped",
-		"probe/a.TestFail": "failed",
+		"probe/a.TestPass":       "passed",
+		"probe/a.TestSkip":       "skipped",
+		"probe/a.TestFail":       "failed",
+		"probe/b.[build failed]": "failed",
+		"probe/d.TestHang":       "failed",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("report holds %v, want %v", got, want)
@@ -104,6 +119,8 @@ func TestEchoKeepsWhatPlainGoTestPrints(t *testing.T) {
 		"b/b.go:3:23: undefined: undefinedThing\n",
 		"    a_test.go:7: boom\n",
 		"--- FAIL: TestFail (0.00s)\n",
+		"panic: test timed out after 3s\n",
+		"FAIL\tprobe/d\t3.005s\n",
 		"FAIL\tprobe/a\t0.002s\n",
 	} {
 		if !strings.Contains(out, keep) {

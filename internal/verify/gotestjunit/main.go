@@ -129,13 +129,16 @@ func exitCode(err error) int {
 // event is one line of `go test -json`'s stream. Build failures carry
 // ImportPath rather than Package, and a build-output line is the compiler's
 // message for one (`go test -json` since Go 1.24 puts them in the stream).
+// FailedBuild is on the package's own fail event and names the package that did
+// not build; the `build-fail` action beside it carries ImportPath alone.
 type event struct {
-	Action     string  `json:"Action"`
-	Package    string  `json:"Package"`
-	ImportPath string  `json:"ImportPath"`
-	Test       string  `json:"Test"`
-	Output     string  `json:"Output"`
-	Elapsed    float64 `json:"Elapsed"`
+	Action      string  `json:"Action"`
+	Package     string  `json:"Package"`
+	ImportPath  string  `json:"ImportPath"`
+	Test        string  `json:"Test"`
+	Output      string  `json:"Output"`
+	Elapsed     float64 `json:"Elapsed"`
+	FailedBuild string  `json:"FailedBuild"`
 }
 
 // read consumes the command's stdout as `go test -json` events, echoes the test
@@ -178,14 +181,21 @@ type report struct {
 }
 
 type suite struct {
-	name    string
-	cases   []*caseResult
-	byName  map[string]*caseResult
-	elapsed float64
+	name        string
+	cases       []*caseResult
+	byName      map[string]*caseResult
+	elapsed     float64
+	failed      bool
+	buildFailed bool
 }
 
 type caseResult struct {
-	name    string
+	name string
+	// done is whether the test reached pass, fail or skip. A test whose binary
+	// died partway -- a `-timeout` panic, a panic in a goroutine, os.Exit --
+	// never does, and go test then reports the package as failed without naming
+	// it (suite.results).
+	done    bool
 	failed  bool
 	skipped bool
 	elapsed float64
@@ -255,16 +265,52 @@ func (r *report) add(ev event, echo io.Writer) {
 		if ev.Test != "" {
 			s.test(ev.Test)
 		}
+	case "build-fail":
+		s.buildFailed = true
 	case "pass", "fail", "skip":
 		if ev.Test == "" {
 			s.elapsed = ev.Elapsed
+			s.failed = ev.Action == "fail"
+			if ev.FailedBuild != "" {
+				s.buildFailed = true
+			}
 			return
 		}
 		c := s.test(ev.Test)
 		c.elapsed = ev.Elapsed
 		c.failed = ev.Action == "fail"
 		c.skipped = ev.Action == "skip"
+		c.done = true
 	}
+}
+
+// results is the suite's cases as the report writes them, which is what the
+// stream described plus what a package's own failure implies. A test whose
+// binary died partway reaches no outcome, and `go test` reports the package as
+// failed without naming it: the record would then read `FAILED (exit 1, N
+// tests, 0 failures)` and name no test -- a failing run with nothing to explain
+// it, and a `commands.rerun_failed` with nothing to rerun -- so every case the
+// package's failure left without an outcome is a failure here. A package that
+// failed with no case at all -- it never built, or its TestMain died before a
+// test ran -- gets one, so the failure is in the report rather than only in the
+// exit code.
+func (s *suite) results() []*caseResult {
+	if !s.failed {
+		return s.cases
+	}
+	if len(s.cases) == 0 {
+		name := "[no test results]"
+		if s.buildFailed {
+			name = "[build failed]"
+		}
+		return []*caseResult{{name: name, failed: true}}
+	}
+	for _, c := range s.cases {
+		if !c.done {
+			c.failed = true
+		}
+	}
+	return s.cases
 }
 
 // write stores the report as JUnit XML at path, creating its directory.
@@ -276,11 +322,12 @@ func (r *report) write(path string) error {
 	}
 	doc := xmlTestsuites{}
 	for _, s := range r.suites {
-		if len(s.cases) == 0 {
+		cases := s.results()
+		if len(cases) == 0 {
 			continue
 		}
-		xs := xmlSuite{Name: s.name, Tests: len(s.cases), Time: seconds(s.elapsed)}
-		for _, c := range s.cases {
+		xs := xmlSuite{Name: s.name, Tests: len(cases), Time: seconds(s.elapsed)}
+		for _, c := range cases {
 			xc := xmlCase{Classname: s.name, Name: c.name, Time: seconds(c.elapsed)}
 			switch {
 			case c.failed:
