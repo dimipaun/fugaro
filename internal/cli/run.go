@@ -3218,7 +3218,7 @@ func runChangeSet(ctx context.Context, cmd *cobra.Command, env *cloudEnv, o *run
 	// read which lets each member's own launch skip the check (skipBudget).
 	for i := range plans {
 		o.repo = plans[i].repo
-		if err := planTaskDuplicate(ctx, env, o, slugs[i], specs[i].RunID, warn); err != nil {
+		if err := planTaskDuplicate(ctx, env, o, slugs[i], plans[i].repo, specs[i].RunID, warn); err != nil {
 			return err
 		}
 		noteRigorRequest(ctx, o, plans[i].repo, warn)
