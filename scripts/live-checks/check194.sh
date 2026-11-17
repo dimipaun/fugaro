@@ -479,14 +479,18 @@ def source_of(entry):
 
 
 def jobs_of(path, repo):
-    """The jobs of one repository, as (name, containers, updateTime, label) —
-    matched by the repository's own FUGARO_REMOTE first, and by the label the
-    installation writes (`fugaro_repo: <slug>-<16 hex>`) where no remote is
-    readable, because a reading that leaned on the label alone would miss a job
-    whose label the installation had not written and one that leaned on the
-    remote alone would miss a job whose env could not be read back. The label is
-    the repository's own slug, which is the key its creds/workflowsecrets record
-    is written under (label_of), so it is returned with the rest."""
+    """The jobs of one repository, as (name, containers, updateTime, label,
+    account) — matched by the repository's own FUGARO_REMOTE first, and by the
+    label the installation writes (`fugaro_repo: <slug>-<16 hex>`) where no
+    remote is readable, because a reading that leaned on the label alone would
+    miss a job whose label the installation had not written and one that leaned
+    on the remote alone would miss a job whose env could not be read back. The
+    label is the repository's own slug, which is the key its
+    creds/workflowsecrets record is written under (label_of), so it is returned
+    with the rest, and the account its containers run as is returned with them:
+    an accessor binding on a container is read against THAT account (the flip's
+    no-accessors row), and a caller that had to look the job up again by name
+    would be reading a second document for a fact this one already carries."""
     slug = repo.lower().replace("/", "-")
     out = []
     for job in load(path) or []:
@@ -496,6 +500,8 @@ def jobs_of(path, repo):
         if not name:
             continue
         containers = containers_of(job)
+        spec = spec_of(job)
+        account = (spec.get("serviceAccountName") if isinstance(spec, dict) else "") or ""
         label = ((job.get("metadata") or {}).get("labels") or {}).get("fugaro_repo") or ""
         owns = (label.startswith(slug + "-")
                 and re.fullmatch(r"[0-9a-f]{16}", label[len(slug) + 1:]) is not None)
@@ -504,7 +510,8 @@ def jobs_of(path, repo):
             remote = (env(c).get("FUGARO_REMOTE") or {}).get("value") or remote
         if not owns and remote != "https://" + repo + ".git" and not remote.endswith("/" + repo + ".git"):
             continue
-        out.append((name, containers, ((job.get("metadata") or {}).get("updateTime")) or "", label))
+        out.append((name, containers, ((job.get("metadata") or {}).get("updateTime")) or "",
+                    label, account))
     return out
 
 
@@ -518,7 +525,7 @@ def label_of(path, repo):
     key. A path spelled out of `owner/name` is a node nobody writes: the GET
     answers 404 on every installation, and a check reading one would call a
     record that is there "not there" and measure nothing."""
-    for _name, _containers, _up, label in jobs_of(path, repo):
+    for _name, _containers, _up, label, _account in jobs_of(path, repo):
         if re.fullmatch(r"[a-z0-9][a-z0-9-]*-[0-9a-f]{16}", label):
             return label
     return ""
@@ -540,6 +547,25 @@ def parse_time(v):
     except Exception:
         return None
     return d if d.tzinfo else d.replace(tzinfo=datetime.timezone.utc)
+
+
+def bare_member(m):
+    """An IAM member with its type prefix dropped (`serviceAccount:`, `user:`,
+    `group:` or `domain:`) — and with nothing else touched.
+
+    The account a job's containers run as is the bare address, while a binding's
+    member is the same address with its type in front of it, so the two have to
+    be brought to one spelling somewhere. Here is where: a row that compared
+    them as they are written would find no accessor the job holds and would PASS
+    a container the job can still read — the one direction this row may not fail
+    in. A prefix outside that set (`deleted:`, a `principalSet:` URL) is left
+    alone: none of them is an account, and a member that is not one must not
+    become equal to one by a rewrite."""
+    s = str(m)
+    for prefix in ("serviceAccount:", "user:", "group:", "domain:"):
+        if s.startswith(prefix):
+            return s[len(prefix):]
+    return s
 
 
 def spec_facts(doc, want):
@@ -675,9 +701,16 @@ elif cmd == "jobs":
     n = 0
     urls = 0
     present = 0
-    for name, containers, _up, _label in jobs_of(sys.argv[2], repo):
+    for name, containers, _up, _label, account in jobs_of(sys.argv[2], repo):
         n += 1
-        doc = {"metadata": {"name": name}, "spec": {"template": {"spec": {"template": {"spec": {"containers": containers}}}}}}
+        # The account is put back where spec_facts reads it from: the row
+        # `job=<name>|<account>|<url>` is what the flip's no-accessors row takes
+        # the account to compare with a container's policy out of, and a document
+        # synthesized without it would answer "-" for every job of every
+        # installation — a row that could never be measured.
+        doc = {"metadata": {"name": name},
+               "spec": {"template": {"spec": {"template": {"spec": {
+                   "containers": containers, "serviceAccountName": account}}}}}}
         jname, sa, url, ignored = spec_facts(doc, want)
         if url == "present":
             urls += 1
@@ -720,7 +753,7 @@ elif cmd == "iam":
             for m in b.get("members") or []:
                 if role in ACCESSOR_ROLES:
                     accessors += 1
-                    print("accessor=%s" % word(m, 200))
+                    print("accessor=%s" % word(bare_member(m), 200))
                 else:
                     print("role=%s|%s" % (word(role, 120), word(m, 200)))
         print("bindings=%s" % len(bindings))
@@ -735,7 +768,7 @@ elif cmd == "inflight":
     repo, started = sys.argv[3], sys.argv[4]
     best = None
     bestname = "-"
-    for name, _containers, up, _label in jobs_of(sys.argv[2], repo):
+    for name, _containers, up, _label, _account in jobs_of(sys.argv[2], repo):
         d = parse_time(up)
         if d is not None and (best is None or d > best):
             best, bestname = d, name
@@ -1102,12 +1135,12 @@ step_record() {
   for var in "$ENV_ONE" "$ENV_TWO"; do
     id=$(record_env_id "$SCRATCH/wfs-$key.json" "$var")
     case "$id" in
-    fugaro-project-${P}-*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
+    fugaro-project-${INSTALL}-*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;;
     *) bad="$bad ${var} -> ${id};" ;;
     esac
   done
   if [ -n "$bad" ]; then
-    fact record FAIL "${REPO}'s record names a container that is not a project secret of this installation (${P}):${bad:0:400} A derived container is either a repository's own, 'fugaro-<readable slug>-<logical>-<16 hex>' (gcp.SecretID), or the installation's project-wide copy, 'fugaro-project-<installation>-<logical>-<16 hex>' (gcp.ProjectSecretID) — and under D2313 the record may only ever name the second: a repository-level secret is accepted and ignored, so its own container is not one the plan mounts and not one a fetch may read (internal/cli/update_workflowsecrets.go's workflowSecretMountID). Read the allow-list entry and 'fugaro update --repo' in ${REPO}, then this check again"
+    fact record FAIL "${REPO}'s record names a container that is not a project secret of this installation (${INSTALL}):${bad:0:400} A derived container is either a repository's own, 'fugaro-<readable slug>-<logical>-<16 hex>' (gcp.SecretID), or the installation's project-wide copy, 'fugaro-project-<installation>-<logical>-<16 hex>' (gcp.ProjectSecretID) — and under D2313 the record may only ever name the second: a repository-level secret is accepted and ignored, so its own container is not one the plan mounts and not one a fetch may read (internal/cli/update_workflowsecrets.go's workflowSecretMountID). Read the allow-list entry and 'fugaro update --repo' in ${REPO}, then this check again"
     RECORD_STOP=yes
     return 0
   fi
@@ -1240,7 +1273,7 @@ step_nomounts() {
 # none — and the line names the container it was read from, which is the
 # container the record names.
 step_served() {
-  local lines fetched id misses="" still=""
+  local lines fetched id var misses="" still=""
   lines=$SCRATCH/audit-flip-one.json
   if [ -z "$RUN_ROW" ]; then
     unmeasured served "${RUN_ERR:-the run was not launched, so there is nothing of its to read a fetch off}"
@@ -1251,8 +1284,16 @@ step_served() {
     return 0
   fi
   if [ -n "$EXEC_TEXT" ]; then
-    [ -n "$(env_of "$EXEC_TEXT" "$ENV_ONE")" ] && still="$still ${ENV_ONE}"
-    [ -n "$(env_of "$EXEC_TEXT" "$ENV_TWO")" ] && still="$still ${ENV_TWO}"
+    # `env_of` answers `absent` for a variable the document does not carry, and
+    # `absent` is not nothing: a row that read a non-empty answer as "it is
+    # there" would report the execution as holding both variables whatever its
+    # spec said, which is the one reading this row must never take.
+    for var in "$ENV_ONE" "$ENV_TWO"; do
+      case "$(env_of "$EXEC_TEXT" "$var")" in
+      "" | absent) ;;
+      *) still="$still ${var}" ;;
+      esac
+    done
     if [ -n "$still" ]; then
       fact served FAIL "the run (${RUN_ID_FLIP}) of ${REPO} finished, and the execution it ran on (${EXEC_NAME}) still carries${still} — so the values it read came out of its own job and not from the service, and this row would be reading a mount as a fetch. An execution created by a job template the flip has not reached (the no-mounts row above says the same) is not the reading this row is about: re-apply ${REPO} ('fugaro update --repo'), launch the run again and read it"
       return 0
@@ -1455,7 +1496,7 @@ step_inflight() { # step_inflight RID
   tmpl=$(reader jobs "$listed" "$REPO" "$ENV_ONE,$ENV_TWO")
   tmounted=$(field_of carried "$tmpl")
   if [ "${tmounted:-0}" -ge 1 ]; then
-    unmeasured inflight-mount "the execution ${execpath} of the run ${rid} carries $([ -n "$(env_of "$mounts" "$ENV_ONE")" ] && echo "${ENV_ONE} ") $([ -n "$(env_of "$mounts" "$ENV_TWO")" ] && echo "${ENV_TWO} "), and the jobs of ${REPO} hand a workflow secret out too (in ${tmounted} place(s)): with the template still handing one out, a mount on that execution is not the RETENTION U9 is about — the flip has not reached that repository's jobs, which is the no-mounts row above"
+    unmeasured inflight-mount "the execution ${execpath} of the run ${rid} carries $([ -n "$(env_id "$mounts" "$ENV_ONE")" ] && echo "${ENV_ONE} ") $([ -n "$(env_id "$mounts" "$ENV_TWO")" ] && echo "${ENV_TWO} "), and the jobs of ${REPO} hand a workflow secret out too (in ${tmounted} place(s)): with the template still handing one out, a mount on that execution is not the RETENTION U9 is about — the flip has not reached that repository's jobs, which is the no-mounts row above"
     return 0
   fi
   for name in "$ENV_ONE" "$ENV_TWO"; do
@@ -1579,7 +1620,7 @@ print_plan() {
   say "  [network] gcloud run jobs list --project=${P} --region=${L} --format=json  (the installation's jobs: ${REPO}'s own 'fugaro_repo' label is the key its record is written under, and ${OTHER_REPO}'s, the job environments and the re-apply's clock all come out of this one read)"
   say "  [network, read only] gcloud auth print-access-token, then GET ${RTDB:-<budget.rtdb_url>}/creds/workflowsecrets/<slug>.json for each repository — the slug being that repository's own task slug ('<readable>-<16 hex>'), which the check reads off its jobs' 'fugaro_repo' label and never spells out of the repository's name — the record 'fugaro update --repo' writes; READ, never written, and this check narrows no record"
   say "  [local] the record's shape: version and workflows, per entry env and id, and no key this release does not model (a member that could hold a value is a FAIL, G18)"
-  say "  [local] its containers: a project container of this installation ('fugaro-project-${P}-<name>-<16 hex>') for ${ENV_ONE} and for ${ENV_TWO}, and never a repository's own container (D2313)"
+  say "  [local] its containers: a project container of this installation ('fugaro-project-<installation>-<name>-<16 hex>', the installation here being ${INSTALL:-unread}) for ${ENV_ONE} and for ${ENV_TWO}, and never a repository's own container (D2313)"
   if [ "$MODE" = flip ]; then
     say "  [local] no job of ${REPO} hands a run ${ENV_ONE} or ${ENV_TWO} in any form, and every one of them still carries FUGARO_CREDENTIALS_SERVICE_URL (B3.8: the mount goes, the URL stays)"
     say "  [network, read only] gcloud secrets get-iam-policy <each container the record names> --project=${P} --format=json  (no binding lists the account the run's job runs as as a secretAccessor, D2074)"
@@ -1624,6 +1665,16 @@ main() {
   if [ -z "$RTDB" ]; then
     stop "this check needs the installation's Realtime Database URL and read none out of ${CONFIG_FILE} (budget.rtdb_url). The record it reads each repository's workflow secrets from lives in that database, and without it nothing below can be measured. Check that ${CONFIG_FILE} is this machine's local config for installation fugaro, or name it with CHECK194_CONFIG"
   fi
+  # The installation's own name, and it is checked HERE rather than left to the
+  # record row to trip over: the containers that record names are derived from it
+  # (gcp.ProjectSecretID), and a name this check cannot read is a pattern that
+  # would refuse every container a real installation writes. The charset is
+  # checked with it, because that pattern is a shell one and a name carrying a
+  # '*' would widen it.
+  case "$INSTALL" in
+  "") stop "this check needs the installation's own Fugaro project name and read none out of ${CONFIG_FILE} (name:). It is NOT the GCP project: the project-wide secret containers a workflow secret's value comes from are derived from the Fugaro project name (gcp.ProjectSecretID), so without it no container the record names can be told from a repository's own. Check that ${CONFIG_FILE} is this machine's local config for installation fugaro, or name it with CHECK194_CONFIG" ;;
+  *[!a-z0-9-]*) stop "the installation's Fugaro project name read out of ${CONFIG_FILE} is '${INSTALL}', which is not a project name this check can read a container by (lower-case letters, digits and dashes). Check that ${CONFIG_FILE} is this machine's local config, or name another file with CHECK194_CONFIG" ;;
+  esac
 
   case "$MODE" in
   flip) run_194_flip ;;
@@ -1772,12 +1823,19 @@ EXEC_PATH=""
 EXEC_ERR=""
 ACCOUNT_ERR=""
 CONFIG_FILE=${CHECK194_CONFIG:-${HOME:-}/.config/fugaro/projects/fugaro.yaml}
-# The Realtime Database URL, out of the installation's own local config
-# (budget.rtdb_url): the one place a machine already set up for this installation
-# names it, and a file this check only reads.
+# The Realtime Database URL and the installation's own Fugaro project name, out
+# of the installation's own local config (budget.rtdb_url and name): the one
+# place a machine already set up for this installation names them, and a file
+# this check only reads. The NAME is not the GCP project (the two are `fugaro`
+# and `fugaro-dev` here) and it is the one that matters for the containers this
+# check reads: an installation's project-wide secret containers are derived from
+# it (gcp.ProjectSecretID takes lc.Name), so a pattern spelled out of the GCP
+# project would refuse every container a real installation writes.
 RTDB=""
+INSTALL=""
 if [ -f "$CONFIG_FILE" ]; then
   RTDB=$(sed -n 's/^[[:space:]]*rtdb_url:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -n 1 | tr -d '[:space:]"' | tr -d "\047" || true)
+  INSTALL=$(sed -n 's/^[[:space:]]*name:[[:space:]]*//p' "$CONFIG_FILE" 2>/dev/null | head -n 1 | tr -d '[:space:]"' | tr -d "\047" || true)
 fi
 
 for arg in "$@"; do
