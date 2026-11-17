@@ -38,15 +38,18 @@ import (
 // same family, and one new non-ZDR model at the marketplace would break every
 // route that claims its family (design D9).
 func PriceTable(providers map[string]ModelProvider, overrides pricing.Overrides, cat *catalog.File, now time.Time) (*pricing.Table, error) {
-	t, err := pricing.ApplyCatalog(pricing.Embedded(), cat, catalogRoutes(providers, cat, overrides), now)
+	t, err := pricing.ApplyCatalog(pricing.Embedded(), cat, CatalogRoutes(providers, cat, overrides), now)
 	if err != nil {
 		return nil, err
 	}
 	return t.With(overrides)
 }
 
-// catalogRoutes are the routes the catalog may price, each with the model IDs
-// it claims. A route that is not catalog-eligible is left out entirely, so a
+// CatalogRoutes are the routes the catalog may price, each with the model IDs
+// it claims — the table Table.With is applied over below, and the claim
+// pricing.UndercutsCatalog reads a hand-priced model against, so that the
+// price an override is below is the price the routes would have charged. A
+// route that is not catalog-eligible is left out entirely, so a
 // vendor's own endpoint never picks up OpenRouter's marketplace price for a
 // model ID it happens to serve too (design D5, plan P6): the catalog is
 // OpenRouter's prices, and everything else is priced under model_prices.
@@ -60,7 +63,7 @@ func PriceTable(providers map[string]ModelProvider, overrides pricing.Overrides,
 // applied over no row at all would raise the model's ceiling to the table's
 // defaults and the gateway would stop refusing a max_tokens above the model's
 // real maximum.
-func catalogRoutes(providers map[string]ModelProvider, cat *catalog.File, overrides pricing.Overrides) []pricing.CatalogRoute {
+func CatalogRoutes(providers map[string]ModelProvider, cat *catalog.File, overrides pricing.Overrides) []pricing.CatalogRoute {
 	if cat == nil || len(cat.Models) == 0 {
 		return nil
 	}

@@ -100,6 +100,11 @@ var cliStages = []cliStage{
 		build: func(e *initEngine) initflow.Stage { return newRepositoryStage(e) }},
 	{stage: initflow.Rules, ctor: "newRulesStage(", covered: true, self: true,
 		build: func(e *initEngine) initflow.Stage { return newRulesStage(e) }},
+	// The cache-price keys of the owner's own config: every write is on this
+	// machine, so the stage keeps its own confirmation and the loop may run it
+	// in a session with no terminal at all (update_model_prices.go, SA4.2).
+	{stage: initflow.ModelPrices, ctor: "newModelPricesStage(", self: true,
+		build: func(e *initEngine) initflow.Stage { return newModelPricesStage(e) }},
 	{stage: initflow.Policy, ctor: "newPolicyMigrateStage(", self: true,
 		build: func(e *initEngine) initflow.Stage { return newPolicyMigrateStage(e) }},
 	{stage: initflow.CredentialsService, ctor: "newCredentialsStage(", covered: true, self: true,
