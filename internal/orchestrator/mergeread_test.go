@@ -600,3 +600,52 @@ func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 		t.Errorf("the node moved from revision %d to %d over a cadence whose only write would be the fact it already carries", before, got)
 	}
 }
+
+// fullFacts is a node's fact table at its bound: MaxFacts facts, none of them
+// the merge read's own.
+func fullFacts() map[string]orchestrator.Fact {
+	facts := make(map[string]orchestrator.Fact, orchestrator.MaxFacts)
+	for i := range orchestrator.MaxFacts {
+		facts[fmt.Sprintf("fact_%d", i)] = orchestrator.Fact{Value: "a fact a person set", By: orchestrator.Daemon}
+	}
+	return facts
+}
+
+// TestFullFactTableStillLetsTheMergeLand: the fact a missing read consumer
+// leaves rides in the same patch as the moves the same cadence read, and a node
+// at its fact bound refuses the sixty-fifth fact — the whole patch, moves
+// included (ValidateState's ErrTooLarge). A diagnostic that can take a merge
+// down with it is a diagnostic that holds an item in `review` for ever, and its
+// dependents never launch, so the fact is what is dropped when it does not fit
+// and the line is what the person reads instead (G3, D2705).
+func TestFullFactTableStillLetsTheMergeLand(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	bb, itBB := mergeReviewItem("wi-bb", mergeBitbucket, mergeRunA, approvedAt)
+	gh, itGH := mergeReviewItem("wi-gh", mergeRepo, mergeRunB, approvedAt)
+	s := tickState(t, now, []orchestrator.WorkItem{bb, gh}, []orchestrator.Intent{itBB, itGH})
+	s.Facts = fullFacts()
+	h := newMergeHarness(t, s, now)
+	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
+	h.reads.noList[mergeBitbucket] = true
+	h.reads.stateErr[mergeKey(mergeBitbucket, 12)] = orchestrator.ErrMergeNoReadConsumer
+	h.reads.states[mergeKey(mergeRepo, 14)] = orchestrator.MergeMerged
+
+	rep := h.step()
+
+	if got := h.mergePhase("wi-gh"); got != orchestrator.PhaseDone {
+		t.Errorf("the item is %q, and its pull request merged: a fact the node is too full to take must not carry the move down with it", got)
+	}
+	if rep.Merged != 1 {
+		t.Errorf("the cycle moved %d items out of review, and one of them merged", rep.Merged)
+	}
+	if got := h.mergePhase("wi-bb"); got != orchestrator.PhaseReview {
+		t.Errorf("the item is %q, and a read that could not be made says nothing about its pull request", got)
+	}
+	if got := len(h.state().Facts); got != orchestrator.MaxFacts {
+		t.Errorf("the node carries %d facts, and the fact that did not fit is not one of them", got)
+	}
+	if len(h.lines.lines) != 1 || !strings.Contains(h.lines.lines[0], mergeBitbucket) {
+		t.Errorf("the cadence left the lines %q, and the fact it could not record is one line naming the repository", h.lines.lines)
+	}
+}

@@ -157,8 +157,9 @@ func (c *cycle) merge(ctx context.Context) error {
 func (c *cycle) mergeOps(ctx context.Context) []Op {
 	seams := &c.tick.Merge
 	mem := seams.memory()
-	// recorded is the repositories this cycle has already written the missing
-	// consumer's fact for, seeded from the node: the fact is the record and the
+	// recorded is the repositories this cycle has already answered for — the
+	// missing consumer's fact written, or the one line saying the node is too
+	// full to take it — seeded from the node: the fact is the record and the
 	// node is where it lives, so a write that did not land is a fact the next
 	// cycle writes, and a daemon that restarted does not write what is already
 	// there.
@@ -359,6 +360,18 @@ func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, recorded ma
 		return nil
 	}
 	recorded[repo] = true
+	// A node at its fact bound is a node this op cannot land on: the state that
+	// carries one fact more is the state ValidateState refuses, and the refusal
+	// takes the whole patch with it — which is the patch the same cadence's
+	// merged pull requests move their items in. The move is what must land and
+	// the fact is the diagnostic, so the fact is what is dropped when it does
+	// not fit; the line is what the person reads instead, and the read is made
+	// again on the next cadence, so a node with room again records it then.
+	if len(c.state.Facts) >= MaxFacts {
+		warnMerge(ctx, seams, fmt.Sprintf("the missing read consumer of %s is not recorded, and the node is at its %d facts: set one with `fugaro creds set bitbucket-read-consumer`",
+			repo, MaxFacts))
+		return nil
+	}
 	return []Op{{Op: OpFactSet, Fact: &FactOp{Key: key, Value: mergeFactValue(repo)}}}
 }
 
