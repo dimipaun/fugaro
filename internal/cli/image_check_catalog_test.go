@@ -310,13 +310,13 @@ func catalogCheckSelftest(t *testing.T, repo, commit string) []byte {
 	return data
 }
 
-// TestCatalogCheckJobRebuildsTheChangedEntryAsItsOwnRepositorysAccount: the
-// job submits exactly the entry whose base moved, and the request is the one
+// TestCatalogCheckJobRebuildsTheChangedEntryAsTheBuildIdentity: the job
+// submits exactly the entry whose base moved, and the request is the one
 // fugaro image build <entry> sends — the entry's own image in the shared
-// registry, the copied definition pinned by generation and sha256, and
-// acme/other's build account, which is the account of the repository the
-// entry's Dockerfile is in and never the job's own.
-func TestCatalogCheckJobRebuildsTheChangedEntryAsItsOwnRepositorysAccount(t *testing.T) {
+// registry, the copied definition pinned by generation and sha256, and the
+// project's build identity, which is the account every catalog build runs as
+// (B6) and never the repository's build account the request's slug names.
+func TestCatalogCheckJobRebuildsTheChangedEntryAsTheBuildIdentity(t *testing.T) {
 	f := newCatalogCheckJob(t, catalogCheckSpecFor(t, catalogCheckCatalog("tools", "runtime", "prebuilt")))
 	f.seed(t, "tools", "acme/app", catalogCheckAppDef, checkBaseDigest)
 	gen, sum := f.seed(t, "runtime", "acme/other", catalogCheckOtherDef, "sha256:"+strings.Repeat("9", 64))
@@ -336,7 +336,7 @@ func TestCatalogCheckJobRebuildsTheChangedEntryAsItsOwnRepositorysAccount(t *tes
 		GitSecretID: gcp.SecretID(otherSlug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
 		Base: checkBase, Image: catalogBuildImage(t, "runtime"),
 		Definition:     gcp.CatalogDefinition{SourceCommit: catalogCheckCommit, Generation: gen, SHA256: sum},
-		ServiceAccount: gcp.BuildServiceAccountID(otherSlug) + "@proj-1234.iam.gserviceaccount.com",
+		ServiceAccount: gcp.BuildIdentityEmail("proj-1234"),
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://" + catalogBuildBucket,
 		TemplateSalt:   gcp.TemplateSalt(Version),
@@ -1020,7 +1020,7 @@ func TestCatalogCheckReadsTheStagedContextHash(t *testing.T) {
 		Context:        ".",
 		ContextCommit:  stagedCommit,
 		ContextSHA256:  staged,
-		ServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
+		ServiceAccount: gcp.BuildIdentityEmail("proj-1234"),
 		MachineType:    "E2_HIGHCPU_8",
 		Bucket:         "gs://" + catalogBuildBucket,
 		TemplateSalt:   gcp.TemplateSalt(Version),
