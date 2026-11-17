@@ -61,39 +61,39 @@ func TestWebsiteTermsPageOnlyCutsText(t *testing.T) {
 	}
 }
 
-// The page carries the revision date, because section 29.1 amends the
-// agreement "by publishing a new dated version": a reader at the URL the
-// licence pins has to be able to tell which revision they are accepting, and
-// the source's own note is cut from the page.
+// The page carries the revision date when the source states one, because
+// section 29.1 amends the agreement "by publishing a new dated version": a
+// reader at the URL the licence pins has to be able to tell which revision they
+// are accepting, and the source's own note is cut from the page.
+//
+// Both halves are pinned on fixtures rather than on the tree's source, because
+// whether the Terms carry a revision is the document's business and not this
+// generator's: today's source states none (the agreement is unchanged), and a
+// revision of it will state one. What this test holds is that the generator
+// reads a stated revision -- so the page says it -- and invents no date the
+// source does not state.
 func TestWebsiteTermsPageCarriesTheRevisionDate(t *testing.T) {
-	source, err := os.ReadFile("../../" + termsSource)
-	if err != nil {
-		t.Fatal(err)
-	}
-	revised := termsRevised.FindStringSubmatch(string(source))
-	if revised == nil {
-		t.Fatalf("%s carries no '**Revised YYYY-MM-DD' paragraph: the page then cannot say which revision of the agreement a reader accepts", termsSource)
-	}
-	page, err := renderTermsPage(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimPrefix(string(page), termsHeaderBlock), "\n")
-	if len(lines) < 3 {
-		t.Fatalf("%s has no status line: %q", termsPage, lines)
-	}
-	if status := lines[2]; !strings.Contains(status, "Revised "+revised[1]) {
-		t.Errorf("%s is what %s generates, and its status line %q does not carry the revision %s", termsPage, termsSource, status, revised[1])
+	statusLine := func(t *testing.T, src string) string {
+		t.Helper()
+		page, err := renderTermsPage([]byte(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimPrefix(string(page), termsHeaderBlock), "\n")
+		if len(lines) < 3 {
+			t.Fatalf("the rendered page has no status line: %q", lines)
+		}
+		return lines[2]
 	}
 
-	// A source with no revision renders none: a date the source does not state
-	// would be this generator inventing a version.
-	plain, err := renderTermsPage([]byte("# T\n\nwritten 2026-10-27\n\n## 1. A\n\nText.\n\n## 34. Z\n\nEnd.\n"))
-	if err != nil {
-		t.Fatal(err)
+	revised := "# T\n\nwritten 2026-10-27\n\n**Revised 2026-11-17 (task S0.4).**\n\n# Part A. Plans\n\n## 1. A\n\nText.\n\n## 34. Z\n\nEnd.\n"
+	if got, want := statusLine(t, revised), termsStatus+". Dated 2026-10-27. Revised 2026-11-17."; got != want {
+		t.Errorf("a source that states a revision of 2026-11-17 renders the status line %q, and a reader accepting the agreement has to be told which revision it is", got)
 	}
-	if strings.Contains(string(plain), "Revised") {
-		t.Errorf("a source with no revision renders one: %q", strings.TrimPrefix(string(plain), termsHeaderBlock))
+
+	plain := "# T\n\nwritten 2026-10-27\n\n# Part A. Plans\n\n## 1. A\n\nText.\n\n## 34. Z\n\nEnd.\n"
+	if got := statusLine(t, plain); strings.Contains(got, "Revised") {
+		t.Errorf("a source that states no revision renders one anyway: %q", got)
 	}
 }
 

@@ -3,7 +3,7 @@
 
 # Fugaro Subscription Terms
 
-Approved by counsel. Dated 2026-10-28. Revised 2026-11-17.
+Approved by counsel. Dated 2026-10-28.
 
 # Part A. General
 
@@ -21,10 +21,7 @@ are authorised to bind the Customer.
 
 1.3 **Businesses only.** The Licensor offers the Software only to businesses and other
 organisations, for use in their trade, business or profession, and not to consumers. The Customer
-represents that it is not acquiring the Subscription as a consumer for personal use. An individual
-who acquires or uses the Software in a trade, business or profession, and not as a consumer, is an
-organisation of one for these Terms, and this section does not exclude that individual from a Free
-Plan under section 10.2 (Free Plans).
+represents that it is not acquiring the Subscription as a consumer for personal use.
 
 ## 2. Definitions
 
@@ -234,9 +231,7 @@ License Key expires, a grace period of 30 days applies, after which section 9 (A
 Subscription ends) applies.
 
 6.3 **Issue of License Keys.** The Licensor issues License Keys through the Key Service, a
-self-serve website, as follows. Until the Key Service is live, the Licensor issues License Keys
-directly, by hand, on the same terms, and this section applies to a License Key issued that way as
-it does to one the Key Service issues:
+self-serve website, as follows:
 
 - **Open-source teams** (section 10.2(b) (Free Plans)): the applicant provides the URLs of its
   repositories and an email address. The Key Service verifies that every repository is public under
@@ -247,9 +242,7 @@ it does to one the Key Service issues:
   issues a renewable License Key valid for three months, and issues no more than one free seat per
   legal person, determined by email domain and, where it is known, by the legal person's identity.
 - **Paid Subscriptions**: the Licensor issues the Customer a License Key stating the User Seats
-  purchased, following purchase, and issues the next License Key 30 days before the current one
-  expires, so that the Customer may hold two valid License Keys at once. The Software uses the
-  latest valid License Key.
+  purchased, following purchase.
 - **Other requests** (for example, from an individual without an email address on their
   organisation's domain, or for a multi-seat trial or an academic or nonprofit application): the
   applicant may submit the manual request form. The Licensor may approve or decline any such
@@ -358,8 +351,7 @@ section 8.1 (Support).
 
 10.2 **Free Plans.** The Licensor grants each Free Plan through a License Key or an Order Form. If
 the Customer no longer meets the conditions of a Free Plan, the Licensor may end that Free Plan at
-the end of the term of its License Key. An individual acting other than as a consumer is an
-organisation of one for both Free Plans (section 1.3 (Businesses only)). The Free Plans are:
+the end of the term of its License Key. The Free Plans are:
 
 - **(a) One free seat per legal person.** A legal person that has no Paid Plan may hold one free
   User Seat, and a legal person and its Affiliates together hold no more than one, intended for

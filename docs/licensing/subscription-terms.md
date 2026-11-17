@@ -12,18 +12,20 @@ and [`mobile/LICENSE.md`](../../mobile/LICENSE.md) refers to as published "at ht
 the text is published at that address (live on 2026-11-11)
 ([implementation plan, L4.3](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
 
-**Revised 2026-11-17 (subscriptions plan task S0.4).** The owner recorded that day that counsel had
-closed its review round (task S8.4), so the plan's one revision of the Terms, held back until
-counsel answers, is made here. It applies what the round leaves settled: an individual acting other
-than as a consumer is an organisation of one (section 1.3, ruling T15); the Licensor issues License
-Keys by hand until the Key Service is live, and issues the next License Key for a Paid Plan 30 days
-before the current one expires (section 6.3, rulings T13 and T26). Section 7.1 already carries the
-coordinator as part of the Software, the owner's ruling D531 of 2026-10-29. **The refund text is not
-touched here:** ruling T25's "no revocation" was overturned on 2026-11-11 and 2026-11-13 (D2131 and
-D2147: a refund or a chargeback revokes the keys of the licence), and the Terms' refund and "no
-revocation" text is counsel's, under licence-key-v2 task K0.1, which no agent edits. The items of
-the plan's S0.4 list that no answer on file states are not applied, and item 9 of the list at the
-end of this file names them.
+**The revision of 2026-11-17 changed no clause (subscriptions plan task S0.4).** The owner recorded
+that day that counsel had closed its review round (task S8.4), so the plan's one revision of the
+Terms, held back until counsel answers, was made here. It applies nothing: the items the plan still
+lists for this revision ask counsel for a wording — section 6.3's transition sentence and its paid
+path among them, and the rest of the list — and no answer of counsel stating that wording is on
+file in this repository, so no sentence is guessed and the agreement below is unchanged. The
+rulings behind several of those items (T13, T26, and T15, whose first half the plan records as
+applied on 2026-10-29) settle the substance and not the words, and section 1.3 is unchanged, as the
+plan's note of 2026-10-29 already records. Section 7.1 carries the coordinator as part of the
+Software, the owner's ruling D531 of 2026-10-29. The refund text in particular is not touched here:
+ruling T25's "no revocation" was overturned on 2026-11-11 and 2026-11-13 (D2131 and D2147: a refund
+or a chargeback revokes the keys of the licence), and the Terms' refund and "no revocation" text is
+counsel's, under licence-key-v2 task K0.1, which no agent edits. Item 9 of the list at the end of
+this file names each item not applied.
 
 **How to read it.** Parts A to G are the agreement text, as counsel wrote it, with Markdown for
 counsel's formatting. The two figures first held back are in the text: the late-payment interest
@@ -49,10 +51,7 @@ are authorised to bind the Customer.
 
 1.3 **Businesses only.** The Licensor offers the Software only to businesses and other
 organisations, for use in their trade, business or profession, and not to consumers. The Customer
-represents that it is not acquiring the Subscription as a consumer for personal use. An individual
-who acquires or uses the Software in a trade, business or profession, and not as a consumer, is an
-organisation of one for these Terms, and this section does not exclude that individual from a Free
-Plan under section 10.2 (Free Plans).
+represents that it is not acquiring the Subscription as a consumer for personal use.
 
 ## 2. Definitions
 
@@ -262,9 +261,7 @@ License Key expires, a grace period of 30 days applies, after which section 9 (A
 Subscription ends) applies.
 
 6.3 **Issue of License Keys.** The Licensor issues License Keys through the Key Service, a
-self-serve website, as follows. Until the Key Service is live, the Licensor issues License Keys
-directly, by hand, on the same terms, and this section applies to a License Key issued that way as
-it does to one the Key Service issues:
+self-serve website, as follows:
 
 - **Open-source teams** (section 10.2(b) (Free Plans)): the applicant provides the URLs of its
   repositories and an email address. The Key Service verifies that every repository is public under
@@ -275,9 +272,7 @@ it does to one the Key Service issues:
   issues a renewable License Key valid for three months, and issues no more than one free seat per
   legal person, determined by email domain and, where it is known, by the legal person's identity.
 - **Paid Subscriptions**: the Licensor issues the Customer a License Key stating the User Seats
-  purchased, following purchase, and issues the next License Key 30 days before the current one
-  expires, so that the Customer may hold two valid License Keys at once. The Software uses the
-  latest valid License Key.
+  purchased, following purchase.
 - **Other requests** (for example, from an individual without an email address on their
   organisation's domain, or for a multi-seat trial or an academic or nonprofit application): the
   applicant may submit the manual request form. The Licensor may approve or decline any such
@@ -386,8 +381,7 @@ section 8.1 (Support).
 
 10.2 **Free Plans.** The Licensor grants each Free Plan through a License Key or an Order Form. If
 the Customer no longer meets the conditions of a Free Plan, the Licensor may end that Free Plan at
-the end of the term of its License Key. An individual acting other than as a consumer is an
-organisation of one for both Free Plans (section 1.3 (Businesses only)). The Free Plans are:
+the end of the term of its License Key. The Free Plans are:
 
 - **(a) One free seat per legal person.** A legal person that has no Paid Plan may hold one free
   User Seat, and a legal person and its Affiliates together hold no more than one, intended for
@@ -818,13 +812,18 @@ Quebec language clause, the late-payment rate, resellers and the merchant of rec
 8. **The licence's wording**: counsel's text no longer cites the licence's clauses (the "Licence"
    definition is gone, and the Subscription is not described in the licence's words); whether the
    licence files need a matching revision is counsel's.
-9. **The revision of 2026-11-17** (subscriptions plan task S0.4, after the owner recorded that
-   counsel closed its review round): applied to sections 1.3, 6.3 and 10.2 on rulings T15, T13 and
-   T26, as the note above the agreement states. Items of that task's list that no
-   answer on file states, and which are therefore **not applied**: whether section 6.1 puts the key
-   requirement as the Software's behaviour or as the Customer's obligation; whether the
-   mixed-licence binary needs a note, and whether a command that initiates no Job needs a seat in
-   it (the draft's section 3.3 note, rulings T10, T11 and T21); a definition of "consumer" in
-   section 2; whether section 15 or section 6.4 states a refund's effect on an issued License Key
-   in counsel's own words; and the shape of the transition sentence and the paid path in
-   section 6.3.
+9. **The revision of 2026-11-17 applied nothing** (subscriptions plan task S0.4, made after the
+   owner recorded that counsel closed its review round): every item of that task's list that is
+   still open asks counsel for a wording, no answer of counsel stating any of them is on file in
+   this repository, and the agreement is therefore unchanged. **Not applied**, for that reason: the
+   refund text (ruling T25's "no revocation", overturned by D2131 and D2147 on 2026-11-11 and
+   2026-11-13, and now counsel's under the licence-key-v2 task K0.1); whether section 6.3 carries a
+   transition sentence for keys the Licensor mints by hand until the Key Service is live (ruling
+   T13) and writes the paid path out, including what a cancellation, a refund or a non-renewal does
+   to the next key (ruling T26); whether section 1.3 or section 10.2 says that an individual acting
+   other than as a consumer is an organisation of one (ruling T15's second half); whether section
+   6.1 puts the key requirement as the Software's behaviour or as the Customer's obligation;
+   whether the mixed-licence binary needs a note, and whether a command that initiates no Job needs
+   a seat in it (the draft's section 3.3 note, rulings T10, T11 and T21); a definition of
+   "consumer" in section 2; and whether section 15 states a refund's effect on an issued License Key
+   in counsel's own words.
