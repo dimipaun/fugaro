@@ -1153,31 +1153,34 @@ before Slice 3, and T3.1 waits for T4.5 (§2, §6).
 - **Commit.** `docs(live-checks): Check 119, <result>`
 
 **T8.3 — the migration note**
-- **Files.** `docs/releases/v0.11.0.md` — the release that ships the modes, and
-  whose Highlights already say a repository that configures nothing runs at Pro —
-  where the note states the default a reader of that release meets: **Pro**, with
+- **Files.** `docs/releases/v0.11.0.md` — the release that shipped the modes,
+  named by the owner's ruling of 2026-11-17, and already cut, so what this amends
+  is the repository's record of that release and the page the site renders from
+  it: the GoReleaser body is frozen from the tag and stays as cut. The note there
+  states the default a reader of that release meets — **Pro**, with
   `rigor.default: critical` the one line that puts a repository back on the
-  behaviour of the releases before this one (D19). It states the two bounds that
-  default does not move: **the security-sensitive tier stays Critical**, under the
-  floors — a credential path, an IAM path, `.github/workflows/` and whatever a
-  repository declares, outside every layer and only ever raised (D18) — and
-  **Hotfix is off the axis**: nothing resolves to it by configuring nothing, it is
-  the tightest bound of the five, and its rule is the security gate alone (D12,
-  D16). It claims what the release wires and no more, leaving the thresholds
-  table, the built-in floors, `fugaro run --mode` and the mode in `fugaro watch`
-  to the `### Known limits` section the file already carries, and it keeps the
-  `### For operators` section too. The file's one line in
-  `website/data/release-summaries.yaml` (no backticks, no links) moves only if the
-  line it carries stops being true.
+  behaviour of the releases before this one (D19) — beside the cap ladder the
+  mode sets. It states nothing the release does not wire: the security tier's
+  floors (T1.5) and Hotfix's narrowed blocking row (Slice 5's T5.3) are not in
+  it, and they stay in the `### Known limits` section the file already carries,
+  which says the thresholds table is not wired and the sensitive-path floors are
+  not built. The release that wires a bound is the one whose notes announce it,
+  and a note that claimed one here would read as live behaviour this release
+  does not have. The `### For operators` section stays as it is, and the file's one
+  line in `website/data/release-summaries.yaml` (no backticks, no links) moves
+  only if the line it carries stops being true.
 - **Tests.** The release-notes pin — `internal/cli/docs_release_notes_test.go`'s
   format rules for a release file and its no-links rule over every file in
   `docs/releases/` — and the site's own check that a released file has its line in
   `website/data/release-summaries.yaml`.
-- **Red step.** The note states the default without stating what the security
-  tier and Hotfix are left at, so a repository cannot read what the change does
-  and does not reach.
+- **Red step.** The note states the default without the way back, so a repository
+  that upgraded and wants today's cap has nothing to act on. The format pin holds
+  the file's shape and is green on any wording, so the red step is the missing
+  sentence on the page rather than a failing test.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Release' -count=1 -timeout 40m`
-- **Depends on.** T8.1.
+- **Depends on.** T8.1, and the owner's ruling of 2026-11-17 that names 0.11.0:
+  a note for the release that wires a bound waits for that release, and this
+  one is the default the modes already shipped.
 - **Reviewer.** senior (in-loop).
 - **Commit.** `docs(releases): 0.11.0 runs at Pro until you say otherwise`
 
