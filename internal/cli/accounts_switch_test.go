@@ -543,3 +543,50 @@ repos:
       - team-a
       - team-b
 `
+
+// switchFlowTail is the same five keys with one of them inside a one-line flow
+// mapping — repos.acme/app on one line, its claude_accounts a flow sequence
+// inside it. The command does not write that shape and no writer here does, so
+// the case is what a hand-written entry looks like, and the refusal it meets is
+// the one the editor's own reason class cannot say to a person.
+const switchFlowTail = `claude_accounts:
+  team-a: { allow_data_to: [acme/app] }
+  team-b: { allow_data_to: [acme/app] }
+repos:
+  acme/app: { provider: github, base_branch: main, workflows: [web], claude_accounts: [team-a] }
+`
+
+// TestAccountsSwitchRefusesAChoiceKeyWrittenAsAFlowMapping: the editor refuses
+// every flow shape it cannot splice into rather than re-formatting the line, and
+// a list inside a one-line flow mapping is one of them, so the command refuses
+// with it and names the style the fix is in — the entry written in block style,
+// as docs/project-claude-accounts.md writes it. The refusal is named for the
+// key's own entry and not for the list inside it, because the line that has to
+// change is the entry's.
+//
+// Nothing is printed before the refusal: the keys are printed after the edit is
+// built, so a run that cannot write says which key refused and no line that
+// reads like a move.
+func TestAccountsSwitchRefusesAChoiceKeyWrittenAsAFlowMapping(t *testing.T) {
+	switchFixture(t, switchFlowTail)
+	before := switchFile(t)
+	out, errOut, err := execute(t, "accounts", "switch", "team-a", "team-b", "--yes")
+	if err == nil {
+		t.Fatalf("a key inside a flow mapping was admitted:\n%s\n%s", out, errOut)
+	}
+	for _, want := range []string{
+		"repos.acme/app is written as a one-line flow mapping",
+		"write repos.acme/app in block style",
+		"nothing was written",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if out != "" {
+		t.Errorf("the refusal printed a line that reads like a move:\n%s", out)
+	}
+	if after := switchFile(t); after != before {
+		t.Errorf("the refusal wrote the file anyway:\n%s", after)
+	}
+}
