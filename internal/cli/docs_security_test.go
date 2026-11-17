@@ -538,6 +538,17 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"turn off its own stop switch or widen the policy it is checked against",
 		"the same identity already holds every model credential a call can be given",
 		"The fence is the service's own behaviour",
+		// The database role's count, scoped (the review finding on B3.5): the
+		// paragraph said it was the account's ONLY project-level grant and
+		// that the installation project holds nothing else of the account's,
+		// which the two project-level Secret Manager bindings of E25 falsify
+		// in the installation project — the prefix-conditioned accessor and
+		// the lister role — in either layout. Pinned as the scoped sentences,
+		// because the flat count is what a reader checks against
+		// modules/installation/credentials.tf and finds wrong.
+		"the account's **only grant on the database**",
+		"two of them are project-level in the installation project",
+		"the installation project holds the two Secret Manager bindings and nothing of the database's",
 		// The revocation, stated exactly: write-once outcome, and fx as the
 		// only bound until it exists.
 		"the write-once outcome",
