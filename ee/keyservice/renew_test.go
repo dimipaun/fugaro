@@ -534,11 +534,10 @@ func TestRevokedKeyIsNeverRenewed(t *testing.T) {
 	}
 }
 
-// mailedSecret reads the renewal secret the purchase mailed below the key text,
-// which is where the delivery carries it (D2135). A test that renews a purchased
-// key has to take the secret from there rather than from the minter: the merchant
-// path mints through the fixture's recording minter, and what the customer holds
-// — the mail — is the only copy of it a test can read.
+// mailedSecret reads the renewal secret a notice mailed below the key text,
+// which is what a reissue's mail carries its holder (D2135). A key the portal
+// issued is not one of these — no key is ever mailed (F3) — and a case about one
+// reads the mint's own answer through the fixture's `secretOf`.
 func mailedSecret(t *testing.T, f *fixture, key string) string {
 	t.Helper()
 	for _, sent := range f.mail.sent {
@@ -674,7 +673,7 @@ func TestAPurchasedKeyRenewsAndItsSuccessorInheritsItsWorkspaceAndSubscription(t
 	// out and reads the end rather than moving it, so a purchase the merchant has
 	// not renewed is a licence with no term to hand out
 	// (TestARenewalMintsOnlyIntoATermTheSubscriptionCovers).
-	secret := mailedSecret(t, f, f.mintedKeys()[0])
+	secret := f.secretOf(t, f.mintedKeys()[0])
 	theMerchantRenews(t, f, bought)
 	paid, held, err := f.store.Subscription(context.Background(), bought.Subscription)
 	if err != nil || !held {
@@ -766,7 +765,7 @@ func TestARotationLeavesTheSubscriptionsEndWhereTheMerchantLeftIt(t *testing.T) 
 		t.Fatalf("the subscription ends at %s and the purchase's key at %s, want the subscription ahead of it: the case this pins is a key the subscription has moved past", paid.Expires, bought.Expires)
 	}
 
-	successor, _ := renewThroughTheEndpoint(t, f, bought.KeyID, mailedSecret(t, f, f.mintedKeys()[0]))
+	successor, _ := renewThroughTheEndpoint(t, f, bought.KeyID, f.secretOf(t, f.mintedKeys()[0]))
 	if !successor.Expires.Before(paid.Expires) {
 		t.Fatalf("the successor covers to %s and the subscription ends at %s, want the successor behind it: otherwise this key's term would be the subscription's own end", successor.Expires, paid.Expires)
 	}
@@ -788,7 +787,7 @@ func TestARotationLeavesTheSubscriptionsEndWhereTheMerchantLeftIt(t *testing.T) 
 func TestACancelledSubscriptionsKeyIsRefused(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-cancel-1", "acme.example", 5, 365)
-	secret := mailedSecret(t, f, f.mintedKeys()[0])
+	secret := f.secretOf(t, f.mintedKeys()[0])
 	f.inTheRenewalWindow(t, bought.KeyID)
 	f.deliver(Event{
 		ID: "evt-cancel-2", Type: EventCancellation, Mode: ModeFor(f.env), OccurredAt: f.now,
@@ -833,7 +832,7 @@ func TestARenewedKeysSuccessorIsRefusedOnceTheSubscriptionIsCancelled(t *testing
 	f, spy := renewing(t)
 	bought := f.purchase("evt-cancel-renew-1", "acme.example", 5, 30)
 	theMerchantRenews(t, f, bought)
-	successor, successorSecret := renewThroughTheEndpoint(t, f, bought.KeyID, mailedSecret(t, f, f.mintedKeys()[0]))
+	successor, successorSecret := renewThroughTheEndpoint(t, f, bought.KeyID, f.secretOf(t, f.mintedKeys()[0]))
 	if successor.Subscription != bought.Subscription {
 		t.Fatalf("the successor names the subscription %q, want the purchase's %q: the key this test cancels under is the one a holder's job carries", successor.Subscription, bought.Subscription)
 	}
@@ -884,7 +883,7 @@ func TestARenewedKeysSuccessorIsRefusedOnceTheSubscriptionIsCancelled(t *testing
 func TestAnExpiredSubscriptionsKeyIsRefused(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-lapsed-1", "acme.example", 5, 365)
-	secret := mailedSecret(t, f, f.mintedKeys()[0])
+	secret := f.secretOf(t, f.mintedKeys()[0])
 	lapsed, held, err := f.store.Subscription(context.Background(), bought.Subscription)
 	if err != nil || !held {
 		t.Fatalf("reading the subscription back: held=%v err=%v", held, err)
@@ -930,7 +929,7 @@ func TestAnExpiredSubscriptionsKeyIsRefused(t *testing.T) {
 func TestARenewalMintsOnlyIntoATermTheSubscriptionCovers(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-term-1", "acme.example", 5, 30)
-	secret := mailedSecret(t, f, f.mintedKeys()[0])
+	secret := f.secretOf(t, f.mintedKeys()[0])
 	paid, held, err := f.store.Subscription(context.Background(), bought.Subscription)
 	if err != nil || !held {
 		t.Fatalf("reading the subscription back: held=%v err=%v", held, err)
@@ -1229,7 +1228,7 @@ func TestASupersededKeysChainCarriesTheSubscriptionsSeats(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-seats-down-1", "acme.example", 8, 365)
 	superseded := v1Verified(t, f, f.mintedKeys()[0]).KeyID
-	secret := mailedSecret(t, f, f.mintedKeys()[0])
+	secret := f.secretOf(t, f.mintedKeys()[0])
 	f.advance(10 * day)
 	f.event(Event{ID: "evt-seats-down-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 3, TermDays: 365})
 	sub, held, err := f.store.Subscription(context.Background(), bought.Subscription)
@@ -2096,25 +2095,27 @@ func TestAnAnnualRowsKeyRenewsInItsOwnLastWeek(t *testing.T) {
 	}
 }
 
-// TestAPurchasedKeyRenewsThroughTheRenewEndpoint: the key a purchase mails is
-// the key D2202 makes a month of, and the endpoint the plan names for carrying an
-// entitlement from one of those to the next is `/renew` — "keys of connected
-// entitlements carry at most 30 days to `paid_through` and renew through
-// `/renew` while the entitlement runs" (docs/portal/reconciliation.md). The
-// state the paid lane writes is the whole of that endpoint's input, and this
-// reads both halves of it: the key's own renewal hash, and the workspace the
-// successor is minted into — a state that names none is refused there rather than
-// renewed (TN2, K2.3), which leaves the customer dark from the end of the key in
-// hand until the merchant's own renewal.
+// TestAPurchasedKeyRenewsThroughTheRenewEndpoint: the key a purchase's binding
+// mints is the key D2202 makes a month of, and the endpoint the plan names for
+// carrying an entitlement from one of those to the next is `/renew` — "keys of
+// connected entitlements carry at most 30 days to `paid_through` and renew
+// through `/renew` while the entitlement runs"
+// (docs/portal/reconciliation.md). The state the paid lane writes is the whole
+// of that endpoint's input, and this reads both halves of it: the key's own
+// renewal hash, and the workspace the successor is minted into — a state that
+// names none is refused there rather than renewed (TN2, K2.3), which leaves the
+// customer dark from the end of the key in hand until the merchant's own
+// renewal.
 func TestAPurchasedKeyRenewsThroughTheRenewEndpoint(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-1", "acme.example", 5, 365)
 	if len(f.mail.sent) != 1 {
-		t.Fatalf("the purchase mailed %d message(s), want the one carrying the key", len(f.mail.sent))
+		t.Fatalf("the purchase mailed %d message(s), want the one notice it sends: the key is issued in the portal and mailed by nobody (F3, D2182)", len(f.mail.sent))
 	}
-	key, secret := mailedBundle(t, f.mail.sent[0].Body)
+	key := f.mintedKeys()[0]
+	secret := f.secretOf(t, key)
 	if claims := v1Verified(t, f, key); claims.KeyID != bought.KeyID {
-		t.Fatalf("the mail carries the key %s, want the purchased one %s", claims.KeyID, bought.KeyID)
+		t.Fatalf("the binding minted the key %s, want the one it recorded %s", claims.KeyID, bought.KeyID)
 	}
 
 	state, held, err := f.store.KeyState(context.Background(), bought.KeyID)
@@ -2155,9 +2156,10 @@ func TestAnAnnualPurchasesLicenceIsLiveAllYear(t *testing.T) {
 	f, spy := renewing(t)
 	bought := f.purchase("evt-1", "acme.example", 5, 365)
 	if len(f.mail.sent) != 1 {
-		t.Fatalf("the purchase mailed %d message(s), want the one carrying the key", len(f.mail.sent))
+		t.Fatalf("the purchase mailed %d message(s), want the one notice it sends: the key is issued in the portal and mailed by nobody (F3, D2182)", len(f.mail.sent))
 	}
-	key, secret := mailedBundle(t, f.mail.sent[0].Body)
+	key := f.mintedKeys()[0]
+	secret := f.secretOf(t, key)
 	claims := v1Verified(t, f, key)
 	if run := claims.PaidThrough.Sub(claims.IssuedAt); run != connectedTerm {
 		t.Fatalf("the purchased key runs %s, want D2202's thirty days: the subscription carries the year and the key is a month of it", run)

@@ -878,14 +878,16 @@ var propertyAgentSites = map[string]string{
 	// are the ones that reach it, an agent's session being refused by the
 	// installation step before that door runs at all.
 	"init_credentials.go readCredentialsBundle": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
-	// The login unit's step (O9, Q2 and T7) refuses a marker itself rather
-	// than leaning on the loop's gate: it SKIPS with the marker's own
+	// The login unit's step (O9, Q2, T7 and D2700) refuses a marker itself
+	// rather than leaning on the loop's gate: it SKIPS with the marker's own
 	// sentence, because a unit is code that runs at every login and the drift
 	// a re-render would fix is what `doctor` reports until the person runs
 	// the command in their own terminal. Both doors share the read, and one
 	// test drives each: the setup door's skip, and the update door's — which
-	// leaves the installed unit exactly as it was.
-	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateUnitStepAsksNothingAndIsLeftForThePerson (the update door)",
+	// writes nothing under a marker (no re-render, and no install of the unit
+	// D2700 has this door write where there is none) and leaves the machine
+	// exactly as it was.
+	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateInAgentSessionWritesNoUnit (the update door)",
 	// The compute stage refuses a marker itself rather than leaning on the
 	// loop's gate, and it refuses FIRST, before the root's tfvars are written
 	// and planned: the stage is registered noYes, so the loop's own agent arm
@@ -1012,11 +1014,16 @@ var initFlagCases = map[string]string{
 	// bake-repos (IS7) is one of them: it answers the wizard's own question and
 	// writes the switch, and it is asked — and taken — on a first run of setup
 	// only, so no confirmation is touched by it either way.
+	// rigor (task W of docs/rigor-command/implementation-plan.md; D900) is the
+	// other: the wizard's own question, asked on a first run of setup and
+	// refused by name on a converge, whose write is the layer stage's — the
+	// confirmation it reaches is confirmStageWrite's, which the property
+	// already covers.
 	"admin": "value", "alert-email": "value", "bake-repos": "value", "base": "value", "base-image": "value", "billing-account": "value", "budget": "value",
 	"budget-admin": "value", "budget-currency": "value", "budget-mode": "value", "config": "value",
 	"display-name": "value", "expect-digest": "value", "gcp-project": "value", "github-app-id": "value",
 	"image-source": "value", "name": "value", "no-log-isolation": "value",
-	"operator": "value", "parent": "value", "project": "value", "region": "value",
+	"operator": "value", "parent": "value", "project": "value", "region": "value", "rigor": "value",
 	"registry-cleanup": "value", "runs-bucket": "value", "scheduler-region": "value",
 	"state-bucket": "value; under --managed the value must be the derived fugaro-tfstate-<gcp-project> and anything else refuses the creation before the project stage (checkManagedStateBucket, Task 4.5/D59), the way a bad --budget-currency refuses it",
 }

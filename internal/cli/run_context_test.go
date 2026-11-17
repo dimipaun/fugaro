@@ -361,20 +361,21 @@ func TestRunContextReposAreStoredCanonical(t *testing.T) {
 	}
 }
 
-// TestRunContextNotClonedYetIsSaid: the runner does not clone a context
-// repository yet (plan tasks C5b and C5c are what read the list), and a flag
-// that only records one is a gap a person has to hear about rather than one
-// this command leaves them to discover. The line is the field's: a launch that
-// names none says nothing.
-func TestRunContextNotClonedYetIsSaid(t *testing.T) {
+// TestRunContextNeedsTheAppInstalledIsSaid: the run reads the repositories this
+// launch records, with a read-only token the credentials service mints for
+// them, and that mint is scoped to what the installation's GitHub App covers —
+// a GitHub-side state no gate here reads, so it is a thing a person has to hear
+// about rather than one this command leaves them to discover at bootstrap. The
+// line is the field's: a launch that names none says nothing.
+func TestRunContextNeedsTheAppInstalledIsSaid(t *testing.T) {
 	f := contextLaunchFixture(t)
 	publishAllowOnly(t, f, "github/acme/*")
 	_, errOut, err := contextRun(t, f, "acme/lib")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(errOut, "does not clone them yet") || !strings.Contains(errOut, "acme/lib") {
-		t.Fatalf("a launch carrying --context said nothing about the repository not being read yet:\n%s", errOut)
+	if !strings.Contains(errOut, "GitHub App") || !strings.Contains(errOut, "acme/lib") {
+		t.Fatalf("a launch carrying --context said nothing about the App installation the read-only mint needs:\n%s", errOut)
 	}
 	plain := contextLaunchFixture(t)
 	publishAllowOnly(t, plain, "github/acme/*")
@@ -382,7 +383,7 @@ func TestRunContextNotClonedYetIsSaid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(quiet, "does not clone") {
+	if strings.Contains(quiet, "GitHub App") {
 		t.Fatalf("a launch naming no context repository printed the context line:\n%s", quiet)
 	}
 }

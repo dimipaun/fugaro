@@ -31,7 +31,7 @@ const okProvider = `{"kind": "anthropic-compat", "base_url": "https://openrouter
 
 // providerPolicy is one provider entry under the name openrouter.
 func providerPolicy(entry string) []byte {
-	return []byte(`{"version": 6, "providers": {"openrouter": ` + entry + `}}`)
+	return []byte(`{"version": 9, "providers": {"openrouter": ` + entry + `}}`)
 }
 
 func TestDecodeIgnoresUnknownKeys(t *testing.T) {
@@ -47,7 +47,7 @@ func TestDecodeIgnoresUnknownKeys(t *testing.T) {
 	// package doc for why the shape of a known block is not the same case as a
 	// key this binary cannot name.
 	p, found, err := Decode([]byte(`{
-		"version": 6,
+		"version": 9,
 		"budget": {"mode": "observe"},
 		"providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"]}},
 		"future": {"anything": [1, 2, 3]}
@@ -122,7 +122,7 @@ func TestDecodeRefusesAProviderNamedOrSpelledTwice(t *testing.T) {
 		{"allow_data_to twice, the second widened", string(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "allow_data_to": ["*"]}`))},
 		{"route_fee_pct twice, the second dropped", string(providerPolicy(entry + `, "route_fee_pct": 3, "route_fee_pct": 0}`))},
 		{"the same member twice spelled in two cases", string(providerPolicy(entry + `, "allow_data_to": ["acme/app"], "ALLOW_DATA_TO": ["*"]}`))},
-		{"the provider named twice", `{"version": 6, "providers": {"openrouter": ` + entry + `, "allow_data_to": ["acme/app"]}, "openrouter": ` + entry + `, "allow_data_to": ["*"]}}}`},
+		{"the provider named twice", `{"version": 9, "providers": {"openrouter": ` + entry + `, "allow_data_to": ["acme/app"]}, "openrouter": ` + entry + `, "allow_data_to": ["*"]}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, found, err := Decode([]byte(tc.raw))
@@ -189,11 +189,11 @@ func TestDecodeRefusesANullRouteFeePct(t *testing.T) {
 // not model at all is still tolerated).
 func TestDecodeRefusesADuplicatedTopLevelKey(t *testing.T) {
 	for _, tc := range []struct{ name, raw string }{
-		{"budget twice, the second null", `{"version": 6, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": null}`},
-		{"budget twice, the second narrower", `{"version": 6, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": {"mode": "observe"}}`},
-		{"providers twice", `{"version": 6, "providers": {}, "providers": null}`},
-		{"a modelled key in another case", `{"version": 6, "Budget": {"mode": "enforce"}}`},
-		{"version twice", `{"version": 6, "version": 6}`},
+		{"budget twice, the second null", `{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": null}`},
+		{"budget twice, the second narrower", `{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 50}, "budget": {"mode": "observe"}}`},
+		{"providers twice", `{"version": 9, "providers": {}, "providers": null}`},
+		{"a modelled key in another case", `{"version": 9, "Budget": {"mode": "enforce"}}`},
+		{"version twice", `{"version": 9, "version": 9}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, found, err := Decode([]byte(tc.raw))
@@ -207,7 +207,7 @@ func TestDecodeRefusesADuplicatedTopLevelKey(t *testing.T) {
 	}
 	// The document with each key written once, in the same order, decodes: the
 	// refusal is the repeat, not the shape.
-	p, found, err := Decode([]byte(`{"version": 6, "budget": {"mode": "enforce", "per_run_usd": 50}}`))
+	p, found, err := Decode([]byte(`{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 50}}`))
 	if err != nil || !found || p.Budget.PerRunUSD != 50 {
 		t.Fatalf("Decode = (%+v, %v, %v), want the budget it names", p, found, err)
 	}
@@ -217,7 +217,7 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 	for name, raw := range map[string]string{
 		"no version":     `{"budget": {"mode": "observe"}}`,
 		"version 0":      `{"version": 0}`,
-		"version 9":      `{"version": 9}`,
+		"version 10":     `{"version": 10}`,
 		"a string":       `{"version": "1"}`,
 		"a float":        `{"version": 1.5}`,
 		"a bool":         `{"version": true}`,
@@ -235,8 +235,8 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 	}
 	// The version message is the shared constant, so the runner and the CLI
 	// print the same sentence.
-	_, _, err := Decode([]byte(`{"version": 9}`))
-	if err == nil || !strings.Contains(err.Error(), "policy is version 9") {
+	_, _, err := Decode([]byte(`{"version": 10}`))
+	if err == nil || !strings.Contains(err.Error(), "policy is version 10") {
 		t.Errorf("the version refusal must use Skew, got %v", err)
 	}
 }
@@ -245,7 +245,7 @@ func TestDecodeRefusesBadVersion(t *testing.T) {
 // a missing json tag: every documented key, field by field.
 func TestDecodeReadsTheDocumentedSnakeCaseKeys(t *testing.T) {
 	p, found, err := Decode([]byte(`{
-		"version": 8,
+		"version": 9,
 		"budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"], "max_run_tokens": 250000},
 		"allow_repos": ["github/acme/*", "bitbucket/acme/app"]
 	}`))
@@ -282,11 +282,11 @@ func TestDecodeReadsTheDocumentedSnakeCaseKeys(t *testing.T) {
 // ("a misspelt key is an error, never \"no policy\"").
 func TestDecodeRefusesABudgetWhoseKeysAllMiss(t *testing.T) {
 	for name, raw := range map[string]string{
-		"camelCase per_run_usd":    `{"version": 6, "budget": {"mode": "enforce", "perRunUsd": 5}}`,
-		"camelCase max_run_tokens": `{"version": 6, "budget": {"mode": "enforce", "MaxRunTokens": 1000}}`,
-		"a mistyped mode":          `{"version": 6, "budget": {"mode": "observe", "perRunUsd": 5}}`,
-		"not an object":            `{"version": 6, "budget": 5}`,
-		"a list":                   `{"version": 6, "budget": []}`,
+		"camelCase per_run_usd":    `{"version": 9, "budget": {"mode": "enforce", "perRunUsd": 5}}`,
+		"camelCase max_run_tokens": `{"version": 9, "budget": {"mode": "enforce", "MaxRunTokens": 1000}}`,
+		"a mistyped mode":          `{"version": 9, "budget": {"mode": "observe", "perRunUsd": 5}}`,
+		"not an object":            `{"version": 9, "budget": 5}`,
+		"a list":                   `{"version": 9, "budget": []}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -305,10 +305,10 @@ func TestDecodeRefusesABudgetWhoseKeysAllMiss(t *testing.T) {
 // held to the documented ones here too.
 func TestDecodeRefusesCaseFoldedBudgetMembers(t *testing.T) {
 	for name, raw := range map[string]string{
-		"a case-folded mode beside the real one": `{"version": 6, "budget": {"mode": "enforce", "MODE": "off"}}`,
-		"mode written twice":                     `{"version": 6, "budget": {"mode": "enforce", "mode": "observe"}}`,
-		"a case-folded allowed_models":           `{"version": 6, "budget": {"mode": "enforce", "ALLOWED_MODELS": ["claude-sonnet-5"]}}`,
-		"a case-folded per_run_usd":              `{"version": 6, "budget": {"mode": "enforce", "PER_RUN_USD": 5}}`,
+		"a case-folded mode beside the real one": `{"version": 9, "budget": {"mode": "enforce", "MODE": "off"}}`,
+		"mode written twice":                     `{"version": 9, "budget": {"mode": "enforce", "mode": "observe"}}`,
+		"a case-folded allowed_models":           `{"version": 9, "budget": {"mode": "enforce", "ALLOWED_MODELS": ["claude-sonnet-5"]}}`,
+		"a case-folded per_run_usd":              `{"version": 9, "budget": {"mode": "enforce", "PER_RUN_USD": 5}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -320,7 +320,7 @@ func TestDecodeRefusesCaseFoldedBudgetMembers(t *testing.T) {
 		}
 	}
 	// The documented spelling is read as before, values and all.
-	p, found, err := Decode([]byte(`{"version": 6, "budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"]}}`))
+	p, found, err := Decode([]byte(`{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 12.5, "allowed_models": ["claude-sonnet-5"]}}`))
 	if err != nil || !found || p == nil || p.Budget.Mode != "enforce" || p.Budget.PerRunUSD != 12.5 {
 		t.Fatalf("a correctly spelled budget was refused: (%v, %v, %v)", p, found, err)
 	}
@@ -332,15 +332,15 @@ func TestDecodeRefusesCaseFoldedBudgetMembers(t *testing.T) {
 // run falls back to off, and enforcement silently never turns on.
 func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 	for name, raw := range map[string]string{
-		"an unknown mode":       `{"version": 6, "budget": {"mode": "enforc"}}`,
-		"a Go-ish mode":         `{"version": 6, "budget": {"mode": "Enforce"}}`,
-		"a boolean mode":        `{"version": 6, "budget": {"mode": true}}`,
-		"a negative cap":        `{"version": 6, "budget": {"mode": "enforce", "per_run_usd": -1}}`,
-		"an absurd cap":         `{"version": 6, "budget": {"mode": "enforce", "per_run_usd": 1e9}}`,
-		"a cap rounding to 0":   `{"version": 6, "budget": {"mode": "enforce", "per_run_usd": 0.0000001}}`,
-		"a negative token cap":  `{"version": 6, "budget": {"mode": "enforce", "max_run_tokens": -1}}`,
-		"an empty allow-list":   `{"version": 6, "budget": {"mode": "enforce", "allowed_models": []}}`,
-		"a token cap as string": `{"version": 6, "budget": {"mode": "enforce", "max_run_tokens": "1000"}}`,
+		"an unknown mode":       `{"version": 9, "budget": {"mode": "enforc"}}`,
+		"a Go-ish mode":         `{"version": 9, "budget": {"mode": "Enforce"}}`,
+		"a boolean mode":        `{"version": 9, "budget": {"mode": true}}`,
+		"a negative cap":        `{"version": 9, "budget": {"mode": "enforce", "per_run_usd": -1}}`,
+		"an absurd cap":         `{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 1e9}}`,
+		"a cap rounding to 0":   `{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 0.0000001}}`,
+		"a negative token cap":  `{"version": 9, "budget": {"mode": "enforce", "max_run_tokens": -1}}`,
+		"an empty allow-list":   `{"version": 9, "budget": {"mode": "enforce", "allowed_models": []}}`,
+		"a token cap as string": `{"version": 9, "budget": {"mode": "enforce", "max_run_tokens": "1000"}}`,
 		// H1 (security review of PR #379): a budget block is there and names
 		// no mode. The mode would otherwise come from the job environment,
 		// which the policy's own reader cannot see, so a node published for
@@ -348,9 +348,9 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 		// silent "enforcement never turned on" this strict decode exists to
 		// prevent. A policy that sets no budget key leaves the block out
 		// entirely.
-		"a cap with no mode":       `{"version": 6, "budget": {"per_run_usd": 0.000001}}`,
-		"an empty budget block":    `{"version": 6, "budget": {}}`,
-		"a token cap with no mode": `{"version": 6, "budget": {"max_run_tokens": 1000}}`,
+		"a cap with no mode":       `{"version": 9, "budget": {"per_run_usd": 0.000001}}`,
+		"an empty budget block":    `{"version": 9, "budget": {}}`,
+		"a token cap with no mode": `{"version": 9, "budget": {"max_run_tokens": 1000}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -358,10 +358,10 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		`{"version": 6, "budget": {"mode": "off"}}`,
-		`{"version": 6, "budget": {"mode": "observe", "per_run_usd": 12.5, "max_run_tokens": 250000, "allowed_models": ["claude-sonnet-5"]}}`,
-		`{"version": 6, "budget": {"mode": "enforce", "per_run_usd": 0.000001}}`,
-		`{"version": 6}`,
+		`{"version": 9, "budget": {"mode": "off"}}`,
+		`{"version": 9, "budget": {"mode": "observe", "per_run_usd": 12.5, "max_run_tokens": 250000, "allowed_models": ["claude-sonnet-5"]}}`,
+		`{"version": 9, "budget": {"mode": "enforce", "per_run_usd": 0.000001}}`,
+		`{"version": 9}`,
 	} {
 		if _, _, err := Decode([]byte(raw)); err != nil {
 			t.Errorf("Decode(%s) = %v, want a valid budget", raw, err)
@@ -377,14 +377,14 @@ func TestDecodeRefusesABadBudgetValue(t *testing.T) {
 // no budget key at all leaves the block out, which is the "sets no budget"
 // spelling the decoder accepts.
 func TestDecodeAcceptsAPartialBudget(t *testing.T) {
-	p, _, err := Decode([]byte(`{"version": 6, "budget": {"mode": "observe"}}`))
+	p, _, err := Decode([]byte(`{"version": 9, "budget": {"mode": "observe"}}`))
 	if err != nil {
 		t.Fatalf("a partial budget must be valid: %v", err)
 	}
 	if p.Budget.Mode != "observe" || p.Budget.PerRunUSD != 0 || p.Budget.MaxRunTokens != 0 {
 		t.Errorf("a partial budget = %+v, want observe with zero ceilings", p.Budget)
 	}
-	p, _, err = Decode([]byte(`{"version": 6}`))
+	p, _, err = Decode([]byte(`{"version": 9}`))
 	if err != nil {
 		t.Fatalf("a policy with no budget block must be valid: %v", err)
 	}
@@ -395,21 +395,21 @@ func TestDecodeAcceptsAPartialBudget(t *testing.T) {
 
 func TestDecodeRefusesBadAllowRepoPattern(t *testing.T) {
 	for _, pattern := range []string{"", "acme/*", "github", "github/acme", "GitHub/acme/app", "github/acme/x y"} {
-		if _, _, err := Decode([]byte(`{"version": 6, "allow_repos": ["` + pattern + `"]}`)); err == nil {
+		if _, _, err := Decode([]byte(`{"version": 9, "allow_repos": ["` + pattern + `"]}`)); err == nil {
 			t.Errorf("allow_repos [%q] must be refused", pattern)
 		}
 	}
-	if _, _, err := Decode([]byte(`{"version": 6, "allow_repos": "github/acme/*"}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 9, "allow_repos": "github/acme/*"}`)); err == nil {
 		t.Error("allow_repos that is not a list of strings must be refused")
 	}
 	// A pattern carrying an unreasonable number of wildcards reaches the same
 	// check through Decode: the node is what the runner reads, so the refusal
 	// must be there too (ValidPattern caps them; TestValidPatternCapsWildcards).
-	if _, _, err := Decode([]byte(`{"version": 6, "allow_repos": ["github/acme/*****"]}`)); err == nil {
+	if _, _, err := Decode([]byte(`{"version": 9, "allow_repos": ["github/acme/*****"]}`)); err == nil {
 		t.Error("allow_repos with more wildcards than ValidPattern allows must be refused")
 	}
 	// A single "*" is the design's explicit choice: every repository.
-	p, _, err := Decode([]byte(`{"version": 6, "allow_repos": ["*"]}`))
+	p, _, err := Decode([]byte(`{"version": 9, "allow_repos": ["*"]}`))
 	if err != nil || len(p.AllowRepos) != 1 || p.AllowRepos[0] != "*" {
 		t.Errorf("allow_repos [\"*\"] must be valid, got (%v, %v)", p, err)
 	}
@@ -434,7 +434,7 @@ func TestDecodeChecksAProviderSecretIsASecretName(t *testing.T) {
 		"an empty-ish dot": ".",
 		"too long":         "k" + strings.Repeat("e", 63) + "y",
 	} {
-		raw := []byte(`{"version": 6, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "` + secret + `", "models": ["deepseek/*"]}}}`)
+		raw := []byte(`{"version": 9, "providers": {"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "` + secret + `", "models": ["deepseek/*"]}}}`)
 		p, found, err := Decode(raw)
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(secret %q) = (%v, %v, %v), want a refusal: only a secret name may sit on the readable node", name, secret, p, found, err)
@@ -515,7 +515,7 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 	// The same walk one level up: a provider defined twice on the block is the
 	// entry the decoder kept, which is the last one written, so the node could
 	// be routed and metered by a definition no reader of the document sees.
-	if _, _, err := Decode([]byte(`{"version": 6, "providers": {
+	if _, _, err := Decode([]byte(`{"version": 9, "providers": {
 		"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["acme/app"]},
 		"openrouter": {"kind": "anthropic-compat", "base_url": "https://evil.example/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["deepseek/*"], "allow_data_to": ["*"]}}}`)); err == nil ||
 		!strings.Contains(err.Error(), "providers names") || !strings.Contains(err.Error(), `"openrouter"`) || !strings.Contains(err.Error(), "twice") {
@@ -523,7 +523,7 @@ func TestDecodeValidatesProviderEntriesLikeTheCarrier(t *testing.T) {
 	}
 	// Two providers may not claim the same model: the run would route to one of
 	// them arbitrarily, and the charge would be whichever one it was.
-	if _, _, err := Decode([]byte(`{"version": 6, "providers": {
+	if _, _, err := Decode([]byte(`{"version": 9, "providers": {
 		"one": {"kind": "anthropic-compat", "base_url": "https://one.example/v1", "auth": "bearer", "secret": "one-key", "models": ["deepseek/*"]},
 		"two": {"kind": "anthropic-compat", "base_url": "https://two.example/v1", "auth": "x-api-key", "secret": "two-key", "models": ["deepseek/deepseek-v4.1-flash"]}}}`)); err == nil {
 		t.Error("two providers claiming one model must be refused")
@@ -625,12 +625,12 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 		"null entry":               `[null]`,
 		"a number entry":           `[5]`,
 	} {
-		p, found, err := Decode([]byte(`{"version": 6, "budget": {"mode": "enforce", "allowed_models": ` + list + `}}`))
+		p, found, err := Decode([]byte(`{"version": 9, "budget": {"mode": "enforce", "allowed_models": ` + list + `}}`))
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode(allowed_models %s) = (%v, %v, %v), want a refusal", name, list, p, found, err)
 		}
 	}
-	p, _, err := Decode([]byte(`{"version": 6, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5-5", "deepseek/deepseek-v4.1-flash"]}}`))
+	p, _, err := Decode([]byte(`{"version": 9, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5-5", "deepseek/deepseek-v4.1-flash"]}}`))
 	if err != nil {
 		t.Fatalf("two explicit model IDs must be valid: %v", err)
 	}
@@ -647,7 +647,7 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 	// Mutation (run, restored): drop every entry beginning "anthropic/" where
 	// Decode fills Budget.AllowedModels. This assertion fails and the
 	// two-model one below still passes, which is the gap it was written for.
-	ap, _, err := Decode([]byte(`{"version": 6, "budget": {"mode": "enforce", "allowed_models": ["anthropic/claude-sonnet-5.5"]}}`))
+	ap, _, err := Decode([]byte(`{"version": 9, "budget": {"mode": "enforce", "allowed_models": ["anthropic/claude-sonnet-5.5"]}}`))
 	if err != nil {
 		t.Fatalf("an explicit anthropic/<id> allowed model must be accepted (a price is not a permission): %v", err)
 	}
@@ -663,7 +663,7 @@ func TestDecodeRefusesABadAllowedModel(t *testing.T) {
 // decoded.
 func TestDecodeRefusesAnOversizedNode(t *testing.T) {
 	pad := func(n int) []byte {
-		return []byte(`{"version": 6, "allow_repos": ["*"], "pad": "` + strings.Repeat("a", n) + `"}`)
+		return []byte(`{"version": 9, "allow_repos": ["*"], "pad": "` + strings.Repeat("a", n) + `"}`)
 	}
 	small := pad(MaxPolicyBytes - 100)
 	if len(small) > MaxPolicyBytes {
@@ -695,7 +695,7 @@ func TestDecodeModelPricesAgreeWithTheCatalog(t *testing.T) {
 		"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15},
 		"claude-opus-5-5": {"input_per_m": 5, "output_per_m": 25, "cache_write_5m": 2, "cache_write_1h": 3, "cache_read": 0.25, "web_search_per_1k": 7}
 	}`
-	p, _, err := Decode([]byte(`{"version": 6, "model_prices": ` + block + `}`))
+	p, _, err := Decode([]byte(`{"version": 9, "model_prices": ` + block + `}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -746,13 +746,13 @@ func TestDecodeModelPricesAgreeWithTheCatalog(t *testing.T) {
 
 func TestDecodeRefusesABadPrice(t *testing.T) {
 	for name, raw := range map[string]string{
-		"input_per_m missing":          `{"version": 6, "model_prices": {"claude-sonnet-5-5": {"output_per_m": 15}}}`,
-		"a camelCase rate":             `{"version": 6, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "cacheRead": 0.1}}}`,
-		"an anthropic glob key":        `{"version": 6, "model_prices": {"anthropic/claude-*": {"input_per_m": 3, "output_per_m": 15}}}`,
-		"a negative rate":              `{"version": 6, "model_prices": {"claude-sonnet-5-5": {"input_per_m": -3, "output_per_m": 15}}}`,
-		"a bare number":                `{"version": 6, "model_prices": 5}`,
-		"a list":                       `{"version": 6, "model_prices": []}`,
-		"a long_context without rates": `{"version": 6, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "long_context": {"above_input_tokens": 200000}}}}`,
+		"input_per_m missing":          `{"version": 9, "model_prices": {"claude-sonnet-5-5": {"output_per_m": 15}}}`,
+		"a camelCase rate":             `{"version": 9, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "cacheRead": 0.1}}}`,
+		"an anthropic glob key":        `{"version": 9, "model_prices": {"anthropic/claude-*": {"input_per_m": 3, "output_per_m": 15}}}`,
+		"a negative rate":              `{"version": 9, "model_prices": {"claude-sonnet-5-5": {"input_per_m": -3, "output_per_m": 15}}}`,
+		"a bare number":                `{"version": 9, "model_prices": 5}`,
+		"a list":                       `{"version": 9, "model_prices": []}`,
+		"a long_context without rates": `{"version": 9, "model_prices": {"claude-sonnet-5-5": {"input_per_m": 3, "output_per_m": 15, "long_context": {"above_input_tokens": 200000}}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -761,11 +761,11 @@ func TestDecodeRefusesABadPrice(t *testing.T) {
 	}
 	// An explicit anthropic/<id> key is a PRICE for the claim form (P4: a price
 	// is not a permission): accepted where it is written, enabling nothing.
-	if p, _, err := Decode([]byte(`{"version": 6, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`)); err != nil || len(p.Prices) != 1 {
+	if p, _, err := Decode([]byte(`{"version": 9, "model_prices": {"anthropic/claude-sonnet-5.5": {"input_per_m": 3, "output_per_m": 15}}}`)); err != nil || len(p.Prices) != 1 {
 		t.Errorf("an explicit anthropic/<id> price key must be accepted: err = %v", err)
 	}
 	// An empty block and an absent one are both "no overrides".
-	for _, raw := range []string{`{"version": 6}`, `{"version": 6, "model_prices": {}}`, `{"version": 6, "model_prices": null}`} {
+	for _, raw := range []string{`{"version": 9}`, `{"version": 9, "model_prices": {}}`, `{"version": 9, "model_prices": null}`} {
 		p, _, err := Decode([]byte(raw))
 		if err != nil {
 			t.Errorf("Decode(%s) = %v, want no overrides", raw, err)
@@ -779,7 +779,7 @@ func TestDecodeRefusesABadPrice(t *testing.T) {
 // rendered message, so the runner (task 1.3) prints RunnerSkew and the CLI
 // (task 1.6) CLISkew from the same error without matching on the text.
 func TestVersionErrorCarriesBothVersions(t *testing.T) {
-	_, found, err := Decode([]byte(`{"version": 9}`))
+	_, found, err := Decode([]byte(`{"version": 10}`))
 	if !found {
 		t.Error("the node exists and cannot be used, so found must be true")
 	}
@@ -787,10 +787,10 @@ func TestVersionErrorCarriesBothVersions(t *testing.T) {
 	if !errors.As(err, &ve) {
 		t.Fatalf("err = %v, want a *VersionError", err)
 	}
-	if ve.Found != 9 || ve.Understood != Version {
-		t.Errorf("VersionError = %+v, want found 9 and understood %d", ve, Version)
+	if ve.Found != 10 || ve.Understood != Version {
+		t.Errorf("VersionError = %+v, want found 10 and understood %d", ve, Version)
 	}
-	if got, want := err.Error(), fmt.Sprintf(Skew, 9, Version); got != want {
+	if got, want := err.Error(), fmt.Sprintf(Skew, 10, Version); got != want {
 		t.Errorf("Error() = %q, want the shared sentence %q", got, want)
 	}
 	if got := fmt.Sprintf(RunnerSkew, ve.Found, ve.Understood); !strings.Contains(got, "runner image") {
@@ -841,7 +841,7 @@ func TestPolicyCarriesRouting(t *testing.T) {
 		t.Errorf("routing = %+v", got.Routing.Claude)
 	}
 	// A node without one decodes to no block: direct (D1b).
-	if p, _, err := Decode([]byte(`{"version": 6}`)); err != nil || p.Routing != nil {
+	if p, _, err := Decode([]byte(`{"version": 9}`)); err != nil || p.Routing != nil {
 		t.Errorf("an absent block = (%+v, %v), want nil and no error", p.Routing, err)
 	}
 	// And the shapes D1a refuses are refused on the node too, with the key
@@ -853,7 +853,7 @@ func TestPolicyCarriesRouting(t *testing.T) {
 		{"an empty list", `{"claude": {"via": "openrouter"}}`, "routing.claude.models"},
 		{"an empty via", `{"claude": {"via": ""}}`, "routing.claude.via"},
 	} {
-		raw := []byte(`{"version": 6, "providers": ` + routes + `, "routing": ` + tc.routing + `}`)
+		raw := []byte(`{"version": 9, "providers": ` + routes + `, "routing": ` + tc.routing + `}`)
 		p, found, err := Decode(raw)
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
@@ -871,7 +871,7 @@ func TestPolicyCarriesRouting(t *testing.T) {
 		{"the claim has no allow_data_to", `{"openrouter": {"kind": "anthropic-compat", "base_url": "https://openrouter.ai/api/v1", "auth": "bearer", "secret": "openrouter-key", "models": ["anthropic/claude-sonnet-5.5"]}}`, "allow_data_to"},
 		{"no providers block at all", `{}`, "no provider entry claims it"},
 	} {
-		raw := []byte(`{"version": 6, "providers": ` + tc.providers + `, "routing": {"claude": {"via": "openrouter", "models": ["claude-sonnet-5-5"]}}}`)
+		raw := []byte(`{"version": 9, "providers": ` + tc.providers + `, "routing": {"claude": {"via": "openrouter", "models": ["claude-sonnet-5-5"]}}}`)
 		p, found, err := Decode(raw)
 		if err == nil || p != nil || !found {
 			t.Errorf("%s: Decode = (%v, %v, %v), want a refusal", tc.name, p, found, err)
@@ -901,12 +901,12 @@ func TestDecodeRefusesFoldEqualMemberNames(t *testing.T) {
 	const longS = "ſ"  // ſ, fold-equal to s
 	const kelvin = "K" // K, fold-equal to k
 	for name, raw := range map[string]string{
-		"the long s in an allow-list member":       `{"version": 6, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"], "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
-		"the long s alone in an allow-list member": `{"version": 6, "budget": {"mode": "enforce", "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
-		"the long s in routing.claude.models":      `{"version": 6, "routing": {"claude": {"via": "direct", "model` + longS + `": ["claude-sonnet-5-5"]}}}`,
-		"the long s beside routing.claude.models":  `{"version": 6, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "model` + longS + `": ["claude-opus-5-5"]}}}`,
-		"the kelvin sign in a rate":                `{"version": 6, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1k": 0.01, "web_search_per_1` + kelvin + `": 9}}}`,
-		"the kelvin sign alone in a rate":          `{"version": 6, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1` + kelvin + `": 9}}}`,
+		"the long s in an allow-list member":       `{"version": 9, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"], "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
+		"the long s alone in an allow-list member": `{"version": 9, "budget": {"mode": "enforce", "allowed_model` + longS + `": ["claude-opus-5-5"]}}`,
+		"the long s in routing.claude.models":      `{"version": 9, "routing": {"claude": {"via": "direct", "model` + longS + `": ["claude-sonnet-5-5"]}}}`,
+		"the long s beside routing.claude.models":  `{"version": 9, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"], "model` + longS + `": ["claude-opus-5-5"]}}}`,
+		"the kelvin sign in a rate":                `{"version": 9, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1k": 0.01, "web_search_per_1` + kelvin + `": 9}}}`,
+		"the kelvin sign alone in a rate":          `{"version": 9, "model_prices": {"deepseek/deepseek-v4-flash": {"input_per_m": 5, "output_per_m": 1, "web_search_per_1` + kelvin + `": 9}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err == nil || p != nil || !found {
@@ -918,7 +918,7 @@ func TestDecodeRefusesFoldEqualMemberNames(t *testing.T) {
 		}
 	}
 	// The documented spelling is still read, ſ nowhere in it.
-	p, found, err := Decode([]byte(`{"version": 6, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"]}, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"]}}}`))
+	p, found, err := Decode([]byte(`{"version": 9, "budget": {"mode": "enforce", "allowed_models": ["claude-sonnet-5"]}, "routing": {"claude": {"via": "direct", "models": ["claude-sonnet-5-5"]}}}`))
 	if err != nil || !found || p == nil || len(p.Budget.AllowedModels) != 1 || len(p.Routing.Claude.Models) != 1 {
 		t.Fatalf("a correctly spelled node was refused: (%v, %v, %v)", p, found, err)
 	}
@@ -932,7 +932,7 @@ func TestDecodeRefusesFoldEqualMemberNames(t *testing.T) {
 // with no floor publishes: no member at all, so the node of such a project is
 // what it was before the member existed.
 func TestReviewFloorDecodeStrict(t *testing.T) {
-	p, found, err := Decode([]byte(`{"version": 6, "review_floor": {"pro": ["l2"], "critical": ["l2", "l3"]}}`))
+	p, found, err := Decode([]byte(`{"version": 9, "review_floor": {"pro": ["l2"], "critical": ["l2", "l3"]}}`))
 	if err != nil || !found {
 		t.Fatalf("the correctly spelled floor was refused: %v", err)
 	}
@@ -954,7 +954,7 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 		{"a mode named twice", `{"pro": ["l2"], "pro": ["l3"]}`, "names \"pro\" twice"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode([]byte(`{"version": 6, "review_floor": ` + tc.body + `}`))
+			p, found, err := Decode([]byte(`{"version": 9, "review_floor": ` + tc.body + `}`))
 			if err == nil || p != nil || !found || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Decode = (%v, %v, %v), want a refusal naming %q", p, found, err, tc.want)
 			}
@@ -964,11 +964,11 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 	// A written empty block is no floor, and a policy that sets none marshals
 	// no member: the publisher writes this struct, so the member's absence is
 	// what keeps a floorless project's node byte for byte what it was.
-	empty, found, err := Decode([]byte(`{"version": 6, "review_floor": {}}`))
+	empty, found, err := Decode([]byte(`{"version": 9, "review_floor": {}}`))
 	if err != nil || !found || len(empty.ReviewFloor) != 0 {
 		t.Fatalf("Decode({\"review_floor\": {}}) = (%v, %v, %v), want no floor", empty, found, err)
 	}
-	for _, raw := range []string{`{"version": 6}`, `{"version": 6, "review_floor": null}`} {
+	for _, raw := range []string{`{"version": 9}`, `{"version": 9, "review_floor": null}`} {
 		q, _, err := Decode([]byte(raw))
 		if err != nil {
 			t.Fatal(err)
@@ -995,7 +995,7 @@ func TestReviewFloorDecodeStrict(t *testing.T) {
 // fixture node is decoded twice, once under this key set and once under a copy
 // of the list as it stood before the key.
 func TestVerifierAccountsIsUnknownToAReaderThatPredatesIt(t *testing.T) {
-	raw := []byte(`{"version": 6, "verifier_accounts": ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]}`)
+	raw := []byte(`{"version": 9, "verifier_accounts": ["person-1@example.com", "fugaro-coordinator@proj-1234.iam.gserviceaccount.com"]}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found {
 		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
@@ -1040,13 +1040,13 @@ func TestVerifierAccountsDecodeRefusesAMisspeltEntry(t *testing.T) {
 		{"an address with a space", `["person-1 @example.com"]`, "is not an email address"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, found, err := Decode([]byte(`{"version": 6, "verifier_accounts": ` + tc.body + `}`))
+			p, found, err := Decode([]byte(`{"version": 9, "verifier_accounts": ` + tc.body + `}`))
 			if err == nil || p != nil || !found || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Decode = (%v, %v, %v), want a refusal naming %q", p, found, err, tc.want)
 			}
 		})
 	}
-	for _, raw := range []string{`{"version": 6}`, `{"version": 6, "verifier_accounts": null}`, `{"version": 6, "verifier_accounts": []}`} {
+	for _, raw := range []string{`{"version": 9}`, `{"version": 9, "verifier_accounts": null}`, `{"version": 9, "verifier_accounts": []}`} {
 		q, _, err := Decode([]byte(raw))
 		if err != nil {
 			t.Fatal(err)
@@ -1066,7 +1066,7 @@ func TestVerifierAccountsDecodeRefusesAMisspeltEntry(t *testing.T) {
 
 // catalogNode is a node carrying the project's image catalog, in the shape a
 // publisher writes one: two entries, the second a Dockerfile at a repository.
-const catalogNode = `{"version": 6, "image_catalog": {"entries": [
+const catalogNode = `{"version": 9, "image_catalog": {"entries": [
 	{"name": "universal", "tags": ["node"], "default": true, "source": {"kind": "image", "image": "ghcr.io/acme/agent:1.2"}},
 	{"name": "rust", "tags": ["cargo"], "source": {"kind": "dockerfile", "repo": "acme/app", "path": "docker/agent.Dockerfile"}}
 ]}}`
@@ -1099,9 +1099,9 @@ func TestImageCatalogIsDecoded(t *testing.T) {
 		t.Errorf("entries[1].source = %+v, want the repository pointer", rust.Source)
 	}
 	for _, raw := range []string{
-		`{"version": 6}`,
-		`{"version": 6, "image_catalog": null}`,
-		`{"version": 6, "image_catalog": {"entries": []}}`,
+		`{"version": 9}`,
+		`{"version": 9, "image_catalog": null}`,
+		`{"version": 9, "image_catalog": {"entries": []}}`,
 	} {
 		q, found, err := Decode([]byte(raw))
 		if err != nil || !found {
@@ -1139,7 +1139,7 @@ func TestImageCatalogDecodeRefusesWhatTheCarrierWould(t *testing.T) {
 		{"a source that is not an object", `{"entries": [{"name": "a", "source": "ghcr.io/acme/agent:1.2"}]}`, "source"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			raw := []byte(`{"version": 6, "image_catalog": ` + tc.body + `}`)
+			raw := []byte(`{"version": 9, "image_catalog": ` + tc.body + `}`)
 			_, _, err := Decode(raw)
 			if err == nil {
 				t.Fatal("the node was accepted")
@@ -1163,7 +1163,7 @@ func TestImageCatalogDecodeRefusesFoldedMemberNames(t *testing.T) {
 		`{"Entries": []}`,
 		`{"entries": [{"name": "a", "source": {"Kind": "image", "image": "ghcr.io/acme/agent:1.2"}}]}`,
 	} {
-		raw := []byte(`{"version": 6, "image_catalog": ` + body + `}`)
+		raw := []byte(`{"version": 9, "image_catalog": ` + body + `}`)
 		if _, _, err := Decode(raw); err == nil {
 			t.Errorf("Decode(%s) was accepted: a member spelled in another case is one encoding/json folds onto the documented one", body)
 		}
@@ -1177,7 +1177,7 @@ func TestImageCatalogDecodeRefusesFoldedMemberNames(t *testing.T) {
 // reader would take whatever the node wrote, which is what the refusal beside
 // this test is about.
 func TestPolicyAcceptsAContextInTheNode(t *testing.T) {
-	raw := []byte(`{"version": 6, "image_catalog": {"entries": [
+	raw := []byte(`{"version": 9, "image_catalog": {"entries": [
 		{"name": "rust", "tags": ["cargo"], "source": {"kind": "dockerfile", "repo": "acme/app", "path": "ci/Dockerfile", "context": "."}}
 	]}}`)
 	p, found, err := Decode(raw)
@@ -1202,7 +1202,7 @@ func TestPolicyRefusesAnUnknownSourceMember(t *testing.T) {
 		`{"entries": [{"name": "a", "source": {"kind": "dockerfile", "repo": "acme/app", "path": "ci/Dockerfile", "Context": "."}}]}`,
 		`{"entries": [{"name": "a", "source": {"kind": "dockerfile", "repo": "acme/app", "path": "ci/Dockerfile", "contexts": "."}}]}`,
 	} {
-		raw := []byte(`{"version": 6, "image_catalog": ` + body + `}`)
+		raw := []byte(`{"version": 9, "image_catalog": ` + body + `}`)
 		if _, _, err := Decode(raw); err == nil {
 			t.Errorf("Decode(%s) was accepted: a source member outside the documented spelling is one this reader would fold onto a member it knows", body)
 		}
@@ -1300,7 +1300,7 @@ func TestPolicyUnknownKeysStillListsBinariesForAnOlderReader(t *testing.T) {
 // the "/" every repository name has (ImageMap). It carries no bake_repos, so
 // the two members are exercised apart: a project that answered nothing keeps
 // D1901's default.
-const imageMapNode = `{"version": 6, "image_map": {"acme%2Fapp": "api", "acme%2Fweb": "frontend"}}`
+const imageMapNode = `{"version": 9, "image_map": {"acme%2Fapp": "api", "acme%2Fweb": "frontend"}}`
 
 // TestPolicyImageMapStrictDecode: the map is a key this Fugaro reads, and
 // what it refuses is what a silently dropped entry would cost — a repository
@@ -1338,37 +1338,37 @@ func TestPolicyImageMapStrictDecode(t *testing.T) {
 	for _, tc := range []struct{ name, node, want string }{
 		{
 			"a value that is not a catalog entry name",
-			`{"version": 6, "image_map": {"acme%2Fapp": "API Image"}}`,
+			`{"version": 9, "image_map": {"acme%2Fapp": "API Image"}}`,
 			"must be a catalog entry name",
 		},
 		{
 			"a key that is not a repository name",
-			`{"version": 6, "image_map": {"not a repository": "api"}}`,
+			`{"version": 9, "image_map": {"not a repository": "api"}}`,
 			"image_map key is a repository name",
 		},
 		{
 			"a key in another case",
-			`{"version": 6, "image_map": {"Acme%2FApp": "api"}}`,
+			`{"version": 9, "image_map": {"Acme%2FApp": "api"}}`,
 			"image_map key is a repository name",
 		},
 		{
 			"a key with a truncated escape",
-			`{"version": 6, "image_map": {"acme%2": "api"}}`,
+			`{"version": 9, "image_map": {"acme%2": "api"}}`,
 			"truncated escape",
 		},
 		{
 			"one key twice",
-			`{"version": 6, "image_map": {"acme%2Fapp": "api", "acme%2Fapp": "web"}}`,
+			`{"version": 9, "image_map": {"acme%2Fapp": "api", "acme%2Fapp": "web"}}`,
 			"twice",
 		},
 		{
 			"one repository under two spellings",
-			`{"version": 6, "image_map": {"acme%2Fapp": "api", "acme/app": "web"}}`,
+			`{"version": 9, "image_map": {"acme%2Fapp": "api", "acme/app": "web"}}`,
 			"are both the repository",
 		},
 		{
 			"a value that is not a string",
-			`{"version": 6, "image_map": {"acme%2Fapp": 7}}`,
+			`{"version": 9, "image_map": {"acme%2Fapp": 7}}`,
 			"cannot unmarshal",
 		},
 	} {
@@ -1419,7 +1419,7 @@ func TestPolicyImageMapMarshalsEscapedKeys(t *testing.T) {
 // which is what keeps the key's skew out of every launcher's way (the promise
 // image_catalog's own emptiness keeps).
 func TestPolicyImageMapEmptyIsAbsent(t *testing.T) {
-	p, found, err := Decode([]byte(`{"version": 6, "image_map": {}}`))
+	p, found, err := Decode([]byte(`{"version": 9, "image_map": {}}`))
 	if err != nil || !found {
 		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
 	}
@@ -1445,10 +1445,10 @@ func TestBakeReposDefaultsTrue(t *testing.T) {
 		node string
 		want bool
 	}{
-		{"the member is absent", `{"version": 6}`, true},
-		{"the member is written true", `{"version": 6, "bake_repos": true}`, true},
-		{"the member is written false", `{"version": 6, "bake_repos": false}`, false},
-		{"the member is written null", `{"version": 6, "bake_repos": null}`, true},
+		{"the member is absent", `{"version": 9}`, true},
+		{"the member is written true", `{"version": 9, "bake_repos": true}`, true},
+		{"the member is written false", `{"version": 9, "bake_repos": false}`, false},
+		{"the member is written null", `{"version": 9, "bake_repos": null}`, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, found, err := Decode([]byte(tc.node))
@@ -1472,7 +1472,7 @@ func TestBakeReposDefaultsTrue(t *testing.T) {
 		preKey[k] = v
 	}
 	delete(preKey, "bake_repos")
-	q, found, err := decodeWithKeys([]byte(`{"version": 6, "bake_repos": false}`), preKey)
+	q, found, err := decodeWithKeys([]byte(`{"version": 9, "bake_repos": false}`), preKey)
 	if err != nil || !found {
 		t.Fatalf("the reader that predates the key refused the node: (%v, %v, %v)", q, found, err)
 	}
@@ -1484,7 +1484,7 @@ func TestBakeReposDefaultsTrue(t *testing.T) {
 // imageServicesNode is a node carrying the services a catalog entry's image
 // provides (D1904): the two entries the fixture catalog declares, one with a
 // service and one with three.
-const imageServicesNode = `{"version": 6, "image_services": {"api": ["postgres"], "web": ["postgres", "redis", "firebase"]}}`
+const imageServicesNode = `{"version": 9, "image_services": {"api": ["postgres"], "web": ["postgres", "redis", "firebase"]}}`
 
 // TestPolicyImageServicesStrictDecode: image_services decodes into the field a
 // run reads — the entry's own list, keyed by the entry's name — and a block
@@ -1516,7 +1516,7 @@ func TestPolicyImageServicesStrictDecode(t *testing.T) {
 	}
 	// An empty block is no block: a project that declares no service writes no
 	// member, and the two spellings read the same way (the catalog's rule).
-	q, found, err := Decode([]byte(`{"version": 6, "image_services": {}}`))
+	q, found, err := Decode([]byte(`{"version": 9, "image_services": {}}`))
 	if err != nil || !found {
 		t.Fatalf("Decode of a written empty block = (%v, %v, %v), want the node read", q, found, err)
 	}
@@ -1527,22 +1527,22 @@ func TestPolicyImageServicesStrictDecode(t *testing.T) {
 	for _, tc := range []struct{ name, node, want string }{
 		{
 			"an unknown service name",
-			`{"version": 6, "image_services": {"api": ["mysql"]}}`,
+			`{"version": 9, "image_services": {"api": ["mysql"]}}`,
 			"must be one of postgres, redis, firebase",
 		},
 		{
 			"a service named twice",
-			`{"version": 6, "image_services": {"api": ["redis", "redis"]}}`,
+			`{"version": 9, "image_services": {"api": ["redis", "redis"]}}`,
 			"named twice",
 		},
 		{
 			"an entry that names no service",
-			`{"version": 6, "image_services": {"api": []}}`,
+			`{"version": 9, "image_services": {"api": []}}`,
 			"names at least one service",
 		},
 		{
 			"a key that is not a catalog entry name",
-			`{"version": 6, "image_services": {"API Image": ["redis"]}}`,
+			`{"version": 9, "image_services": {"API Image": ["redis"]}}`,
 			"must be a catalog entry name",
 		},
 	} {
@@ -1570,7 +1570,7 @@ func TestEntryServicesRunInFlightKeepsReading(t *testing.T) {
 		preKey[k] = v
 	}
 	delete(preKey, "image_services")
-	q, found, err := decodeWithKeys([]byte(`{"version": 6, "base_branch": "main", `+
+	q, found, err := decodeWithKeys([]byte(`{"version": 9, "base_branch": "main", `+
 		`"image_services": {"api": ["postgres"]}}`), preKey)
 	if err != nil || !found || q == nil {
 		t.Fatalf("the reader of the release behind refused the node: (%v, %v, %v) — a run in flight would stop on it", q, found, err)
@@ -1590,7 +1590,7 @@ func TestEntryServicesRunInFlightKeepsReading(t *testing.T) {
 	// The member shape is the one that does not hold: an entry carrying
 	// `services` is refused by the strict decode of the whole policy, which is
 	// what F20 is about and why the fact travels top-level.
-	_, _, err = Decode([]byte(`{"version": 6, "image_catalog": {"entries": [` +
+	_, _, err = Decode([]byte(`{"version": 9, "image_catalog": {"entries": [` +
 		`{"name": "api", "tags": ["node"], "source": {"kind": "inline", "inline": "FROM node:24\n"}, "services": ["postgres"]}]}}`))
 	if err == nil || !strings.Contains(err.Error(), "services") {
 		t.Fatalf("Decode of an entry carrying services = %v, want the unknown-member refusal: an entry member is what a reader of the release behind refuses whole", err)
@@ -1624,8 +1624,272 @@ func TestImageServicesFromCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, found, err := Decode([]byte(`{"version": 6, "image_services": ` + string(raw) + `}`))
+	p, found, err := Decode([]byte(`{"version": 9, "image_services": ` + string(raw) + `}`))
 	if err != nil || !found || !reflect.DeepEqual(p.ImageServices, want) {
 		t.Errorf("the derived block does not decode back: (%v, %v, %v)", p, found, err)
+	}
+}
+
+// TestOrchestratorEnabledFalseWins is R1's own red step, and the rule the key
+// is: the daemon launches runs unless the policy writes false (D2701, D2739).
+//
+// False is the only value that can undo the daemon's work, and it is the only
+// one the node has to keep. A layer that writes nothing passes on what the layer
+// under it decided, and so does one that writes true — which is why the member
+// is a pointer rather than a bool whose zero value would read as "off", and why
+// the key merges by the ceiling rule (the registry's Tighten row, and
+// internal/policy's Merge for a run's own layers): whatever layer writes false
+// decides, and no layer turns it back on over one.
+func TestOrchestratorEnabledFalseWins(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"absent: the default is on", `{"version": 9}`, true},
+		{"written true: the default restated", `{"version": 9, "orchestrator_enabled": true}`, true},
+		{"written null: no statement at all", `{"version": 9, "orchestrator_enabled": null}`, true},
+		{"written false: the daemon launches nothing", `{"version": 9, "orchestrator_enabled": false}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(tc.raw))
+			if err != nil || !found {
+				t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: orchestrator_enabled is a key this Fugaro reads", p.UnknownKeys)
+			}
+			if got := p.OrchestratorOn(); got != tc.want {
+				t.Errorf("OrchestratorOn() = %v, want %v: absent is on, and only a written false turns the daemon off", got, tc.want)
+			}
+			// The pointer is the difference the default rests on: nil is "this
+			// policy says nothing", and a false one is a statement the node
+			// keeps — which is what a merge reads as the winner.
+			switch {
+			case p.OrchestratorEnabled == nil && !tc.want:
+				t.Error("a policy that writes false decodes to a nil member: the statement is lost, and the reader falls back to the default that launches")
+			case p.OrchestratorEnabled != nil && tc.raw == `{"version": 9}`:
+				t.Error("a policy that writes no member carries one: the node of a project that never answered is not byte for byte what it was")
+			}
+		})
+	}
+
+	// A written false survives the round trip — it is the one value the node has
+	// to keep — while a policy that writes no member writes none.
+	off, _, err := Decode([]byte(`{"version": 9, "orchestrator_enabled": false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), `"orchestrator_enabled":false`) {
+		t.Errorf("a policy whose switch is off marshals %s, want the member written: the writer that round trips a node would drop the owner's own answer", b)
+	}
+
+	// Every other JSON kind is refused where the operator can see it, rather
+	// than read as a truthy or zero value: a switch that hands orchestration
+	// back is the last place a typo may mean "on".
+	for _, body := range []string{`"false"`, `1`, `0`, `[]`, `{}`} {
+		p, found, err := Decode([]byte(`{"version": 9, "orchestrator_enabled": ` + body + `}`))
+		if err == nil || p != nil || !found || !strings.Contains(err.Error(), "orchestrator_enabled") {
+			t.Errorf("Decode(orchestrator_enabled: %s) = (%v, %v, %v), want a refusal naming the key", body, p, found, err)
+		}
+	}
+
+	// The key's spelling is the node's: another case is the same key folded by
+	// encoding/json, so the value under it would be read or not depending on
+	// the order the document was written in (checkTopLevelNames).
+	p, found, err := Decode([]byte(`{"version": 9, "Orchestrator_Enabled": false}`))
+	if err == nil || p != nil || !found || !strings.Contains(err.Error(), "orchestrator_enabled") {
+		t.Errorf("Decode with the key in another case = (%v, %v, %v), want a refusal naming the spelling this Fugaro reads", p, found, err)
+	}
+}
+
+// TestIssueSyncStrictAndMirrorDefaultsFalse: the project's issue adapter
+// (D2733, D2719) is decoded strictly, member by member and entry by entry, and
+// an unset mirror means off — the backlog stays internal until the owner says
+// otherwise, so the default is the direction that opens no issue in anybody's
+// repository.
+func TestIssueSyncStrictAndMirrorDefaultsFalse(t *testing.T) {
+	// What the block reads, and what the mirror answers.
+	for _, tc := range []struct {
+		name   string
+		body   string
+		repos  []string
+		mirror bool
+	}{
+		{"repos and an explicit false", `{"github": {"repos": ["acme/app", "acme/lib"], "mirror": false}}`, []string{"acme/app", "acme/lib"}, false},
+		{"repos alone: mirror defaults off", `{"github": {"repos": ["acme/app"]}}`, []string{"acme/app"}, false},
+		{"mirror on", `{"github": {"repos": ["acme/app"], "mirror": true}}`, []string{"acme/app"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(`{"version": 9, "issue_sync": ` + tc.body + `}`))
+			if err != nil || !found {
+				t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+			}
+			if p.IssueSync == nil || p.IssueSync.GitHub == nil {
+				t.Fatalf("IssueSync = %+v, want the github block read", p.IssueSync)
+			}
+			if !slices.Equal(p.IssueSync.GitHub.Repos, tc.repos) {
+				t.Errorf("repos = %v, want %v", p.IssueSync.GitHub.Repos, tc.repos)
+			}
+			if got := p.IssueSync.GitHub.MirrorOn(); got != tc.mirror {
+				t.Errorf("MirrorOn() = %v, want %v: mirror is false unless the node writes it true", got, tc.mirror)
+			}
+			if len(p.UnknownKeys) != 0 {
+				t.Errorf("UnknownKeys = %v, want none: issue_sync is a key this Fugaro reads", p.UnknownKeys)
+			}
+		})
+	}
+
+	// The block is strict: a member it does not model is refused rather than
+	// dropped, nested members included, and so is a modelled member in another
+	// case or one written twice — the four spellings that would otherwise read
+	// as one key or as no key at all.
+	for _, tc := range []struct{ name, body, want string }{
+		{"an unknown member of the block", `{"github": {"repos": ["acme/app"]}, "jira": {}}`, "issue_sync"},
+		{"an unknown member of github", `{"github": {"repos": ["acme/app"], "mirror_issues": true}}`, "mirror_issues"},
+		{"a member of github in another case", `{"github": {"Repos": ["acme/app"]}}`, "repos"},
+		{"the block's member in another case", `{"Github": {"repos": ["acme/app"]}}`, "github"},
+		{"a member written twice", `{"github": {"repos": ["acme/app"]}, "github": {"repos": ["acme/lib"]}}`, "twice"},
+		{"github not an object", `{"github": ["acme/app"]}`, "issue_sync"},
+		{"mirror not a bool", `{"github": {"repos": ["acme/app"], "mirror": "yes"}}`, "mirror"},
+		{"repos not a list", `{"github": {"repos": "acme/app"}}`, "repos"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, found, err := Decode([]byte(`{"version": 9, "issue_sync": ` + tc.body + `}`))
+			if err == nil || p != nil || !found || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Decode(issue_sync: %s) = (%v, %v, %v), want a refusal naming %q", tc.body, p, found, err, tc.want)
+			}
+		})
+	}
+
+	// Every entry is a canonical repository name, and no repository is named
+	// twice: the adapter lists and opens issues by the name, so an entry in
+	// another case is a repository no lookup reaches, and a name written twice
+	// is one repository's issues ingested twice.
+	for _, body := range []string{
+		`{"github": {"repos": ["Acme/App"]}}`,
+		`{"github": {"repos": ["acme/app.git"]}}`,
+		`{"github": {"repos": ["acme"]}}`,
+		`{"github": {"repos": [""]}}`,
+		`{"github": {"repos": ["acme/app", "acme/app"]}}`,
+	} {
+		p, found, err := Decode([]byte(`{"version": 9, "issue_sync": ` + body + `}`))
+		if err == nil || p != nil || !found || !strings.Contains(err.Error(), "repos") {
+			t.Errorf("Decode(issue_sync: %s) = (%v, %v, %v), want a refusal naming the entry", body, p, found, err)
+		}
+	}
+
+	// A block that decides nothing is no block: the daemon walks the
+	// repositories the block names and no others, so a block naming none has
+	// nothing to sync — and the mirror switch is a decision about those
+	// repositories' items. Each of these writes no member, which is what keeps
+	// the node of a project that configures no adapter byte for byte what it
+	// was; a mirror turned on with no repository is a statement, and is kept.
+	for _, raw := range []string{
+		`{"version": 9}`,
+		`{"version": 9, "issue_sync": null}`,
+		`{"version": 9, "issue_sync": {}}`,
+		`{"version": 9, "issue_sync": {"github": null}}`,
+		`{"version": 9, "issue_sync": {"github": {}}}`,
+		`{"version": 9, "issue_sync": {"github": {"repos": []}}}`,
+		`{"version": 9, "issue_sync": {"github": {"mirror": false}}}`,
+	} {
+		p, _, err := Decode([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.IssueSync != nil {
+			t.Errorf("Decode(%s).IssueSync = %+v, want nil: a block that names no repository and leaves the mirror off decides nothing", raw, p.IssueSync)
+		}
+	}
+	p, _, err := Decode([]byte(`{"version": 9, "issue_sync": {"github": {"mirror": true}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.IssueSync == nil || !p.IssueSync.GitHub.MirrorOn() {
+		t.Errorf("Decode of a block that turns the mirror on reads %+v, want the statement kept: it is a decision about the items of every repository the block names, and a written one is the owner's own answer", p.IssueSync)
+	}
+}
+
+// TestOlderReaderToleratesNewTopLevelKeys is the two keys' skew as a test rather
+// than a sentence (F35, F46, P8): this binary reads a node that carries
+// orchestrator_enabled and issue_sync and lists no unknown key at all, while a
+// reader older than the keys — the one every CLI was before this release —
+// lists them in UnknownKeys and reads everything else unchanged. The older
+// reader is not reached by spelling a key this package does not model, because
+// knownTopLevelKeys holds both: the same fixture node is decoded twice, once
+// under this key set and once under a copy of the list as it stood before them.
+func TestOlderReaderToleratesNewTopLevelKeys(t *testing.T) {
+	raw := []byte(`{"version": 9, "budget": {"mode": "observe", "per_run_usd": 5}, "orchestrator_enabled": false, "issue_sync": {"github": {"repos": ["acme/app"]}}}`)
+	p, found, err := Decode(raw)
+	if err != nil || !found {
+		t.Fatalf("Decode = (%v, %v, %v), want the node read", p, found, err)
+	}
+	if len(p.UnknownKeys) != 0 {
+		t.Errorf("UnknownKeys = %v, want none: both keys are ones this Fugaro reads", p.UnknownKeys)
+	}
+	if p.OrchestratorOn() {
+		t.Error("OrchestratorOn() = true, want the written false: this binary reads the switch")
+	}
+	if p.IssueSync == nil || p.IssueSync.GitHub == nil || !slices.Equal(p.IssueSync.GitHub.Repos, []string{"acme/app"}) {
+		t.Errorf("IssueSync = %+v, want the block this binary reads", p.IssueSync)
+	}
+
+	preKey := make(map[string]bool, len(knownTopLevelKeys))
+	for k, v := range knownTopLevelKeys {
+		preKey[k] = v
+	}
+	delete(preKey, "orchestrator_enabled")
+	delete(preKey, "issue_sync")
+	q, found, err := decodeWithKeys(raw, preKey)
+	if err != nil || !found {
+		t.Fatalf("the reader that predates the keys refused the node: (%v, %v, %v)", q, found, err)
+	}
+	if want := []string{"issue_sync", "orchestrator_enabled"}; !slices.Equal(q.UnknownKeys, want) {
+		t.Errorf("the reader that predates the keys lists UnknownKeys = %v, want %v: that is the node a CLI of that age refuses and a runner of it logs", q.UnknownKeys, want)
+	}
+	// The rest of the node decodes unchanged, which is the whole point of the
+	// keys being top-level ones: a member of a block would have made that reader
+	// refuse the policy whole (F35).
+	if q.Version != 9 || q.Budget.PerRunUSD != 5 {
+		t.Errorf("the reader that predates the keys read version %d and a per-run cap of %v, want the node's own 9 and 5: a top-level key the reader does not know costs it nothing else", q.Version, q.Budget.PerRunUSD)
+	}
+}
+
+// TestPolicyWithoutNewKeysUnchanged: a project that sets neither key publishes
+// no member for either, so its node is byte for byte what it was before the two
+// existed — the promise every optional member of this node keeps, and the one
+// that keeps a release from making every project's policy a node an older CLI
+// refuses.
+func TestPolicyWithoutNewKeysUnchanged(t *testing.T) {
+	for _, raw := range []string{
+		`{"version": 9}`,
+		`{"version": 9, "orchestrator_enabled": null, "issue_sync": null}`,
+		`{"version": 9, "issue_sync": {}}`,
+		`{"version": 9, "issue_sync": {"github": {}}}`,
+	} {
+		p, found, err := Decode([]byte(raw))
+		if err != nil || !found {
+			t.Fatalf("Decode(%s) = (%v, %v, %v), want the node read", raw, p, found, err)
+		}
+		if p.OrchestratorEnabled != nil || p.IssueSync != nil {
+			t.Errorf("Decode(%s) = {%v, %+v}, want both members nil: the node says nothing about either key", raw, p.OrchestratorEnabled, p.IssueSync)
+		}
+		if !p.OrchestratorOn() {
+			t.Errorf("Decode(%s): OrchestratorOn() = false, want the default that launches", raw)
+		}
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, member := range []string{"orchestrator_enabled", "issue_sync"} {
+			if strings.Contains(string(b), member) {
+				t.Errorf("a policy that sets no %s marshals one: %s", member, b)
+			}
+		}
 	}
 }

@@ -426,3 +426,48 @@ func TestCraftDefaultsNameTheCraftTheyFollow(t *testing.T) {
 		}
 	}
 }
+
+// TestRegistryCarriesTheOrchestratorSwitchAndIssueSync pins R1 of
+// docs/orchestrator-graph-estimates/'s two rows (D2701, D2733, D2739): the
+// daemon's switch and the project's issue adapter.
+//
+// Both are top-level keys of the published policy node and of no other layer —
+// the node is what every machine of the project reads, which is the whole point
+// of the switch — so `policy` is the whole of their Layers. The switch merges by
+// Tighten, and that is the row where "false wins at any layer" is held: false is
+// its stricter value, so a layer that writes it off decides whatever another
+// layer writes, and no layer turns orchestration back on over one. The adapter
+// replaces, because which repositories are synced and whether an item opens an
+// issue is one answer rather than the stricter of two.
+//
+// Both name the `project` family, whose `fugaro project policy publish` is the
+// door that carries a node-only key onto the node, and neither a name nor a
+// prefix in the generic allowlist reaches them — which the writer ratchet's
+// testdata/writer_gaps.golden records until a command writes them.
+func TestRegistryCarriesTheOrchestratorSwitchAndIssueSync(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		merge Merge
+	}{
+		{"orchestrator_enabled", Tighten},
+		{"issue_sync", Replace},
+	} {
+		r, ok := Lookup(tc.key)
+		if !ok {
+			t.Errorf("%s has no row: a key of the published node that no row names is one the read and the write cannot see", tc.key)
+			continue
+		}
+		if !slices.Equal(r.Layers, []string{LayerPolicy}) {
+			t.Errorf("%s: Layers = %v, want the policy node alone: both are top-level keys of the node every machine of the project reads", tc.key, r.Layers)
+		}
+		if r.Merge != tc.merge {
+			t.Errorf("%s: Merge = %q, want %q: the switch's stricter value is false, which is what makes a written false win at any layer, and the adapter is one answer rather than the stricter of two", tc.key, r.Merge, tc.merge)
+		}
+		if r.Default.Unset == "" || r.Default.Value != "" || r.Default.Const != "" {
+			t.Errorf("%s: Default = %+v, want an unset sentence: neither key has a value a config field can be read back from", tc.key, r.Default)
+		}
+		if r.Owner != "project" || r.Doc == "" {
+			t.Errorf("%s: Owner = %q and Doc = %q, want the `project` family and the plan that states the key: the publish door is what carries a node-only key onto the node", tc.key, r.Owner, r.Doc)
+		}
+	}
+}

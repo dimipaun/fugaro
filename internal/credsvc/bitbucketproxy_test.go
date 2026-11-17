@@ -268,7 +268,7 @@ func (p *proxyUpstream) answerWith(status int, body string) {
 func proxyPolicyDoc(t *testing.T) string {
 	t.Helper()
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + testCanonical(t, testBitbucketRepo) + `"],
 		"accounts": {"default": {"allow_repos": ["` + testCanonical(t, testBitbucketRepo) + `"]}},
@@ -1845,7 +1845,7 @@ func proxyRecordedHostPolicyDoc(t *testing.T) string {
 	canonical := testCanonical(t, testBitbucketRepo)
 	host := "bitbucket/" + proxyHostLikeWorkspace + "/*"
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ["` + canonical + `"],
 		"accounts": {"default": {"allow_repos": ["` + canonical + `"]}},
@@ -1911,7 +1911,7 @@ func proxyReviewPolicyDoc(t *testing.T) string {
 	t.Helper()
 	both := `["` + testCanonical(t, testBitbucketRepo) + `", "` + testCanonical(t, proxySiblingRepo) + `"]`
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + both + `,
 		"accounts": {
@@ -1948,7 +1948,7 @@ func proxySharedCodingPolicyDoc(t *testing.T) string {
 		profiles += `, "` + sharedCodingProfile + `": ` + body
 	}
 	return `{
-		"version": 5,
+		"version": 9,
 		"budget": ` + testBudgetDoc + `,
 		"allow_repos": ` + both + `,
 		"accounts": {

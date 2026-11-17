@@ -231,6 +231,14 @@ type InstallationSpec struct {
 	// (infra.CarriedProjectJobs). It is a working note of the run and not a
 	// variable — the root has no such input — so it never reaches the document.
 	CarriedProjectJobs []string `json:"-"`
+	// CarriedProjectJobAccounts are the points of the account axis this spec
+	// composes no job for, because the local config declares a KEY credential
+	// under the name (ProjectKeyAccountJobs, the filter's own answer), while
+	// the installation may already hold the job an earlier release deployed
+	// for one: prepare keeps each of them, whole, from the installation's own
+	// tfvars (infra.CarriedProjectJobAccounts). A working note like the field
+	// above, and never a variable of the root's.
+	CarriedProjectJobAccounts []ProjectJobAccount `json:"-"`
 	// ProjectReviewJobs are the review-only variants of those jobs, by job
 	// name: one per (profile, provider, account) the coding set deploys, with
 	// an empty secret_env, deployed by the root as a module instance of its own
@@ -1310,45 +1318,46 @@ func CarriedIntake(vars, prev []byte) ([]byte, error) {
 // writes (InstallationSpec's field spells it in its own tag).
 const ProjectReviewJobsKey = "project_review_jobs"
 
-// CarriedProjectReviewJobs returns vars with the implicit default review job
+// CarriedProjectReviewJobs returns vars with the implicit default review jobs
 // (ImplicitReviewJobName) that the document prev carries, when vars carry no job
 // of that name.
 //
-// It is the carry for the one review job the config cannot always compose.
-// Whether the installation deploys that job at all is the config's answer
+// It is the carry for the review jobs the config cannot always compose. Whether
+// the installation deploys one at all is the config's answer
 // (implicitReviewVariant's gates), and one of those gates is a fact the config
 // can lose AFTER the job is deployed: a second GitHub App ID recorded, or the
-// last GitHub repository gone, leaves the config with no single App ID — and
-// the job runs on one App's ID, so no reader composes it any more. The
-// installation holds it all the same, and a document rewritten without it is
-// the plan of its destruction: RefuseProjectJobDeletes stops the whole update
-// on that plan, with "restore the profile as it was" as the only remedy it can
-// print — a profile an installation that declares none does not have. Every
-// later run repeats it, so the installation stops converging for good. The job
-// is deployed for nobody who asked for it (implicitReviewVariant), and it must
-// never be the reason an installation that converges today stops converging —
-// which is what its own gate says of the run that has not deployed it yet.
+// last GitHub repository gone, leaves the config with no single App ID — and the
+// job runs on one App's ID, so no reader composes it any more; the last
+// Bitbucket repository gone is the same state for the Bitbucket job, whose gate
+// is that a repository of its provider exists at all. The installation holds the
+// job all the same, and a document rewritten without it is the plan of its
+// destruction: RefuseProjectJobDeletes stops the whole update on that plan, with
+// "restore the profile as it was" as the only remedy it can print — a profile an
+// installation that declares none does not have. Every later run repeats it, so
+// the installation stops converging for good. These jobs are deployed for nobody
+// who asked for them (implicitReviewVariant), and they must never be the reason
+// an installation that converges today stops converging — which is what each
+// one's own gate says of the run that has not deployed it yet.
 //
-// The record is the installation's own tfvars, and the job is taken from it
+// The record is the installation's own tfvars, and each job is taken from it
 // whole rather than recomposed: prepare, the writer this serves, holds the spec
 // and not the config, and the spec's review set is exactly what cannot describe
-// this job. Taken whole is also what makes the plan that follows a no-op — the
+// these jobs. Taken whole is also what makes the plan that follows a no-op — the
 // job in the record is the job in the state, so nothing about it is proposed
 // for a change.
 //
-// Two things it deliberately does not do. It never overwrites a job vars
+// Three things it deliberately does not do. It never overwrites a job vars
 // already carry: a config that composes the job again is the authority on it,
 // and that run is what catches the job up with this release's image and
-// environment — until then the carried job keeps what the installation was
-// deployed with, and it is a job no launch reaches (internal/cli's reviewJobFor
-// refuses a launch whose repository resolved no shared project job, and a
-// config that records no single App ID is that state). And it carries no other
-// review job: a profile's variant missing from the spec is a profile the config
-// no longer declares, which is a fact OF the config, and the refusal
-// RefuseProjectJobDeletes prints for it is that fact's remedy.
+// environment. It carries no other review job: a profile's variant missing from
+// the spec is a profile the config no longer declares, which is a fact OF the
+// config, and the refusal RefuseProjectJobDeletes prints for it is that fact's
+// remedy. And it carries only the jobs ImplicitReviewProviders names — the list
+// the deployment composes them from — so a provider this release deploys no
+// implicit job for has nothing carried for it either.
 //
 // prev is that document — infra.Workdir.PrevVars, or the tfvars the workdir
-// holds now, which is where the installation stage's own deploy wrote the job a
+// holds now, which is where the installation stage's own deploy wrote the jobs a
 // few steps before prepare rewrites the file.
 func CarriedProjectReviewJobs(vars, prev []byte) ([]byte, error) {
 	if prev == nil {
@@ -1357,12 +1366,17 @@ func CarriedProjectReviewJobs(vars, prev []byte) ([]byte, error) {
 	previous, err := varsDoc(prev)
 	if err != nil {
 		// A tfvars that cannot be read is not a reason to write a plan that
-		// deletes the job: fail rather than carry nothing forward.
+		// deletes the jobs: fail rather than carry nothing forward.
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	carried, _ := previous[ProjectReviewJobsKey].(map[string]any)
-	job, ok := carried[ImplicitReviewJobName()]
-	if !ok || job == nil {
+	implicit := map[string]any{}
+	for _, provider := range ImplicitReviewProviders {
+		if job, ok := carried[ImplicitReviewJobName(provider)]; ok && job != nil {
+			implicit[ImplicitReviewJobName(provider)] = job
+		}
+	}
+	if len(implicit) == 0 {
 		return vars, nil
 	}
 	doc, err := varsDoc(vars)
@@ -1370,13 +1384,20 @@ func CarriedProjectReviewJobs(vars, prev []byte) ([]byte, error) {
 		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
 	}
 	jobs, _ := doc[ProjectReviewJobsKey].(map[string]any)
-	if _, ok := jobs[ImplicitReviewJobName()]; ok {
-		return vars, nil // the spec composes the job itself: its own answer stands
+	added := false
+	for _, name := range slices.Sorted(maps.Keys(implicit)) {
+		if _, ok := jobs[name]; ok {
+			continue // the spec composes the job itself: its own answer stands
+		}
+		if jobs == nil {
+			jobs = make(map[string]any, len(implicit))
+		}
+		jobs[name] = implicit[name]
+		added = true
 	}
-	if jobs == nil {
-		jobs = make(map[string]any, 1)
+	if !added {
+		return vars, nil
 	}
-	jobs[ImplicitReviewJobName()] = job
 	doc[ProjectReviewJobsKey] = jobs
 	return sortedJSON(doc)
 }
@@ -1450,12 +1471,91 @@ func ProjectJobProfilesOf(vars []byte) (map[string]bool, error) {
 // remedy — as is the refusal installOptions raises for a config that declares a
 // github profile and records no App ID at all before any job is deployed.
 func CarriedProjectJobs(vars, prev []byte, profiles []string) ([]byte, error) {
-	if prev == nil || len(profiles) == 0 {
-		return vars, nil // nothing held, or nothing to carry
+	if len(profiles) == 0 {
+		return vars, nil // nothing to carry
 	}
 	want := make(map[string]bool, len(profiles))
 	for _, p := range profiles {
 		want[p] = true
+	}
+	return carriedProjectJobs(vars, prev, func(job map[string]any) bool {
+		profile, _ := job["profile"].(string)
+		return want[profile]
+	})
+}
+
+// CarriedProjectJobAccounts returns vars with every shared job of the named
+// (profile, provider, account) triples that the document prev carries and vars
+// lack, taken whole from prev — the coding job of each (ProjectJobsKey) and its
+// review-only variant (ProjectReviewJobsKey).
+//
+// It is the carry for the accounts this installation declares a KEY credential
+// under while a profile of the local config lists them (MC22, D1669, D1670):
+// the names ProjectJobs composes no job for at all, because every job of that
+// axis exists to mount its account's Claude token and such a name's value lives
+// under the credential's own derived secret instead (config.CredentialSecret),
+// so the job would mount a container nothing writes a version to. The filter is
+// this release's (ProjectKeyAccountJobs names what it drops), and the job an
+// installation already holds is one an earlier release deployed: the deployer
+// behind built a job for every value of the axis whose account had a
+// project-wide container (projectAccountMount's own lookup), which is exactly
+// the config that reaches here — a profile listing a key-typed name is written
+// by hand, because `fugaro accounts add` refuses to put one in a profile's
+// claude_accounts (accounts_add.go), and no command ever wrote one.
+//
+// Without this carry, that installation stops converging for good: the plan of
+// every later run is the destruction of the job the state holds,
+// RefuseProjectJobDeletes stops the whole update on that plan, and the remedy
+// it prints — "restore the profile as it was" — is not one an operator can
+// carry out here, because the name back in the profile's claude_accounts is
+// what the filter drops the job for. It is the same failure the two carries
+// above answer, and the same answer: the job is kept, whole, from the
+// installation's own record, so the plan proposes no change to it
+// (CLAUDE.md's HARD RULE: `fugaro update` is the whole upgrade, and a migration
+// it needs ships in it).
+//
+// The triple is read off the record's own entry, which states it (ProjectJob's
+// profile, provider and account), so no name is derived here and a job written
+// by another release is carried as that release wrote it. One triple answers
+// for both keys: a review variant of a NAMED account carries that account's own
+// name (config.ReviewVariantAccount is the identity for every value but the
+// empty one, and a key credential is never the profile's no-account job — its
+// name is a credential's).
+//
+// What it does not do is the shared walk's rule: a job vars already carry is
+// the spec's own answer and stays. And nothing else is carried — a triple the
+// caller does not name is a name the config no longer declares, or a profile
+// gone from it, which is a fact of the config, and the refusal
+// RefuseProjectJobDeletes prints for it is that fact's remedy.
+//
+// prev is the installation's tfvars — infra.Workdir.PrevVars, or the tfvars the
+// workdir holds now.
+func CarriedProjectJobAccounts(vars, prev []byte, accounts []ProjectJobAccount) ([]byte, error) {
+	if len(accounts) == 0 {
+		return vars, nil // nothing to carry
+	}
+	want := make(map[ProjectJobAccount]bool, len(accounts))
+	for _, a := range accounts {
+		want[a] = true
+	}
+	return carriedProjectJobs(vars, prev, func(job map[string]any) bool {
+		profile, _ := job["profile"].(string)
+		provider, _ := job["provider"].(string)
+		account, _ := job["account"].(string)
+		return want[ProjectJobAccount{Profile: profile, Provider: provider, Account: account}]
+	})
+}
+
+// carriedProjectJobs is the walk the two carries above share: every entry of
+// the document prev that want accepts, and that vars lack, taken whole from
+// prev — from the coding set and from the review-only variants, by job name.
+//
+// want reads a carried entry as the record states it, never as this release
+// would compose it: what the two carries answer for is a job an installation
+// holds, and the record is the only thing that says which jobs those are.
+func carriedProjectJobs(vars, prev []byte, want func(job map[string]any) bool) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no workdir held one: nothing to carry
 	}
 	previous, err := varsDoc(prev)
 	if err != nil {
@@ -1479,7 +1579,7 @@ func CarriedProjectJobs(vars, prev []byte, profiles []string) ([]byte, error) {
 			if !ok {
 				continue
 			}
-			if profile, _ := m["profile"].(string); !want[profile] {
+			if !want(m) {
 				continue
 			}
 			if _, ok := jobs[name]; ok {
@@ -1585,6 +1685,70 @@ func CarriedManagedDeployerScoped(vars, prev []byte) ([]byte, error) {
 		return vars, nil // the caller's own decision stands
 	}
 	doc[ManagedDeployerScopedKey] = scoped
+	return sortedJSON(doc)
+}
+
+// OrchestratorKey is the installation root's variable for the resident
+// orchestrator's block (mobile plan task P5.1b; the mobile orchestrator design's
+// section 4.3) — the account and its bindings — and it is the key
+// CarriedOrchestrator reads and keeps.
+const OrchestratorKey = "orchestrator"
+
+// CarriedOrchestrator returns vars with the orchestrator block the document prev
+// carried, when vars carry none of their own: prepare's fifth carry, beside the
+// credentials service's, the intake's, the implicit review job's and the
+// deployer's scope.
+//
+// The block is the design's section 4.3 table and nothing else — the account
+// fugaro-orch, the launcher's project role, the runs bucket's conditioned write
+// and its unconditioned read, the token-minter role on the budget signer ACCOUNT
+// and the job runner's role on each of the installation's jobs — and the
+// installation holds it as STATE. No writer in this tree composes it: the
+// variable has no CLI writer yet (infra.OrchestratorAccountID says so), so the
+// one installation that has the block is one whose owner put it in
+// terraform.tfvars.json by hand. Every path that re-serializes the root's tfvars
+// rebuilds the document from a spec that does not carry the key, so without this
+// carry the next `fugaro update` hands Terraform a document with no orchestrator
+// block at all, and the plan is the account's and its bindings' removal — a
+// google_service_account, which D1551 classifies as data-bearing ("an identity
+// whose keys and grants are lost with it") and the removal rule therefore
+// REFUSES (internal/infra/tf's RefusesRemovalType). An installation that opted
+// in by hand stops converging at its next update, and every update after it
+// repeats the same refusal.
+//
+// The block is taken WHOLE and not recomposed: it is the installation's own
+// record of what it opted into, and a run that rebuilt it from a spec would be a
+// run re-deciding the account's grants. It is carried as it is found, present or
+// absent, so an installation that never opted in is unchanged rather than given
+// a block by a run that decided nothing; and a document that carries the key of
+// its own stands, which is where the release that adds the writer will put the
+// caller's own answer.
+//
+// prev is the same pair of documents the carries beside it take —
+// infra.Workdir.PrevVars, the snapshot from before the run, and the tfvars the
+// workdir holds now.
+func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no document held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// deletes the account: fail rather than carry nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, ok := previous[OrchestratorKey]
+	if !ok || block == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	if _, own := doc[OrchestratorKey]; own {
+		return vars, nil // the caller's own answer stands
+	}
+	doc[OrchestratorKey] = block
 	return sortedJSON(doc)
 }
 
@@ -1714,6 +1878,12 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, err
 	}
 	s.ProjectJobs = jobs
+	// And the accounts that filter drops, named for the carry that keeps what
+	// the release behind deployed for them: a name the config declares a key
+	// credential under must not reach a job of this composition (D1670), and a
+	// job the installation already holds must not be planned away either (the
+	// field's own comment).
+	s.CarriedProjectJobAccounts = ProjectKeyAccountJobs(lc, o.CarriedJobProfiles)
 	review, err := projectReviewJobs(lc, bucket, s.EnableVertex, o.CarriedJobProfiles)
 	if err != nil {
 		return InstallationSpec{}, err

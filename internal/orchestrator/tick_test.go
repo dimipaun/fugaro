@@ -232,25 +232,30 @@ func TestTickMarksAFinishedRunDone(t *testing.T) {
 	})
 
 	// The mapping is the fold's whole decision, so it is pinned as a table
-	// rather than one case at a time: an outcome a run reports is a phase, and
-	// anything else is refused rather than guessed.
+	// rather than one case at a time: an outcome a run reports — and whether it
+	// left a pull request — is a phase, and anything else is refused rather
+	// than guessed.
 	t.Run("the outcome a run reported is the phase the item takes", func(t *testing.T) {
 		for _, tc := range []struct {
 			outcome orchestrator.Outcome
+			leftPR  bool
 			phase   orchestrator.Phase
 			known   bool
 		}{
-			{orchestrator.OutcomeSucceeded, orchestrator.PhaseDone, true},
-			{orchestrator.OutcomeFailed, orchestrator.PhaseFailed, true},
-			{orchestrator.OutcomeRefused, orchestrator.PhaseFailed, true},
-			{orchestrator.OutcomeCancelled, orchestrator.PhaseCancelled, true},
-			{orchestrator.OutcomeAbandoned, "", false},
-			{orchestrator.Outcome(""), "", false},
-			{orchestrator.Outcome("halted"), "", false},
+			{orchestrator.OutcomeSucceeded, false, orchestrator.PhaseDone, true},
+			{orchestrator.OutcomeSucceeded, true, orchestrator.PhaseReview, true},
+			{orchestrator.OutcomeFailed, false, orchestrator.PhaseFailed, true},
+			{orchestrator.OutcomeFailed, true, orchestrator.PhaseFailed, true},
+			{orchestrator.OutcomeRefused, false, orchestrator.PhaseFailed, true},
+			{orchestrator.OutcomeCancelled, false, orchestrator.PhaseCancelled, true},
+			{orchestrator.OutcomeAbandoned, false, "", false},
+			{orchestrator.Outcome(""), false, "", false},
+			{orchestrator.Outcome("halted"), true, "", false},
 		} {
-			phase, known := orchestrator.FoldPhase(tc.outcome)
+			phase, known := orchestrator.FoldPhase(tc.outcome, tc.leftPR)
 			if known != tc.known || phase != tc.phase {
-				t.Errorf("%q folds to (%q, %v), and this release reads it as (%q, %v)", tc.outcome, phase, known, tc.phase, tc.known)
+				t.Errorf("%q with a pull request %v folds to (%q, %v), and this release reads it as (%q, %v)",
+					tc.outcome, tc.leftPR, phase, known, tc.phase, tc.known)
 			}
 		}
 	})

@@ -56,7 +56,7 @@ As of 2026-11-16 evening, read from `main`, the open pull requests and each plan
 
 | Spec | State |
 | --- | --- |
-| orchestrator-graph-estimates | 0/39: plan only; no task approved; D2700–D2747 answered 2026-11-16 (D2720 not the recommendation; the decisions amended after review await the owner's confirmation, O4); Checks 700–703 owner-run |
+| orchestrator-graph-estimates | 0/39: plan only; all tasks approved 2026-11-16; D2700–D2747 answered 2026-11-16 (D2720 not the recommendation; the decisions amended after review await the owner's confirmation, O4); Checks 700–703 owner-run |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 

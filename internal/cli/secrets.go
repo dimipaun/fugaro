@@ -614,6 +614,19 @@ func repoSecretsDisabled(w io.Writer) error {
 	return nil
 }
 
+// repoSecretsDisabledName reports whether name is one D2313 disables: a
+// repository's own secret (config.RepoLevelSecret) that is not a credential
+// Fugaro's own scope machinery decides (platformSecretName). It is the
+// predicate every reader of the ruling asks, so the surfaces cannot disagree
+// about which names it is about: `secrets set`'s repository-scope form and
+// `secrets rm` answer the notice on it, and the secrets stage reads it to know
+// which names it may not take at all — no prompt and no line, because the one
+// store a prompt there could write is the repository's own container
+// (initsecrets.go), which is the store the ruling closed.
+func repoSecretsDisabledName(lc *localcfg.Config, name string) bool {
+	return config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(lc, name)
+}
+
 func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
@@ -806,7 +819,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
 		}
 	}
-	if config.RepoSecretsOff && config.RepoLevelSecret(name) && !platformSecretName(env.lc, name) {
+	if repoSecretsDisabledName(env.lc, name) {
 		// D2313: a repository-level secret is disabled for now, and everything
 		// below this line is a write into one repository's own container — the
 		// store, the notes about which copy wins and the step that files a log.
@@ -1544,14 +1557,13 @@ func projectWideRefusal(lc *localcfg.Config, name string) error {
 	// type, and the sentence says which of the two reasons it is rather than
 	// naming a field the owner could fill in and still not store under.
 	if cred, ok := config.CredentialBySecret(name); ok {
-		declared, isKey := config.CredentialNamed(lc.Credentials, cred)
-		switch {
-		case !isKey:
-			return userErr("%s is a key credential's own secret name, and this project declares no credential %s: declare one with '%s accounts add %s --type openrouter' (or --type anthropic), which stores its key under this name itself",
-				pluginwire.Printable(name), pluginwire.Printable(cred), selfCommand(), pluginwire.Printable(cred))
-		case !config.KeyCredentialType(declared.Type):
-			return userErr("%s is a key credential's own secret name, and %s is declared %s: a credential of that type stores its value under its Claude account's name (%s), so nothing would read this one — its type is changed in the file, where a type is a decision",
-				pluginwire.Printable(name), pluginwire.Printable(cred), pluginwire.Printable(declared.Type), pluginwire.Printable(config.ClaudeAccountSecret(cred)))
+		// The two states a name of the namespace is in when it is no declared
+		// key credential's are `fugaro creds set`'s own (creds.go's
+		// keyCredentialDeclarationRefusal), because they are one rule at the two
+		// write paths: this command refuses the container as a project-wide
+		// secret, and that one refuses the entry.
+		if err := keyCredentialDeclarationRefusal(lc, name, cred); err != nil {
+			return err
 		}
 		return projectSecretRefusal(name, "claude_accounts."+pluginwire.Printable(cred)+".allow_data_to")
 	}
