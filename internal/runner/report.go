@@ -13,7 +13,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
-	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // LogTail is the end of the output that explains a draft PR (design §4.5).
@@ -178,11 +177,11 @@ func stageTable(rec *runstore.Record) string {
 // so a reader of the report alone cannot say how much of the run went to
 // building and testing — the fact the owner asked for on 2026-11-17.
 //
-// A test record's count is the one the wrapper read out of the JUnit reports,
-// and only a test run reads any: a build or lint row has none, and a test run
-// that found no report at all carries the wrapper's warning and zero counts,
-// leaving the same cell empty. "0 tests" over a suite nobody counted is the
-// false reading stageTable's "—" exists to refuse.
+// A count is what the wrapper read out of the JUnit reports, and only a test
+// run reads any: a build or lint row counts zero, and a test run that found no
+// report at all carries the wrapper's warning and zero counts too. Both leave
+// the cell empty — "0 tests" over a suite nobody counted is the false reading
+// stageTable's "—" exists to refuse.
 //
 // The footer gives the time all the records add up to beside the run's own wall
 // clock, so a reader can see whether making the suite faster is worth anything
@@ -201,11 +200,16 @@ func verifyTable(rec *runstore.Record) string {
 			state = "failed"
 		}
 		count := ""
-		if v.Kind == verify.KindTest && v.Tests > 0 {
+		if v.Tests > 0 {
 			count = Plural(v.Tests, "test")
 		}
+		// The kind and the head are text a record states, and a record is a
+		// file inside the container the agent works in: inlineText is what
+		// keeps a hand-written one from ending the cell, the row or the report
+		// with a line of its own (the artifact table's rule, tableCode).
 		fmt.Fprintf(&b, "| %s | %s | %s (exit %d) | %s | %s |\n",
-			v.Kind, shortSHA(v.HeadSHA), state, v.ExitCode, count, secsText(v.DurationS))
+			inlineText(string(v.Kind)), tableCode(inlineText(shortSHA(v.HeadSHA))),
+			state, v.ExitCode, count, secsText(v.DurationS))
 		total += v.DurationS
 	}
 	b.WriteString("\n")

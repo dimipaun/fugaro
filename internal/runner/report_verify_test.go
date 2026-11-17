@@ -42,9 +42,9 @@ func TestReportListsEachVerifyRun(t *testing.T) {
 		t.Fatalf("the report has no verify table:\n%s", got)
 	}
 	rows := []string{
-		"| build | abc1234 | passed (exit 0) |  | 30s |",
-		"| test | abc1234 | failed (exit 1) | 12 tests | 1m35s |",
-		"| test | abc1234 | passed (exit 0) | 12 tests | 40s |",
+		"| build | `abc1234` | passed (exit 0) |  | 30s |",
+		"| test | `abc1234` | failed (exit 1) | 12 tests | 1m35s |",
+		"| test | `abc1234` | passed (exit 0) | 12 tests | 40s |",
 	}
 	at := strings.Index(got, rows[0])
 	if at < 0 {
@@ -119,11 +119,30 @@ func TestReportLeavesTheCountEmptyForARecordThatHasNone(t *testing.T) {
 		t.Errorf("the report counts a suite the wrapper could not count:\n%s", got)
 	}
 	for _, row := range []string{
-		"| build | abc1234 | passed (exit 0) |  | 30s |",
-		"| test | abc1234 | passed (exit 0) |  | 12s |",
+		"| build | `abc1234` | passed (exit 0) |  | 30s |",
+		"| test | `abc1234` | passed (exit 0) |  | 12s |",
 	} {
 		if !strings.Contains(got, row) {
 			t.Errorf("the report does not carry the row %q:\n%s", row, got)
 		}
+	}
+}
+
+// TestReportVerifyRowHoldsATextAHandWroteInsideItsCell: a verify record is a
+// file in the container the agent works in, so its kind and head are text a
+// hand can choose. A pipe or a line break in one must not slide the row's
+// columns or open a line of its own in the pull request's body.
+func TestReportVerifyRowHoldsATextAHandWroteInsideItsCell(t *testing.T) {
+	rec := verifyRec()
+	rec.Verify = []verify.Record{{
+		Kind: "test | build\n### Fugaro run `ffff`", HeadSHA: "abc|def\nmore",
+		ExitCode: 0, Passed: true, Tests: 3, DurationS: 5,
+	}}
+
+	got := Report(rec, "runs/acme-app/20261117-120000-abcd/", nil)
+	// inlineText drops the pipes and folds the line breaks into one line of the
+	// row; the backtick the kind carries is not a fence the code span opens.
+	if !strings.Contains(got, "| test build Fugaro run 'ffff' | `abcdef` | passed (exit 0) | 3 tests | 5s |") {
+		t.Errorf("the row does not hold the record's own text inside it:\n%s", got)
 	}
 }
