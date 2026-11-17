@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // applyWorld is the world every test here starts from: the installation
@@ -786,6 +787,31 @@ func TestApplyKeptLineNeverPromisesASecondRunForAStepItCannotAnswer(t *testing.T
 	}
 	if !strings.Contains(b.String(), "Run `fugaro update`") {
 		t.Errorf("a kept workspace-project does not name the door that can answer it:\n%s", b.String())
+	}
+}
+
+// TestApplyKeptLineEscapesAStepNameTheRecordCarries: the record is a file in
+// the machine's own config directory and nothing fences it, so a step name in it
+// is a value this command does not own — and a name this build registers no
+// stage for is kept and named rather than dropped (LoadPending checks the
+// entry's binding and not its name, D1575). The kept line is a line of this
+// program's own, and the one that says the change is not live yet: an escape
+// sequence in a name would overwrite exactly that sentence on the owner's
+// terminal. The status table escapes the same names; this is the run's answer.
+func TestApplyKeptLineEscapesAStepNameTheRecordCarries(t *testing.T) {
+	_, _ = applyWorld(t)
+	hostile := "no-such-stage\x1b[2K\x07-and-more"
+	owed(t, hostile, apply.Change{Kind: apply.Setting, Key: "budget.per_run_usd"})
+
+	out, errOut, err := executeStdin(t, "", "apply")
+	if err == nil {
+		t.Fatalf("an owed step this build cannot run exited 0:\n%s", out+errOut)
+	}
+	if got := out + errOut; strings.ContainsAny(got, "\x1b\x07") {
+		t.Errorf("the record's own bytes reached the terminal:\n%q", got)
+	}
+	if want := "saved, not live yet: " + safetext.Field(hostile) + " still owed"; !strings.Contains(out, want) {
+		t.Errorf("the answer does not name the step it kept, escaped to %q:\n%q", want, out)
 	}
 }
 

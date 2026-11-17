@@ -444,8 +444,19 @@ func applyRecordNote(w io.Writer, recorded, current bool) {
 // A kept workspace-project says where too, for a reason of this command's own:
 // its step is a grant confirmed by a typed name, and no run of `fugaro apply`
 // can give that word, so the command it names is `fugaro update`.
+//
+// The names are the record's and not this command's: it is a file in the
+// machine's own config directory, nothing fences it, and the reader checks the
+// entry's binding and never its name (D1575) — so a name this build registers
+// no stage for is kept, and a name can carry an escape sequence that would
+// redraw the very line saying the change is not live yet. Each one is escaped
+// where it is joined, the way the status table escapes the same names.
 func applyKeptLine(w io.Writer, kept []string) {
-	fmt.Fprintf(w, "saved, not live yet: %s still owed\n", strings.Join(kept, ", "))
+	names := make([]string, 0, len(kept))
+	for _, n := range kept {
+		names = append(names, safetext.Field(n))
+	}
+	fmt.Fprintf(w, "saved, not live yet: %s still owed\n", strings.Join(names, ", "))
 	if slices.Contains(kept, initflow.Repository) {
 		fmt.Fprintln(w, "Run `fugaro apply` in a checkout of the repository the change was made for: the redeploy is that repository's own Terraform root, and this machine has none of it.")
 		return
