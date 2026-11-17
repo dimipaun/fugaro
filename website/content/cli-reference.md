@@ -29,6 +29,7 @@ Subcommands:
 - `fugaro ab` -- Report model A/B results: pairs, wins, cost and the recommendation per group
 - `fugaro accounts` -- List the named Claude accounts a repository may use
 - `fugaro allow-delete` -- Record the objects a run may delete or replace, by address (the project's owner)
+- `fugaro apply` -- Run the follow-up steps a management command saved for later
 - `fugaro artifacts` -- List and download what an artifact run delivered
 - `fugaro backends` -- List the compute backends an installation can run its jobs on
 - `fugaro backlog` -- File a backlog item, read the backlog, regenerate its index
@@ -955,6 +956,43 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for allow-delete |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro apply`
+
+Run the follow-up steps a management command saved for later
+
+Run the follow-up steps a management change saved for later.
+
+A management command (settings set, image add, models rm, workspace add, ...)
+writes its change and then runs the steps that make it live: publishing the
+project policy, redeploying the checkout's repository, building a catalog
+image. A step its own run did not finish stays owed, and this command runs
+what is owed.
+
+Every owed step runs once, in the installation's own order, whatever queued it
+and however many changes asked for the same one. Each step checks the state
+first and does nothing when there is nothing to do, so running this command
+again costs nothing. A step that fails leaves its change saved and the step
+owed: this command says so and exits non-zero, and running it again finishes
+the job.
+
+With --status it prints what is owed and changes nothing.
+
+Usage: `fugaro apply [--status]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's own under $XDG_CONFIG_HOME/fugaro/projects) |
+| `-h`, `--help` | bool | `false` | no | help for apply |
+| `--json` | bool | `false` | no | print the answer as a JSON document |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--status` | bool | `false` | no | print the steps that are owed and change nothing |
 
 Subcommands:
 
@@ -7290,6 +7328,12 @@ project layer file, and `--area <glob>` writes one rule of
 the strictest of the rules that match it. The file is the one `fugaro update`
 publishes, and every write ends with `next: fugaro update`.
 
+`--layer repo` writes the same two keys into a checkout's own `fugaro.yaml`
+instead: there they are live once your branch is merged to the base branch,
+which is what every run reads, and this command commits, pushes and opens
+nothing. The project layer file stays the layer a write lands in when no
+`--layer` says otherwise.
+
 A mode is `poc`, `startup`, `pro`, `critical` or `hotfix`, and `hotfix` is the one
 no layer sets: it is a per-run mode, reached with
 `fugaro run --mode hotfix` from wherever a run is launched — a coding
@@ -7470,24 +7514,33 @@ pull request say decided the mode. --name on a rule the layer already carries
 renames it. A second rule with the same glob is refused: one glob addresses one
 rule, and two rules matching one path leave only the strictest of them deciding.
 
-A mode below what this project resolves to today is the sensitive direction: a
-coding agent's session is refused it with the diff and the command to run at
-your own terminal, and your own terminal writes it and asks
+`--layer repo` writes the same key into a checkout's own `fugaro.yaml`, where
+the two keys are spelled `rigor.default` and `rigor.areas`: that file is the
+repository's own, reviewed like the rest of it, and what it sets is live once
+your branch is merged to the base branch — every run reads the base branch, and
+this command commits, pushes and opens nothing. `--repo` names the repository,
+as owner/name or as a path to its checkout; without it the checkout the command
+runs in is the one written. A layer the key does not have is refused naming the
+layers it does: `local` is not one of them.
+
+A mode below what this project's runs resolve to today is the sensitive
+direction: a coding agent's session is refused it with the diff and the command
+to run at your own terminal, and your own terminal writes it and asks
 nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
 
 The command prints the review floor beside the write, and it cannot lower it:
 the floor is outside every layer, and `fugaro rigor floor` is the command that
 changes one.
 
-It writes one file: this machine's own project layer file, whose path is
-derived from the selected project's name. A project that has published no layer
-and has no local file of its own gets one — a project layer document carrying
-this installation's anchors and the change that was asked for — so a fresh
-installation can set a mode. A project that HAS published a layer is not written
-over: with no local file there the command refuses and names `fugaro update`,
-whose Layer stage seeds the file from that layer.
+With no `--layer` it writes one file: this machine's own project layer file,
+whose path is derived from the selected project's name. A project that has
+published no layer and has no local file of its own gets one — a project layer
+document carrying this installation's anchors and the change that was asked for
+— so a fresh installation can set a mode. A project that HAS published a layer
+is not written over: with no local file there the command refuses and names
+`fugaro update`, whose Layer stage seeds the file from that layer.
 
-Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]]`
+Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]] [--layer LAYER] [--repo REPO]`
 
 Flags:
 
@@ -7497,8 +7550,10 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the keys are spelled rigor.default and rigor.areas and are live once your branch is merged to the base branch) |
 | `--name` | string | "" | no | the rule's name; required for a glob the layer does not carry yet, and a rename for one it does |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
 
 Subcommands:
 
@@ -7534,8 +7589,10 @@ fugaro watch and runs ls list the run by, and the title (with the body's first
 heading) of the pull request the run opens when the agent writes no pr.md of
 its own. Without it the run is named by the task's first line, so briefs that
 start with the same preamble all read alike. A follow-up (--pr) keeps its run's
-title unless --title is given, and --retry takes none (the stored task keeps its
-own).
+title unless --title is given, and with neither a title nor a task of its own it
+takes the title of the pull request it continues, read from the code host (a host
+that cannot be read leaves the run named by its own instructions). A task of its
+own always wins, and --retry takes none (the stored task keeps its own).
 
 --plan-task PLAN/TASK records which task of which plan this run works on, so
 the console's graph can join the run to that node. One plan and one task id,
@@ -7617,7 +7674,7 @@ Flags:
 | `--security` | bool | `false` | no | ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone |
 | `--task-file` | string | "" | no | read the task from this file, or - for stdin |
 | `--tier` | string | "" | no | the expectation tier to dispatch this run at: trivial, small, medium, large. It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all |
-| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given |
+| `--title` | string | "" | no | the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and with no title and no task of its own it takes the pull request's title instead |
 | `--token` | string | "" | no | named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's) |
 | `--total-timeout` | string | "" | no | override the workflow's timeouts.total for this run, such as 45m |
 | `--used-review-rounds` | string | "" | no | state that the chain has already spent N review rounds, such as 2: tighten-only like --used-usd |
@@ -8570,11 +8627,51 @@ it with the command to run yourself (D1552). --dry-run
 says what the write would do and writes nothing, and --json prints that as
 the settings-write document.
 
+Three flags record what this machine knows about secrets, in its own local
+config, and read no value at all:
+
+  --expires DATE               record secret_expires.NAME, the day this secret
+                               lapses, written YYYY-MM-DD and not in the past:
+                               fugaro doctor warns ahead of it
+  --rotation-days N            record secret_rotation_days, the period this
+                               installation means to go between rotations
+  --bitbucket-api-root URL     add an API root to bitbucket_api_roots, the
+                               roots a run may send the Bitbucket token to: an
+                               https origin, with no userinfo, query or
+                               fragment, and never a credential
+  --remove-bitbucket-api-root URL
+                               take one of those roots out again: the same
+                               value the flag above takes, and the key goes
+                               with the last root, because a list with no
+                               roots is the absent key
+
+NAME goes with --expires alone — a date is recorded for one secret, while the
+others are records of the installation. --layer names the document such a
+record is written in (local, project or repo), and these are local config keys,
+so --layer project is refused with the layers the key has (local, shared). Each
+value a flag names is a settings write of its own: one diff and one backup each,
+so two flags in one command are two writes and one flag naming two roots — a
+comma-separated or repeated --bitbucket-api-root — is two writes as well. A dry
+run answers for the run and not per record: it prints one record per value named,
+in the order the flags named them, so a key named twice appears twice, and one
+record prints that record's document while two or more print one document that
+holds every record and names no single key — the one value a consumer of --json
+parses. The add flag writes
+into bitbucket_api_roots rather than writing the key whole, so no run of it can
+drop a root you put there:
+`fugaro secrets set --remove-bitbucket-api-root URL`
+takes one back out, and clearing the rotation period is
+`fugaro secrets set --rotation-days 0`, which records "no period" —
+the value the row itself reads as none. --repo and --project-wide are refused
+beside these flags, and so are --allow-data-to and --proxy: a record has no
+repository's copy, and the policy entry is a write of its own run — run the
+command twice to change both.
+
 A value is not a setting: it has no row, it is never in a diff, and no dry
-run of this command prints one. secrets set with neither policy flag is the
-value write and reads the value from stdin; to store a value and change its
-policy, run the command twice. A coding agent's session is refused the
-policy flags outright (spec §5), because a secret's policy is
+run of this command prints one. secrets set with neither the policy flags nor
+the records above is the value write and reads the value from stdin; to store
+a value and change its policy, run the command twice. A coding agent's session
+is refused the policy flags outright (spec §5), because a secret's policy is
 a value no plan shows.
 
 Usage: `fugaro secrets set NAME`
@@ -8584,16 +8681,21 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `--allow-data-to` | stringSlice | `[]` | no | add a repository (owner/name) to NAME's allow_data_to — project_secrets.NAME.allow_data_to, or workflow_secrets.NAME.allow_data_to for a workflow secret — the list of repositories the value is stored for; comma-separated or repeated |
+| `--bitbucket-api-root` | stringSlice | `[]` | no | add an API root (https://host, no userinfo, query or fragment) to bitbucket_api_roots, the roots a run may send the Bitbucket token to; comma-separated or repeated, and never a credential |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
-| `--dry-run` | bool | `false` | no | print what the policy write would do and write nothing |
+| `--dry-run` | bool | `false` | no | print what the write would do — the policy entry, or one of the records the settings flags write — and write nothing |
+| `--expires` | string | "" | no | record secret_expires.NAME, the day this secret lapses, as YYYY-MM-DD (today or later); writes the local config and reads no value |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--layer` | string | "" | no | the layer a record is written in (local, project, repo); these records are the local config's, so local is the layer they take |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--project-wide` | bool | `false` | no | the default for a name that has a project-wide meaning, accepted as a synonym so existing scripts keep working (cannot be combined with --repo) |
 | `--proxy` | bool | `false` | no | set project_secrets.NAME.proxy, the Bitbucket token's switch for the credentials service (--proxy=false turns it off) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--remove-bitbucket-api-root` | stringSlice | `[]` | no | take an API root out of bitbucket_api_roots, the same value the add flag takes; the key goes with the last root, and removing a root the list does not hold changes nothing |
 | `--repo` | string | "" | no | work on one repository's own copy, given as owner/name or a path inside its checkout (no value: this checkout's origin); without it, a name that has a project-wide meaning is stored and listed project-wide |
+| `--rotation-days` | int | `0` | no | record secret_rotation_days, the period this installation means to go between rotations, in days; writes the local config and reads no value |
 
 Subcommands:
 

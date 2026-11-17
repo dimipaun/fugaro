@@ -177,7 +177,12 @@
 #             service), its call was never handed to the service, or no
 #             container carries the label the accessor row is read from. In the
 #             block, a key the run never reached reads `FAIL — not reached`,
-#             which is a row that was NOT measured.
+#             which is a row that was NOT measured, and a key the MODE this run
+#             is in never records — Check 192's rows and the `dry-run` marker in
+#             a Check 191 run, and Check 191's rows in a Check 192 one — reads
+#             `N/A — not part of this mode (<mode>)`, which is neither a pass
+#             nor a failure and changes no exit code: the run did not stop
+#             before that row, it is a row this run could never have recorded.
 #
 # A NOTE ON WHAT IS NEVER PRINTED: no credential value, no token and no
 # authorization header reaches this script's stdout, its stderr, the block or
@@ -2034,9 +2039,11 @@ run_192() {
 
 # -------------------------------------------------------------------- the plan
 # --dry-run prints what a real run would do and records every row that run would
-# record, as INFO: a row that was NOT measured must not read as a PASS, and a
-# key the plan did not name would print as `FAIL — not reached`, which nobody
-# measured either.
+# record, as INFO: a row that was NOT measured must not read as a PASS. A key
+# the plan did not name prints as `FAIL — not reached` where the mode records it
+# and as `N/A — not part of this mode` where it does not (BLOCK_KEYS_*_NA): the
+# plan of a mode names that mode's own rows, so a row of the other mode is no
+# more measured here than a real run of this mode measures it.
 plan() {
   local row name key
   say "CHECK ${CHECK} plan (dry run: nothing below is run, and no row in the block was measured)"
@@ -2070,7 +2077,8 @@ plan() {
 
 # The block's shape does not depend on how far the run got: the keys below are
 # printed in this order whatever happened, one that was never reached reads
-# `FAIL — not reached`, and any other recorded key follows in the order the run
+# `FAIL — not reached` (or `N/A — not part of this mode`, for one this mode
+# never records), and any other recorded key follows in the order the run
 # recorded it. That is what makes the block safe to diff between two runs.
 BLOCK_KEYS=(fugaro-version project-region xtrace dry-run proxied account-admitted jobs mount accessor doctor
   run-launch run-outcome
@@ -2078,9 +2086,25 @@ BLOCK_KEYS=(fugaro-version project-region xtrace dry-run proxied account-admitte
   refusal-other-pull-request refusal-merge refusal-workspaces
   review-run ended-identity run-still-works plain-repo restore scratch-removed)
 
+# The rows each mode NEVER records — a key here was not reached by this run and
+# could not have been. Check 191 (proxy) reads the working run's rows and never
+# `jobs`, `mount`, `accessor` and `doctor` (Check 192's flip section), nor
+# `run-still-works` and `plain-repo` (the flip's own two runs); Check 192 (flip)
+# reads those six and none of Check 191's rows — not one of `proxied`,
+# `account-admitted`, `run-launch`, `run-outcome`, the seven refusals,
+# `review-run` or `ended-identity` exists in that mode; and `dry-run` is written
+# by a --dry-run plan alone, whatever mode it is in. A key of the list for the
+# mode this run is in that no fact carries prints `N/A — not part of this mode`
+# rather than `FAIL — not reached`: the run did not stop before it, and the row
+# is neither a pass nor a failure — it is not in the facts the verdict is taken
+# from, which counts a FAIL alone, so it can move no exit code.
+BLOCK_KEYS_PROXY_NA="dry-run jobs mount accessor doctor run-still-works plain-repo"
+BLOCK_KEYS_FLIP_NA="dry-run proxied account-admitted run-launch run-outcome refusal-other-repository refusal-other-ref refusal-tag-ref refusal-ref-delete refusal-other-pull-request refusal-merge refusal-workspaces review-run ended-identity"
+
 print_block() { # print_block FACTS STATUS — always on the owner's own stdout
   local facts=$1 status=$2
-  local key printed=""
+  local key printed="" na=$BLOCK_KEYS_PROXY_NA
+  [ "$MODE" = flip ] && na=$BLOCK_KEYS_FLIP_NA
   printf '\nCHECK %s RESULT\n' "$CHECK" >&3
   for key in "${BLOCK_KEYS[@]}"; do
     local line
@@ -2090,7 +2114,10 @@ print_block() { # print_block FACTS STATUS — always on the owner's own stdout
         "$(printf '%s' "$line" | cut -d'|' -f2)" \
         "$(printf '%s' "$line" | cut -d'|' -f3-)" >&3
     else
-      printf 'FACT %s: FAIL — not reached (the run stopped before this step)\n' "$key" >&3
+      case " $na " in
+      *" $key "*) printf 'FACT %s: N/A — not part of this mode (%s)\n' "$key" "$MODE" >&3 ;;
+      *) printf 'FACT %s: FAIL — not reached (the run stopped before this step)\n' "$key" >&3 ;;
+      esac
     fi
     printed="$printed$key"$'\n'
   done

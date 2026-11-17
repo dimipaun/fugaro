@@ -59,11 +59,13 @@ type policyDrift struct {
 // The comparison is the JSON both sides spell, so a member the node omits and a
 // config that states nothing for it are one value (the carrier's omitempty is
 // what drops an empty list on the way in). Only the members a config edit has to
-// reach a run through are compared: the keys no command of this release writes
-// into the node (credentials, allow_repos) are the node's own, and
-// `providers` reaches a run through its own job's copy, not through this node
-// (F9), so a config whose only difference is its providers: block is no reason
-// to rewrite what every run of the project is admitted by.
+// reach a run through are compared: allow_repos is the node's own (no command of
+// this release writes it from the local config), and `providers` reaches a run
+// through its own job's copy, not through this node (F9), so a config whose only
+// difference is its providers: block is no reason to rewrite what every run of
+// the project is admitted by. The credentials block is not in that list any
+// more: this release's local config carries it (credential_cascade), so it is
+// compared below through the publisher's own merge (D2607).
 func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities map[string]string) []policyDrift {
 	if lc.Budget == nil || p == nil {
 		// A config with no budget block names no budget backend, so the stage
@@ -197,6 +199,23 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	craftPools, _ := publishedCraftPools(lc, p, craftCreds)
 	add("craft_pools", craftPools, p.CraftPools, false)
 	add("crafts", publishedCrafts(lc, p), p.Crafts, false)
+	// The cascade and the model grades are the same case one block over
+	// (D2607, F5, F6): the local config is their carrier from this release on,
+	// so a config that states a member the node does not carry is exactly the
+	// gap this stage exists to close — without the comparison the operator's
+	// own `credential_cascade:` or `model_grades:` edit would reach no run
+	// until they ran the explicit publish, which is the second command the HARD
+	// RULE forbids. Each is compared through the publisher's own merge, the
+	// craft rows' reason: a config that states nothing is not reported as a
+	// difference (the merge hands the node's own member back, so the two sides
+	// are one document and the row is silent), while a written block is the
+	// operator's edit and is reported like any other.
+	if lc.CredentialCascade != nil {
+		add("credentials", publishedCredentials(lc, p.Credentials), p.Credentials, false)
+	}
+	if lc.ModelGrades != nil {
+		add("model_grades", publishedModelGrades(lc, p.ModelGrades), p.ModelGrades, false)
+	}
 	// The triage switch reaches a run off this node too (D1854), so a config
 	// that states it where the node states the other answer is a difference a
 	// publish closes, and it is compared the bake switch's way: the node's value
@@ -776,22 +795,25 @@ func policyAccountWidening(old, new *projectpolicy.Policy) []policyCeiling {
 	return out
 }
 
-// policyCraftWidening is the craft grants this publish would ADD or REWRITE
-// where the node it replaces carries them not at all or carries another value:
-// a credential the node does not name, a credential whose type changes, a pool
-// the node does not name or one whose members, strategy, owner or users change,
-// and a craft's access.
+// policyCraftWidening is the grants this publish would ADD or REWRITE where the
+// node it replaces carries them not at all or carries another value: a
+// credential the node does not name, a credential whose type changes, a pool the
+// node does not name or one whose members, strategy, owner or users change, a
+// craft's access, a member of the cascade (its fallback, its threshold, its
+// backoff and D142's two controls), and a model grade's access.
 //
-// They are the node's spending and egress grant (F12/D1628): a credential is a
-// token a run's calls go out on, a pool is the set of them a craft may be served
-// by, and a craft's access is which of the two that craft's calls use — so a
-// publish that adds one hands every run of the project a credential it did not
-// hold, and one that repoints an access moves a craft's calls onto another
-// credential. That is the account-choice members' own class rather than a
-// ceiling settingsLoosens reads (a credential and a pool are no member of
-// policyCeilingMembers), so their comparison is asked beside it, and MC18's
-// publish — which writes the three blocks from the installation's config — is
-// what makes them a change this node can meet at all.
+// They are the node's spending and egress grant (F12/D1628, D2617): a credential
+// is a token a run's calls go out on, a pool is the set of them a craft may be
+// served by, a craft's access is which of the two that craft's calls use, the
+// cascade is where a run's calls fall over when one is exhausted, and a grade's
+// access is what the ladder's rung spends. So a publish that adds one hands
+// every run of the project a credential it did not hold, and one that repoints
+// an access moves a craft's calls onto another credential. That is the
+// account-choice members' own class rather than a ceiling settingsLoosens reads
+// (a credential and a pool are no member of policyCeilingMembers), so their
+// comparison is asked beside it, and this release's publish — which writes the
+// blocks from the installation's config (MC18, N4) — is what makes them a change
+// this node can meet at all.
 //
 // A member this publish REMOVES is not a widening, exactly as the account
 // members' removal is not: it takes a grant away from the node. Nor is a craft's
@@ -912,18 +934,80 @@ func craftAccountNamed(lc *localcfg.Config, name string) bool {
 	return ok
 }
 
-// policyCraftGrantValues is a node's craft grants keyed and spelled the way the
+// policyCraftGrantValues is a node's grants keyed and spelled the way the
 // publish diff spells them — the very lines whose change the operator reads
 // there — so a sentence naming one names the text the diff above it shows. The
-// three blocks are the diff's own three: a credential by its type, a pool by the
-// members and the answers that decide who it is served to, and an access alone.
+// blocks are the diff's own: a credential by its type, a pool by the members and
+// the answers that decide who it is served to, a craft by its access alone, and
+// the two the reconcile carries beside them — the cascade, member by member
+// (credentialsGrantLines), and each grade's access half (gradeGrantLines).
 func policyCraftGrantValues(p *projectpolicy.Policy) map[string]string {
 	out := map[string]string{}
 	if p == nil {
 		return out
 	}
-	for _, lines := range []map[string]string{craftCredentialLines(p), craftPoolLines(p), craftAccessLines(p)} {
+	for _, lines := range []map[string]string{
+		craftCredentialLines(p), craftPoolLines(p), craftAccessLines(p),
+		credentialsGrantLines(p), gradeGrantLines(p),
+	} {
 		maps.Copy(out, lines)
+	}
+	return out
+}
+
+// credentialsGrantLines is the cascade's members as grants, keyed the way the
+// diff spells them (credentialsText) and one key per member so a sentence names
+// the member that moved rather than the block.
+//
+// The cascade is a grant because it decides how a run's calls go out when a
+// credential is exhausted (D152, D153): `fallback` is whether a run may spend
+// the project's money at all — `auto` is openrouter when the run holds no
+// Anthropic key (D1b) — and D142's two controls decide how much of it a window
+// admits. A member this publish removes is left out here and is not a widening
+// (policyCraftWidening's own rule): it takes the statement away.
+func credentialsGrantLines(p *projectpolicy.Policy) map[string]string {
+	out := map[string]string{}
+	if p == nil || p.Credentials == nil {
+		return out
+	}
+	c := p.Credentials
+	if c.Fallback != "" {
+		out["credentials fallback"] = c.Fallback
+	}
+	if c.WaitThreshold != "" {
+		out["credentials wait_threshold"] = c.WaitThreshold
+	}
+	if c.Backoff != nil {
+		if c.Backoff.Initial != "" {
+			out["credentials backoff.initial"] = c.Backoff.Initial
+		}
+		if c.Backoff.Cap != "" {
+			out["credentials backoff.cap"] = c.Backoff.Cap
+		}
+	}
+	if c.StopAfterExhaustionPerWindow != nil {
+		out["credentials stop_after_exhaustion_per_window"] = strconv.FormatBool(*c.StopAfterExhaustionPerWindow)
+	}
+	if c.ConcurrencyPerToken != nil {
+		out["credentials concurrency_per_token"] = strconv.Itoa(*c.ConcurrencyPerToken)
+	}
+	return out
+}
+
+// gradeGrantLines is each model grade's ACCESS half as a grant, and never its
+// model: a grade's access is the credential or pool its rung's calls go out on,
+// which is the craft access's own grant (F12, D1628), while the model beside it
+// decides what the rung runs and not whose credential it spends — the same
+// split policyCraftWidening makes for a craft.
+func gradeGrantLines(p *projectpolicy.Policy) map[string]string {
+	out := map[string]string{}
+	if p == nil || p.ModelGrades == nil {
+		return out
+	}
+	for _, name := range config.GradeNames {
+		if c := p.ModelGrades.At(name); c != nil && c.Access != "" {
+			out["model_grades "+name+".access"] = c.Access
+		}
 	}
 	return out
 }
@@ -980,15 +1064,64 @@ func (m *policyMigration) loosening() []policyCeiling {
 	if m.firstPublish {
 		return []policyCeiling{{Member: projectpolicy.PathShared()}}
 	}
-	// The account keys and the craft grants are not ceilings, so settingsLoosens
-	// has nothing to say about them and their own comparisons are asked beside
-	// it: setting one is the same class of decision — who is admitted, and on
-	// whose credential — that the typed name guards here, and a credential, a
-	// pool or an access this publish adds is the grant itself
-	// (policyCraftWidening).
+	// The account keys and the grants are not ceilings, so settingsLoosens has
+	// nothing to say about them and their own comparisons are asked beside it:
+	// setting one is the same class of decision — who is admitted, and on whose
+	// credential — that the gate refuses here, and a credential, a pool, a
+	// craft's access, a cascade member or a grade's access this publish adds is
+	// the grant itself (policyCraftWidening, D2617).
 	out := policyLoosening(m.node, m.pub.pol)
 	out = append(out, policyAccountWidening(m.node, m.pub.pol)...)
 	return append(out, policyCraftWidening(m.node, m.pub.pol, m.lc)...)
+}
+
+// grantOnly is whether the whole of this publish's loosening is grants — the
+// members D2617 names, which hand a run a credential, a pool or a model it did
+// not hold — and nothing else: no ceiling raised, none removed, the model list
+// not widened, and no account-choice member moved.
+//
+// It is the condition the typed name is waived on for a grant (D1542, D1552,
+// F24). Adding the grants to loosening() is what puts them in front of the
+// gate, which refuses them in a coding agent's session and on a managed
+// project's --yes; what it must not do is put them in front of every
+// installation's first `fugaro update` as a typed name, because the update door
+// asks nothing for a grant: the diff above the line is what the operator reads,
+// and a grant is a widening the owner's own command publishes. The account
+// choice beside it is NOT this and keeps the confirmation: it has its own fence
+// (D2097's door, and policyAccountWidening's typed name at a real terminal), and
+// the alias command's waiver is the narrower accountChoiceOnly. So is a ceiling
+// raised in the same publish, which is the separate decision D846 reserves for
+// the project's own hand.
+//
+// A project's FIRST node is never this, whatever it carries, for
+// accountChoiceOnly's reason: the node it writes is the whole of the project's
+// policy, which is what the first publish's own sentence says and what its Typed
+// class is about. So is a run with no node to compare against, which is the same
+// case read from the other side.
+func (m *policyMigration) grantOnly(loosening []policyCeiling) bool {
+	if m.firstPublish || m.pub == nil || len(loosening) == 0 {
+		return false
+	}
+	return len(policyLoosening(m.node, m.pub.pol)) == 0 && len(policyAccountWidening(m.node, m.pub.pol)) == 0
+}
+
+// refuseGrantsInAnAgentSession is D2617's fence on this tail: a publish that
+// carries a grant is refused in a coding agent's session whatever the gate said.
+//
+// It is D1552's fence and not a second one — the session is what refuses a
+// widening, and not the step's class — extended from the ceilings to the grants
+// this release's reconcile publishes (D2617, F24). The gate refuses this case
+// itself wherever it stands in for the session, so what reaches here is a step
+// the gate admitted; the fence is kept anyway, because a grant a coding agent
+// queues in the local config is published by the owner's own next `fugaro
+// update` and never by the session that wrote the file. It is asked before the
+// diff is printed, so a session that is refused is told why and reads nothing
+// it might take for the write.
+func (m *policyMigration) refuseGrantsInAnAgentSession(c initflow.Conditions) error {
+	if c.Agent == "" || !m.writesNode() || len(m.loosening()) == 0 {
+		return nil
+	}
+	return &initflow.AgentError{Marker: c.Agent}
 }
 
 // accountChoiceOnly is whether the whole of this publish's loosening is the
@@ -1162,6 +1295,14 @@ func generationText(g string) string {
 // object that no longer exists, which the next run would read as another
 // machine's publish.
 func policyGenerationRecord(w io.Writer, path string, lc *localcfg.Config, gen string) error {
+	return policyGenerationRecordOf(w, path, lc, gen, nil)
+}
+
+// policyGenerationRecordOf is policyGenerationRecord for a run that has just
+// written a policy node, published being the node it wrote: the two edits ride
+// on one write of the file, so the backup beside it is one and the file is
+// replaced once (clearReconciledRemovals).
+func policyGenerationRecordOf(w io.Writer, path string, lc *localcfg.Config, gen string, published *projectpolicy.Policy) error {
 	if path == "" {
 		return userErr("the published policy node's generation cannot be recorded: this installation has no local config file (a shared config has none)")
 	}
@@ -1172,6 +1313,10 @@ func policyGenerationRecord(w io.Writer, path string, lc *localcfg.Config, gen s
 	out, err := yamledit.SetScalar(old, []string{"policy_generation"}, gen)
 	if err != nil {
 		return userErr("recording the published policy node's generation in %s: %v", path, err)
+	}
+	out, cleared, err := clearReconciledRemovals(out, lc, published)
+	if err != nil {
+		return userErr("clearing the removals the published node no longer holds from %s: %v", path, err)
 	}
 	if !yamledit.Changed(old, out) {
 		lc.PolicyGeneration = gen
@@ -1185,8 +1330,98 @@ func policyGenerationRecord(w io.Writer, path string, lc *localcfg.Config, gen s
 		return userErr("recording the published policy node's generation in %s: %v", path, err)
 	}
 	fmt.Fprintf(w, "recorded the published policy node's generation in %s (backup at %s)\n", path, backup)
+	for _, name := range cleared {
+		fmt.Fprintf(w, "  node_removals %s cleared: the published node no longer holds it\n", name)
+	}
 	lc.PolicyGeneration = gen
 	return nil
+}
+
+// clearReconciledRemovals is this machine's explicit-unset record with the
+// names the node it has just published no longer holds taken out of it, in the
+// file's own text and in the config this run holds (D2607, F22): a removal is a
+// statement about the node and it is spent once the write has landed, so the
+// record would otherwise make every publish after this one delete a name the
+// node does not have. A record that names nothing left is the key's absence
+// (NodeRemovals.IsZero), so the key goes with the last name.
+//
+// A name the published node STILL holds stays in the record: the write that was
+// to delete it did not, and the record is what makes the next publish try
+// again. published is nil for a run that published no node — a bare migration
+// writes the node it migrated and reconciles nothing — and then nothing is
+// cleared, because this run has no answer about any of the names.
+func clearReconciledRemovals(src []byte, lc *localcfg.Config, published *projectpolicy.Policy) ([]byte, []string, error) {
+	r := removedNames(lc)
+	if r.IsZero() || published == nil {
+		return src, nil, nil
+	}
+	creds := map[string]bool{}
+	for _, c := range published.CraftCredentials {
+		creds[c.Name] = true
+	}
+	pools := map[string]bool{}
+	for _, p := range published.CraftPools {
+		pools[p.Name] = true
+	}
+	crafts := map[string]bool{}
+	for _, name := range config.CraftNames {
+		if published.Crafts != nil && published.Crafts.Of(name) != (config.Craft{}) {
+			crafts[name] = true
+		}
+	}
+	remaining := localcfg.NodeRemovals{}
+	var cleared []string
+	for _, l := range []struct {
+		key, block string
+		names      []string
+		held       map[string]bool
+		keep       *[]string
+	}{
+		{"craft_credentials", "craft_credentials", r.CraftCredentials, creds, &remaining.CraftCredentials},
+		{"pools", "pools", r.Pools, pools, &remaining.Pools},
+		{"crafts", "crafts", r.Crafts, crafts, &remaining.Crafts},
+	} {
+		for _, name := range l.names {
+			if l.held[name] {
+				*l.keep = append(*l.keep, name)
+				continue
+			}
+			cleared = append(cleared, l.block+" "+name)
+		}
+	}
+	if len(cleared) == 0 {
+		return src, nil, nil
+	}
+	if remaining.IsZero() {
+		out, err := yamledit.RemoveKey(src, []string{"node_removals"})
+		if err != nil {
+			return nil, nil, err
+		}
+		lc.NodeRemovals = nil
+		return out, cleared, nil
+	}
+	var err error
+	out := src
+	for _, l := range []struct {
+		key   string
+		names []string
+		held  map[string]bool
+	}{
+		{"craft_credentials", r.CraftCredentials, creds},
+		{"pools", r.Pools, pools},
+		{"crafts", r.Crafts, crafts},
+	} {
+		for _, name := range l.names {
+			if l.held[name] {
+				continue
+			}
+			if out, err = yamledit.RemoveListItem(out, []string{"node_removals", l.key}, name); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	lc.NodeRemovals = &remaining
+	return out, cleared, nil
 }
 
 // recordPublishedGeneration records the generation of the node a run has just
@@ -1207,7 +1442,7 @@ func policyGenerationRecord(w io.Writer, path string, lc *localcfg.Config, gen s
 // so: the caller reports it as the run's outcome, and a sentence that read as a
 // publish that failed would hide the node this run moved — the operator would
 // look for a write that is already there.
-func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client, lc *localcfg.Config, path string, payload []byte) error {
+func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client, lc *localcfg.Config, path string, payload []byte, published *projectpolicy.Policy) error {
 	if path == "" {
 		// A run that holds no local config file — the shared config has none, and
 		// a config elsewhere was not built from this file — has nothing to record
@@ -1235,7 +1470,7 @@ func recordPublishedGeneration(ctx context.Context, w io.Writer, db *rtdb.Client
 		return userErr("the policy node at %s was written and then changed again before the generation could be recorded in %s: another writer holds a different document there now, so nothing was recorded and the config still records the generation from before this write. The next %s compares this machine's config with the node it finds and records that node's generation when the node carries what the config states; when the node carries something else it refuses and offers to re-seed the file from the node instead. Read what the node holds now with 'fugaro project policy show'",
 			projectpolicy.PathShared(), path, selfCommand()+" update")
 	}
-	return policyGenerationRecord(w, path, lc, etag)
+	return policyGenerationRecordOf(w, path, lc, etag, published)
 }
 
 // sameNode is whether two documents are the same node: the values they hold

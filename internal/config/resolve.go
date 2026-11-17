@@ -120,6 +120,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 		repo.RepoModelGradesSet = setsModelGrades(tree)
 		repo.RepoVisionSet = setsVision(tree)
 		repo.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
+		repo.RepoWorkflowABSet = setsWorkflowAB(tree)
 		res := &Resolution{Sources: map[string]string{}}
 		markLeaves(tree, "", SourceRepo, res.Sources)
 		res.ConfigSHA256 = repo.SHA256()
@@ -174,6 +175,7 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	c.RepoModelGradesSet = setsModelGrades(tree)
 	c.RepoVisionSet = setsVision(tree)
 	c.RepoMergeJudgeCraftSet = setsMergeJudgeCraft(tree)
+	c.RepoWorkflowABSet = setsWorkflowAB(tree)
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, nil, annotate(ps, res, profileOf)
@@ -643,6 +645,40 @@ func visionKey(agent any) bool {
 	}
 	_, ok = m["vision"]
 	return ok
+}
+
+// setsWorkflowAB is setsVision for a workflow's own ab: key: the workflows of
+// the repository file's text that write one, at any value. It reads the tree
+// and not the resolved block for the reason setsSecurity reads it — a runner
+// older than workflowABSince (internal/cli) decodes the file with KnownFields
+// and refuses the key whatever it says, so a null leaf, which decodes to no
+// block at all, is exactly as fatal to that runner as a block naming a level,
+// and the resolved pointer answers the other question (which arm the file asks
+// for). Its answer becomes Config.RepoWorkflowABSet, and the names are sorted
+// so the same file always answers the same list.
+//
+// The walk is the repository file's own, and only its own: workflows.<name>.ab
+// is InRepo (config.Scopes), so a project layer that wrote the key is refused
+// by the layer's own loader before any image is judged, and a profile cannot
+// carry it into a resolution at all.
+func setsWorkflowAB(tree map[string]any) []string {
+	wfs, ok := tree["workflows"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	names := map[string]bool{}
+	for name, wf := range wfs {
+		// A workflow written as something other than a mapping is refused by
+		// its own decode, so it writes no ab: key here either.
+		m, ok := wf.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, wrote := m["ab"]; wrote {
+			names[name] = true
+		}
+	}
+	return sortedKeys(names)
 }
 
 // docTree is a YAML document as Resolve merges it (nodeTree).

@@ -63,10 +63,12 @@ type Labeler interface {
 	// meaning AddLabels gives it.
 	RemoveLabels(ctx context.Context, number int, runID string, names []string) error
 	// ListOpenPRLabels returns every open pull request's labels, keyed by
-	// pull request number.
+	// pull request number. It is a GitHub repository's read: a Bitbucket
+	// repository's host has no labels to list, and the call is refused.
 	ListOpenPRLabels(ctx context.Context) (map[int][]string, error)
 	// PRLabels returns one pull request's state and its labels, open, merged
-	// or closed.
+	// or closed — the labels empty on a host that has none, which is what a
+	// Bitbucket answer is (D2736).
 	PRLabels(ctx context.Context, number int) (state string, labels []string, err error)
 }
 
@@ -122,8 +124,23 @@ type ServiceLabeler struct {
 	// thing a call names beyond the act. The service's environment does not
 	// hold it, so the caller names it — and cannot name anything else: the key
 	// that signs, the permissions the token takes and the names the route
-	// writes are the service's.
+	// writes are the service's. A Bitbucket client (Bitbucket below) names
+	// none: there is no GitHub App on that host, and a call that carried one
+	// is refused.
 	AppID string
+	// Bitbucket says this client's repository is one of the installation's
+	// Bitbucket repositories, whose host has no pull request labels (D2736,
+	// G5). The `get` act is served there — the state of one pull request, with
+	// no labels, which is what the daemon's merge read asks for — and the four
+	// others are refused, by this client one round trip earlier and by the
+	// service itself. A Bitbucket call carries no App ID, which is what lets an
+	// installation with no GitHub App ask for the read at all.
+	//
+	// The host is this client's own fact and not something the call states: the
+	// service tells the two hosts apart by its two inventories and refuses a
+	// name both resolve, so a client that sent an App ID for a repository on
+	// this host would be refusing itself the read it exists for.
+	Bitbucket bool
 	// HTTP is the client the calls are made with; nil means this package's own
 	// hardened one (serviceCallClient: no redirects, no jar, a bounded
 	// timeout).
@@ -138,14 +155,19 @@ type ServiceLabeler struct {
 // ServiceLabeler is a Labeler, which is what the daemon's wiring consumes.
 var _ Labeler = (*ServiceLabeler)(nil)
 
-// Supported implements Labeler, and it is true: the route this client speaks is
-// GitHub's (/v1/github/labels), so the host behind it has pull request labels,
-// and a repository whose host has none is never given this client at all — the
-// daemon resolves a capability per repository (labelSeams) and leaves the rest
-// unlabelled (R7). The service answers an act asked of a host without the
-// capability with a refusal rather than an empty success, which is the same
-// answer one side over.
-func (s *ServiceLabeler) Supported() bool { return true }
+// Supported implements Labeler: the route this client speaks is GitHub's
+// (/v1/github/labels), so a GitHub repository's host has pull request labels —
+// and a Bitbucket one's does not, which is the false this answer gives it. The
+// Bitbucket client is still built, because the read act is served there; the
+// syncer asks this first and stays a no-op for a host with no labels (R7),
+// which is the same answer the host's own provider gives (bitbucket's
+// labels.go).
+//
+// A host the daemon resolves no capability for is left unlabelled either way
+// (labelSeams), and the service answers an act asked of a host without the
+// capability with a refusal rather than an empty success: the answer is the
+// same one side over.
+func (s *ServiceLabeler) Supported() bool { return !s.Bitbucket }
 
 // EnsureLabel implements Labeler: it asks the service to create name, treating
 // one that already exists as success (D2440).
@@ -257,14 +279,17 @@ func (s *ServiceLabeler) writeNames(ctx context.Context, action string, number i
 // send it to is a credential this process did not need to hold — and the token
 // before anything is built.
 func (s *ServiceLabeler) call(ctx context.Context, req LabelRequest) (LabelAnswer, error) {
-	if s.URL == "" || s.AppID == "" || s.Repository == "" || s.IDToken == nil {
+	// The App ID is required of a GitHub client and refused of a Bitbucket one
+	// (Bitbucket): what the two hosts take from a caller differs by that field
+	// and nothing else.
+	if s.URL == "" || s.Repository == "" || s.IDToken == nil || (!s.Bitbucket && s.AppID == "") {
 		return LabelAnswer{}, fmt.Errorf("%w: this daemon has no credentials service to ask for a label call at", ErrLabelIdentity)
 	}
 	if !repoShape(s.Repository) {
 		return LabelAnswer{}, fmt.Errorf("%w: the call names no repository (owner/name)", ErrLabelIdentity)
 	}
 	req.Repository, req.AppID = s.Repository, s.AppID
-	if err := checkLabelCall(req); err != nil {
+	if err := checkLabelCall(req, s.Bitbucket); err != nil {
 		return LabelAnswer{}, err
 	}
 	// The URL is checked before anything is sent to it: a call presents the
@@ -320,12 +345,25 @@ func (s *ServiceLabeler) call(ctx context.Context, req LabelRequest) (LabelAnswe
 // a pull request, and a write names a pull request, the run id that opened it
 // (F17, O3) and a label of the route's own namespaces (F26, R3).
 //
+// bitbucket is the client's own fact about its repository's host (Bitbucket):
+// there the route serves the read alone and no call carries an App ID, so the
+// four other acts and a call that names one are refused here (D2736, G5).
+//
 // It is here for two reasons and both are about the answer rather than the cost:
 // a call the service would refuse is refused one round trip earlier, and — this
 // is the one that matters for the sets — the whole set is checked before any of
 // its calls is made, so a set carrying a name the route does not write writes
 // none of its names instead of writing the ones before it.
-func checkLabelCall(req LabelRequest) error {
+func checkLabelCall(req LabelRequest, bitbucket bool) error {
+	if bitbucket {
+		if req.AppID != "" {
+			return fmt.Errorf("%w: a Bitbucket call carries no App ID: this host has no GitHub App to name", ErrLabelIdentity)
+		}
+		if req.Action != LabelActionGet {
+			return fmt.Errorf("%w: a Bitbucket repository's host has no pull request labels, so this client asks it for the %s act and no other",
+				ErrLabelIdentity, LabelActionGet)
+		}
+	}
 	switch req.Action {
 	case LabelActionList:
 		if req.Number != 0 || req.Name != "" || req.RunID != "" {
