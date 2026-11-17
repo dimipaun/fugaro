@@ -27,6 +27,8 @@ func init() {
 	if err := runner.SetStage(runner.StageFuncs{
 		Timeout:  governance.Timeout,
 		TimedOut: governance.TimedOut,
+		Stopped:  governance.Stopped,
+		Before:   governance.Before,
 	}); err != nil {
 		panic("ee/register: " + err.Error())
 	}

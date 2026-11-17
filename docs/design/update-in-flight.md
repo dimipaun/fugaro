@@ -54,6 +54,7 @@ release could observe or lose.
 | default profiles | Writes the default job profile of every provider the project's repositories use into the local config, before the first stage plans, so that the installation stage deploys its job in this same update (S5, R1, D2310); a config that can no longer compose the job of one of those profiles — the last GitHub repository moved to Bitbucket, or a repository on a second App added — is planned from the installation's own record of that job instead, which the plan then leaves alone (`installSpec`, `infra.CarriedProjectJobs`) | None. The file is this machine's and no run reads it: the profile reaches a run through the policy stage's node and the shared job the installation stage deploys, and both are this run's own writes (the rows below). The carry changes no job either: it puts back the job the installation already holds, whole, so the plan proposes no change to it | Safe | `createDefaultProfiles`, `installSpec`, `internal/cli/init_policy_migrate.go`, `CarriedProjectJobs`, `internal/infra/tfvars.go` |
 | preflight | Reads the environment and the local config; no cloud write | None | Safe | `preflightStage` |
 | installation | Terraform root `installation`: the GCS bucket, the Artifact Registry, the credential containers, the history/coordinator/catalog-check jobs, the shared project jobs, the credentials service's own block (its image is moved by the credentials-service row below), and — for an installation whose tfvars carry an `orchestrator` block, a key no release writes yet, so today it is on no installation unless its owner put it there by hand, and that block every update carries forward rather than planning it away (`internal/infra/tfvars.go`'s `CarriedOrchestrator`) — the resident orchestrator's own service account and section 4.3's bindings (`modules/installation/orchestrator.tf`; mobile plan task P5.1b) | A create or an update, never a replace: `google_storage_bucket.runs`, the registries and the secret containers carry `prevent_destroy` (`deploy/terraform/gcp/modules/installation/bucket.tf`, `registry.tf`, `secrets.tf`, `credentials.tf`). A job whose *name* would change is ForceNew and is destroyed — see the job row below. The orchestrator's block is one more create, in a step that already runs: the block is `null` unless the installation asked for one, and a `null` variable creates nothing, so the step is a **no-op** for every installation that has not opted in — it plans and applies exactly what it planned and applied before the module file existed — and nothing the account holds is anything a run in flight uses | Safe, with the job-name caveat | `newInstallationStage`, `deploy/terraform/gcp/roots/installation/main.tf`, `deploy/terraform/gcp/modules/installation/orchestrator.tf` |
+| installation, the implicit review job (piece 1 of `docs/review-job/spec.md`) | One review-only job per (provider, account) for a project that declares no profile (`ImplicitReviewJobName`), with its own service account and the row the credentials service admits a review caller by. It is composed by the run that finds the `credentials_service` block in the installation's tfvars (`specReviewJobsOfTheService`), so an installation at the previous version — the block deployed by the release behind, no review job beside it — gets the job from ONE `fugaro update`; a config that can no longer compose it keeps the job the record holds (`CarriedProjectReviewJobs`) | None: a create beside the jobs the run's own execution runs on, never a replace of one — a job's template reaches the next execution, and a run in flight holds its own execution's. The next update hands terraform the same entry with two members moved and no others: the base image, because the installation stage composes this root before the images stage pins this release's, and `FUGARO_CREDENTIALS_SERVICE_URL`, because the address the run that deployed the service records reaches a shared job on the apply after that one (`internal/infra/projectjobs.go`); the update after that hands it back byte for byte. The job's name, its service account and its class never move, which is what a destroy would need | Safe | `implicitReviewVariant`, `internal/infra/projectjobs.go`; `specReviewJobsOfTheService`, `internal/cli/init_stages.go`; `CarriedProjectReviewJobs`, `internal/infra/tfvars.go`; `TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`, `internal/cli/update_review_job_test.go` |
 | Firebase | The Realtime Database instance, the web API key, the token-signing service account | The run reaches the database with an ID token exchanged from a custom token minted by its own launcher: `token.Exchange`, `internal/budget/token/exchange.go`; the database identity is not an IAM identity (`deploy/terraform/gcp/modules/firebase/iam.tf`). A re-apply of the instance's own fields does not invalidate it | Safe | `newFirebaseStage`, `deploy/terraform/gcp/modules/firebase/firebase.tf` |
 | images | Pins `base_images.<kind>` by digest, mirrors the history image, and rebuilds the catalog entries of this checkout whose recorded build was built FROM an older release base (naming the ones another checkout builds, never passing one over); never patches a job | A run's own execution already holds its image; the pin and the rebuilds reach the *next* execution | Safe | `imagesStage`, `internal/cli/init_images.go`, `internal/cli/init_images_catalog.go` |
 | installation, second apply | The history job and the catalog check job, which only the images stage makes deployable | Same as the first apply | Safe | `newInstallation2Stage` |
@@ -115,7 +116,7 @@ stage's apply lands, the process in the project is the one the release behind
 deployed, and that binary refuses a node above its own version. The window is
 one apply — the two stages are adjacent, and this stage builds no image — and
 the binary that reads it was released, so it cannot be taught anything, and it is
-named in the update's own line about the runs in flight (`credentialsWindowOpens`)
+named in the update's own note about the runs in flight (`credentialsWindowOpens`)
 rather than left to be discovered by a refused call. What such a bump must not
 be is a step that needs something OUTSIDE the node: 3 → 4's republish is the
 one, no reader can derive the block it adds from the bytes it holds, and
@@ -211,13 +212,29 @@ told the operator to wait (`refuseRunsInFlight`). The owner's requirement of
 2026-11-09 makes that unacceptable — a team of ten or twenty always has runs in
 flight — so the update door no longer refuses, and it announces the runs once
 instead (`announceRunsInFlight`, `internal/cli/update_in_flight.go`, called from
-the converge before the first stage). The line is one sentence, it is not a
-question, and it never asks anybody to wait. What it claims is what holds
-whatever this update turns out to do — the update waits for no run and changes
-nothing a run holds — and never the flat "the runs are unaffected",
-which the budget-mode raise below makes false; that a step can still reach a
-run is said instead, and the update log names each step. It is absent when nothing runs, under `--json` and `--print-vars`
+the converge before the first stage). The count is a step of the run like any
+other, so the wait it can cost is named while it happens — `Checking for runs in
+flight`, the CLI's own spinner and its one line per step — because the owner met
+it with fourteen runs going and no output at all (the feedback of 2026-11-15).
+What it prints after that is the count's own line: how many runs are in flight,
+that the update waits for none of them and changes nothing they hold. Then one
+short line per step that can still reach one, indented under it, or a single line
+saying no step does (`inFlightSteps`). The note is exactly as long as that count
+and no longer: the same feedback could not find what it was after in the
+paragraph this used to be, and what each line stands for — the question its
+step is gated on — is written where that step's own code and gate are. It never
+asks anybody to wait, and it never claims the flat "the runs are unaffected",
+which the budget-mode raise below makes false. It is absent when nothing runs, under `--json` and `--print-vars`
 (whose stdout is a document), and under `--plan-only` (which applies nothing).
+
+The door asks nothing of its own: the note is information, printed before the
+update's own confirmation and before any stage writes, and it is where a person
+deciding whether it is safe to update now reads it. Nothing is added to the
+no-prompt policy's surface — a pipe, `--json`, a coding agent's session and a
+managed project all proceed exactly as they did, printing the note only
+(`docs/no-prompt-policy/spec.md`) — and a run in flight is never a reason for the
+update to stop.
+
 The refusal stays where it is not the update door's: `fugaro project policy publish --delete` /
 `fugaro project repos rm`, which are not the whole upgrade and are their own
 commands. The other two doors that reach this stage through `initStages` —
@@ -226,10 +243,10 @@ door either, so they keep the answer they had before this ruling, which is the
 ruling of 2026-11-06: a managed project's own session is told the count as a note
 and writes, and every other session is refused
 (`inflightManaged`, `policyMigrateStage.inflightAnswer`, which reads the answer
-off the door rather than taking it as a parameter). The one line above is the
-update door's and is not printed by those doors.
+off the door rather than taking it as a parameter). The note is the update
+door's and is not printed by those doors.
 
-The rows that are not simply safe are the ones the line has to own, and they are
+The rows that are not simply safe are the ones the note has to own, and they are
 six (`inFlightSteps`, `internal/cli/update_in_flight.go`): the budget-mode
 raise, which can bound a run that bootstrapped under `observe` from its next
 lease and is the operator's own caps becoming effective rather than the update
@@ -247,7 +264,7 @@ running on it.
 Each clause is the question its own step is gated on rather than the whole of its
 decision (`budgetModeBindsRuns`, `policyReadsLive`, `credentialsWindowOpens`,
 `tokensPublishReachesRuns`, `markerConverges`, `retireTakesExecutions`), so the
-line errs towards naming a step that may not end up doing anything over claiming
+note errs towards naming a step that may not end up doing anything over claiming
 the update cannot reach a run when it can; the budget raise's shape for the owner
 is in the pull request.
 
@@ -257,8 +274,15 @@ converges under `fugaro update` while a run of its own repository is in flight,
 and that run's later writes — its lease, the ledger and the counters the report
 settles, the outcome it ends with, its record and its review session — still
 land under the new rules and the migrated policy.
+`TestUpdateAddsTheImplicitReviewJobAndLeavesARunInFlightRunning`
+(`internal/cli/update_review_job_test.go`) is the same fixture read against the
+one job this release adds (the row above): an installation at the previous
+version — the credentials service the release behind deployed, no implicit
+review job beside it — gets that job from one `fugaro update`, the run in flight
+is left running with every write of its own still landing, and the updates after
+it hand terraform the same job.
 `TestUpdateInFlightLineNamesEveryStepThatCanReachARun` turns each step on alone
-and asserts the clause is there and the others are not, so a step
+and asserts its one short line is there and the others are not, so a step
 that can reach a run and is not named fails the suite;
 `TestUpdateInFlightLineNamesTheBitbucketTokensPublish` does the same for the
 typed tokens a proxied call re-reads.

@@ -10561,8 +10561,8 @@ func TestDocsDesktopConsoleContractFinishesTheSettingsWrite(t *testing.T) {
 		"`widening`",
 		"`changed`",
 		"`refusal`",
-		// The four optional members version 1 has since grown (D1164), off the
-		// four `omitempty` fields of `settingsWriteDoc` and the four rows
+		// The four optional entry members version 1 has since grown (D1164),
+		// off the four `omitempty` entry fields of `settingsWriteDoc` and the four rows
 		// `writeSettingsWriteTable` prints below `refusal`. The console's own
 		// row cannot build an entry write, so its reader ignores them — but the
 		// section is the document described member by member, and a reader who

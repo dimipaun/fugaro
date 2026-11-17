@@ -65,7 +65,24 @@ func newImageSelftestCmd() *cobra.Command {
 }
 
 type imageBuildOptions struct {
-	cloud                               cloudOptions
+	cloud cloudOptions
+	// lc is the installation the build acts on, for a caller that has already
+	// resolved and announced one: the build then reads no project of its own
+	// out of the flags, the environment and the working directory's checkout
+	// (openBuildCloud). `fugaro apply` hands its own in — it runs the catalog
+	// build as one of its steps, and its selection is checkout-blind
+	// (settingsAimedSelection), so a build left to select for itself would read
+	// the checkout's project, build that project's catalog and lease it against
+	// that installation's budget while this run cleared the aimed project's
+	// entry as answered (D1577). Nil is this package's own selection.
+	lc *localcfg.Config
+	// run is the step run a build prints its steps through and files its log
+	// under, when the command that calls it already has one: `fugaro apply`
+	// runs the catalog build as one of its own steps, so the build's lines
+	// belong to that run's account and its one log rather than to a second
+	// `image-build` log opened beside it (D1352, D1354). Nil is this package's
+	// own: the build opens its own run when its first entry proceeds.
+	run                                 *stepRun
 	repo, workflow, base, tag, platform string
 	local, noSmoke, noWait, asJSON      bool
 }
@@ -239,6 +256,18 @@ func runImageBuildLocal(cmd *cobra.Command, o imageBuildOptions) error {
 	return nil
 }
 
+// openBuildCloud is the installation a build acts on: the one the caller
+// resolved and handed in (o.lc), else one selected from the flags, the
+// environment and the working directory's checkout (openCloud). Both arms end
+// at openCloudFor, which is what reads the installation's own records and
+// answers for its name, so the only difference is where the config came from.
+func openBuildCloud(ctx context.Context, o imageBuildOptions) (*cloudEnv, error) {
+	if o.lc != nil {
+		return openCloudFor(ctx, o.lc)
+	}
+	return openCloud(ctx, o.cloud)
+}
+
 // runImageBuildCloud submits the derived-image build of the checkout's
 // repository and workflow to Cloud Build and, unless --no-wait, waits for
 // it. The build clones the base branch itself; only the checkout's
@@ -248,7 +277,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	env, err := openCloud(ctx, o.cloud)
+	env, err := openBuildCloud(ctx, o)
 	if err != nil {
 		return err
 	}

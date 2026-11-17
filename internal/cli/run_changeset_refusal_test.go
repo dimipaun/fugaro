@@ -17,8 +17,8 @@ import (
 // the refusal is a function of the edition it is handed (changeSetRefusal).
 // A `//go:build !ee` file is what the boundary rule refuses in core, so the
 // untagged build's answer is judged here rather than under a tag. What a
-// tagged CLI answers is the other sentence, and TestChangeSetRefusedUntilSettleExists
-// judges both in process.
+// tagged CLI answers is that it launches the set, and
+// TestChangeSetLaunchesOnceSettleExists judges both in process.
 func TestChangeSetRefusedByUntaggedBuild(t *testing.T) {
 	f := changeSetFixture(t)
 	_, errOut, err := execute(t, "run", "--change-set", "--repo", "acme/app", "--repo", "acme/other", "Add a feature")

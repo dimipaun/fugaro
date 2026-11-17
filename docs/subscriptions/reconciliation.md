@@ -509,6 +509,50 @@ looks**: the plan and the design made the approval a precondition of the change,
 naming the host without the approval recorded anywhere is a change no later reader can tell was
 authorised.
 
+### The privacy notice for key sign-up (S7.3, landed 2026-11-17)
+
+**The task, and the approvals it needed.** S7.3's brief is counsel's text for the sign-up data with
+the merchant of record as a recipient; the plan makes the whole of the notice's subscriptions copy
+"S8.4's and the owner's", and the plan's row 14185 records the owner ruling on 2026-11-17 that
+"counsel has closed all of S8.4" (the Terms, its questions 12–18, the S0.2 addendum, D433 and the
+rest). The plan's "All of it needs the owner's approval" is met by the owner's approval of the
+plan's tasks of 2026-11-16. The second half of F44 above — "§7.3's notice still has to say that a
+visitor's data reaches the intake" — is what the task carries, and with it the hold S3.3 left:
+`keys/**` leaves `firebase.json`'s `ignore` and the keys page's exemption leaves
+`website/test/consent.mjs` in the same commit, so the page is held to the statement instead of being
+held out of the deploy. **The deploy itself is still S7.4's** (the owner runs it), and the page's
+being published is not the service's existing: `ee/keyservice/` is S3.5's and S3.7's.
+
+**The one correction the tree forced.** The design's §1 and §7.3 and the plan all write the service
+as one "the software never calls", and Terms §7.1 says "the Software does not contact the Key
+Service". The tree disagrees for the licence flows and for nothing else: `ee/register/licence.go`'s
+`licenceServerURL` is contacted by `fugaro licence`'s own commands and by a paid installation's
+renewal job (`ee/register/licence_renew.go`, `ee/register/licence_login.go`), which is a model call
+and not a run. Ruled: the notice is written to what happens — the software part's sentence reads
+"and to nothing the Fugaro project operates except the licence service", and says when it is asked
+(a licence command, and the renewal job on the key's own schedule) and what is not (a run: the
+verifier makes no network call, §9.1's R2 row). The design's §7.3 carries a dated amendment to the
+same effect. **Terms §7.1's sentence is counsel's and is left alone**; it is now the one place the
+documents overstate the isolation, and it goes to the next S8.4 round rather than into this
+commit.
+
+**What `website/test/privacy.mjs` rule 5 now reads and exempts.** The scan covers `ee/` beside
+`cmd/`, `internal/`, `console/src`, `mobile/src` and `shared`, and the allow-list grows by exactly
+the services the project operates: `SERVICE_SOURCES` (`ee/keyservice/`, the design's §1, and
+`ee/portal/`, the licence site's own web app, which names the host it is served from and the site's
+privacy statement and Terms) and `REACHED_SOURCES` (`ee/register/licence.go` alone, selected before
+the filter so the sentence it breaks is the sentence that records it). Both lists are asserted in
+both directions — the directories and the file exist and hold what the exemption claims, and a
+planted source beside them is still refused. Rule 9 is new and holds the page's key sign-up card to
+the forms' own fields (`website/test/keys.mjs`'s) and to the documents behind it: the Terms' §7.1
+clause on what the Key Service collects, the design's recipient sentence, and the store's comment
+and the service's `dropPersonal` that the retention sentence is written from.
+
+**Left open deliberately.** D457 — how long the record of an *issued* key is kept — is still open,
+so the card states the behaviour the code implements (the application's personal data goes once the
+link can no longer be followed; the issued key's record keeps the key's facts and the address it was
+mailed to) and states no period. S7.4's publication is where the period wants to land, with D457.
+
 ### The tensions as raised (ruled 2026-10-27, kept for the record)
 
 **T10 — (D434) Future coordinator versions in the business-licensed folder.** Facts: the

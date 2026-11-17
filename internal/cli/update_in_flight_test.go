@@ -45,8 +45,8 @@ const (
 
 // TestUpdateLeavesARunInFlightRunning: an installation one release behind,
 // updated while a run of its own repository is in flight. The update converges
-// — `fugaro update` stays the whole upgrade — the runs are named once and not
-// asked about, and every write the run makes afterwards still lands: its lease,
+// — `fugaro update` stays the whole upgrade — the runs are named once and the
+// run goes on, and every write the run makes afterwards still lands: its lease,
 // the ledger and the counters that lease settles, the outcome it ends with, and
 // its record and review session in the runs bucket.
 func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
@@ -60,31 +60,31 @@ func TestUpdateLeavesARunInFlightRunning(t *testing.T) {
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "policy-older-than-binary", "plugin-pin"})
 
-	// One line, one fact: the runs are in flight and the update leaves them
-	// running. Not a question, not a refusal, and never a request to wait — the
-	// owner's ruling of 2026-11-09, and the reason the policy stage's refusal
-	// is not a thing this door does any more.
+	// One note, one fact per line: the runs are in flight and the update leaves
+	// them running. No refusal, and never a request to wait — the owner's ruling
+	// of 2026-11-09, and the reason the policy stage's refusal is not a thing
+	// this door does any more.
 	line := inFlightLine(t, out)
 	if !strings.Contains(line, "1 run in flight") {
-		t.Errorf("the update's line does not say how many runs are running: %q", line)
+		t.Errorf("the update's note does not say how many runs are running: %q", line)
 	}
 	for _, banned := range []string{"wait for them", "refus", "finish first, then"} {
 		if strings.Contains(line, banned) {
-			t.Errorf("the update's line asks the operator to act (%q): %q", banned, line)
+			t.Errorf("the update's note asks the operator to act (%q): %q", banned, line)
 		}
 	}
-	// What the line claims is what holds whatever this update does: it never
+	// What the note claims is what holds whatever this update does: it never
 	// asks a run to finish first and it rewrites nothing a run holds. It does
 	// NOT claim the runs are unaffected — the budget mode's raise can bind one
 	// at its next lease, and the steps that can are named (the table test
 	// below).
 	for _, want := range []string{"waits for none", "changes nothing they hold"} {
 		if !strings.Contains(line, want) {
-			t.Errorf("the update's line does not say %q: %q", want, line)
+			t.Errorf("the update's note does not say %q: %q", want, line)
 		}
 	}
 	if strings.Contains(line, "unaffected") {
-		t.Errorf("the update's line claims the runs are unaffected, which the budget mode's raise can make false: %q", line)
+		t.Errorf("the update's note claims the runs are unaffected, which the budget mode's raise can make false: %q", line)
 	}
 
 	// The document the update deployed is this binary's, and it only ADDED to
@@ -190,23 +190,26 @@ func TestUpdateSaysNothingWhenNothingRuns(t *testing.T) {
 	}
 }
 
-// TestUpdateInFlightLineNamesEveryStepThatCanReachARun: the audit found three
+// TestUpdateInFlightLineNamesEveryStepThatCanReachARun: the audit found six
 // steps of the update that can still reach a run in flight — the budget mode's
 // raise to enforce, which a session re-reads on every lease while the policy
 // node is read once; the policy node itself, which a project routed through the
-// credentials cascade re-reads on every model call; and a retirement, which
-// deletes an orphaned job and takes the executions running on it with it — and
-// the door's line names every one this run can take, with why.
+// credentials cascade re-reads on every model call; the credentials service's
+// own replacement; the Bitbucket tokens that same publish carries; the creation
+// fact; and a retirement, which deletes an orphaned job and takes the executions
+// running on it with it — and the door's note names every one this run can take,
+// one short line each.
 //
 // The rows are the mutation check of that reading: each one turns exactly one
-// step on and asserts the clause is there, and the other clauses are not. The
-// first row is the ordinary update — nothing this run does reaches a run in
-// flight — where the line says so, and the alternative to every clause here,
-// silence over a step that then reaches a run, is the failure the requirement
-// of 2026-11-09 is about. Every row is also held to the claim the line makes in
-// both cases, and to the one it must never make: the budget mode's raise DOES
-// reach a run in flight, so "the runs are unaffected" is not a sentence this
-// line may print.
+// step on and asserts the line is there, and the others are not. The first row
+// is the ordinary update — nothing this run does reaches a run in flight — where
+// the note says so, and the alternative to every line here, silence over a step
+// that then reaches a run, is the failure the requirement of 2026-11-09 is
+// about. Every row is also held to the shape the owner asked for (the count's
+// line, then one short line per step) and to the claim the note makes in both
+// cases, and to the one it must never make: the budget mode's raise DOES reach a
+// run in flight, so "the runs are unaffected" is not a sentence this note may
+// print.
 func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 	// A published node that turns the cascade on: O3's switch, which is what
 	// sends a run's model calls through the credentials service — and so through
@@ -237,42 +240,42 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			name:    "nothing this update does reaches them",
 			mode:    budget.ModeEnforce,
 			want:    []string{"1 run in flight", "no step reaches them"},
-			notWant: []string{"budget mode", "policy this update publishes", "retirement"},
+			notWant: []string{"budget mode", "policy:", "retirement"},
 		},
 		{
 			// The raise is a managed project's alone, and so is the retirement
-			// it brings with it (retireTakesExecutions): the two clauses travel
+			// it brings with it (retireTakesExecutions): the two lines travel
 			// together, which is why this row does not call the retirement
-			// clause absent.
+			// line absent.
 			name: "the budget mode's raise", mode: budget.ModeObserve, managed: true,
-			want:    []string{"budget mode", "caps taking effect", "the retirement"},
-			notWant: []string{"policy this update publishes"},
+			want:    []string{"budget mode", "the raise to enforce", "retirement:"},
+			notWant: []string{"policy:"},
 		},
 		{
 			name: "the policy a cascade project re-reads", node: cascade, mode: budget.ModeEnforce,
-			want:    []string{"1 run in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
+			want:    []string{"1 run in flight", "policy:", "cascade", "next model call"},
 			notWant: []string{"budget mode", "retirement"},
 		},
 		{
 			// The same project on the node this upgrade actually reads: the one
 			// the release before this wrote, which the policy stage has not
-			// migrated yet. The clause has to be there — the service re-reads
+			// migrated yet. The line has to be there — the service re-reads
 			// the node per call, and the stage is about to rewrite it — and a
 			// reader that decoded the node with the refusing Read would answer
 			// "no cascade" and print "no step reaches them" over it.
 			name: "the policy a cascade project re-reads, one version behind", node: behindCascade, mode: budget.ModeEnforce,
-			want:    []string{"1 run in flight", "the policy this update publishes", "routing.claude.via", projectpolicy.RouteCascade},
+			want:    []string{"1 run in flight", "policy:", "cascade"},
 			notWant: []string{"budget mode", "retirement", "no step reaches them"},
 		},
 		{
 			name: "the retirement a managed project runs", mode: budget.ModeEnforce, managed: true,
-			want:    []string{"1 run in flight", "the retirement", "orphaned job"},
-			notWant: []string{"budget mode", "policy this update publishes"},
+			want:    []string{"1 run in flight", "retirement:", "orphaned job"},
+			notWant: []string{"budget mode", "policy:"},
 		},
 		{
 			name: "the retirement --retire asks for", mode: budget.ModeEnforce, retire: true,
-			want:    []string{"1 run in flight", "the retirement", "orphaned job"},
-			notWant: []string{"budget mode", "policy this update publishes"},
+			want:    []string{"1 run in flight", "retirement:", "orphaned job"},
+			notWant: []string{"budget mode", "policy:"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -289,30 +292,42 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			h.s.e.announceRunsInFlight(context.Background())
 
 			out := strings.TrimSpace(h.out.String())
-			if strings.Count(out, "\n") != 0 {
-				t.Errorf("the door's line is one line:\n%s", out)
+			// The note's shape, which is the owner's feedback of 2026-11-15:
+			// one line for the count, and one short line per step under it,
+			// indented — never the paragraph the line used to be.
+			lines := strings.Split(out, "\n")
+			if !strings.Contains(lines[0], "in flight: update waits for none") {
+				t.Errorf("the door's first line is not the count's:\n%s", out)
+			}
+			for _, under := range lines[1:] {
+				if !strings.HasPrefix(under, "  ") {
+					t.Errorf("a line under the count is not an indented step line: %q\n%s", under, out)
+				}
+				if n := len(strings.Fields(under)); n > 15 {
+					t.Errorf("a step's line is %d words, and the note is meant to be short: %q", n, under)
+				}
 			}
 			for _, want := range tc.want {
 				if !strings.Contains(out, want) {
-					t.Errorf("the line does not say %q:\n%s", want, out)
+					t.Errorf("the note does not say %q:\n%s", want, out)
 				}
 			}
 			for _, bad := range tc.notWant {
 				if strings.Contains(out, bad) {
-					t.Errorf("the line names %q over a step this run cannot take:\n%s", bad, out)
+					t.Errorf("the note names %q over a step this run cannot take:\n%s", bad, out)
 				}
 			}
-			// The two facts the line states in every case, and the claim it
+			// The two facts the note states in every case, and the claim it
 			// never makes: the runs are not "unaffected" — the budget mode's
 			// raise reaches one at its next lease, which is the whole of this
 			// reading.
 			for _, want := range []string{"waits for none", "changes nothing they hold"} {
 				if !strings.Contains(out, want) {
-					t.Errorf("the line does not state %q:\n%s", want, out)
+					t.Errorf("the note does not state %q:\n%s", want, out)
 				}
 			}
 			if strings.Contains(out, "unaffected") {
-				t.Errorf("the line claims the runs are unaffected, which the budget mode's raise can make false:\n%s", out)
+				t.Errorf("the note claims the runs are unaffected, which the budget mode's raise can make false:\n%s", out)
 			}
 		})
 	}
@@ -357,22 +372,22 @@ func TestUpdateInFlightLineNamesTheCredentialsServiceWindow(t *testing.T) {
 	}
 	t.Run("the node's version rises and the service moves", func(t *testing.T) {
 		got := line(t, v7Node())
-		for _, want := range []string{"the credentials service this update replaces", "does not understand"} {
+		for _, want := range []string{"credentials service:", "is refused"} {
 			if !strings.Contains(got, want) {
-				t.Errorf("the line does not say %q over a run whose node is raised before the service that reads it is replaced:\n%s", want, got)
+				t.Errorf("the note does not say %q over a run whose node is raised before the service that reads it is replaced:\n%s", want, got)
 			}
 		}
 		if strings.Contains(got, "no step reaches them") {
-			t.Errorf("the line claims no step can reach a run in flight, over the window this update opens:\n%s", got)
+			t.Errorf("the note claims no step can reach a run in flight, over the window this update opens:\n%s", got)
 		}
 	})
 	t.Run("the service moves over a node that does not", func(t *testing.T) {
 		got := line(t, currentNode())
 		if strings.Contains(got, "credentials service") {
-			t.Errorf("the line names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
+			t.Errorf("the note names the credentials service over a run that raises no node, so no call can meet a service that cannot read it:\n%s", got)
 		}
 		if !strings.Contains(got, "no step reaches them") {
-			t.Errorf("the line names no step at all over a run this update leaves where it is:\n%s", got)
+			t.Errorf("the note names no step at all over a run this update leaves where it is:\n%s", got)
 		}
 	})
 }
@@ -416,28 +431,28 @@ func TestUpdateInFlightLineNamesTheMarkerConvergence(t *testing.T) {
 	}
 	t.Run("a version-3 fact is rewritten", func(t *testing.T) {
 		got := line(t, markerBuildsFact, true)
-		for _, want := range []string{"the creation fact this update rewrites", "refuses a version it does not know", "keeps the typed confirmation"} {
+		for _, want := range []string{"creation fact:", "stops taking the gate"} {
 			if !strings.Contains(got, want) {
-				t.Errorf("the line does not say %q over a run whose installation still carries a version-3 creation fact:\n%s", want, got)
+				t.Errorf("the note does not say %q over a run whose installation still carries a version-3 creation fact:\n%s", want, got)
 			}
 		}
 		if strings.Contains(got, "no step reaches them") {
-			t.Errorf("the line claims no step can reach a run in flight, over the fact this update rewrites:\n%s", got)
+			t.Errorf("the note claims no step can reach a run in flight, over the fact this update rewrites:\n%s", got)
 		}
 	})
 	t.Run("a fact this build already writes is left alone", func(t *testing.T) {
 		got := line(t, markerNowFact, true)
-		if strings.Contains(got, "the creation fact this update rewrites") {
-			t.Errorf("the line names the marker's convergence over a fact that is already this build's:\n%s", got)
+		if strings.Contains(got, "creation fact") {
+			t.Errorf("the note names the marker's convergence over a fact that is already this build's:\n%s", got)
 		}
 	})
 	t.Run("a version-3 object the read does not believe", func(t *testing.T) {
 		got := line(t, markerBuildsFact, false)
-		if strings.Contains(got, "the creation fact this update rewrites") {
-			t.Errorf("the line names the marker's convergence over an object the managed read does not believe, so the step has nothing to converge:\n%s", got)
+		if strings.Contains(got, "creation fact") {
+			t.Errorf("the note names the marker's convergence over an object the managed read does not believe, so the step has nothing to converge:\n%s", got)
 		}
 		if !strings.Contains(got, "no step reaches them") {
-			t.Errorf("the line names a step over a run this update leaves where it is:\n%s", got)
+			t.Errorf("the note names a step over a run this update leaves where it is:\n%s", got)
 		}
 	})
 }
@@ -629,29 +644,36 @@ func rulePaths(t *testing.T, doc []byte) map[string]string {
 	return out
 }
 
-// inFlightLine is the update's own line about the runs in flight: the one line
-// of the transcript that names them, and the whole of what the door says about
-// them.
-//
-// The log is read beside the screen for the reason the door's line is split at
-// all: the screen names the steps and the clause that says why each can reach a
-// run is the run's own account (update_in_flight.go, §9.2), so the whole of
-// what the door says about the runs is the two together.
+// inFlightLine is the update's own note about the runs in flight: the count's
+// line, and the one short line per step under it. The log is read beside the
+// screen because the note is written to both, line for line (loggedOut,
+// update_in_flight.go), so the whole of what the door says about the runs is the
+// two together; a run whose log could not be opened (G5) has the same note on
+// the screen alone, which is what the screen half of this helper is.
 func inFlightLine(t *testing.T, out string) string {
 	t.Helper()
-	first := func(s string) string {
-		for _, line := range strings.Split(s, "\n") {
-			if strings.Contains(line, "update waits for none") {
-				return line
+	note := func(s string) string {
+		lines := strings.Split(s, "\n")
+		for i, line := range lines {
+			if !strings.Contains(line, "update waits for none") {
+				continue
 			}
+			block := []string{line}
+			for _, under := range lines[i+1:] {
+				if !strings.HasPrefix(under, "  ") {
+					break
+				}
+				block = append(block, under)
+			}
+			return strings.Join(block, "\n")
 		}
 		return ""
 	}
-	screen := first(out)
+	screen := note(out)
 	if screen == "" {
 		t.Fatalf("the update printed nothing about the runs in flight:\n%s", out)
 	}
-	return screen + "\n" + first(newestLog(t, "update"))
+	return screen + "\n" + note(newestLog(t, "update"))
 }
 
 // microsPtr is what the caps a fixture seeds are: pointers, an absent side being
