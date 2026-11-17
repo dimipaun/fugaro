@@ -270,6 +270,52 @@ func TestAccessBudgetShowIsAProjectRead(t *testing.T) {
 	}
 }
 
+// TestAccessReposLsIsAProjectRead: the enrolment view is the project's own
+// (D2414, and F19's project-level reads) — every repository the project knows,
+// the published allow-list and what has run on the installation — so listing it
+// is read by a project-scope role, the way the spend document is. A
+// repository-scoped grant covers its repositories' runs and logs, and the
+// project's enrolment is not among them; `--json` prints the same view of the
+// same read, so the refusal is made before either form is written.
+//
+// The positive control is beside the refusals: a gate that refused everyone
+// would pass every case above it.
+func TestAccessReposLsIsAProjectRead(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		role  accesslib.Role
+		scope string
+	}{
+		{"a repository viewer", accesslib.RoleViewer, accessRepoCanon},
+		{"a repository admin", accesslib.RoleAdmin, accessRepoCanon},
+		{"an all-repos admin", accesslib.RoleAdmin, "all-repos"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newSeenFixture(t)
+			accessAs(t, f.db, accessAdminAddr,
+				userStored(t, accessMember(t, accessAdminAddr), tc.role, tc.scope))
+			_, _, err := execute(t, "project", "repos", "ls")
+			accessRefused(t, err, "listing them", "needs viewer at project scope")
+		})
+	}
+	t.Run("the --json form is refused at the same place", func(t *testing.T) {
+		f := newSeenFixture(t)
+		accessAs(t, f.db, accessAdminAddr,
+			userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleViewer, accessRepoCanon))
+		out, _, err := execute(t, "project", "repos", "ls", "--json")
+		accessRefused(t, err, "listing them", "needs viewer at project scope")
+		if out != "" {
+			t.Errorf("the refused --json form printed a document: %q", out)
+		}
+	})
+	f := newSeenFixture(t)
+	accessAs(t, f.db, accessAdminAddr,
+		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleViewer, "project"))
+	if _, _, err := execute(t, "project", "repos", "ls"); err != nil {
+		t.Fatalf("a project viewer could not list the project's repositories: %v", err)
+	}
+}
+
 // TestAccessReposStatusIsAProjectRead: `project repos status` answers with the
 // project's own material — the published allow-list, this machine's config for
 // every repository and each one's credential containers — so it is asked at
