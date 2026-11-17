@@ -29,8 +29,10 @@ Three things it deliberately does **not** claim:
   `internal/mailbox/action.go`, the Go port of `shared/confirm`'s rules that the re-validation and
   the action allow-list live in, held to `shared/confirm/vectors.json`, and `internal/cli/mailbox.go`,
   this plan's T5, which is where the runner it refuses from sits). **Partly built:** **P6.13** — the
-  command the sweeper hides behind is in the tree, and the sweeper's own rule for stored prompts
-  (`internal/mailbox/expiry.go`) is not. **Approved and not built:** **P6.12** (the phone's spoken
+  command the sweeper hides behind is in the tree and the store-side deletion it adds to that same
+  file (`internal/cli/mailbox.go`) has landed with it, while this plan's own T7 half — the
+  sweeper's local delete set and the presence verdict it reports (`internal/mailbox/expiry.go`) —
+  is not. **Approved and not built:** **P6.12** (the phone's spoken
   confirmation, which consumes the merged confirmation machine). So the MAC **can** be
   computed today and the **key can** too: the pairing command's wait and its delivery landed with the
   pairing CLI plan's T2b and T3, so a phone that has paired holds a per-pairing MAC key. What that means for

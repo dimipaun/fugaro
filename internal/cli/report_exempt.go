@@ -53,8 +53,13 @@ var reporterCommands = map[string]string{
 	"accounts rm":        "accounts-rm",
 	"accounts switch":    "accounts-switch",
 	"allow-delete":       "allow-delete",
-	"backlog add":        "backlog-add",
-	"backlog index":      "backlog-index",
+	// The one command that runs what a management command saved for later
+	// (docs/composite-commands, D1560): it runs a subset of the converge's
+	// stages through the loop, so its account of the steps is the reporter's
+	// like `accounts add`'s.
+	"apply":         "apply",
+	"backlog add":   "backlog-add",
+	"backlog index": "backlog-index",
 	// One entry per mutating command, and the raise is one: it rewrites a
 	// run's stored task and records the raise beside it, so its account is a
 	// step like the three below it rather than a listing (D1352).

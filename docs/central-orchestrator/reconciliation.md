@@ -1103,7 +1103,7 @@ by name for this document:
 | 69a–69c | the website work | allocated |
 | 70a–70c | the website redesign | proposed; 70a–70c written |
 | 71–79 | the website work's held range | **held, no check written** — `docs/mobile/README.md` reads them as unused and not taken |
-| 80–89 | the mobile work (Task P4.2) | **80, 83–88 unwritten; 81, 82, 89 written** |
+| 80–89 | the mobile work (Task P4.2) | **all ten written and none run**: 81, 82 and 89 by Task P4.2a (2026-10-18), 80 and 83–88 by Task P4.2 (2026-11-17) |
 | 90–99 | the credentials service | reserved; none written |
 | 100–104 | the mobile functional spec | approved 2026-10-18 (`docs/mobile/implementation-plan.md`), still written as *proposed* in `docs/mobile/README.md` |
 | 105–109 | the mobile functional spec | reserved and unused |

@@ -39,17 +39,19 @@ func TestRequireZDRDefaultsTrue(t *testing.T) {
 	}
 }
 
-// TestPricePolicyDefaultIsCheapest pins the second switch's default and its
-// effective value: unset means cheapest, spelled out so the compiler of a
-// catalog row never sees the empty string (design D3).
-func TestPricePolicyDefaultIsCheapest(t *testing.T) {
+// TestPricePolicyDefaultsHighest pins the second switch's default and its
+// effective value: unset means highest (D2644, which supersedes the catalog
+// design's ruling 3 — the charge is what the caps and the ledger are computed
+// from, so the safe end is the one that cannot under-count a call), spelled
+// out so the compiler of a catalog row never sees the empty string.
+func TestPricePolicyDefaultsHighest(t *testing.T) {
 	var p ModelProvider
-	if got := p.PricePolicySet(); got != PricePolicyCheapest {
-		t.Errorf("an unset price_policy is %q, want %q", got, PricePolicyCheapest)
-	}
-	p.PricePolicy = PricePolicyHighest
 	if got := p.PricePolicySet(); got != PricePolicyHighest {
-		t.Errorf("price_policy: highest is %q", got)
+		t.Errorf("an unset price_policy is %q, want %q", got, PricePolicyHighest)
+	}
+	p.PricePolicy = PricePolicyCheapest
+	if got := p.PricePolicySet(); got != PricePolicyCheapest {
+		t.Errorf("price_policy: cheapest is %q", got)
 	}
 	if PricePolicyCheapest != "cheapest" || PricePolicyHighest != "highest" {
 		t.Errorf("the policy names are %q/%q, want cheapest/highest: they are the config's own spelling", PricePolicyCheapest, PricePolicyHighest)

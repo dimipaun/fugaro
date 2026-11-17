@@ -21,6 +21,13 @@
 # images/repo_pins_test.go's TestRepositoryTracksNoBuiltBinaries is the pin for
 # the case where it was staged anyway.
 *.exe
+# The JUnit reports this repository's own test command writes, one per `go test`
+# invocation it runs (fugaro.yaml, through internal/verify/gotestjunit):
+# `fugaro verify test` reads them back for the run record's counts, so they are
+# the run's own build output and never committed -- and an unignored one would
+# leave the working tree dirty, which is what a verify run refuses to mark a pull
+# request ready on.
+/reports/
 # A local terraform init or test run in a Terraform root. Set TF_DATA_DIR
 # outside the tree instead: go:embed doesn't read .gitignore, and a
 # .terraform/ under deploy/terraform would put provider binaries in the fugaro

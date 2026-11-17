@@ -305,9 +305,35 @@ func (o *initOptions) doorProgram() string { return "fugaro " + o.doorName() }
 // onboarding an unlisted repository in either door's converge (D12's answer of
 // 2026-10-20, authState/onboardCovered), so this is what a run that gave no such
 // confirmation falls back on (W5.1).
+//
+// `fugaro apply` is the third door that does not ask either: it runs the steps
+// a change already saved and its input is nobody's, so an owed redeploy of an
+// unlisted repository is left for the user with the `fugaro setup` line exactly
+// as `update` leaves it. The row's other half — the answer — is where those two
+// doors part, and that is enrolsByAnswer's.
 func (o *initOptions) enrolling() bool {
-	return o.door != updateDoor.name || o.repo
+	switch o.door {
+	case updateDoor.name, applyName:
+		return o.repo
+	}
+	return true
 }
+
+// enrolsByAnswer is whether the run's own answer may cover onboarding an
+// unlisted repository in this door (authState/onboardCovered). The two front
+// doors may: D12's answer of 2026-10-20 covers the row in both of them and in
+// both of their modes, and a run of either that carries the answer is one a
+// command opened on the person's own — `update` has no flag that sets one
+// (T11), so in practice it is setup's and an internal converge's.
+//
+// `fugaro apply` may not, and that is the whole of the difference: the answer
+// it carries is its own rather than anybody's, and a pipe, a script, `--json`
+// and the console all reach that door (D1572). The step is one that creates
+// cloud resources and writes the checkout, so what a context can make happen by
+// running a command is not this; the repository is left for the user with the
+// line naming `fugaro setup` (enrolLeft) — the door that owns the question
+// (D5), and the one place a person is asked.
+func (o *initOptions) enrolsByAnswer() bool { return o.door != applyName }
 
 // initCreation is what a run of setup --create-project did, as the run itself
 // knows it (not inferred from the cloud afterwards): the project it created,
@@ -601,6 +627,12 @@ type initRun struct {
 	// (refreshOptions.detail) writes its lines where that converge keeps its
 	// own, instead of onto a screen that run has already accounted for (§9.2).
 	detail io.Writer
+	// cover is the run's own cover (initEngine.cover), set by the one door that
+	// has no review screen: `fugaro apply` converges the installation as it is
+	// and asks nothing, so its steps' plans are judged by the cover the review
+	// would have printed (init_review.go's coverOf). It is nil everywhere else,
+	// where the review's own cover is what the gate reads.
+	cover func() tf.Cover
 	// questions counts the questions in flight (initRun.asking): while one is
 	// open the run's own writer does not put the step's line back between the
 	// lines of the block it prints, so a CONFIRM block and a prompt are shown
@@ -4482,6 +4514,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateModelGrades(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// A workflow's ab: block is the same kind of break, on workflowABSince:
+	// it is a key of fugaro.yaml's workflows: map, which every release decodes
+	// whole and strictly, so the runner that refuses it dies at bootstrap.
+	if err := r.gateWorkflowAB(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	if !o.forget {
 		// The ceiling and the keys the layer would clamp are the run's own
 		// account of what it is about to apply, not the step's line: with a
@@ -5135,6 +5173,24 @@ func (r *initRun) gateModelGrades(o *initOptions, repo string, lc *localcfg.Conf
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseModelGradesSkew(repo, cfg.RepoModelGradesSet, cfg.Layer.SetsModelGrades(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateWorkflowAB is fugaro update --repo's gate for workflowABSince:
+// refuseWorkflowABSkew, with gateRigor's escapes and for its reason, and
+// gateTriage's one-file shape: a workflow's ab: block is fugaro.yaml's alone
+// (config.WorkflowAB), and the project layer's Profile carries no ab member, so
+// there is no layer half here the way gateModelGrades has one — a layer that
+// wrote the key would be refused by the layer's own loader before any image is
+// judged.
+func (r *initRun) gateWorkflowAB(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseWorkflowABSkew(repo, cfg, lc.BaseImage(config.BaseKind), w)
 }
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates

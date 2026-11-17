@@ -33,7 +33,10 @@ func setup(t *testing.T) fixture {
 		Test:        "sh test.sh",
 		RerunFailed: &config.RerunFailed{Command: "sh test.sh", Each: "{id}"},
 		Reports:     []string{"build/test-results/*.xml"},
-		TimeoutS:    60,
+		// A workflow that named its reports, which is what the warning text
+		// below distinguishes from one that was handed the defaults.
+		ReportsDeclared: true,
+		TimeoutS:        60,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +58,7 @@ func (f fixture) lint(t *testing.T, cmd string) {
 		RepoDir: f.repoDir, Build: "sh build.sh", Test: "sh test.sh", Lint: cmd,
 		RerunFailed: &config.RerunFailed{Command: "sh test.sh", Each: "{id}"},
 		Reports:     []string{"build/test-results/*.xml"}, TimeoutS: 60,
+		ReportsDeclared: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -270,6 +274,29 @@ func TestTestWithoutReportsWarns(t *testing.T) {
 	rec := run(t, f, KindTest, false)
 	if want := "no JUnit reports found under build/test-results/*.xml"; !strings.Contains(rec.Summary(), want) {
 		t.Fatalf("summary %q lacks %q", rec.Summary(), want)
+	}
+}
+
+// TestTestWithoutDeclaredReportsSaysSo: a workflow that named no report paths
+// was handed config.DefaultReports, whose Java-shaped globs it never wrote, so
+// the warning has to say what is the case rather than name a scan nobody
+// configured.
+func TestTestWithoutDeclaredReportsSaysSo(t *testing.T) {
+	f := setup(t)
+	s, err := LoadSettings(f.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Test, s.Reports, s.ReportsDeclared = "true", config.DefaultReports(), false
+	if err := WriteSettings(f.stateDir, s); err != nil {
+		t.Fatal(err)
+	}
+	summary := run(t, f, KindTest, false).Summary()
+	if want := "this workflow declares no test report paths, so the record carries no test counts"; !strings.Contains(summary, want) {
+		t.Fatalf("summary %q lacks %q", summary, want)
+	}
+	if strings.Contains(summary, "no JUnit reports found under") {
+		t.Fatalf("summary names report globs the workflow never declared: %s", summary)
 	}
 }
 

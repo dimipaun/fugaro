@@ -126,6 +126,12 @@ func (a *armProvider) GitAuthReadOnly(_ context.Context, _ time.Duration) (gitpr
 	return gitprov.GitAuth{Username: "x-access-token", Token: a.roToken, Expires: time.Now().Add(time.Hour)}, nil
 }
 
+// noStageDecision is the stage hook's off-switch for the two stops T7.3 added:
+// the tests here install a bound and a halt of their own, and a set is refused
+// unless all four functions are present, so the pair they do not exercise is
+// the one that answers no stop.
+func noStageDecision(runner.StageView) runner.StageDecision { return runner.StageDecision{} }
+
 // armGW is a run of the arm cfg: the fixture's configuration and the owner's
 // route, the task's ab block, the project layer naming the challenger, the
 // budget gateway enforcing, and audited provider calls. capUSD "" leaves the
@@ -248,6 +254,8 @@ func TestShadowNeverPushes(t *testing.T) {
 			TimedOut: func(runner.StageView) runner.StageDecision {
 				return runner.StageDecision{Halt: true, Reason: runstore.HaltStageBudget, Detail: "time"}
 			},
+			Stopped: noStageDecision,
+			Before:  noStageDecision,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -1214,6 +1222,8 @@ func TestShadowFollowupHaltWritesNoStatus(t *testing.T) {
 		TimedOut: func(runner.StageView) runner.StageDecision {
 			return runner.StageDecision{Halt: true, Reason: runstore.HaltStageBudget, Detail: "time"}
 		},
+		Stopped: noStageDecision,
+		Before:  noStageDecision,
 	}); err != nil {
 		t.Fatal(err)
 	}

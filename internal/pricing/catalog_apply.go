@@ -21,7 +21,7 @@ type CatalogRoute struct {
 	Name       string
 	Models     []string // the model IDs this route claims, already resolved
 	RequireZDR bool     // price the ZDR-eligible endpoints only (the default)
-	Policy     string   // "cheapest" (also ""), or "highest"
+	Policy     string   // "highest" (also ""), or "cheapest"
 
 	// Overridden is the subset of the models this route claims that the owner
 	// has priced by hand under model_prices. Such a model keeps the file's
@@ -184,9 +184,13 @@ func catalogModel(id string, r CatalogRoute, e catalog.Entry, source, checkedAt 
 			return Model{}, fmt.Errorf("%s is routed to %s with require_zdr: true, but the built-in price catalog has no ZDR-eligible endpoint for it: set require_zdr: false on the route, or price the model under model_prices", id, r.Name)
 		}
 	}
-	bound := "min"
-	if r.Policy == "highest" {
-		bound = "max"
+	// The unset policy is highest (D2644): the charge is what the caps and
+	// the ledger are computed from, so the end that cannot under-count a
+	// call OpenRouter serves from a dearer endpoint is the safe default.
+	// cheapest stays selectable, spelled out on the route.
+	bound := "max"
+	if r.Policy == "cheapest" {
+		bound = "min"
 	}
 	if stale {
 		// A stale catalog charges the safe end whatever the policy asked

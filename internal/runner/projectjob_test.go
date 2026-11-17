@@ -1023,7 +1023,7 @@ func TestReviewVariantIsNotTheCodingJob(t *testing.T) {
 	rec, err := b.run(t)
 	refusedAdmission(t, b, rec, err,
 		gcp.ProjectJobName(job.profile, job.provider, job.account),
-		"review-only variant", "is not a review", "The run stops")
+		"review-only variant", "neither a review nor a diagnosis", "The run stops")
 }
 
 // TestProjectJobDefaultProfileIsTheProvidersOwn is D2310 and R8's rule as this

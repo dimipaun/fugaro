@@ -18,7 +18,8 @@ import (
 // Secrets is a stateful fake of the Secret Manager v1 calls Fugaro makes:
 // secrets get, create, list (with a filter of labels.k=v terms joined by
 // " AND "), delete, getIamPolicy, addVersion and versions list, disable,
-// delete and destroy, and the value read at `latest` or at a numbered version.
+// enable, delete and destroy, and the value read at `latest` or at a numbered
+// version.
 // It has no access call unless a test allows it (AllowAccess): the CLI reads a
 // value back only where the work cannot be done without it — the GitHub App
 // pre-check and a catalog build's copy of a repository-sourced entry, which
@@ -77,6 +78,12 @@ type Secrets struct {
 	// best-effort — the write is already verified when it is attempted, so a
 	// refused disable is reported and the command still succeeds.
 	FailDisableWith int
+	// FailDestroyWith, when non-zero, makes versions/N:destroy answer that HTTP
+	// status and destroy nothing: the refusal the revocation step 2b has to
+	// report rather than pass over (mobile plan task P5.1e), since a version
+	// the caller believes is gone and is not keeps verifying the messages of a
+	// pairing nobody holds any more.
+	FailDestroyWith int
 	// FailVersionsAfter makes every version list after the first n answer
 	// 403 PERMISSION_DENIED: the read a step past the label calls makes,
 	// which a test cannot name by ID because the same secrets are read
@@ -104,6 +111,7 @@ type Secrets struct {
 	deletes     []string // the secret IDs a delete removed, in order
 	destroys    []string // the version names a destroy or a version delete took
 	disables    []string // the version names a versions/N:disable took, in order
+	enables     []string // the version names a versions/N:enable took, in order
 	versionList int      // the version lists served, successful or failed
 	// versionLists is the same count per secret ID: VersionsListCalls answers
 	// for the whole run, which cannot say whether ONE container was listed —
@@ -124,11 +132,19 @@ type fakeSecret struct {
 	// off names the versions a versions/N:disable call turned DISABLED, one
 	// at a time: C1.25's rotation retires the version it replaced with one.
 	off map[int]bool
+	// gone names the versions a versions/N:destroy call took. The version stays
+	// in the list — real Secret Manager keeps it and reports it DESTROYED — and
+	// its value is no longer readable, which is the whole point of a destroy
+	// over a disable (mobile plan task P5.1e).
+	gone map[int]bool
 }
 
-// state is version n's state, "ENABLED" or "DISABLED". A secret-level
-// disable (DisableVersions) covers every version of it.
+// state is version n's state: "ENABLED", "DISABLED" or "DESTROYED". A
+// secret-level disable (DisableVersions) covers every version of it.
 func (s *fakeSecret) state(n int) string {
+	if s.gone[n] {
+		return "DESTROYED"
+	}
 	if s.disabled || s.off[n] {
 		return "DISABLED"
 	}
@@ -148,6 +164,7 @@ var (
 	versionRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+)$`)
 	destroyRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):destroy$`)
 	disableRE      = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):disable$`)
+	enableRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/([0-9]+):enable$`)
 	labelTermRE    = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
 )
 
@@ -169,6 +186,29 @@ func (f *Secrets) Latest(id string) []byte {
 		return nil
 	}
 	return append([]byte(nil), s.versions[len(s.versions)-1]...)
+}
+
+// EnabledVersions returns every ENABLED version's value of secret id, oldest
+// first: what a client that reads the whole container sees, which for the
+// pairing keys is the set a cloud consumer verifies with (keychain.Cloud's
+// Keys). A DESTROYED version is not in the answer and neither is one a
+// DisableVersions call took, so a test asserts what the consumer would verify
+// with rather than which calls were made.
+func (f *Secrets) EnabledVersions(id string) [][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.secrets[id]
+	if s == nil {
+		return nil
+	}
+	var out [][]byte
+	for i := range s.versions {
+		if s.state(i+1) != "ENABLED" {
+			continue
+		}
+		out = append(out, append([]byte(nil), s.versions[i]...))
+	}
+	return out
 }
 
 // VersionsListCalls is how many version lists the fake has served, successful
@@ -195,7 +235,10 @@ func (f *Secrets) VersionsListedFor(id string) int {
 // DisableVersions marks every version of secret id DISABLED, as
 // secretmanager.versions.disable does. It is the state a readiness gate
 // must still read as "no version": the container is there and resolves to
-// nothing.
+// nothing. The mark is the secret's, because this helper stands for an
+// operator's disable of the whole container; an enable names one version, so
+// the first one spreads the mark onto the versions that exist and lifts it from
+// the version the call names, exactly as disabling them one at a time would.
 func (f *Secrets) DisableVersions(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -228,7 +271,9 @@ func (f *Secrets) Deleted() []string {
 }
 
 // Destroyed lists the versions a destroy or a version delete took, in order
-// (their full names). It is empty for every Fugaro run.
+// (their full names). A destroy leaves the version in the list and DESTROYED,
+// as real Secret Manager does, and its value is no longer readable — which is
+// what a pairing's revoke is for (mobile plan task P5.1e).
 func (f *Secrets) Destroyed() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -243,6 +288,16 @@ func (f *Secrets) Disabled() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.disables...)
+}
+
+// Enabled lists the version names a versions/N:enable call turned ENABLED, in
+// order (their full names): what a revoke makes of a version it has to read to
+// attribute it, and what it puts back with a disable when the version turns out
+// not to be the revoked pairing's.
+func (f *Secrets) Enabled() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.enables...)
 }
 
 // AddVersion appends a version to secret id, as another writer of the same
@@ -315,11 +370,12 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 		}
-		if state := s.state(n); state == "DISABLED" {
-			// As real Secret Manager: a DISABLED version is there and its
-			// value is not readable. It is not a 404 — the version exists —
-			// so a caller that reads a state as an absence is caught here.
-			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Secret Version ["+p+"] is disabled.")
+		if state := s.state(n); state != "ENABLED" {
+			// As real Secret Manager: a version that is DISABLED or DESTROYED
+			// is there and its value is not readable. It is not a 404 — the
+			// version exists — so a caller that reads a state as an absence is
+			// caught here.
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Secret Version ["+p+"] is "+strings.ToLower(state)+".")
 			return
 		}
 		f.accessed = append(f.accessed, m[2])
@@ -365,7 +421,15 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
 			return
 		}
+		if f.FailDestroyWith != 0 {
+			writeError(w, f.FailDestroyWith, http.StatusText(f.FailDestroyWith), "injected failure")
+			return
+		}
 		f.destroys = append(f.destroys, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
+		if s.gone == nil {
+			s.gone = map[int]bool{}
+		}
+		s.gone[atoi(m[3])] = true
 		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], atoi(m[3]), s.created, s.state(atoi(m[3]))))
 	case r.Method == http.MethodPost && disableRE.MatchString(p):
 		m := disableRE.FindStringSubmatch(p)
@@ -384,6 +448,34 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		s.off[atoi(m[3])] = true
 		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], atoi(m[3]), s.created, s.state(atoi(m[3]))))
+	case r.Method == http.MethodPost && enableRE.MatchString(p):
+		m := enableRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil || version(s, m[3]) == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+			return
+		}
+		n := atoi(m[3])
+		if s.state(n) == "DESTROYED" {
+			// A destroyed version cannot be brought back, as real Secret
+			// Manager refuses it: the destroy is the one call here with no way
+			// back, which is the whole of why step 2b makes it and not a
+			// disable.
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Secret Version ["+p+"] is destroyed.")
+			return
+		}
+		if s.disabled {
+			if s.off == nil {
+				s.off = map[int]bool{}
+			}
+			for i := 1; i <= len(s.versions); i++ {
+				s.off[i] = true
+			}
+			s.disabled = false
+		}
+		delete(s.off, n)
+		f.enables = append(f.enables, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
+		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], n, s.created, s.state(n)))
 	case r.Method == http.MethodDelete && versionRE.MatchString(p):
 		m := versionRE.FindStringSubmatch(p)
 		s := f.secrets[m[2]]

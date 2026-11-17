@@ -290,7 +290,7 @@ func TestRoutingTriageRunsTheReviewersModel(t *testing.T) {
 // The allow-list is deliberately not one of them. The resolver's list is a
 // membership test; the list that bounds a run is config.CheckAllowed's, which
 // admits a route ID where the switch routes the model to it and names the key
-// the owner wrote — a level's own model as agent.levels.lN.model (checkLevels,
+// the owner wrote — a level's own model as agent.levels.lN.model (checkModels,
 // levelModelPath). Filled in here it would refuse a routed level model the run
 // may use, and refuse it before checkBudget judged it, so the resolution writes
 // the level and the run's own gate is what refuses the run — which is what
@@ -313,7 +313,7 @@ func TestRoutingApplyLevelsLeavesTheAllowListToTheRun(t *testing.T) {
 	if got := r.levelModel(policy.LevelL3); got != adversarial {
 		t.Fatalf("level 3's model = %q, want the resolved %q: the level runs, and the run's own gate is what judges it", got, adversarial)
 	}
-	ps := r.checkLevels(func(a config.Agent) []config.Problem {
+	ps := r.checkModels(func(a config.Agent) []config.Problem {
 		return config.CheckAllowed(a, r.policy, r.ceilingAllowed(), r.routingSwitch(), r.modelProviders())
 	})
 	if len(ps) != 1 || ps[0].Path != "agent.levels.l3.model" {

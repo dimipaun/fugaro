@@ -1249,14 +1249,22 @@ func (s *policyMigrateStage) forget() {
 // step left for the user: a malformed node, or one written by a newer Fugaro,
 // is not something the operator of this binary can finish by hand, and the
 // message says which of the two it is.
+//
+// The three states it skips instead of refusing — a project whose config names
+// no database to read the node in, a database the ownership pair does not
+// prove is ours, and a node this run holds where it is while the credentials
+// service is not replaced — are one word in the plan view and two facts to a
+// caller: every one of them leaves the node exactly as it was, so a step run
+// for this stage stays owed (Undone), and only a run that published something
+// answers it.
 func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error) {
 	if policyNodeUnreachable(s.e.lc) {
-		return initflow.Status{State: initflow.Skipped, Detail: policyNoDBReason}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: policyNoDBReason, Undone: true}, nil
 	}
 	m, published, err := s.plan(ctx)
 	var notOurs *policyMigrationNotOurs
 	if errors.As(err, &notOurs) {
-		return initflow.Status{State: initflow.Skipped, Detail: notOurs.reason}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: notOurs.reason, Undone: true}, nil
 	}
 	if err != nil {
 		return initflow.Status{}, err
@@ -1282,7 +1290,7 @@ func (s *policyMigrateStage) Check(ctx context.Context) (initflow.Status, error)
 	case m == nil:
 		return initflow.Status{State: initflow.Done, Detail: fmt.Sprintf("the published policy is version %d", projectpolicy.Version)}, nil
 	case held != "":
-		return initflow.Status{State: initflow.Skipped, Detail: fmt.Sprintf("the published policy is version %d and this run holds it there: %s, and the service that reads the published node on every cascade and Bitbucket-proxied call refuses a node its own binary does not understand — %s, run from the owner's own session, migrates the node and replaces the service in one run", m.from, held, selfCommand()+" update")}, nil
+		return initflow.Status{State: initflow.Skipped, Detail: fmt.Sprintf("the published policy is version %d and this run holds it there: %s, and the service that reads the published node on every cascade and Bitbucket-proxied call refuses a node its own binary does not understand — %s, run from the owner's own session, migrates the node and replaces the service in one run", m.from, held, selfCommand()+" update"), Undone: true}, nil
 	case m.generations != nil:
 		return initflow.Status{State: initflow.Todo, Detail: fmt.Sprintf("the published policy at %s has moved past the generation this machine's config was written from (%s)", projectpolicy.PathShared(), m.generations.text())}, nil
 	case m.record != "":
