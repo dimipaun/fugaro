@@ -204,55 +204,10 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 		doc.Streams = plan.StreamList(cat)
 	}
 
-	// The runs of this checkout's own repository. An origin that cannot be read
-	// is not a reason to refuse the read: a plan's graph says a great deal on
-	// its own, and what is lost is said in a warning. The join itself is
-	// fail-closed either way — plan.State joins nothing when the repository is
-	// unknown.
-	now := time.Now().UTC()
-	facts := []plan.RunFact{}
-	// The estimate's two inputs from the cloud side: the history the runs
-	// carry, and the cap `max_running` defaults to (A6). Both fall back to what
-	// this machine runs at when the checkout has no repository to read.
-	maxRunning := localcfg.DefaultMaxParallel
-	var (
-		rows  []runview.Row
-		table *estimate.Table
-		recs  map[string]*runstore.Record
-	)
-	if repo, err := originRepo(ctx); err != nil {
-		doc.Warnings = append(doc.Warnings, "this checkout's repository could not be read: no run is joined")
-	} else {
-		doc.Repo = repo
-		env, err := openCloud(ctx, o.cloud)
-		if err != nil {
-			return err
-		}
-		defer env.Close()
-		slug, err := env.repoSlug(repo, checkoutOf(ctx, repo))
-		if err != nil {
-			return err
-		}
-		maxRunning = env.lc.MaxParallel
-		// The listing is bounded by the runs bucket's own age, the window
-		// `run --pr` reads with (followUpLookback is that lifecycle): a join
-		// wants every run the bucket still holds — an older one has been
-		// deleted with its run and can never join a task — and nothing beyond
-		// it, so the read costs what the bucket holds rather than everything
-		// the repository has ever launched.
-		rows, err = loadRows(ctx, env, lsFilter{
-			slugs: []string{slug}, since: now.Add(-followUpLookback), warn: errw,
-		}, now)
-		if err != nil {
-			return err
-		}
-		facts = planRunFacts(rows)
-		table, recs = planHistory(ctx, env, slug, now, warn)
-	}
-
 	// The plans are read before a single run is asked about. Which plans exist
-	// and which tasks they carry is what decides which runs the join reads, and
-	// therefore which pull requests are looked up at all (planMerges); an
+	// and which tasks they carry is what decides which runs the join reads,
+	// which pull requests are looked up at all (planMerges), and which runs'
+	// records the estimate reads for the work that is already done or going; an
 	// artifact this build refuses, and one whose plan id another artifact has
 	// already taken, are warnings rather than the end of the read, and neither
 	// is a plan the join may read runs for.
@@ -286,13 +241,61 @@ func runPlanStatus(cmd *cobra.Command, o *planStatusOptions) error {
 		plans = append(plans, plan.PlanRef{ID: id, Doc: d})
 	}
 
-	// The join reads the runs that claim one of these plans and no others, and
-	// everything spent per run is spent on those — the merge lookup above all,
-	// which spawns a process per distinct pull request. Scoping it to the runs
-	// the join reads is what keeps a command the console calls to draw a graph
-	// from costing what the plans hold rather than what the repository's whole
-	// history holds.
-	joined := plan.JoinedRuns(plans, facts, doc.Repo)
+	// The runs of this checkout's own repository. An origin that cannot be read
+	// is not a reason to refuse the read: a plan's graph says a great deal on
+	// its own, and what is lost is said in a warning. The join itself is
+	// fail-closed either way — plan.State joins nothing when the repository is
+	// unknown.
+	now := time.Now().UTC()
+	facts := []plan.RunFact{}
+	// The estimate's two inputs from the cloud side: the history the runs
+	// carry, and the cap `max_running` defaults to (A6). Both fall back to what
+	// this machine runs at when the checkout has no repository to read.
+	maxRunning := localcfg.DefaultMaxParallel
+	var (
+		rows   []runview.Row
+		table  *estimate.Table
+		recs   map[string]*runstore.Record
+		joined []plan.RunFact
+	)
+	if repo, err := originRepo(ctx); err != nil {
+		doc.Warnings = append(doc.Warnings, "this checkout's repository could not be read: no run is joined")
+	} else {
+		doc.Repo = repo
+		env, err := openCloud(ctx, o.cloud)
+		if err != nil {
+			return err
+		}
+		defer env.Close()
+		slug, err := env.repoSlug(repo, checkoutOf(ctx, repo))
+		if err != nil {
+			return err
+		}
+		maxRunning = env.lc.MaxParallel
+		// The listing is bounded by the runs bucket's own age, the window
+		// `run --pr` reads with (followUpLookback is that lifecycle): a join
+		// wants every run the bucket still holds — an older one has been
+		// deleted with its run and can never join a task — and nothing beyond
+		// it, so the read costs what the bucket holds rather than everything
+		// the repository has ever launched.
+		rows, err = loadRows(ctx, env, lsFilter{
+			slugs: []string{slug}, since: now.Add(-followUpLookback), warn: errw,
+		}, now)
+		if err != nil {
+			return err
+		}
+		facts = planRunFacts(rows)
+		// The join reads the runs that claim one of these plans and no others, and
+		// everything spent per run is spent on those — the merge lookup above all,
+		// which spawns a process per distinct pull request. Scoping it to the runs
+		// the join reads is what keeps a command the console calls to draw a graph
+		// from costing what the plans hold rather than what the repository's whole
+		// history holds.
+		joined = plan.JoinedRuns(plans, facts, doc.Repo)
+		table = planEstimateTable(ctx, env, slug, now, warn)
+		recs = planRunRecords(ctx, env, slug, joined, warn)
+	}
+
 	merge := planMerges(ctx, joined, doc.Repo, warn)
 
 	// What every plan's estimate is computed from, gathered once: the history
@@ -589,49 +592,100 @@ func releaseLabel(r plan.StateRelease) string {
 // is one nobody asked for.
 const planEstimateRuns = 5000
 
-// planHistory reads the run history this plan status's estimate is drawn from,
-// and writes it to the local cache the offline reads read back (D2714 as
-// amended).
+// planEstimateRefresh is how old the cached history may be before this read
+// pays for the window's records again. It is what keeps a command the console
+// polls about once a minute from re-reading the window's objects on every poll:
+// the table is a distribution over tiers and modes, which moves as runs finish
+// rather than as a reader looks, while everything else this estimate prints —
+// which task is done or going, how long its run has been going, and what that
+// run has cost — is as fresh as the join beside it.
+const planEstimateRefresh = 6 * time.Hour
+
+// planEstimateTable is the history the estimate is drawn from: the table an
+// earlier read of this machine cached, while it is younger than
+// planEstimateRefresh, and the window's records read and cached again when it
+// is not (D2714 as amended).
 //
-// It is a second pass over the bucket's records, and it is a second pass on
-// purpose: the rows the join reads carry neither the tier nor the finish time a
-// sample is grouped by — runview.Row is deliberately narrower than a record —
-// and this read may not spend a cloud call it does not need, so the records are
-// read here as records (readRunObjects, the one reader behind runs stats and
-// report) rather than widened into the listing's view.
+// The window is the runs bucket's own (followUpLookback, as the join's listing
+// is) and the read is bounded (planEstimateRuns), because a plan's figures are
+// per tier and per rigor: the sample is the runs behind those groups rather
+// than the runs behind one plan, and past the bound it is a read nobody asked
+// for. The records are read here as records (readRunObjects, the one reader
+// behind runs stats and report) rather than off the listing's rows, which
+// carry neither the tier nor the finish time a sample is grouped by —
+// runview.Row is deliberately narrower than a record.
 //
 // A history that cannot be read is a warning and not the end of the read: the
 // estimate then answers every tier its seed minutes with no cost at all
-// (D2712), and the line says which sample answered each task. The cache write
-// is the same shape of trouble: what it costs is that the offline reads fall
-// back to the seeds, which is what they do on a machine that has never run this
-// command.
-//
-// The records come back as well, by run id: the estimate wants what a task's
-// run has cost so far and how long it has been going, and a record is where a
-// cost figure is a figure rather than a zero.
-func planHistory(ctx context.Context, env *cloudEnv, slug string, now time.Time, warn func(string)) (*estimate.Table, map[string]*runstore.Record) {
+// (D2712), and the line says which sample answered each task. A cache that
+// cannot be read is the same window read again, which is what heals it; one
+// that cannot be written costs the offline reads the seeds, which is what they
+// fall back to on a machine that has never run this command.
+func planEstimateTable(ctx context.Context, env *cloudEnv, slug string, now time.Time, warn func(string)) *estimate.Table {
+	path, err := estimate.CachePath(os.Getenv, runtime.GOOS)
+	if err != nil {
+		warn("this machine's cache directory could not be placed: " + oneLine(err.Error()))
+		path = ""
+	} else if cached, err := estimate.ReadCache(path); err == nil && now.Sub(cached.WrittenAt) < planEstimateRefresh {
+		return cached
+	}
 	objs, _, _, err := readRunObjects(ctx, env, []string{slug}, now.Add(-followUpLookback), time.Time{}, planEstimateRuns)
 	if err != nil {
 		warn("this repository's run history could not be read: the estimate is its tiers' seed minutes alone")
-		return nil, nil
+		return nil
 	}
 	records := make([]runstore.Record, 0, len(objs))
-	recs := make(map[string]*runstore.Record, len(objs))
 	for _, o := range objs {
-		if o.record == nil {
-			continue
+		if o.record != nil {
+			records = append(records, *o.record)
 		}
-		records = append(records, *o.record)
-		recs[o.id] = o.record
 	}
 	table := estimate.Build(records, now)
-	if path, err := estimate.CachePath(os.Getenv, runtime.GOOS); err != nil {
-		warn("warning: " + oneLine(err.Error()))
-	} else if err := table.WriteCache(path); err != nil {
-		warn("the estimate's cached history could not be written: " + oneLine(err.Error()))
+	if path != "" {
+		if err := table.WriteCache(path); err != nil {
+			warn("the estimate's cached history could not be written: " + oneLine(err.Error()))
+		}
 	}
-	return table, recs
+	return table
+}
+
+// planRunRecords reads the record of every run the join is about — the runs
+// that claim a task of one of this checkout's plans, and no others. It is what
+// tells a done or running task what its work has actually cost (D2723), and
+// without it the plan's total could not be a figure at all.
+//
+// They are read through the run cache the listing reads its own rows with
+// (lsReaders, readRunVia): the join has just read these runs' objects, so a
+// poll of this command reads them off this machine rather than out of the
+// bucket again — and the set is the runs the plans claim, not the window's. A
+// record that cannot be read is one task's cost unknown, which the estimate
+// counts and the line prints; the read says so once rather than dropping it in
+// silence.
+func planRunRecords(ctx context.Context, env *cloudEnv, slug string, joined []plan.RunFact, warn func(string)) map[string]*runstore.Record {
+	refs := make([]lsRef, 0, len(joined))
+	for _, f := range joined {
+		refs = append(refs, lsRef{slug: slug, id: f.RunID})
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	readers := lsReaders(ctx, env, true, refs)
+	recs := make(map[string]*runstore.Record, len(refs))
+	var unread int
+	for _, r := range refs {
+		run, err := readRunVia(ctx, env, readers[r], r.slug, r.id, 0)
+		switch {
+		case err != nil:
+			unread++
+		case run.in.Record != nil:
+			recs[r.id] = run.in.Record
+		}
+	}
+	if unread > 0 {
+		warn(fmt.Sprintf("the runs this plan's tasks carry could not all be read, %d of %d: a task of them the estimate found no cost for counts as unknown",
+			unread, len(refs)))
+	}
+	return recs
 }
 
 // planEstimateInputs is what one plan's estimate needs beyond the plan itself:
