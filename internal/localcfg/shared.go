@@ -227,6 +227,15 @@ func (c *Config) Shared() *Config {
 	// rule reading itself out of the way. ParseShared refuses the key besides,
 	// because a shared config carrying it was not written by the converge.
 	s.Binaries = nil
+	// ReportsCommit is the owner's policy too, and it travels the floor's way,
+	// into the policy node — and it is dropped here for a sharper reason than
+	// the floor's: the member decides which repository every report of the
+	// project is committed into, so a launcher who could write it into the runs
+	// bucket's shared file would be aiming the project's reports at a repository
+	// of its own choosing, which is the one decision D2751 keeps to the owner.
+	// ParseShared refuses the key besides, because a shared config carrying it
+	// was not written by the converge.
+	s.ReportsCommit = nil
 	// ImageCatalog travels the verifier list's way and is dropped here for a
 	// sharper reason than the floor's: the catalog decides which image a run's
 	// job executes in and which Dockerfile is fetched to build it, so a
