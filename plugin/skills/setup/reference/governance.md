@@ -15,7 +15,9 @@ Each key bounds one stage at a time, and a run that passes one ends with a check
 | `governance.max_subagents` | the most distinct sub-agents one stage may start; a run a plan graph dispatched at `trivial` or `small` is bounded at 3 whatever this says |
 | `governance.review_ratio`, `governance.review_floor_calls` | review's calls against the implementation's: review that spends more than `max(floor, ratio × implement calls)` stops |
 
-Read the keys, their defaults and their units from `fugaro validate --json` and the schema, never from memory. `governance.tiers` is the adjacent block and is not one of these bounds: a tier's expected cost and minutes are what a run is expected to use, and nothing there moves a cap.
+Read the keys, their defaults and their units from `fugaro validate --json` and the schema, never from memory.
+
+`governance.tiers` is the adjacent block and is not one of these bounds: a tier's expected cost and minutes are what a run of that tier is expected to use, and nothing there moves a cap.
 
 Two rules decide whether a value written here does anything. Anything written in the repository's own file may only tighten — a value looser than the one in force is dropped with a warning that names the key — and the project layer is the one layer that may loosen, because it is where the block a run starts under comes from. That loosening is the owner's, in their own terminal, never yours: the key goes in their local layer file and `fugaro config publish FILE` publishes it. No key in the block moves the per-run cap, which stays the ceiling every stage bound sits under; a run with no per-run cap is stopped by none of the gateway's figures, since a fraction of nothing is not a budget, though its `governance.stage_timeout` still fires.
 
