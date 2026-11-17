@@ -2,8 +2,10 @@ package runner_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -626,5 +628,72 @@ func TestABReplayRefusesALevelTheRunDoesNotRun(t *testing.T) {
 		if !strings.Contains(rec.Reason, want) {
 			t.Fatalf("reason = %q, want it to carry %q", rec.Reason, want)
 		}
+	}
+}
+
+// TestABReplayRunsTheReviewPosture (B1.2): the arm's one stage reads another
+// run's patch, so it is launched the way the review job's own stage is and not
+// as a coding run's stage. The checkout the reviewer reads is the champion's
+// base with that patch applied, so a hook the base repository's settings
+// declare — pointed at a script the patch itself may have written — must not
+// run, a project MCP server in it must not load, and the reviewer must not hold
+// the tools that would run or write anything in it: what it wrote would be
+// committed by the arm's finalize and uploaded as the arm's own patch, and what
+// it ran would be code crossing runs, which is the one thing the fence exists to
+// refuse. The plan states it as "runs the review with the reviewer's read-only
+// tool set" (docs/review-levels-ab-jobmax/implementation-plan.md, B1.2).
+func TestABReplayRunsTheReviewPosture(t *testing.T) {
+	g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
+	withBucket(g.harness)
+	putChampionPatch(t, g.harness, championPatch(t, g.harness, championChange(g.harness)))
+	var raw, home string
+	var argv []string
+	read := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		_, _, raw = settingsEnv(t, g.harness)
+		home = envValue(req.Env, "HOME")
+		argv = agent.Args(req)
+		return replayReview("ship", 0)(t, ctx, req)
+	}
+	if _, err := g.run(t, read); err != nil {
+		t.Fatal(err)
+	}
+	if raw == "" {
+		t.Fatal("the arm ran no stage, so there is no launch to read")
+	}
+	var s struct {
+		DisableAllHooks            *bool
+		AllowManagedHooksOnly      *bool
+		AllowManagedMcpServersOnly *bool
+		AllowedMcpServers          *[]string
+		Permissions                struct{ Deny []string }
+	}
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		t.Fatalf("managed settings %s: %v", raw, err)
+	}
+	if s.DisableAllHooks == nil || !*s.DisableAllHooks {
+		t.Errorf("the replay stage's settings do not refuse every hook: %s", raw)
+	}
+	if s.AllowManagedHooksOnly == nil || !*s.AllowManagedHooksOnly {
+		t.Errorf("the replay stage's settings do not allow managed hooks only: %s", raw)
+	}
+	if s.AllowManagedMcpServersOnly == nil || !*s.AllowManagedMcpServersOnly {
+		t.Errorf("the replay stage's settings do not restrict MCP servers to the managed file's: %s", raw)
+	}
+	for _, rule := range agent.ReviewJobDenyRules() {
+		if !slices.Contains(s.Permissions.Deny, rule) {
+			t.Errorf("the replay stage's settings do not deny %q: %v", rule, s.Permissions.Deny)
+		}
+	}
+	// The mechanism, not just the file: setting-source selection is a flag and a
+	// project-scoped MCP server loads under `claude -p` whatever a settings file
+	// says, so the argv is the half that reaches those two.
+	if !slices.Contains(argv, "--strict-mcp-config") {
+		t.Errorf("the replay stage's argv reads every other MCP configuration: %q", argv)
+	}
+	if i := slices.Index(argv, "--setting-sources"); i < 0 || i+1 >= len(argv) || argv[i+1] != strings.Join(agent.ReviewSettingSources, ",") {
+		t.Errorf("the replay stage's argv does not select the user level alone: %q", argv)
+	}
+	if want := filepath.Join(g.harness.deps.StateDir, agent.ReviewHomeName); home != want {
+		t.Errorf("the replay stage ran with HOME %q, want the review home %q: the one level it selects is that empty directory", home, want)
 	}
 }

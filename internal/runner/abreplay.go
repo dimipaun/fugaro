@@ -210,6 +210,17 @@ func (r *run) runReviewReplay(ctx context.Context) {
 	// champion's own loop narrows its range to its own commits, and the prompt
 	// and every round's input are built over it (reviewRev, reviewPromptWithInput).
 	r.narrowReviewRange(ctx)
+	// The session runs with a home of its own, as every review stage's does and
+	// for the same reason (reviewmode.go's useReviewHome, D894(a)): the image's
+	// home is Claude Code's user level, which is the one level the posture below
+	// keeps (agent.ReviewSettingSources), so a settings file baked into the
+	// image would otherwise configure the session that reads the champion's
+	// patch. Made before the round, which is what builds the stage's settings
+	// and environment out of the run's own.
+	if err := r.useReviewHome(); err != nil {
+		r.failReplayRead(ctx, err)
+		return
+	}
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.reviewRev(ctx), r.reviewDiffSize(ctx), r.baseUnreadable())
 	prompt := r.replayPrompt(reviewPrompt, r.replay)
 	// Read before the round, as the loops read it: the summary keeps the commit
@@ -245,7 +256,14 @@ func (r *run) replayRound(ctx context.Context, stage, prompt string) (Verdict, b
 		if attempt > 1 && r.capReached() {
 			return Verdict{}, false, false
 		}
-		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, prompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}
+		// The stage's own posture, which a coding run's review rounds do not
+		// take (reviewartifact.go's reviewStageRequest is the other place it is
+		// spelled): the user level alone, which the review home leaves empty,
+		// and no MCP configuration but the managed file's. The checkout the
+		// reviewer reads is another run's patch, so neither the repository's own
+		// settings nor an .mcp.json in it may configure this session (B1.2).
+		req := agent.Request{Prompt: r.reviewPromptWithInput(ctx, prompt), SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema,
+			SettingSources: agent.ReviewSettingSources, StrictMCPConfig: true}
 		res, ok, _ := r.stage(ctx, stage, req, stageOpts{})
 		// The review's own session is saved beside the work session, as every
 		// review stage's is (C1.17, D138): an arm has no work session, so this
@@ -302,17 +320,18 @@ func (r *run) readChampionPatch(ctx context.Context) ([]byte, error) {
 }
 
 // failReplayRead ends the arm for a failure of the machinery rather than of its
-// input: the read of the runs bucket, or the local git of the checkout, stopped
-// for a reason that is nobody's configuration. It is the ending the check gate's
-// own infrastructure failures take (gate.go, failInfra): status infra_error,
-// class infra_error, and no finalize, since there is nothing to record of an arm
-// that never reached its review.
+// input: the read of the runs bucket, the local git of the checkout, or the home
+// its review stage's session runs with (useReviewHome), stopped for a reason
+// that is nobody's configuration. It is the ending the check gate's own
+// infrastructure failures take (gate.go, failInfra): status infra_error, class
+// infra_error, and no finalize, since there is nothing to record of an arm that
+// never reached its review.
 func (r *run) failReplayRead(ctx context.Context, err error) {
 	reason := r.redact(err.Error())
 	r.recordEnd(runstore.StatusInfraError, runstore.OutcomeNone, failure.InfraError, reason)
 	r.skipPR = true
 	r.storeEnded(ctx, nil)
-	r.d.Log.Error("the reviewer replay could not read the champion's patch", "err", reason)
+	r.d.Log.Error("the reviewer replay could not reach the champion's patch", "err", reason)
 }
 
 // refuseReplay refuses the arm the way refuseArm does — failed, outcome none,
