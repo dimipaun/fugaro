@@ -462,15 +462,31 @@ func (s *Service) relinkResellerCustomer(ctx context.Context, actor Caller, aske
 // customer is one the reseller sells licences to, and it starts with the licence
 // the reseller mints for it rather than with the free seat of a self-serve
 // sign-up.
+//
+// **It is bounded by the day as a sign-up is.** F35's organisation limit (D2184)
+// is asked here too, and twice: the account's own day, as a sign-up asks it, and
+// the reseller's (refuseAnotherCustomer), because the count a sign-up takes reads
+// the memberships an account owns and F40 means this path writes none.
 func (s *Service) createCustomerOrganisation(ctx context.Context, actor Caller, held resellerAccess, name string) (WireOrganisation, error) {
 	if err := held.write(); err != nil {
+		return WireOrganisation{}, err
+	}
+	now := s.now()
+	// F35's day (D2184), which this path owes as much as a sign-up does: an
+	// account that may make three organisations a day may not make unlimited
+	// ones by being a reseller, and every organisation this path makes is one a
+	// person could otherwise mint in a loop. Both counts are taken before the id
+	// is minted, so a refusal writes nothing at all.
+	if err := s.refuseAnotherOrganisation(ctx, actor.UID, now); err != nil {
+		return WireOrganisation{}, err
+	}
+	if err := s.refuseAnotherCustomer(ctx, held.Organisation.ID, now); err != nil {
 		return WireOrganisation{}, err
 	}
 	id, err := newID()
 	if err != nil {
 		return WireOrganisation{}, err
 	}
-	now := s.now()
 	resellerID := held.Organisation.ID
 	org := WireOrganisation{
 		ID:   id,
@@ -498,6 +514,41 @@ func (s *Service) createCustomerOrganisation(ctx context.Context, actor Caller, 
 		return WireOrganisation{}, err
 	}
 	return org, nil
+}
+
+// refuseAnotherCustomer is F35's day (D2184) read for the organisations this path
+// makes, which the sign-up's own count cannot see: that count reads the
+// memberships an account owns, and a reseller is never a member of its customers
+// (F40), so the customers it made are in no record of that shape. What holds them
+// is the link this path writes for every one of them, whose instant is when the
+// reseller took that customer on — so the day counted here is the reseller
+// organisation's, shared by its owners and admins, and a relink counts against
+// the reseller that took the customer on (relinkResellerCustomer writes a fresh
+// instant, which is its own act and operations' decision, not this one's).
+//
+// The number and the window are the sign-up's own (orgDailyLimit, orgLimitWindow),
+// because D2184 names one limit for an account's day and not a second one for
+// resellers, and the refusal is that limit's own sentinel so that one sentence
+// answers it wherever it is met. The whole record is read and not a count query:
+// this store's reader takes one equality field, and a reseller's customers are a
+// list the reseller's own screen draws whole anyway.
+func (s *Service) refuseAnotherCustomer(ctx context.Context, resellerID string, now time.Time) error {
+	links, err := recordsWhere[WireResellerCustomer](ctx, s.docs, resellerCustomersCollection,
+		Where{Field: "reseller_organisation_id", Value: resellerID})
+	if err != nil {
+		return err
+	}
+	since := now.Add(-orgLimitWindow)
+	taken := 0
+	for _, link := range links {
+		if link.LinkedAt.After(since) {
+			taken++
+		}
+	}
+	if taken >= orgDailyLimit {
+		return errOrgDailyLimit
+	}
+	return nil
 }
 
 // resellerCustomer answers the link this reseller holds for one customer
@@ -664,7 +715,17 @@ func (s *Service) inviteCustomerFirstOwner(ctx context.Context, actor Caller, he
 	// createInvitation spends it and for the same reason: the caller's standing is
 	// known by now, so an account of another organisation cannot spend somebody
 	// else's allowance by posting bodies that name it.
-	if !s.invites.allow("organisation:" + org.ID) {
+	//
+	// It is spent in two buckets, and the second is the point: the customer's own
+	// (which is where createInvitation spends it, and what bounds a customer's
+	// invitations) and the reseller organisation's. Every customer this path makes
+	// is a fresh organisation and so a fresh bucket, so without the reseller's own
+	// an owner could invite once into each of as many customers as it could make
+	// and meet no rate at all: refuseAnotherCustomer bounds the making, this
+	// bounds the mailing, which is what the rate is for. The limiter's own map is
+	// the second reason — a bound that added a bucket per organisation would be
+	// the growth this rate exists to stop.
+	if !s.invites.allow("organisation:"+org.ID, "organisation:"+held.Organisation.ID) {
 		return WireInvite{}, errInviteRateLimited
 	}
 	id, err := newID()

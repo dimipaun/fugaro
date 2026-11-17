@@ -819,3 +819,64 @@ func TestAnotherOrgsResellerCustomersAreRefused(t *testing.T) {
 		t.Errorf("operations setting the reseller's terms answered %+v, want %s", terms, mine.ID)
 	}
 }
+
+// TestAResellersOrganisationsAndInvitationsAreBounded: F35 and D2184 (the day's
+// organisation limit) read for this path, which is the one place a reseller could
+// have slipped both.
+//
+// The limit a sign-up meets counts the organisations an account owns a membership
+// of (refuseAnotherOrganisation), and F40 says there is no such membership here —
+// the reseller is never a member of its customers — so this path asks the same day
+// a second time, in the record that does hold the organisations it made
+// (refuseAnotherCustomer). The invitation rate is the other half: it is keyed on
+// the organisation the invitation is for, and every customer is a fresh
+// organisation, so a rate that only knew that one would hand out a fresh allowance
+// per customer and bound nothing at all. Both are what this case pins.
+func TestAResellersOrganisationsAndInvitationsAreBounded(t *testing.T) {
+	f := newFixtureWith(t, Production, func(b *fixture) {
+		b.cfg.InviteRate = Limits{Requests: 2, Window: time.Hour}
+	})
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+
+	// D2184's number, which this path borrows rather than invents: three
+	// organisations in the day, and the fourth is refused before anything is
+	// written.
+	before := len(f.organisations())
+	first := f.soldBy("Customer One")
+	second := f.soldBy("Customer Two")
+	third := f.soldBy("Customer Three")
+	readAPIRefusal(t, f.apiAsCaller(http.MethodPost, apiResellerCustomersPath, `{"name":"Customer Four"}`),
+		http.StatusTooManyRequests, "too_many_organisations")
+	if made := len(f.organisations()) - before; made != orgDailyLimit {
+		t.Errorf("the reseller made %d organisation(s), want the %d the day allows and no trace of the fourth", made, orgDailyLimit)
+	}
+	if _, found := f.link(third.ID); !found {
+		t.Fatalf("the third customer %s was written without its link", third.ID)
+	}
+
+	// The rate is spent in the reseller's own bucket as well as the customer's:
+	// two is what this deployment allows, and the third customer's fresh
+	// organisation hands out no fresh allowance.
+	for _, customer := range []WireOrganisation{first, second} {
+		if rec := f.firstOwnerInvite(customer.ID, buyerMail, roleOwner); rec.Code != http.StatusCreated {
+			t.Fatalf("inviting into %s answered %d: %s", customer.ID, rec.Code, rec.Body)
+		}
+	}
+	mails := len(f.mail.sent)
+	readAPIRefusal(t, f.firstOwnerInvite(third.ID, rivalBuyerMail, roleOwner),
+		http.StatusTooManyRequests, "rate_limited")
+	if held := f.invitationsOf(third.ID); len(held) != 0 {
+		t.Errorf("the rate-refused invitation was written anyway: %+v", held)
+	}
+	if len(f.mail.sent) != mails {
+		t.Errorf("the rate-refused invitation mailed %d message(s), want none", len(f.mail.sent)-mails)
+	}
+
+	// The day is the day, not a permanent ceiling: once it has passed, the
+	// reseller creates again, and the rate has run out for that customer only.
+	f.advance(orgLimitWindow + time.Hour)
+	if rec := f.apiAsCaller(http.MethodPost, apiResellerCustomersPath, `{"name":"Customer Five"}`); rec.Code != http.StatusCreated {
+		t.Errorf("creating a customer after the day passed answered %d: %s", rec.Code, rec.Body)
+	}
+}

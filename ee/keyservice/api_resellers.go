@@ -355,6 +355,8 @@ func refuseReseller(w http.ResponseWriter, err error) {
 		refuseAPI(w, http.StatusForbidden, "not_permitted", "Only a reseller organisation's owners and admins may do this. Members read its customers.")
 	case errors.Is(err, ErrSSORequired), errors.Is(err, ErrDirectoryNotPinned):
 		refuseAPI(w, http.StatusForbidden, "sso_required", "A reseller organisation's members sign in with Google or Microsoft. Sign in that way to use it.")
+	case errors.Is(err, errOrgDailyLimit):
+		refuseAPI(w, http.StatusTooManyRequests, "too_many_organisations", "This reseller has made as many customer organisations as a day allows. The ones it has are unchanged; try again tomorrow.")
 	case errors.Is(err, errFirstOwnerSet):
 		refuseAPI(w, http.StatusConflict, "first_owner_set", "This customer organisation has its own people already. Its owners and admins invite from here, and the reseller's part in it is done.")
 	case errors.Is(err, errResellerAlreadyLinked):
