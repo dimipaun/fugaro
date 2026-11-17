@@ -95,6 +95,13 @@ type projectReposOptions struct {
 	// checkout, no fugaro.yaml and no image to converge, and * is the list's
 	// own entry for every repository rather than a repository at all.
 	allowListOnly bool
+	// noApply is --no-apply (D1565), and it is `add`'s own: the enrolment is
+	// written — the repos: entry, the image mapping and the published allow-list
+	// entry — and the two stages that make it live are saved for `fugaro apply`
+	// instead of run here. `--allow-list-only` and `rm` have none: the
+	// ETag-guarded write of the published node IS their change, and there is
+	// nothing behind it to defer.
+	noApply *bool
 }
 
 func newProjectReposLsCmd() *cobra.Command {
@@ -165,7 +172,11 @@ func newProjectReposAddCmd() *cobra.Command {
 			"\n" +
 			"--allow-list-only writes the published allow-list entry and nothing else,\n" +
 			"as this command did before the enrolment converged: it is what * needs, and\n" +
-			"it is the whole of what a pattern such as owner/* can want.",
+			"it is the whole of what a pattern such as owner/* can want.\n" +
+			"\n" +
+			"--no-apply writes the enrolment and stops there: the publish of the node\n" +
+			"and the deploy of the repository's own root are saved in this machine's\n" +
+			"record, and `fugaro apply` runs them later.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if o.allowListOnly {
@@ -176,6 +187,7 @@ func newProjectReposAddCmd() *cobra.Command {
 	}
 	addCloudFlags(cmd, &o.cloud)
 	cmd.Flags().BoolVar(&o.allowListOnly, "allow-list-only", false, "Write only the allow-list entry, as this command did before the whole enrolment converged (required for *)")
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 

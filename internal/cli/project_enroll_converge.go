@@ -36,6 +36,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -167,7 +168,10 @@ func runProjectReposEnroll(cmd *cobra.Command, o *projectReposOptions, arg strin
 	// Safe while runs are in flight (CLAUDE.md): this asks no run to finish and
 	// rewrites nothing a run holds — the allow-list write is the ETag-guarded
 	// one, and the stages are `fugaro update`'s.
-	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, false, reposEnrolmentWhat(lc, plan)); err != nil {
+	// The sentence is the confirmation's own and it follows --no-apply: what the
+	// run is about to do is what the person answers for, and under the flag the
+	// publish and the deploy are not run (D1563, D1565).
+	if err := confirmTyped(cmd, bufio.NewReader(cmd.InOrStdin()), lc, false, reposEnrolmentWhat(lc, plan, *o.noApply)); err != nil {
 		return err
 	}
 	return reposEnrolmentApply(ctx, cmd, o, lc, db, configPath, plan)
@@ -667,10 +671,18 @@ func workflowNames(row reposViewRepo) []string {
 	return names
 }
 
-// reposEnrolmentWhat is the sentence the one question is about.
-func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment) string {
-	return fmt.Sprintf("enrol %s in project %s: write its repos: entry and its image mapping, add it to the published allow-list, publish the node from this machine's config, and converge and deploy its own root",
-		pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name))
+// reposEnrolmentWhat is the sentence the one question is about. noApply is
+// --no-apply (D1565), and it changes the last clause only: under the flag the
+// publish and the deploy are saved in this machine's record for `fugaro apply`
+// rather than run here, and a question that named them as things about to
+// happen would be asking about a run this invocation does not make.
+func reposEnrolmentWhat(lc *localcfg.Config, plan reposEnrolment, noApply bool) string {
+	tail := "publish the node from this machine's config, and converge and deploy its own root"
+	if noApply {
+		tail = "and save the publish of the node and the deploy of its own root for fugaro apply to run later"
+	}
+	return fmt.Sprintf("enrol %s in project %s: write its repos: entry and its image mapping, add it to the published allow-list, %s",
+		pluginwire.Printable(plan.canonical), pluginwire.Printable(lc.Name), tail)
 }
 
 // reposEnrolmentApply runs the steps the plan printed, in that order. Each is
@@ -702,7 +714,37 @@ func reposEnrolmentApply(ctx context.Context, cmd *cobra.Command, o *projectRepo
 	if err != nil {
 		return userErr("reading back %s: %v", safetext.Field(plan.path), err)
 	}
-	return reposEnrolmentStages(ctx, cmd, o, after, plan)
+	// The change's own follow-up (AP6), recorded here and not earlier: what the
+	// record remembers is the steps that make the enrolment live, and a record
+	// written before the writes above would name steps for an enrolment that was
+	// never made — the same order `accounts rm` writes its own in (D1014's shape,
+	// and the four steps above are this command's change). It is written before
+	// the converge and not after it, because the converge is minutes of Terraform
+	// and one that died in the middle would leave an enrolment nothing remembers
+	// is not live (D1562, D1563).
+	names, err := chainSteps(reposEnrolmentChanges())
+	if err != nil {
+		return err
+	}
+	before, err := chainSave(after, reposEnrolmentChanges(), names)
+	if err != nil {
+		return err
+	}
+	if *o.noApply {
+		chainSavedLine(out, names)
+		return nil
+	}
+	return reposEnrolmentStages(ctx, cmd, o, after, plan, before, names)
+}
+
+// reposEnrolmentChanges is the change `project repos add` makes, as apply's
+// table is keyed: a repository of this project. One row, whichever half of the
+// enrolment a run makes — the repos: entry, the image mapping and the published
+// allow-list entry are one change to the installation, and the steps that make
+// it live are the node the admission is published in, the job set that serves
+// the repository and the repository's own root (ResourceRepo's own comment).
+func reposEnrolmentChanges() []apply.Change {
+	return []apply.Change{{Kind: apply.Resource, Key: apply.ResourceRepo}}
 }
 
 // reposEnrolmentWriteLocal is steps 2 and 3: the `repos:` entry and the image
@@ -798,7 +840,7 @@ func reposEnrolmentWriteAllow(ctx context.Context, out io.Writer, configPath str
 // confirmation is about what it is: `fugaro update --repo` offers the first
 // build behind its own billable confirmation, and a single question about
 // enrolment may not stand for a bill (D2400).
-func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, plan reposEnrolment) error {
+func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectReposOptions, lc *localcfg.Config, plan reposEnrolment, before *apply.Pending, names []string) error {
 	run := stepRunFor(cmd, "project-repos-add", cmd.ErrOrStderr())
 	defer run.close()
 	env, err := openCloudFor(ctx, lc)
@@ -808,9 +850,23 @@ func reposEnrolmentStages(ctx context.Context, cmd *cobra.Command, o *projectRep
 	defer env.Close()
 	stages, err := reposEnrolmentRunStages(ctx, cmd, run, lc, plan.path, plan.old)
 	if err != nil {
+		// The steps this command wrote to the record are still owed, every one of
+		// them, and the sentence that finishes them goes beside the stage's own
+		// error: a person who reads only the error line would re-run this command,
+		// and the record would read as an enrolment nobody remembers.
+		applyKeptLine(cmd.OutOrStdout(), names)
 		return err
 	}
 	if err := reposEnrolmentDeployed(plan, stages); err != nil {
+		applyKeptLine(cmd.OutOrStdout(), names)
+		return err
+	}
+	// The chain is settled before the report and not after it: the report's last
+	// line is the claim that `fugaro run --repo …` is ready, and it may not be
+	// printed over a step the run did not answer — a line that says the change is
+	// still owed belongs above it, or nowhere (D1563, and the settle is what
+	// clears the record the run above answered).
+	if err := chainSettle(cmd, lc, plan.path, before, names, stages); err != nil {
 		return err
 	}
 	reposEnrolmentReport(cmd, lc, plan, stages)
