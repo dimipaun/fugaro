@@ -526,14 +526,15 @@ the plan's D12 row now say the owner claimed it, and the row and the section are
 check is the one part of that work no runner can do: a person, a real Windows 10 or 11 machine with
 WSL 2, and the installer a **manual dispatch** of `console-windows.yml` produced (the job runs at
 release time only, so a dispatch is the only way to have one before a release). **Two works wanted
-119**: the rigor-modes work proposes it for its own live check
-(`docs/rigor-modes/implementation-plan.md` §3 — *"So the next free number is **119**, and this plan
-takes it"* — and its `docs/rigor-modes/README.md`'s own row), and the register's rule for two open
-claims is that **whichever merges second renumbers itself**. This one is the owner's, it is dated,
-and it is the row and the section written below; that plan's T8.1 is where its check's text is
-written, and it takes another number if it merges after this. The check is owner-run — **no agent
-runs any step of it** — it reads and writes on your own Windows machine and in one WSL distribution,
-**never `belong`**, and it is **NOT RUN**.
+119**: the rigor-modes work proposed it for its own live check
+(`docs/rigor-modes/implementation-plan.md` §3 at its base — *"So the next free number is **119**, and
+this plan takes it"* — and its `docs/rigor-modes/README.md`'s own row), and the register's rule for
+two open claims is that **whichever merges second renumbers itself**. This one is the owner's, it is
+dated, it is the row and the section written below, and **the other one has renumbered itself**: the
+owner ruled on **2026-11-17** that the rigor live check takes **Check 127**, which is what that
+plan's §3 and its task T8.1 now say and what the paragraph below records. The check is owner-run —
+**no agent runs any step of it** — it reads and writes on your own Windows machine and in one WSL
+distribution, **never `belong`**, and it is **NOT RUN**.
 
 **Check 120, 121 and 122 are the mobile telemetry phase's, and Task P7.5 is the task that writes
 them here** (`docs/mobile/implementation-plan.md`, its Phase 7 and its task **P7.5**; the authority
@@ -790,6 +791,29 @@ billable step in either check is 651's halted run. **Nothing above was renumbere
 reservation's first two numbers, **652 to 659 stay unused and that plan's**, and the paragraph above's
 **664 onward stays free** is untouched.
 
+**Check 127 is the rigor-modes work's, and the number is the owner's ruling rather than this file's own
+reading** ([`docs/rigor-modes/implementation-plan.md`](rigor-modes/implementation-plan.md) §3, and its
+task **T8.1**, which writes the section; the owner's ruling of **2026-11-17**). The work took **119**
+first — the next free number at its own base `1d325928`, which §3 says in as many words — and the
+register's rule for two open claims is that **whichever merges second renumbers itself**. The
+console-on-Windows work claimed 119 on 2026-11-14 and has since written it here, so this work renumbers
+itself, and the owner named the number rather than leaving it to the register's reading: **the rigor
+live check takes Check 127** (console-windows owns 119; 125 is cloud-senior-review's, 130–134
+licensing's). **127 is free at this change's commit `a03cdbc3`**: nothing in this file — no paragraph
+above, no row and no `## Check` section — carries it, the highest **written** section here being
+**663** (the always-on orchestrator's), whose own paragraph took it as *the first free number past every
+claim above*; **120**, **121** and **122** are the mobile telemetry phase's and written, **123** is the
+console dependency-graph work's, **124** the Cloud Batch backend's, and **130** the licensing work's,
+whose block **130–134** is that work's. A work that reserved none takes the number free past every
+claim — that is how 660–663 were taken — and an owner's ruling is the one thing that does not wait for
+that reading: 127 is below several of those claims and the ruling is what makes it this work's, which is
+why it is recorded here rather than derived. Its subject is the **eleven live steps §9 lists**, the ones
+no container can run because each needs a real run, a real pull request or a real project — the modes
+read off runs that **already exist**, plus the four the owner launches to have them. The row is in the
+table below and the `## Check 127:` section is written below it, the check is owner-run — **no agent
+runs any step of it** — it reads a sandbox repository's own project and nothing else, **never `belong`**,
+it launches nothing, and it is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -987,6 +1011,7 @@ probe account carries predefined grants only).
 | 119 | The console on Windows, installed from the dispatch's artifact ([`docs/console-windows/`](console-windows/implementation-plan.md), its §4 "The owner's manual checklist", claimed by the owner on **2026-11-14**; **U13**, **U15**, **U16**, **U18**, **U5**, **U6**, **U7**, **U10** and **U14** of its reconciliation §6, and findings **F7**, **F14**, **F16**, **F19**, **F21**, **F22**, **F24**, **F26**, **F29**, **F30**, **F31** and **F32**): on one real Windows 10 or 11 machine with WSL 2 — the installer a **manual dispatch** of `console-windows.yml` produced, installed and launched; the header showing the resolved **Linux** path of a `fugaro` inside a distribution, never a Windows and never a UNC spelling; the first-run pages for **no WSL**, **no distribution** and **no `fugaro`** each saying the true thing with the remedy that fits and no dashboard drawn around it; two distributions with the wrong one chosen stated rather than silently swapped; a read whose numbers are the ones the CLI prints in a terminal inside that distribution; a cancelled `watch` leaving no process inside the distribution; a killed distribution reading as a distribution that went away rather than as a dead CLI; the credentials reported as the **distribution's**; the store written to `%APPDATA%` on the host and nothing written inside the distribution; a `wsl.exe` command line carrying a distro name, a directory and flags and **no token, no key and no environment dump**; a cold start inside the read deadline or a timeout that names the distribution; and an uninstall that leaves the store alone. It is the one part of that work no runner can do — the console's e2e specs drive its real window on macOS, and this is the machine they cannot reach | See "Check 119" below, sixteen steps, each saying what must be true and which **U**-row or finding it settles; **you** run it, at your own machine, with the installer from a **manual dispatch** of `console-windows.yml` (the job runs at release time only — the tag or a dispatch, **never on a pull request** — so a dispatch is the only way to have one before a release) and a Linux `fugaro` inside a distribution installed by [docs/windows-cli/wsl.md](windows-cli/wsl.md); the one step with no Windows in it is `scripts/live-checks/check119.sh` (name, size, SHA-256 and `x64` of the downloaded installer, refusing an empty, non-PE, DOS-stub or truncated file), its own test `scripts/live-checks/check119_test.sh`, and **no agent runs any step of it** | Nothing in the cloud: no project, no installation, no bucket, no run and no grant. On the machine, one unsigned NSIS installer and the store it writes at `%APPDATA%\Fugaro Console` — left behind on purpose, which is what step 16 reads — plus a second distribution if you make one for step 7. **One `windows-latest` runner and one pack, about an hour at the machine, and no model spend.** **OWNER-RUN, NOT RUN.** |
 | 123 | The console's **dependency graph in the packed, signed macOS app** (the console dependency-graph work: `docs/console-dependency-graph/README.md` "Numbers this work holds" — 123 is the only number it takes — and `docs/console-dependency-graph/implementation-plan.md` §6, "Checks", task **GV2.6**): the **elkjs worker loads from `app://`** in the packaged build, under the Electron fuses (the plan's **U5**) — the graph draws, with no blank frame and no worker or CSP error in the app; the **graph renders** for the sandbox installation's checkout, its nodes carrying their state words; and with **Reduce motion** on, every state is **static** and **keeps its text label** (the reduced-motion style GV2.4 landed) — no comet, no pulse, no flow along an edge, and no state left unlabelled | See "Check 123" below; **you** run it, on your own Mac, on installation `fugaro` (never `belong`) and the sandbox checkout only — one local build and one local launch, and the one read the app makes itself: it spawns that installation's `fugaro plan status --json`, so the check reads the sandbox project's runs bucket (`fugaro-dev`) with your CLI's own credentials — a **read**, and the only cloud project it touches; **No agent performs any step of it** | One local build (`cd console && npm ci && npm run package`), one app launch, one look at the graph, and one look again with Reduce motion on. Nothing is created, enabled, linked or written anywhere in the cloud. **USER-RUN, NOT RUN.** |
 | 124 | The Cloud Batch backend's own live check (compute-backend plan `docs/plans/2026-10-19-compute-backend.md`, its Task 12; design `docs/design/compute-backend.md` — **57 is this backend's reserved number and 124 is a second one taken above it**, which the claim paragraph above states with the overlap named: 57's section is Task 12's and this check's parts are the owner's, so the two are read together rather than one replacing the other; the opt-in `--provision-batch` backend, shipped in 0.9.5, whose live check was never written — 57a measured it in hand-made scripts and 57b lives inside that plan): **four owner-run parts.** **124a** — `fugaro setup --provision-batch --project fugaro`: the plan the compute root prints (the two APIs, the run accounts' IAM, the reaper's and the preload's accounts and their two custom roles, the Cloud NAT and its router, the preload's scheduled rebuild, the reaper's job), the typed confirmation nothing is applied before, the apply's `provisioned; the preloaded boot image …` line, the second run's `No changes: the compute backend's provisioning matches the plan.`, and the two read-backs — the lines `fugaro doctor`'s Batch half prints, which is the one `info batch-artifact-boundary: …` line it always prints for an installation carrying a `batch:` block and `fugaro doctor: everything checked is ok`; the other seven ids print nothing while their read is OK, so a `warning batch-…: …` line is the finding — and `fugaro validate`'s refusal, which is the pass today and `<path> is valid` after **the enable task**. **This part is the first one to run**: the enable task landed, so `internal/localcfg` accepts `backend: cloud-batch` and `fugaro doctor` is what reports an installation that selects it, failing until every Batch check passes — the report is doctor's own verdict and no launch reads it — **124b, 124c and 124d are runnable once this part has run**. **124b** — one ordinary sandbox task through a Batch job to its **draft pull request**, then declined and its branch deleted (Bitbucket, the sandbox's own repository). **124c** — a forced preemption: the run's own VM, selected by the label value the **job itself** records (`fugaro_run=<slug>-<run-id>`, never a typed name, and the step refuses a VM whose label is not its own job's), deleted by hand; the job must end `FAILED` with the task's exit code equal to the value read out of the tree (`grep -n 'preemptExitCode =' internal/backend/batch/run.go` — the number has one home and is written nowhere under `docs/`), and `fugaro runs ls` must read `failed (preempted)` — a **derived** reading, because nothing writes a preempted run's record; the reaper then reports what it would reap and what it reaped. **no Fugaro run is Spot today**, so this is a **simulated** reclaim and the design's §7.2 step 7 stays unrun. **124d** — the check's own cost and the cleanup: the runs' dollars, the budget lease released, and `gcloud batch jobs list` / `gcloud compute instances list` diffed against the before-state the check recorded, with the installation's own provisioning — **the installation's own, never deleted**: the preload image family, the reaper's and the preload's service accounts, **the two custom roles**, the Cloud NAT and its router, the preload rebuild's and the reaper sweep's scheduler jobs, the reaper job — named as what no restore here may touch | See "Check 124a"–"Check 124d" below; **each of the four parts is one script now**, `bash scripts/live-checks/check124.sh --part a|b|c|d` (the owner's request of 2026-11-14): one idempotent run per part that prints `PASS` or `FAIL` per fact, takes `--dry-run` for the local guards alone, cleans its scratch directory from its own exit trap and names in its own restore row what it does NOT remove (the runs' jobs, kept as the records parts (b) and (c) are read from, and the work directory 124a's before-state lives in — no job, no image, no account, no role, no network and no scheduler job is removed by any part), and refuses a project named `belong` before a single call; **you** run it, on installation `fugaro` (GCP project `fugaro-dev`, never `belong`), a sandbox checkout only, at your own terminal, with the guard block re-run before every part; the apply's confirmation and `fugaro setup` are refused a coding agent's session, and **no agent performs any step of the check** | 124a: one installation-root apply and the compute root's, one Cloud Build for the preload image and the scheduled rebuilds after it, and nothing else; 124b and 124c: **two** small sandbox runs on Batch (one ordinary, one preempted by hand), the check's own dollars recorded in 124d, with the batch jobs' own records kept. Nothing in the register is deleted by the check except 124b's declined pull request and its branch, and **the installation's own provisioning is never deleted**. **USER-RUN, NOT RUN — and 124b, 124c and 124d are runnable once 124a has run**, for the reason the sections record in as many words: the enable task (the plan's Task 10) landed, so `backend: cloud-batch` is a name `internal/localcfg` accepts and `fugaro doctor` is what reports an installation that selects it without the provisioning behind it, failing on the checks until they pass — a report, not a fence: `fugaro run` still launches. |
+| 127 | The rigor modes on a real repository ([`docs/rigor-modes/implementation-plan.md`](rigor-modes/implementation-plan.md), its Check 127, tasks **T8.1** and **T8.2**, and the eleven live steps of its §9 — the owner's number ruling of **2026-11-17**; the plan's own decisions **D19** (the Critical default), **D25** (the mode read from the base branch's revision), **D26** and **D28** (two same-day items renamed, and the one command that reconciles the index), **D31** (the flip and the regenerated index in one commit) and the drop-and-warn path **F40**): the modes read off runs that **already exist** on a sandbox repository — a POC run against the same task at Critical, the strict run tolerating no more than the lenient one; a Hotfix run over a security-sensitive path, which the mode and **not** the guard left open; `fugaro budget preview --mode` against that finished run's own gateway figure, and its knobs against the resolution in force; a merged Hotfix pull request's **post-merge CI**, read at the merge commit; two repositories of **one project** that differ only in their own `rigor.default`, each run obeying its own; a run started with `--ref` whose mode came from the **base** branch's revision and not the branch under review; a run whose diff matched **two** area rules, one of them first applied at a round; `fugaro watch` on a live run, whose frame must carry a mode rather than the `-` F40 records; and the two item pull requests — the flip carried with the regenerated index **in one commit**, and two branches that filed same-day items under **differently named** files, in a checkout whose index regenerates to the same bytes | See "Check 127" below; `bash scripts/live-checks/check127.sh --sandbox <checkout> --run <slug>/<run-id>` is the whole of it — **one** script, eleven steps, each flag naming the step's own evidence (`--critical`, `--hotfix --path`, `--pr`, `--checkout2 --run2`, `--ref-run --ref`, `--areas-run`, `--item-pr --item-pr2`, `--recipe`, `--runs`) and each step whose flag is absent reading as **INFO** with the command that produces it — its sibling test `scripts/live-checks/check127_test.sh` drives it against fake `fugaro`, `git` and `gh` only, and **you** run it, read-only, on a sandbox repository's own project — **never `belong`** — at your own terminal, and it launches nothing | Nothing in the cloud: it reads the owner's own runs (`fugaro runs ls --json`, `fugaro diagnose --json`), the config in force in each checkout, `fugaro security paths --check`, `fugaro budget preview`, `gh`'s own documents of the pull requests and of the workflow runs on the branch they merged into, and one `fugaro watch --once --json` frame. No model call, no run, no object, no grant and **no write anywhere**: the backlog index step 11 reconciles is regenerated on a copy in the script's own scratch directory. **OWNER-RUN, NOT RUN.** |
 | 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works — every link the guard's `grep` reads out of the file and not a list remembered here, among them `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it as ONE script — `bash scripts/live-checks/check130.sh`, with its own test `scripts/live-checks/check130_test.sh` — read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, RUN 2026-11-11: PASS.** |
 | 135 | A per-repository job account's read of the runs bucket ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 135, task T3.5, and the reconciliation's **U2** and **U8**): impersonating the sandbox repository's **job account**, the owner reads one of **its own** run records by name — `runs/<slug>/<run-id>/result.json` — which must **succeed**, and one of a **sibling** repository's the same way, which must be **refused**; then records, for **U8**, whether `gcloud storage ls` of the account's own prefix is allowed (the design leaves a prefix-limited list unverified, and the plan does not need it). **What it is not:** the job's write reach (Checks 7 and 60 read the prefixes' writes) and a **project** job's reach, which is the owner's accepted one (G2) | See "Check 135" below; **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, impersonating the sandbox repository's job account, which needs `roles/iam.serviceAccountTokenCreator` on it: you grant it to yourself first and remove it in the Restore, the same step the register's earlier impersonation checks take; **no agent runs any step of it** | One impersonation grant added and removed, and four read-only `gcloud storage` calls: no object written, no run launched, no model call, no image, no bucket and no Terraform. **USER-RUN, NOT RUN.** |
 | 136 | A report run's own pull request ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 136, task T3.5; **D321/D322/D323** and **G3/G5**; task T3.1's `run-digest` recipe, T3.6's launcher manifest, T3.2's digest step and **T3.3's byte-for-byte guard, all merged**): in the sandbox repository, `fugaro run --recipe run-digest "periodic run review"`, then `fugaro runs ls --watch` until it settles, then the pull request it opened — one file per **due** period under `docs/fugaro-reviews/<YYYY>/` (the seven closed days, plus the week, month or year that closed), the generated index regenerated, and **no address and no task text in any of them** (D323) — with the figures equal to the ones the CLI prints for the same day: the run count and dollars against `fugaro runs ls --json --since 8d` filtered by the finish date the report buckets by, and two sampled rows' stage figures against `fugaro diagnose <run-id> --json` | See "Check 136" below; **you** run it, on the sandbox repository only — **never `belong`** — at your own terminal, launching one report run; it is **run only against a release carrying T3.3's guard**, because the reading it takes — that the pull request holds exactly the generated files — is the guard T3.3 adds, and its guard stops until you confirm T3.3 is in the release you run; **no agent runs any step of it** | One sandbox report run: one `digest` step (no model call of its own), one senior `review` stage's model calls, one job execution and one pull request you decline or merge yourself. **USER-RUN, PARTLY RUN (2026-11-14):** launch, eight files and no-address passed (the pull request was merged); the run halted `budget_unavailable` (`state_unavailable` from the credentials service), so the check's result is FAIL on run-settled. Step 5 (figures): the 2026-11-13 run count (9) and dollars ($0) match the repository-filtered CLI listing; the two sampled `fugaro diagnose` rows are still open. |
@@ -19656,3 +19681,132 @@ next week's comparison is not read against it.
 this spec: a 651 that holds is the change's acceptance, and a 651 that does not is the owner's decision about
 which of the three causes is still open, read against Check 650's per-model figures, rather than a task this
 plan adds.
+
+## Check 127: the rigor modes on a real repository — a POC run against the same task at Critical, a Hotfix run over a sensitive path, the preview against a finished run's gateway figure, a merged Hotfix pull request's post-merge CI, two repositories of one project that differ in `rigor.default`, a `--ref` run's own revision, two matched areas, `fugaro watch` on a live run, and the two item pull requests (a sandbox repository's own project, read-only, nothing launched, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **task T8.1** of the rigor-modes plan (its Check 127), and run by **task T8.2** —
+**you**, at your own terminal. It is the eleven live steps that plan's §9 lists, and each one is a step
+no container can take: every row is a reading of something only a real run, a real pull request or a
+real project produces. **No agent runs any step of it.** The script refuses a coding agent's session and
+a traced shell by name, refuses every value that names `belong` before it calls a tool at all, and reads
+a sandbox repository's own project and nothing else.
+
+**What it is.** One script — `bash scripts/live-checks/check127.sh` — and its sibling test
+`scripts/live-checks/check127_test.sh`, which drives it against a fake `fugaro`, a fake `git` and a fake
+`gh` on `PATH`, each answering out of the case's own documents and logging every call, so no network, no
+project and no credential is touched by the test and every reading the check makes is one a case can
+break on purpose. The check **launches nothing**: it reads the runs your installation already has
+(`fugaro runs ls --json`, `fugaro diagnose --json`), the config in force in each checkout
+(`fugaro config show --json`), the security list (`fugaro security paths --check`), the cost surface
+(`fugaro budget preview --json`), `gh`'s own documents of a pull request and of the workflow runs on the
+branch it merged into, and one `fugaro watch --once --json` frame. Where a step needs a run that does
+not exist yet, its row is **INFO** naming the command that produces it — `fugaro run --mode critical`
+for step 2, and so on — rather than a FAIL: **a run that was never asked for is not a finding about the
+modes**, and the block says which steps stayed yours.
+
+**How to read the block.** The script prints one block on stdout — from `CHECK 127 RESULT` to
+`CHECK 127 RESULT END (exit <s>)` — and everything else it says, including each step's progress,
+goes to stderr: the block is what you paste into the `| 127 |` row above, with the date and the
+verdict. Its rows are the script's own `BLOCK_KEYS`, printed in that order whatever happened, and a
+step the run did not reach reads `FAIL — not reached` rather than passing silently. `exit 0` means
+every row that could be measured passed; `1` means at least one row FAILed and that failure is an
+answer about the modes; `2` means the run could not tell — a guard refused it, a command a step rests
+on did not answer, or a step that was asked for read nothing — which is a reading about the run and
+never a verdict about the modes.
+
+**The eleven steps, and what makes each row pass.**
+
+1. **The POC run, and its record.** The run named by `--run` resolved mode **poc**, the record says
+   which layer decided it (`from`) and what the run cost; `fugaro diagnose` reads its review rounds, the
+   levels the triage reached and how many findings the mode tolerated. **It passes when** the mode is
+   the one the run asked for and the diagnose document parses — the row that says the modes reach a real
+   record at all, and D19's default (**Critical**) is what a run that asks for nothing resolves to.
+2. **The same task at Critical, diffed against step 1.** `--critical` names it. **It passes when** the
+   strict run **tolerated no more** than the lenient one over the same task, and its row prints both
+   counts, both round counts and both level sets — the modes' whole claim, read off two records rather
+   than off the table that resolves them.
+3. **A Hotfix run over a security-sensitive path.** `--hotfix` and `--path`. **It passes when** the path
+   is on the security list in force (`fugaro security paths --check <path> --json`, whose row names the
+   rule that matched) **and** the Hotfix run over it tolerated no finding: what kept a finding open is
+   then the mode's own reading and not a guard refusing the run. **One premise is stated rather than
+   assumed**: T1.5's built-in sensitive-path floors (`internal/rigor/floors.go`) are **not in the tree**
+   at this section's commit — `internal/rigor/floor.go` holds the finding-score reading alone — so a path
+   that no row of the list in force matches is written **FAIL**, naming T1.5 as the work that would make
+   it one, rather than passing. Run step 3 in full once that task has landed; until then its FAIL is a
+   reading about the tree and not about the modes.
+4. **`fugaro budget preview` against a finished run's own figure.** `--recipe` and `--runs` (default: the
+   run's own recipe, ten runs). **It passes when** the preview's ceiling at `--mode critical` is **not
+   below** what that finished run's own gateway figure was, and its review-round knob is **not below**
+   the resolution in force: a mode may only raise what a run spends, so a preview that prices fewer
+   rounds than the repository resolves to is the failure this step exists to catch.
+5. **A merged Hotfix pull request's post-merge CI.** `--pr`. **It passes when** the pull request is
+   merged into the base branch **and** the provider ran at least one workflow on that branch at the
+   merge commit itself (`gh run list --branch <base> --json headSha`), which is the one thing a
+   container cannot read: CI firing on the provider.
+6. **Two repositories of one project that differ only in their own `rigor.default`.** `--checkout2` and
+   `--run2`. **It passes when** both checkouts belong to the **same** installation (two installations
+   are two projects, which is a FAIL and not this step), each repository's `rigor.default` resolves from
+   its **own** file (`repo`) with a different value, and each repository's run obeyed its own key.
+7. **A run whose mode came from the base branch's revision.** `--ref-run` and `--ref`. **It passes
+   when** the record's `rigor.revision` is the base branch's tip (`origin/<base>`) and **not** the branch
+   under review, and the layer that decided it is not the run's own request — the answer **D25** is
+   waiting for, which is *which revision* the mode was read from. The step also reads the branch's own
+   `fugaro.yaml` out of the checkout (`git show <ref>:fugaro.yaml`) and reports what it finds there; a
+   branch with no config at that ref is an **INFO** row, since the record's revision above is what the
+   step compares.
+8. **A run whose diff matched two area rules.** `--areas-run`. **It passes when** the record carries
+   **two or more** area rules with the mode each set, and its second half is an **INFO** row when one of
+   them was first applied at a **round** rather than at bootstrap: a round that reached a new rule needs
+   a live multi-round agent, so the row reports the moments the record carries rather than inventing one.
+9. **`fugaro watch` on a live run.** No flag: it reads a frame. **It passes when** every live run in the
+   frame carries a mode and the layer it came from; a run whose mode reads `-` is a **FAIL** naming the
+   drop-and-warn path **F40** and the deploy that fixes it (`fugaro init --firebase-project` regenerates
+   and deploys the rules the frame is read out of). A frame with no live run at all is recorded as a step
+   that **could not be read** rather than passed: start a run and run this step while it is in flight.
+   This is the unnumbered check §9's D24 answer proposes, written beside the check rather than as one.
+10. **The pull request that fixes a filed item.** `--item-pr`. **It passes when** the pull request
+    touches at least one item file under the backlog folder, that file reads `status: closed` (or
+    `dropped`) **at the pull request's head**, the same pull request carries `docs/backlog/README.md`,
+    and **one commit carries both** the flip and the regenerated index — **D31**'s claim, read as a diff
+    a person would have to review. The item and its head are read out of the sandbox repository
+    (`gh api repos/<repo>/contents/<path>?ref=<head>`), and a pull request that is not merged yet is read
+    anyway with a line on stderr rather than a second row under the same key.
+11. **Two branches that filed items on the same day.** `--item-pr` and `--item-pr2`, with the sandbox
+    checkout at the base branch that carries both merges. **It passes when** both pull requests are
+    merged, they carry item files whose **names differ** (the rename **D26** asks for), and the
+    checkout's `docs/backlog/README.md` is **current**: the folder is copied into the script's scratch
+    directory, `fugaro backlog index --dir <the copy>` regenerates the index **there**, and the bytes are
+    compared with the checkout's own — **D28**'s one command, read without writing anything in the
+    checkout. A checkout that is not on its base branch, or an index that regenerates differently, stops
+    or FAILs with the copy left in the scratch for you to diff.
+
+**Run it:**
+
+```sh
+bash scripts/live-checks/check127.sh --help                 # the flags, and the plan
+bash scripts/live-checks/check127.sh --sandbox <checkout> --run <slug>/<run-id> --dry-run
+bash scripts/live-checks/check127.sh --sandbox <checkout> --run <slug>/<run-id> \
+  --critical <slug>/<run-id> --hotfix <slug>/<run-id> --path <path> --pr <N> \
+  --checkout2 <checkout> --run2 <slug>/<run-id> \
+  --ref-run <slug>/<run-id> --ref <branch> --areas-run <slug>/<run-id> \
+  --item-pr <N> --item-pr2 <N>
+```
+
+`--dry-run` prints the plan and calls **nothing at all** — no `fugaro`, no `git` beyond the one remote read
+that names the repository, and no `gh`. Every value you type is refused at once if it names `belong`.
+
+**What it is not.** It is not a check of the **code path**: the table that resolves a mode, the round
+counts, the area rules and the floors are pinned by the tree's own tests, and this check reads what a
+**real** run did with them. It does not grade whether the modes' numbers are **right** — that is the
+plan's own UNVERIFIED list, **U1** (whether a cheap model scores reliably enough for a strict mode to be
+worth it) and **U2** (whether a mode in fact costs less), which this check's records give figures to
+rather than answers. And it is not a deployment: it deploys nothing, so step 9's frame is read on the
+rules your installation already has.
+
+**What it costs and what it restores.** **Nothing.** The script makes one scratch directory under
+`TMPDIR` (mode 0700, removed at the end, with `restore` as its own row and `CHECK127_KEEP_SCRATCH=1` if
+you want to keep it) and writes nowhere else: no run, no pull request, no object, no node, no config and
+no file in any checkout. The runs the eleven steps read are the ones **you** launched, and the four
+commands that produce a missing one are printed in the rows that stay yours rather than run for you. No
+secret is read or printed by the check or by its test, and no value it reads is echoed in a way that
+would put one in a log: the documents it prints are the CLI's own JSON, which carries no credential.

@@ -147,12 +147,15 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		// became a claim about what is built rather than about what is approved
 		// when the gate passed.
 		rigorModesNotImplemented,
-		// The check number this work proposes, in the index, where a reader
-		// looks for the numbers a work holds. It is 119 rather than 110-118
-		// because every one of those is held by an open claim at the base
-		// (110 named by the mobile P5.3 design, 111 the setup wizard's, 112
-		// the Windows CLI's, 113-118 the voice session's six).
-		"**Check 119**",
+		// The check number this work takes, in the index, where a reader looks
+		// for the numbers a work holds. It is 127: every number to 118 was
+		// held by an open claim at the base (110 named by the mobile P5.3
+		// design, 111 the setup wizard's, 112 the Windows CLI's, 113-118 the
+		// voice session's six), this work first took 119 as the next free
+		// number, and the owner ruled on 2026-11-17 that 119 is the
+		// console-on-Windows work's, 125 is cloud-senior-review's and 130-134
+		// are licensing's — so the number to pin is the one the owner gave.
+		"**Check 127**",
 		// The backlog the owner ruled on, named in the index by the folder its
 		// items live in: an index that stops naming it is an index a reader
 		// cannot find the backlog in.
@@ -192,9 +195,9 @@ func TestDocsRigorModesIsWritten(t *testing.T) {
 		rigorModesGateHeading,
 		rigorModesBacklogFolder,
 		rigorModesGatePassed,
-		// The live check this work proposes, named in the plan as well as in the
+		// The live check this work takes, named in the plan as well as in the
 		// index, because a number claimed in two places is a number to check.
-		"Check 119",
+		"Check 127",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("%s lacks %q", rigorModesPlan, want)
