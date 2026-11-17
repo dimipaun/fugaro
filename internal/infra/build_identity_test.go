@@ -162,12 +162,14 @@ func TestProjectHasOneBuildIdentity(t *testing.T) {
 	}
 	slices.Sort(grants)
 	want := []string{
+		"module.installation.google_artifact_registry_repository_iam_member.build_identity_base_reader[0]",
+		"module.installation.google_artifact_registry_repository_iam_member.build_identity_ghcr_reader[0]",
 		"module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover[0]",
 		"module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_writer[0]",
 		"module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]",
 	}
 	if !slices.Equal(grants, want) {
-		t.Errorf("the plan grants the build identity %v, want exactly %v: its reach is the credentials service's invoker bit and the shared registry's writer and tag mover, so a further role here would be a widening nobody announced", grants, want)
+		t.Errorf("the plan grants the build identity %v, want exactly %v: its reach is the credentials service's invoker bit, the shared registry's writer and tag mover, and the reader on the two registries a build's own steps pull from, so a further role here would be a widening nobody announced", grants, want)
 	}
 }
 
@@ -178,7 +180,7 @@ func TestProjectHasOneBuildIdentity(t *testing.T) {
 //
 // The grant is read whole — the role, the member, the service it is on, the
 // project, the location and the absence of a condition — because "invoker on
-// the credentials service" is the whole of what the identity holds: a member
+// the credentials service" is the whole of what this row grants: a member
 // that is another address, a role that is not the invoker bit, or a condition
 // that fences the grant to a resource the next plan does not carry would each
 // be a different fact with the same name.
@@ -193,7 +195,7 @@ func TestBuildIdentityIsInvokerOnTheService(t *testing.T) {
 		t.Fatalf("%s is a %s, want the service-level IAM member", addr, g.Type)
 	}
 	if got, _ := g.After["role"].(string); got != "roles/run.invoker" {
-		t.Errorf("%s grants %q, want roles/run.invoker: the identity's whole reach is the invoker bit on this one service", addr, got)
+		t.Errorf("%s grants %q, want roles/run.invoker: this row is the invoker bit on this one service and nothing else", addr, got)
 	}
 	if got, _ := g.After["member"].(string); got != p.member {
 		t.Errorf("%s grants to %q, want %q — the address of the account this same plan creates", addr, got, p.member)
@@ -380,14 +382,17 @@ func TestCatalogCheckGrantSurvivesRetiringARepoRoot(t *testing.T) {
 
 // The identity's whole reach (B6's "nothing wider"), read off the plan: every
 // resource that names it as a MEMBER is a grant TO it, and there are exactly
-// three — the invoker bit on the credentials service and the writer and tag
-// mover on the installation's ONE shared registry, which are the two roles the
+// five — the invoker bit on the credentials service, the writer and tag mover
+// on the installation's ONE shared registry, which are the two roles the
 // per-repository build account held there (modules/repo/registry.tf) and the
-// two a catalog push needs. Both are on that registry alone: the base
-// registry, the ghcr remote and a repository's own registry are read or
-// written by other accounts, and a role for this one on any of them would be
-// the per-repository account's reach, which this task deliberately does not
-// carry over.
+// two a catalog push needs, and the READER on the two registries a build pulls
+// its own steps from: fugaro-base, whose base images the generated credential
+// step runs, and the ghcr remote, through which the derived build's step image
+// and its FROM arrive (modules/repo/build.tf's build_base and build_ghcr
+// before this task). Reader is the whole of it on those two: neither registry
+// is written by a build, and a write role for this identity on a repository's
+// own registry would be the per-repository account's reach, which this task
+// deliberately does not carry over.
 func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 	p := newCatalogCheckIdentityPlan(t)
 	shared, ok := p.rows["module.installation.google_artifact_registry_repository.shared"]
@@ -399,9 +404,11 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		t.Fatalf("%s has no repository_id: %v", shared.Address, shared.After)
 	}
 	const (
-		writer   = "module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_writer[0]"
-		tagMover = "module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover[0]"
-		invoker  = "module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]"
+		writer     = "module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_writer[0]"
+		tagMover   = "module.installation.google_artifact_registry_repository_iam_member.build_identity_shared_tag_mover[0]"
+		invoker    = "module.installation.google_cloud_run_v2_service_iam_member.credentials_build_identity[0]"
+		baseReader = "module.installation.google_artifact_registry_repository_iam_member.build_identity_base_reader[0]"
+		ghcrReader = "module.installation.google_artifact_registry_repository_iam_member.build_identity_ghcr_reader[0]"
 	)
 	got := map[string]string{}
 	for addr, row := range p.rows {
@@ -418,12 +425,14 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 		got[addr] = role
 	}
 	want := map[string]string{
-		invoker:  "roles/run.invoker",
-		writer:   "roles/artifactregistry.writer",
-		tagMover: "projects/" + p.project + "/roles/" + RoleTagMover,
+		invoker:    "roles/run.invoker",
+		writer:     "roles/artifactregistry.writer",
+		tagMover:   "projects/" + p.project + "/roles/" + RoleTagMover,
+		baseReader: "roles/artifactregistry.reader",
+		ghcrReader: "roles/artifactregistry.reader",
 	}
 	if !maps.Equal(got, want) {
-		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, and a fourth grant would be a reach this task did not carry over", got, want)
+		t.Errorf("the plan grants the build identity %v, want exactly %v: the writer and the tag mover are the two roles the per-repository build account held on the shared registry, the invoker bit is the build route's class, the two readers are the registries a build's own steps pull from, and a sixth grant would be a reach this task did not carry over", got, want)
 	}
 	for _, addr := range []string{writer, tagMover} {
 		row, ok := p.rows[addr]
@@ -431,7 +440,31 @@ func TestBuildIdentityHoldsOnlyTheRegistryRoles(t *testing.T) {
 			t.Fatalf("the plan carries no %s, so a catalog build of an entry pushes nothing", addr)
 		}
 		if r, _ := row.After["repository"].(string); r != registry {
-			t.Errorf("%s grants on repository %q, want the shared registry %q: every catalog image lands there (D1152), and a role on a repository's own registry, on the base image registry or on the ghcr remote is the per-repository account's reach and not this identity's", addr, r, registry)
+			t.Errorf("%s grants on repository %q, want the shared registry %q: every catalog image lands there (D1152), and a write role on a repository's own registry, on the base image registry or on the ghcr remote would be the per-repository account's reach and not this identity's", addr, r, registry)
+		}
+		if r, _ := row.After["project"].(string); r != p.project {
+			t.Errorf("%s grants in project %q, want %q", addr, r, p.project)
+		}
+	}
+	// The two readers, each on the registry it exists for: a build pulls the
+	// base images it runs as and the FROM it builds on from exactly these two,
+	// and a reader that named the shared registry would be the write's own
+	// read rather than the pulls a build makes before it pushes anything.
+	for addr, wantRepo := range map[string]string{
+		baseReader: "module.installation.google_artifact_registry_repository.base",
+		ghcrReader: "module.installation.google_artifact_registry_repository.ghcr",
+	} {
+		row, ok := p.rows[addr]
+		if !ok {
+			t.Fatalf("the plan carries no %s, so the first step of a catalog build starts as an account that may not pull the image it runs", addr)
+		}
+		target, ok := p.rows[wantRepo]
+		if !ok {
+			t.Fatalf("the plan creates no %s, so %s has no target", wantRepo, addr)
+		}
+		wantID, _ := target.After["repository_id"].(string)
+		if r, _ := row.After["repository"].(string); wantID == "" || r != wantID {
+			t.Errorf("%s grants on repository %q, want %q (%s's own repository_id)", addr, r, wantID, wantRepo)
 		}
 		if r, _ := row.After["project"].(string); r != p.project {
 			t.Errorf("%s grants in project %q, want %q", addr, r, p.project)

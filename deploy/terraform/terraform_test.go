@@ -442,26 +442,33 @@ func TestRemoteRepositoryIsARemotePullThroughProxyOfGhcr(t *testing.T) {
 	}
 }
 
-// TestRemoteRepositoryReaderGrants: exactly two reader grants on the new
+// TestRemoteRepositoryReaderGrants: exactly three reader grants on the new
 // remote repository, and nothing else. The operators' (the run that pins
 // reads the verified digest back through the proxy with their own
-// credentials, design §3.2) and each repository's build account's (Cloud
+// credentials, design §3.2), each repository's build account's (Cloud
 // Build pulls the derived build's step image and its FROM through it,
-// design §6). Neither writes it: the packages are public, so nothing in
-// the repository is ever written (§2.3, §5.2).
+// design §6) and — since B6 — the project's build identity's, which is what
+// a catalog build pulls those same images as once its repository's root is
+// retired (modules/installation/build_identity.tf). None writes it: the
+// packages are public, so nothing in the repository is ever written
+// (§2.3, §5.2).
 //
-// Both must name the remote repository and nothing that matches
+// All three must name the remote repository and nothing that matches
 // TestMirrorRunsAsUserNotBuildAccount's own substring test for "on the
 // base registry" — that test reads a grant as being on fugaro-base when
 // its body contains "base_registry" or "repository.base.".
 // The count is the whole point, so it is taken over EVERY iam_member whose
-// body names ghcr rather than over the two blocks by name: a third grant
-// added anywhere — a writer, a second reader, a grant on another resource
-// that happens to name the repository — is a failure here.
+// body names ghcr rather than over the blocks by name: a fourth grant added
+// anywhere — a writer, another reader, a grant on another resource that
+// happens to name the repository — is a failure here.
 func TestRemoteRepositoryReaderGrants(t *testing.T) {
-	want := map[string]string{ // "path|resource" -> the member it must grant
+	// "path|resource" -> the member it must grant.
+	const identityGhcr = "gcp/modules/installation/build_identity.tf|" +
+		"google_artifact_registry_repository_iam_member.build_identity_ghcr_reader"
+	want := map[string]string{
 		"gcp/modules/installation/iam.tf|google_artifact_registry_repository_iam_member.ghcr_reader": "toset(var.operators)",
 		"gcp/modules/repo/build.tf|google_artifact_registry_repository_iam_member.build_ghcr":        "google_service_account.build.member",
+		identityGhcr: "google_service_account.build_identity[0].member",
 	}
 	seen := map[string]bool{}
 	walk(t, func(path string, b []byte) {

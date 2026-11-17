@@ -354,8 +354,9 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		logview = "google_logging_log_view_iam_member"
 	)
 	// The project's build identity (B5, D2301), whose cells below are pinned:
-	// the invoker bit on the credentials service and the writer and tag-mover
-	// pair on the shared registry (B6), and no role of any other row.
+	// the invoker bit on the credentials service, the writer and tag-mover
+	// pair on the shared registry, and the reader on the two registries a
+	// build pulls from (B6), and no role of any other row.
 	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
 		typ, role, member string
@@ -387,21 +388,21 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{secret, "roles/secretmanager.secretAccessor", account, true},
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
-		// The project's build identity's three cells (B5, D2301; the registry
-		// pair added by B6): the invoker bit on the SERVICE type, the class
-		// the service answers the build route for, and the two roles on the
-		// ONE shared registry the per-repository build account held before
-		// it — which is the whole of what the account may hold.
+		// The project's build identity's four cells (B5, D2301; the registry
+		// roles added by B6): the invoker bit on the SERVICE type, the class
+		// the service answers the build route for, the writer and the tag
+		// mover on the ONE shared registry every catalog image lands in, and
+		// the reader on the base and ghcr registries a build's own steps pull
+		// through — the whole of what the account may hold.
 		{runsvc, "roles/run.invoker", buildIdentity, true},
 		{repo, "roles/artifactregistry.writer", buildIdentity, true},
 		{repo, "projects/proj-1/roles/fugaroTagMover", buildIdentity, true},
-		// ... and a role it does NOT hold: the reader, which is no part of a
-		// catalog push through a grant ("nothing wider" — what a build pulls
-		// it pulls with its key or its own registry write), and which the
-		// per-repository build account held on the base and ghcr registries
-		// (modules/repo/build.tf's build_base and build_ghcr) beside the two
-		// rows above.
-		{repo, "roles/artifactregistry.reader", buildIdentity, false},
+		// The reader is not a fifth cell of its own: this type's row carries
+		// one reader cell for every principal that pulls an image, and the
+		// identity is one of them now that a catalog build's first pull — the
+		// credential step's own base image — is made as the account the build
+		// runs as.
+		{repo, "roles/artifactregistry.reader", buildIdentity, true},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -880,11 +881,17 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 	// The cells it may hold, and nothing else: a row that gains
 	// toBuildIdentity without being named here is a role this account may be
 	// granted, which is a decision the account's own tasks make and not one a
-	// widened row makes silently. B6 is the second of those tasks and added
-	// the registry pair.
+	// widened row makes silently. B6 is the second of those tasks, and it
+	// added the registry roles a catalog build needs as the account it runs
+	// as: the writer and the tag mover on the ONE shared registry, where every
+	// catalog image lands, and the reader on the two registries a build pulls
+	// from (fugaro-base and the ghcr remote) — the three roles the
+	// per-repository build account held (modules/repo/build.tf's build_base
+	// and build_ghcr, and modules/repo/registry.tf's pair).
 	allowed := map[string]map[string]bool{
 		"google_cloud_run_v2_service_iam_member": {"roles/run.invoker": true},
 		"google_artifact_registry_repository_iam_member": {
+			"roles/artifactregistry.reader": true,
 			"roles/artifactregistry.writer": true,
 			customKey + "fugaroTagMover":    true,
 		},

@@ -10,18 +10,28 @@
 # credentials service on, and it outlives every repository the catalog bakes
 # (design §"one project identity", D2301).
 #
-# What it holds HERE, and what it deliberately does not. Three grants: the
-# invoker bit on the credentials service, because the credential a build runs
-# on is minted by that service's build route and Cloud Run refuses a caller at
-# IAM before the container decides the class (iam.tf's verifier grant is the
-# same fact); and the writer and tag-mover roles on the ONE shared registry,
+# What it holds HERE, and what it deliberately does not. Five grants, and no
+# sixth: the invoker bit on the credentials service, because the credential a
+# build runs on is minted by that service's build route and Cloud Run refuses a
+# caller at IAM before the container decides the class (iam.tf's verifier grant
+# is the same fact); the writer and tag-mover roles on the ONE shared registry,
 # below, which are the reach a catalog build's own push needs and the two roles
 # the per-repository build account held there (modules/repo/registry.tf's
 # build_shared and build_shared_tag_mover, whose comments this file repeats the
-# reasons of). It holds NO role on any repository's registry, and nothing
-# wider than those three (B6's acceptance): the entry's build pushes catalog
-# images into the shared registry and moves their tags, and that is the whole
-# of what the identity is granted.
+# reasons of); and the READER on the two registries a build pulls from —
+# fugaro-base and the ghcr remote — because a build pulls as the account it
+# runs as: its own step images are the base images in fugaro-base, and the
+# derived build's step image and the FROM it builds on come through the ghcr
+# remote (design §6, and the smoke stage of a D2305 entry pulls its pinned
+# base). The per-repository build account held exactly those two readers for
+# exactly that reason (modules/repo/build.tf's build_base and build_ghcr), and
+# this file carries them over with the rest of the account's reach a catalog
+# build needs.
+#
+# Nothing wider than the five (B6's acceptance): no role on any repository's
+# own registry, no project role, no bucket, no secret. That the identity can
+# read the two registries every build reads is not a widening beyond what a
+# build does; a role anywhere else would be.
 #
 # The ID is a LITERAL, which is the load-bearing half of the answer, exactly
 # as verifier.tf's own comment says of the verifier: a module that knows
@@ -99,5 +109,41 @@ resource "google_artifact_registry_repository_iam_member" "build_identity_shared
   location   = google_artifact_registry_repository.shared.location
   repository = google_artifact_registry_repository.shared.repository_id
   role       = "projects/${var.project}/roles/fugaroTagMover"
+  member     = google_service_account.build_identity[0].member
+}
+
+# The two registries a build READS, on the same account. A Cloud Build step
+# pulls its image as the build's service account, so a catalog build pulls
+# these as the identity: the generated credential step's own image is the
+# installation's base image, the derived build's step image and the FROM it
+# builds on come through the ghcr remote (design §6), and a D2305 entry's
+# smoke stage runs `docker pull` of the base it pinned. Without the reader the
+# first step of a catalog build fails to start the container it runs.
+#
+# Reader, and no more, on each: neither registry is written by a build. Only
+# operators write fugaro-base (iam.tf's base_writer, and the image every
+# repository's credential step runs comes from there), and the ghcr remote is
+# a pull-through proxy nothing writes. These are the per-repository build
+# account's own two readers (modules/repo/build.tf's build_base and
+# build_ghcr), moved here with the account a catalog build now runs as (B6):
+# after M2 retires every repository root, a build that pulled as one of those
+# accounts would pull as an account that no longer exists.
+resource "google_artifact_registry_repository_iam_member" "build_identity_base_reader" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project    = var.project
+  location   = google_artifact_registry_repository.base.location
+  repository = google_artifact_registry_repository.base.repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = google_service_account.build_identity[0].member
+}
+
+resource "google_artifact_registry_repository_iam_member" "build_identity_ghcr_reader" {
+  count = local.credentials_service_on ? 1 : 0
+
+  project    = var.project
+  location   = google_artifact_registry_repository.ghcr.location
+  repository = google_artifact_registry_repository.ghcr.repository_id
+  role       = "roles/artifactregistry.reader"
   member     = google_service_account.build_identity[0].member
 }

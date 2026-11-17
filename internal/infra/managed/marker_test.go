@@ -1985,24 +1985,32 @@ var runAccountGrants = setOf(
 	// catalog image is pushed into, which are the two roles the per-repository
 	// build account held there before this task (modules/repo/registry.tf's
 	// build_shared and build_shared_tag_mover, whose rows above read the same
-	// way). Neither role carries a storage permission, nothing that grants a
-	// role, acts as or mints for another account; the tag mover's whole
-	// permission list is artifactregistry.tags.delete (pinned by perms); and
-	// the target is that registry repository — never the project and never the
-	// runs bucket, so neither is a write path to the marker. What the identity
-	// deliberately does NOT hold is the reader on the shared registry or any
-	// role on a repository's own registry, the base or the ghcr one: its whole
-	// reach in this module is these three rows and the writer's own read of
-	// what it pushes.
+	// way), and the READER on the two registries every build pulls its own
+	// steps from, fugaro-base and the ghcr remote (modules/repo/build.tf's
+	// build_base and build_ghcr, whose rows above read the same way): a Cloud
+	// Build step pulls its image as the build's service account, so without
+	// the reader the credential step's own base image would not start the
+	// container it runs as, and the derived build's step image and its FROM
+	// would not come through the proxy. No one of the three roles carries a
+	// storage permission, nothing that grants a role, acts as or mints for
+	// another account; the tag mover's whole permission list is
+	// artifactregistry.tags.delete (pinned by perms); and every target is one
+	// registry repository — never the project and never the runs bucket, so
+	// none is a write path to the marker. What the identity deliberately does
+	// NOT hold is the reader on the SHARED registry (its write already reads
+	// what it pushes) or any role on a repository's own registry: its whole
+	// reach in this module is these five rows.
 	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.writer" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	`google_artifact_registry_repository_iam_member | "projects/${var.project}/roles/fugaroTagMover" | repository=google_artifact_registry_repository.shared.repository_id | google_service_account.build_identity[0].member | for_each= | perms=artifactregistry.tags.delete`,
+	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.base.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
+	`google_artifact_registry_repository_iam_member | "roles/artifactregistry.reader" | repository=google_artifact_registry_repository.ghcr.repository_id | google_service_account.build_identity[0].member | for_each= | perms=`,
 	// Reviewed for B6's other half: the project's catalog check job may act as
 	// that identity, which is what makes every build it submits run as the
 	// project's one build account rather than a repository's. actAs on ONE
 	// account is not actAs on the project and not a role on anything: it lets
 	// the job mint that account's token and submit a build that names it, so
-	// what the check reaches through it is exactly the three rows above — and
-	// it reaches them already, holding cloudbuild.builds.create. The target is
+	// what the check reaches through it is exactly that account's five rows
+	// above — and it reaches them already, holding cloudbuild.builds.create. The target is
 	// the literal path of the identity this module creates (a computed
 	// service_account_id is a grant internal/infra/tf's cover cannot read), and
 	// the member is the module's own catalog check account.

@@ -339,16 +339,22 @@ var grantRules = map[string]map[string]who{
 		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports | toOrchestrator,
 	},
 	"google_artifact_registry_repository_iam_member": {
-		// toBuildIdentity carries the two roles, and only the two, the
-		// per-repository build account held on this registry before B6
-		// (modules/repo/registry.tf's build_shared and
-		// build_shared_tag_mover): the project's build identity pushes every
-		// catalog image into the one shared registry and moves its tags, and
-		// its write already reads what it pushes. The reader role stays the
-		// people's and the accounts': the identity reads another repository's
-		// images through no grant, which is B6's "nothing wider".
+		// toBuildIdentity carries the three roles the per-repository build
+		// account held for the same reasons before B6: the writer and the tag
+		// mover on the ONE shared registry, where the project's build identity
+		// pushes every catalog image and moves its tags (its write already
+		// reads what it pushes), and the reader a build's own pulls need —
+		// fugaro-base and the ghcr remote, because a Cloud Build step pulls
+		// its image as the build's account: the credential step's own image is
+		// the installation's base image, the derived build's step image and
+		// its FROM come through the ghcr remote, and a D2305 entry's smoke
+		// stage pulls the base it pinned. That is modules/repo/build.tf's
+		// build_base and build_ghcr, and B6 moved them with the account. No
+		// other registry row widens for this principal: the identity reads a
+		// repository's own registry through no grant, which is B6's "nothing
+		// wider".
 		customKey + "fugaroTagMover":    toAccounts | toBuildIdentity,
-		"roles/artifactregistry.reader": toPeople | toAccounts,
+		"roles/artifactregistry.reader": toPeople | toAccounts | toBuildIdentity,
 		"roles/artifactregistry.writer": toPeople | toAccounts | toBuildIdentity,
 	},
 	"google_secret_manager_secret_iam_member": {
@@ -420,10 +426,10 @@ var grantRules = map[string]map[string]who{
 	// the build before the container can decide its class. It is Fugaro's own
 	// account, created by the same apply that turns the service on, and it
 	// comes with nothing wider — no actAs, no project role, and no second
-	// resource type: the registry roles a catalog build needs to push are in
-	// the artifact registry row below, added there deliberately by the task
-	// that granted them (B6), which is the whole of what this principal holds
-	// outside this bit.
+	// resource type: the registry roles a catalog build needs, to push and to
+	// pull, are in the artifact registry row below, added there deliberately
+	// by the task that granted them (B6), and they are the whole of what this
+	// principal holds outside this bit.
 	"google_cloud_run_v2_service_iam_member": {
 		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity,
 	},
