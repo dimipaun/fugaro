@@ -165,6 +165,28 @@ var secretReaderExceptions = []struct {
 	// The guard keys on the import, so it is a row of this table for the same
 	// reason E22 is.
 	{id: "E27", keys: []string{"internal/cli/repos_view.go"}},
+	// The pairing key's cloud copy (mobile plan task P5.1e, the mobile
+	// orchestrator design's section 4.2 and its section 4.7 step 2b), and it is
+	// the one row in this table whose value is a SECRET Secret Manager holds for
+	// Fugaro itself: the tag over every message between a paired phone and the
+	// process that serves it is a symmetric HMAC, so the consumer that verifies
+	// one holds the key the phone signs with, and a cloud consumer is not the
+	// operator's laptop (section 4.2). The container is the installation's own
+	// — one per installation, one version per pairing, created by the
+	// installation module and destroyed version by version by `fugaro pair
+	// revoke` — and the account is the resident orchestrator's, the same one
+	// E28 lists for metadata. The grant is the SECRET row and never the project
+	// row: `internal/infra/tf/cover.go` refuses a project-wide accessor for
+	// every principal but the credentials service's, and the design's section
+	// 4.3 states the readers this row does not bound — every project Owner
+	// reads any container's value past its own policy (E12, SECURITY.md).
+	{
+		id: "E29",
+		keys: []string{
+			"internal/mailbox/keychain/cloud.go",
+			"deploy/terraform/gcp/modules/installation/orchestrator.tf google_secret_manager_secret_iam_member.orchestrator_pairing_key",
+		},
+	},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it
