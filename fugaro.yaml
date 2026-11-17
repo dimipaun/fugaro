@@ -92,25 +92,42 @@ workflows:
         go build ./...
         go vet ./...
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      # Each of the three calls below is wrapped in internal/verify/gotestjunit, and that
-      # wrapper is why each one carries -json: `fugaro verify test` reads a run's test counts,
-      # its failures and its flakes out of JUnit reports (internal/verify/junit.go), and a
-      # stock `go test` writes none, so a run of this repository recorded "0 tests" and warned
-      # about Java-shaped report globs it was never given. The wrapper runs the command and
-      # writes the report the `reports` key below names, and it exits with the command's own
-      # code, so rc is still the tests'. gotestsum does the same job and is not in the job's
-      # image: images/catalog/go/Dockerfile installs this repository's mise.toml tools and
-      # nothing else, so relying on one would mean an image change.
+      # Each of the three calls below goes through the `w` runner the script selects:
+      # internal/verify/gotestjunit when the tree carries it, and the command itself when it
+      # does not. That wrapper is why each one carries -json: `fugaro verify test` reads a
+      # run's test counts, its failures and its flakes out of JUnit reports
+      # (internal/verify/junit.go), and a stock `go test` writes none, so a run of this
+      # repository recorded "0 tests" and warned about Java-shaped report globs it was never
+      # given. The wrapper runs the command and writes the report the `reports` key below
+      # names, and it exits with the command's own code, so rc is still the tests'. gotestsum
+      # does the same job and is not in the job's image: images/catalog/go/Dockerfile installs
+      # this repository's mise.toml tools and nothing else, so relying on one would mean an
+      # image change.
       test: |
         rc=0
+        # Not every tree this command runs against carries the wrapper: a follow-up or review
+        # run reads commands.test from the base branch and checks out the pull request's tree
+        # (internal/runner/followup.go), so a branch older than the wrapper would fail
+        # `go run ./internal/verify/gotestjunit` and record a test failure on tests that pass.
+        # Select the runner: with the wrapper present the command is wrapped and the reports
+        # below are written; without it the command runs as a plain `go test`, whose exit code
+        # is the tests' own either way. -json goes only to the wrapper, which is what reads the
+        # stream -- a plain run would otherwise put the event stream in the log tail.
+        if [ -f internal/verify/gotestjunit/main.go ]; then
+          w() { go run ./internal/verify/gotestjunit "$@"; }
+          json=-json
+        else
+          w() { shift 2; "$@"; }
+          json=
+        fi
         # Three invocations at once: the tree without internal/cli (with the live-check bash
         # tests skipped), and internal/cli in the two halves the comment above describes. The
         # cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in.
-        go run ./internal/verify/gotestjunit --junitfile reports/tree.xml go test -json -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
+        w --junitfile reports/tree.xml go test $json -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
         tree=$!
-        go run ./internal/verify/gotestjunit --junitfile reports/cli-update.xml go test -json -timeout 15m -run '^TestU' ./internal/cli/ &
+        w --junitfile reports/cli-update.xml go test $json -timeout 15m -run '^TestU' ./internal/cli/ &
         cliU=$!
-        go run ./internal/verify/gotestjunit --junitfile reports/cli-rest.xml go test -json -timeout 15m -run '^Test[^U]' ./internal/cli/ &
+        w --junitfile reports/cli-rest.xml go test $json -timeout 15m -run '^Test[^U]' ./internal/cli/ &
         cliRest=$!
         wait $tree || rc=$?
         wait $cliU || rc=$?
