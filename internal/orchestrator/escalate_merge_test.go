@@ -2,6 +2,7 @@ package orchestrator_test
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"slices"
 	"strings"
@@ -1788,5 +1789,144 @@ func TestR3CycleWritesAfterTheHooksWrite(t *testing.T) {
 	}
 	if len(m.stub.launched) != 2 || m.stub.launched[1].Recipe != orchestrator.RecipeMergeJudge {
 		t.Fatalf("the second cycle started %+v, and the judge follows the review the hook recorded", m.stub.launched)
+	}
+}
+
+// TestR4CycleWritesAfterTheHooksWrite is the same half of the hook at the other
+// rung the finding names: rung 4's split writes through the seam rung 3's launch
+// does (MergeSeams.Node), so the cycle that entered it holds a document the hook
+// has already moved past — and its Step is not over. What it owes here is the
+// question a second item's unreadable reading raises, and the split is what the
+// hook left on the node: the item stopped, and the scope it filed beside it.
+//
+// Mutation: drop the re-read from ladderBeyond and the cycle ends as "state
+// moved" with the split's items on the node and no question about wi-2.
+func TestR4CycleWritesAfterTheHooksWrite(t *testing.T) {
+	now := o6Now()
+	m := newMergeHarness(t, now, nil,
+		mergeItem("wi-1", r2Ledger(now, headA, 1)),
+		mergeItem("wi-2", r2Ledger(now, headB, 0)))
+	blocked := mergePass(headA)
+	blocked.Verdict = runstore.MergeJudge{
+		Verdict: runstore.MergeJudgeBlocked,
+		Reason:  "the split is the fundamental issue and not the rest",
+		Blocker: "the retry loop has no bound and no test covers it",
+		Model:   "test-judge",
+	}
+	m.reader.reads["wi-1"] = blocked
+
+	// The item is at rung 2 with its one stronger pass spent and the reviewer
+	// raising the same finding again, which is the churn D2036 answers with the
+	// split rather than with a rung 3 the item never reaches.
+	churned := reading(rigor.POC, 4*time.Hour, headA)
+	churned.Churn = escalation.KindSame
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
+		"wi-1": churned,
+		// The second item's runs are the ones the daemon could not read.
+		"wi-2": {},
+	}}
+	seams := l.seams(escalation.DefaultThresholds())
+	seams.Beyond = m.seams.Beyond()
+	tick := &orchestrator.Tick{
+		Store:    m.node,
+		Runs:     ladderNoRuns{},
+		Launcher: &o6Launcher{},
+		Mint:     func(time.Time) (string, error) { return mergeRun, nil },
+		Caps:     o6Caps(),
+		Now:      clockAt(now),
+		Ladder:   seams,
+		Notifier: m.sink,
+	}
+
+	if _, err := tick.Step(context.Background()); err != nil {
+		t.Fatalf("the cycle ended as %v, and the split's own write is not one the cycle has to hold", err)
+	}
+	if w := m.item("wi-1"); w.Phase != orchestrator.PhaseCancelled || w.Escalation == nil || w.Escalation.Rung != escalation.R4 {
+		t.Fatalf("the item reads %+v, and the churn the ladder read is rung 4's", w)
+	}
+	split, ok := m.state().Item("wi-1-split")
+	if !ok {
+		t.Fatalf("the node carries no split: %+v", m.state().WorkItems)
+	}
+	if !strings.Contains(split.Brief, "the retry loop has no bound") {
+		t.Fatalf("the split's brief reads %q, and the judge's blocker is what it is scoped to", split.Brief)
+	}
+	question, ok := m.state().Decision("wi-2-escalation")
+	if !ok {
+		t.Fatalf("the cycle wrote no question about wi-2, and the write it makes after the hook is what this test is about")
+	}
+	if question.WaitingOn != orchestrator.OnPerson || !strings.Contains(question.Question, "cannot read the runs behind wi-2") {
+		t.Fatalf("the question about wi-2 reads %+v, and a reading nobody could make is a person's question (G5)", question)
+	}
+	if len(m.host.calls) != 0 {
+		t.Errorf("the host was asked %v, and the split keeps the branch and the pull request", m.host.calls)
+	}
+	// And the write the hook made is still on the node: the transition the
+	// split was recorded under, and the line beside it.
+	m.stub.line("ladder-r4-split-" + headA[:8])
+}
+
+// TestR3HookFailureLeavesTheBreakerItsQuestion is the hook's failure and not its
+// return: a rung 3 move that landed on the node and a line the log would not
+// take leave the hook failing with the cycle holding the document it read before
+// the write — exactly the shape a clean return leaves, and the Step still has
+// one write left, the breaker's question on the cycle that reached the threshold
+// (Step's ask). A cycle that kept the stale document has that question refused
+// like any other write, so the daemon fails on and on with nobody asked, which
+// is the opposite of what the streak is for (D1228).
+//
+// Mutation: drop the re-read from ladderBeyond's failure branch and the third
+// cycle below ends with no breaker question on the node at all.
+func TestR3HookFailureLeavesTheBreakerItsQuestion(t *testing.T) {
+	now := o6Now()
+	// Three ids for three cycles: a mint is asked for its id before the launch
+	// that is refused, so the two failing launches spend one each.
+	m := newMergeHarness(t, now, []string{mergeRun, mergeRun, mergeReviewRun}, mergeItem("wi-1", r3Ledger(now, headA, 2)))
+	m.host.head, m.host.checks = headA, mergeGreen()
+
+	// Nothing scored at the head: the hook's first move is D2043's review, which
+	// is the write it lands before the line fails.
+	uncovered := mergePass(headA)
+	uncovered.Scored, uncovered.ReviewRun = false, ""
+	m.reader.reads["wi-1"] = uncovered
+
+	l := &ladderStub{t: t, reads: map[string]orchestrator.LadderReading{
+		"wi-1": reading(rigor.POC, 4*time.Hour, headA),
+	}}
+	seams := l.seams(escalation.DefaultThresholds())
+	seams.Beyond = m.seams.Beyond()
+	var breaker orchestrator.Breaker
+	tick := &orchestrator.Tick{
+		Store:    m.node,
+		Runs:     ladderNoRuns{},
+		Launcher: &o6Launcher{},
+		Mint:     func(time.Time) (string, error) { return mergeRun, nil },
+		Caps:     o6Caps(),
+		Now:      clockAt(now),
+		Ladder:   seams,
+		Notifier: m.sink,
+		Breaker:  &breaker,
+	}
+
+	// The two cycles before the threshold: the launch is what fails, so the
+	// hook has written nothing and the streak is the only thing they are for.
+	m.stub.launchErr = errors.New("the launcher refused")
+	for i := range orchestrator.BreakerThreshold - 1 {
+		if _, err := tick.Step(context.Background()); err == nil {
+			t.Fatalf("cycle %d ended cleanly, and the launcher refused it", i+1)
+		}
+	}
+
+	// The cycle that reaches the threshold: the launch is taken, the ledger it
+	// writes is on the node, and the line failing is what ends the cycle.
+	m.stub.launchErr, m.stub.appendErr = nil, errors.New("the log would not take the line")
+	if _, err := tick.Step(context.Background()); err == nil {
+		t.Fatalf("the cycle ended cleanly, and the line the hook's log would not take fails it")
+	}
+	if e := m.item("wi-1").Escalation; e == nil || e.OuterAttempts != 3 {
+		t.Fatalf("the ledger reads %+v, and the review the hook launched is one ladder run", e)
+	}
+	if !orchestrator.BreakerOpen(m.state(), now) {
+		t.Fatalf("the cycle that reached the threshold asked a person nothing: %+v", m.state().Decisions)
 	}
 }

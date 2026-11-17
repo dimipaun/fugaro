@@ -406,6 +406,13 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 // re-reads the node here (reread), which is what keeps the rest of the Step's
 // writes — another item's question, the triage, the decision — from being
 // refused under an ETag the hook's write has already moved past.
+//
+// A hook that fails asks for the same re-read, and for the same reason: the
+// moves it landed before the failure are on the node exactly as a clean return's
+// are, and a Step that ends failed still writes once more — the breaker's
+// question, when the streak reached it (Step's ask) — from the document the
+// cycle holds. The hook's own error is what the cycle reports; a re-read that
+// fails too is joined to it.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
 	if c.tick.Ladder.Beyond == nil {
 		runID := w.RunID
@@ -415,6 +422,9 @@ func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.St
 		return c.ladderSay(ctx, w, step, reason, runID)
 	}
 	if err := c.tick.Ladder.Beyond(ctx, w, step, reason, read); err != nil {
+		if rerr := c.reread(ctx); rerr != nil {
+			return errors.Join(err, rerr)
+		}
 		return err
 	}
 	return c.reread(ctx)
