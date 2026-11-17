@@ -419,6 +419,16 @@ func replayPatchRefusal(patch []byte) string {
 // in place. `git status` names it, ignored and untracked alike, which is the
 // listing taken here.
 //
+// The ignored half of that listing is taken in git's traditional mode, never its
+// matching one: matching reports an ignored directory as the one entry `!! dir/`
+// and says nothing about what is inside it, so a patch writing
+// build/.claude/settings.json — with build/ an ignore rule of the base, which is
+// what a build directory is — is a refused component one level below everything
+// that listing names, and reaches the reviewer the same way (the review of
+// 2026-11-17). Traditional names each ignored file, at every depth, which is the
+// depth the fence refuses a component at (replayRefusesComponent) and the depth
+// B1.2 asks for.
+//
 // What the second listing names is the patch's own: the arm's checkout is the
 // champion's base, cloned and bootstrapped, with no stage of this arm run in it
 // yet, so a path git calls ignored or untracked there is one the patch just
@@ -434,7 +444,7 @@ func replayPatchRefusal(patch []byte) string {
 // quote never closed — is read by git from the line's own bytes with the first
 // path part stripped, which is not the name the fence's reader takes out of it.
 // The paths git wrote admit no such spelling: they are what git wrote
-// (TestABReplayRefusesPatchTouchingAgentConfig's last three cases).
+// (TestABReplayRefusesPatchTouchingAgentConfig's last four cases).
 func replayWrittenPaths(ctx context.Context, repo *gitops.Repo) ([]string, error) {
 	if _, err := replayGit(ctx, repo, nil, "add", "-A"); err != nil {
 		return nil, err
@@ -444,7 +454,7 @@ func replayWrittenPaths(ctx context.Context, repo *gitops.Repo) ([]string, error
 		return nil, err
 	}
 	status, err := replayGit(ctx, repo, nil, "--no-replace-objects", "status", "--porcelain=v1", "-z",
-		"--no-renames", "--untracked-files=all", "--ignored=matching")
+		"--no-renames", "--untracked-files=all", "--ignored=traditional")
 	if err != nil {
 		return nil, err
 	}

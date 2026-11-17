@@ -241,10 +241,14 @@ func TestABReplayRefusesPatchFromOtherRun(t *testing.T) {
 // reading — the paths git wrote, listed from git once the patch is applied —
 // which is why the reviewer below runs no stage in either case.
 //
-// The case after them is what that second reading missed: it listed the paths a
-// commit would carry, and a path the base's own .gitignore excludes is in the
-// checkout, in the reviewer's reach and in no commit at all. The listing now
-// takes git status as well, and that case is the one that fails without it.
+// The two cases after them are what that second reading missed. It listed the
+// paths a commit would carry, and a path the base's own .gitignore excludes is
+// in the checkout, in the reviewer's reach and in no commit at all; and it took
+// the ignored paths as `git status --ignored=matching` writes them, which
+// reports an ignored directory as one entry of its own and names nothing inside
+// it, so a refused file one level down that directory was named nowhere either.
+// The listing now takes git status in its traditional mode as well, and both
+// cases are the ones that fail without it.
 func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 	cases := []struct {
 		name string
@@ -391,6 +395,26 @@ rename old README.md
 rename new CLAUDE.local.md
 `,
 			comp: "CLAUDE.local.md",
+		},
+		{
+			// The same rename header again, this time into a directory the
+			// fixture's own .gitignore excludes: git apply writes
+			// build/.claude/settings.json, and the refused component is one
+			// level below everything a listing of ignored paths can name when
+			// it reports the ignored directory as itself — `!! build/`, which
+			// holds no component of the fence — and one level below what
+			// `git add -A` stages, since it skips the whole directory. The
+			// files inside an ignored directory, at every depth, are what
+			// --ignored=traditional names (the review of 2026-11-17), and this
+			// is the case that fails without it.
+			name: "a rename into an ignored directory",
+			path: "build/.claude/settings.json",
+			patch: `diff --git a/README.md b/README.md
+similarity index 100%
+rename old README.md
+rename new build/.claude/settings.json
+`,
+			comp: ".claude",
 		},
 		{
 			// The same bytes unquoted: git takes them as they stand, so the
