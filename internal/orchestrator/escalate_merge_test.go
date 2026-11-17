@@ -138,6 +138,25 @@ func (m *mergeStub) line(transition string) orchestrator.Entry {
 	return found[0]
 }
 
+// lastLine is the most recent line under a transition, for a head the hook
+// wrote more than once: the transition names the rung, the kind and the head,
+// and not the cycle, so a rung 3 that waits on something moving writes the same
+// id again next cycle and the log keeps the later line. A refusal is read
+// through this one and a move through line, because a move happens once.
+func (m *mergeStub) lastLine(transition string) orchestrator.Entry {
+	m.t.Helper()
+	var found []orchestrator.Entry
+	for _, e := range m.lines {
+		if e.Transition == transition {
+			found = append(found, e)
+		}
+	}
+	if len(found) == 0 {
+		m.t.Fatalf("the log carries no line under %q: %+v", transition, m.lines)
+	}
+	return found[len(found)-1]
+}
+
 // mergeHostStub is MergeHost as a test sets it: the pull request and the checks
 // it answers with, the refusals it gives, and every call it was asked for in
 // the order it was asked.
@@ -593,29 +612,38 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		m.stub.line("ladder-r3-merged-" + headA[:8])
 	})
 
+	// A refusal on a reading that has stopped moving is a person's question, and
+	// one on a reading that is still moving is not (MergeOutcome.Retry): the two
+	// transient rows below are asserted with waitedOut, and every other row with
+	// refusedAt, which is the difference this table exists to pin.
 	for _, tc := range []struct {
-		name string
-		code string
-		drop func(*orchestrator.MergeReading, *mergeHostStub)
+		name      string
+		code      string
+		transient bool
+		drop      func(*orchestrator.MergeReading, *mergeHostStub)
 	}{
 		{
 			"a run that has not ended",
 			string(orchestrator.GateRunRunning),
+			true,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.Status = runstore.StatusRunning },
 		},
 		{
 			"a record that pushed another commit",
 			string(orchestrator.GateHeadUnpushed),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.PushedHead = headB },
 		},
 		{
 			"a record with no changed-path set",
 			string(orchestrator.ReasonPathsMissing),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.ChangedFiles = nil },
 		},
 		{
 			"a changed-path set nobody bounded",
 			string(orchestrator.ReasonPathsTruncated),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Record.ChangedFiles = &runstore.ChangedFiles{Paths: []string{"docs/status.md"}, Total: 500}
 			},
@@ -623,6 +651,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a run that changed nothing",
 			string(orchestrator.ReasonNoCommits),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Record.ChangedFiles = runstore.NewChangedFiles(nil)
 			},
@@ -630,6 +659,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a path outside the routine allowlist",
 			string(orchestrator.GatePathsNotRoutine),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Paths = runstore.NewChangedFiles([]string{mergeSecurityPath})
 			},
@@ -637,11 +667,13 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a path set nobody read from the host",
 			string(orchestrator.GatePathsUncorroborated),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Paths = nil },
 		},
 		{
 			"a host path set nobody bounded",
 			string(orchestrator.ReasonPathsTruncated),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Paths = &runstore.ChangedFiles{Paths: []string{mergeRoutinePath}, Total: 500}
 			},
@@ -649,11 +681,13 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"CI nobody could read",
 			string(orchestrator.ReasonCIUnknown),
+			true,
 			func(_ *orchestrator.MergeReading, h *mergeHostStub) { h.checks = nil },
 		},
 		{
 			"CI that failed",
 			string(orchestrator.GateCIRed),
+			false,
 			func(_ *orchestrator.MergeReading, h *mergeHostStub) {
 				h.checks = []gitprov.CheckRun{{Status: "completed", Conclusion: "failure"}}
 			},
@@ -661,6 +695,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a critical finding",
 			string(orchestrator.ReasonCriticalFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: "docs/status.md", Key: mergeFinding}}
 			},
@@ -668,6 +703,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a high finding in a security path",
 			string(orchestrator.ReasonSecurityHighFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.Findings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: "internal/gateway/proxy.go", Key: mergeFinding}}
 			},
@@ -675,11 +711,13 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"findings nobody could read",
 			string(orchestrator.ReasonFindingsAbsent),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Findings.Read = orchestrator.FindingsAbsent },
 		},
 		{
 			"a critical finding in the review at this head",
 			string(orchestrator.ReasonCriticalFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityCritical, Path: mergeRoutinePath, Key: mergeFinding}}
 			},
@@ -687,6 +725,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a high finding in a security path, in the review at this head",
 			string(orchestrator.ReasonSecurityHighFinding),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.ReviewFindings.List = []orchestrator.Finding{{Severity: orchestrator.SeverityHigh, Path: mergeSecurityPath, Key: mergeFinding}}
 			},
@@ -694,6 +733,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"review findings nobody could read",
 			string(orchestrator.ReasonFindingsAbsent),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) {
 				r.ReviewFindings.Read = orchestrator.FindingsAbsent
 			},
@@ -701,6 +741,7 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 		{
 			"a record nobody can place",
 			string(orchestrator.ReasonRecordUnreadable),
+			false,
 			func(r *orchestrator.MergeReading, _ *mergeHostStub) { r.Record.Status = runstore.Status("invented") },
 		},
 	} {
@@ -711,6 +752,10 @@ func TestR3MergesOnlyUnderGate(t *testing.T) {
 			m.reader.reads["wi-1"] = read
 			m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
 
+			if tc.transient {
+				waitedOut(t, m, headA, "ladder-r3-wait-"+headA[:8], tc.code)
+				return
+			}
 			refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], tc.code)
 		})
 	}
@@ -724,7 +769,7 @@ func refusedAt(t *testing.T, m *rungHarness, head, transition, code string) {
 	if len(m.host.merged) != 0 {
 		t.Fatalf("the host merged %v, and the gate refused this head", m.host.merged)
 	}
-	line := m.stub.line(transition)
+	line := m.stub.lastLine(transition)
 	if !strings.Contains(line.Text, code) {
 		t.Fatalf("the line reads %q, and %q is the code this refusal is recorded under", line.Text, code)
 	}
@@ -733,6 +778,36 @@ func refusedAt(t *testing.T, m *rungHarness, head, transition, code string) {
 	}
 	if m.item("wi-1").Phase == orchestrator.PhaseCancelled {
 		t.Fatalf("the item was cancelled, and a rung 3 that cannot merge waits for a person")
+	}
+}
+
+// waitedOut is the outcome of a rung 3 refused on something still moving: the
+// same nothing merged and the same line under the head's own name, and no
+// question and no notification, because the wait is retried next cycle
+// (MergeOutcome.Retry) and the reading may well have changed by then.
+//
+// Mutation: raise the question for these too and a wait on a run that has not
+// ended spends the item's one question, which is what the veto test below
+// catches — the judge's refusal then reaches nobody.
+func waitedOut(t *testing.T, m *rungHarness, head, transition, code string) {
+	t.Helper()
+	if len(m.host.merged) != 0 {
+		t.Fatalf("the host merged %v, and the gate refused this head", m.host.merged)
+	}
+	line := m.stub.lastLine(transition)
+	if !strings.Contains(line.Text, code) {
+		t.Fatalf("the line reads %q, and %q is the code this refusal is recorded under", line.Text, code)
+	}
+	if d, ok := m.state().Decision("wi-1-escalation"); ok {
+		t.Fatalf("the cycle asked a person %q, and a wait on something still moving is retried, not asked", d.Question)
+	}
+	for _, n := range m.sink.got {
+		if n.Kind == orchestrator.NotifyDecisionNeeded {
+			t.Fatalf("the cycle said %q, and a wait on something still moving asks nobody", n.Line())
+		}
+	}
+	if m.item("wi-1").Phase == orchestrator.PhaseCancelled {
+		t.Fatalf("the item was cancelled, and a rung 3 that cannot merge waits rather than stopping")
 	}
 }
 
@@ -1564,6 +1639,47 @@ func TestR3JudgeAbsentIsVeto(t *testing.T) {
 	}
 }
 
+// TestR3PendingCIThatTurnsIntoAVetoAsksAPerson is the debt E10b left: a wait on
+// checks that have not concluded is retried and asks nobody, so the item's one
+// question is still unspent when the checks arrive and the judge's veto does —
+// and the veto is the one thing here a person has to read (D2037). A question
+// raised for the first cycle would spend it on a wait nobody could act on: the
+// veto would then have nobody to reach, and a question about checks still
+// running would sit open over a head the ladder was never going to land.
+//
+// Mutation: raise the question for a transient wait as well (drop the !out.Retry
+// guard in merge) and the second cycle below leaves the node with no question
+// carrying the judge's words, and the first cycle with one.
+func TestR3PendingCIThatTurnsIntoAVetoAsksAPerson(t *testing.T) {
+	now := o6Now()
+	m := landable(t, now)
+	m.host.checks = nil
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	waitedOut(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.ReasonCIUnknown))
+
+	read := mergePass(headA)
+	read.Verdict = runstore.MergeJudge{
+		Verdict: runstore.MergeJudgeBlocked,
+		Reason:  "the retry buries the failure",
+		Blocker: "the retry swallows the error",
+	}
+	m.reader.reads["wi-1"] = read
+	m.host.checks = mergeGreen()
+
+	m.act("wi-1", r3Step(escalation.CeilingAutoMerge), escalation.ReasonR2Clean, r3Read(headA))
+
+	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateJudgeVeto))
+	q := m.question("wi-1").Question
+	if !strings.Contains(q, "the retry buries the failure") || !strings.Contains(q, "the retry swallows the error") {
+		t.Fatalf("the question reads %q, and whoever reads it reads the judge (D2037)", q)
+	}
+	if got := m.sink.got; len(got) != 1 || got[0].Kind != orchestrator.NotifyDecisionNeeded {
+		t.Fatalf("the tick said %+v, and the veto is the one thing it has to say", got)
+	}
+}
+
 // TestR3RebasedHeadNeedsScoredReview is D2043 and G13: a head only a rebase run
 // has touched is an agent's own work, so rung 3 covers it with a review-only run
 // at that head before it may merge — one such run per head — and the merge waits
@@ -1595,7 +1711,7 @@ func TestR3RebasedHeadNeedsScoredReview(t *testing.T) {
 	if len(m.stub.launched) != 1 {
 		t.Fatalf("the ladder launched %+v, and one review per head is the bound D2043 states", m.stub.launched[1:])
 	}
-	refusedAt(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateReviewSpent))
+	waitedOut(t, m, headA, "ladder-r3-wait-"+headA[:8], string(orchestrator.GateReviewSpent))
 
 	read = mergePass(headA)
 	m.reader.reads["wi-1"] = read

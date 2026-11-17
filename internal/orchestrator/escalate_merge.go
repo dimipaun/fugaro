@@ -393,6 +393,13 @@ type MergeOutcome struct {
 	// findings are filed and the person a Pro or Hotfix merge is owed is told
 	// here instead.
 	Replay bool
+	// Retry is a wait on something that is still moving: a ladder run at this
+	// head that has not ended, a review that has not answered, checks that have
+	// not concluded. The next cycle reads the same head again and the answer may
+	// well be different, so none of it is a person's to act on and no question
+	// is raised for it (see merge). It is read on a wait and nowhere else: every
+	// other outcome is one the gate reached on evidence that has stopped moving.
+	Retry bool
 	// Refusal is the closed code of a merge a host refused, and "" otherwise.
 	Refusal string
 	// Verdict is the judge's answer, attached to the question a refusal raises
@@ -509,7 +516,9 @@ func mergeGate(in MergeInput) MergeOutcome {
 			}
 			return MergeOutcome{Kind: MergeLaunchReview, Launch: RecipeReviewOnly, Facts: []GateReason{GateUncovered}}
 		}
-		return waitFact(GateReviewSpent)
+		// The review D2043 asks for is in flight, or the run is a step behind the
+		// log's line: the next cycle reads what it said.
+		return retry(waitFact(GateReviewSpent))
 	}
 	if reason, unreadable := headFindingsUnreadable(in.Read); unreadable {
 		return waitReason(reason)
@@ -519,7 +528,7 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitReason(ReasonRecordUnreadable)
 	}
 	if !rec.Status.Terminal() {
-		return waitFact(GateRunRunning)
+		return retry(waitFact(GateRunRunning))
 	}
 	paths := rec.ChangedFiles.Bounded()
 	switch {
@@ -533,7 +542,7 @@ func mergeGate(in MergeInput) MergeOutcome {
 		return waitFact(GateHeadUnpushed)
 	}
 	if !knownCI(in.CI) {
-		return waitReason(ReasonCIUnknown)
+		return retry(waitReason(ReasonCIUnknown))
 	}
 	if in.CI != gitprov.CIGreen {
 		return waitFact(GateCIRed)
@@ -674,6 +683,15 @@ func waitReason(r TriageReason) MergeOutcome {
 	return MergeOutcome{Kind: MergeWait, Reasons: []TriageReason{r}}
 }
 
+// retry marks a wait as one on something that is still moving, which is what
+// keeps it away from a person (MergeOutcome.Retry). It wraps the two above so a
+// clause reads as the thing it refuses on, and whether anybody is asked is
+// decided in one place rather than at each clause.
+func retry(out MergeOutcome) MergeOutcome {
+	out.Retry = true
+	return out
+}
+
 // vetoed is a refusal taken with the judge's verdict in hand: the verdict is the
 // reader's, so the verdict dangles only while there is no judge to have answered
 // — a malformed one that is present is still a veto, and judgeVetoes has already
@@ -806,8 +824,17 @@ func (s RungSeams) merge(ctx context.Context, item WorkItem, step escalation.Ste
 		// this write is safe to re-run.
 		ops = append(ops, mergeFollowUpOps(st, item, out)...)
 	case MergeWait:
-		if op, n, ok := mergeQuestionOp(st, item, mergeQuestion(item, out)); ok {
-			ops, told = append(ops, op), &n
+		// A wait on something still moving asks nobody (MergeOutcome.Retry): the
+		// item has one question and it is asked once, so a question raised for a
+		// run that has not ended or checks that have not concluded would spend it
+		// — the judge's later veto (D2037) would reach no person, and the stale
+		// question would sit open over a landing nobody is waiting on. The wait
+		// is retried next cycle, and if it never ends it is the breaker (D1228)
+		// that reaches a person, which is what the breaker is for.
+		if !out.Retry {
+			if op, n, ok := mergeQuestionOp(st, item, mergeQuestion(item, out)); ok {
+				ops, told = append(ops, op), &n
+			}
 		}
 	}
 	if len(ops) > 0 {
@@ -1067,7 +1094,8 @@ func mergeLedgerOp(item WorkItem, step escalation.Step, reason escalation.Reason
 // carries is the question already asked, and a cycle that re-runs after its
 // write landed asks nothing more. Nothing new is asked while a rung 3 waits
 // either — the answer is what moves the item, and the ladder's reading of the
-// next cycle is what it acts on.
+// next cycle is what it acts on — and a wait on something still moving is not
+// asked about in the first place (merge, MergeOutcome.Retry).
 func mergeQuestionOp(st State, item WorkItem, question string) (Op, Notification, bool) {
 	id := ladderQuestionID(item.ID)
 	if _, ok := st.Decision(id); ok {

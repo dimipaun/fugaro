@@ -443,12 +443,15 @@ func (c *cycle) ladderOuter(w WorkItem, step escalation.Step, read LadderReading
 // each of those would report progress for ever and no streak would ever reach
 // the breaker at all (D1228).
 //
-// A rung 3 hook that waits asks its own question rather than reading as an idle
-// daemon — the ladder's question about the item is on the node from the cycle
-// the hook first waits on (mergeQuestionOp) — so what the count leaves for the
-// breaker is only the cycle the hook could not act on at all. The item a hook
-// has finished with is not left to the breaker either: the hook stops it, and
-// the cycle after it finds an item the ladder reads no further rungs for.
+// A rung 3 hook that refuses on a reading which has stopped moving asks its own
+// question rather than reading as an idle daemon — the ladder's question about
+// the item is on the node from the first cycle the hook refuses on one
+// (mergeQuestionOp) — and a wait on something still moving asks nobody and is
+// retried, so what the count leaves for the breaker is a wait that never ends
+// (D1228; MergeOutcome.Retry says why asking then would spend the item's one
+// question). The item a hook has finished with is not left to the breaker
+// either: the hook stops it, and the cycle after it finds an item the ladder
+// reads no further rungs for.
 func (c *cycle) ladderBeyond(ctx context.Context, w WorkItem, step escalation.Step, reason escalation.Reason, read LadderReading) error {
 	if c.tick.Ladder.Beyond == nil {
 		runID := w.RunID

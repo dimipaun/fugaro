@@ -529,13 +529,14 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:     caps,
 		Breaker:  &orchestrator.Breaker{},
-		// A tick has two things to say — a run it folded ended, and it
-		// committed a question (O7) — and the log sink is the channel slice 1
-		// ships, one cleaned line on this daemon's own output, which is where
-		// the person running it in the foreground reads what it did (and where
-		// the login unit collects it). Left unset, every say() in a cycle
-		// returns at its nil check: the daemon would stop a run nobody hears
-		// about and pause on a spend question nobody sees.
+		// A tick has three things to say — a run it folded ended, it committed
+		// a question (O7), and it merged under a ceiling that tells somebody
+		// (D2030) — and the log sink is the channel slice 1 ships, one cleaned
+		// line on this daemon's own output, which is where the person running it
+		// in the foreground reads what it did (and where the login unit collects
+		// it). Left unset, every say() in a cycle returns at its nil check: the
+		// daemon would stop a run nobody hears about, pause on a spend question
+		// nobody sees, and land a merge nobody is told to read.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
 		// The audit log the trip writes its refusal line to (O19): the daemon's
