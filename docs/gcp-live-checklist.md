@@ -11924,10 +11924,13 @@ printf 'CHECK 137 SETUP: repository %s, per-run cap present, layer %s\n' "${REPO
    # The copy: the layer as it is, plus the one key this check is about. A layer
    # that already carries a governance: block is left to you rather than edited
    # twice — a second governance: key is a file the strict decoder refuses at a
-   # run bootstrap — so set the key it has to 0.0001 by hand and go on.
+   # run bootstrap — so set the key it has to 0.0001 by hand and go on. That
+   # hand edit is the COPY's alone: layer-before.yaml stays exactly as the line
+   # above wrote it, byte for byte, because step 7 republishes it as the layer
+   # the whole project resolves.
    cp "${CHECK137_DIR}/layer-before.yaml" "${CHECK137_DIR}/layer-check.yaml"
    if grep -qE '^governance:' "${CHECK137_DIR}/layer-check.yaml"; then
-     echo "CHECK 137: ${CHECK137_DIR}/layer-check.yaml already carries a governance: block: set governance.stage_budget.review to 0.0001 in it by hand before step 2, and set the same value back in ${CHECK137_DIR}/layer-before.yaml, because the Restore republishes that file." >&2
+     echo "CHECK 137: ${CHECK137_DIR}/layer-check.yaml already carries a governance: block: set governance.stage_budget.review to 0.0001 in THAT file by hand before step 2, and edit no other copy. ${CHECK137_DIR}/layer-before.yaml must stay exactly as step 1 wrote it, byte for byte: the Restore republishes it, so a value written into it would be published as the layer every repository of the project resolves, and the sha256 read back would no longer be step 1's." >&2
    else
      printf 'governance:\n  stage_budget:\n    review: 0.0001\n' >>"${CHECK137_DIR}/layer-check.yaml"
    fi
@@ -12166,9 +12169,12 @@ printf 'CHECK 138 SETUP: repository %s, per-run cap present, layer %s\n' "${REPO
    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],"w").write(d["yaml"]); print("CHECK 138 STEP 1: layer sha256 %s, generation %s" % (d["sha256"], d["generation"]))' \
      "${CHECK138_DIR}/before.json" "${CHECK138_DIR}/layer-before.yaml"
 
+   # As Check 137's step 1: a hand edit is the COPY's alone, and
+   # layer-before.yaml stays exactly as the line above wrote it, byte for byte,
+   # because step 7 republishes it as the layer the whole project resolves.
    cp "${CHECK138_DIR}/layer-before.yaml" "${CHECK138_DIR}/layer-check.yaml"
    if grep -qE '^governance:' "${CHECK138_DIR}/layer-check.yaml"; then
-     echo "CHECK 138: ${CHECK138_DIR}/layer-check.yaml already carries a governance: block: set governance.max_subagents to 1 in it by hand before step 2, and set the same value back in ${CHECK138_DIR}/layer-before.yaml, because the Restore republishes that file." >&2
+     echo "CHECK 138: ${CHECK138_DIR}/layer-check.yaml already carries a governance: block: set governance.max_subagents to 1 in THAT file by hand before step 2, and edit no other copy. ${CHECK138_DIR}/layer-before.yaml must stay exactly as step 1 wrote it, byte for byte: the Restore republishes it, so a value written into it would be published as the layer every repository of the project resolves, and the sha256 read back would no longer be step 1's." >&2
    else
      printf 'governance:\n  max_subagents: 1\n' >>"${CHECK138_DIR}/layer-check.yaml"
    fi
