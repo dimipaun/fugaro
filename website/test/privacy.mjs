@@ -1189,7 +1189,12 @@ export const SIGNUP_DROP_FUNCTION = 'func (s *Service) dropPersonal(ctx context.
  * sends it, so the card's two sentences about the queue are held to the three of them. */
 export const SIGNUP_QUEUE = 'ee/keyservice/queue.go'
 export const SIGNUP_APPLICATION = 'type Application struct {'
-export const SIGNUP_APPLICATION_FIELDS = Object.freeze(['Email', 'Detail', 'Repositories'])
+/** The record's own fields the card's sentence about a decided request names, one by one: what the
+ * page says stays beside the decision is the address, the domain, the text the applicant wrote and
+ * the repository URLs, so each of the four is read off the record AND off the mail that carries it
+ * — a record that stopped holding one, or a notification that stopped writing one, is the
+ * sentence's own half missing rather than a page that overstates. */
+export const SIGNUP_APPLICATION_FIELDS = Object.freeze(['Email', 'Domain', 'Detail', 'Repositories'])
 export const SIGNUP_QUEUE_ALERT = 'func queueAlert(intakeURL string, a Application) Alert {'
 export const SIGNUP_QUEUE_NOTIFY = 'return s.alerts.Notify(ctx, queueAlert(s.cfg.URL, a))'
 /** The card's own words for it, each held in both directions: the page may say a decided request
@@ -1282,14 +1287,14 @@ export function keySignupFailures({ page, keysPage, terms, design, store, servic
   const at = store.indexOf(SIGNUP_APPLICATION)
   if (at < 0) {
     out.push(
-      `${SIGNUP_STORE} no longer declares an Application: the card says a request a person decides on is kept with the address, the text and the repository URLs it carried, and this record is what keeps it — a store that stopped holding one leaves the sentence describing a request nothing has`,
+      `${SIGNUP_STORE} no longer declares an Application: the card says a request a person decides on is kept with the address, the domain, the text and the repository URLs it carried, and this record is what keeps it — a store that stopped holding one leaves the sentence describing a request nothing has`,
     )
   } else {
     const declared = store.slice(at).split('\n}')[0]
     for (const field of SIGNUP_APPLICATION_FIELDS) {
       if (!declared.includes(field)) {
         out.push(
-          `${SIGNUP_STORE}'s Application no longer holds ${JSON.stringify(field)}: the card says a request a person decides on is kept with the address, the text and the repository URLs it carried, and each of the three is a field of this record`,
+          `${SIGNUP_STORE}'s Application no longer holds ${JSON.stringify(field)}: the card says a request a person decides on is kept with the address, the domain, the text and the repository URLs it carried, and each of the four is a field of this record`,
         )
       }
     }
@@ -1298,10 +1303,22 @@ export function keySignupFailures({ page, keysPage, terms, design, store, servic
     out.push(
       `${SIGNUP_QUEUE} no longer builds and sends the owner's notification for a queued request: the card says the owner is mailed a notification carrying the request's own facts, and a queue that stopped mailing one leaves that sentence standing on nothing — an unannounced request is one nobody reads`,
     )
+  } else {
+    // And what the mail CARRIES, which is the other half of that sentence: the card says the
+    // notification carries the request's own facts, so a field the alert stopped writing is a
+    // request the owner is told about and cannot read without opening the page.
+    const alert = queue.slice(queue.indexOf(SIGNUP_QUEUE_ALERT)).split('\n}')[0]
+    for (const field of SIGNUP_APPLICATION_FIELDS) {
+      if (!alert.includes(`a.${field}`)) {
+        out.push(
+          `${SIGNUP_QUEUE}'s queueAlert no longer carries the applicant's ${field}: the card says the notification the owner is mailed carries the request's own facts, and a field the mail has dropped leaves that sentence describing a mail the owner cannot read the request out of`,
+        )
+      }
+    }
   }
   if (!text.includes(SIGNUP_KEPT_PHRASE)) {
     out.push(
-      `the privacy page's key sign-up card does not say a request a person decides on is ${JSON.stringify(SIGNUP_KEPT_PHRASE)}: ${SIGNUP_STORE}'s Application holds the address, the text and the repository URLs after the decision, and a card that stated only the drop would tell a reader that everything a form takes goes`,
+      `the privacy page's key sign-up card does not say a request a person decides on is ${JSON.stringify(SIGNUP_KEPT_PHRASE)}: ${SIGNUP_STORE}'s Application holds the address, the domain, the text and the repository URLs after the decision, and a card that stated only the drop would tell a reader that everything a form takes goes`,
     )
   }
   if (!text.includes(SIGNUP_ALERT_PHRASE)) {
@@ -2169,9 +2186,10 @@ test('a statement without the key sign-up card, or one of its facts, is refused,
   }
 
   // A field of the kept request gone: the record is what the card's sentence about it is, so a
-  // record that stopped holding the address, the text or the repositories is the sentence's own
-  // half missing rather than a page that overstates. The edit is made inside the Application
-  // declaration, because three other records of this store carry a field of the same name.
+  // record that stopped holding the address, the domain, the text or the repositories is the
+  // sentence's own half missing rather than a page that overstates. The edit is made inside the
+  // Application declaration, because three other records of this store carry a field of the same
+  // name.
   const withoutApplicationField = (text, field) => {
     const at = text.indexOf(SIGNUP_APPLICATION)
     const end = text.indexOf('\n}', at)
@@ -2181,7 +2199,19 @@ test('a statement without the key sign-up card, or one of its facts, is refused,
     const without = keySignupFailures({ page, ...sources, store: withoutApplicationField(sources.store, field) })
     assert.ok(
       without.some((line) => line.includes(JSON.stringify(field))),
-      `an Application that dropped its ${field} field was not refused: the card says a decided request is kept with the address, the text and the repository URLs it carried`,
+      `an Application that dropped its ${field} field was not refused: the card says a decided request is kept with the address, the domain, the text and the repository URLs it carried`,
+    )
+  }
+
+  // And the mail's own half of the same sentence: the owner is mailed a notification CARRYING
+  // those facts, so an alert that stopped writing one of them is a request the owner is told
+  // about and cannot read. Every occurrence goes, because the alert names each field twice — the
+  // guard and the line it writes.
+  for (const field of SIGNUP_APPLICATION_FIELDS) {
+    const without = keySignupFailures({ page, ...sources, queue: sources.queue.split(`a.${field}`).join('a.Gone') })
+    assert.ok(
+      without.some((line) => line.includes(`the applicant's ${field}`)),
+      `a queueAlert that stopped carrying the applicant's ${field} was not refused: the card says the owner is mailed a notification carrying the request's own facts, and a mail with a field missing is not that notification`,
     )
   }
 
