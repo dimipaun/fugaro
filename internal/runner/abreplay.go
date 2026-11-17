@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -157,6 +159,14 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		r.refuseReplay(r.replayFenceReason("touches " + r.stageErrorText(comp)))
 		return
 	}
+	// What the checkout carried before the patch, read before anything is
+	// applied: an image's baked checkout is not the base alone, and the fence
+	// reads the listing after the apply against this one (replayWrittenPaths).
+	before, err := replayCheckoutSnapshot(ctx, r.repo)
+	if err != nil {
+		r.failReplayRead(ctx, fmt.Errorf("listing the paths this checkout already carried: %w", err))
+		return
+	}
 	if err := replayApply(ctx, r.repo, patch); err != nil {
 		// git's own message quotes the paths the patch carries, so it is bytes
 		// out of the patch too and gets the same treatment.
@@ -164,10 +174,11 @@ func (r *run) runReviewReplay(ctx context.Context) {
 		return
 	}
 	// The fence's second reading, and the one that decides: the paths git just
-	// wrote, listed from git itself rather than from the patch's own lines. A
-	// patch that reaches a run's own configuration is refused here even when no
-	// header the first reading holds names it (replayWrittenPaths).
-	written, err := replayWrittenPaths(ctx, r.repo)
+	// wrote, listed from git itself rather than from the patch's own lines, and
+	// the ones the checkout already carried read out of it. A patch that reaches
+	// a run's own configuration is refused here even when no header the first
+	// reading holds names it (replayWrittenPaths).
+	written, err := replayWrittenPaths(ctx, r.repo, before)
 	if err != nil {
 		r.failReplayRead(ctx, fmt.Errorf("listing the paths the champion's patch wrote: %w", err))
 		return
@@ -419,13 +430,14 @@ func replayPatchRefusal(patch []byte) string {
 }
 
 // replayWrittenPaths lists every path the patch put in the checkout: the ones a
-// commit would now carry, and the ones no commit carries at all.
+// commit would now carry, and the ones no commit carries at all, each of them
+// read against the state the checkout had before the patch.
 //
-// The first half stages the checkout and lists what that commit would hold:
-// every path the patch wrote, a rename read as the delete and the add it is
-// (--no-renames), NUL-separated so a path holding a newline survives the
-// listing. Staging is `git add -A`, the call the arm's own commit makes, so the
-// listing is exactly what that commit would carry and nothing beside it.
+// The first half stages the checkout and lists what that commit would hold: a
+// rename read as the delete and the add it is (--no-renames), NUL-separated so a
+// path holding a newline survives the listing. Staging is `git add -A`, the call
+// the arm's own commit makes, so the listing is exactly what that commit would
+// carry and nothing beside it.
 //
 // The second half is why this is not that listing alone. `git add -A` honours
 // the checkout's ignore rules, so a path the base's own .gitignore already
@@ -447,12 +459,17 @@ func replayPatchRefusal(patch []byte) string {
 // depth the fence refuses a component at (replayRefusesComponent) and the depth
 // B1.2 asks for.
 //
-// What the second listing names is the patch's own: the arm's checkout is the
-// champion's base, cloned and bootstrapped, with no stage of this arm run in it
-// yet, so a path git calls ignored or untracked there is one the patch just
-// wrote. A path the base itself carried untracked and ignored would be refused
-// for a patch that never touched it, and that is the safe side: the arm loses a
-// sample rather than run a review over a checkout nothing accounted for.
+// Neither listing is the patch's alone, which is what before is for. The arm's
+// checkout is not always the champion's base cloned and bootstrapped: an image
+// bakes a checkout that carries the dependency warm-up and the image.setup
+// output (images/derived/Dockerfile.tmpl), untracked and ignored — a node_modules
+// where many packages ship a .github/FUNDING.yml is the one every such repository
+// has — and the reset that opens a baked checkout keeps ignored files (git clean
+// -fd, never -x). Every one of those is a refused component the patch never
+// touched, so a fence that read the listing alone would refuse every arm in such
+// a repository and B1.3 would get no samples at all (the review of 2026-11-17).
+// What is the patch's is what before does not hold, or holds with another size or
+// modification time (replaySnapshot.wrote), and only that is listed.
 //
 // It is the fence's second reading, and it is the one that decides, because it
 // is not a reading of the patch at all. The header fence reads the patch's own
@@ -462,8 +479,8 @@ func replayPatchRefusal(patch []byte) string {
 // quote never closed — is read by git from the line's own bytes with the first
 // path part stripped, which is not the name the fence's reader takes out of it.
 // The paths git wrote admit no such spelling: they are what git wrote
-// (TestABReplayRefusesPatchTouchingAgentConfig's last four cases).
-func replayWrittenPaths(ctx context.Context, repo *gitops.Repo) ([]string, error) {
+// (TestABReplayRefusesPatchTouchingAgentConfig's last cases).
+func replayWrittenPaths(ctx context.Context, repo *gitops.Repo, before replaySnapshot) ([]string, error) {
 	if _, err := replayGit(ctx, repo, nil, "add", "-A"); err != nil {
 		return nil, err
 	}
@@ -471,18 +488,92 @@ func replayWrittenPaths(ctx context.Context, repo *gitops.Repo) ([]string, error
 	if err != nil {
 		return nil, err
 	}
-	status, err := replayGit(ctx, repo, nil, "--no-replace-objects", "status", "--porcelain=v1", "-z",
-		"--no-renames", "--untracked-files=all", "--ignored=traditional")
+	status, err := replayCheckoutStatus(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
 	var paths []string
 	for _, p := range strings.Split(staged, "\x00") {
-		if p != "" {
+		if p != "" && before.wrote(repo, p) {
 			paths = append(paths, p)
 		}
 	}
-	return append(paths, replayStatusPaths(status)...), nil
+	for _, p := range status {
+		if before.wrote(repo, p) {
+			paths = append(paths, p)
+		}
+	}
+	return paths, nil
+}
+
+// replaySnapshot is what the checkout carried before the patch was applied:
+// every path git status names, with the size and modification time it had then.
+// It is a map and not a slice because the listing after the patch is read
+// against it path by path.
+//
+// The stamp is the size and the modification time rather than a content hash:
+// both change when git apply writes the file and neither changes when it does
+// not, and a hash of every file in a warmed-up node_modules is work this fence
+// would do on every arm. What the two can miss is a patch that writes a path to
+// the very size and the very timestamp it already had, and that needs the write
+// to land inside the resolution of the clock the file was last written at.
+type replaySnapshot map[string]replayStamp
+
+// replayStamp is one path's size and modification time.
+type replayStamp struct {
+	size int64
+	mod  time.Time
+}
+
+// replayCheckoutSnapshot reads the checkout's untracked, ignored and changed
+// paths, with the stamp of each: the state replayWrittenPaths reads the listing
+// after the patch against. A path git names and the filesystem does not have is
+// left out of it, so the later reading counts it as the patch's — the safe side,
+// and the only one left when the two disagree.
+func replayCheckoutSnapshot(ctx context.Context, repo *gitops.Repo) (replaySnapshot, error) {
+	paths, err := replayCheckoutStatus(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	snap := make(replaySnapshot, len(paths))
+	for _, p := range paths {
+		if stamp, ok := replayStampOf(repo, p); ok {
+			snap[p] = stamp
+		}
+	}
+	return snap, nil
+}
+
+// wrote reports whether p is a path the patch wrote: one the snapshot does not
+// hold, or one whose size or modification time the patch changed.
+func (s replaySnapshot) wrote(repo *gitops.Repo, p string) bool {
+	was, ok := s[p]
+	if !ok {
+		return true
+	}
+	now, ok := replayStampOf(repo, p)
+	return !ok || now != was
+}
+
+// replayStampOf is the stamp of p in the checkout's working tree, false when
+// there is no such file to stamp.
+func replayStampOf(repo *gitops.Repo, p string) (replayStamp, bool) {
+	info, err := os.Lstat(filepath.Join(repo.Dir, filepath.FromSlash(p)))
+	if err != nil {
+		return replayStamp{}, false
+	}
+	return replayStamp{size: info.Size(), mod: info.ModTime()}, true
+}
+
+// replayCheckoutStatus is the paths `git status` names in the checkout, ignored
+// and untracked alike.
+func replayCheckoutStatus(ctx context.Context, repo *gitops.Repo) ([]string, error) {
+	out, err := replayGit(ctx, repo, nil, "--no-replace-objects", "status", "--porcelain=v1", "-z",
+		"--no-renames", "--untracked-files=all", "--ignored=traditional")
+	if err != nil {
+		return nil, err
+	}
+	return replayStatusPaths(out), nil
 }
 
 // replayStatusPaths are the paths of a `git status --porcelain=v1 -z` listing:

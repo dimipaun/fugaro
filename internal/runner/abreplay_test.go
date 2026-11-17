@@ -508,6 +508,36 @@ new file mode 100644
 	}
 }
 
+// TestABReplayRunsBesideAnIgnoredPathTheCheckoutAlreadyCarried (B1.2): the arm's
+// checkout is not always the champion's base cloned and bootstrapped. An image
+// bakes a checkout that carries the dependency warm-up and the image.setup
+// output — untracked, ignored, and left in place by the reset that opens a baked
+// checkout — and a warmed-up node_modules is full of paths the fence refuses a
+// component at: many npm packages ship a .github/FUNDING.yml. A fence that read
+// the listing after the patch on its own would refuse the arm for a path the
+// patch never touched, so every arm in such a repository would end
+// config_invalid and B1.3 would get no samples at all (the review of
+// 2026-11-17). What the patch wrote is what the checkout did not carry before
+// it, and this is the case that says so: the review runs.
+func TestABReplayRunsBesideAnIgnoredPathTheCheckoutAlreadyCarried(t *testing.T) {
+	g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
+	withBucket(g.harness)
+	baked := bakedDir(t, g.harness, repoSlug)
+	testutil.Git(t, filepath.Dir(baked), "clone", "--quiet", g.harness.remote, baked)
+	testutil.WriteFiles(t, baked, map[string]string{"build/.github/FUNDING.yml": "name: qs\n"})
+	putChampionPatch(t, g.harness, championPatch(t, g.harness, championChange(g.harness)))
+	rec, err := g.run(t, replayReview("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(g.agent.calls) != 1 {
+		t.Fatalf("a patch beside an ignored path the checkout already carried ran %d stage(s), want the one review: %s", len(g.agent.calls), rec.Reason)
+	}
+	if strings.Contains(rec.Reason, "may not be replayed") {
+		t.Fatalf("the replay was refused for a path the patch never wrote: %s", rec.Reason)
+	}
+}
+
 // TestABReplayQuotesTheRefusedComponent: the refusal names a component out of
 // the patch's own bytes, and those bytes are untrusted -- a C-quoted header
 // spells them in escapes, so a name may carry a newline, an escape sequence or
