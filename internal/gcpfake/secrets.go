@@ -124,11 +124,19 @@ type fakeSecret struct {
 	// off names the versions a versions/N:disable call turned DISABLED, one
 	// at a time: C1.25's rotation retires the version it replaced with one.
 	off map[int]bool
+	// gone names the versions a versions/N:destroy call took. The version stays
+	// in the list — real Secret Manager keeps it and reports it DESTROYED — and
+	// its value is no longer readable, which is the whole point of a destroy
+	// over a disable (mobile plan task P5.1e).
+	gone map[int]bool
 }
 
-// state is version n's state, "ENABLED" or "DISABLED". A secret-level
-// disable (DisableVersions) covers every version of it.
+// state is version n's state: "ENABLED", "DISABLED" or "DESTROYED". A
+// secret-level disable (DisableVersions) covers every version of it.
 func (s *fakeSecret) state(n int) string {
+	if s.gone[n] {
+		return "DESTROYED"
+	}
 	if s.disabled || s.off[n] {
 		return "DISABLED"
 	}
@@ -228,7 +236,9 @@ func (f *Secrets) Deleted() []string {
 }
 
 // Destroyed lists the versions a destroy or a version delete took, in order
-// (their full names). It is empty for every Fugaro run.
+// (their full names). A destroy leaves the version in the list and DESTROYED,
+// as real Secret Manager does, and its value is no longer readable — which is
+// what a pairing's revoke is for (mobile plan task P5.1e).
 func (f *Secrets) Destroyed() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -315,11 +325,12 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 				return
 			}
 		}
-		if state := s.state(n); state == "DISABLED" {
-			// As real Secret Manager: a DISABLED version is there and its
-			// value is not readable. It is not a 404 — the version exists —
-			// so a caller that reads a state as an absence is caught here.
-			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Secret Version ["+p+"] is disabled.")
+		if state := s.state(n); state != "ENABLED" {
+			// As real Secret Manager: a version that is DISABLED or DESTROYED
+			// is there and its value is not readable. It is not a 404 — the
+			// version exists — so a caller that reads a state as an absence is
+			// caught here.
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", "Secret Version ["+p+"] is "+strings.ToLower(state)+".")
 			return
 		}
 		f.accessed = append(f.accessed, m[2])
@@ -366,6 +377,10 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		f.destroys = append(f.destroys, "projects/"+m[1]+"/secrets/"+m[2]+"/versions/"+m[3])
+		if s.gone == nil {
+			s.gone = map[int]bool{}
+		}
+		s.gone[atoi(m[3])] = true
 		writeJSON(w, http.StatusOK, versionJSON(m[1], m[2], atoi(m[3]), s.created, s.state(atoi(m[3]))))
 	case r.Method == http.MethodPost && disableRE.MatchString(p):
 		m := disableRE.FindStringSubmatch(p)
