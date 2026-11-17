@@ -523,7 +523,7 @@ a value no plan shows.`,
 			if len(args) > 0 {
 				name = args[0]
 			}
-			return secretsSet(cmd, o, name)
+			return secretsSet(cmd, o, name, len(args) > 0)
 		},
 	}
 	o.addFlags(cmd)
@@ -738,8 +738,15 @@ func secretsSetName(name string) error {
 	return nil
 }
 
-func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
-	if name != "" {
+// secretsSet takes the NAME an argument carried and whether one was given at
+// all (hasName): a run of the record flags that are about the installation
+// rather than one secret names none, while an argument that is there and empty
+// is a NAME that is not one — `secrets set "$NAME"` with NAME unset is the
+// case — and is held to the guard above like any other. The decision is on
+// whether an argument was given, never on what it holds, so no path downstream
+// of this runs under a name the guard has not passed.
+func secretsSet(cmd *cobra.Command, o secretsOptions, name string, hasName bool) error {
+	if hasName {
 		if err := secretsSetName(name); err != nil {
 			return err
 		}

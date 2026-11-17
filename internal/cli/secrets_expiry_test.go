@@ -386,6 +386,53 @@ func TestSecretsSetRefusesAnEmptyRecordFlag(t *testing.T) {
 	}
 }
 
+// TestSecretsSetRefusesAnEmptyName: an argument that is there and empty is a
+// NAME that is not one — `secrets set "$NAME"` with NAME unset is the case —
+// and it is refused by the same guard as any other name, before the scope
+// decision, before the checkout is read and before any cloud call. That guard
+// decides on whether an argument was given and never on what it holds: a route
+// that asked the value would let "" through, and the run would then reach the
+// value path (the unreadable reader below, and the project header openCloud
+// prints on stderr), the policy path, or a record keyed by a name that is not
+// one.
+func TestSecretsSetRefusesAnEmptyName(t *testing.T) {
+	secretsFixture(t)
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+
+	for _, args := range [][]string{
+		{"secrets", "set", ""},
+		{"secrets", "set", "", "--project-wide"},
+		{"secrets", "set", "", "--repo", "acme/app"},
+		{"secrets", "set", "", "--allow-data-to", "acme/app"},
+		{"secrets", "set", "", "--expires", "2026-12-01"},
+		{"secrets", "set", "", "--rotation-days", "30"},
+	} {
+		line := strings.Join(args, " ")
+		out, errOut, err := executeStdinReader(t, secretsUnreadableStdin{}, args...)
+		if err == nil {
+			t.Fatalf("%s: an empty NAME was accepted (stdout %q, stderr %q)", line, out, errOut)
+		}
+		if !strings.Contains(err.Error(), "the secret NAME must be one of") {
+			t.Fatalf("%s: the refusal is not the name-shape guard's, so the guard was not reached: %v", line, err)
+		}
+		if strings.Contains(out+errOut, "stdin was read") || strings.Contains(err.Error(), "stdin was read") {
+			t.Fatalf("%s: the run read the value from stdin: %v", line, err)
+		}
+		if strings.Contains(out+errOut, "project: aurora") {
+			t.Fatalf("%s: the run announced a cloud project, so it opened the cloud:\n%s%s", line, out, errOut)
+		}
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("an empty NAME wrote the config:\n%s", after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("an empty NAME told the hook %v", *hooked)
+	}
+}
+
 // TestSecretsSetRefusesALayerTheKeyLacks is T3 read through this family: the
 // three records are local config keys, and a write aimed at another layer is
 // refused with the layers the key does have (docs/contracts/config-ownership.md §6).
