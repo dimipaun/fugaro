@@ -2209,7 +2209,7 @@ func clearStateDir(stateDir string) error {
 	if err := verify.ClearState(stateDir); err != nil {
 		return err
 	}
-	for _, name := range []string{prFile, followupFile} {
+	for _, name := range []string{prFile, followupFile, discoveredFile} {
 		if err := os.Remove(filepath.Join(stateDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("removing stale %s: %w", name, err)
 		}
