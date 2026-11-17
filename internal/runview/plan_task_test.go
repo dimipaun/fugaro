@@ -97,6 +97,13 @@ var planTaskReaders = map[string]string{
 	"internal/orchestrator/state.go":    "defines WorkItem.PlanTask, the node of a plan the item stands for",
 	"internal/orchestrator/validate.go": "applies task.PlanTaskProblem to the id a patch writes, the shape rule the launcher applies on write",
 	"internal/orchestrator/patch.go":    "the upsert op that carries a plan's node id into the state",
+	// The item's id on its way to the launch (B7): the declaration the state
+	// digests carries it into the spec the launcher is handed, and the daemon's
+	// launcher passes it through the command's own resolution, which is what
+	// writes it into the task and into launch.json -- the records a screen joins
+	// a run to its node with. Neither decides anything with it.
+	"internal/orchestrator/launch.go":       "carries the item's plan task into the launch spec (Spec.PlanTask, SpecOf), where the launcher reads it",
+	"internal/cli/orchestrator_launcher.go": "passes the item's plan task into the command's own launch resolution, which records it in the task and in launch.json",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

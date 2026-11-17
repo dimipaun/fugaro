@@ -843,6 +843,32 @@ const titlesSince = "0.8.5"
 // actually tagged.
 const planTaskSince = "0.11.2"
 
+// externalSince is the first fugaro release whose runner reads a task's
+// external field (task.Spec.External, the id of the ticket outside Fugaro the
+// work item stands for): an older runner refuses the field outright, since
+// task.Parse decodes with DisallowUnknownFields, and the run would fail at
+// bootstrap on a task nobody can read.
+//
+// It differs from planTaskSince beside it in what a launch does about that,
+// and the difference is the field's rather than the release's: the plan task
+// is a refusal (internal/cli/run.go's gate, which the daemon's launch reaches
+// too, because an item's plan task is part of what a person approved), while
+// the external id is a drop (externalSkew). What is lost by dropping it is
+// one `Fixes #<n>` line in the pull request the run opens, and the approved
+// attempt that a refused bootstrap would spend is worth more than the link.
+//
+// It names 0.26.0, the release this work ships in: the whole orchestrator
+// plan's daemon half lands there (docs/releases/v0.26.0.md), and the field
+// has no operator order to record, because a launch never refuses over it —
+// so this constant is verified against the tag actually cut (a number ahead
+// of it, like cascadeSince's 0.10.0) by whoever cuts the release and not by
+// a "Before you tag" bullet, which contextReposSince and changeSetSince
+// beside it do without for the same reason. A wrong value here writes the
+// field onto an image whose runner cannot read it (the run dies at bootstrap
+// over a task nobody can read) or drops it for one that could (the run opens
+// its pull request with no `Fixes` line, which nothing else reports).
+const externalSince = "0.26.0"
+
 // compressionSince is the first fugaro release whose runner reads a task's
 // compression_off field (task.Spec.CompressionOff, fugaro run
 // --no-compression): an older runner refuses the field outright, since
@@ -1627,6 +1653,61 @@ func baseBranchSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.
 		fmt.Fprintf(warn, "the job image predates %s and ignores the project's base branch %s; fugaro update in the checkout moves it onto this release's base image\n", baseBranchSince, b)
 	}
 	predates := func(rel string, known bool) bool { return known && imagePredates(rel, baseBranchSince) }
+	if clone == nil {
+		rel, known := releaseOf(env.lc.BaseImage(config.BaseKind))
+		if predates(rel, known) {
+			drop()
+			return
+		}
+		if rel, known = recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
+			drop()
+		}
+		return
+	}
+	if *clone {
+		if rel, known := releaseOf(env.lc.BaseImage(config.BaseKind)); predates(rel, known) {
+			drop()
+		}
+		return
+	}
+	if rel, known := recordBaseRelease(ctx, env, slug, spec); predates(rel, known) {
+		drop()
+	}
+}
+
+// externalSkew drops a task's external id when the job image it will run on is
+// older than the release that reads the field (externalSince), and says so in
+// one line. It never refuses the launch: the id is the ticket outside Fugaro
+// the item came from, named in the pull request of a run for it so a merge
+// closes it (B5, the runner half that reads this field, D2727), and a launch
+// that cannot carry it still does the work — where a task an older runner
+// refuses is a paid-for attempt that never started.
+//
+// No command reaches it but the daemon's launcher (orchestrator_launcher.go),
+// which is the field's only writer: no flag sets an external id, so `fugaro
+// run` has nothing here to drop.
+//
+// The judge is baseBranchSkew's, for the same two shapes: a `checkout: clone`
+// job runs the installation's base image itself, and a derived image runs the
+// binary of the base its build record was built FROM. clone is that workflow's
+// checkout mode, nil for the daemon's launch, which resolves no checkout at all
+// — both judges are then asked and either one predating drops the field. An
+// image neither judge can date (a development build, a hand-pushed one) keeps
+// the field, as it does for the base branch: the drop is announced, but it does
+// change what the run's pull request says, and an installation built from
+// source must not lose the link to its own issue because no record dates its
+// image — a runner of such an image that predates the field refuses the task at
+// bootstrap, and that is the mistake the release's own `fugaro update` fixes.
+func externalSkew(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, clone *bool, warn io.Writer) {
+	e := spec.External
+	if e == "" {
+		return
+	}
+	drop := func() {
+		spec.External = ""
+		fmt.Fprintf(warn, "the job image predates %s and cannot read the item's external id %s, so this run opens no Fixes line for its issue; fugaro update in the checkout moves it onto this release's base image\n", externalSince, pluginwire.Printable(e))
+	}
+	predates := func(rel string, known bool) bool { return known && imagePredates(rel, externalSince) }
 	if clone == nil {
 		rel, known := releaseOf(env.lc.BaseImage(config.BaseKind))
 		if predates(rel, known) {
