@@ -170,11 +170,12 @@ func newProjectReposRmCmd() *cobra.Command {
 			"this command reads to know the repository is enrolled at all — so a removal\n" +
 			"left half done by an earlier failure is finished by running it again.\n" +
 			"\n" +
-			"The grants of the repository's job accounts are the one thing it cannot take\n" +
-			"away: they are the repository root's own IAM members, only an apply of that\n" +
-			"root deletes them, and that apply reads the state this command removes. Run\n" +
-			"`fugaro update --repo . --retire` from a checkout that no longer lists the\n" +
-			"repository, before this command, to have it take them. It says so before the\n" +
+			"The grants of the repository's job accounts and of its build account are the\n" +
+			"one thing it cannot take away: they are the repository root's own IAM\n" +
+			"members, only an apply of that root deletes them, and that apply reads the\n" +
+			"state this command removes. There is no command that does it: the root goes\n" +
+			"by hand, docs/how-to/offboarding.md lays the sequence out, and its last step\n" +
+			"is the state removal this command performs. It says so before the\n" +
 			"confirmation and after the write.\n" +
 			"\n" +
 			"Removing an allowed repository stops its runs — a run of a repository the list\n" +
