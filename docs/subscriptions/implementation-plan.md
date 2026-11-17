@@ -17,9 +17,10 @@ warn, not refuse, until enforcement ships, and that warning is itself deferred w
 (ee-reorg D523), so nothing waits on it.
 
 **Updated 2026-11-17: counsel has closed all of S8.4** — its review of the Terms, questions 12–18,
-the S0.2 addendum, D433 and the rest — on the owner's word of that day. Every edge S8.4 carried is
+the S0.2 addendum, D433 and the rest — on the owner's word of that day. The edges S8.4 carried are
 satisfied, so the tasks that waited on it are unblocked; S0.4, S7.1 and S7.3 are approved with it,
-and each of them has its own run.
+and each of them has its own run. Its own section below records the one item of its list whose
+artefact is still to come, with S7.3.
 
 **Re-sliced 2026-10-27 after the owner's rulings** (reconciliation, "Rulings"). What changed, with
 the earlier version kept visible:
@@ -1090,15 +1091,19 @@ after is the key's own `grace_days` rather than a fixed thirty days, and "Free" 
   - answers questions 12–18 and the addendum;
   - words D433;
   - confirms D432, D436 and T12's cancel, T15, T17's honour-based release and T21;
-  - reviews the privacy notice;
+  - reviews the privacy notice (the key sign-up one S7.3 writes, whose page does not exist yet —
+    see the note below);
   - sets the interest rate.
 
   **Its sign-off gates console 0.113.0 and the first app release (D448, T17, S0.7).**
   **Depends on:** S0.2.
   **Done 2026-11-17, on the owner's word:** counsel has closed all of S8.4 — its review of the
-  Terms, questions 12–18, the S0.2 addendum, D433 and the rest. The tasks that waited on it are
-  unblocked, and S0.4, S7.1 and S7.3 are approved, each of them with its own run; what the sign-off
-  releases is S0.7's own record.
+  Terms, questions 12–18, the S0.2 addendum, D433 and the rest. One item of the list above has no
+  page to have been reviewed: the privacy notice for key sign-up is S7.3's to write, from counsel's
+  own text for the sign-up data, and [counsel-packet.md](counsel-packet.md) records that it does
+  not exist yet — so what the closure carries there is the text, and the page lands with S7.3. The
+  tasks that waited on it are unblocked, and S0.4, S7.1 and S7.3 are approved, each of them with
+  its own run; what the sign-off releases is S0.7's own record.
 - **S8.5 The Paddle account.** In the entity's name, with test mode. The §4.3 discounts are
   configured from the private figures, and the Team true-up (§5.6) is collected at renewal.
   **Depends on:** S8.1.
@@ -1114,7 +1119,8 @@ S1.1–S1.5, S1.7 and S1.9 are superseded (2026-10-29) and stay in these tables 
 - **Counsel and the entity:**
   - S0.2→S8.4.
   - S8.4→S0.4, S6.2, S6.3, S7.1, S7.3, S3.7; satisfied 2026-11-17, when counsel closed S8.4 (S0.4,
-    S7.1 and S7.3 are the three of these with their own runs).
+    S7.1 and S7.3 are the three of these with their own runs; the one item of S8.4's list with no
+    artefact yet, the key sign-up notice, is S7.3's to write).
   - S8.1→S8.2, S8.5, S3.2, S3.7.
   - S8.2→S8.3; S0.4→S8.3, S7.2; S8.3→S3.7; S8.5→S3.7.
 - **The `ee/` folder:** S0.6→S0.3, S1.3, S2.3.

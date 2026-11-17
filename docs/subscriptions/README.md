@@ -5,7 +5,8 @@ owner-run — and, until 2026-11-16, no task was approved; **the owner approved 
 [status-2026-11-07.md](status-2026-11-07.md).** Since that census the counsel addendum (S0.2) has
 been written: [counsel-packet.md](counsel-packet.md) asks counsel only what the Terms' own list does
 not already ask. **Counsel has closed all of S8.4 — its review of the Terms, questions 12–18, the
-S0.2 addendum, D433 and the rest — and the owner recorded it on 2026-11-17**, so what was
+S0.2 addendum, D433 and the rest — and the owner recorded it on 2026-11-17** (the key sign-up
+notice its list names has no page yet: S7.3 writes it, from counsel's own text), so what was
 counsel-gated is now approved and unblocked: S0.4, S7.1 and S7.3, each of which has its own run. The
 lapse state's core half has landed as well (RS9 of
 [docs/roles-scopes](../roles-scopes/implementation-plan.md), 2026-11-09): the licence
