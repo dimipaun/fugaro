@@ -1243,30 +1243,48 @@ func (r *run) checkBudget(ctx context.Context) error {
 	return nil
 }
 
-// warnReportedGap logs, once, when the providers' own cost figures are more
-// than reportedGapPct above what the gateway charged on the provider routes
-// without the route fee, which providers don't report (the table price
-// settles, except where the report floors an unpriced tier's charge up to the
-// call's reservation, so a high report means a wrong price, a served-by
-// fallback, or a tier report above that reservation; a low one only means
-// Fugaro over-charged).
+// warnReportedGap logs, once, when the providers' own cost figures leave the
+// price table's band by more than reportedGapPct, which is the comparison
+// `fugaro diagnose` makes on the same run (F16, D2640): a complete call on a
+// provider route settles on the report, so a report read against the charge
+// agrees with it by construction, and the band -- what the table would have
+// charged the calls that reported, at its selected tier's two ends, with no
+// route fee, which providers don't report -- is what a gap is real against.
+// Above the band the table's prices are low, or a catalog-priced route served
+// an endpoint dearer than the tier's range. Below it the provider charged less
+// than the tier's cheapest end, where the call is floored (D2651), so the
+// charge the caps see is the table's figure rather than the provider's: the
+// gap is the table or an override priced above the endpoints actually served,
+// or a provider under-reporting a bill the floor bounds. A run whose calls
+// carried no band at all keeps the older comparison against the charge without
+// the fee, and only above it: with no band a low report may be partial
+// reporting (a cut stream, a call without a cost).
 func (r *run) warnReportedGap() {
 	r.mu.Lock()
+	reported := r.reported
+	lo, hi := sumMicros(r.tableLoBy), sumMicros(r.tableHiBy)
 	var charged pricing.Micros
 	for name, v := range r.routeBy {
 		// The provider reports the model's price, not Fugaro's route fee.
 		charged += pricing.WithoutFee(v, r.modelProviders()[name].RouteFeePct)
 	}
-	reported := r.reported
 	r.mu.Unlock()
-	if reported <= 0 || float64(reported) <= float64(charged)*(1+float64(reportedGapPct)/100) {
+	if reported <= 0 {
 		return
 	}
-	r.d.Log.Warn(fmt.Sprintf("reported cost: the providers reported $%.4f, more than %d%% over the $%.4f charged: check model_prices and the account's provider settings", reported.USD(), reportedGapPct, charged.USD()), "code", "reported_gap")
+	switch {
+	case hi > 0 && float64(reported) > float64(hi)*(1+float64(reportedGapPct)/100):
+		r.d.Log.Warn(fmt.Sprintf("reported cost: the providers reported $%.4f, more than %d%% above the $%.4f the table would have charged the calls they reported at the tier's dearest end: check model_prices and the account's provider settings", reported.USD(), reportedGapPct, hi.USD()), "code", "reported_gap")
+	case lo > 0 && float64(reported) < float64(lo)*(1-float64(reportedGapPct)/100):
+		r.d.Log.Warn(fmt.Sprintf("reported cost: the providers reported $%.4f, more than %d%% below the $%.4f the table would have charged those calls at the tier's cheapest end: check model_prices and the account's provider settings", reported.USD(), reportedGapPct, lo.USD()), "code", "reported_gap")
+	case lo == 0 && hi == 0 && float64(reported) > float64(charged)*(1+float64(reportedGapPct)/100):
+		r.d.Log.Warn(fmt.Sprintf("reported cost: the providers reported $%.4f, more than %d%% over the $%.4f charged: check model_prices and the account's provider settings", reported.USD(), reportedGapPct, charged.USD()), "code", "reported_gap")
+	}
 }
 
-// reportedGapPct is the margin (percent) a provider's reported cost may
-// exceed the charge by before the run warns.
+// reportedGapPct is the margin (percent) a provider's reported cost may leave
+// the table's band -- or, for a run whose calls carried none, exceed the
+// charge without the route fee -- by before the run warns.
 const reportedGapPct = 10
 
 // modelAgent is one model the run carries that is not one of its four pins, as

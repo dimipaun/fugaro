@@ -742,7 +742,8 @@ reaches.
 
 Then it converges, in the same command and after that one sentence: the
 policy node the account was published in, the job set and this checkout's
-repository root, through the stages fugaro update runs.
+repository root, through the stages fugaro update runs. With --no-apply the
+removal is saved and that converge is owed, and fugaro apply runs it later.
 
 If the delete fails after the config was written, the config is put back the
 way it was and the command stops: an account whose declaration is gone while
@@ -761,6 +762,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--profile` | string | "" | no | the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time) |
 
 Subcommands:
@@ -1213,24 +1215,24 @@ This command has no subcommands.
 
 File a backlog item, read the backlog, regenerate its index
 
-Read the backlog in docs/backlog/, file an item into it, and regenerate
-its index.
+Read the project's backlog, file an item into it, and regenerate the index
+of the folder it came from.
 
-The backlog is one Markdown file per item, named `<id>-<slug>.md`, beside
-the generated index README.md and the hand-written format FORMAT.md. The
-naming rule is what lets two pull requests file an item at once: they write
-two differently named files, and the merge is a union of disjoint files
-rather than a conflict (D26). `add` writes one item under that rule and
-refuses the one the folder already holds — the same title filed twice on
-the same day. The index is derived state — regenerated,
-never merged by hand — so two branches that regenerated it at once are
-reconciled by re-running `fugaro backlog index`, and never by merging the
-file (D28). `add` regenerates it in the same commit that files the item;
-`index` regenerates it alone; `list` writes nothing and prints what the
-index would say.
+The backlog is the project's work items with no spec: one item per piece of
+work nobody has planned yet, in the orchestrator's own backlog node
+(orchestrator/<project>/backlog), which is what the daemon launches from and
+what a person approves. `add` writes one item there and prints its id; the
+item is queued and unapproved, so nothing runs it until a person approves
+it; `list` reads the backlog node together with the spec-less items a
+session queued in the project's state node.
 
-Nothing here reaches a network, a credential or an installation: the items
-and the index are files in this checkout.
+docs/backlog/ is history: the Markdown items that used to be the backlog
+were folded into the node once, and the folder stays for a reader. `index`
+still regenerates the folder's README.md from the item files beside it, and
+`index` is the only command that writes there.
+
+add and list read and write the project's database, so both carry the cloud
+flags every other command that acts on the project does.
 
 Usage: `fugaro backlog`
 
@@ -1242,30 +1244,27 @@ Flags:
 
 Subcommands:
 
-- `fugaro backlog add` -- File an item in docs/backlog/ and regenerate the index
+- `fugaro backlog add` -- File an item in the project's backlog and print its id
 - `fugaro backlog index` -- Regenerate docs/backlog/README.md from the item files beside it
-- `fugaro backlog list` -- Print the backlog's items as the index lists them
+- `fugaro backlog list` -- Print the project's backlog items
 
 ## `fugaro backlog add`
 
-File an item in docs/backlog/ and regenerate the index
+File an item in the project's backlog and print its id
 
-File an item, and regenerate the index beside it.
+File an item in the project's backlog: a queued, unapproved work item with
+no spec, in the orchestrator's backlog node. The command prints the id it
+minted, which is the day it was filed (YYYYMMDD) and a two-digit sequence
+that day (D26).
 
-The item takes the next id for the day it is filed (D26) and is written
-as `<id>-<slug>.md`, with the eight front-matter fields the format
-requires (D27). The index is regenerated in the same command, so the
-commit that files an item is the commit that regenerates the index.
+--title is the one line the item is about and is required; --repo names the
+repository it is about, and defaults to this checkout's origin. --brief-file
+names a file whose contents are the brief the run is launched with; without
+it the brief is the title.
 
---title and --why are required, and so is --filed-by: an item is not a
-title with no text, and who filed it is one of the eight fields. An item
-is committed, so a --filed-by with an @ in it records `unknown`. --what
-defaults to the title, and --done and --link are written when given.
-
-An item filed by hand records `mode: none` — no run chose a mode for it.
---mode names the mode a run resolved when the item is about one, and
---filed-in says where it came from: `hand`, `run:<run id>` or
-`pr:<number>`.
+Nothing runs the item: it arrives queued and unapproved (D2717), and
+approving it is the person's own word at a real terminal, over the spec the
+terminal shows them (fugaro orchestrator patch).
 
 Usage: `fugaro backlog add`
 
@@ -1273,18 +1272,14 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--area` | string | `repo` | no | the area the item is about: an area name, project or repo |
-| `--date` | string | "" | no | the day it is filed, as YYYY-MM-DD; today when empty |
-| `--dir` | string | `docs/backlog` | no | the folder the item files live in |
-| `--done` | string | "" | no | what done looks like |
-| `--filed-by` | string | "" | no | who filed it: the run's launcher, or your login (required) |
-| `--filed-in` | string | `hand` | no | where it came from: hand, run:<run id> or pr:<number> |
+| `--brief-file` | string | "" | no | a file whose contents are the brief the run is launched with (default: the title) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
-| `--link` | stringArray | `[]` | no | a link for the item's Links section (repeatable) |
-| `--mode` | string | `none` | no | the mode a run resolved; none for an item filed by hand |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository the item is about, as owner/name (default: this checkout's origin) |
 | `--title` | string | "" | no | the item's title, one line (required) |
-| `--what` | string | "" | no | what was left open; the title when empty |
-| `--why` | string | "" | no | why it is left open (required) |
 
 Subcommands:
 
@@ -1294,7 +1289,8 @@ This command has no subcommands.
 
 Regenerate docs/backlog/README.md from the item files beside it
 
-Regenerate the backlog's index from the item files.
+Regenerate the index of docs/backlog/, the folder the backlog was before it
+became the project's work items.
 
 The index lists one row per item — the id linked to its file, the title,
 the mode, the area, the status, who filed it and the date — sorted by id,
@@ -1305,9 +1301,11 @@ file this command touches.
 The document is a pure function of the item files: every date in it comes
 from the item that carries it and no clock is read, so regenerating an
 unchanged folder rewrites the same bytes and a regeneration in review
-diffs only where an item changed (D27). A pull request that adds an item
-runs this in the same commit, and a test in internal/cli fails on an index
-that is not current — which is why the file is never merged by hand.
+diffs only where an item changed (D27). A pull request that adds an item to
+the folder runs this in the same commit, and a test in internal/cli fails on
+an index that is not current — which is why the file is never merged by
+hand. The folder is history: new items go to `fugaro backlog add`, which
+writes a work item and no file at all (D2716).
 
 Usage: `fugaro backlog index`
 
@@ -1324,23 +1322,21 @@ This command has no subcommands.
 
 ## `fugaro backlog list`
 
-Print the backlog's items as the index lists them
+Print the project's backlog items
 
-Print the backlog's items.
+Print the project's backlog: the work items with no spec in the orchestrator's
+backlog node, and the spec-less items a session queued in the project's state
+node, which are the same list to a reader (D2715).
 
-The output is the index itself, rendered from the item files rather than
-read back from README.md: a stale index on disk cannot change what this
-prints, and a reader who sees a difference between the two has found the
-file that needs `fugaro backlog index`.
+One row per item — its id, phase, the node it lives in, its repository,
+whether a person has approved it, and its title — sorted by id, which is the
+day the item was filed. --json prints one document instead:
+{version, kind, project, waiting, items[{id, title, phase, repo, node,
+approved}]}, indented.
 
---json prints one document instead: {dir, items[{id, title, mode, area,
-status, filed_by, filed_in, date, path}], open, closed, dropped}, indented.
-The rows are the index's own rows in the index's own order, and the three
-counts are the count line's own figures, so a screen shows what the
-Markdown says rather than a second reading of the folder.
-
-Nothing is written, and nothing is reached over the network: a folder that
-does not exist is an error rather than an empty backlog.
+Nothing is written. Both nodes are read in the project's database, with the
+person's own credential and the same cloud flags every command that acts on
+the project carries.
 
 Usage: `fugaro backlog list`
 
@@ -1348,9 +1344,12 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--dir` | string | `docs/backlog` | no | the folder the item files live in |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for list |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
 
 Subcommands:
 
@@ -2223,6 +2222,7 @@ Subcommands:
 - `fugaro coordinator logout` -- Delete the front door credential this project's keychain holds
 - `fugaro coordinator report` -- Declare the work you are about to start
 - `fugaro coordinator roadmap` -- Change the project's roadmap record, through the installation's front door
+- `fugaro coordinator settle` -- Make a change set's pull requests ready together
 - `fugaro coordinator show` -- Show one pull request as the host has it
 - `fugaro coordinator status` -- Show the work in flight, and where it collides
 
@@ -2737,6 +2737,68 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro coordinator settle`
+
+Make a change set's pull requests ready together
+
+Settle one change set: read every member's records and every member's pull
+request as the host has it now, and — only when every member has shipped, with
+passing tests on the commit its pull request is at — make every pull request
+ready, through the settle-only token.
+
+A change set is one piece of work spanning several repositories: a run per
+repository, launched together, each opening its own pull request. A member's
+run never makes its own pull request ready, because a set's pull requests are
+read together; this is the step that lifts that hold, and it is the only thing
+that does.
+
+--change-set names the set, which is the id of the run of its FIRST member, and
+--repo names that member's repository (the default is the local config's, when
+it lists one): the two together are what the member list is read from. Every
+other member, its repository and its run are read from that list, and a member
+whose task lists another set holds the whole set back (membership is fixed when
+a set is launched).
+
+Nothing is written until every member has been read and found shippable, so a
+set with one member still working is left exactly as it was, and the report says
+which member holds it. It is idempotent: a member whose pull request is already
+ready counts as ready, so a settle that flipped some of a set and then met a
+failure is finished by the next one rather than undone.
+
+The credential is the settle-only one: an installation token scoped to the
+members' repositories, carrying pull requests write and nothing else, minted
+where the App's key is and taken back when the command ends. A repository whose
+provider is not GitHub is reported rather than written to.
+
+Exit codes: 0 whether or not the set settled — the report is the answer, and a
+set that is merely waiting is not a failure — 1 when the set named cannot be
+read (no such run, a run in no change set), and 2 for a failure of the host.
+
+Nothing runs this on a schedule yet: the coordinator job's tick is `fugaro
+coordinator sweep`, which writes no pull request, so a change set's pull
+requests stay drafts until this command is run — by hand, in an environment
+holding the App's key (the coordinator job's own holds it where the sweep
+reads GitHub), or from a job wired to run it.
+
+Usage: `fugaro coordinator settle`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--change-set` | string | "" | no | the change set to settle (the id of its first member's run) |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for settle |
+| `--json` | bool | `false` | no | print the settle's report as JSON |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--repo` | string | "" | no | the repository of the set's first member (owner/name; default: the local config's, when it lists one) |
 
 Subcommands:
 
@@ -5119,11 +5181,13 @@ it; when it is absent it stays absent.
 Only the keys it changes are rewritten: every comment and every other key of
 the file is kept.
 
-The change reaches a run through `fugaro update`, which publishes the policy
-node: a model_prices entry and a budget.allowed_models entry are what a run
-reads from there. A route's own claim is not — a run routes by the copy of
-the providers block in its job's environment — so a repository routes to the
-model once `fugaro update --repo .` has been run in its checkout.
+The change reaches a run when the policy node is published, which this command
+does itself: a model_prices entry and a budget.allowed_models entry are what a
+run reads from there. With --no-apply the change is saved and the publish is
+owed, and `fugaro apply` runs it later. A route's own claim is not published —
+a run routes by the copy of the providers block in its job's environment — so a
+repository routes to the model once `fugaro update --repo .` has been run in
+its checkout.
 
 Usage: `fugaro models add <id>`
 
@@ -5132,6 +5196,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
 | `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
 | `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
@@ -5367,11 +5432,12 @@ of each one fails at launch with no provider for the model, until the pin is
 changed with `fugaro models use` or the model is added back.
 
 Only the keys it changes are rewritten: every comment and every other key of
-the file is kept. `fugaro update` publishes the policy node, which carries the
-model_prices and budget.allowed_models halves of the removal to the runs that
-read it; the route's own claims are in the copy of the providers block each
-job holds, so a repository stops routing to the model when `fugaro update
---repo .` is run in its checkout.
+the file is kept. The command publishes the policy node itself, which carries
+the model_prices and budget.allowed_models halves of the removal to the runs
+that read it; with --no-apply the change is saved and the publish is owed, and
+`fugaro apply` runs it later. The route's own claims are in the copy of the
+providers block each job holds, so a repository stops routing to the model when
+`fugaro update --repo .` is run in its checkout.
 
 Usage: `fugaro models rm <id>`
 
@@ -5380,6 +5446,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 
 Subcommands:
 
@@ -6520,7 +6587,7 @@ Subcommands:
 
 - `fugaro project repos add` -- Enroll a repository: one confirmation for the whole enrolment
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
-- `fugaro project repos rm` -- Un-enroll a repository: remove it from the allow-list
+- `fugaro project repos rm` -- Un-enroll a repository: remove its enrolment and its jobs
 - `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
 - `fugaro project repos status` -- Whether a repository can run: the enrolment's rows, each failing one naming its fix
 
@@ -6564,6 +6631,10 @@ rewrites what a run in flight holds.
 as this command did before the enrolment converged: it is what * needs, and
 it is the whole of what a pattern such as owner/* can want.
 
+--no-apply writes the enrolment and stops there: the publish of the node
+and the deploy of the repository's own root are saved in this machine's
+record, and `fugaro apply` runs them later.
+
 Usage: `fugaro project repos add <provider/owner/name | owner/name>`
 
 Flags:
@@ -6574,6 +6645,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -6614,18 +6686,48 @@ This command has no subcommands.
 
 ## `fugaro project repos rm`
 
-Un-enroll a repository: remove it from the allow-list
+Un-enroll a repository: remove its enrolment and its jobs
 
-Remove an entry from the published policy's allow_repos. Removing an allowed
-repository stops its runs — a run of a repository the list does not admit is
-refused before it mints a git token — unless another entry on the list still
-admits it, which is the case a pattern makes (github/acme/app stays admitted
-while github/acme/* is there); the confirmation says which of the two it is.
-Removing * refuses every repository the rest of the list does not admit.
+Remove a repository's enrolment in one step, the way `fugaro project repos add`
+writes it: the published allow-list entry, this machine's repos: entry, this
+machine's image mapping, the published per-repository admission
+(config/policy/repos/<slug>), the repository's Cloud Run jobs (its workflow job
+and its check job) and its Cloud Scheduler job. Every step is the writer the
+enrolment used, one confirmation covers them all, and a store that holds
+nothing says so rather than failing. The allow-list entry is written last,
+because it is the store this command reads to know the repository is enrolled
+at all — so a removal left half done by an earlier failure is finished by
+running it again.
+
+It keeps the repository's Terraform state and the repository root's own IAM
+members — the grants of the repository's job accounts and of its build
+account, on the project, on the runs bucket, on its secrets and on its image
+registry. Neither is this command's to take away: the state is what an apply
+of that root plans from, and the grants are members only such an apply
+deletes. There is no command that does it: the root goes by hand,
+docs/how-to/offboarding.md lays the sequence out, and the state goes in its
+last step, `fugaro update --repo --forget`. It says so before the
+confirmation and after the write.
+
+Removing an allowed repository stops its runs — a run of a repository the list
+does not admit is refused before it mints a git token — unless another entry on
+the list still admits it, which is the case a pattern makes (github/acme/app
+stays admitted while github/acme/* is there); the confirmation says which of
+the two it is. It also names, before the confirmation and after the write, what
+it deliberately leaves: the provider's App installation, the built images, the
+secrets and their versions, the run history, every pull request a run opened and
+the remote branch. Nothing here deletes a secret, an image or a run's history.
+
 So it asks you to type the project's name, and while a run is in flight only
-that typing confirms it.
+that typing confirms it: the sentence names the run, which keeps its job, its
+record and its ledger until it ends.
 
-Usage: `fugaro project repos rm <provider/owner/name | owner/name | *>`
+`*` and a pattern such as github/acme/* are allow-list entries and not
+repositories: neither has a provider, a repos: entry, a job or a state of its
+own, so removing one takes that entry away and says nothing about the
+repositories it admitted.
+
+Usage: `fugaro project repos rm <provider/owner/name | owner/name | pattern>`
 
 Flags:
 
@@ -7328,6 +7430,12 @@ project layer file, and `--area <glob>` writes one rule of
 the strictest of the rules that match it. The file is the one `fugaro update`
 publishes, and every write ends with `next: fugaro update`.
 
+`--layer repo` writes the same two keys into a checkout's own `fugaro.yaml`
+instead: there they are live once your branch is merged to the base branch,
+which is what every run reads, and this command commits, pushes and opens
+nothing. The project layer file stays the layer a write lands in when no
+`--layer` says otherwise.
+
 A mode is `poc`, `startup`, `pro`, `critical` or `hotfix`, and `hotfix` is the one
 no layer sets: it is a per-run mode, reached with
 `fugaro run --mode hotfix` from wherever a run is launched — a coding
@@ -7508,24 +7616,33 @@ pull request say decided the mode. --name on a rule the layer already carries
 renames it. A second rule with the same glob is refused: one glob addresses one
 rule, and two rules matching one path leave only the strictest of them deciding.
 
-A mode below what this project resolves to today is the sensitive direction: a
-coding agent's session is refused it with the diff and the command to run at
-your own terminal, and your own terminal writes it and asks
+`--layer repo` writes the same key into a checkout's own `fugaro.yaml`, where
+the two keys are spelled `rigor.default` and `rigor.areas`: that file is the
+repository's own, reviewed like the rest of it, and what it sets is live once
+your branch is merged to the base branch — every run reads the base branch, and
+this command commits, pushes and opens nothing. `--repo` names the repository,
+as owner/name or as a path to its checkout; without it the checkout the command
+runs in is the one written. A layer the key does not have is refused naming the
+layers it does: `local` is not one of them.
+
+A mode below what this project's runs resolve to today is the sensitive
+direction: a coding agent's session is refused it with the diff and the command
+to run at your own terminal, and your own terminal writes it and asks
 nothing. `hotfix` is refused in either form, naming `fugaro run --mode hotfix`.
 
 The command prints the review floor beside the write, and it cannot lower it:
 the floor is outside every layer, and `fugaro rigor floor` is the command that
 changes one.
 
-It writes one file: this machine's own project layer file, whose path is
-derived from the selected project's name. A project that has published no layer
-and has no local file of its own gets one — a project layer document carrying
-this installation's anchors and the change that was asked for — so a fresh
-installation can set a mode. A project that HAS published a layer is not written
-over: with no local file there the command refuses and names `fugaro update`,
-whose Layer stage seeds the file from that layer.
+With no `--layer` it writes one file: this machine's own project layer file,
+whose path is derived from the selected project's name. A project that has
+published no layer and has no local file of its own gets one — a project layer
+document carrying this installation's anchors and the change that was asked for
+— so a fresh installation can set a mode. A project that HAS published a layer
+is not written over: with no local file there the command refuses and names
+`fugaro update`, whose Layer stage seeds the file from that layer.
 
-Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]]`
+Usage: `fugaro rigor set MODE [--area GLOB [--name NAME]] [--layer LAYER] [--repo REPO]`
 
 Flags:
 
@@ -7535,8 +7652,10 @@ Flags:
 | `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the keys are spelled rigor.default and rigor.areas and are live once your branch is merged to the base branch) |
 | `--name` | string | "" | no | the rule's name; required for a glob the layer does not carry yet, and a rename for one it does |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
 
 Subcommands:
 
@@ -7628,7 +7747,7 @@ Flags:
 | `--attach` | stringArray | `[]` | no | attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task) |
 | `--attempts` | int | `0` | no | launch N (2 to 4) independent runs of the same task, workflow, ref and recipe as a best-of-N batch (bestof-<first run id> unless --batch is given); refused with --pr, --run-id, --retry or a review-mode recipe |
 | `--batch` | string | "" | no | batch label, to group runs in fugaro runs ls |
-| `--change-set` | bool | `false` | no | launch one run per repository named by --repo (2 to 5) as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings. Part of Fugaro Subscription Edition, and not available yet in any build: the settle step that flips a set's pull requests ready ships after this release, and a set launched now would stay in draft with nothing able to lift it |
+| `--change-set` | bool | `false` | no | launch one run per repository named by --repo (2 to 5) as members of one change set: every member's task carries the set's ID and the whole member list, and the members' pull requests are linked as siblings, each left in draft for the settle step to make ready once every member is verified. Part of Fugaro Subscription Edition |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--context` | stringArray | `[]` | no | a repository this run reads and never writes, as owner/name: repeatable, at most 5, each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository |
 | `--continues` | string | "" | no | continue the chain of RUN (a run ID, or <repo-slug>/<run-id>): this launch inherits the chain's remaining limits, for a chain with no pull request — the run you name opened nothing to follow up. The chain's limit is read from the run that began it, and what it has spent from the chain's runs' budget ledgers; this launch's own --max-* may only tighten the remaining. Refused with --pr, --retry and --attempts, which name a chain's previous run themselves |
@@ -9285,8 +9404,9 @@ selects that project.
 
 Before the first billable image build of a GitHub repository, setup asks GitHub
 (as the App, with the App's key read from Secret Manager into memory only)
-whether the App is installed on the repository with the permissions runs ask
-for (Contents: Write, Pull requests: Write, Issues: Read, Metadata: Read): if
+whether the App is installed on the repository with the permissions Fugaro
+requires (Contents: Write, Pull requests: Write, Issues: Read and write,
+Metadata: Read): if
 not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.
@@ -10531,6 +10651,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
 
 Subcommands:
@@ -10666,6 +10787,7 @@ Flags:
 | `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
 
 Subcommands:
@@ -10694,6 +10816,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 
 Subcommands:
 

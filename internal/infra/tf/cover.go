@@ -155,6 +155,9 @@ const (
 	// grantRules are written with, and a shift would rewrite all of them.
 	// ReportsAccountID says why the account is its own kind.
 	toReports
+	// The licence renewal job's own kind (plan K4.2), appended for the same
+	// reason: LicenceAccountID says why the account is its own kind.
+	toLicence
 	// The resident orchestrator's own kind (mobile plan task P5.1b;
 	// docs/mobile/design/always-on-orchestrator.md §4.3), appended rather than
 	// inserted like the reports job's bit above and for the same reason.
@@ -252,16 +255,23 @@ var grantRules = map[string]map[string]who{
 		// so the row is here rather than in that type's, and it names the
 		// credentials account alone — a job account holding a project-wide
 		// secretAccessor is precisely what DS2.2 exists to stop.
-		"roles/secretmanager.secretAccessor":      toCredentials,
-		"roles/aiplatform.user":                   toAccounts,
-		"roles/batch.agentReporter":               toAccounts,
-		"roles/batch.jobsEditor":                  toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
-		"roles/datastore.user":                    toAccounts,
-		"roles/datastore.viewer":                  toPeople,
-		"roles/firebaseauth.admin":                toAccounts,
-		"roles/firebasedatabase.admin":            toPeople | toAccounts | toCoordinator,
-		"roles/firebasedatabase.viewer":           toPeople,
-		"roles/logging.logWriter":                 toAccounts,
+		"roles/secretmanager.secretAccessor": toCredentials,
+		"roles/aiplatform.user":              toAccounts,
+		"roles/batch.agentReporter":          toAccounts,
+		"roles/batch.jobsEditor":             toPeople, // only under the Fugaro job-name condition (jobsCondition); never an account
+		"roles/datastore.user":               toAccounts,
+		"roles/datastore.viewer":             toPeople,
+		"roles/firebaseauth.admin":           toAccounts,
+		"roles/firebasedatabase.admin":       toPeople | toAccounts | toCoordinator,
+		"roles/firebasedatabase.viewer":      toPeople,
+		// logging.logWriter's toBuildIdentity is what a catalog build's own
+		// step logs need (B6): a build that names a user-specified service
+		// account is written to Cloud Logging as that account, and the role
+		// is project-wide because Cloud Logging offers the write no narrower
+		// — appending entries, and nothing else. The per-repository build
+		// account the identity replaces held the same role at the same level
+		// (modules/repo/build.tf's `build` row).
+		"roles/logging.logWriter":                 toAccounts | toBuildIdentity,
 		"roles/serviceusage.serviceUsageConsumer": toPeople | toAccounts,
 	},
 	"google_service_account_iam_member": {
@@ -274,7 +284,17 @@ var grantRules = map[string]map[string]who{
 		// for any uid is one the review has to see classified, not one a
 		// widened toAccounts row would quietly accept.
 		customKey + "fugaroTokenMinter": toPeople | toOrchestrator,
-		"roles/iam.serviceAccountUser":  toPeople | toAccounts,
+		// The operators' actAs on the accounts a build runs as. Two module
+		// sites hold it now: the per-repository build account
+		// (modules/repo/build.tf's operator_build, on google_service_account
+		// .build) and — since B6 moved the catalog build onto the project's
+		// build identity — that identity (modules/installation/
+		// build_identity.tf's operator_build_identity, on the literal account
+		// path). Both are people acting as an account of the installation's
+		// own, which is this row's own kind; the account the role is on is
+		// what the module's literal spelling pins, since this table sees only
+		// the member.
+		"roles/iam.serviceAccountUser": toPeople | toAccounts,
 		// D75's one-time impersonation setup: the operators, and nobody else,
 		// may assume the deployer account. On an account, for people — the
 		// grant that makes the managed apply possible and the only grant of
@@ -324,7 +344,24 @@ var grantRules = map[string]map[string]who{
 		// built from that account (reportsWriteGrant). Without that check the
 		// bit would let a plan hand this account objectUser on runs/ — the
 		// launchers' own write area — or on another bucket.
-		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports | toOrchestrator,
+		// objectUser's toLicence is the licence renewal job writing the one
+		// object its whole reason to exist is (plan K4.2): the licence, at its
+		// own name in the runs bucket and nowhere else. Like the reports row
+		// above, what makes the grant the modules' own is the condition and not
+		// the member — gcp.LicenceWriteCondition's one name, byte for byte — so
+		// without licenceWriteGrant the bit would let a plan hand this account
+		// objectUser on runs/ or on another of this run's buckets.
+		//
+		// objectUser's toBuildIdentity is the record step of a catalog build
+		// (B6): the build runs as the project's identity, and the record it
+		// writes is one repository's, so the grant is one condition per
+		// repository — the same bytes the catalog check's own grant carries
+		// (gcp.CatalogRecordsCondition) — and catalogRecordsGrant is what
+		// pins it to the identity and to those bytes. Without the check the
+		// bit would let a plan hand this account a project-wide builds/
+		// prefix, reaching every repository's check state and the copied
+		// definitions beside them.
+		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports | toLicence | toOrchestrator | toBuildIdentity,
 		// The intake's bit is on the reader row and not on the writer's: what
 		// the class reads is the derived admin list, one object of the runs
 		// bucket (intakeAdminListGrant checks the bucket AND the object), and
@@ -336,12 +373,42 @@ var grantRules = map[string]map[string]who{
 		// are on the two rows and not one: the read is objectViewer, and a
 		// grant of the write role under the read condition (or the reverse) is
 		// refused rather than read as either.
-		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports | toOrchestrator,
+		//
+		// objectViewer's toLicence is the renewal job's read of THREE named
+		// objects (plan K4.2): the project marker, the published config and the
+		// licence — the two the job finds its installation by, and the one it
+		// renews — under licenceReadGrant's bytes and no other condition. The
+		// bit is on the reader row and not on the writer's for the reports
+		// rows' reason: the read is objectViewer and the write objectUser, and
+		// a grant of one role under the other's condition is refused rather
+		// than read as either.
+		//
+		// objectViewer's toBuildIdentity is the copied catalog definitions a
+		// catalog build's pin step reads (B6): objectViewer and never
+		// objectUser, under the input's own expression
+		// (gcp.CatalogReadCondition) and this account's title, which is what
+		// catalogReadGrant reads. A repository's build could not rewrite a
+		// definition before this bit existed, and the identity cannot either.
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports | toLicence | toOrchestrator | toBuildIdentity,
 	},
 	"google_artifact_registry_repository_iam_member": {
-		customKey + "fugaroTagMover":    toAccounts,
-		"roles/artifactregistry.reader": toPeople | toAccounts,
-		"roles/artifactregistry.writer": toPeople | toAccounts,
+		// toBuildIdentity carries the three roles the per-repository build
+		// account held for the same reasons before B6: the writer and the tag
+		// mover on the ONE shared registry, where the project's build identity
+		// pushes every catalog image and moves its tags (its write already
+		// reads what it pushes), and the reader a build's own pulls need —
+		// fugaro-base and the ghcr remote, because a Cloud Build step pulls
+		// its image as the build's account: the credential step's own image is
+		// the installation's base image, the derived build's step image and
+		// its FROM come through the ghcr remote, and a D2305 entry's smoke
+		// stage pulls the base it pinned. That is modules/repo/build.tf's
+		// build_base and build_ghcr, and B6 moved them with the account. No
+		// other registry row widens for this principal: the identity reads a
+		// repository's own registry through no grant, which is B6's "nothing
+		// wider".
+		customKey + "fugaroTagMover":    toAccounts | toBuildIdentity,
+		"roles/artifactregistry.reader": toPeople | toAccounts | toBuildIdentity,
+		"roles/artifactregistry.writer": toPeople | toAccounts | toBuildIdentity,
 	},
 	"google_secret_manager_secret_iam_member": {
 		// The credentials service's own account reads Secret Manager in two
@@ -363,6 +430,23 @@ var grantRules = map[string]map[string]who{
 		// and deploy/terraform's TestServiceWorkflowSecretGrantsMatchTheJobsMounts
 		// holds D2074's set to the containers the job's own env mounts).
 		//
+		// LicenceRenewalRole's toLicence is the renewal job's four calls on the
+		// installation's renewal container (plan K4.2), and it is the ONE grant
+		// this file reads a container for: licenceSecretGrant compares the
+		// binding's secret_id with the container the run's own licence spec
+		// derives (Cover.LicenceRenewalSecret), because four Secret Manager
+		// calls are a read of a value where the row's other grants are reads of
+		// a key the job already holds. A plan that moved the grant to another
+		// container of the project asks its owner.
+		customKey + LicenceRenewalRole: toLicence,
+		//
+		// toBuildIdentity is a catalog build's own provider credential (B6):
+		// Cloud Build resolves AvailableSecrets as the account the build runs
+		// as, which is the project's identity now, and the containers it reads
+		// are the repositories' own — one grant per repository whose entries
+		// this project's catalog builds, exactly the secrets the repository's
+		// own build account read (modules/repo/build.tf's build grant).
+		//
 		// toOrchestrator is P5.1e's row and the only one the resident
 		// orchestrator has here: a cloud consumer verifies the phone's tag, the
 		// tag is a symmetric HMAC, so it holds the key — one container per
@@ -372,7 +456,7 @@ var grantRules = map[string]map[string]who{
 		// project-wide one above, and it is a reader in section 4.3's table
 		// rather than the only one: a project Owner or Editor reads any
 		// container's value past its own policy.
-		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toOrchestrator,
+		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toBuildIdentity | toOrchestrator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},
@@ -422,8 +506,10 @@ var grantRules = map[string]map[string]who{
 	// the build before the container can decide its class. It is Fugaro's own
 	// account, created by the same apply that turns the service on, and it
 	// comes with nothing wider — no actAs, no project role, and no second
-	// resource type: the registry roles a catalog build needs to push are added
-	// to this table deliberately, in the task that grants them.
+	// resource type: the registry roles a catalog build needs, to push and to
+	// pull, are in the artifact registry row below, added there deliberately
+	// by the task that granted them (B6), and they are the whole of what this
+	// principal holds outside this bit.
 	"google_cloud_run_v2_service_iam_member": {
 		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity,
 	},
@@ -479,6 +565,24 @@ type Cover struct {
 	// Cloud Scheduler service agents, which act as the preload account. The
 	// installation's cover names none.
 	Accounts []string
+	// LicenceRenewalSecret is the ID of the installation's renewal secret
+	// container (internal/infra.LicenceRenewalSecretID): the one container
+	// licenceSecretGrant accepts a binding on, and empty where the caller has
+	// none to name. The caller names the container of the block the plan under
+	// review is WRITTEN FROM — internal/cli records it on the run as its
+	// licenceJob completes the spec, the completion happening on installRoot's
+	// copy of that spec and so never on the engine's own — rather than deriving
+	// it again at the review: an installation whose licence job is not deployed
+	// has no block in the plan, so a binding to this account in that plan is one
+	// the module never wrote, whatever container it names.
+	//
+	// It is carried rather than derived in this package because the derivation
+	// that produces it is internal/infra's (LicenceRenewalSecretID), which
+	// imports this package and so cannot be called from it. An empty one refuses
+	// every binding — a caller that forgets to fill it cannot open the hole —
+	// which is the fail-closed direction, since the container of a plan with no
+	// licence block is one no grant of this class should name.
+	LicenceRenewalSecret string
 }
 
 // CloudAssetRole is the installation's whole-project inventory read role
@@ -624,6 +728,62 @@ const CatalogCheckAccountID = "fugaro-catalog-check"
 // write.
 const ReportsAccountID = "fugaro-reports"
 
+// LicenceAccountID is the licence renewal job's account (plan K4.2 of
+// docs/licence-key-v2): the account modules/installation/licence.tf creates in
+// the installation's project and the job runs as, internal/infra.
+// LicenceAccountID being the same name on the writer's side and the module's
+// variable validation pinning the ID it is given to this literal.
+//
+// It is NOT among FugaroAccounts, for the reports job's reason: it reads three
+// named objects of the runs bucket and writes one of them, and it holds four
+// Secret Manager calls on the installation's renewal container — a reach no job
+// account holds — so it is a kind of its own (toLicence) and every role it is
+// given is refused unless a row carries that bit AND the narrowing check
+// accepts it: the two bucket rows through licenceReadGrant and licenceWriteGrant
+// (one exact object condition each, of one of this run's buckets) and the
+// custom role through licenceSecretGrant (the literal role, this account, this
+// run's container and no condition).
+const LicenceAccountID = "fugaro-licence"
+
+// LicenceRenewalRole is the custom role the renewal job's account holds on the
+// installation's renewal secret container: the four Secret Manager calls K4.1's
+// job makes — the metadata read (secrets.get), the list of the container's
+// versions (versions.list), the value of the newest one (versions.access) and
+// the write of the new one (versions.add) — and nothing else (LicenceRenewalPermissions).
+//
+// A custom role rather than a predefined set (plan amendment of 2026-11-14,
+// and this repository's rule that a role is listed permission by permission
+// unless a predefined one is exactly the surface needed): the closest
+// predefined role, roles/secretmanager.secretVersionManager, adds
+// versions.destroy and versions.enable and disable — the job could destroy the
+// secret it renews with — and roles/secretmanager.secretAccessor carries
+// versions.access alone, so covering the four calls would take two roles
+// (secretAccessor + the version adder, whose predefined home
+// roles/secretmanager.secretVersionAdder also carries versions.destroy). One
+// custom role holding exactly these four is the narrowest of the three, and
+// RolePermissions pins it so no later revision of the module can widen it.
+//
+// It is bound at the SECRET level (licence.tf's
+// google_secret_manager_secret_iam_member), which is the whole of what fences
+// it to one container: the same role granted on the project would be those four
+// calls on every secret the installation holds.
+const LicenceRenewalRole = "fugaroLicenceRenewal"
+
+// LicenceRenewalPermissions are that role's permissions, in one var so a test
+// can hold the map, the module's own list and this one to each other
+// (MCPStateReadPermissions' shape). The four are K4.1's own calls and nothing
+// else: no secrets.list (the job knows its container's ID — the spec carries
+// it), no secrets.create and no secrets.delete (the container is Terraform's,
+// and an installation that turns the job off gets it back from the same plan),
+// and no versions.destroy, which would let the job destroy the secret it renews
+// with.
+var LicenceRenewalPermissions = []string{
+	"secretmanager.secrets.get",
+	"secretmanager.versions.list",
+	"secretmanager.versions.access",
+	"secretmanager.versions.add",
+}
+
 // CatalogLeaseRole is the custom role the catalog check job's account holds in
 // the installation's Firebase project: the two Realtime Database DATA
 // permissions its build leases are written with (catalogcheck.tf, D1554). It
@@ -758,7 +918,7 @@ const (
 // reason (toBuildIdentity): its reach is the credentials service's invoker bit
 // and nothing a job of any repository holds.
 var (
-	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole}
+	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole, LicenceRenewalRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
 )
 
@@ -1110,6 +1270,14 @@ func (c Cover) isReportsMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+ReportsAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isLicenceMember is whether m is exactly the licence renewal job's account as
+// an IAM member, in the installation's project: the account the installation
+// module's licence resource creates (var.project, LicenceAccountID).
+func (c Cover) isLicenceMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+LicenceAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isBuildIdentityMember is whether m is exactly the project's build identity as
 // an IAM member, in the installation's project: the account build_identity.tf
 // creates (var.project, BuildIdentityAccountID).
@@ -1355,6 +1523,16 @@ var RolePermissions = map[string][]string{
 	// MCPStateReadPermissions, and TestRolePinsAreTheModules holds both to the
 	// module.
 	MCPStateReadRole: {"firebasedatabase.instances.get"},
+	// The renewal job's four calls on the installation's renewal container
+	// (licence.tf, plan K4.2, the plan amendment of 2026-11-14). A custom role
+	// rather than a predefined one, and the comment on LicenceRenewalRole says
+	// which and why: the nearest predefined roles add a destroy of the secret
+	// this job renews with, and no single predefined role carries exactly these
+	// four. LicenceRenewalPermissions is the list the module's own file names
+	// and TestRolePinsAreTheModules holds the two together, so a later revision
+	// that widened the job's Secret Manager reach would have to widen this pin
+	// in the same change.
+	LicenceRenewalRole: LicenceRenewalPermissions,
 	// The deployer's eight roles (D75, Task 1.5, redesigned for 0.10.0). They
 	// are not installation roles: nothing a run does needs them, and their
 	// bound is the split between them — creation, reads and
@@ -1410,7 +1588,8 @@ var RolePermissions = map[string][]string{
 // workflow's job and for the credentials service (whose image's own entrypoint
 // is the service, credentials.tf), the history sweep, the coordinator's
 // aggregation sweep, the image check, the project catalog's check
-// (catalogcheck.tf) and the reports job (reports.tf).
+// (catalogcheck.tf), the reports job (reports.tf) and the licence renewal job
+// (licence.tf).
 var knownCommands = [][2][]string{
 	{nil, nil},
 	{{"/usr/local/bin/fugaro"}, {"budget", "history", "--sweep"}},
@@ -1418,6 +1597,7 @@ var knownCommands = [][2][]string{
 	{{"fugaro"}, {"image", "check", "--job"}},
 	{{"fugaro"}, {"image", "check", "--job", "--catalog"}},
 	{{"fugaro"}, {"runs", "reports", "--job"}},
+	{{"/usr/local/bin/fugaro"}, {"licence", "renew", "--job"}},
 }
 
 // credentialsServiceEnv are the only environment variables the credentials
@@ -1469,6 +1649,30 @@ var credentialsServiceEnv = []string{
 var (
 	intakeServiceArgs = []string{"intake", "serve"}
 	intakeServiceEnv  = []string{"FUGARO_GCP_PROJECT", "FUGARO_INTAKE_URL", "FUGARO_RUNS_BUCKET", "FUGARO_LAUNCHER_ACCOUNTS"}
+)
+
+// orchestratorServiceResource, orchestratorServiceArgs, orchestratorServiceEnv
+// and orchestratorTickPath are the same quartet for the resident orchestrator's
+// own service (mobile plan task P5.1c; modules/installation/orchestrator.tf):
+// the resource name the service case dispatches on, the argv of the released
+// image's `orchestrator serve` subcommand, the three names
+// internal/cli/orchestrator_serve.go reads and nothing else — the project that
+// names this installation's node, the Firebase project it belongs to and the
+// database URL it is read from — and the one route that process answers, which
+// is the only path a tick of this installation may be pointed at.
+//
+// A scheduling job of this service is the tree's ONE tick whose target is a
+// run.app URL rather than the run API's job path, and whose token is therefore
+// an OIDC ID token rather than an OAuth access token: orchestratorTickChange is
+// what those two facts are held by.
+const (
+	orchestratorServiceResource = "orchestrator"
+	orchestratorTickPath        = "/tick"
+)
+
+var (
+	orchestratorServiceArgs = []string{"orchestrator", "serve"}
+	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"}
 )
 
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv
@@ -1735,6 +1939,13 @@ func planAccounts(p *Plan) (created, held map[string]bool) {
 const (
 	credentialsAccountResource = "credentials"
 	intakeAccountResource      = "intake"
+	// orchestratorAccountResource is the resident orchestrator's own account,
+	// resource "google_service_account" "orchestrator" in
+	// modules/installation/orchestrator.tf (mobile plan task P5.1b). It is the
+	// account the module's Cloud Run service runs as (P5.1c), and the service
+	// case reads it back through accountFrom, so it is counted the same way:
+	// the plan's address for it ends in google_service_account.orchestrator[0].
+	orchestratorAccountResource = "orchestrator"
 	// intakeServiceResource is the Cloud Run service's own resource name:
 	// intake.tf names the service and the account that runs it the same word,
 	// and the service case dispatches on this one (cloudRunServiceName).
@@ -1764,35 +1975,45 @@ type accountPlan struct {
 	held    map[string]bool
 }
 
-// serviceAccountsPlan is the installation module's two service accounts as a plan
-// carries them, which the google_cloud_run_v2_service case reads: the
-// credentials service's (D146) and the secrets intake's (D1931, DS2.2).
+// serviceAccountsPlan is the installation module's three service accounts as a
+// plan carries them, which the google_cloud_run_v2_service case reads: the
+// credentials service's (D146), the secrets intake's (D1931, DS2.2) and the
+// resident orchestrator's (mobile plan task P5.1c).
 //
-// They are two and not one because the two services run as two different
-// identities: a check that admitted either for both would let a plan run the
-// intake's container as the account that reads every model credential in the
-// bundle — the account the intake's own roles deliberately keep free of every
-// read (R3) — or the credentials service's as the account that only writes
-// dynamic containers.
+// They are three and not one because the three services run as three different
+// identities: a check that admitted either of the first two for the others
+// would let a plan run the intake's container as the account that reads every
+// model credential in the bundle — the account the intake's own roles
+// deliberately keep free of every read (R3) — or the credentials service's as
+// the account that only writes dynamic containers; and the orchestrator's is
+// the account that holds iam.serviceAccounts.signJwt on the budget signer, so
+// admitting it anywhere else would run a service as the identity that may mint
+// a token for any uid (section 4.5 E4).
 type serviceAccountsPlan struct {
-	credentials accountPlan
-	intake      accountPlan
+	credentials  accountPlan
+	intake       accountPlan
+	orchestrator accountPlan
 }
 
-// planServiceAccounts reads the two accounts out of a plan. Every change
+// planServiceAccounts reads the three accounts out of a plan. Every change
 // counts, a no-op included: an unchanged account is one the plan holds and the
 // service it runs keeps naming, which is the shape of every plan after the one
 // that created the service.
 func planServiceAccounts(p *Plan) serviceAccountsPlan {
 	c := serviceAccountsPlan{
-		credentials: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
-		intake:      accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		credentials:  accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		intake:       accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
+		orchestrator: accountPlan{id: map[string]string{}, created: map[string]bool{}, held: map[string]bool{}},
 	}
 	for _, rc := range p.ResourceChanges {
 		for _, a := range []struct {
 			resource string
 			plan     *accountPlan
-		}{{credentialsAccountResource, &c.credentials}, {intakeAccountResource, &c.intake}} {
+		}{
+			{credentialsAccountResource, &c.credentials},
+			{intakeAccountResource, &c.intake},
+			{orchestratorAccountResource, &c.orchestrator},
+		} {
 			id, ok := accountOfResource(rc, a.resource)
 			if !ok || id == "" {
 				continue
@@ -1936,6 +2157,12 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 		} else {
 			why = c.bucketCondition(rc, createdSAIDs, heldSAIDs)
 		}
+	}
+	// The renewal job's one secret binding is a row on a container:
+	// licenceSecretGrant reads the target, and it is the only secret grant in
+	// this file whose container is checked (plan K4.2).
+	if why == "" && t == "google_secret_manager_secret_iam_member" && c.isLicenceMember(str(rc.Change.After["member"])) {
+		why = c.licenceSecretGrant(rc)
 	}
 	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
 		why = c.jobsCondition(rc.Change)
@@ -2168,6 +2395,19 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// reason: a plan that listed its address would otherwise be able
 			// to grant it a launcher's or an operator's role.
 			kind = toReports
+		case c.isLicenceMember(m):
+			// ... and the installation's licence renewal job (plan K4.2): its
+			// own kind, which three rows accept — objectViewer on the three
+			// objects it finds its installation by, objectUser on the licence
+			// object alone (licenceReadGrant, licenceWriteGrant) and its four
+			// Secret Manager calls on the renewal container and no other
+			// (licenceSecretGrant) — so every other grant it is given, and
+			// every other role a plan might reach for, is refused and the
+			// update that carries them asks its owner. Read here, before the
+			// review screen's list, for the deployer's reason: a plan that
+			// listed its address would otherwise be able to grant it a
+			// launcher's or an operator's role.
+			kind = toLicence
 		case c.isMCPMember(m):
 			// ... and the front door's own account (D920, D935, O16b): its own
 			// kind, which two rows accept — objectAdmin on D935's store and the
@@ -2207,14 +2447,17 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			kind = toOrchestrator
 		case c.isBuildIdentityMember(m):
 			// ... and the project's build identity (B5, D2301): its own kind,
-			// which ONE row accepts — the invoker bit on the credentials
-			// service — so every other grant it is given, and every other role
-			// a plan might reach for, is refused and the update that carries
-			// them asks its owner. Read here, before the review screen's list,
-			// for the deployer's reason: a plan that listed its address would
-			// otherwise be able to grant it a launcher's or an operator's role,
-			// and the whole point of the account is that a catalog build
-			// reaches the one service and nothing else of this installation's.
+			// which the cells B6 added accept — the invoker bit on the
+			// credentials service, the registry pair a push and a pull need,
+			// and the runs bucket and provider-credential reaches a catalog
+			// build's own steps make — so every other grant it is given, and
+			// every other role a plan might reach for, is refused and the
+			// update that carries them asks its owner. Read here, before the
+			// review screen's list, for the deployer's reason: a plan that
+			// listed its address would otherwise be able to grant it a
+			// launcher's or an operator's role, and the whole point of the
+			// account is that a catalog build reaches the one service and
+			// nothing else of this installation's.
 			kind = toBuildIdentity
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
@@ -2244,6 +2487,15 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 		// credentials.tf), and a plan that computes one asks its owner.
 		if kind == toIntake {
 			return "a computed role to the intake's account: it holds its own two roles, named, and the name-prefix condition on the write role is the whole of what fences it to the delivery grammar (D1931, F30)"
+		}
+		if kind == toLicence {
+			// The renewal job's secret role is this module's own custom role
+			// (fugaroLicenceRenewal), written as a literal in licence.tf, and
+			// licenceSecretGrant's whole check is the container the literal is
+			// bound on. A computed role here could be any role of the project,
+			// bound on the container the plan names, under the ordinary
+			// confirmation.
+			return "a computed role to the installation's licence renewal job: it holds its own custom role, named (projects/<project>/roles/" + LicenceRenewalRole + "), on the one renewal container, and licenceSecretGrant compares that binding's target (plan K4.2)"
 		}
 		if kind == toCredentials {
 			return "a computed role to the credentials service's account: it holds the bundle's accessor, the dynamic class's prefix accessor and the shared lister, named, and the prefix condition is what narrows the second (D1931, Q6)"
@@ -2750,7 +3002,9 @@ func IntakeAdminListCondition(bucket string) string {
 // (jobAccountGrant) — or exactly one whole-builds/catalog/ clause
 // (gcp.CatalogReadCondition, a build account's read of the copied catalog
 // definitions, PIC4), under the same account rule and that condition's own
-// title (catalogReadGrant) — or, in the
+// title (catalogReadGrant) — which since B6 is also the project's build
+// identity's read of the same copy, under the title built from that account
+// and that account alone (buildIdentityGrantAccount) — or, in the
 // project module and for an account that module creates, exactly one
 // whole-tokens/ clause (gcp.ProjectTokenBucketCondition, the shared job's
 // read of every repository's sealed token, plan task 3.2 step 2); a person's
@@ -2763,8 +3017,11 @@ func IntakeAdminListCondition(bucket string) string {
 // account carries exactly one repository's builds/<slug>/catalog/ clause
 // (gcp.CatalogRecordsCondition, the job's read-write reach into the records
 // and check state of the repository an entry belongs to, D1148), under that
-// condition's own title and that account alone (catalogRecordsGrant) — and the
-// reports job's account carries exactly the two-clause condition of ONE prefix
+// condition's own title and that account alone (catalogRecordsGrant) — which
+// since B6 is also the project's build identity's grant of the same condition,
+// one per repository, the record a catalog build writes being the one the
+// check reads back — and the reports job's account carries exactly the
+// two-clause condition of ONE prefix
 // of one of this run's buckets: the runs/ one under objectViewer
 // (gcp.ReportsReadCondition, the records its reports summarise) and the
 // reports/ one under objectUser (gcp.ReportsWriteCondition, the one write that
@@ -2824,6 +3081,11 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 			} else if why != "" {
 				return why
 			}
+			if ok, why := c.licenceReadGrant(rc, createdSAIDs, title, expr); ok {
+				return ""
+			} else if why != "" {
+				return why
+			}
 			// The title says which grant this claims to be: when it is the
 			// catalog builder's spelling, the refusal names that grant rather
 			// than the tokens/ ones the expression alone would suggest.
@@ -2837,6 +3099,12 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 			// (ruling E4).
 			if c.isReportsMember(str(ch.After["member"])) {
 				return "grants objectViewer on the bucket to the project's reports job under a condition that is not its runs/ condition of this run's bucket (gcp.ReportsReadCondition), which is the only objectViewer the modules give it (ruling E4)"
+			}
+			// ... and the renewal job's account has the same rule for its
+			// three-name read (plan K4.2): its name under any other condition
+			// is refused here rather than read as some other job's grant.
+			if c.isLicenceMember(str(ch.After["member"])) {
+				return "grants objectViewer on the bucket to the installation's licence renewal job under a condition that is not its three-object read of this run's bucket (gcp.LicenceReadCondition), which is the only objectViewer the module gives it (plan K4.2)"
 			}
 			return "grants objectViewer on the bucket to an account under a condition that is not one repository's tokens/ condition of this run's bucket, a project job's whole-tokens/ one, nor a build account's builds/catalog/ one"
 		}
@@ -2865,6 +3133,16 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		// none of which the job has any business reading (ruling E4).
 		if c.isReportsMember(str(ch.After["member"])) {
 			return "grants " + role + " on the bucket, unconditioned, to the project's reports job: the modules give it objectViewer under its runs/ condition and objectUser under its reports/ one, and nothing else (ruling E4)"
+		}
+		// ... and the renewal job's account for the same reason and with the
+		// same two conditioned rows (plan K4.2): objectViewer under its
+		// three-object read and objectUser under the licence object's own
+		// condition are the module's whole reach on the bucket, so an
+		// unconditioned grant of either role is the bucket-wide one — every
+		// run record, prompt, transcript, token, cache, lock and issue, none
+		// of which the job reads (D524).
+		if c.isLicenceMember(str(ch.After["member"])) {
+			return "grants " + role + " on the bucket, unconditioned, to the installation's licence renewal job: the module gives it objectViewer under its three-object read and objectUser under the licence object's own condition, and nothing else (plan K4.2)"
 		}
 	case role == "roles/storage.objectUser" && person:
 		for _, b := range c.Buckets {
@@ -2914,6 +3192,11 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		} else if why != "" {
 			return why
 		}
+		if ok, why := c.licenceWriteGrant(rc, createdSAIDs, title, expr); ok {
+			return ""
+		} else if why != "" {
+			return why
+		}
 		// The catalog check job's account is admitted by this branch's row for
 		// its one records grant and for nothing else, so its name under any
 		// other condition is refused HERE, before the clause loop below: that
@@ -2931,6 +3214,13 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		// repository's job grant by the clause loop below.
 		if c.isReportsMember(str(ch.After["member"])) {
 			return "grants objectUser on the bucket to the project's reports job under a condition that is not its reports/ condition of this run's bucket (gcp.ReportsWriteCondition), which is the only objectUser the modules give it (ruling E4)"
+		}
+		// The renewal job's account likewise: objectUser on the licence object
+		// ALONE is the one write the module gives it (plan K4.2), so its name
+		// under a per-repository clause — runs/ included — is refused before the
+		// clause loop below reads it as some repository's job grant.
+		if c.isLicenceMember(str(ch.After["member"])) {
+			return "grants objectUser on the bucket to the installation's licence renewal job under a condition that is not the licence object's own of this run's bucket (gcp.LicenceWriteCondition), which is the only objectUser the module gives it (plan K4.2)"
 		}
 		for _, clause := range strings.Split(expr, " || ") {
 			m := accountClause.FindStringSubmatch(clause)
@@ -3018,19 +3308,22 @@ func (c Cover) projectJobTokenCondition(rc ResourceChange, createdSAIDs, heldSAI
 	return false
 }
 
-// catalogReadGrant reports whether a bucket grant is a repository's build
-// account reading the copied catalog definitions (gcp.CatalogReadCondition,
-// PIC4): objectViewer, which the branch this is called from has already
-// established, on exactly builds/catalog/ of one of this run's buckets, with
-// the condition title built from the account the grant's own module holds or
-// creates (gcp.CatalogReadConditionTitle) — the account rule the tokens/
-// grants pass (jobAccountGrant).
+// catalogReadGrant reports whether a bucket grant is a build account reading
+// the copied catalog definitions (gcp.CatalogReadCondition, PIC4):
+// objectViewer, which the branch this is called from has already established,
+// on exactly builds/catalog/ of one of this run's buckets, with the condition
+// title built from the account the grant's own module holds or creates
+// (gcp.CatalogReadConditionTitle) — the account rule the tokens/ grants pass
+// (jobAccountGrant), or, since B6, the project's build identity
+// (buildIdentityGrantAccount), which reads the same copy as the account a
+// catalog build now runs as.
 //
 // The clause has no slug, so the expression is one builder's bytes for the
 // whole string: the grant the repository module writes is accepted, and any
 // other clause under objects/ — or the same clause on no run bucket — is not.
 func (c Cover) catalogReadGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, expr string) bool {
-	if _, ok := c.jobAccountGrant(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix); !ok {
+	if _, ok := c.jobAccountGrant(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix); !ok &&
+		!c.buildIdentityGrantAccount(rc, createdSAIDs, heldSAIDs, title, gcp.CatalogReadConditionTitlePrefix) {
 		return false
 	}
 	bucket := str(rc.Change.After["bucket"])
@@ -3104,6 +3397,109 @@ func (c Cover) reportsWriteGrant(rc ResourceChange, createdSAIDs map[string]bool
 	return c.reportsGrant(rc, createdSAIDs, title, expr, gcp.ReportsWriteConditionTitlePrefix, gcp.ReportsWriteCondition)
 }
 
+// licenceGrant is the account rule the licence renewal job's two bucket
+// conditions share (plan K4.2): the condition's title is titlePrefix + the
+// account's ID, the account is the installation's licence account itself, and
+// the expression is the builder's bytes for one of this run's buckets. It
+// returns whether the grant passed and, when the title claims to be one of the
+// licence ones and the grant is not, why — the sentence the caller uses
+// instead of the generic refusal, since the title says which grant the plan
+// meant to write.
+//
+// The member rule and the bucket loop are reportsGrant's, for the same two
+// reasons: the account has a fixed ID (the module's variable validation pins
+// it, LicenceAccountID), so nothing is derived from the member and the TITLE
+// is what says whose grant it is; and the same bytes on another bucket are a
+// grant no module writes.
+func (c Cover) licenceGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr, titlePrefix string, build func(bucket string) string) (bool, string) {
+	id, ok := strings.CutPrefix(title, titlePrefix)
+	if !ok {
+		return false, ""
+	}
+	if id != LicenceAccountID {
+		return false, "grants a bucket role under the licence renewal job's condition to the account " + id + ", which is not the installation's licence account (" + LicenceAccountID + ")"
+	}
+	if !c.isLicenceMember(str(rc.Change.After["member"])) &&
+		(!unknown(rc.Change, "member") || !createdSAIDs[modulePrefix(rc)+"|"+LicenceAccountID]) {
+		return false, "grants a bucket role under the licence renewal job's condition to a member that is not the licence account its title names, which the modules never do"
+	}
+	bucket := str(rc.Change.After["bucket"])
+	for _, b := range c.Buckets {
+		if !gcp.ValidBucketName(b) || (bucket != "" && bucket != b) {
+			continue
+		}
+		if expr == build(b) {
+			return true, ""
+		}
+	}
+	return false, "grants a bucket role under the licence renewal job's condition with an expression that is not the licence condition of this run's bucket (" + titlePrefix + LicenceAccountID + ")"
+}
+
+// licenceReadGrant reports whether a bucket grant is the renewal job reading
+// the three objects it finds its installation and its key by
+// (gcp.LicenceReadCondition, plan K4.2): objectViewer, which the branch this is
+// called from has already established, on exactly the project marker, the
+// published config and the licence object of one of this run's buckets, with
+// the condition title built from the licence account.
+//
+// It is THREE names and not one, and that is the grant's whole design: the job
+// runs in a container with no checkout and no config file, so the marker and
+// the published config are how it learns which installation it renews for
+// (internal/cli's selectWith). The read carries no listing half: a List
+// request names no object, so no clause of a name condition matches one, and
+// the account stays out of the run records, the prompts and the transcripts
+// the bucket holds.
+func (c Cover) licenceReadGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) (bool, string) {
+	return c.licenceGrant(rc, createdSAIDs, title, expr, gcp.LicenceReadConditionTitlePrefix, gcp.LicenceReadCondition)
+}
+
+// licenceWriteGrant is licenceReadGrant for the job's other binding: objectUser
+// on the licence object ALONE (gcp.LicenceWriteCondition) — the one write the
+// account holds, and the whole reason it is objectUser rather than
+// objectCreator (the write replaces the object the job read, and the bucket is
+// versioned).
+func (c Cover) licenceWriteGrant(rc ResourceChange, createdSAIDs map[string]bool, title, expr string) (bool, string) {
+	return c.licenceGrant(rc, createdSAIDs, title, expr, gcp.LicenceWriteConditionTitlePrefix, gcp.LicenceWriteCondition)
+}
+
+// licenceSecretGrant is the narrowing the renewal job's secret binding has and
+// no other secret grant in this file does: WHICH container it is on. The role
+// is the row's own (customKey + LicenceRenewalRole, checked before this is
+// called), and what is left is the target — the container the run's own
+// licence spec derived from the Fugaro project's name
+// (infra.LicenceRenewalSecretID, carried into the review as
+// Cover.LicenceRenewalSecret).
+//
+// Why this one and not the row's others: four Secret Manager calls are a read
+// of a VALUE — `fugaro licence set` writes the per-key renewal secret into it —
+// where the row's other grants are reads of a key the job already holds. A
+// hand-edited plan that pointed this binding at another container of the
+// project would hand the renewal job the credentials of some other part of the
+// installation, and the target is the only thing left that says otherwise.
+//
+// The container may be unknown, and then the grant is refused: the ID is a
+// derived literal (gcp.ProjectSecretID), never a computed attribute of a
+// resource in this plan, so "unknown" means the plan did not take it from the
+// spec. A cover with no container in it (LicenceRenewalSecret empty — a caller
+// that had none to name) has nothing to compare with, and every binding to this
+// account is refused.
+func (c Cover) licenceSecretGrant(rc ResourceChange) string {
+	if unknown(rc.Change, "secret_id") {
+		return "grants the renewal role on a secret whose secret_id is not known: it is the container the installation's own licence spec derives (internal/infra.LicenceRenewalSecretID), which the plan carries as a literal"
+	}
+	if id := str(rc.Change.After["secret_id"]); c.LicenceRenewalSecret == "" || id != c.LicenceRenewalSecret {
+		return "grants the renewal role on the secret " + safetext.Field(id) + ", which is not this installation's renewal container (" + safetext.Field(c.LicenceRenewalSecret) + "): the four calls are the renewal job's whole Secret Manager reach (plan K4.2)"
+	}
+	conds, why := grantConditions(rc.Change, "a secret grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the renewal role on the renewal container under a condition: the container is the fence, and the module never adds one (plan K4.2)"
+	}
+	return ""
+}
+
 // catalogRecordsGrant reports whether a bucket grant is the project's catalog
 // check job holding ONE repository's build records and check state
 // (gcp.CatalogRecordsCondition, D1148): objectUser, which the branch this is
@@ -3136,8 +3532,18 @@ func (c Cover) catalogRecordsGrant(rc ResourceChange, createdSAIDs map[string]bo
 	// this is. A named member needs no further rule than the account's own
 	// name: the ID and the project name it, and no other account of a run
 	// carries either.
-	if !c.isCatalogCheckMember(str(rc.Change.After["member"])) {
-		if !unknown(rc.Change, "member") || !createdSAIDs[modulePrefix(rc)+"|"+CatalogCheckAccountID] {
+	//
+	// Since B6 the project's build identity is the second account this grant is
+	// written for: a catalog build runs as the identity and writes the record
+	// the check reads back, so the same condition is bound to it, one grant per
+	// repository (modules/installation/build_identity.tf) — the account rule is
+	// the check's own, keyed on the identity's literal ID.
+	if !c.isCatalogCheckMember(str(rc.Change.After["member"])) && !c.isBuildIdentityMember(str(rc.Change.After["member"])) {
+		if !unknown(rc.Change, "member") {
+			return false
+		}
+		mod := modulePrefix(rc)
+		if !createdSAIDs[mod+"|"+CatalogCheckAccountID] && !createdSAIDs[mod+"|"+BuildIdentityAccountID] {
 			return false
 		}
 	}
@@ -3201,6 +3607,28 @@ func (c Cover) jobAccountGrant(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 		return "", false
 	}
 	return id, true
+}
+
+// buildIdentityGrantAccount is jobAccountGrant's account rule for the
+// conditioned grants written for the project's build identity (B6, D2301)
+// instead of a job or build account: the condition's title is the prefix its
+// own builder writes plus that account's ID, and the member is that account,
+// held or created by the grant's own module. Its ID is a literal rather than
+// derived, so unlike a job account's there is nothing to read out of the
+// member: the title is the whole of what says whose grant this is, and the
+// member then has to be the account the title names.
+func (c Cover) buildIdentityGrantAccount(rc ResourceChange, createdSAIDs, heldSAIDs map[string]bool, title, titlePrefix string) bool {
+	if title != titlePrefix+BuildIdentityAccountID {
+		return false
+	}
+	mod := modulePrefix(rc) + "|" + BuildIdentityAccountID
+	if c.isBuildIdentityMember(str(rc.Change.After["member"])) {
+		return heldSAIDs[mod] || createdSAIDs[mod]
+	}
+	// The computed member the module writes
+	// (google_service_account.build_identity[0].member): the plan has to be
+	// the one that creates the account the title is built from.
+	return unknown(rc.Change, "member") && createdSAIDs[mod]
 }
 
 func (c Cover) fugaroAccount(m string) bool {
@@ -3383,15 +3811,19 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 			}
 		}
 	case "google_cloud_run_v2_service":
-		// The installation module's two services are two shapes, and which
+		// The installation module's three services are three shapes, and which
 		// rules a change is held to is the resource the plan names and nothing
 		// an editor of the variables can reach: intake.tf hardcodes the
 		// intake's account, its args and its environment names, so the change
-		// at that address is the intake's, and everything else falls to the
+		// at that address is the intake's, orchestrator.tf does the same for
+		// the resident orchestrator's (P5.1c), and everything else falls to the
 		// credentials service's case below — which is what refuses a Cloud Run
 		// service this module does not create.
-		if cloudRunServiceName(rc) == intakeServiceResource {
+		switch cloudRunServiceName(rc) {
+		case intakeServiceResource:
 			return c.intakeServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
+		case orchestratorServiceResource:
+			return c.orchestratorServiceChange(rc, a, rc.Change.AfterUnknown, pre, creds, proj)
 		}
 		// The credentials service (D146, C1.18): the one container image in
 		// the tree that is not a job's. Its container sits one `template`
@@ -3521,6 +3953,16 @@ func (c Cover) attributes(rc ResourceChange, creates, createdSAIDs, heldSAIDs ma
 		}
 	case "google_cloud_scheduler_job":
 		ht := at(a["http_target"])
+		// The token block says which kind of target this is, and the two are
+		// not interchangeable: a run API job URI is called with an OAuth access
+		// token and a run.app service URL with an OIDC ID token, so a job
+		// carrying the wrong one authenticates against nothing. The resident
+		// orchestrator's tick is the tree's one job of the second kind
+		// (P5.1c), and it is checked by rules of its own rather than by the
+		// run API's.
+		if len(objects(at(ht, "oidc_token"))) > 0 {
+			return c.orchestratorTickChange(rc, a, rc.Change.AfterUnknown, pre, creates)
+		}
 		if at(rc.Change.AfterUnknown, "http_target", "uri") == true || unknown(rc.Change, "http_target") {
 			// The job's name and location are known only once the job this
 			// module creates exists.
@@ -3822,6 +4264,23 @@ func (c Cover) intakeAccount(a map[string]any, unk any, pre string, plans servic
 	return c.accountFrom(a, unk, pre, plans.intake, "the secrets intake", intakeAccountResource)
 }
 
+// orchestratorAccount is the same check on the third service of the module
+// (mobile plan task P5.1c): the plan's own google_service_account.
+// orchestrator[0], which orchestrator.tf writes into the template and which the
+// same rules hold.
+//
+// It is a check of its own for intakeAccount's reason one account over: the
+// orchestrator's identity is the one that holds iam.serviceAccounts.signJwt on
+// the installation's budget signer (section 4.3's first row, section 4.5 E4 —
+// "may mint" is also "may be the phone"), so admitting either of the module's
+// other two service accounts here would run this process as an identity the
+// design's table never priced, and admitting this account at the credentials
+// service's address would give the process that reads every model credential in
+// the bundle the signJwt reach too.
+func (c Cover) orchestratorAccount(a map[string]any, unk any, pre string, plans serviceAccountsPlan) string {
+	return c.accountFrom(a, unk, pre, plans.orchestrator, "the resident orchestrator", orchestratorAccountResource)
+}
+
 // accountFrom is the check both of the above are: the account a covered
 // service's template names must be the plan's own resource named resource, in
 // this run's project and in the service's module, and the plan must create or
@@ -3917,6 +4376,201 @@ func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any,
 				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
 			}
 		}
+	}
+	return ""
+}
+
+// orchestratorServiceChange holds the resident orchestrator's own service
+// (mobile plan task P5.1c, modules/installation/orchestrator.tf) to the same
+// four rules intakeServiceChange holds the intake's to, and the reasoning for
+// the shape is that function's and credentials.tf's case above. It is a case of
+// its own and not an arm of the intake's, because two of the four are this
+// service's own:
+//
+//   - the argv. This process is the released image's `orchestrator serve`
+//     subcommand (internal/cli/orchestrator_serve.go), and the image's own
+//     default command serves the credentials service, so the module writes
+//     `args = ["orchestrator", "serve"]`. A change whose args are anything else
+//     is refused in both directions: none would serve the credentials service's
+//     or the intake's routes from this URL as an account that may mint a token
+//     for any uid, and anything else would run code orchestrator.tf does not
+//     write. The command is empty, as the two other services' is.
+//   - the environment, which is THREE names and not four
+//     (orchestratorServiceEnv): the project that names this installation's
+//     node, the Firebase project it belongs to, and the database URL it is read
+//     from. Those three are what internal/cli/orchestrator_serve.go reads, and
+//     an environment is the one path a credential could reach this process
+//     without a Secret Manager read — so an entry off the list, or one whose
+//     value comes from a source, is refused here rather than under the one
+//     confirmation that covered the plan. The database URL is on the list as a
+//     NAME; the check that the value is THIS installation's database is the
+//     process's own (it compares the host to the Firebase project it was
+//     given), because only the project's own services know which database is
+//     theirs.
+//
+// The account is the orchestrator's own google_service_account.orchestrator[0]
+// (orchestratorAccount) and never one of the module's other accounts: this
+// identity holds iam.serviceAccounts.signJwt on the installation's budget
+// signer, so running either of the other two services' images as it — or this
+// image as another account — is a pairing section 4.3's table never priced.
+func (c Cover) orchestratorServiceChange(rc ResourceChange, a map[string]any, unk any, pre string, plans serviceAccountsPlan, proj string) string {
+	if unknown(rc.Change, "invoker_iam_disabled") {
+		return "an IAM setting that is not known"
+	}
+	if a["invoker_iam_disabled"] != false {
+		return "a service that does not require IAM, which would let anyone on the internet wake the resident orchestrator and act on this installation's own state"
+	}
+	cs := objects(at(a["template"], "containers"))
+	if unknownAt(unk, "template", 0, "containers") {
+		return "containers that are not known"
+	}
+	if len(cs) == 0 {
+		return "no container"
+	}
+	if why := c.orchestratorAccount(a, unk, pre, plans); why != "" {
+		return why
+	}
+	for i, m := range cs {
+		cp := []any{"template", 0, "containers", i}
+		for _, attr := range []string{"image", "command", "args"} {
+			if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+				return "a container " + attr + " that is not known"
+			}
+		}
+		img := str(m["image"])
+		if !c.credentialsImageOK(img, proj) {
+			return fmt.Sprintf("runs the image %q, which is not this installation's released pin read back through the pull-through repository (%s/%s/%s/%s/fugaro-<kind>:<version>@sha256:<digest>): the resident orchestrator is a subcommand of the released binary, so it runs that pin and never an image of its own",
+				img, c.Registry, proj, c.Ghcr, c.Owner)
+		}
+		cmd, args := strList(m["command"]), strList(m["args"])
+		if len(cmd) != 0 || !slices.Equal(args, orchestratorServiceArgs) {
+			return "a container whose command or args are not the module's: the resident orchestrator runs the released image with no command of its own and args " +
+				strings.Join(orchestratorServiceArgs, " ") + ", and a change that named anything else would run one of this installation's other services here, or code orchestrator.tf does not write"
+		}
+		if unknownAt(unk, append(slices.Clone(cp), "env")...) {
+			return "an environment that is not known"
+		}
+		for j, e := range objects(m["env"]) {
+			ep := append(slices.Clone(cp), "env", j)
+			if unknownAt(unk, append(slices.Clone(ep), "name")...) || unknownAt(unk, append(slices.Clone(ep), "value")...) ||
+				unknownAt(unk, append(slices.Clone(ep), "value_source")...) {
+				return "an environment variable that is not known"
+			}
+			if n := str(e["name"]); !slices.Contains(orchestratorServiceEnv, n) {
+				return fmt.Sprintf("an environment variable %q, which the resident orchestrator does not read: its container sets only %s",
+					n, strings.Join(orchestratorServiceEnv, ", "))
+			}
+			if refs := objects(e["value_source"]); len(refs) > 0 {
+				return "an environment variable whose value comes from a source rather than the module: this service's environment is the module's own names and nothing else"
+			}
+		}
+	}
+	return ""
+}
+
+// orchestratorTickChange holds the tick that wakes that service to the two
+// facts that make it this service's, and it is the tree's only scheduling job
+// of either shape:
+//
+//   - the URI. Every other tick in the tree calls the Cloud Run API's
+//     `/v2/projects/<project>/locations/<region>/jobs/<job>:run`, because what
+//     it starts is a JOB. This one calls a run.app URL, because what it wakes is
+//     a SERVICE, and the path is the process's single route
+//     (orchestratorTickPath). The URI is a computed attribute of the service
+//     resource (`${google_cloud_run_v2_service.orchestrator[0].uri}/tick`), so
+//     it is UNKNOWN on the apply that creates the service and KNOWN on every
+//     later one, when terraform reads it back out of state — both arms are
+//     checked, and neither is vacuous: unknown requires a service created in
+//     this same module (the shape the module writes), and known holds the URL
+//     to this run's region, the run.app domain, the project number of the
+//     host's own label and the tick's path (orchestratorTickURI states the
+//     bound, and what it does not read). A tick pointed anywhere else runs,
+//     fails and logs every minute forever, which is a service nobody measures.
+//   - the token. It is an OIDC ID token, not the OAuth access token every other
+//     tick carries: Cloud Run's front end authenticates a run.app caller by the
+//     ID token whose audience is that service's own URL, and an access token
+//     there is refused before the container runs. The audience is therefore the
+//     URI — the same expression, so a token minted for another service or
+//     another URL cannot be described by this file — and the account is this
+//     run's scheduler account, held to the same two arms the OAuth path's is
+//     (an unknown email is the module's own only when the plan creates an
+//     account with it; a known one must be a Fugaro account of this run).
+//
+// What it does NOT check, because the other case does: the service the URI
+// names is checked where it is declared (orchestratorServiceChange), so this
+// function never has to read a container.
+func (c Cover) orchestratorTickChange(rc ResourceChange, a map[string]any, unk any, pre string, creates map[string]bool) string {
+	ht := at(a["http_target"])
+	// The two blocks are read through `at` rather than `unknownAt`, as the run
+	// API arm below reads them: `http_target` and `oidc_token` are blocks of
+	// list nesting mode, and `at` collapses a single-element list, so the same
+	// call reaches the block's own attribute in both the after and the
+	// after_unknown document.
+	if at(unk, "http_target", "uri") == true {
+		if !creates[pre+"|google_cloud_run_v2_service"] {
+			return "calls a service that is not known and none is created with it"
+		}
+	} else if why := c.orchestratorTickURI(str(at(ht, "uri"))); why != "" {
+		return why
+	}
+	oidc := objects(at(ht, "oidc_token"))
+	if len(oidc) == 0 {
+		return "calls a run.app URL with no ID token: Cloud Run's front end authenticates a caller of this service by an OIDC ID token, and an OAuth access token there is refused before the container runs"
+	}
+	if at(unk, "http_target", "oidc_token", "audience") == true {
+		// The module's own shape: the audience is the service's own URL, which
+		// is unknown exactly while the service is being created.
+		if at(unk, "http_target", "uri") != true {
+			return "an ID token whose audience is not known and a URL that is: the audience of a Cloud Run ID token is the service's own URL, and the two are one expression"
+		}
+	} else if got, want := str(oidc[0]["audience"]), str(at(ht, "uri")); got != want {
+		return fmt.Sprintf("an ID token for the audience %q, not for the URL it calls (%q): Cloud Run refuses an ID token whose audience is not the service's own URL, so this job would never be admitted",
+			got, want)
+	}
+	if at(unk, "http_target", "oidc_token", "service_account_email") == true {
+		if !creates[pre+"|google_service_account"] {
+			return "calls as an account that is not known and none is created with it"
+		}
+	} else if email := str(oidc[0]["service_account_email"]); email == "" || !c.fugaroAccount("serviceAccount:"+email) {
+		return "calls as " + email + ", not a Fugaro service account of this run"
+	}
+	return ""
+}
+
+// orchestratorTickURI is the known-URI arm of the tick's URL rule: the URL has
+// to be a Cloud Run service URL of THIS run's region on the tick's path —
+// https, the run.app domain, the project number Cloud Run appends to the
+// service's name, and the path with nothing after it.
+//
+// What it does not tie, and why: the service's own name. A run.app host is
+// <service>-<project number>, and the number is a fact only the deployment has
+// — this cover knows the project's ID and this run's region, not the number —
+// so which service the host names is held where the expression is written:
+// orchestrator.tf's `uri` is the service's own computed attribute, pinned by
+// the module's TestOrchestratorServiceIsTheDesignsShape and by internal/infra's
+// plan test, which reads the tick's uri and audience off the very service the
+// same plan creates. The run API arm above draws the same bound one URL shape
+// over: it checks this run's project and region, not the job the URI names.
+func (c Cover) orchestratorTickURI(uri string) string {
+	bad := func() string {
+		return fmt.Sprintf("calls %q, not a Cloud Run service URL of this run's region on the tick's path: the job must be https://<the service this module creates>-<project number>.%s.run.app%s, which is the URL the service answers on and the audience its ID token must carry",
+			uri, c.Region, orchestratorTickPath)
+	}
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "https" || u.RawQuery != "" || u.Fragment != "" || u.Path != orchestratorTickPath || c.Region == "" {
+		return bad()
+	}
+	// The dot in front of the region is what makes it a label of its own: a
+	// host that merely ends in the same words (evil-us-east5.run.app) is not
+	// this region's service URL.
+	service, ok := strings.CutSuffix(u.Host, "."+c.Region+".run.app")
+	if !ok {
+		return bad()
+	}
+	// <service>-<project number>: a label, a hyphen and digits. A URL that
+	// names no project at all is not a Cloud Run service URL, whoever hosts it.
+	if i := strings.LastIndex(service, "-"); i <= 0 || strings.Trim(service[i+1:], "0123456789") != "" {
+		return bad()
 	}
 	return ""
 }

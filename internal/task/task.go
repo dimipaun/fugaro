@@ -131,7 +131,34 @@ type Spec struct {
 	// spec — the skew every new task field has, and the reason launch.json,
 	// which its readers decode without that refusal, is not enough on its
 	// own for a run's own record of it.
-	PlanTask    string `json:"plan_task,omitempty"`
+	PlanTask string `json:"plan_task,omitempty"`
+	// External is the ticket this run's work item came from outside Fugaro
+	// with, as the daemon's own state carries it
+	// (orchestrator.WorkItem.External): `github:<owner>/<repo>#<n>`, one
+	// issue, lower-case as the installation's own App answers a repository
+	// name. It is what the pull request of a run for such an item names so
+	// a merge closes that issue — `Fixes <owner>/<repo>#<n>` for another
+	// repository's, `Fixes #<n>` for the run's own (B5, the runner half
+	// that reads this field, D2727) — and it is the whole of what a run may
+	// know about the ticket: the item carries no body, and the field is a
+	// reference rather than text to follow.
+	//
+	// No flag writes it and no person types it: the daemon's launcher is
+	// its only writer, and it copies the id off an item the orchestrator's
+	// own validation admitted (internal/orchestrator's externalRE is the
+	// shape rule, applied where the id is written and again where the node
+	// is read), so the field here is a copy and not a second rule. Empty
+	// (the common case, and every spec written before this release) writes
+	// no key, so the spec is byte-identical to what the previous release
+	// wrote.
+	//
+	// A task that carries one needs a runner that reads it: Parse decodes
+	// with DisallowUnknownFields, so a runner older than the release that
+	// ships the field refuses the whole task at bootstrap. Unlike the plan
+	// task, the daemon drops it there rather than refusing the launch
+	// (internal/cli's externalSkew): what is lost is one `Fixes` line, and
+	// the approved attempt is worth more than the link.
+	External    string `json:"external,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	PR          int    `json:"pr,omitempty"`
 	PreviousRun string `json:"previous_run,omitempty"`

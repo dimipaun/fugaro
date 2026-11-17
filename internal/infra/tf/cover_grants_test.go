@@ -231,7 +231,7 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toOrchestrator|toBuildIdentity) != 0 {
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toLicence|toOrchestrator|toBuildIdentity) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -353,8 +353,12 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		runsvc  = "google_cloud_run_v2_service_iam_member"
 		logview = "google_logging_log_view_iam_member"
 	)
-	// The project's build identity (B5, D2301), whose one row the cells below
-	// pin: the invoker bit on the credentials service, and no role of any
+	// The project's build identity (B5, D2301), whose cells below are pinned:
+	// the invoker bit on the credentials service, the writer and tag-mover
+	// pair on the shared registry, the reader on the two registries a build
+	// pulls from, the bucket's read of the copied definitions and write of one
+	// repository's record, the provider credential a build clones with, the
+	// one project-level role its own step logs need (B6), and no role of any
 	// other row.
 	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
@@ -387,9 +391,40 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{secret, "roles/secretmanager.secretAccessor", account, true},
 		{runjob, "projects/proj-1/roles/fugaroJobRunner", person, true},
 		{runjob, "roles/run.invoker", account, true},
-		// The project's build identity's one row (B5, D2301): the same role on
-		// the SERVICE type, which is the whole of what the account may hold.
+		// The project's build identity's four cells (B5, D2301; the registry
+		// roles added by B6): the invoker bit on the SERVICE type, the class
+		// the service answers the build route for, the writer and the tag
+		// mover on the ONE shared registry every catalog image lands in, and
+		// the reader on the base and ghcr registries a build's own steps pull
+		// through — the whole of what the account may hold.
 		{runsvc, "roles/run.invoker", buildIdentity, true},
+		{repo, "roles/artifactregistry.writer", buildIdentity, true},
+		{repo, "projects/proj-1/roles/fugaroTagMover", buildIdentity, true},
+		// The reader is not a fifth cell of its own: this type's row carries
+		// one reader cell for every principal that pulls an image, and the
+		// identity is one of them now that a catalog build's first pull — the
+		// credential step's own base image — is made as the account the build
+		// runs as.
+		{repo, "roles/artifactregistry.reader", buildIdentity, true},
+		// The bucket and the secret cells the same review added, which are the
+		// three reaches a catalog build's own steps still make as the identity:
+		// the copied definitions its pin step reads, the record its record step
+		// writes, and the provider credential its clone step resolves. The
+		// conditions these carry are the check's own input and
+		// TestBuildIdentityBucketGrantsAreTheConditions reads them at the size
+		// the plan writes them.
+		{bkt, "roles/storage.objectViewer", buildIdentity, true},
+		{bkt, "roles/storage.objectUser", buildIdentity, true},
+		{secret, "roles/secretmanager.secretAccessor", buildIdentity, true},
+		// The one project-level role the identity holds, and the one cell of
+		// that row it shares with an account of Fugaro's own beside the
+		// credentials service's datastore role: a build that names a
+		// user-specified service account is written to Cloud Logging as that
+		// account, so a catalog build without it is refused or loses every step
+		// log (catalog.go submits with Logging: CLOUD_LOGGING_ONLY). The
+		// per-repository build account this identity replaces held the same
+		// role at the same level.
+		{project, "roles/logging.logWriter", buildIdentity, true},
 		{logview, "roles/logging.viewAccessor", person, true},
 		// The credentials service's two rows, and only these two (0.10.1,
 		// ledger #903): the bundle's accessor and its own database role. The
@@ -414,13 +449,16 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
 		{project, "roles/storage.objectAdmin", person, false},
-		// The build identity is refused every role but its one row (B5,
-		// D2301): a bucket write — which is how a registry writer, the role a
-		// later task adds to this table on purpose, would look if it were
-		// widened into a row silently — and the invoker bit on the type that
-		// is not the service it invokes.
-		{bkt, "roles/storage.objectUser", buildIdentity, false},
+		// The build identity on the types and roles it does not hold: a
+		// project-level secretAccessor, which would reach every secret of the
+		// installation rather than the one repository's provider credential its
+		// own cell grants, and the invoker bit on the type that is not the
+		// service it invokes. (The runs bucket's two object roles came off this
+		// list with the review that found a catalog build's own pin, record and
+		// clone steps unreached; their conditions are what narrow them, and
+		// TestBuildIdentityBucketGrantsAreTheConditions reads them.)
 		{runjob, "roles/run.invoker", buildIdentity, false},
+		{project, "roles/secretmanager.secretAccessor", buildIdentity, false},
 		{project, "roles/secretmanager.secretAccessor", account, false},
 		{project, "roles/iam.serviceAccountUser", person, false},
 		{project, "projects/proj-1/roles/fugaroTokenMinter", person, false},
@@ -847,13 +885,15 @@ func TestCoordinatorAccountIsItsOwnPrincipalKind(t *testing.T) {
 // the identity a shared repository's catalog build runs as a job runner's
 // role, the history account's datastore.user or a build account's registry
 // writer. What a catalog build does need of the registry is a role another
-// task adds to this table deliberately; before that, its whole reach is the
-// one row below — roles/run.invoker on the credentials service, the class the
-// service answers the build route for.
+// task adds to this table deliberately, and B6 is that task: the identity's
+// whole reach is the cells `allowed` names — roles/run.invoker on the
+// credentials service, the class the service answers the build route for, and
+// the writer and tag-mover pair on the ONE shared registry every catalog image
+// is pushed into.
 //
 // The table alone does not hold that: TestGrantRulesMatrix computes its
 // expectation from the table under test, so it follows a row that gains the
-// kind. This is the hand-written half — the one row the account may hold,
+// kind. This is the hand-written half — the cells the account may hold,
 // asserted over every (type, role) cell of grantRules and then for real
 // through the cover, role by role — and TestGrantRulesPinnedCells pins the
 // positive cell and two refusals beside it.
@@ -863,12 +903,45 @@ func TestBuildIdentityIsItsOwnPrincipalKind(t *testing.T) {
 	if slices.Contains(FugaroAccounts, BuildIdentityAccountID) {
 		t.Errorf("the project's build identity is one of FugaroAccounts, so every toAccounts row accepts it: one confirmation would then cover granting the identity a catalog build runs as a job runner's role or a build account's registry writer")
 	}
-	// The one row it may hold, and nothing else: a second row that gains
-	// toBuildIdentity is a role this account may be granted, which is a
-	// decision the account's own task makes and not one a widened row makes
-	// silently.
+	// The cells it may hold, and nothing else: a row that gains
+	// toBuildIdentity without being named here is a role this account may be
+	// granted, which is a decision the account's own tasks make and not one a
+	// widened row makes silently. B6 is the second of those tasks, and it
+	// added the registry roles a catalog build needs as the account it runs
+	// as: the writer and the tag mover on the ONE shared registry, where every
+	// catalog image lands, and the reader on the two registries a build pulls
+	// from (fugaro-base and the ghcr remote) — the three roles the
+	// per-repository build account held (modules/repo/build.tf's build_base
+	// and build_ghcr, and modules/repo/registry.tf's pair).
 	allowed := map[string]map[string]bool{
 		"google_cloud_run_v2_service_iam_member": {"roles/run.invoker": true},
+		"google_artifact_registry_repository_iam_member": {
+			"roles/artifactregistry.reader": true,
+			"roles/artifactregistry.writer": true,
+			customKey + "fugaroTagMover":    true,
+		},
+		// The one project-level role, and the only place this account reaches
+		// outside a resource of its own: Cloud Logging writes a build's step
+		// logs as the account the build runs as, so a catalog build — which
+		// submits with Logging: CLOUD_LOGGING_ONLY — needs logging.logWriter,
+		// and the role is project-wide because Cloud Logging offers the write
+		// no narrower. It is what the per-repository build account held too
+		// (modules/repo/build.tf's `build` row), moved here with the account.
+		"google_project_iam_member": {"roles/logging.logWriter": true},
+		// The runs bucket and the provider credentials a catalog build's own
+		// steps reach, which the same review found missing after the build
+		// moved onto this identity: the definitions its pin step reads
+		// (objectViewer), the record its record step writes (objectUser), and
+		// the credential its clone step resolves through AvailableSecrets
+		// (secretAccessor). The conditions are the catalog check's own input
+		// and catalogReadGrant and catalogRecordsGrant are what pin them, one
+		// repository's records area at a time (see
+		// TestBuildIdentityBucketGrantsAreTheConditions).
+		"google_storage_bucket_iam_member": {
+			"roles/storage.objectUser":   true,
+			"roles/storage.objectViewer": true,
+		},
+		"google_secret_manager_secret_iam_member": {"roles/secretmanager.secretAccessor": true},
 	}
 	for typ, row := range grantRules {
 		for key, w := range row {
@@ -1996,6 +2069,223 @@ func TestReportsGrantsAreTheConditions(t *testing.T) {
 	orphan.ResourceChanges[0].Change.After["account_id"] = "fugaro-something-else"
 	if got := c.NotCovered(orphan, nil); len(got) == 0 {
 		t.Error("a computed member with no reports account beside it is covered")
+	}
+}
+
+// licenceMember is the renewal job's account as a plan names it.
+const licenceMember = "serviceAccount:" + LicenceAccountID + "@proj-1234.iam.gserviceaccount.com"
+
+// licenceGrantPlan is one of the renewal job's two bucket grants as a plan
+// carries it: the account created in the same module (a computed member, which
+// is what the first apply's plan writes) or named outright (an update plan),
+// and the one condition the case writes.
+func licenceGrantPlan(computed bool, role string, cnd map[string]any) *Plan {
+	conds := []any{}
+	if cnd != nil {
+		conds = []any{cnd}
+	}
+	after := map[string]any{"bucket": cbBucket, "role": role, "condition": conds}
+	unk := map[string]any{"condition": []any{map[string]any{}}}
+	if computed {
+		unk["member"] = true
+	} else {
+		after["member"] = licenceMember
+	}
+	return &Plan{ResourceChanges: []ResourceChange{
+		{Address: "module.installation.google_service_account.licence", Type: "google_service_account",
+			Change: Change{Actions: []string{"create"}, After: map[string]any{"account_id": LicenceAccountID}}},
+		{Address: "module.installation.google_storage_bucket_iam_member.licence_read", Type: "google_storage_bucket_iam_member",
+			Change: Change{Actions: []string{"create"}, After: after, AfterUnknown: unk}},
+	}}
+}
+
+// TestLicenceGrantsAreTheConditions: the two rows that accept the renewal
+// job's account accept exactly the two bindings the module writes, and the
+// CONDITION is what makes them the modules' own — one prefix of one of this
+// run's buckets under the title built from that account, byte for byte
+// gcp.LicenceReadCondition or gcp.LicenceWriteCondition.
+//
+// The shape the account may NOT hold is the one the reports job's rule already
+// refuses and the comment beside the licence bits claims for this account too:
+// an UNCONDITIONED bucket-wide grant. Every other account's unconditioned
+// objectViewer is a job reading the whole bucket, which is the modules' choice
+// for them; this account holds the two conditioned grants and nothing else, so
+// a whole-bucket read would reach the run records, the prompts, the
+// transcripts, the sealed tokens, the cache, the locks and the issue store,
+// none of which the job has any business reading (plan K4.2, D524).
+//
+// Mutation (verified, run and restored): deleting licenceGrant's
+// member-mismatch return covers the orphan plan below — the plan that creates
+// some other service account, so the member reads as an account and the row
+// admits it — and leaves the rest of the test green, which is what makes that
+// case the pin on the branch rather than on the condition rows.
+func TestLicenceGrantsAreTheConditions(t *testing.T) {
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	read := cond(gcp.LicenceReadConditionTitle(LicenceAccountID), gcp.LicenceReadCondition(cbBucket))
+	write := cond(gcp.LicenceWriteConditionTitle(LicenceAccountID), gcp.LicenceWriteCondition(cbBucket))
+	for _, tc := range []struct {
+		name     string
+		role     string
+		cond     map[string]any
+		computed bool
+		covered  bool
+		want     string
+	}{
+		{"the job reads its three objects", "roles/storage.objectViewer", read, false, true, ""},
+		{"the job writes the licence object", "roles/storage.objectUser", write, false, true, ""},
+		{"a first plan's computed member reads its three objects", "roles/storage.objectViewer", read, true, true, ""},
+		// The read role under the write condition's title, and the read
+		// condition carrying the write's bytes: the title says which of the
+		// two grants the plan meant to write, so neither is read as the other.
+		{"the job reads under the write condition's title", "roles/storage.objectViewer",
+			cond(gcp.LicenceWriteConditionTitle(LicenceAccountID), gcp.LicenceReadCondition(cbBucket)), false, false, "not its three-object read of this run's bucket"},
+		{"the job reads under the read title with the write's bytes", "roles/storage.objectViewer",
+			cond(gcp.LicenceReadConditionTitle(LicenceAccountID), gcp.LicenceWriteCondition(cbBucket)), false, false, "not the licence condition of this run's bucket"},
+		// The two roles swapped: each is bound to its own condition and to no
+		// other, so the write role under the read condition is refused rather
+		// than read as either grant.
+		{"the job writes under the read condition", "roles/storage.objectUser", read, false, false, "is not the licence object's own"},
+		// ... and the whole bucket, which is the grant no module writes: the
+		// account's reach is the two conditioned rows above and nothing else.
+		{"unconditioned objectViewer", "roles/storage.objectViewer", nil, false, false, "unconditioned, to the installation's licence renewal job"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.NotCovered(licenceGrantPlan(tc.computed, tc.role, tc.cond), nil)
+			if tc.covered {
+				if len(got) != 0 {
+					t.Errorf("NotCovered = %q, want the module's own grant", got)
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatal("NotCovered = nil, want a refusal: only the module's two bindings are the module's own")
+			}
+			if !strings.Contains(got[0], tc.want) {
+				t.Errorf("NotCovered = %q, want it to contain %q", got[0], tc.want)
+			}
+		})
+	}
+
+	// The account alone is not the grant: the same rule for a lookalike in
+	// another project, under the right bytes and the right title.
+	lookalike := licenceGrantPlan(false, "roles/storage.objectViewer", read)
+	lookalike.ResourceChanges[1].Change.After["member"] = "serviceAccount:" + LicenceAccountID + "@fp-2.iam.gserviceaccount.com"
+	if got := c.NotCovered(lookalike, nil); len(got) == 0 {
+		t.Errorf("the three-object read of %s@fp-2 is covered: the account is the installation's own", LicenceAccountID)
+	}
+
+	// A computed member under a licence title is the account's grant only when
+	// the plan creates that account in the grant's own module: the title is
+	// built from the account, so a plan that computes the member from ANOTHER
+	// service account of the module — the orphan below, whose account_id is not
+	// the licence one — would otherwise be covered on the strength of a name it
+	// only claims, and the cover would report a binding no reader can hold to
+	// the account.
+	orphan := licenceGrantPlan(true, "roles/storage.objectViewer", read)
+	orphan.ResourceChanges[0].Change.After["account_id"] = "fugaro-something-else"
+	if got := c.NotCovered(orphan, nil); len(got) == 0 {
+		t.Errorf("a computed member with no %s account beside it is covered: the licence condition is only this account's grant", LicenceAccountID)
+	}
+}
+
+// TestALicenceConditionTitleNamesItsOwnAccount: the second half of the rule
+// licenceGrant applies to the renewal job's two bucket bindings (plan K4.2),
+// and the half no other test of this package reads. The account's ID is a fixed
+// literal — the module's variable validation pins it, LicenceAccountID — so
+// nothing about a licence grant is derived from its member, and the TITLE's
+// suffix is what says whose condition the plan claims to be writing.
+//
+// Without this check a grant titled for another account would be read as this
+// account's own and covered: the member is the renewal job's, the role is one
+// of its two, and the expression is the builder's own bytes for this run's
+// bucket, so every other step of licenceGrant passes. The consequence is the
+// one the read grant's three names exist to bound — the account would hold a
+// condition of its own naming under the ordinary update confirmation, and the
+// cover would report the grant that was written rather than the one the plan's
+// title announces.
+//
+// The first row is the control: the module's own title, on the module's own
+// bytes, is still the module's grant, so the two foreign-title rows cannot pass
+// by a check that refuses every licence-shaped title.
+//
+// Mutation (verified, run and restored): deleting licenceGrant's
+// `id != LicenceAccountID` return covers both foreign-title rows — the first
+// two fail with "NotCovered = nil" — and leaves the control green, which is
+// what makes those two rows the pin on the check rather than on the bytes
+// around it.
+func TestALicenceConditionTitleNamesItsOwnAccount(t *testing.T) {
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	const foreign = LicenceAccountID + "-old"
+	for _, tc := range []struct {
+		name    string
+		role    string
+		cond    map[string]any
+		covered bool
+	}{
+		{"the read title names this account", "roles/storage.objectViewer",
+			cond(gcp.LicenceReadConditionTitle(LicenceAccountID), gcp.LicenceReadCondition(cbBucket)), true},
+		{"the read title names another account", "roles/storage.objectViewer",
+			cond(gcp.LicenceReadConditionTitle(foreign), gcp.LicenceReadCondition(cbBucket)), false},
+		{"the write title names another account", "roles/storage.objectUser",
+			cond(gcp.LicenceWriteConditionTitle(foreign), gcp.LicenceWriteCondition(cbBucket)), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.NotCovered(licenceGrantPlan(false, tc.role, tc.cond), nil)
+			if tc.covered {
+				if len(got) != 0 {
+					t.Errorf("NotCovered = %q, want the module's own grant", got)
+				}
+				return
+			}
+			join := strings.Join(got, "\n")
+			if len(got) == 0 {
+				t.Fatal("NotCovered = nil, want a refusal: the title's account is the only thing that says whose condition this is")
+			}
+			if want := "which is not the installation's licence account"; !strings.Contains(join, want) {
+				t.Errorf("NotCovered = %q, want it to contain %q", got, want)
+			}
+		})
+	}
+}
+
+// TestLicenceAccountIsRefusedAComputedRole: checkGrant's computed-role branch
+// for the renewal job's account (plan K4.2), which the dynamic class's own test
+// does not reach (it names the intake and the credentials service). The job's
+// Secret Manager role is this module's own custom role (fugaroLicenceRenewal),
+// written as a literal in licence.tf, and licenceSecretGrant's whole check is
+// the container that literal is bound on: a role the plan cannot name, bound on
+// whatever container the plan likes, is a Secret Manager reach nobody can hold
+// to that one container, and it would ride the ordinary update confirmation.
+// The refusal names the account, so an operator's read of it says which grant
+// to write by name.
+//
+// Every type is refused, not just the secret binding the reason is about: the
+// branch is reached from the member's kind, before the type's row is looked up,
+// so a computed role on a bucket or a project binding — where the account has
+// no role at all — stops with the account's own sentence rather than with the
+// table's.
+//
+// Mutation (verified, run and restored): deleting the `kind == toLicence`
+// return in checkGrant's unknown-role case makes all four rows stop for the
+// table's own reason instead of the account's — "a role that is not known and
+// no custom role is created with it" — and each fails on the wanted sentence,
+// which is what makes this test the pin on that branch rather than on the
+// refusals around it.
+func TestLicenceAccountIsRefusedAComputedRole(t *testing.T) {
+	// The installation's project is proj-1234, as licenceMember is named
+	// (isLicenceMember reads the member and Projects[0], in that order).
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket}, Listed: []string{cbPerson}, Region: testCover.Region}
+	for _, typ := range []string{"google_project_iam_member", "google_secret_manager_secret_iam_member", "google_storage_bucket_iam_member", "google_cloud_run_v2_service_iam_member"} {
+		after := map[string]any{"member": licenceMember, "bucket": cbBucket, "secret_id": "fugaro-project-proj-1234-licence-renewal-0e382f732fd21bbd"}
+		ch := rc(typ, after, map[string]any{"role": true}, "create")
+		got := c.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+		if len(got) == 0 {
+			t.Errorf("%s: a computed role to the installation's licence renewal job is covered: its own custom role is written as a literal and the container it is bound on is what the cover checks (plan K4.2)", typ)
+			continue
+		}
+		if want := "a computed role to the installation's licence renewal job"; !strings.Contains(strings.Join(got, "\n"), want) {
+			t.Errorf("%s: a computed role to the renewal job stopped for another reason: %q, want %q", typ, got, want)
+		}
 	}
 }
 

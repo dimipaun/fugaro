@@ -685,6 +685,15 @@ func TestTheSeamCarriesEveryFactOfASignIn(t *testing.T) {
 	if err := v.FreshWithin(signInOf(caller), 30*time.Second); !errors.Is(err, ErrStaleSignIn) {
 		t.Errorf("a sign-in a minute old was treated as fresh within thirty seconds (%v): the rule read the caller's own sign-in instant", err)
 	}
+	// And the same rule through the seam, which is how an area asks for it
+	// (api.go's SignInVerifier): a reveal's step-up is P1.3's five minutes over
+	// the caller's own `auth_time`, and the answer is the same both ways.
+	if err := seam.FreshWithin(caller, 5*time.Minute); err != nil {
+		t.Errorf("a sign-in a minute old was not fresh within five minutes through the seam (%v): the rule did not cross it", err)
+	}
+	if err := seam.FreshWithin(caller, 30*time.Second); !errors.Is(err, ErrStaleSignIn) {
+		t.Errorf("a sign-in a minute old was treated as fresh within thirty seconds through the seam (%v): the seam did not apply the rule", err)
+	}
 
 	// The admitted direction, so that none of the above is a seam that refuses
 	// everything: a Google caller without a tenant is the caller an operations

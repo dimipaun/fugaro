@@ -2,16 +2,22 @@ package diagnoseagent
 
 import (
 	"encoding/json"
+	"io"
+	"maps"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/cmdlog"
 )
 
 // bundleManifest is one manifest as the launcher writes it: the strict shape
 // ReadBundle parses, marshalled here so a field renamed in Go and a field
-// renamed in the JSON cannot drift apart unnoticed. T-TC5's WriteBundle is the
-// other half of this pair; until it lands, the manifest a test reads back is
-// one this file wrote.
+// renamed in the JSON cannot drift apart unnoticed. WriteBundle is the other
+// half of this pair (TestBundleRoundTrip).
 func bundleManifest(parts ...BundlePart) Bundle {
 	return Bundle{
 		Version:       BundleVersion,
@@ -83,6 +89,37 @@ func TestBundleRejectsTraversalName(t *testing.T) {
 	}
 }
 
+// TestBundleRejectsItsOwnManifestAsAPart: the manifest is the bundle's account
+// of itself and not one of its parts, so the name is refused on both sides —
+// the launcher asking WriteBundle, and the job reading one back out of a
+// bucket through ReadBundle. A reader that downloaded a part under that name
+// would write over the list it is reading.
+//
+// Mutation (drop the BundleManifestName check): the manifest is written and
+// read with the manifest among its own parts, and only this test notices.
+func TestBundleRejectsItsOwnManifestAsAPart(t *testing.T) {
+	selfNamed := bundleManifest(part(BundleManifestName, partSHA))
+	if err := selfNamed.Validate(); err == nil {
+		t.Errorf("the manifest accepted %s as one of its own parts", BundleManifestName)
+	}
+	if _, err := WriteBundle(selfNamed); err == nil {
+		t.Errorf("a manifest naming %s as one of its own parts was written", BundleManifestName)
+	}
+	data, err := json.Marshal(selfNamed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadBundle(data); err == nil {
+		t.Errorf("a manifest naming %s as one of its parts was read", BundleManifestName)
+	}
+	// The name is otherwise an ordinary one, so the refusal above is the
+	// manifest rule and not the name rule happening to catch it: a part of the
+	// same shape under any other name is accepted.
+	if _, err := WriteBundle(bundleManifest(part("other.json", partSHA))); err != nil {
+		t.Errorf("a manifest naming the part other.json = %v, want it accepted", err)
+	}
+}
+
 // TestBundleRejectsUnknownField: the strict codec every wire shape in this
 // program uses. A manifest from a release that added a field is refused rather
 // than read with the field dropped, because the field it drops is one this
@@ -132,6 +169,12 @@ func TestBundleRejectsAManifestItCannotUse(t *testing.T) {
 			if _, err := ReadBundle(data); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("a manifest with %s was read: %v, want a refusal saying %q", tc.name, err, tc.want)
 			}
+			// The launcher refuses the same manifest before it is uploaded: a
+			// bundle one end would hand to the other is a bundle both ends
+			// agree about.
+			if _, err := WriteBundle(tc.man); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("a manifest with %s was written: %v, want a refusal saying %q", tc.name, err, tc.want)
+			}
 		})
 	}
 	// A version this build does not read, which is the one refusal the runner's
@@ -146,6 +189,9 @@ func TestBundleRejectsAManifestItCannotUse(t *testing.T) {
 		}
 		if _, err := ReadBundle(data); err == nil || !strings.Contains(err.Error(), "version") {
 			t.Errorf("a manifest of version %d was read: %v", version, err)
+		}
+		if _, err := WriteBundle(man); err == nil || !strings.Contains(err.Error(), "version") {
+			t.Errorf("a manifest of version %d was written: %v", version, err)
 		}
 	}
 	// Two documents in one object is not a manifest either: the second one is
@@ -180,5 +226,165 @@ func TestBundleReadsTheManifestTheLauncherWrites(t *testing.T) {
 	}
 	if !reflect.DeepEqual(b, man) {
 		t.Errorf("read back %+v, want %+v", b, man)
+	}
+}
+
+// TestBundleRoundTrip: WriteBundle and ReadBundle are two ends of one format,
+// held by two binaries at the same release, so what one writes the other reads
+// back field for field — the parts included, since the runner checks each of
+// them against what the launcher measured (D2404).
+//
+// Mutation (drop WriteBundle's Validate): a bundle the job refuses is uploaded
+// and the failure moves from the command to the job's log.
+func TestBundleRoundTrip(t *testing.T) {
+	want := bundleManifest(part("evidence/log.txt", partSHA), part("changes.txt", strings.Repeat("ab", 32)))
+	data, err := WriteBundle(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadBundle(data)
+	if err != nil {
+		t.Fatalf("reading back the manifest it wrote: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the manifest read back is\n%+v\nwant\n%+v", got, want)
+	}
+}
+
+// TestBundleReadsTheAnswerDocument: the answer as the job wrote it beside the
+// markdown (D2402, D2410). Every label Fugaro knows is read with its two other
+// fields, and a word it does not know, a field this build does not know and a
+// second document in the same object are refused: the outcome is the one word
+// the tier acts on, so a word it cannot act on is an answer it must not print.
+func TestBundleReadsTheAnswerDocument(t *testing.T) {
+	for _, outcome := range Outcomes {
+		a, err := ReadAnswerDocument([]byte(`{"outcome":"` + outcome + `","signature":"update the layer check","text":"the cause and the fix"}`))
+		if err != nil {
+			t.Errorf("reading the answer %q: %v", outcome, err)
+			continue
+		}
+		if a.Outcome != outcome || a.Signature != "update the layer check" || a.Text != "the cause and the fix" {
+			t.Errorf("answer %q read as %+v", outcome, a)
+		}
+	}
+	for _, doc := range []string{
+		`{"outcome":"a_word_fugaro_does_not_know"}`,
+		`{}`,
+		`{"outcome":"bug","something_new":true}`,
+		`{"outcome":"bug"}
+		{}`,
+		`not json at all`,
+	} {
+		if _, err := ReadAnswerDocument([]byte(doc)); err == nil {
+			t.Errorf("the answer %s was read", doc)
+		}
+	}
+}
+
+// EvidenceNames is what the cloud tier uploads, so it has to be the
+// collector's own list and not a second copy of it: a file the collector
+// renamed would otherwise go up under a name nothing wrote. The test runs the
+// collector rather than reading the constants, because the constants are what
+// a copy would be made of.
+func TestBundleEvidenceNamesAreTheCollectors(t *testing.T) {
+	id := evidenceID()
+	ev, err := Collect(t.Context(), id, Options{
+		Version: "0.9.5",
+		Getenv:  evidenceEnv(t),
+		Open: func(cmdlog.ID) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("the log said this\n")), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrote := evidenceRead(t, ev.EvidenceDir)
+	names := EvidenceNames(id.String())
+	if len(names) != 4 {
+		t.Fatalf("EvidenceNames = %v, want the four evidence files", names)
+	}
+	for _, name := range names {
+		if _, ok := wrote[name]; !ok {
+			t.Errorf("EvidenceNames names %q, which the collector did not write", name)
+		}
+		delete(wrote, name)
+	}
+	if len(wrote) != 0 {
+		t.Errorf("the collector wrote %v, which EvidenceNames does not name", slices.Sorted(maps.Keys(wrote)))
+	}
+}
+
+// TreeDigest is the tree's content: the same tree digests the same, a changed
+// file changes it, and the repository's own directory is not part of it —
+// which is what lets the person's checkout and the job's unpacked archive be
+// compared at all.
+func TestBundleTreeDigestIsTheTreesContent(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, text string) {
+		t.Helper()
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("main.go", "package main\n")
+	write("docs/guide.md", "# guide\n")
+	// A git checkout has one; an unpacked tag archive does not. Two trees of
+	// the same source have to digest the same, so it is skipped whole.
+	write(".git/HEAD", "ref: refs/heads/main\n")
+	write(".git/objects/ab/cdef", "a packfile's worth of nothing\n")
+	first, err := TreeDigest(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sha256RE.MatchString(first) {
+		t.Fatalf("TreeDigest = %q, want a lower-case hex sha256", first)
+	}
+	// A second tree, written in the other order, is the same tree.
+	other := t.TempDir()
+	for _, f := range []struct{ rel, text string }{{"docs/guide.md", "# guide\n"}, {"main.go", "package main\n"}} {
+		path := filepath.Join(other, filepath.FromSlash(f.rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(f.text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if again, err := TreeDigest(other); err != nil || again != first {
+		t.Errorf("the same tree digested as %q (%v), want %q", again, err, first)
+	}
+	// A changed file is a different tree, and so is a file that moved.
+	write("main.go", "package main // changed\n")
+	if changed, err := TreeDigest(dir); err != nil || changed == first {
+		t.Errorf("a changed file left the digest at %q (%v)", changed, err)
+	}
+	// The repository's own directory is skipped, so adding to it changes
+	// nothing.
+	write("main.go", "package main\n")
+	write(".git/index", "a new index\n")
+	if after, err := TreeDigest(dir); err != nil || after != first {
+		t.Errorf("the digest changed with .git alone: %q (%v), want %q", after, err, first)
+	}
+}
+
+// The bundle's own statement of the redaction is what a reader quotes, so it
+// has to be a sentence rather than an empty field.
+func TestBundleRedactionStatementIsWritten(t *testing.T) {
+	b := bundleManifest(part("evidence/log.txt", partSHA))
+	b.Redaction = BundleRedaction
+	data, err := WriteBundle(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadBundle(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Redaction != BundleRedaction || BundleRedaction == "" {
+		t.Errorf("the manifest's own statement of the redaction is %q", got.Redaction)
 	}
 }

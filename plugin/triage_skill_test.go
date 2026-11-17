@@ -9,8 +9,10 @@ import (
 // startup or pro run ship a pull request whose review left smaller findings
 // open, and the follow-ups command is the only way those findings become
 // work. An agent that reads a ready pull request as finished work never runs
-// it, and a reader who is not told that ready is not merged treats a run as
-// delivered when a person still has to merge it -- so the skill names the
+// it, and a reader who is not told that a run never merges -- that a person
+// merges a ready pull request, and the only other merge is the project's
+// daemon's at the ladder's rung 3 -- treats a run as delivered when the merge
+// is still outstanding -- so the skill names the
 // stage, the switch that turns it off, the list the deferrals land in, and
 // both commands, with the flags that make the second one write anything.
 func TestWorkingSkillNamesTheTriageAndTheFollowUps(t *testing.T) {
@@ -30,7 +32,7 @@ func TestWorkingSkillNamesTheTriageAndTheFollowUps(t *testing.T) {
 		{"the flag that makes it write, rather than plan", "--launch"},
 		{"the cap on one call", "--max"},
 		{"the listing of the work a review left behind", "fugaro runs ls --debt"},
-		{"that a ready pull request is a person's to merge, never merged", "Ready is never merged"},
+		{"that a run never merges, so a ready pull request is a person's to merge", "A run never merges"},
 	} {
 		if !strings.Contains(tree, want.text) {
 			t.Errorf("the working skill never names %s (%q): a run can end ready with findings deferred, and an agent left without the command and its flags has no way to turn them into work", want.what, want.text)

@@ -49,6 +49,11 @@ func seedOrchestratorLease(t *testing.T, f *budgetFixture, id, holder string, at
 
 // seedBriefCache writes one cached brief the way the daemon writes it, into
 // the cache directory this machine's commands read.
+//
+// The version is spelled rather than taken from BriefCacheVersion: it is the
+// file's format and not the brief's text, so the cache a release behind wrote is
+// one this release still lists, and a release that moved the number for what the
+// brief says fails here (the review's finding on the S5 bump).
 func seedBriefCache(t *testing.T, id string, at time.Time) string {
 	t.Helper()
 	dir := filepath.Join(os.Getenv("XDG_CACHE_HOME"), "fugaro", "orchestrator")
@@ -56,7 +61,7 @@ func seedBriefCache(t *testing.T, id string, at time.Time) string {
 		t.Fatal(err)
 	}
 	doc, err := json.Marshal(map[string]any{
-		"schema_version": orchestrator.BriefCacheVersion,
+		"schema_version": 1,
 		"brief":          "orchestrator " + id + ": the brief the daemon cached",
 		"written_at":     at.UTC().Format(time.RFC3339),
 	})

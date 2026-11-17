@@ -185,15 +185,16 @@ func fixtureConfig(t *testing.T) *localcfg.Config {
 }
 
 // buildHostAndAccount are the two values the catalog arm states its build with:
-// the installation's own registry host, and the build account infra.Repo derives
-// for the fixture's repository (acme/app on Bitbucket) in this project.
+// the installation's own registry host, and the project's build identity, which
+// is the account a catalog build runs as (B6, D2301) — not the account
+// infra.Repo derives for the fixture's repository (acme/app on Bitbucket).
 func buildHostAndAccount(t *testing.T, lc *localcfg.Config) (host, account string) {
 	t.Helper()
 	host, err := infra.RegistryHost(lc)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return host, gcp.BuildServiceAccountID(mustSlug("bitbucket", "acme/app")) + "@" + initProject + ".iam.gserviceaccount.com"
+	return host, gcp.BuildIdentityEmail(initProject)
 }
 
 // catalogBuildPlan is the document the catalog arm judges and records for one
