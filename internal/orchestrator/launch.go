@@ -210,11 +210,17 @@ type Action struct {
 	Reason     string
 }
 
-// Plan is one cycle's decision: the launches and retries the state, the view
-// of the runs and the caps allow, in the order planOrder gives the items — the
-// important follow-ups first, then everything else as the state declares it
-// (D2040). It reads and changes nothing — a plan is a proposal, and the tick
-// that carries it out commits each intent before anything starts.
+// Plan is one cycle's decision for one node: the launches and retries the
+// state, the view of the runs and the caps allow, in the order planOrder gives
+// the items — the important follow-ups first, then everything else as the state
+// declares it (D2040). It reads and changes nothing — a plan is a proposal, and
+// the tick that carries it out commits each intent before anything starts.
+//
+// The caps it reads are the counts of the one state it is given, which is the
+// whole count of a project that has one node, and so is the pause it refuses
+// over. A cycle that works several nodes plans each of them through planNode
+// instead, under the counts of all of them (D2743) and the pause of all of them
+// (see planNode): a node is never a plan's business beyond its own state.
 //
 // It hesitates in the only safe direction. Nothing is planned with the kill
 // switch on, nothing while the breaker's question stands unanswered on the node
@@ -228,12 +234,31 @@ type Action struct {
 // ladder launches on top (LadderLaunch): a rung's runs are the executor's to
 // ask for, and its own bound is not this plan's caps.
 func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
-	if caps.KillSwitch || OverCap(s) || BreakerOpen(s, now) {
-		return nil
+	actions, _ := planNode(s, view, caps, now, CountsOf(s, now), 0, BreakerOpen(s, now))
+	return actions
+}
+
+// planNode is one node's turn at the plan, under counts and a tally a cycle
+// that works several nodes keeps across all of them: counts is every node's
+// reading (CountsOfAll) and planned is how many launches the cycle has already
+// decided, so a project's nodes spend one allowance between them rather than
+// one each (D2743). What comes back is this node's actions and the tally they
+// leave behind. The node's own size cap is read over this state and no other,
+// so a node over its cap plans nothing while the nodes beside it go on.
+//
+// paused is the daemon's pause — the question a tripped breaker raised and
+// nobody has answered, or the one a workspace's refusal raised (BreakerOpen) —
+// and it is not a reading of this node: the question is written to the
+// daemon's own node whatever node the run it is about belonged to, so a plan
+// node or the backlog would find its own state clean and keep starting work
+// through a pause that stands, which is the stop O19 and D2022 (a) exist for.
+// What hands it in is the cycle, over every node it works (Tick.Nodes); a
+// daemon's own node reads it off the state it plans, which is what Plan does.
+func planNode(s State, view RunView, caps Caps, now time.Time, counts Counts, planned int, paused bool) ([]Action, int) {
+	if caps.KillSwitch || OverCap(s) || paused {
+		return nil, planned
 	}
-	counts := CountsOf(s, now)
 	var actions []Action
-	planned := 0
 	for _, w := range planOrder(s, view) {
 		if it, ok := openIntentOf(s, w.ID); ok {
 			// A run is in flight or never started, and what is left to decide
@@ -258,7 +283,7 @@ func Plan(s State, view RunView, caps Caps, now time.Time) []Action {
 		actions = append(actions, a)
 		planned++
 	}
-	return actions
+	return actions, planned
 }
 
 // planOrder is the items a plan considers, in the order it considers them: the
