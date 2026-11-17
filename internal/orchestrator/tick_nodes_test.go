@@ -395,6 +395,63 @@ func TestLaunchesFromEveryNode(t *testing.T) {
 	}
 }
 
+// TestAFinishedRunInAPlanNodeFoldsThere: a run recorded in a plan's node is that
+// node's to fold, and the fold lands there and nowhere else (D2735) — the state
+// node beside it is not written with the plan's item, and the cycle counts the
+// fold it made once.
+//
+// Without it nothing in the plan's node ever moves: the report is read, the
+// item stays in `running` because nothing carried the outcome into it, and no
+// launch from that node happens again — the item holds its own attempt open for
+// good, which is the item the state node's own fold cannot see.
+//
+// Mutation: fold only the state node and the plan node's item reads back
+// `running` with its attempt unreported, while the same run on the state node
+// would have moved it.
+func TestAFinishedRunInAPlanNodeFoldsThere(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	const planRun = "20261107-090000-abcd"
+
+	// The plan's item with a run that has since succeeded and left no pull
+	// request: the fold's own reading, and the one that moves the item to `done`.
+	finished, finishedIntent := o6OpenItem("wi-plan", planRun, approvedAt, now.Add(-time.Hour))
+	planState := o6Node(t, now, finished)
+	planState.Intents = []orchestrator.Intent{finishedIntent}
+
+	h := newHarness(t, readyNode(t, now, "wi-main", approvedAt), now, "20261107-120000-aaaa")
+	plan := h.withShard(t, orchestrator.PlanShard(planFolder), planState)
+	h.reader.reports = []orchestrator.RunReport{{
+		RunID: planRun, Started: true, Finished: true, Outcome: orchestrator.OutcomeSucceeded,
+	}}
+
+	rep := h.step()
+	if rep.Folded != 1 {
+		t.Fatalf("the cycle folded %d run(s) where the plan's node records one that reported", rep.Folded)
+	}
+	if rep.Carried != 1 {
+		t.Errorf("the cycle carried %d action(s), and the state node's own item is approved and ready", rep.Carried)
+	}
+
+	got := shardState(t, plan)
+	w, ok := got.Item("wi-plan")
+	if !ok || w.Phase != orchestrator.PhaseDone {
+		t.Fatalf("the plan node's item reads back as %+v, and its run succeeded without a pull request", w)
+	}
+	if len(got.Intents) != 1 || got.Intents[0].Outcome != orchestrator.OutcomeSucceeded {
+		t.Fatalf("the plan node's attempt reads back as %+v, and its run reported succeeded", got.Intents)
+	}
+	// The state node took its own launch and nothing of the plan's: one item,
+	// one attempt, and neither of them the plan node's.
+	main := h.state()
+	if _, ok := main.Item("wi-plan"); ok {
+		t.Errorf("the state node carries the plan's item: %+v", main.WorkItems)
+	}
+	if len(main.Intents) != 1 || main.Intents[0].RunID != "20261107-120000-aaaa" {
+		t.Errorf("the state node's attempts are %+v, and only the run this cycle started is its own", main.Intents)
+	}
+}
+
 // unreadableStore is a node whose document will not load — what a corrupted or
 // half-written one looks like from the cycle's side — and whose writes are
 // counted, so a test can say that nothing landed on it.
