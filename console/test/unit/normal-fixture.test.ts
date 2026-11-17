@@ -210,9 +210,10 @@ function normalise(text: string): string {
  * The verify line is a matcher rather than a regular expression because it is a
  * PREFIX of what verify.go writes (the registry clips it); see scrub.ts. It is
  * the PINNED matcher, `isKnownVerifySummary`, not the scrub's own
- * `isVerifySummary`: the warning-globs slot is a finite vocabulary (the two
- * `commands.reports` defaults the CLI installs), so a glob the CLI was never
- * given cannot pass this list. The test-name slots are NOT pinned that way --
+ * `isVerifySummary`: the warning is a finite vocabulary (the two sentences
+ * verify.go writes, and the two `commands.reports` defaults the CLI installs
+ * inside one of them), so a warning the CLI was never given cannot pass this
+ * list. The test-name slots are NOT pinned that way --
  * junit.go builds an ID verbatim from the report, so no vocabulary can hold it,
  * and the guard there is the FORBIDDEN pass below, which runs over the whole
  * value including the name list. */

@@ -17,10 +17,12 @@ var (
 	goldenTime = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z`)
 	goldenSHA  = regexp.MustCompile(`\b[0-9a-f]{40}\b|\b[0-9a-f]{7}\b`)
 	goldenDur  = regexp.MustCompile(`\| (\d+(\.\d+)?(ms|µs|s|m\d+s|m|h\d+m\d+s)) \|`)
+	goldenPct  = regexp.MustCompile(`, \d+% of the run's`)
 )
 
 // normalize blanks what differs between two runs of the same task: clock
-// readings, durations and commit hashes — and the fixture's storage slug,
+// readings, durations, the share of the wall clock the verify time takes
+// (a ratio of two real timings) and commit hashes — and the fixture's storage slug,
 // which the report prints as the run's location. The slug is task.Slug's
 // output for the fixture repository (a readable prefix and a hash, see
 // repoSlug); the goldens record what the run wrote, not how the fixture
@@ -29,6 +31,7 @@ func normalize(s string) string {
 	s = strings.ReplaceAll(s, repoSlug, "acme-app")
 	s = goldenTime.ReplaceAllString(s, "<time>")
 	s = goldenSHA.ReplaceAllString(s, "<sha>")
+	s = goldenPct.ReplaceAllString(s, ", <pct>% of the run's")
 	return goldenDur.ReplaceAllString(s, "| <dur> |")
 }
 

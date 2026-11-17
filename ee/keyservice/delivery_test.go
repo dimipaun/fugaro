@@ -166,6 +166,171 @@ func newFailingStore(t *testing.T) (*fixture, *failingSubscriptions) {
 	return f, f.deps.Store.(*failingSubscriptions)
 }
 
+// failingBought is the document store as a deployment that cannot stamp one
+// checkout record: the write a purchase makes after its grant, its subscription
+// and its origin, so that a test can stand in the window a merchant's
+// redelivery arrives in — the licence granted, and the record that names it not.
+type failingBought struct {
+	*docsSpy
+	refuse int
+}
+
+func (f *failingBought) Put(ctx context.Context, collection, id string, doc Doc) error {
+	if f.refuse > 0 && collection == checkoutTransactionsCollection {
+		f.refuse--
+		return errors.New("the store refused the write")
+	}
+	return f.docsSpy.Put(ctx, collection, id, doc)
+}
+
+// newFailingBoughtStore is the fixture whose checkout record cannot be stamped
+// once: refusing that write is what leaves a purchase's grant landed and its
+// `recordBought` not, which is the window these cases are about.
+func newFailingBoughtStore(t *testing.T) (*fixture, *failingBought) {
+	t.Helper()
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		f.deps.Docs = &failingBought{docsSpy: f.docs}
+	})
+	return f, f.deps.Docs.(*failingBought)
+}
+
+// purchaseWithAFailedRecordWrite is one purchase delivered into the window: the
+// grant, the subscription and the origin are written, the record that stamps the
+// licence onto the checkout fails, and the answer is the `500` the merchant
+// retries. It answers the merchant's own bytes, so that the retry is the event
+// the merchant sent and not a second one this service wrote.
+func purchaseWithAFailedRecordWrite(t *testing.T, f *fixture, docs *failingBought, e Event) []byte {
+	t.Helper()
+	e = f.claimsOf(e)
+	body := paddleBody(t, e)
+	docs.refuse = 1
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a purchase whose record write failed was answered %d, want 500: the merchant's retry is what finishes it", rec.Code)
+	}
+	if got := len(f.entitlements(t)); got != 1 {
+		t.Fatalf("the failed delivery left %d licence(s), want the one its grant wrote", got)
+	}
+	return body
+}
+
+// TestARefundedLicenceStaysRevokedWhenThePurchaseIsRedelivered: the window a
+// failed record write leaves open is one a refund can land in, and what the
+// purchase's own retry then meets is a licence the money has already taken back.
+// Rewriting the grant from the event would set it active again, and nothing
+// undoes that: the refund is a processed event, so its own redeliveries are
+// skipped and no later one withdraws the licence a second time. A customer
+// refunded inside that window would hold a live licence for money that went back
+// (F29).
+func TestARefundedLicenceStaysRevokedWhenThePurchaseIsRedelivered(t *testing.T) {
+	f, docs := newFailingBoughtStore(t)
+	event := purchaseEvent("evt-1", "acme.example", 5, 365)
+	event.OccurredAt = f.now
+	body := purchaseWithAFailedRecordWrite(t, f, docs, event)
+
+	// The money goes back inside the window. The refund names the subscription
+	// the origin record began, which the failed delivery did write, so it
+	// resolves to the licence and is applied.
+	f.event(Event{ID: "evt-2", Type: EventRefund, Organisation: "acme.example"})
+	if got := f.onlyEntitlement(t).Status; got != entitlementRevoked {
+		t.Fatalf("the refunded licence reads %q, want %q: the money went back (F29)", got, entitlementRevoked)
+	}
+	if got := f.stored(t, "evt-2").State; got != ledgerProcessed {
+		t.Fatalf("the refund reads %q, want %q: a processed event is not applied again", got, ledgerProcessed)
+	}
+
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered purchase was answered %d, want 200: it is the retry that finishes the writes it left", rec.Code)
+	}
+	held := f.onlyEntitlement(t)
+	if held.Status != entitlementRevoked {
+		t.Errorf("the redelivered purchase left the licence %q, want %q: a grant a refund already took back is answered and not rewritten, or the customer holds a live licence for money that went back (F29)", held.Status, entitlementRevoked)
+	}
+}
+
+// TestABoundLicenceStaysBoundWhenThePurchaseIsRedelivered: the same window, and
+// the customer binds the licence inside it — the portal serves it, the key is
+// minted and the binding is what writes BoundAt. Rewriting the grant from the
+// event would clear BoundAt and RebindableAt with it, so the licence the
+// customer's key is bound to reads as unbound, and D2198's clock for the next
+// rebind is dropped as well.
+func TestABoundLicenceStaysBoundWhenThePurchaseIsRedelivered(t *testing.T) {
+	f, docs := newFailingBoughtStore(t)
+	event := purchaseEvent("evt-1", "acme.example", 5, 365)
+	event.OccurredAt = f.now
+	body := purchaseWithAFailedRecordWrite(t, f, docs, event)
+
+	f.bind("acme.example", "sub-acme.example")
+	bound := f.onlyEntitlement(t)
+	if bound.BoundAt == nil {
+		t.Fatal("the customer's binding left the licence unbound, want the instant it wrote")
+	}
+
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered purchase was answered %d, want 200: it is the retry that finishes the writes it left", rec.Code)
+	}
+	licences := f.entitlements(t)
+	if len(licences) != 1 {
+		t.Fatalf("the redelivery left %d licence(s), want the one licence the purchase bought (D2204)", len(licences))
+	}
+	held := licences[0]
+	if held.BoundAt == nil || !held.BoundAt.Equal(*bound.BoundAt) {
+		t.Errorf("the redelivered purchase left the licence bound at %v, want %s: the customer's key is bound to a licence the portal reads as the one it was minted for", held.BoundAt, bound.BoundAt)
+	}
+	if held.Status != entitlementActive {
+		t.Errorf("the redelivered purchase left the licence %q, want %q", held.Status, entitlementActive)
+	}
+}
+
+// TestARedeliveredPurchaseKeepsTheLicenceItsRecordNames: the checkout's record
+// is what a redelivery of a purchase is read against, and once its grant has
+// landed it names the licence (`recordBought`). A case's own deliveries cannot
+// show that: `claimsOf` stands the record up on every delivery and blanks its
+// licence id, so every redelivery in this package is read against an unstamped
+// record. This one posts the merchant's bytes itself, so the retry meets the
+// record the first delivery stamped — and what it must leave is the one licence
+// it names, still bound, rather than a second grant or a licence unbound.
+func TestARedeliveredPurchaseKeepsTheLicenceItsRecordNames(t *testing.T) {
+	f := newFixture(t)
+	event := purchaseEvent("evt-1", "acme.example", 5, 365)
+	event.OccurredAt = f.now
+	event = f.claimsOf(event)
+	body := paddleBody(t, event)
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the purchase was answered %d, want 200: %s", rec.Code, rec.Body)
+	}
+	f.bind("acme.example", "sub-acme.example")
+	bound := f.onlyEntitlement(t)
+
+	record, held, err := getRecord[checkoutTransaction](context.Background(), f.docs, checkoutTransactionsCollection, event.Transaction)
+	if err != nil || !held {
+		t.Fatalf("the checkout's record is held=%v (err=%v), want the purchase's own", held, err)
+	}
+	if record.EntitlementID != bound.ID {
+		t.Fatalf("the checkout's record names the licence %q, want the one the grant wrote (%q)", record.EntitlementID, bound.ID)
+	}
+
+	// The merchant sends the event again. Its effect is in the store, so the
+	// state is set back to what a delivery whose answer was lost leaves behind —
+	// the fixture's deliveries carry the state over, and posting a body again is
+	// exactly the retry this case is about.
+	if err := f.svc.markEvent(context.Background(), "evt-1", ledgerStored, nil); err != nil {
+		t.Fatalf("setting the event back to %q: %v", ledgerStored, err)
+	}
+	if rec := f.deliverRaw(body, signEvent(f.secret, f.now, body)); rec.Code != http.StatusOK {
+		t.Fatalf("the redelivered purchase was answered %d, want 200", rec.Code)
+	}
+	licences := f.entitlements(t)
+	if len(licences) != 1 {
+		t.Fatalf("the redelivery left %d licence(s), want the one licence the record names (D2204)", len(licences))
+	}
+	if licences[0].ID != bound.ID {
+		t.Errorf("the redelivery left the licence %q, want the one the checkout's record names (%q)", licences[0].ID, bound.ID)
+	}
+	if licences[0].BoundAt == nil || !licences[0].BoundAt.Equal(*bound.BoundAt) {
+		t.Errorf("the redelivery left the licence bound at %v, want %s: the key the binding minted is bound to it", licences[0].BoundAt, bound.BoundAt)
+	}
+}
+
 // TestAPurchaseWhoseSubscriptionWriteFailedIsRetried: a purchase grants the
 // licence and then saves the subscription, and the store has no transaction to
 // make the two one write (§5.2) — so the failure between them is real, and what

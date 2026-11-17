@@ -339,16 +339,23 @@ from — offline. A craft's access is written in the repository's own `fugaro.ya
 repository of it and never its access, because the access names something the owner's own config
 holds.
 
-**What this release does not do**, and a reader of §2 to §6 needs both:
+**What a run runs, and what serves it** — the two halves the vocabulary above is about, and which
+of them decides:
 
-- **A craft's model half is not yet what a run runs.** A run still takes its models from
-  `agent.models` and `agent.levels`, exactly as §4 describes; a craft's **access** is the half a run
-  resolves today.
-- **A run is served from the published policy node's own craft members.** The credentials service
-  reads the project's crafts, credentials and pools from the published policy, and `fugaro project
-  policy publish` keeps those members as they are: no command of this release writes them from your
-  config. So a pool your installation declares changes what `fugaro craft ls` and a launch read, and
-  which member serves a call is a later release's work.
+- **A craft's model is what its stages run.** A stage's model is the first of these rungs that
+  answers, most specific first: a task's model grade, a review level's own model
+  (`agent.levels.l1/l2/l3.model`), **the craft's model**, `agent.models.<role>` and `agent.model`.
+  §2's routes, §4's pins and §5's refusals judge the model that rung resolved exactly as they judge
+  a pinned one, so a craft naming a model no route claims or no price covers is refused where the
+  run's own pins are judged — never at the provider with a billable failure. A craft that names no
+  model leaves §4 and §5 reading `agent.models` and `agent.levels` exactly as this page describes
+  them.
+- **A craft's access is served from the published node, not from your config alone.** The
+  credentials service reads the project's crafts, credentials and pools from the published policy,
+  so the pool an access names is the list that serves the craft's calls, in the node's own member
+  order and on the one half the paragraph above keeps a pool on. `fugaro project policy publish`
+  writes those three members from your installation's config, which is what makes a pool declared
+  here the one a call is served by.
 
 ## The cascade, and the project policy switch
 

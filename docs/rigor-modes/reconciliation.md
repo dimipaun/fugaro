@@ -1780,7 +1780,7 @@ IAM path or `.github/workflows/` runs at Critical whatever the default says.
 repository's `fugaro.yaml` restores today's behaviour exactly, and it is one line
 that a repository can merge on its own.
 
-**The migration note, stated where a reader will meet it** (the plan's T8.2, and
+**The migration note, stated where a reader will meet it** (the plan's T8.3, and
 the release note it writes): *the rigor modes change what "ready" means for a
 repository that configures nothing. From this release the default is Pro, so
 findings that used to fail a run may now be tolerated and filed as backlog items.
@@ -1803,7 +1803,7 @@ decision's:** every claim in this folder and in the plan that the first cut
 today", or that a run is "byte-identical to today" is **true of Critical mode
 only** — of a run whose resolved mode is Critical, which after this answer is a
 run that configured it or sits under a floor. The plan scopes them (T3.1's table,
-T8.2's note) and §7's review focus gives Pro's threshold table the attention it
+T8.3's note) and §7's review focus gives Pro's threshold table the attention it
 now owes: **Pro's table is the behaviour of every unconfigured repository**, so
 it is the one table whose review cannot be deferred.
 

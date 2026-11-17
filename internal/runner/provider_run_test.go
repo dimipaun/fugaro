@@ -79,13 +79,14 @@ func TestProviderRunEndsInPR(t *testing.T) {
 		}
 	}
 
-	// The fee and the attribution are the run's: the model's usage at the
-	// run's own rate for it, plus the 10% route fee. The rate is the built-in
-	// catalog's for the route's model — the zdr tier's maximum under the
-	// default switches, which is the dearest end (D2644) — read from the
-	// table the run built rather than named
-	// here, so the arithmetic under test is the fee, the attribution and the
-	// reported figure. The charge is in whole micros, as the engine's is.
+	// The charge is the figure the provider reported for the call plus the
+	// 10% route fee (D2640): what the provider said the call cost is what the
+	// run paid. The table's own row for the model — the built-in catalog's,
+	// the zdr tier's maximum under the default switches (D2644), read from the table
+	// the run built rather than named here — is the floor under that figure
+	// and the band it is read against, not the charge, which is why the
+	// arithmetic under test is the fee, the attribution and the report. The
+	// charge is in whole micros, as the engine's is.
 	m, ok := g.deps.Spend.Prices.Lookup(deepseek)
 	if !ok {
 		t.Fatal("the run's table has no row for the model it routed")
@@ -93,7 +94,10 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	if m.Catalog == nil || m.Catalog.Tier != "zdr" || m.Catalog.Bound != "max" {
 		t.Fatalf("the run's row is not the catalog's zdr maximum: %+v", m.Catalog)
 	}
-	want := pricing.WithFee(m.Rates.Cost(use), 10).USD()
+	if lo := m.Lo.Cost(use); lo >= 2_100 {
+		t.Fatalf("the row's cheapest end is %d, not below the provider's 2100: the test cannot tell which figure was charged", lo)
+	}
+	want := pricing.WithFee(2_100, 10).USD()
 	if rec.Cost == nil || !near(rec.CostUSD, want) || !near(rec.Cost.RouteBy["openrouter"], want) || !near(rec.Cost.ModelBy[deepseek], want) {
 		t.Fatalf("want %v: cost_usd = %v, cost = %+v", want, rec.CostUSD, rec.Cost)
 	}
@@ -647,13 +651,16 @@ func TestProviderModelNeedsEnforce(t *testing.T) {
 	}
 }
 
-// A provider that reports more than 10% above the charge is logged once at
-// the end of the run (warn level, no key); a report below the charge is not.
-// The charge is compared without the route fee, which the provider doesn't
-// report. The reported figures are relative to the charge the run's own table
-// makes for the usage, read from that table (Task 4: the catalog prices the
-// route's model, at a fraction of the placeholder row this test was written
-// against), so the case under test is the 10% threshold and not a number.
+// A report the gateway settled the call on is the run's own charge, so the
+// run's reported total can no longer sit above what it charged -- the one
+// report that still can is the one the gateway refused to settle on, a
+// figure past ten times the call's reservation, which is charged at the
+// table instead (D2641). That report is logged once at the end of the run
+// (warn level, no key), and no other is. The charge is compared without the
+// route fee, which the provider doesn't report. The reported figures are
+// relative to what the run's own table makes of the usage -- read from that
+// table, so the case under test is the threshold and not a number -- and to
+// the reservation the coder's own 4096 output tokens make.
 func TestReportedAboveChargeWarnsOnce(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500}
 	g0 := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
@@ -662,29 +669,54 @@ func TestReportedAboveChargeWarnsOnce(t *testing.T) {
 		t.Fatal("the run's table has no row for the model it routed")
 	}
 	bare := m.Rates.Cost(use).USD()
+	// The reservation the coder's own call makes, from its max_tokens
+	// alone: a report past ten times this one is malformed.
+	reserved := m.WorstCase(pricing.Request{MaxTokens: 4096})
+	malformed := float64(reserved) * 11 / 1e6
+	if reserved <= m.Rates.Cost(use) {
+		t.Fatalf("the fixture's reservation %d is not above its usage's cost %d", reserved, m.Rates.Cost(use))
+	}
+	if malformed >= 1 {
+		t.Fatalf("the malformed report $%v is past the gateway's $1 ceiling: it would not be recorded at all", malformed)
+	}
 	for _, c := range []struct {
-		cost float64
-		fee  float64
-		warn int
+		name      string
+		cost, fee float64
+		warn      int
+		malformed bool
 	}{
-		{bare * 3, 0, 1}, {bare * 1.05, 0, 0}, {bare * 0.5, 0, 0},
-		{bare * 1.2, 10, 1}, {bare * 1.05, 10, 0},
+		{"three times the table's charge, settled on", bare * 3, 0, 0, false},
+		{"just above the charge, settled on", bare * 1.05, 0, 0, false},
+		{"below the charge, floored", bare * 0.5, 0, 0, false},
+		{"above the charge with a route fee, settled on", bare * 1.2, 10, 0, false},
+		{"just above the charge with a route fee, settled on", bare * 1.05, 10, 0, false},
+		{"past ten times the reservation", malformed, 0, 1, true},
 	} {
-		g := providerRun(t, providerPinned(t), "enforce", "50", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
-		prov := g.deps.Providers["openrouter"]
-		prov.RouteFeePct = c.fee
-		g.deps.Providers["openrouter"] = prov
-		var status int
-		var body string
-		if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
-			t.Fatalf("rec = %+v, err = %v", rec, err)
-		}
-		if n := strings.Count(g.logs.String(), "code=reported_gap"); n != c.warn {
-			t.Errorf("reported %v: %d warnings, want %d:\n%s", c.cost, n, c.warn, g.logs.String())
-		}
-		if strings.Contains(g.logs.String(), providerKey) {
-			t.Error("the log has the provider key")
-		}
+		t.Run(c.name, func(t *testing.T) {
+			g := providerRun(t, providerPinned(t), "enforce", "50", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
+			prov := g.deps.Providers["openrouter"]
+			prov.RouteFeePct = c.fee
+			g.deps.Providers["openrouter"] = prov
+			var status int
+			var body string
+			if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if n := strings.Count(g.logs.String(), "code=reported_gap"); n != c.warn {
+				t.Errorf("reported %v: %d warnings, want %d:\n%s", c.cost, n, c.warn, g.logs.String())
+			}
+			if c.malformed {
+				// The case is what it says it is only if the gateway really
+				// refused the figure: otherwise the warning above is the
+				// settle path's, and the fixture proves nothing.
+				if !strings.Contains(g.logs.String(), "above ten times the reservation") {
+					t.Errorf("the gateway settled on the report: %s", g.logs.String())
+				}
+			}
+			if strings.Contains(g.logs.String(), providerKey) {
+				t.Error("the log has the provider key")
+			}
+		})
 	}
 }
 

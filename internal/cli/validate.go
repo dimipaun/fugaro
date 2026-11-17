@@ -818,7 +818,7 @@ func craftModelProblems(cfg *config.Config, lc *localcfg.Config, repo string, cl
 //
 // The run's allowed_models is not handed to the resolver. A level's model is
 // judged against that list by the run's own gate, over the routes the run
-// carries (runner's checkBudget, checkLevels): a list handed to the resolver
+// carries (runner's checkBudget, checkModels): a list handed to the resolver
 // is a membership test that knows no routes, and would refuse an ID this
 // repository's runs may well use. A model this command lets through is refused
 // there; a refusal invented here would be the worse of the two mistakes.

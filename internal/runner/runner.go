@@ -163,8 +163,10 @@ type run struct {
 	// cfgRes is how cfg was resolved: the layer each key cfg carries came
 	// from (resolveConfig, set beside cfg). It is read to name the layer the
 	// run's own timeouts.stage came from, which is the source of the bound a
-	// dropped governance.stage_timeout is recorded against (T7.6); nothing
-	// else reads it, and it is nil only for a run that resolved no config.
+	// dropped governance.stage_timeout is recorded against (T7.6), and to tell
+	// a workflow's own `commands.reports` from the defaults filled in behind it
+	// (bootstrap, verify.Settings.ReportsDeclared); it is nil only for a run
+	// that resolved no config.
 	cfgRes *config.Resolution
 	// providers are r.d.Providers with the project layer's claude_models
 	// merged in (config.ApplyClaudeClaims), set once in resolveConfig --
@@ -203,6 +205,13 @@ type run struct {
 	// model call and no implement stage (digest.go, T3.2). Set once at
 	// bootstrap, from the recipe the run resolved.
 	digest bool
+	// diagnose is whether the resolved recipe's one step is the diagnose
+	// step (recipe.UsesDiagnose, T-TC3): a cloud diagnosis, whose one model
+	// stage the runner runs in commands.render's place — the bundle it reads
+	// and the answer it writes are its own work, and no command of the
+	// repository's runs at all (diagnose.go, T-TC4, D2402). Set once at
+	// bootstrap, from the recipe the run resolved.
+	diagnose bool
 	// rebase is whether the resolved recipe's one step is the rebase step
 	// (recipe.UsesRebase, E5): the run puts its branch on its base, resolves
 	// the conflicts, runs the workflow's tests again and pushes — with no
@@ -2802,26 +2811,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
-	// The diagnose step is a model stage this build's runner does not execute
-	// yet (T-TC4 lands it), and artifactMode runs the recipe's plan stage, if
-	// it has one, and then always commands.render (artifact.go) — so a run of
-	// a recipe holding the step would run the repository's render command in
-	// the step's place and end succeeded/artifacts having diagnosed nothing:
-	// no error, and no answer either. The catalog's troubleshoot names
+	// The diagnose step is a model stage, and it stands in commands.render's
+	// place rather than beside it (D2402): a recipe holding the step is
+	// mode: artifact like the digest recipes, but what it delivers is the
+	// answer the model wrote into out/, not the output of a command the
+	// repository wrote. Marked here, right after the recipe is resolved and
+	// before any stage, and dispatched in artifactMode in place of the render
+	// (artifact.go): a run that rendered instead would run the repository's
+	// render command in the step's place and end succeeded/artifacts having
+	// diagnosed nothing — the catalog's troubleshoot names
 	// out/diagnosis.md and out/diagnosis.json, which no repository's render
-	// writes, so its own run would even end with an empty artifact set.
-	// Refused here, right after the recipe is resolved and before any stage,
-	// the way the digest step was refused until T3.2 dispatched it, and for
-	// the reason internal/recipe's RegisterStepKind gives: a step the parser
-	// accepts and the run drops may never happen. The launcher's image gate
-	// cannot make this refusal yet — the *Since constant for the step is
-	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
-	// way out: no release's runner runs the stage yet, so a refreshed job image
-	// would refuse the recipe again, and the release that runs it is T-TC4's to
-	// carry — not a step a person is sent to take here.
-	if recipe.UsesDiagnose(rcp) {
-		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
-	}
+	// writes, so its run would even end with an empty artifact set. The
+	// launcher's image gate refuses a diagnosis launch against a release
+	// image that predates the step (T-TC6's *Since constant,
+	// internal/cli/recipes_skew.go); this is the arm the resolved recipe
+	// decides.
+	r.diagnose = recipe.UsesDiagnose(rcp)
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
 	// nothing and it opens no pull request — what it delivers is a branch put
@@ -3007,8 +3012,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// configuration into the file layer it merges, so a bound written after it
 	// would move the pin without the record or the policy ever seeing it.
 	if applyRecipeOutputLimit(&cfg.Agent, rcp) {
-		r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
-			"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+		if r.diagnose {
+			r.d.Log.Info("agent.max_output_tokens.coder capped: the diagnose stage reserves at the recipe's bound",
+				"coder", cfg.Agent.MaxOutputTokens.Coder)
+		} else {
+			r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
+				"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+		}
 	}
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	// The arm's coder model, after the recipe's own role mapping and before
@@ -3240,6 +3250,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
 		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test, Lint: wf.Commands.Lint,
 		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
+		// Whether the workflow declared these reports or they are
+		// config.DefaultReports filled in: a test run that then finds no report
+		// of a workflow that declared none has no globs to name
+		// (verify.Settings.ReportsDeclared).
+		ReportsDeclared: r.cfgRes != nil &&
+			r.cfgRes.SourceOf("workflows."+r.rec.Workflow+".commands.reports") != config.SourceDefault,
 		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
@@ -4717,11 +4733,14 @@ type stageOpts struct {
 	// sets per attempt and not a decision stageOnce makes on its own.
 	RetryTransient bool
 	// Dir is the working directory the stage's agent runs in, "" for the
-	// run's own checkout — which is every stage but one. The triage judge
+	// run's own checkout — which is every stage but three. The triage judge
 	// runs in a directory of its own that holds nothing of the run
 	// (triage_stage.go): the brief is text, and a stage with the artifact
 	// under review in reach is what the empty tool list and the empty
-	// setting sources are there to prevent (F25).
+	// setting sources are there to prevent (F25). The diagnose stage runs in
+	// the source tree the job fetched for it (diagnose.go): that tree is what
+	// it reads, and the run's own checkout holds the repository the failed
+	// command ran in, which is not what a diagnosis of Fugaro reads.
 	Dir string
 	// Ordinal is which of the run's triage rounds this stage's call serves: the
 	// triage stage is the one today, and it reaches the record on each of the
