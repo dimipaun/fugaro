@@ -82,6 +82,18 @@ const (
 	issueMaxBodyRunes  = 8000
 )
 
+// maxIssueRequestBytes bounds an issue call's body, and it is NOT the mint's 4
+// KiB: the whole request is one issue's text, which D2718's own bounds allow to
+// be 8000 characters, so a 4 KiB read would refuse a call the route's own rule
+// admits and the body check below would never see a body it exists to refuse.
+//
+// 64 KiB is the largest legal text and then some. The text is JSON, where one
+// character may cost six bytes (\uXXXX) — the worst case for a body of astral
+// characters, which is the case a smaller bound would have to be argued
+// against field by field — and the fields around it are named in this file. A
+// body larger than this is not an issue call.
+const maxIssueRequestBytes = 64 << 10
+
 // The route's rate limits are the label route's numbers (F22): the two acts are
 // asked by the same daemon on the same tick, and the numbers were sized for
 // exactly that tick — 240 reads an hour is two a tick and 60 writes is one
@@ -234,8 +246,8 @@ func issueTokenPermissions() map[string]string {
 // names no App ID is a call this route cannot sign its own token for (the label
 // route's shape, where the host decides, is the other way round).
 func readIssueCall(body []byte) (creds.IssueRequest, error) {
-	if len(body) > maxMintRequestBytes {
-		return creds.IssueRequest{}, fmt.Errorf("the body is larger than the %d bytes this service accepts", maxMintRequestBytes)
+	if len(body) > maxIssueRequestBytes {
+		return creds.IssueRequest{}, fmt.Errorf("the body is larger than the %d bytes this service accepts", maxIssueRequestBytes)
 	}
 	var req creds.IssueRequest
 	if err := decodeStrict(body, &req); err != nil {
