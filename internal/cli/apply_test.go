@@ -389,6 +389,16 @@ func TestApplyRedeploysOnlyTheCheckoutsRepository(t *testing.T) {
 	if !strings.Contains(got, "checkout of the repository") {
 		t.Errorf("the answer does not say where the redeploy has to run:\n%s", got)
 	}
+	// The sentence and not the two words in it: the stage's own detail says
+	// "checkout of the repository" too, and what this arm of the answer adds is
+	// that the command has to be run in one — instead of the general sentence,
+	// which would send the person back to this machine.
+	if want := "Run `fugaro apply` in a checkout of the repository the change was made for:"; !strings.Contains(out, want) {
+		t.Errorf("the answer does not name the checkout the redeploy needs:\n%q", out)
+	}
+	if strings.Contains(out, "Run `fugaro apply` again") {
+		t.Errorf("a redeploy this machine has no checkout for is sent back to this machine:\n%q", out)
+	}
 	if calls := r.ran(t, "apply"); len(calls) != 0 {
 		t.Errorf("a repository with no checkout here was redeployed: %q", calls)
 	}
@@ -776,6 +786,70 @@ func TestUpdateKeepsAStepRequeuedWithTheSameKeyWhileItsRunWasGoing(t *testing.T)
 	}
 }
 
+// TestUpdateLeavesTheRedeployOwedWhenItHasNoCheckout: the redeploy is that
+// repository's own Terraform root (D1574), so an `update` run where there is no
+// checkout of it is not a run that answered the step — its stage skips, and the
+// skip is the one skip the clearing rule singles out, because a stage that
+// skipped and did nothing is an answer everywhere else (applyAnswered). The
+// step stays owed for the machine that has the checkout, with applyKeptLine's
+// own sentence saying so.
+func TestUpdateLeavesTheRedeployOwedWhenItHasNoCheckout(t *testing.T) {
+	r := updateManagedRig(t)
+	updating(t, r)
+	owed(t, initflow.Repository, apply.Change{Kind: apply.Resource, Key: apply.ResourceRepo})
+
+	got, _ := updateRun(t, r, "update")
+	if steps := pendingSteps(record(t)); !slices.Contains(steps, initflow.Repository) {
+		t.Errorf("update cleared the redeploy of a repository it has no checkout of: %v\n%s", steps, got)
+	}
+}
+
+// TestOnlyTheUpdateDoorSettlesTheRecord: the record is settled by the command
+// whose job is to bring an installation up to date (D1567) — read before the
+// first stage and cleared at the end — and a second door doing either would
+// settle a record it did not write and cannot date. Both halves are pinned
+// here, at the seam rather than through a run: `setup` converges the same
+// stages and reaches readOwedBefore and clearAnsweredSteps at all
+// (init_stages.go's converge calls both), and a setup that cleared what it
+// answered would drop steps the run had published nothing for.
+func TestOnlyTheUpdateDoorSettlesTheRecord(t *testing.T) {
+	r := updateRig(t)
+	updating(t, r)
+	owed(t, initflow.Installation, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := record(t)
+	answered := &initflow.Result{Stages: []initflow.StageResult{{Name: initflow.Installation, State: initflow.Changed}}}
+
+	e, _ := stageEngine(t, "", &initOptions{door: applyName})
+	e.lc = lc
+	e.readOwedBefore()
+	if e.owedBefore != nil {
+		t.Error("a door that is not update read the record as the one that clears it")
+	}
+	// The read is in place and it is still not this door's to clear: what
+	// stops it is the door and not a record that was never read.
+	e.owedBefore = read
+	e.clearAnsweredSteps(answered)
+	if got := pendingSteps(record(t)); !slices.Equal(got, pendingSteps(read)) {
+		t.Errorf("a door that is not update cleared the record: %v, want %v", got, pendingSteps(read))
+	}
+
+	// And the door whose job it is does both.
+	e.r.o.door = updateDoor.name
+	e.owedBefore = nil
+	e.readOwedBefore()
+	if e.owedBefore == nil {
+		t.Fatal("update read nothing before its first stage, so nothing would be cleared")
+	}
+	e.clearAnsweredSteps(answered)
+	if got := pendingSteps(record(t)); slices.Contains(got, initflow.Installation) {
+		t.Errorf("update left the step its own stage answered owed: %v", got)
+	}
+}
+
 // TestApplyKeptLineNeverPromisesASecondRunForAStepItCannotAnswer: this sentence
 // is the whole of what the reader of a kept step is given, and a second
 // `fugaro apply` is not the fix for a step this command can never answer — the
@@ -790,6 +864,52 @@ func TestApplyKeptLineNeverPromisesASecondRunForAStepItCannotAnswer(t *testing.T
 	}
 	if !strings.Contains(b.String(), "Run `fugaro update`") {
 		t.Errorf("a kept workspace-project does not name the door that can answer it:\n%s", b.String())
+	}
+}
+
+// TestApplyKeptLinePromisesOnlyTheStepsASecondRunFinishes: the sentence every
+// other kept step gets is the general one, and the steps that reach it are not
+// all steps a second run finishes — a name this door registers no stage under,
+// the workspace's own project's among them, is kept however often the command
+// runs (applyRunSteps), and the record is a file nothing fences, so a name no
+// build knows reaches it too (TestApplyKeptLineEscapesAStepNameTheRecordCarries
+// is that same line). Naming this command is D1563's, and promising the job
+// would send the reader of such a step back to this machine for the same
+// sentence and no more work done.
+func TestApplyKeptLinePromisesOnlyTheStepsASecondRunFinishes(t *testing.T) {
+	for _, name := range []string{initflow.Project, initflow.Services, initflow.Compute, "no-such-stage"} {
+		t.Run(name, func(t *testing.T) {
+			var b strings.Builder
+			applyKeptLine(&b, []string{name})
+			got := b.String()
+			if strings.Contains(got, "to finish the job") {
+				t.Errorf("a kept step this command has no stage for is promised the job:\n%s", got)
+			}
+			if !strings.Contains(got, "Run `fugaro apply` again") {
+				t.Errorf("the kept line does not name the command that runs the steps it has:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestApplyKeptLineForAStepItHasNoStageFor is the same sentence through the
+// command, on the step that reaches it in a real record: the project stage is
+// `setup`'s (initStages registers it for a first run and for nothing else), so
+// an entry naming it is kept for ever — and the answer says what this command
+// will do about it rather than that the job is one run away.
+func TestApplyKeptLineForAStepItHasNoStageFor(t *testing.T) {
+	_, _ = applyWorld(t)
+	owed(t, initflow.Project, apply.Change{Kind: apply.Setting, Key: "layer.defaults.agent.model"})
+
+	out, errOut, err := executeStdin(t, "", "apply")
+	if err == nil {
+		t.Fatalf("a run that could not answer an owed step exited 0:\n%s", out+errOut)
+	}
+	if !strings.Contains(out, "Run `fugaro apply` again to finish the steps it can answer") {
+		t.Errorf("the answer does not name the command that runs the steps it has:\n%s", out)
+	}
+	if strings.Contains(out, "to finish the job") {
+		t.Errorf("a step this command has no stage for is promised the job:\n%s", out)
 	}
 }
 
