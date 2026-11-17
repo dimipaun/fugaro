@@ -32,16 +32,23 @@
 // because a resident pass's starter carries no commit.
 //
 // THE VIEW IT IS HANDED IS THE RUNS BUCKET'S, AND A DEPLOYMENT MAY GIVE IT
-// NONE. recovery (intent.go) reads one fact off the run records — whether the
-// run an intent names ever started — and a pass whose RunView is empty reads
-// every run id as one that never started. The direction a re-issue takes is the
-// safe one: the SAME run id and never a second one, and the launcher's own
-// behaviour is what makes that true rather than lucky — `fugaro run` reads the
-// run's launch record before it starts anything (internal/cli's
-// existingLaunch) and the runstore's launch.json is create-if-absent, so a run
-// that already went is answered with the execution that record names. ClaimTTL
-// is the second fence around the same question: nothing is re-issued inside the
-// ten minutes a launch beside it may still be in flight.
+// NONE — WHICH IS A READING AND NOT A FACT. recovery (intent.go) reads one fact
+// off the run records — whether the run an intent names ever started — and a
+// pass whose RunView is empty reads every run id as one that never started, so
+// every open attempt past ClaimTTL comes back as ActionReissue. That includes
+// the run that is simply still going: a run longer than ten minutes is not
+// distinguishable here from one that never went, which is why a caller must
+// report these as attempts it cannot see started and never as launches owed
+// (internal/cli's pass counts them under `unreported`, and a name is not a
+// changeable thing once it is a wire field). Acting on one is safe for a
+// different reason: the SAME run id and never a second one, and the launcher's
+// own behaviour is what makes that true rather than lucky — `fugaro run` reads
+// the run's launch record before it
+// starts anything (internal/cli's existingLaunch) and the runstore's launch.json
+// is create-if-absent, so a run that already went is answered with the execution
+// that record names. ClaimTTL is the second fence around the same question:
+// nothing is re-issued inside the ten minutes a launch beside it may still be in
+// flight.
 //
 // WHAT A CALLER HAS TO READ ITSELF, and the two things this file's own caller
 // does: the CAPS, whose kill switch is read rather than assumed — the field's
@@ -54,14 +61,17 @@ package orchestrator
 import "time"
 
 // ResidentRequests is one node's plan split the way a resident pass may act on
-// it. requests are the launch requests the node's own record already carries:
-// the re-issues of attempts whose run never started, which a starter holding a
-// launcher and no commit carries out — the attempt was committed before this
-// process woke, and starting it is a start and not a write. others are the
-// actions a plan derived that ARE a write's: a first launch, a retry, an
-// abandon. They are handed back rather than dropped, so that a caller can say
-// how many steps it left and why, and they belong to whoever holds the node's
-// credential (`fugaro orchestrator patch`, D1223/D1241).
+// it. requests are the plan's re-issues: attempts whose run the caller cannot
+// see started, which a starter holding a launcher and no commit carries out —
+// the attempt was committed before this process woke, and starting it is a start
+// and not a write. With an empty RunView that includes a run that is still
+// going (the header says why), so a caller that cannot read the runs bucket must
+// report these under a name that says what it read — attempts not seen to start
+// — and never as launches owed. others are the actions a plan derived that ARE a
+// write's: a first launch, a retry, an abandon. They are handed back rather than
+// dropped, so that a caller can say how many steps it left and why, and they
+// belong to whoever holds the node's credential (`fugaro orchestrator patch`,
+// D1223/D1241).
 //
 // It is Plan's own reading of the node and nothing beside it: the same items in
 // the same order (an important follow-up ahead of new work), the same caps, the

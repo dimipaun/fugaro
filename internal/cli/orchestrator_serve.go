@@ -29,19 +29,26 @@
 //
 // WHAT A PASS DOES. The tick's pass reads the node the previous pass left — the
 // state document, and the lease node beside it — from the store and never from
-// memory, and then reads what the node's own record holds: the launch requests
-// (the attempts whose run never started, P5.1d's ResidentRequests) and how many
-// actions a plan derives that are a write's — a first launch, a retry, an
-// abandon. It writes no node, reads no message and starts no run: a node's
-// writes stay with `fugaro orchestrator patch` and the owner's own credential
-// (D1223, D1241) and the consumer half is P5.1f. What the tick buys is what the
-// owner-run Check 660 measures: the service exists, its autoscaling floor is 0,
-// the scheduler job that wakes it is enabled, and a forced tick reads the store
-// and starts nothing it was not already told to start.
+// memory, and then reads the plan that record derives: the attempts it cannot
+// see a start for (P5.1d's ResidentRequests) and the actions that are a write's
+// — a first launch, a retry, an abandon. It writes no node, reads no message and
+// starts no run: a node's writes stay with `fugaro orchestrator patch` and the
+// owner's own credential (D1223, D1241) and the consumer half is P5.1f. What the
+// tick buys is what the owner-run Check 660 measures: the service exists, its
+// autoscaling floor is 0, the scheduler job that wakes it is enabled, and a
+// forced tick reads the store and starts nothing it was not already told to
+// start.
 //
-// AND THE LAUNCH ITSELF IS NOT THIS FILE'S TO MAKE — see the paragraph below.
-// A request this pass reads is reported, never started: the numbers in its
-// answer say how many the record holds, and one line says why they stand.
+// AND WHAT IT READS IS AN UPPER BOUND, NOT A LIST OF LAUNCHES OWED. This process
+// reaches no runs bucket (the paragraph below), so an attempt past its ten-minute
+// ClaimTTL window whose run it cannot see started is counted — and a run that is
+// simply longer than that window is one of them, because ClaimTTL is all this
+// process has to tell "in flight" from "was never seen to go". So the field is
+// named for the READING (Unreported) and not for a request the node is making,
+// no line is written per attempt (a warning once per tick per long run is a line
+// nobody can act on), and nothing acts on any of it: an operator who wants to
+// know whether a run went asks `fugaro runs ls`, which reads the bucket this
+// process cannot.
 //
 // THE CALLER IS FENCED BY CLOUD RUN'S OWN IAM AND NOT BY A CHECK HERE. The
 // service is deployed with invoker_iam_disabled = false and one binding —
@@ -84,11 +91,11 @@
 // internal/infra/tf's orchestratorServiceEnv allow-list, which refuses a
 // container setting a name outside it.
 //
-// So this process reads the requests and carries none of them out, and it says
-// so in one line naming the step and the deployment fact behind it. Writing a
-// second route here — a claim, a mint and a job start of this file's own — is
-// the one thing the launcher's own header rules out, and widening this
-// deployment's environment is orchestrator.tf's file (P5.1b), not this task's.
+// So this process reads the plan and starts none of it, and a count it cannot
+// act on rides the pass's own line (above). Writing a second route here — a
+// claim, a mint and a job start of this file's own — is the one thing the
+// launcher's own header rules out, and widening this deployment's environment is
+// orchestrator.tf's file (P5.1b), not this task's.
 // The wiring closes when that module gives this container those three names and
 // the service has a configuration source of its own for the project (the
 // launcher's cloudEnv), which is a change of behaviour and a product decision
@@ -429,7 +436,7 @@ func (s *residentOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		"process", orchestratorProcessName, "orchestrator", pass.Orchestrator,
 		"rev", pass.Rev, "items", pass.Items, "intents", pass.Intents,
 		"lease_holder", pass.LeaseHolder, "lease_at", pass.LeaseAt,
-		"requests", pass.Requests, "left", pass.Left)
+		"unreported", pass.Unreported, "left", pass.Left)
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(pass); err != nil {
 		// The body is a convenience for whoever forced the tick by hand; the
@@ -472,16 +479,23 @@ type orchestratorPass struct {
 	// themselves rather than a fact this line remembered.
 	LeaseHolder string `json:"lease_holder"`
 	LeaseAt     string `json:"lease_at,omitempty"`
-	// Requests is how many launch requests the node's own record held — the
-	// attempts whose run never started — and Left is the actions the plan
-	// derived that ARE a write's: a first launch, a retry, an abandon. Both are
-	// read and reported, neither is acted on: this pass starts no run (the
-	// header's paragraph on the one launch path) and writes no node (D1223,
-	// D1241). The numbers are here so that a person forcing a tick can see, from
-	// the answer alone, whether the node is waiting on this process to start
-	// something.
-	Requests int `json:"requests"`
-	Left     int `json:"left"`
+	// Unreported is what this pass READ of the node and NOT what the runs bucket
+	// would say, and the name is the whole of that distinction: an attempt the
+	// node records, past its ten-minute ClaimTTL window, for which this pass
+	// cannot see a start. A run that is simply longer than that window is one of
+	// these too — nothing here reads the runs bucket (the header says why), and
+	// ClaimTTL is all this process has to tell "in flight" from "was never seen
+	// to go" — so the number is an upper bound and never a count of launches
+	// owed. It is a wire field, and this name is the one it keeps: "requests"
+	// would have said the node was asking for a launch, which is a claim about
+	// the bucket this pass does not read.
+	//
+	// Left is the actions the plan derived that ARE a write's: a first launch, a
+	// retry, an abandon. Both are read and reported, neither is acted on: this
+	// pass starts no run (the header's paragraph on the one launch path) and
+	// writes no node (D1223, D1241).
+	Unreported int `json:"unreported"`
+	Left       int `json:"left"`
 }
 
 // orchestratorPassLine is the one line an operator reads to see what a tick came
@@ -508,19 +522,19 @@ const orchestratorPassLine = "tick read the node and ran no step"
 // of this process's own.
 //
 // THE PLAN IS READ (P5.1d) and nothing on it is carried out, in this revision:
-// ResidentRequests splits the node's launch requests from the actions that are a
-// write's, the pass reports both counts, and one line names the requests it left
-// and the deployment fact behind them (carry). The plan is read under caps whose
-// ONE field this process reads and whose others are zero: the budget switch is
-// read out of the same database the node is in (carry), so `fugaro budget kill`
-// stops this pass as it stops a run and a switch that could not be read is ON —
-// Caps' own rule, and the half of the zero Caps that is a reading. The ceilings
-// stay zero, which is the fail-closed direction for them rather than an
-// omission: the guardrails live in the installation's published policy, which
-// this revision does not read (the header's three names are not where it lives),
-// and a pass that cannot read a cap plans no first launch — while the re-issues
-// still come back, an attempt that was committed and counted spending nothing a
-// cap is there to bound.
+// ResidentRequests splits the attempts this pass cannot see started from the
+// actions that are a write's, the pass reports both counts under the name the
+// reading carries (Unreported), and nothing acts on either. The plan is read
+// under caps whose ONE field this process reads and whose others are zero: the
+// budget switch is read out of the same database the node is in (carry), so
+// `fugaro budget kill` stops this pass as it stops a run and a switch that could
+// not be read is ON — Caps' own rule, and the half of the zero Caps that is a
+// reading. The ceilings stay zero, which is the fail-closed direction for them
+// rather than an omission: the guardrails live in the installation's published
+// policy, which this revision does not read (the header's three names are not
+// where it lives), and a pass that cannot read a cap plans no first launch —
+// while the re-issues still come back, an attempt that was committed and counted
+// spending nothing a cap is there to bound.
 //
 // WHAT IT DOES NOT DO is the rest of section 6's list as this step can hold it:
 // no write to any node (there is no PutIfMatch on this path), no message read or
@@ -556,58 +570,60 @@ func (s *residentOrchestrator) tick(ctx context.Context) (orchestratorPass, erro
 	return pass, nil
 }
 
-// carry reads the launch requests the node's own record holds, and it is the
-// whole of what this process does besides reading.
+// carry reads what the node's own record derives — the attempts this pass
+// cannot see a start for, and the actions beside them that are a write's — and
+// it is the whole of what this process does besides reading.
 //
 // The clock it judges the ten-minute claim window with is the STORE's, not this
 // machine's (D1230): ok is false only before the store has answered anything,
 // and the two reads above are what made it answer — a pass that could not read
-// it reads no request rather than deciding against a container's clock, which is
+// it reads nothing rather than deciding against a container's clock, which is
 // the direction every refusal in this file takes.
 //
 // NOTHING IT READS IS STARTED, and that is a fact about this deployment rather
 // than about the plan: the one launcher this tree has is
 // internal/cli/orchestrator_launcher.go's — `fugaro run`'s own steps and gate
 // block, built over a *cloudEnv this service's container is not given the three
-// names for (this file's header). A request that stands is a request an operator
-// has to see, so a pass that holds one writes a line naming the count and the
-// deployment fact behind it: "there was nothing to carry out" and "there is
-// something to carry out and no way to start it" are otherwise the same numbers
-// in the pass.
+// names for (this file's header). What it reads is therefore counted under the
+// name the reading carries, Unreported, and never as a launch the node asked
+// for: without the runs bucket a run that is longer than the window counts here
+// too, so the number is an upper bound and is not something to warn about once
+// per tick per long run. The count rides the pass's own line and no line is
+// written per attempt — the same rule this file already keeps for the node's
+// items, which are counted and never quoted (orchestratorPass).
 //
 // The RunView is empty for the same reason the ceilings are zero: the runs
 // bucket is not one of the three names this revision is given, so a run id reads
-// as one that never started, and what makes that safe is the re-issue's own
-// shape — the same run id, never a second one, with the ten-minute window in
-// front of it (internal/orchestrator's resident_launch.go says where each fence
-// stands).
+// as one that never started, and nothing acts on that reading (internal/
+// orchestrator's resident_launch.go says what the empty view can and cannot
+// tell a caller).
 func (s *residentOrchestrator) carry(ctx context.Context, state orchestrator.State, pass *orchestratorPass) {
 	now, ok := s.db.ServerNow()
 	if !ok {
-		s.log.Warn("the database's clock could not be read, so this tick read no launch request",
+		s.log.Warn("the database's clock could not be read, so this tick read nothing of the plan",
 			"process", orchestratorProcessName, "orchestrator", s.id)
 		return
 	}
 	// The budget switch is read, not assumed, and it is the one guardrail this
 	// process can reach: `config/kill/global` is a node of the same database the
 	// state node is in, so `fugaro budget kill` stops this pass exactly as it
-	// stops a run. A read that FAILED is ON and reads no request, which is
-	// Caps' own rule — "a switch it could not read is on" — and the daemon's own
+	// stops a run. A read that FAILED is ON and reads nothing, which is Caps'
+	// own rule — "a switch it could not read is on" — and the daemon's own
 	// reading of the same node (orchestrator_run.go's caps) answers the same way.
 	// The zero value of the field is the permissive one, so it is never what a
 	// pass hands in unwatched.
 	kills, err := budget.ReadGlobalKill(ctx, s.db)
 	if err != nil {
-		s.log.Warn("the budget switch could not be read, and a switch this process cannot read is on, so this tick read no launch request",
+		s.log.Warn("the budget switch could not be read, and a switch this process cannot read is on, so this tick read nothing of the plan",
 			"process", orchestratorProcessName, "orchestrator", s.id)
 		return
 	}
 	on, which := kills.On()
 	if on {
-		// One line, because "there was nothing to carry out" and "the switch is
-		// on" are the same numbers in the pass and an operator reading the log
-		// has to be able to tell them apart.
-		s.log.Warn("the budget switch is on, so this tick read no launch request",
+		// One line, because "there was nothing to read" and "the switch is on"
+		// are the same numbers in the pass and an operator reading the log has
+		// to be able to tell them apart.
+		s.log.Warn("the budget switch is on, so this tick read nothing of the plan",
 			"process", orchestratorProcessName, "orchestrator", s.id, "switch", which)
 		return
 	}
@@ -620,10 +636,5 @@ func (s *residentOrchestrator) carry(ctx context.Context, state orchestrator.Sta
 	// (planNode's own reason).
 	caps := orchestrator.Caps{KillSwitch: on}
 	requests, others := orchestrator.ResidentRequests(state, orchestrator.RunView{}, caps, now)
-	pass.Requests, pass.Left = len(requests), len(others)
-	for _, a := range requests {
-		s.log.Warn("a launch request the node holds was left: the launch is `fugaro run`'s one path, and the runs bucket, the GCP project and the region it needs are not this service's container's",
-			"process", orchestratorProcessName, "orchestrator", s.id,
-			"item", a.ItemID, "run", a.RunID)
-	}
+	pass.Unreported, pass.Left = len(requests), len(others)
 }

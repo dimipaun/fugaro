@@ -28,15 +28,16 @@ import (
 // never a second one.
 const residentLaunchRun = "20261117-050000-abcd"
 
-// residentNodeDoc is a node whose one attempt was committed and never started:
-// the record a person's patch leaves, which is the only thing a resident pass
-// may start. The intent carries the item's own digest — recovery abandons an
-// intent whose spec has moved under it — it is past its claim window against
-// the store's clock, and an approval covers it.
+// residentNodeDoc is a node whose one attempt is past its claim window, in an
+// item that is still running: the record a person's patch leaves, and the same
+// reading this pass gets for a run that is simply longer than the window, since
+// it reads no runs bucket. The intent carries the item's own digest — recovery
+// abandons an intent whose spec has moved under it — it is past its claim window
+// against the store's clock, and an approval covers it.
 //
 // The document is written by the state's own writer, which is the opposite of
 // what the literal beside it does, and deliberately: that literal is the strict
-// decoder's test, and what is under test HERE is the read of the requests.
+// decoder's test, and what is under test HERE is the read of the plan.
 func residentNodeDoc(t *testing.T, at time.Time) string {
 	t.Helper()
 	approvalAt := at.Add(-2 * time.Hour)
@@ -100,17 +101,17 @@ func tickWithNode(t *testing.T, docs map[string]string, at time.Time) (*httptest
 	return rec, log.String()
 }
 
-// TestOrchestratorTickReportsTheLaunchRequestsItHolds is P5.1d's half of the
-// pass as this deployment serves it: the attempt the node records and never
-// started is READ — the run id is the one that was committed, so a crash between
-// the intent and the start of a previous pass spends nothing that was not spent
-// — and it is started by nothing here, because the one launch path is
-// `fugaro run`'s and this container is not given the names it needs (this
-// package's orchestrator_serve.go says which). What an operator gets instead is
-// the count in the answer and a line naming the item and the run: a request that
-// stands and cannot be started is a fact somebody has to act on, and "nothing to
-// do" and "nothing this process can do" are otherwise the same numbers.
-func TestOrchestratorTickReportsTheLaunchRequestsItHolds(t *testing.T) {
+// TestOrchestratorTickReportsTheAttemptsItCannotSeeStarted is P5.1d's half of
+// the pass as this deployment serves it, and it is written around the fact the
+// review turned up: the fixture's item is in PhaseRunning with a run id — an
+// attempt the node records, past its claim window — and this pass reads NO runs
+// bucket, so a run that is simply longer than the ten-minute window reads here
+// exactly as one that never went. The count is therefore an upper bound, named
+// for what was read (`unreported`) and never for a launch the node is asking
+// for, and it is the whole of what is said about it: no per-attempt line, and
+// nothing at WARNING, because a warning once per tick per long run would fire
+// for every normal run this installation has going.
+func TestOrchestratorTickReportsTheAttemptsItCannotSeeStarted(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	doc := residentNodeDoc(t, at)
 	statePath, err := orchestrator.PathState("aurora")
@@ -126,11 +127,17 @@ func TestOrchestratorTickReportsTheLaunchRequestsItHolds(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 		t.Fatalf("the tick's answer is not a pass: %v (%s)", err, rec.Body.String())
 	}
-	if pass.Requests != 1 || pass.Left != 0 {
-		t.Errorf("the pass reads requests %d, left %d, and the node holds one attempt committed and never started", pass.Requests, pass.Left)
+	if pass.Unreported != 1 || pass.Left != 0 {
+		t.Errorf("the pass reads unreported %d, left %d, and the node holds one attempt past its claim window", pass.Unreported, pass.Left)
 	}
-	if !strings.Contains(logged, "left") || !strings.Contains(logged, residentLaunchRun) {
-		t.Errorf("the pass logged %q, and a request this deployment cannot start has to be a line naming the run", logged)
+	if !strings.Contains(rec.Body.String(), `"unreported"`) {
+		t.Errorf("the tick answered %s, and the field's own name is the reading: a caller has to be able to tell it from a launch the node asked for", rec.Body.String())
+	}
+	if strings.Contains(logged, "WARNING") {
+		t.Errorf("the pass logged %q, and a count that is an upper bound for every run longer than the window is not a warning: one per tick per long run is a line nobody can act on", logged)
+	}
+	if strings.Contains(logged, residentLaunchRun) {
+		t.Errorf("the pass logged %q, and the node's items are counted and never quoted: a project's plan does not belong in Cloud Logging", logged)
 	}
 	if strings.Contains(logged, "started") {
 		t.Errorf("the pass logged %q, and it started nothing: every line this revision writes says so", logged)
@@ -170,8 +177,8 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 				t.Fatal(err)
 			}
-			if pass.Requests != 0 || pass.Left != 0 {
-				t.Errorf("the pass reads requests %d, left %d under the switch, and a switch that is on is read before any request is", pass.Requests, pass.Left)
+			if pass.Unreported != 0 || pass.Left != 0 {
+				t.Errorf("the pass reads unreported %d, left %d under the switch, and a switch that is on is read before any attempt is", pass.Unreported, pass.Left)
 			}
 			if !strings.Contains(logged, "the budget switch is on") {
 				t.Errorf("the pass logged %q, and the line has to say why: \"nothing was committed\" and \"the switch is on\" are the same numbers otherwise", logged)
@@ -180,11 +187,11 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 	}
 }
 
-// TestOrchestratorTickReadsNoRequestForARecentAttempt is the fence around the
+// TestOrchestratorTickReadsNothingForARecentAttempt is the fence around the
 // read: an attempt inside its claim window may be a launch that is still in
 // flight, so no request is read for it — which is what keeps a pass that cannot
 // read the run records from reporting the same attempt twice.
-func TestOrchestratorTickReadsNoRequestForARecentAttempt(t *testing.T) {
+func TestOrchestratorTickReadsNothingForARecentAttempt(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	doc := residentNodeDoc(t, at)
 	// The intent is inside the window: the record is five minutes old and the
@@ -210,8 +217,8 @@ func TestOrchestratorTickReadsNoRequestForARecentAttempt(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 		t.Fatal(err)
 	}
-	if pass.Requests != 0 {
-		t.Errorf("the pass reads requests %d, and the attempt is inside its claim window", pass.Requests)
+	if pass.Unreported != 0 {
+		t.Errorf("the pass reads unreported %d, and the attempt is inside its claim window", pass.Unreported)
 	}
 }
 

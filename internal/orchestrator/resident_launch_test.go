@@ -10,12 +10,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
 
-// The resident pass's read of the node's own launch requests (mobile plan task
+// The resident pass's read of the plan the node derives (mobile plan task
 // P5.1d). The launch itself is internal/cli's one path — the launcher header
 // there, F11/D931/T2 — so what these tests hold is the SPLIT:
-// orchestrator.ResidentRequests is the launch requests the node's record
-// already carries (the re-issues), and it is what a pass hands to the starter
-// the daemon's cycle already uses.
+// orchestrator.ResidentRequests is the re-issues (attempts the caller cannot see
+// started, which with an empty RunView includes a run that is still going), and
+// it is what a pass hands to the starter the daemon's cycle already uses.
 
 // residentRun is the run id these tests launch: one shape of the ids
 // internal/task mints, and the same one the intent of a re-issued attempt
@@ -63,14 +63,19 @@ func TestResidentRequestsCarryOutANodesOwnReissue(t *testing.T) {
 	}
 }
 
-// TestResidentRequestsAreTheNodesOwnLaunchRequests is the split a resident pass
-// acts on: the launch requests the node's own record already carries are the
-// re-issue's, everything else a plan derives is a write's — and the ceilings a
-// pass cannot read do not bound a re-issue, because it starts the attempt that
-// was already committed and counted. The budget switch is the exception, and it
-// is not a ceiling: it stops the re-issues too, which is the one thing a pass
-// has to read rather than assume.
-func TestResidentRequestsAreTheNodesOwnLaunchRequests(t *testing.T) {
+// TestResidentRequestsAreTheAttemptsThePlanCannotSeeStarted is the split a
+// resident pass acts on: the plan's re-issues — attempts the caller cannot see
+// started — are the requests, everything else a plan derives is a write's, and
+// the ceilings a pass cannot read do not bound a re-issue, because it starts the
+// attempt that was already committed and counted. The budget switch is the
+// exception, and it is not a ceiling: it stops the re-issues too, which is the
+// one thing a pass has to read rather than assume.
+//
+// The fixture is an item still in PhaseRunning with a run id, which is the same
+// reading this gets for a run that is simply longer than the window: an empty
+// RunView cannot tell the two apart, so what comes back is what the caller may
+// report as "not seen to start" and never as a launch owed (the file's header).
+func TestResidentRequestsAreTheAttemptsThePlanCannotSeeStarted(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
 	w, it := o6OpenItem("wi-1", residentRun, approvedAt, now.Add(-time.Minute))
