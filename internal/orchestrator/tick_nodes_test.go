@@ -257,6 +257,10 @@ func TestCapsCountedAcrossNodes(t *testing.T) {
 func TestMainNodeUnaffectedByFullBacklog(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
+	// The run the over-cap node's own item holds in the last sub-test below: an
+	// attempt committed and unreported, with a report that says it succeeded —
+	// the fold's own op on the node beside the state node.
+	const overCapRun = "20261107-090000-abcd"
 
 	// B4's ingest stops 20 items below the backlog's caps, and this is the node
 	// past them: the fixture's long tail of history and its long briefs, with one
@@ -295,6 +299,48 @@ func TestMainNodeUnaffectedByFullBacklog(t *testing.T) {
 		}
 		if got, found := backlog.s.Item("wi-approved"); !found || got.Phase != orchestrator.PhaseFailed {
 			t.Errorf("the over-cap node's item reads back as %+v, and a node over its cap starts nothing", got)
+		}
+	})
+
+	t.Run("an over-cap node holding a run that reports stops nothing", func(t *testing.T) {
+		// The same node, with an item whose attempt is committed and a run that
+		// has since reported: the fold of that node has ops to write, and Apply
+		// checks the state a patch is made from as well as the one it makes, so
+		// the write the fold derives is one the validator refuses — and that
+		// refusal is this step's error, which ends the whole cycle before the
+		// state node's own merge and launches. A node over its cap is that
+		// node's affair, so the fold is skipped there as the plan is, and the
+		// state node beside it carries on.
+		spent, attempt := o6OpenItem("wi-approved", overCapRun, approvedAt, now.Add(-2*time.Hour))
+		held := full
+		held.WorkItems = slices.Clone(full.WorkItems)
+		held.WorkItems[i] = spent
+		held.Intents = []orchestrator.Intent{attempt}
+		if !orchestrator.OverCap(held) {
+			t.Fatalf("the node under test is %d bytes and the cap is %d", stateBytes(t, held), orchestrator.MaxStateBytes)
+		}
+
+		h := newHarness(t, readyNode(t, now, "wi-main", approvedAt), now, "20261107-120000-aaaa")
+		backlog := &frozenStore{s: held, etag: "etag-backlog"}
+		h.tick.Nodes = append(h.tick.Nodes, backlog)
+		h.reader.reports = []orchestrator.RunReport{{
+			RunID: overCapRun, Started: true, Finished: true, Outcome: orchestrator.OutcomeSucceeded,
+		}}
+
+		rep := h.step()
+		if rep.Carried != 1 {
+			t.Fatalf("the cycle carried %d action(s) beside an over-cap node whose own run reported", rep.Carried)
+		}
+		if rep.Folded != 0 {
+			t.Errorf("the cycle folded %d run(s) into a node no write of this release may land on", rep.Folded)
+		}
+		if backlog.saves != 0 {
+			t.Errorf("the cycle wrote the node it planned nothing from %d time(s)", backlog.saves)
+		}
+		s := h.state()
+		w, ok := s.Item("wi-main")
+		if !ok || w.Phase != orchestrator.PhaseRunning || w.RunID != "20261107-120000-aaaa" {
+			t.Fatalf("the state node's item reads back as %+v, and the node beside it is over its own cap", w)
 		}
 	})
 
@@ -449,6 +495,74 @@ func TestAFinishedRunInAPlanNodeFoldsThere(t *testing.T) {
 	}
 	if len(main.Intents) != 1 || main.Intents[0].RunID != "20261107-120000-aaaa" {
 		t.Errorf("the state node's attempts are %+v, and only the run this cycle started is its own", main.Intents)
+	}
+}
+
+// TestTheMergeReadReachesEveryNode: an item waiting on its pull request is read
+// and moved in whatever node carries it (D2735). A cycle that read the state
+// node alone would leave a plan node's item in `review` for good — its
+// dependents inside that node would never start, and outcome() reads every node's
+// wait as a cycle in flight, so the daemon would report CycleInFlight for as long
+// as the project stands.
+//
+// The two items are on the same repository and in different nodes, so the one
+// listing this cadence makes answers for both: the read is per repository
+// (D2742) and not one per node, which is what keeps a project's node count out
+// of the host's budget.
+//
+// Mutation: run the merge with the state node bound, whatever the read found
+// (the defect the review found, c.merge with node 0 for every op) and the plan
+// node's item stays in `review`, its dependent never starts, and the cycle ends
+// CycleInFlight.
+func TestTheMergeReadReachesEveryNode(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	const afterRun = "20261107-120000-bbbb"
+
+	// Both nodes hold an item whose attempt reported succeeded having left a pull
+	// request, and the plan's node holds a third that waits on one of them: what
+	// the merge unlocks is a launch inside the node the merge had to reach.
+	mainItem, mainAttempt := mergeReviewItem("wi-main", mergeRepo, mergeRunA, approvedAt)
+	planItem, planAttempt := mergeReviewItem("wi-plan", mergeRepo, mergeRunB, approvedAt)
+	after := mergeDependent("wi-after", mergeRepo, []string{"wi-plan"}, approvedAt)
+	mainState := o6Node(t, now, mainItem)
+	mainState.Intents = []orchestrator.Intent{mainAttempt}
+	planState := o6Node(t, now, planItem, after)
+	planState.Intents = []orchestrator.Intent{planAttempt}
+
+	h := newMergeHarness(t, mainState, now, afterRun)
+	plan := h.withShard(t, orchestrator.PlanShard(planFolder), planState)
+	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
+	h.reads.states[mergeKey(mergeRepo, 12)] = orchestrator.MergeMerged
+	h.reads.states[mergeKey(mergeRepo, 14)] = orchestrator.MergeMerged
+
+	rep := h.step()
+	if rep.Merged != 2 {
+		t.Fatalf("the cycle merged %d item(s) where each of its nodes carries one whose pull request merged", rep.Merged)
+	}
+	if got, want := h.reads.lists, []string{mergeRepo}; !slices.Equal(got, want) {
+		t.Errorf("the cadence listed %v, and one repository is read once for every node its items are on", got)
+	}
+	if got, want := h.reads.gets, []string{mergeKey(mergeRepo, 12), mergeKey(mergeRepo, 14)}; !slices.Equal(got, want) {
+		t.Errorf("the cadence read the pull requests %v, and the nodes are worked in the order %v", got, want)
+	}
+
+	if w, ok := h.state().Item("wi-main"); !ok || w.Phase != orchestrator.PhaseDone {
+		t.Errorf("the state node's item reads back as %+v, and its pull request merged", w)
+	}
+	got := shardState(t, plan)
+	if w, ok := got.Item("wi-plan"); !ok || w.Phase != orchestrator.PhaseDone {
+		t.Fatalf("the plan node's item reads back as %+v, and its pull request merged", w)
+	}
+	w, ok := got.Item("wi-after")
+	if !ok || w.Phase != orchestrator.PhaseRunning || w.RunID != afterRun {
+		t.Fatalf("the plan node's dependent reads back as %+v, and the item it waits on merged in this same cycle", w)
+	}
+	if rep.Carried != 1 {
+		t.Errorf("the cycle carried %d action(s) where the plan node's dependent is the only item left to start", rep.Carried)
+	}
+	if rep.Outcome != orchestrator.CycleProgress {
+		t.Errorf("a cycle that moved two items and started one ended %q", rep.Outcome)
 	}
 }
 

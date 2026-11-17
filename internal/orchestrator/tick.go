@@ -418,13 +418,14 @@ func (c *cycle) run(ctx context.Context) error {
 		c.settle()
 	}
 
-	// The state node's own turn, in the order it has always had: the merge read
-	// comes after the fold and before the plan, because the fold has just left
-	// every item whose run succeeded with a pull request in `review` (D2705) and
-	// an item whose pull request has since merged is `done` before the plan is
-	// made, so the work that depends on it starts in this cycle rather than the
-	// next one — then what it launches, then the ladder, the long-run rule, the
-	// decision agent and the labels.
+	// The merge read comes after the fold and before the plan, and it reaches
+	// every node: the fold has just left every item whose run succeeded with a
+	// pull request in `review` (D2705), wherever it is, and an item whose pull
+	// request has since merged is `done` before the plan is made, so the work
+	// that depends on it starts in this cycle rather than the next one (D2735).
+	// The state node's own turn follows, in the order it has always had: what it
+	// launches, then the ladder, the long-run rule, the decision agent and the
+	// labels.
 	c.bind(0)
 	if err := c.merge(ctx); err != nil {
 		return c.settled(err)
@@ -534,7 +535,20 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 // audit log keeps of it. The state node's fold is the one that reads a refusal
 // — out of every node's reports, because one call answers for every node's
 // intents — and it is the state node whose question a person answers.
+//
+// A sibling over its size cap is skipped, and this is that node's own affair as
+// much as the plan it is not given is: Apply validates the state a patch is made
+// from as well as the one it makes, so the fold of an over-cap node is a patch
+// the database refuses — and that refusal is this step's error, which ends the
+// whole cycle before the state node's merge and its launches (X4: a node over
+// its cap stops that node alone). The runs the skipped node holds are left
+// unfolded and unreported, which is the same place the node is in for the plan:
+// nothing this release writes can land on a document ValidateState refuses both
+// ways, so there is no fold to make and no launch to hold back.
 func (c *cycle) foldNode(ctx context.Context, reports []RunReport) error {
+	if OverCap(c.state) {
+		return nil
+	}
 	ops, notes, err := foldOps(c.state, reports)
 	if err != nil {
 		return err

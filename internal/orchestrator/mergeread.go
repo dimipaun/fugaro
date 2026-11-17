@@ -127,57 +127,81 @@ type MergeSeams struct {
 // Set reports whether every seam is there.
 func (s MergeSeams) Set() bool { return s.Reader != nil && s.Log != nil }
 
-// merge is one cycle's turn at the merge read, and the write its answer lands
-// in.
+// merge is one cycle's turn at the merge read over every node it works, and the
+// writes its answers land in.
 //
 // It is the fold's own question asked one step further: the fold has just moved
-// every item whose run succeeded with a pull request into `review`, and this is
-// what asks the hosts which of those pull requests have since merged. An item
-// it moves is moved before the plan is made, so the work that depends on it
-// starts in this same cycle rather than the next one.
+// every item whose run succeeded with a pull request into `review` — in whatever
+// node that item is — and this is what asks the hosts which of those pull
+// requests have since merged. An item it moves is moved before the plan is made,
+// so the work that depends on it starts in this same cycle rather than the next
+// one, and an item in a plan's node or the backlog's is moved in the node that
+// carries it (D2735). A node the read never reaches is a wait the project never
+// leaves: the cycle reads every node's `review` as a reason to keep waiting
+// (hasReviewWait, outcome), so the node would sit in `review` for good and its
+// dependents would never start.
+//
+// The reads of every node are made together and each node is written with its
+// own (mergeOps): one repository is read at most once per cadence whatever nodes
+// its items are on, which is what keeps the cadence the host's per-repository
+// budget and not one read per node (D2742).
 func (c *cycle) merge(ctx context.Context) error {
-	if !c.tick.Merge.Set() || !c.fresh {
+	if !c.tick.Merge.Set() {
 		return nil
 	}
-	ops := c.mergeOps(ctx)
-	if len(ops) == 0 {
-		return nil
+	for i, ops := range c.mergeOps(ctx) {
+		if len(ops) == 0 {
+			continue
+		}
+		c.bind(i)
+		next, err := Apply(c.state, Patch{BaseRev: c.state.Rev, Ops: ops}, Actor{Class: Daemon, Now: c.now})
+		if err != nil {
+			return err
+		}
+		if err := c.commit(ctx, next); err != nil {
+			return err
+		}
+		c.settle()
 	}
-	next, err := Apply(c.state, Patch{BaseRev: c.state.Rev, Ops: ops}, Actor{Class: Daemon, Now: c.now})
-	if err != nil {
-		return err
-	}
-	return c.commit(ctx, next)
+	// The read reaches every node, so the cycle comes back to the node it was
+	// working on: the state node's own turn — the plan, then the ladder, the
+	// long-run rule and the decision — follows the merge.
+	c.bind(0)
+	return nil
 }
 
 // mergeFacts is what one cadence has done about the missing read consumer: the
 // repositories it has answered for — the fact queued, or the one line saying
-// the node will not take it — and how many fact ops it has queued in the patch
-// it is building.
+// the node will not take it — and how many fact ops it has queued for each node
+// in the patch it is building.
 //
 // The count is what the fact bound is read against beside the facts the node
 // already carries: what ValidateState refuses is the state the patch makes, so a
 // fact queued for one repository is one the next repository's fact does not fit
-// beside.
+// beside — and a patch is one node's, which is why the count is one node's too.
 type mergeFacts struct {
 	answered map[string]bool
-	queued   int
+	queued   map[int]int
 }
 
-// mergeOps is one cycle's whole turn at the read: every repository's items in
-// `review`, each repository read at most once per cadence, as the ops that
-// record what the hosts answered and the one fact an unreadable installation
-// leaves.
-func (c *cycle) mergeOps(ctx context.Context) []Op {
+// mergeOps is one cycle's whole turn at the read, over every node it works:
+// every node's items in `review`, grouped by repository, each repository read at
+// most once per cadence (D2742) — one read answers for the items of every node
+// that are on it, because the budget the cadence spends is the host's per
+// repository and not the daemon's per node — as the ops each node records what
+// the hosts answered with, in the order the cycle works its nodes. A node with
+// no ops is one this read had nothing to say about.
+func (c *cycle) mergeOps(ctx context.Context) [][]Op {
 	seams := &c.tick.Merge
 	mem := seams.memory()
-	// answered starts empty every cycle and the node is what it is seeded from
-	// instead: the fact is the record and the node is where it lives, so a write
-	// that did not land is a fact the next cycle writes, and a daemon that
+	// answered starts empty every cycle and the nodes are what it is seeded
+	// from instead: the fact is the record and the node is where it lives, so a
+	// write that did not land is a fact the next cycle writes, and a daemon that
 	// restarted does not write what is already there.
-	facts := &mergeFacts{answered: map[string]bool{}}
-	var ops []Op
-	for _, g := range mergeGroups(c.state) {
+	facts := &mergeFacts{answered: map[string]bool{}, queued: map[int]int{}}
+	states := c.states()
+	ops := make([][]Op, len(states))
+	for _, g := range c.mergeWaits(states) {
 		if !mem.due(g.repo, c.now) {
 			continue
 		}
@@ -185,7 +209,9 @@ func (c *cycle) mergeOps(ctx context.Context) []Op {
 		// that would not answer is a host to ask again in a minute, not one to
 		// ask again on the next wake.
 		mem.markRead(g.repo, c.now)
-		ops = append(ops, c.mergeRepo(ctx, seams, facts, g)...)
+		for _, no := range c.mergeRepo(ctx, seams, facts, states, g) {
+			ops[no.node] = append(ops[no.node], no.op)
+		}
 	}
 	return ops
 }
@@ -196,7 +222,7 @@ func (c *cycle) mergeOps(ctx context.Context) []Op {
 // whose only work is this one is in flight rather than empty (D1228's reading
 // of an unreported attempt, D2705, G3).
 //
-// An item with no repository counts here as it does not in mergeGroups: what
+// An item with no repository counts here as it does not in mergeWaits: what
 // ends the wait is a person merging the pull request, with or without a
 // repository on the record, so a cycle spent waiting for one is not a cycle the
 // breaker is for — and the pause a trip raises is what refuses the launch a
@@ -211,48 +237,73 @@ func hasReviewWait(s State) bool {
 }
 
 // mergeGroup is one repository's items waiting on a merge: the bulk read is per
-// repository, so the items are grouped before anything is read.
+// repository, so the items of every node the cycle works are grouped together
+// before anything is read.
 type mergeGroup struct {
 	repo  string
 	items []mergeRun
 }
 
-// mergeRun is one item waiting on a merge as the node records it: the item and
-// the run its attempt left, which is what the pull request's number is read by.
+// mergeRun is one item waiting on a merge as the node records it: the node that
+// carries the item and the run its attempt left, which is what the pull
+// request's number is read by.
 type mergeRun struct {
+	node  int
 	id    string
 	runID string
 }
 
-// mergeGroups is the items in `review`, in the repositories they are on, in the
-// order the node carries them.
+// nodeOp is one op and the node it lands on: the read is per repository and its
+// answer belongs to the node that carries the item it is about (D2735).
+type nodeOp struct {
+	node int
+	op   Op
+}
+
+// mergeWaits is the items in `review` of every node this cycle may write, in the
+// repositories they are on, in the order the cycle works the nodes and, inside
+// one node, in the order the node carries them.
 //
-// An item with no repository is left out, as it is of every read a repository
-// is the unit of; and an item whose phase is `review` but which no run of the
-// node reaches is in the group all the same, because what is wrong with it is
-// its number and not the read.
-func mergeGroups(s State) []mergeGroup {
+// A node another writer has moved, and one over its size target, is left out
+// with its items: Apply validates the state a patch is made from, so an op built
+// for either is a patch the node refuses, and that refusal would end the whole
+// cycle — the state node's launches and every node beside it included — where a
+// node over its cap is that node's own affair (OverCap, planNode, and X4's
+// acceptance that it stops that node alone).
+//
+// An item with no repository is left out, as it is of every read a repository is
+// the unit of; and an item whose phase is `review` but which no run of the node
+// reaches is in the group all the same, because what is wrong with it is its
+// number and not the read.
+func (c *cycle) mergeWaits(states []State) []mergeGroup {
 	var (
 		out []mergeGroup
 		at  = map[string]int{}
 	)
-	for _, w := range s.WorkItems {
-		if w.Phase != PhaseReview || w.Repo == "" {
+	for i, s := range states {
+		if !c.nodes[i].fresh || OverCap(s) {
 			continue
 		}
-		if i, seen := at[w.Repo]; seen {
-			out[i].items = append(out[i].items, mergeRun{id: w.ID, runID: w.RunID})
-			continue
+		for _, w := range s.WorkItems {
+			if w.Phase != PhaseReview || w.Repo == "" {
+				continue
+			}
+			waits := mergeRun{node: i, id: w.ID, runID: w.RunID}
+			if j, seen := at[w.Repo]; seen {
+				out[j].items = append(out[j].items, waits)
+				continue
+			}
+			at[w.Repo] = len(out)
+			out = append(out, mergeGroup{repo: w.Repo, items: []mergeRun{waits}})
 		}
-		at[w.Repo] = len(out)
-		out = append(out, mergeGroup{repo: w.Repo, items: []mergeRun{{id: w.ID, runID: w.RunID}}})
 	}
 	return out
 }
 
-// mergeItem is one item's pull request as this cadence reads it: the item and
-// the number the run view answered for its run.
+// mergeItem is one item's pull request as this cadence reads it: the node the
+// item is in, the item, and the number the run view answered for its run.
 type mergeItem struct {
+	node   int
 	id     string
 	number int
 }
@@ -260,8 +311,8 @@ type mergeItem struct {
 // mergeRepo is one repository's turn: the number each item waits on, one
 // listing of what the host reports open, and a `get` for each item the listing
 // does not carry (D2742) — or for each item at all, where the host has no
-// listing (Bitbucket).
-func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, facts *mergeFacts, g mergeGroup) []Op {
+// listing (Bitbucket) — as the ops the nodes that carry those items take.
+func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, facts *mergeFacts, states []State, g mergeGroup) []nodeOp {
 	items, err := c.mergeItems(ctx, g)
 	if err != nil {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
@@ -270,9 +321,9 @@ func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, facts *mergeFa
 	}
 	open, supported, err := seams.Reader.ListOpen(ctx, g.repo)
 	if err != nil {
-		return c.mergeRefusal(ctx, seams, facts, g.repo, err)
+		return c.mergeRefusal(ctx, seams, facts, states, g.items[0].node, g.repo, err)
 	}
-	var ops []Op
+	var ops []nodeOp
 	for _, it := range items {
 		if supported && open[it.number] {
 			// The host reports the pull request open, which is the whole
@@ -283,10 +334,10 @@ func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, facts *mergeFa
 		}
 		state, err := seams.Reader.State(ctx, g.repo, it.number)
 		if err != nil {
-			ops = append(ops, c.mergeRefusal(ctx, seams, facts, g.repo, err)...)
+			ops = append(ops, c.mergeRefusal(ctx, seams, facts, states, it.node, g.repo, err)...)
 			continue
 		}
-		if op, ok := c.mergeOp(g.repo, it, state); ok {
+		if op, ok := c.mergeOp(states[it.node], it, state); ok {
 			ops = append(ops, op)
 		}
 	}
@@ -319,7 +370,7 @@ func (c *cycle) mergeItems(ctx context.Context, g mergeGroup) ([]mergeItem, erro
 	var out []mergeItem
 	for _, it := range g.items {
 		if r, ok := byRun[it.runID]; ok && r.PRNumber > 0 {
-			out = append(out, mergeItem{id: it.id, number: r.PRNumber})
+			out = append(out, mergeItem{node: it.node, id: it.id, number: r.PRNumber})
 		}
 	}
 	return out, nil
@@ -327,12 +378,13 @@ func (c *cycle) mergeItems(ctx context.Context, g mergeGroup) ([]mergeItem, erro
 
 // mergeOp is what one pull request's state means for its item: `done` for one
 // that merged, `failed` for one that closed without merging, and nothing for
-// one that is still open or for a state this release cannot place.
+// one that is still open or for a state this release cannot place. s is the
+// state of the node the item is in, and the op is that node's.
 //
 // A move the phase table does not allow is left out rather than refused, for
 // the reason the fold leaves one out: the item was moved by somebody else while
 // the read was going, and their word stands.
-func (c *cycle) mergeOp(repo string, it mergeItem, state MergeState) (Op, bool) {
+func (c *cycle) mergeOp(s State, it mergeItem, state MergeState) (nodeOp, bool) {
 	var phase Phase
 	switch state {
 	case MergeMerged:
@@ -344,14 +396,14 @@ func (c *cycle) mergeOp(repo string, it mergeItem, state MergeState) (Op, bool) 
 		// waits where it is. A state that is not one of the three is a host
 		// answering something new, and moving an item on a state nobody has
 		// read the meaning of is the one thing this must not do.
-		return Op{}, false
+		return nodeOp{}, false
 	}
-	w, ok := c.state.Item(it.id)
+	w, ok := s.Item(it.id)
 	if !ok || !w.Phase.CanMoveTo(phase) {
-		return Op{}, false
+		return nodeOp{}, false
 	}
 	c.rep.Merged++
-	return Op{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{ID: w.ID, Phase: &phase}}, true
+	return nodeOp{node: it.node, op: Op{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{ID: w.ID, Phase: &phase}}}, true
 }
 
 // mergeRefusal is what a read that did not happen leaves: one line in the log,
@@ -359,16 +411,22 @@ func (c *cycle) mergeOp(repo string, it mergeItem, state MergeState) (Op, bool) 
 // the repository and the fix, recorded once per repository and not once per
 // cadence (D2736).
 //
+// The fact is once per project and not once per node, so it lands on the node
+// whose items are in that repository — the node the read was made for, handed in
+// as node — and a project that already carries it anywhere carries it
+// (carriesMergeFact): a second node's copy is a fact nobody reads twice, and the
+// person's own view of the project is not a node's to decide.
+//
 // The items are left in `review` by both: a read that failed is not an answer,
 // and the wait it was reading for goes on.
-func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, facts *mergeFacts, repo string, err error) []Op {
+func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, facts *mergeFacts, states []State, node int, repo string, err error) []nodeOp {
 	if !errors.Is(err, ErrMergeNoReadConsumer) {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
 			repo, safetext.OneLine(err.Error())))
 		return nil
 	}
 	key := mergeFactKey(repo)
-	if _, ok := c.state.Facts[key]; ok || facts.answered[repo] {
+	if carriesMergeFact(states, key) || facts.answered[repo] {
 		return nil
 	}
 	facts.answered[repo] = true
@@ -384,13 +442,29 @@ func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, facts *merg
 	// is dropped when it does not fit; the line is what the person reads
 	// instead, and the read is made again on the next cadence, so a node with
 	// room again records it then.
-	if len(c.state.Facts)+facts.queued >= MaxFacts {
+	if len(states[node].Facts)+facts.queued[node] >= MaxFacts {
 		warnMerge(ctx, seams, fmt.Sprintf("the missing read consumer of %s is not recorded: the node's facts reach their bound of %d with the ones this cadence queues; set one with `fugaro creds set bitbucket-read-consumer`",
 			repo, MaxFacts))
 		return nil
 	}
-	facts.queued++
-	return []Op{{Op: OpFactSet, Fact: &FactOp{Key: key, Value: mergeFactValue(repo)}}}
+	facts.queued[node]++
+	return []nodeOp{{node: node, op: Op{Op: OpFactSet, Fact: &FactOp{Key: key, Value: mergeFactValue(repo)}}}}
+}
+
+// carriesMergeFact reports whether any node this cycle works already records the
+// missing read consumer of one repository. The fact is the project's and it is
+// read wherever it landed: the node it was written on is the node the read that
+// found the refusal was made for, and the same repository's items may sit on
+// another node — or on another node entirely by the time a person sets the
+// credential — so a check of any one node would write the second copy the
+// record is meant not to carry.
+func carriesMergeFact(states []State, key string) bool {
+	for _, s := range states {
+		if _, ok := s.Facts[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeFactKey is the fact key of one repository. A fact key is a name
