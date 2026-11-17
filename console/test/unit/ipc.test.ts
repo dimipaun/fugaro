@@ -646,6 +646,16 @@ const CLI_COMMANDS: readonly CliCommand[] = [
   // writes neither it nor the state file.
   { command: 'managed status', kind: 'allowed', where: 'internal/cli/managed_status.go:174' },
   { command: 'project policy show', kind: 'allowed', where: 'internal/cli/project_cmd.go:2489' },
+  // The project's enrolled repositories (the repos-management plan's RE5,
+  // D2413): `fugaro project repos ls --json` (what the project admits and what
+  // each repository runs) and `fugaro project repos status --json` (one row per
+  // fact that decides whether a run of a repository can start, each failure
+  // naming its fix). Both are `allowed` because the surface drives them, and
+  // both are the group's whole reach: `add` and `rm` are on `NEVER_REACHABLE`
+  // below, so the two rows here are what keeps a write off the console's
+  // surface for this group.
+  { command: 'project repos ls', kind: 'allowed', where: 'internal/cli/project_enroll.go:111' },
+  { command: 'project repos status', kind: 'allowed', where: 'internal/cli/project_status.go:164' },
   // Console 0.119.0's read-only models panel (the owner's ruling of
   // 2026-11-02): the selected project's routes, the models a run can name and
   // each repository's pins, from the project's own configuration and the price
@@ -909,6 +919,15 @@ const DESIGN_ARGV: readonly string[] = [
   // `project show`: only the former omits the **installation's** caps, which
   // belong to the Spend screen (F18).
   'project policy show --json',
+  // The project's enrolled repositories (the repos-management plan's RE5,
+  // D2413). Two rows, both the command and `--json`: the group's `add` and `rm`
+  // are the surface's never table's business, `ls` and `status` are reads, and
+  // neither row declares an argument (`src/main/spawn.ts`), which is what makes
+  // the empty argument list true rather than merely stated -- a caller cannot
+  // aim `status` at a repository this installation does not have, and the
+  // command's own no-argument form answers for every repository it knows.
+  'project repos ls --json',
+  'project repos status --json',
   // Rule 11's argv, `--task-file -` and all: the literal `-` is the word that
   // sends the task down the child's stdin rather than onto a command line.
   'run --task-file - --json',
@@ -1701,6 +1720,15 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // refuses every key.
   'managed.status': {},
   'policy.show': {},
+  // The empty payload twice more: the project's two enrolment reads take no
+  // argument at all either (the repos-management plan's RE5, D2413), so what a
+  // renderer may say to them is nothing -- not the project, not a repository
+  // name. `status` answers for every repository this project knows when no word
+  // is given, which is the read a screen would draw, and the schemas' own loop
+  // below refuses every key these rows do not declare, so the command's optional
+  // positional stays unreachable from here.
+  'repos.ls': {},
+  'repos.status': {},
   // The five fields, with the two optional ones left out -- which is the argv
   // rule 11 writes for a launch the operator gave no title and no plan task.
   'run.launch': { installation: 'sandbox', repository: 'acme/app', task: 'do the thing' },
@@ -3107,7 +3135,7 @@ describe('the spend read’s arguments', () => {
  * table's order -- and it is the frozen list the plan asks for: it is spelled
  * here rather than read back from `EXPOSED_OPERATIONS`, because a test that
  * compared the table with itself would hold for a table that had just gained a
- * channel. The claim is "these forty, and no others".
+ * channel. The claim is "these forty-two, and no others".
  *
  * Task 2.4 asserted the twelve and said the spend controls widened nothing;
  * Task 3.3 added the thirteenth (`startup.compatibility` / `getCompatibility`,
@@ -3295,6 +3323,29 @@ describe('the spend read’s arguments', () => {
  *     would widen what the read is about; the `repository` kind refuses one
  *     before a child exists, and the patterns that are stored arrive in the
  *     document.
+ *
+ * **The repos-management plan's RE5 added the forty-first and forty-second**
+ * (`repos.ls` / `listRepos` and `repos.status` / `reposStatus`: the Project
+ * tab's view of what the project has enrolled, and the per-repository doctor
+ * that says whether one of them can start a run -- D2413) and left the other
+ * forty exactly where they were. They are appended here for the reason every
+ * row above was, and they are two more rows that reach a command group whose
+ * other words are refused: `fugaro project repos add`
+ * writes the published allow-list, this machine's `repos:` entry and image
+ * mapping, the policy and the repository's job set with its `roles/run.invoker`
+ * grant, and `fugaro project repos rm` takes the same stores back and deletes
+ * the Cloud Run jobs -- so both are on this file's never table, and `ls --json`
+ * and `status --json` are the group's whole reach, which is the claim a reader
+ * should check first. Neither takes an
+ * argument, and that is the second thing to check: `status` with no word
+ * answers for every repository this project knows, which is the read a screen
+ * would draw, and a caller that could fill the word could aim the read at a
+ * repository this installation does not have. The pair is also the surface's
+ * first read whose document **names what is wrong and the one command that puts
+ * it right**: the failing rows of `status` carry a `fix`, and several of those
+ * are commands this console may not run at all -- the credential one is the
+ * owner's. So the rows are drawn, and the fix is handed to the operator as
+ * text, exactly as the never table requires.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -3342,6 +3393,20 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['roadmap.move', 'moveRoadmapTask'],
   ['managed.status', 'managedStatus'],
   ['policy.show', 'policyShow'],
+  // The project's enrolled repositories (the repos-management plan's RE5,
+  // D2413), appended for the reason every row above was: what the task added
+  // must be visible as a diff. They are two more rows here that reach a command
+  // group whose other words are refused, as `models.list` and `user ls` do --
+  // `project repos add` writes the published allow-list, this machine's config
+  // and a repository's own cloud resources, `project repos rm` takes the same
+  // stores back and deletes its Cloud Run jobs, and both are on `src/main/
+  // ipc.ts`'s never table, so `ls --json` and `status --json` are the group's
+  // whole reach. Neither takes an argument: `status` answers for every
+  // repository when it names none, which is the read a screen would draw, and a
+  // caller that could fill the word could aim the read at a repository this
+  // installation does not have.
+  ['repos.ls', 'listRepos'],
+  ['repos.status', 'reposStatus'],
   ['run.launch', 'launchRun'],
   // The licence section's two (subscriptions plan S2.7), appended for the reason
   // every row above was: what the task added must be visible as a diff, and the
@@ -3391,7 +3456,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these forty, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these forty-two, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -3408,11 +3473,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A forty-first channel: what each task added must stay one row, and the
+    // A forty-third channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
     const fortyFirst = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
     expect(fortyFirst).toContain('fleet.report: a channel this console does not ship')
-    expect(fortyFirst).toContain('41 rows, and this console ships 40')
+    expect(fortyFirst).toContain('43 rows, and this console ships 42')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -3426,7 +3491,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('39 rows, and this console ships 40')
+    expect(withoutTheNewRow).toContain('41 rows, and this console ships 42')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -3441,8 +3506,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the forty methods and nothing else', () => {
-    // The bridge the window is handed: the forty methods and the names,
+  it('is frozen, and hands the window a bridge with the forty-two methods and nothing else', () => {
+    // The bridge the window is handed: the forty-two methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4616,7 +4681,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: thirty-three of the surface's forty operations,
+    // The non-vacuity half: thirty-five of the surface's forty-two operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -4689,7 +4754,17 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // to withhold, and a reduced console is precisely the one whose operator may
     // need to see who still holds a role on the installation they are trying to
     // bring back.
-    expect(THE_OPEN_OPERATIONS.length).toBe(33)
+    //
+    // **`repos.ls` and `repos.status` (the repos-management plan's RE5) are the
+    // thirty-fourth and thirty-fifth**, and they are here for `members.list`'s
+    // reason: an enrolment is repository state -- which repositories the
+    // allow-list admits, what each one's job runs, and which of the facts that
+    // decide a launch is failing -- so there is no spent dollar, no notional
+    // dollar and no cap anywhere in either document for the reduced mode to
+    // withhold. Withholding them would take away the one read that says why a
+    // repository cannot run, which is exactly what an operator bringing an
+    // installation back needs.
+    expect(THE_OPEN_OPERATIONS.length).toBe(35)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(

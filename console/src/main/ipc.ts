@@ -619,9 +619,17 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Forty operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Forty-two operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
+ *
+ * **The two enrolment reads are this surface's forty-first and forty-second
+ * operations** (the repos-management plan's RE5, D2413): `repos.ls` and
+ * `repos.status`, the `project repos` group's two read verbs, added before any
+ * screen draws them so that the console's reach over the group is settled by
+ * the design rather than by the first screen that wants it. The group's writes
+ * -- `repos add` and `repos rm` -- are on the never table and stay there; their
+ * own rows below say what the pair may and may not be asked.
  *
  * The thirteen CLI argvs are design section 2.1's list -- its thirteenth row,
  * `fugaro config list --json`, arrived with the installation rail (owner's
@@ -1779,15 +1787,50 @@ export const CONSOLE_OPERATIONS = [
   // already (F9), which is what D1487 decided, and this is the operation's half.
   //
   // Like its sibling above it takes no argument at all: no positional word, no
-  // `--gcp-project`, no `--region`. The `project` group's other words --
+  // `--gcp-project`, no `--region`. The `project` group's writing words --
   // `policy publish`, `repos add`, `repos rm` and `sync` -- are each on this
-  // file's never table, so this is the group's whole reachable argv.
+  // file's never table; the group's two enrolment reads are the rows below.
   {
     name: 'policy.show',
     method: 'policyShow',
     command: 'project policy show',
     flags: ['--json'],
     summary: 'the published policy node the project’s runs read, and nothing else',
+    args: [],
+  },
+  // **The project's repositories** (the repos-management plan's RE5, D2413):
+  // `fugaro project repos ls --json` and `fugaro project repos status --json`,
+  // the group's two read verbs and the whole of what the console may ask it.
+  // The group's writes stay where they were: `project repos add` and
+  // `project repos rm` are on the never table below, and no code in this tree
+  // constructs a word of either argv -- the two rows here are the group's reach
+  // and nothing more. No screen consumes the documents yet, which is the same
+  // state `craft ls` is in on the design's own table (D2413: the reach lands
+  // before the screen does).
+  //
+  // **Neither takes an argument**, and `repos.status`'s optional positional
+  // repository is deliberately not one: the command answers for every
+  // repository this project knows when it names none, which is the read a
+  // screen would draw, and a caller that could fill the word could aim the read
+  // at a repository the installation does not have. Both are reads in the
+  // strongest sense: the CLI writes nothing on any path, `--json` included, and
+  // reads a credential's presence and never its value (`internal/cli/
+  // project_status.go`'s own comment), so both are on `consoleReadPaths` and
+  // neither remembers a checkout.
+  {
+    name: 'repos.ls',
+    method: 'listRepos',
+    command: 'project repos ls',
+    flags: ['--json'],
+    summary: 'the project’s repositories as data: the allow-list, this machine’s copies, and what each one runs',
+    args: [],
+  },
+  {
+    name: 'repos.status',
+    method: 'reposStatus',
+    command: 'project repos status',
+    flags: ['--json'],
+    summary: 'each repository’s enrolment as a doctor: one row per fact that decides whether a run of it can start, each failure naming its fix',
     args: [],
   },
   // **The licence section's two operations** (subscriptions plan S2.7; the

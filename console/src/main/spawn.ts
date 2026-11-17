@@ -1315,9 +1315,9 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // CM4; `policy.show`, D1480 and D1481; rule 6's own row). The command is
     // `fugaro project policy show --json`, and the row spells all four of its
     // words because three of them are the command path: the `project` group's
-    // other words -- `policy publish`, `repos add`, `repos rm` and `sync` -- are
-    // each on this module's own never table, so `project policy show` is the
-    // group's whole reachable argv.
+    // writing words -- `policy publish`, `repos add`, `repos rm` and `sync` --
+    // are each on this module's own never table, and the group's two enrolment
+    // reads are the pair of rows below.
     //
     // The command prints `{project, policy}` and nothing else, which is why the
     // row is this one and not `project show --json`: the latter also carries the
@@ -1338,6 +1338,34 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     // argv comes from a renderer.
     operation: 'policy.show',
     words: ['project', 'policy', 'show', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    // The project's enrolled repositories (the repos-management plan's RE5,
+    // D2413; `repos.ls` and `repos.status`, `src/main/ipc.ts`). The two rows are
+    // the `project repos` group's whole reach: `repos add` and `repos rm` are on
+    // the never table, and this table cannot build a word of either -- the four
+    // words here are the command path and `--json`, and no operation's schema
+    // fills one.
+    //
+    // Neither row carries an argument, and `repos.status`'s optional positional
+    // repository is not one: with no word the command answers for every
+    // repository this project knows, which is the read a screen would draw, and
+    // a renderer that could fill the word could aim the read at a repository the
+    // installation does not have. The two project flags are rule 3's, so
+    // `takesProject` is true for both and no word of either argv comes from a
+    // renderer.
+    operation: 'repos.ls',
+    words: ['project', 'repos', 'ls', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
+  {
+    operation: 'repos.status',
+    words: ['project', 'repos', 'status', '--json'],
     takesProject: true,
     args: [],
     dirFlag: false,

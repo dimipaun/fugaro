@@ -178,7 +178,11 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * the same installation every other write here does -- and the roles-and-scopes
  * plan's RS7's members read, `members.list`, the twenty-seventh: `fugaro user
  * ls` resolves the checkout on its way to the installation whose grants it
- * lists, so it takes the flag the way every cloud read here does. The
+ * lists, so it takes the flag the way every cloud read here does -- and the
+ * repos-management plan's RE5's two enrolment reads, `repos.ls` and
+ * `repos.status`, the twenty-eighth and twenty-ninth: both resolve the
+ * installation and then the project whose allow-list they read, so they take
+ * the flag like every other project read here. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -211,6 +215,8 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'roadmap.move',
   'managed.status',
   'policy.show',
+  'repos.ls',
+  'repos.status',
   'run.launch',
   'seats.read',
   'members.list',
@@ -537,7 +543,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: twenty-eight argvs, twenty-six commands, twenty-six of them with --project', () => {
+  it('fixes the design allow-list exactly: thirty-one argvs, twenty-eight commands, twenty-nine of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -578,7 +584,15 @@ describe('the spawn table and the argv it builds', () => {
     // own `expectFlag` emits -- and the roles-and-scopes plan's RS7 added the
     // members read, `user ls --json`, the Members view's own argv: the `user`
     // group's one reachable word, whose one argument is the repository a role is
-    // asked about and which the caller may leave out. The Go
+    // asked about and which the caller may leave out. The repos-management
+    // plan's RE5 added the thirtieth and thirty-first argvs: `project repos
+    // ls --json` and `project repos status --json`, the Project tab's view of
+    // what the project has enrolled and the per-repository doctor that says
+    // whether one of them can start a run. Both are the managed reads' shape --
+    // the row's own words and the installation's two, no argument at all, which
+    // is what keeps `status`'s optional positional repository out of a caller's
+    // reach -- and both take `--project`, so they are two more rows over two
+    // more commands in the count below. The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -625,6 +639,15 @@ describe('the spawn table and the argv it builds', () => {
       // own words, filled from the chosen installation like every other row's.
       'managed status --json',
       'project policy show --json',
+      // The project's enrolled repositories (the repos-management plan's RE5,
+      // D2413): the Project tab's view of what the project has enrolled, and the
+      // per-repository doctor that says whether one of them can start a run.
+      // Both rows are the command and `--json` and nothing else -- no argument
+      // of any kind, so `project repos status`'s optional positional repository
+      // is unreachable -- and the two project flags are this row's own words,
+      // filled from the chosen installation like every other row's.
+      'project repos ls --json',
+      'project repos status --json',
       // The seat estimate (subscriptions plan S4.2): the Project tab's advisory
       // read, whose argv is the command, its one fixed flag and the
       // installation's two words -- there is no argument for a caller to fill.
@@ -638,7 +661,7 @@ describe('the spawn table and the argv it builds', () => {
       'run --task-file - --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are twenty-seven rows over twenty-four commands: `logs` has two rows,
+    // are twenty-nine rows over twenty-six commands: `logs` has two rows,
     // `--json` and `--url`, and neither of them may be the one that forgets
     // --project, and `settings` (a read and a write) and `graph` (a read and its
     // feed) have two each as well.
@@ -670,13 +693,15 @@ describe('the spawn table and the argv it builds', () => {
         'coordinator intents',
         'managed status',
         'project policy show',
+        'project repos ls',
+        'project repos status',
         'seats',
         'user ls',
         'coordinator roadmap move',
         'run',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(27)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(29)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1244,6 +1269,61 @@ describe('the spawn table and the argv it builds', () => {
     // omits the installation's caps (F18), so the row this surface carries has
     // to be that command's.
     expect(SPAWN_COMMANDS.map((row) => row.words.slice(0, 3).join(' '))).toContain('project policy show')
+  })
+
+  it('spawns the two enrolment reads as their command, `--json` and nothing else', () => {
+    // **RE5's pair, word for word** (the repos-management plan, D2413; the
+    // design allow-list's `project repos ls --json` and `project repos status
+    // --json`). Both are the managed reads' shape again -- the argv is the row's
+    // own words and the caller fills none of them -- and the emptiness is what
+    // keeps the reads about *this* project: `project repos status` answers for
+    // every repository the project knows when it names none, so a payload that
+    // could name a repository would be aiming the read at one this installation
+    // may not have. Spelled out here rather than read off the rows, so a change
+    // to either row is a failing test.
+    expect(argvFor('repos.ls', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'project',
+      'repos',
+      'ls',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    expect(argvFor('repos.status', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'project',
+      'repos',
+      'status',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    for (const operation of ['repos.ls', 'repos.status'] as const) {
+      const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+      expect(row?.args, operation).toEqual([])
+      expect(row?.dirFlag, operation).toBe(false)
+      // A key neither row declares never reaches an element -- and the words
+      // these commands own but no row declares (`--config`, the group's
+      // positional repository, and the group's two writes) are refused like any
+      // other.
+      for (const key of ['project', 'config', 'repo', 'json', 'all', 'token']) {
+        expect(
+          () => argvFor(operation, { [key]: 'x' }, safeContext()),
+          `${operation} accepted ${key}`,
+        ).toThrow(/does not declare/)
+      }
+      // The argv's whole flag list is the row's one word plus the console's own
+      // `--project`: no credential, no host, no path and no other command's flag.
+      const argv = argvFor(operation, {}, safeContext({ project: 'chosen' }))
+      expect(argv.filter((word) => word.startsWith('--'))).toEqual(['--json', '--project'])
+    }
+    // The group's two writes are not on this surface at all: the only words
+    // under `project repos` here are the two reads, which is the claim
+    // `assertSpawnSurface` and the design's never table hold from the other side.
+    expect(
+      SPAWN_COMMANDS.filter((row) => row.words.slice(0, 2).join(' ') === 'project repos').map(
+        (row) => row.words.slice(2).join(' '),
+      ),
+    ).toEqual(['ls --json', 'status --json'])
   })
 
   it('spawns the seats estimate as its command, `--json` and nothing else', () => {
