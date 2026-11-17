@@ -5866,9 +5866,17 @@ goes first, because the node's existence is what the rules read and its
 deletion revokes at once, without waiting for an ID token to expire; then
 the account's push node under config/admin/push, the sibling that holds
 the one registration this installation made for it, so the phone's token
-goes with the pairing rather than outliving it (push design §3.4); then
-this laptop's OS keychain item for that pairing's MAC key. Three
-deletions, and all three are here.
+goes with the pairing rather than outliving it (push design §3.4); then,
+where the installation has a resident orchestrator, the installation's own
+cloud copy of the pairing's MAC key, which is the mobile design's
+revocation step 2b: its version is destroyed rather than rotated or
+disabled, so the pairing's messages stop verifying in the cloud as well as
+on this laptop; then this laptop's OS keychain item for that pairing's MAC
+key. Every deletion this command can make is here, in that order.
+
+Deleting the cloud copy un-reads nothing: whoever held the key keeps it, a
+project Owner or Editor among them, and what the step ends is the
+installation's own service's ability to verify a message and to forge one.
 
 The pairing session's own node is not one of them. Its key is the p~ uid
 the session drew, and nothing on this laptop records that uid, so a revoke

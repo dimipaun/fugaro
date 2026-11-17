@@ -15,6 +15,13 @@ import (
 // runs/<slug>/<run-id>/ prefix.
 const ChangeSetMemberFile = "changeset.json"
 
+// VerdictShip is the verdict a member records when nothing must change before
+// its pull request is merged: the word the run's own reviews carry in
+// result.json (ReviewSummary.Verdict), and the one a reader of a whole set
+// looks for — a member that recorded anything else, or nothing, has not
+// shipped, and the set it belongs to waits for it (D614, D3).
+const VerdictShip = "ship"
+
 // ChangeSetMember is what one member run records about the change set it was
 // launched in (task.Spec.ChangeSet): the set it belongs to, the run it is, its
 // own pull request and the verdict it ended on.
@@ -41,10 +48,12 @@ type ChangeSetMember struct {
 	// PRURL is the member's own pull request, which is what lets a whole set
 	// be reached later (D3). Empty until the run has opened one.
 	PRURL string `json:"pr_url,omitempty"`
-	// Verdict is the run's own final verdict word, "ship" when nothing must
-	// change before this is merged (the word the run's reviews carry in
+	// Verdict is the run's own final verdict word, VerdictShip when nothing
+	// must change before this is merged (the word the run's reviews carry in
 	// result.json). Empty while the run has not ended, and on a run that ended
-	// without one.
+	// without one: the member writes it once its ending is known, and a run
+	// that ended without shipping writes the empty word over whatever an
+	// earlier attempt at the same pull request recorded (D2).
 	Verdict string `json:"verdict,omitempty"`
 	// At is when the record was last written, UTC.
 	At time.Time `json:"at"`

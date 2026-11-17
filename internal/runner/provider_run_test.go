@@ -82,7 +82,7 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	// The charge is the figure the provider reported for the call plus the
 	// 10% route fee (D2640): what the provider said the call cost is what the
 	// run paid. The table's own row for the model — the built-in catalog's,
-	// the zdr tier's minimum under the default switches, read from the table
+	// the zdr tier's maximum under the default switches (D2644), read from the table
 	// the run built rather than named here — is the floor under that figure
 	// and the band it is read against, not the charge, which is why the
 	// arithmetic under test is the fee, the attribution and the report. The
@@ -91,8 +91,8 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	if !ok {
 		t.Fatal("the run's table has no row for the model it routed")
 	}
-	if m.Catalog == nil || m.Catalog.Tier != "zdr" || m.Catalog.Bound != "min" {
-		t.Fatalf("the run's row is not the catalog's zdr minimum: %+v", m.Catalog)
+	if m.Catalog == nil || m.Catalog.Tier != "zdr" || m.Catalog.Bound != "max" {
+		t.Fatalf("the run's row is not the catalog's zdr maximum: %+v", m.Catalog)
 	}
 	if lo := m.Lo.Cost(use); lo >= 2_100 {
 		t.Fatalf("the row's cheapest end is %d, not below the provider's 2100: the test cannot tell which figure was charged", lo)

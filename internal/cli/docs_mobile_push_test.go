@@ -175,16 +175,20 @@ func TestDocsMobilePushCitationsExist(t *testing.T) {
 	// Check 88's register state, read from the register itself. The number is
 	// NOT chosen here: the mobile plan allocates 80-89 to this work in advance
 	// ("a reserved number is never reused and never renumbered") and assigns 88
-	// to P5.2's behaviour, and the plan allocates the *writing* to P4.2. So a
-	// `## Check 88` section or a `| 88 |` row appearing does not mean a new
-	// number must be found — it means P4.2 has written the check into the
-	// register, and the design's §8 sentence that the register is free of it
-	// must be updated to say so (and to record the run, which is the owner's).
+	// to P5.2's behaviour, and the plan allocates the *writing* to P4.2. P4.2
+	// has written it, so the register carries the row and the section and §8
+	// says so; what the register must NOT claim is a run, which is the owner's.
 	checklist := readDoc(t, "docs/gcp-live-checklist.md")
 	for _, written := range []string{"## Check 88", "| 88 |"} {
-		if strings.Contains(checklist, written) {
-			t.Errorf("docs/gcp-live-checklist.md now carries %q: P4.2 has written Check 88 into the register, so %s's §8 must say the check is written (the number is allocated and is never renumbered) and record the owner's run", written, path)
+		if !strings.Contains(checklist, written) {
+			t.Errorf("docs/gcp-live-checklist.md no longer carries %q: P4.2 wrote Check 88 into the register (the number is allocated and is never renumbered), so %s's §8 says the check is written text the owner runs", written, path)
 		}
+	}
+	if !strings.Contains(normSpace(doc), normSpace("Task **P4.2** wrote it on **2026-11-17**")) {
+		t.Errorf("%s's §8 no longer says P4.2 has written Check 88 into the register", path)
+	}
+	if !strings.Contains(normSpace(doc), normSpace("It is written text and it is **not run**")) {
+		t.Errorf("%s's §8 no longer says Check 88 is written and not run: the running is the owner's and only if the owner builds push", path)
 	}
 }
 

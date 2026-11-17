@@ -952,6 +952,10 @@ func reviewReport(rec *runstore.Record, location string, failedComments []int) s
 	// written from one record so a report cannot say what the other does not.
 	b.WriteString(triageStatusLine(rec))
 	b.WriteString(stageTable(rec))
+	// A review class run records no verify record of its own, so this table is
+	// empty here; it is written from the record like the two lines above it, so
+	// a record that ever carries one is shown the same way in both reports.
+	b.WriteString(verifyTable(rec))
 	if rec.Cost != nil {
 		b.WriteString(CostLine(*rec.Cost) + "\n\n")
 	} else {

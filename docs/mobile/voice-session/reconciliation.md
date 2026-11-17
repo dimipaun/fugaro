@@ -433,7 +433,7 @@ the native behaviour at all.
 **Evidence.** `docs/mobile/implementation-plan.md`'s check table — **86**,
 *"Hands-free audio: the background mode, the microphone ask, Bluetooth, and
 barge-in"*, attributed to P3.5 and P4.2, and run by the owner; `docs/gcp-live-checklist.md`
-carries no `## Check 86` section yet (checks 80–89 are the mobile block);
+carries a `## Check 86:` section now, written by Task P4.2 on 2026-11-17 with its row and ending `USER-RUN, NOT RUN` (checks 80–89 are the mobile block);
 `docs/mobile/README.md` **reserves** 80–89 for the mobile work and writes none of
 them (*"Checks 80–89 — this work — reserved here, and no row or section is
 written by this pull request"*). The **owner-run** fact is not in that file but

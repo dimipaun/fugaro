@@ -33,8 +33,8 @@ import { describe, expect, it } from 'vitest'
 
 import {
   CONNECTION_REASONS, INVENTED_CONNECTION_REASON, INVENTED_LEASE_USD, INVENTED_MAX_PARALLEL, TIME_SHIFT_RANGE_MS,
-  VERIFY_CLIP_RUNES, VOCAB, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs, scrubDocument,
-  timeShiftFromDraw,
+  VERIFY_CLIP_RUNES, VERIFY_WARNING_PREFIX, VOCAB, isKnownVerifySummary, isVerifySummary, randomTimeShiftMs,
+  scrubDocument, timeShiftFromDraw,
 } from '../../tools/scrub-fixture/scrub'
 import { FINISHED_KEYS, RUN_KEYS } from '../../src/shared/schema'
 
@@ -176,6 +176,7 @@ describe('the scrub: the verify line verify.go writes', () => {
     ['a test killed by its own timeout', 'fugaro verify test #8: FAILED (exit -1, 41 tests, 3 failures: TestA, TestB, TestC; timed out)'],
     ['a command killed by a signal without a timeout', 'fugaro verify lint #13: FAILED (exit -1)'],
     ['a warning', 'fugaro verify test #9: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml)'],
+    ['the warning of a workflow that declared no reports', 'fugaro verify test #9: passed (exit 0, 0 tests, 0 failures; warning: this workflow declares no test report paths, so the record carries no test counts)'],
     ['a dirty tree', 'fugaro verify lint #10: passed (exit 0; working tree not clean, so this run cannot mark the PR ready: commit first)'],
     ['every tail at once', 'fugaro verify test --rerun-failed #11: FAILED (exit 1, 41 tests, 2 failures: TestA; flaky: TestB; timed out; warning: no JUnit reports found under **/junit*.xml; working tree not clean, so this run cannot mark the PR ready: commit first)'],
   ]
@@ -213,6 +214,35 @@ describe('the scrub: the verify line verify.go writes', () => {
     }
     for (let n = afterCounts; n <= clipped.length; n++) {
       expect(isVerifySummary([...clipped].slice(0, n).join('')), `cut at ${n}`).toBe(true)
+    }
+  })
+
+  it('accepts a line the clip cut inside the opening of the warning', () => {
+    // The clip is VERIFY_CLIP_RUNES runes and the warning's opening is the CLI's
+    // own sentence, so a head long enough to push the warning past the clip -- a
+    // `--rerun-failed` and a timeout, here -- ends the recording inside that
+    // sentence rather than inside the globs after it: `... warning: no JUnit
+    // reports found `. Both matchers have to take that, or the scrub and the
+    // fixture's scan both refuse a real recording, and a recording the scan
+    // refuses cannot be committed. The line carries no name list, which would
+    // otherwise absorb the cut: the name slots are open in both matchers, so a
+    // line whose warning follows one is taken whatever the warning says.
+    const full = 'fugaro verify test --rerun-failed #8: FAILED (exit -1, 41 tests, 3 failures; timed out; warning: no JUnit reports found under **/junit*.xml)'
+    const opened = full.indexOf(VERIFY_WARNING_PREFIX)
+    const clipped = [...full].slice(0, VERIFY_CLIP_RUNES).join('')
+    expect(opened).toBeLessThan(VERIFY_CLIP_RUNES)
+    expect(VERIFY_CLIP_RUNES).toBeLessThan(opened + VERIFY_WARNING_PREFIX.length)
+    expect(clipped.endsWith('found ')).toBe(true)
+    const afterCounts = 'fugaro verify test --rerun-failed #8: FAILED (exit -1, 41 tests, 3 failures'.length
+    const matchers: ReadonlyArray<readonly [string, (value: string) => boolean]> = [
+      ['the scrub', isVerifySummary],
+      ['the pinned scan', isKnownVerifySummary],
+    ]
+    for (const [what, matcher] of matchers) {
+      expect(matcher(clipped), what).toBe(true)
+      for (let n = afterCounts; n <= full.length; n++) {
+        expect(matcher([...full].slice(0, n).join('')), `${what}, cut at ${n}`).toBe(true)
+      }
     }
   })
 
@@ -288,15 +318,25 @@ describe('the scrub: the verify line verify.go writes', () => {
 
   it('refuses, when pinned, the text the CLI does not write into a slot', () => {
     // The warning sentence is the CLI's own text, not a slot: `Record.Summary`
-    // writes one sentence there (`no JUnit reports found under ` + the repo's
-    // globs), so both matchers refuse a warning the CLI cannot write, and the
-    // Go drift test is what fails first if verify.go ever gains a second one.
+    // writes one of two sentences there -- `no JUnit reports found under ` + the
+    // globs the workflow configured, or the one verify.go writes for a workflow
+    // that declared none, which carries no globs at all -- so both matchers
+    // refuse a warning the CLI cannot write, and the Go drift test is what fails
+    // first if verify.go ever gains a third.
     const prose = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: the Acme Payroll build was slow)'
     expect(isVerifySummary(prose)).toBe(false)
     expect(isKnownVerifySummary(prose)).toBe(false)
     const globs = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: no JUnit reports found under **/junit*.xml)'
     expect(isVerifySummary(globs)).toBe(true)
     expect(isKnownVerifySummary(globs)).toBe(true)
+    const noReports = 'fugaro verify test #5: passed (exit 0, 0 tests, 0 failures; warning: this workflow declares no test report paths, so the record carries no test counts)'
+    expect(isVerifySummary(noReports)).toBe(true)
+    expect(isKnownVerifySummary(noReports)).toBe(true)
+    // ...and the sentence with a word of it changed is not the CLI's, however
+    // much of it reads like one.
+    const almost = noReports.replace('no test report paths', 'no report paths')
+    expect(isVerifySummary(almost)).toBe(false)
+    expect(isKnownVerifySummary(almost)).toBe(false)
     // The name slots are NOT like this: a name is the report's own text, so
     // prose there is a name someone could have written, and the pinned matcher
     // takes it too. What guards that slot is the fixture scan's

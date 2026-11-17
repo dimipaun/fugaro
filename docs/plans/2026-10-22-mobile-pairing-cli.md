@@ -535,7 +535,7 @@ operator needs is on the node, and **the node's existence is what the rules read
 user whose node is gone is the **sweep's** business (decisions 1 and 2) and is invisible to the rules
 by construction.
 
-### 4.3 `fugaro pair revoke <uid|name>`
+### 4.3 `fugaro pair revoke`
 
 ```
 fugaro pair revoke (--uid UID | --name NAME) [--json] [--project NAME | --gcp-project ID]
