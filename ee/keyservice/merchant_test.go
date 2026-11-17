@@ -710,14 +710,19 @@ func (f *failingIssuances) SaveIssuance(ctx context.Context, r Record) error {
 }
 
 // mailedBundle is the pair a paid mail carries: the key and, on the line below
-// it, the renewal secret (D2135).
+// it, the renewal secret (D2135) — or the key alone, with the reissue's own note
+// in the secret's place, which is what a mail for a licence whose secret the
+// holder already has carries (D2200).
 func mailedBundle(t *testing.T, body string) (key, secret string) {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), "fgk_") {
-			if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) == "" {
-				t.Fatalf("the mail ends on the key line, want the renewal secret below it (D2135): %q", body)
+			if i+1 >= len(lines) {
+				t.Fatalf("the mail ends on the key line, want the renewal secret or the reissue's own note below it (D2135, D2200): %q", body)
+			}
+			if strings.TrimSpace(lines[i+1]) == "" {
+				return strings.TrimSpace(line), ""
 			}
 			return strings.TrimSpace(line), strings.TrimSpace(lines[i+1])
 		}
@@ -943,8 +948,10 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	// the rest of the licence machinery can act on: its own `key_id`, which §8's
 	// list and a K2.3 reissue name; the workspace the purchase bound, which every
 	// verifier reads (TN2, D2134); the row its term is sold under; and the
-	// renewal secret mailed beside it and kept as a digest, which is the pair the
-	// term after this one is renewed with (D2135).
+	// renewal secret that renews the term after this one — which is the licence's
+	// own and not a fresh one, because D2200 keeps the hash a seat change or a
+	// renewal is reissued under, so the installation renews with the secret it
+	// already holds.
 	if claims.KeyID == first.KeyID || !strings.HasPrefix(claims.KeyID, keyIDPrefix) {
 		t.Errorf("the renewal key's key id is %q, and the purchase's is %q, want a new %q id: a reissue is a new key (§8)", claims.KeyID, first.KeyID, keyIDPrefix)
 	}
@@ -954,19 +961,26 @@ func TestRenewalKeyIssuesThirtyDaysBeforeExpiry(t *testing.T) {
 	if minted.Record.Plan != PolicyTeamAnnual {
 		t.Errorf("the renewal mints under the row %q, want the one the subscription's year is sold under (%q)", minted.Record.Plan, PolicyTeamAnnual)
 	}
-	if minted.RenewalSecret == "" {
-		t.Error("the renewal answered with no renewal secret, want the one its own renewal needs (D2135)")
+	if minted.RenewalSecret != "" {
+		t.Errorf("the renewal answered the renewal secret %q, want none: it is a reissue under the licence a key already exists for, so the secret is the one the installation holds (D2200)", minted.RenewalSecret)
+	}
+	kept := secretHash(f.secretOf(t, f.mintedKeys()[0]))
+	if claims.RenewalSecretHash != kept {
+		t.Errorf("the renewal key claims the secret hash %q, want the licence's own (%q): a reissue under an entitlement keeps the secret the installation renews with (D2200)", claims.RenewalSecretHash, kept)
 	}
 	state, held, err := f.store.KeyState(context.Background(), claims.KeyID)
 	if err != nil || !held {
 		t.Fatalf("the store holds no key state for the renewal's key %s (held=%v, err=%v), so the term it covers could never be renewed", claims.KeyID, held, err)
 	}
-	if state.RenewalSecretHash != secretHash(minted.RenewalSecret) {
-		t.Errorf("the store holds the digest %q for the renewal's key, want the hash of the secret it answered, %q", state.RenewalSecretHash, secretHash(minted.RenewalSecret))
+	if state.RenewalSecretHash != kept {
+		t.Errorf("the store holds the digest %q for the renewal's key, want the licence's own %q: the state is what a renewal compares the holder's secret against, and one hashed from an empty answer is a key nobody can renew", state.RenewalSecretHash, kept)
 	}
 	sent := f.mail.sent[len(f.mail.sent)-1]
-	if !strings.Contains(sent.Body, minted.Key) || !strings.Contains(sent.Body, minted.RenewalSecret) {
-		t.Errorf("the renewal's mail is %q, want both lines of D2135's bundle: the key and the secret beside it", sent.Body)
+	if !strings.Contains(sent.Body, minted.Key) {
+		t.Errorf("the renewal's mail is %q, want it to carry the key", sent.Body)
+	}
+	if !strings.Contains(sent.Body, "renewal secret you were sent with it is unchanged") {
+		t.Errorf("the renewal's mail is %q, want it to say the secret is unchanged: a reissue mails one line, because the second is the one the holder already has (D2200)", sent.Body)
 	}
 
 	if _, again, err := f.svc.Renew(context.Background(), "sub-acme.example"); err != nil || again {
@@ -1897,7 +1911,7 @@ func TestAReissueThatKeepsTheSecretWritesTheHashItKept(t *testing.T) {
 		Seats:             5,
 		TermDays:          365,
 		RenewalSecretHash: kept,
-	}, buyerAddress("acme.example"), "reissue:evt-2", "sub-acme.example")
+	}, buyerAddress("acme.example"), "reissue:evt-2", "sub-acme.example", "ent-acme.example")
 	if err != nil {
 		t.Fatalf("reissuing onto the entitlement's own secret hash: %v", err)
 	}
