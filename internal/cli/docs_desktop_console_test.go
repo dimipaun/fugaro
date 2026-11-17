@@ -6964,17 +6964,21 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	sameSet(t, "verify kind", kinds, tsList(t, scrub, `VERIFY_KINDS = \[([^\]]*)\]`, "VERIFY_KINDS"))
 
 	// The two status words `Record.Summary` picks between, the flag it appends
-	// to the kind, the one warning sentence it writes, and the note it appends
-	// to a run that found the tree dirty. The last two are the CLI's own text
-	// sitting in the middle of the line: the scrub spells them out, so a second
-	// warning or a reworded note fails here rather than making the recorder
-	// refuse an ordinary run.
+	// to the kind, the warning sentences it writes -- `verify.go` picks between
+	// two of them, one for a workflow that declared report paths and one for a
+	// workflow that declared none -- and the note it appends to a run that found
+	// the tree dirty. The last ones are the CLI's own text sitting in the middle
+	// of the line: the scrub spells them out, so a third warning or a reworded
+	// note fails here rather than making the recorder refuse an ordinary run.
 	statuses := sourceValues(t, "internal/verify/verify.go", verifyGo, `status (?::=|=) "([A-Za-z]+)"`)
 	sameSet(t, "verify status", statuses, tsList(t, scrub, `VERIFY_STATUSES = \[([^\]]*)\]`, "VERIFY_STATUSES"))
 	rerun := sourceValues(t, "internal/verify/verify.go", verifyGo, `kind \+= " ([^"]+)"`)
 	sameSet(t, "verify rerun flag", rerun, []string{tsConst(t, scrub, "VERIFY_RERUN_FLAG")})
 	sameSet(t, "verify warning", sourceValues(t, "internal/verify/verify.go", verifyGo,
-		`rec\.Warning = "([^"]*)"`), []string{tsConst(t, scrub, "VERIFY_WARNING_PREFIX")})
+		`rec\.Warning = "([^"]*)"`), []string{
+		tsConst(t, scrub, "VERIFY_WARNING_PREFIX"),
+		tsConst(t, scrub, "VERIFY_WARNING_NO_REPORTS"),
+	})
 	sameSet(t, "verify clean-tree note", sourceValues(t, "internal/verify/verify.go", verifyGo,
 		"s \\+= \"; ([^\"]*)\"\n\t}\n\treturn s"), []string{tsConst(t, scrub, "VERIFY_CLEAN_TREE")})
 
@@ -7068,12 +7072,12 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	//
 	// Both sides are rendered to one string per segment, from their own sources:
 	// a literal as written (with the writer's `%d` as the digits marker), the
-	// test-name joins as the names marker, and `r.Warning` -- which verify.go
-	// builds as the sentence below plus the repository's reports -- as that
-	// sentence followed by the globs marker. Nothing is retyped here, so a
-	// reworded, dropped, reordered or added segment fails on the two renderings.
-	warning := sourceValues(t, "internal/verify/verify.go", verifyGo, `rec\.Warning = "([^"]*)"`)[0]
-	goTail := summaryTail(t, verifyGo, warning+"\x02globs")
+	// test-name joins as the names marker, and `r.Warning` -- whose two
+	// sentences are the sameSet above and which the scrub's tail carries as one
+	// slot, VERIFY_WARNING_PREFIX included -- as the warning marker. Nothing is
+	// retyped here, so a reworded, dropped, reordered or added segment fails on
+	// the two renderings.
+	goTail := summaryTail(t, verifyGo, tailWarning)
 	tsTail := verifyTailRendered(t, scrub)
 	if len(goTail) == 0 || len(tsTail) == 0 {
 		t.Fatalf("%s: the tail scan read nothing (verify.go %q, scrub.ts %q); the sources have moved", scrubTS, goTail, tsTail)
@@ -7099,13 +7103,14 @@ func TestDocsDesktopConsoleScrubVocabularyMatchesTheGoSource(t *testing.T) {
 	}
 }
 
-// tailDigits, tailNames and tailGlobs mark, in the two renderings compared
+// tailDigits, tailNames and tailWarning mark, in the two renderings compared
 // above, the places a segment is not literal text: a `%d`, the test-name lists
-// verify.go joins with ", ", and the report globs inside its warning.
+// verify.go joins with ", ", and the warning the scrub's tail carries as a slot
+// (whose two sentences the sameSet above holds, prefix and all).
 const (
-	tailDigits = "\x03"
-	tailNames  = "\x02names"
-	tailGlobs  = "\x02globs"
+	tailDigits  = "\x03"
+	tailNames   = "\x02names"
+	tailWarning = "\x02warning"
 )
 
 // summaryTail renders the statements Record.Summary appends, in order, one string

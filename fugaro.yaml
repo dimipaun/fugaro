@@ -92,16 +92,25 @@ workflows:
         go build ./...
         go vet ./...
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      # Each of the three calls below is wrapped in internal/verify/gotestjunit, and that
+      # wrapper is why each one carries -json: `fugaro verify test` reads a run's test counts,
+      # its failures and its flakes out of JUnit reports (internal/verify/junit.go), and a
+      # stock `go test` writes none, so a run of this repository recorded "0 tests" and warned
+      # about Java-shaped report globs it was never given. The wrapper runs the command and
+      # writes the report the `reports` key below names, and it exits with the command's own
+      # code, so rc is still the tests'. gotestsum does the same job and is not in the job's
+      # image: images/catalog/go/Dockerfile installs this repository's mise.toml tools and
+      # nothing else, so relying on one would mean an image change.
       test: |
         rc=0
         # Three invocations at once: the tree without internal/cli (with the live-check bash
         # tests skipped), and internal/cli in the two halves the comment above describes. The
         # cli exclusion is anchored, so internal/clidoc and ee/clidoc stay in.
-        go test -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
+        go run ./internal/verify/gotestjunit --junitfile reports/tree.xml go test -json -timeout 15m -skip '^TestLiveCheckScripts$' $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images -e '/internal/cli$') &
         tree=$!
-        go test -timeout 15m -run '^TestU' ./internal/cli/ &
+        go run ./internal/verify/gotestjunit --junitfile reports/cli-update.xml go test -json -timeout 15m -run '^TestU' ./internal/cli/ &
         cliU=$!
-        go test -timeout 15m -run '^Test[^U]' ./internal/cli/ &
+        go run ./internal/verify/gotestjunit --junitfile reports/cli-rest.xml go test -json -timeout 15m -run '^Test[^U]' ./internal/cli/ &
         cliRest=$!
         wait $tree || rc=$?
         wait $cliU || rc=$?
@@ -112,5 +121,10 @@ workflows:
           if [ -r "$f" ]; then echo "peak memory: $(( $(cat "$f") / 1048576 )) MiB ($f)"; break; fi
         done
         exit $rc
+      # The reports the wrapper writes, under the gitignored reports/ the .gitignore
+      # explains. Naming them here is what keeps this workflow off config.DefaultReports,
+      # whose Java-shaped globs (**/junit*.xml, **/build/test-results/**/*.xml) would
+      # otherwise be the paths a reader was told to look under.
+      reports: ["reports/**/*.xml"]
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 4h, stage: 3h, verify: 25m, finalize_reserve: 5m }

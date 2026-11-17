@@ -163,8 +163,10 @@ type run struct {
 	// cfgRes is how cfg was resolved: the layer each key cfg carries came
 	// from (resolveConfig, set beside cfg). It is read to name the layer the
 	// run's own timeouts.stage came from, which is the source of the bound a
-	// dropped governance.stage_timeout is recorded against (T7.6); nothing
-	// else reads it, and it is nil only for a run that resolved no config.
+	// dropped governance.stage_timeout is recorded against (T7.6), and to tell
+	// a workflow's own `commands.reports` from the defaults filled in behind it
+	// (bootstrap, verify.Settings.ReportsDeclared); it is nil only for a run
+	// that resolved no config.
 	cfgRes *config.Resolution
 	// providers are r.d.Providers with the project layer's claude_models
 	// merged in (config.ApplyClaudeClaims), set once in resolveConfig --
@@ -3217,6 +3219,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
 		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test, Lint: wf.Commands.Lint,
 		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
+		// Whether the workflow declared these reports or they are
+		// config.DefaultReports filled in: a test run that then finds no report
+		// of a workflow that declared none has no globs to name
+		// (verify.Settings.ReportsDeclared).
+		ReportsDeclared: r.cfgRes != nil &&
+			r.cfgRes.SourceOf("workflows."+r.rec.Workflow+".commands.reports") != config.SourceDefault,
 		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
