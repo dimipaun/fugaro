@@ -671,29 +671,40 @@ radius (§1), and `accounts.<name>.allow_repos` plus the two gates are what boun
 The account above is one type of a more general thing: a **credential** — a name and a type, in the
 same local config, in a `credentials:` block. The types the engine reads are:
 
-| Type | What it authenticates with | Served by |
-| --- | --- | --- |
-| `claude-oauth` | a Claude subscription's OAuth token, which is what every account of this page is | the credentials service |
-| `anthropic` | an Anthropic API key | the credentials service |
-| `openrouter` | an OpenRouter key; the credential's name **is** the provider entry's name ([multi-model.md](multi-model.md) §2) | the run's own gateway |
-| `vertex` | nothing — it is built in, and it is never defined | the run's own gateway |
+| Type | What it authenticates with | Served by | Declared by |
+| --- | --- | --- | --- |
+| `claude-oauth` | a Claude subscription's OAuth token, which is what every account of this page is | the credentials service | `fugaro accounts add <name> --type claude-oauth` |
+| `anthropic` | an Anthropic API key | the credentials service | `fugaro accounts add <name> --type anthropic` |
+| `openrouter` | an OpenRouter key; the credential's name **is** the provider entry's name ([multi-model.md](multi-model.md) §2) | the run's own gateway | `fugaro accounts add <name> --type openrouter` |
+| `vertex` | nothing — it is built in, and it is never defined | the run's own gateway | no command: it exists in every installation |
 
 `fugaro accounts add <name> --type claude-oauth` writes the entry beside the account block it has
 always written (§3), and that is what makes the name one a pool (§13) may list. Without the flag the
 command writes exactly what it always wrote — `claude_accounts` and the profile — so nothing on this
 page changes for an installation that wants the account alone. A name the config already defines
-with another type is **refused** rather than retyped: a type decides which tier serves the name, and
-the file is where a type is changed.
+with another type is **refused** rather than retyped: a type decides which half of a run serves the
+name, and the file is where a type is changed.
 
 A credential carries a **name and a type and no grant of its own**. `allow_data_to` (§2, §4) stays
 the account's, and every reader that scopes the token's reach still reads it there: a credential a
 pool lists is bounded by the account entry the same name holds, not by the pool.
 
-Only `claude-oauth` is declarable by this command, because its token step is the one that stores a
-secret. `--type anthropic` or `--type openrouter` is **refused in words that say so** rather than
-half-declared — an entry whose key no command stores would be a name a pool could list and no run
-could authenticate with. The owner defines one by hand in this prefix's `credentials:` block, and
-the project's own key path is unchanged: `fugaro secrets set` stores a key the project holds (§5).
+**Three of the four types are declarable by this command, and each of the three is one whose value
+it stores.** `--type claude-oauth` stores the account's own token as above; `--type openrouter` and
+`--type anthropic` read a **key exactly as the token is read** — from stdin, or at the hidden prompt
+on your terminal, and never from an argument, a flag or the environment — and store it project-wide
+under the credential's own derived name, `credential-<name>-key`, rather than the account's. A key
+credential is added to **no** profile's list and rides no job of its own: what serves its key is the
+half its type names ([multi-model.md](multi-model.md) §"Crafts, credentials and pools"), which is
+also what the command's last line says. So `--profile` is **refused** with the two key types, and so
+is a name a profile already lists — that list is what deploys the job mounting the account's token,
+and the job would read a container nothing writes. Take the name off the list first
+(`fugaro accounts rm <name> --profile <profile>`) or declare the key credential under another name.
+`vertex` stays **built in** and is refused as such, and `openai` and `codex-oauth` keep refusing as
+**not yet**: Claude Code speaks the Anthropic Messages API and the gateway never rewrites a request
+body, so a type whose provider does not answer that API needs a design of its own. Nothing stops the
+owner defining any of the four by hand in this prefix's `credentials:` block, and the project's own
+key path is unchanged: `fugaro secrets set` stores a key the project holds (§5).
 
 **The older keys keep their meaning, and a write converges them.** Every write of this local config
 converges the craft vocabulary first
@@ -796,17 +807,23 @@ for the inert pool of §13. It is **offline**: it reads this checkout's
 and reaches no bucket, no database and no host. `--json` prints the versioned document the console
 reads.
 
-**Two limits of this release**, and both are stated where the vocabulary is:
+**What a run resolves and what serves it** — the two limits this page carried while the crafts were
+being read only, and what stands in their place:
 
-- **A craft's model half is not yet what a run runs.** The model is written, validated and shown by
-  `fugaro craft ls`, and a run still takes its models from `agent.models` and `agent.levels`
-  ([multi-model.md](multi-model.md), [models-commands/spec.md](models-commands/spec.md)). The
-  **access** is the half a run resolves today.
-- **What a run is served from is the published node's own craft members.** The credentials service
-  reads the project's crafts, credentials and pools from the published policy, and `fugaro project
-  policy publish` **keeps** those members as they are — no command of this release writes them from
-  your config — so a pool declared here changes what `fugaro craft ls` and a launch read, and which
-  member serves a call is a later release's work.
+- **A craft's model is what its stages run.** A stage's model is the first of these rungs that
+  answers, most specific first: a task's model grade, a review level's own model
+  (`agent.levels.l1/l2/l3.model`), **the craft's model**, `agent.models.<role>` and `agent.model`. A
+  craft that sets no model therefore resolves exactly as it did before, and both `agent.models` and
+  `agent.model` keep every meaning they have. The resolved model is written where the run's own
+  readers already read a stage's model, so the pins the agent is given, the gateway's allow-list, the
+  price row `cost.go` charges and the run record's `StageTiming.Model` name one answer
+  ([multi-model.md](multi-model.md), [models-commands/spec.md](models-commands/spec.md)).
+- **The published node is what serves a run.** `fugaro project policy publish` writes the crafts, the
+  credentials and the pools **from this installation's own config**, and a run is served from the
+  node: the credentials service reads a pool's members there on every call, and the run's own gateway
+  reads the craft whose stages it runs. So the pool an access names is the list that serves the
+  craft's calls, in the order the node lists its members, on the one half §13 keeps a pool on
+  ([project-layer.md](project-layer.md)).
 
 ## 15. Aliases: one name the choice keys may hold
 

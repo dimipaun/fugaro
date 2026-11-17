@@ -678,15 +678,23 @@ func TestDocsProjectLayerSaysWhatTiesARepositoryToAProject(t *testing.T) {
 // The row set is pinned as a list rather than derived from the Policy struct:
 // the table groups the four `budget` members into one row and deliberately
 // leaves out the members whose effect is not a run's (base_branch, credentials,
-// accounts, clone_urls, the crafts), so a reflection over the struct would
-// refuse the table as it stands. What the list catches is the removal of a row
-// and the return of a claim the row no longer carries.
+// accounts, clone_urls), so a reflection over the struct would refuse the table
+// as it stands. What the list catches is the removal of a row and the return of
+// a claim the row no longer carries.
+//
+// The crafts row is MC25's of the model-crafts activation plan, and it moved the
+// one clause that used to say the table left the crafts out: a craft's access is
+// what serves a call — a run reads its own craft, the credentials service reads
+// a pool's members on every call — so `crafts`, `craft_credentials` and
+// `craft_pools` are members whose effect is a run's, and the operator editing
+// the node has to read the crossing rule where the node's keys are described.
 //
 // Mutation (verified, run and restored): delete the `binaries` row — this fails
 // naming it; put "decoded, validated and accepted, **not applied**" back as the
 // row's whole description without the written-block half — it fails naming that;
 // delete the `model_grades` row — it fails naming the key the table stopped
-// describing.
+// describing; delete the crafts row — it fails naming the three keys the table
+// stopped describing.
 func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	const header = "| Policy key | What the run does with it today |"
 	doc := readDoc(t, "docs/project-layer.md")
@@ -717,6 +725,7 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 		"providers",
 		"binaries",
 		"model_grades",
+		"crafts", "craft_credentials", "craft_pools",
 		"routing",
 		"profiles",
 	}
@@ -750,6 +759,23 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	} {
 		if !strings.Contains(doc, want) {
 			t.Errorf("docs/project-layer.md's `model_grades` row lacks %q: the row is where an operator reads what the grades do today, that they are the project's own, and what an unset one means", want)
+		}
+	}
+	for _, want := range []string{
+		"| `crafts`, `craft_credentials`, `craft_pools` | **applied**",
+		"the credential or pool each of a run's five crafts sends its calls out on",
+		"the credentials service reads `craft_credentials` and `craft_pools` on every call",
+		"so the pool a craft's `access` names is the list that serves it, in the order the node lists its members",
+		"**A pool naming a member of each half of a run is refused here**",
+		"at `craft_pools.<name>.members[i]`, in one sentence that names the two members and the fix (two pools, one per half)",
+		"which `projectpolicy.Decode` runs",
+		"the runner, the credentials service, `fugaro doctor` and `fugaro update` itself all meet the refusal",
+		"A crossing pool a node already carries is **repaired rather than refused**",
+		"the policy chain's step from 8 splits it into one pool per half and repoints each craft that named it",
+		"**The three members are the ones 0.24.0 published and version 9 adds no member**",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/project-layer.md's crafts row lacks %q: the row is where an administrator editing the node reads what a pool's members may be and where a crossing one is refused", want)
 		}
 	}
 }
