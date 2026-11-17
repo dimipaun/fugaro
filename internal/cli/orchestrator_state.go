@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/estimate"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -133,11 +134,17 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 // beside it and the history its estimates are drawn from.
 //
 // The two inputs the command supplies rather than reads are the estimate's own:
-// how many tasks are assumed to run at once is the person's `max_parallel`,
-// which is what a daemon whose `orchestrator.max_running` was never set plans
-// under (A6, D2722), and the mode is the default one a run resolves to when no
-// layer and no request sets another (D19). The brief is a print and not a run, so
-// it has no `--rigor` of its own to be told otherwise.
+// how many tasks are assumed to run at once is the running cap this project's
+// own layers state — `orchestrator.max_running` where they set one, the person's
+// `max_parallel` otherwise, which is what that key defaults to (A6, D1239) — and
+// the mode is the default one a run resolves to when no layer and no request
+// sets another (D19). The brief is a print and not a run, so it has no `--rigor`
+// of its own to be told otherwise.
+//
+// The cap is read from the local config and never from the published policy: the
+// published block is a network read the brief must not make (D1243), so a
+// project whose cap is published rather than set here is estimated at the local
+// number, and the range does not say which number it used.
 //
 // The table is the file the estimate's history is cached in, never the runs
 // bucket (D1243): the brief is a print a session makes before it does anything,
@@ -158,10 +165,24 @@ func orchestratorBrief(ctx context.Context, lc *localcfg.Config, db *rtdb.Client
 		State:      s,
 		Nodes:      nodes,
 		Table:      table,
-		MaxRunning: lc.MaxParallel,
+		MaxRunning: orchestratorBriefMaxRunning(lc),
 		Mode:       rigor.Default,
 		Now:        time.Now(),
 	}, nil
+}
+
+// orchestratorBriefMaxRunning is how many tasks the estimate assumes run at
+// once: the project's `orchestrator.max_running` where this checkout's own
+// config sets one, and the person's `max_parallel` otherwise, which is the
+// value that key falls back to (A6, D1239). It is the same arithmetic the
+// daemon plans its cycles under, minus the published layer, which the brief
+// cannot read (D1243).
+func orchestratorBriefMaxRunning(lc *localcfg.Config) int {
+	blk := policy.Orchestrator{}
+	if eff := lc.OrchestratorEffective(nil); eff != nil {
+		blk = *eff
+	}
+	return int(blk.WithDefaults(int64(lc.MaxParallel)).MaxRunning)
 }
 
 // orchestratorBriefNodes reads the nodes beside the state node: one per imported

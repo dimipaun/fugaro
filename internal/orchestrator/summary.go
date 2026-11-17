@@ -109,9 +109,10 @@ type Brief struct {
 //
 // Brief.String is the brief itself: the state as a person or a session reads
 // it: the goal, each node's ready-by range, the work items with their phases,
-// the questions waiting on someone, and the facts the loop has learned,
-// generated on every read and capped, so a session that starts by reading it
-// pays a bounded cost whatever the document grew to.
+// the questions waiting on someone, the facts the loop has learned and, last,
+// the open items of the nodes beside this one, generated on every read and
+// capped, so a session that starts by reading it pays a bounded cost whatever
+// the document grew to.
 //
 // Everything it prints that came from a document is data and is fenced as such,
 // because it is the one thing in a session that a session can also write: a
@@ -135,7 +136,9 @@ func (br Brief) String() string {
 
 	// The nodes beside this one are printed before its own items: the items are
 	// the longest part of the brief and the cap cuts the tail, so a range that
-	// came after them would be the first thing a busy project lost.
+	// came after them would be the first thing a busy project lost. Their own
+	// items are the brief's last section (nodeItemsSection), for the same reason
+	// read the other way round.
 	b.WriteString(br.nodesSection())
 
 	fmt.Fprintf(&b, "\nwork items: %d, %d still open\n", len(s.WorkItems), openItems(s))
@@ -208,6 +211,8 @@ func (br Brief) String() string {
 		}
 	}
 
+	b.WriteString(br.nodeItemsSection())
+
 	head := posture + "\n\n" + summaryOpen + "\n"
 	tail := "\n" + summaryClose + "\n"
 	body := strings.TrimRight(b.String(), "\n")
@@ -244,10 +249,13 @@ func openItems(s State) int {
 }
 
 // nodesSection is the ready-by range of every node beside the state node: one
-// line per plan node with open items, and one for the backlog (D2714), each
-// followed by the node's own open items so that a session sees what the range
-// covers — and so that a title the issue ingest wrote (D2720) is shown where
-// D2747 says it is, through safetext and inside this fence.
+// line per plan node with open items, and one for the backlog (D2714).
+//
+// A node's line is its range and nothing else: the node's open items are printed
+// too, but in the brief's last section (nodeItemsSection), so that a backlog of
+// any size costs titles rather than the work items, questions and facts the
+// state node alone carries. The count in the line says how much is open, and the
+// names are a section below.
 //
 // It is empty where no such node has anything open, so a project that keeps its
 // work in the state node alone is summarized exactly as it was before there were
@@ -288,24 +296,57 @@ func (br Brief) nodesSection() string {
 	return b.String()
 }
 
-// writeNode is one node's block: the node's name and range, then its open
-// items. The name is the plan's folder or `backlog`, so it is the same word the
-// commands that write the node use, and it goes through safe with everything
-// else a document carries.
+// writeNode is one node's line: its name and its ready-by range. The name is the
+// plan's folder or `backlog`, so it is the same word the commands that write the
+// node use, and it goes through safe with everything else a document carries.
 //
-// An item is listed while it is open — the phases openItems counts — so a node's
-// block is what the range above it is the range of, and a node whose work is
-// finished contributes no line at all. The title is the whole of the line
-// because it is the part a person reads: what is left to do, and which item it
-// is when they come to approve or patch it.
+// A node whose work is finished contributes no line at all, and the count in the
+// range's parentheses is what is open — the phases openItems counts.
 func (br Brief) writeNode(b *strings.Builder, n NodeBrief) {
 	fmt.Fprintf(b, "  %s: %s\n", safe(n.Name), br.readyBy(n))
-	for _, w := range n.State.WorkItems {
-		if !w.Phase.active() {
-			continue
+}
+
+// nodeItemsSection is the open work of the nodes beside the state node, one line
+// each, and it is the brief's last section.
+//
+// The place is the point. The brief is capped, and a shard's items are the part
+// of it a session can ask for again — `orchestrator backlog list`, the node's
+// own read — while the questions waiting on a person and the facts the loop
+// learned exist nowhere else. Printed above them, a backlog of any size would
+// spend the cap on titles and cut that part; printed last, the cap costs titles,
+// and a brief with room for them shows them.
+//
+// These are the titles the issue ingest wrote (D2720) as well as a session's own,
+// so each goes through safe like every other stored string: a title is data
+// inside the fence and never text a session acts on (D2747). Each line names the
+// node it belongs to, so the section stands on its own wherever the cap leaves
+// it — the ranges it belongs to are a section above.
+func (br Brief) nodeItemsSection() string {
+	var b strings.Builder
+	n := 0
+	write := func(node NodeBrief) {
+		for _, w := range node.State.WorkItems {
+			if !w.Phase.active() {
+				continue
+			}
+			fmt.Fprintf(&b, "  %s/%s [%s] %s\n", safe(node.Name), safe(w.ID), w.Phase, safe(w.Title))
+			n++
 		}
-		fmt.Fprintf(b, "    %s [%s] %s\n", safe(w.ID), w.Phase, safe(w.Title))
 	}
+	for i := range br.Nodes {
+		if br.Nodes[i].Name != BacklogNode {
+			write(br.Nodes[i])
+		}
+	}
+	for i := range br.Nodes {
+		if br.Nodes[i].Name == BacklogNode {
+			write(br.Nodes[i])
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf("\nnode items: %d\n%s", n, b.String())
 }
 
 // readyBy is one node's line: its ready-by range at its open items' tiers, and
