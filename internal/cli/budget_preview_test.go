@@ -1541,14 +1541,17 @@ func TestBudgetPreviewModeEqualsTheModesOwnEffects(t *testing.T) {
 	}
 }
 
-// TestBudgetPreviewModeNeverLowers: a request may raise a mode and never lower
-// it (D6), so a --mode below the mode the repository resolves changes nothing,
-// and the preview says so rather than quoting a cheaper ceiling than the run
-// would really be held to. hotfix is the sharpest case: it is off the axis and
-// ranks below every on-axis mode, so it never raises anything.
+// TestBudgetPreviewModeNeverLowers: an on-axis request may raise a mode and
+// never lower it (D6), so a --mode below the mode the repository resolves
+// changes nothing, and the preview says so rather than quoting a cheaper
+// ceiling than the run would really be held to.
+//
+// Hotfix is not one of these cases: the request takes it whole
+// (rigor.Mode.PerRun), so `--mode hotfix` is the mode the preview prices and
+// there is nothing to note (TestBudgetPreviewTakesHotfix).
 func TestBudgetPreviewModeNeverLowers(t *testing.T) {
 	const agent = "  max_budget_usd: 10\n"
-	for _, mode := range []rigor.Mode{rigor.POC, rigor.Hotfix} {
+	for _, mode := range []rigor.Mode{rigor.POC, rigor.Startup} {
 		t.Run(string(mode), func(t *testing.T) {
 			f := newBudgetFixture(t, "")
 			f.SetCaps(100, 50, 100, 50)
@@ -1568,6 +1571,34 @@ func TestBudgetPreviewModeNeverLowers(t *testing.T) {
 				t.Errorf("the ignored request is not said:\n%s", errOut)
 			}
 		})
+	}
+}
+
+// TestBudgetPreviewTakesHotfix: the preview prices the mode a run would really
+// be held to, and `--mode hotfix` is now that mode — the request takes it whole
+// (rigor.Mode.PerRun), with no opt-in (the owner's ruling of 2026-11-13,
+// docs/rigor-command/implementation-plan.md R7). So the figures are hotfix's
+// and the "has no effect" note is not printed: it would tell a caller their
+// request was ignored while the preview had just priced it.
+//
+// Mutation (put the old behaviour back — PerRun false for hotfix): the mode
+// line reads critical and the note appears, which is the pair this fails on.
+func TestBudgetPreviewTakesHotfix(t *testing.T) {
+	const agent = "  max_budget_usd: 10\n"
+	f := newBudgetFixture(t, "")
+	f.SetCaps(100, 50, 100, 50)
+	f.SetSpentToday(0)
+	f.Checkout(t, agent)
+	previewCheckoutRigor(t, agent, string(rigor.Critical))
+	out, errOut, err := execute(t, "budget", "preview", "--recipe", "standard", "--runs", "3", "--mode", "hotfix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "at most ") || !strings.Contains(out, "stages (mode hotfix, agent.first_line_rounds 1, agent.review_rounds 1)") {
+		t.Errorf("--mode hotfix did not price the mode it asked for:\n%s", out)
+	}
+	if strings.Contains(errOut, "has no effect") {
+		t.Errorf("the preview says the request had no effect, and it is the mode it priced:\n%s", errOut)
 	}
 }
 

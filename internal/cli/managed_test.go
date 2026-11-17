@@ -878,14 +878,16 @@ var propertyAgentSites = map[string]string{
 	// are the ones that reach it, an agent's session being refused by the
 	// installation step before that door runs at all.
 	"init_credentials.go readCredentialsBundle": "TestTheBundleIsNeverOpenedInAnAgentsSessionOrARunsProcess, TestTheRecordIsKeptUnderARunsProcessMarker and TestTheBackfillIsNotWrittenInAnAgentsSessionOrARunsProcess",
-	// The login unit's step (O9, Q2 and T7) refuses a marker itself rather
-	// than leaning on the loop's gate: it SKIPS with the marker's own
+	// The login unit's step (O9, Q2, T7 and D2700) refuses a marker itself
+	// rather than leaning on the loop's gate: it SKIPS with the marker's own
 	// sentence, because a unit is code that runs at every login and the drift
 	// a re-render would fix is what `doctor` reports until the person runs
 	// the command in their own terminal. Both doors share the read, and one
 	// test drives each: the setup door's skip, and the update door's — which
-	// leaves the installed unit exactly as it was.
-	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateUnitStepAsksNothingAndIsLeftForThePerson (the update door)",
+	// writes nothing under a marker (no re-render, and no install of the unit
+	// D2700 has this door write where there is none) and leaves the machine
+	// exactly as it was.
+	"init_orchestrator_stage.go unitStepRead": "TestSetupNeverInstallsUnderAnAgentMarker (the setup door) and TestUpdateInAgentSessionWritesNoUnit (the update door)",
 	// The compute stage refuses a marker itself rather than leaning on the
 	// loop's gate, and it refuses FIRST, before the root's tfvars are written
 	// and planned: the stage is registered noYes, so the loop's own agent arm

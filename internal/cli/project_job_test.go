@@ -65,7 +65,7 @@ type projectJobFixture struct {
 // serving github, and every repository of the fixture's owner admitted to it.
 // The profile lists no Claude account, so its job runs as no account and the
 // job's account segment is empty (config.ProjectJobAccounts).
-const projectJobPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+const projectJobPolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 
 // projectJobTimeout is the profile's task timeout: what a project job's
@@ -80,7 +80,7 @@ const projectJobTimeout = 6 * time.Hour
 // launch refuses it (cascadeLaunchRefusal, the owner's ruling of 2026-10-22).
 // The budget node's mode is the one that keeps the gateway on, because a
 // cascade run holds no model credential of its own (D143).
-const projectJobCascadePolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+const projectJobCascadePolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}},` +
 	`"routing":{"claude":{"via":"cascade"}},` +
 	`"budget":{"mode":"observe","allowed_models":["claude-sonnet-5-5"]}}`
@@ -743,7 +743,7 @@ const projectJobAccountConfig = "claude_accounts:\n" +
 // and the accounts block carries one exact list per account — the document that
 // says which repositories each token may be used by, derived at publish from
 // the local config above (projectpolicy.DeriveAccounts).
-const projectJobAccountsPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+const projectJobAccountsPolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"claude_accounts":["acme-personal","default"],"allow_repos":["github/acme/app"]}},` +
 	`"accounts":{"acme-personal":{"allow_repos":["github/acme/app"]},` +
@@ -1186,7 +1186,7 @@ const projectJobSentinelProfile = "profiles: { standard: { provider: github, cpu
 // be reachable — the credentials service intersects a repository's admission
 // with accounts.<name>.allow_repos (credsvc's admittedAccounts), so a sentinel
 // with no entry there is one no review call could ever be served by.
-const projectJobSentinelPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+const projectJobSentinelPolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.AnthropicKeyAccount + `"]}},` +
 	`"accounts":{"` + config.AnthropicKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
@@ -1199,7 +1199,7 @@ const projectJobSentinelPolicy = `{"version":5,"allow_repos":["github/acme/*"],`
 // whatever its checkout says (D2304). It is the state a project is in before
 // `fugaro update` writes its default profile (S5), and the one a launch has to
 // keep invisible.
-const projectJobLegacyPolicy = `{"version":5,"allow_repos":["github/acme/*"]}`
+const projectJobLegacyPolicy = `{"version":9,"allow_repos":["github/acme/*"]}`
 
 // newProjectJobSentinelFixture is the project that serves the key: the fixture's
 // standard profile rewritten to list the sentinel, that policy published, and
@@ -1750,7 +1750,7 @@ const projectJobProviderKeyProfile = "profiles: { standard: { provider: github, 
 // sentinel: the two values are two credentials, and a node that keyed one of
 // them by the other's name would admit a repository to a key its job is not
 // the one for.
-const projectJobProviderKeyPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+const projectJobProviderKeyPolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"allow_repos":["github/acme/app"],"claude_accounts":["` + config.ProviderKeyAccount + `"]}},` +
 	`"accounts":{"` + config.ProviderKeyAccount + `":{"allow_repos":["github/acme/app"]}}}`
@@ -1965,7 +1965,7 @@ func TestProviderKeyIsNotAClaudeAccount(t *testing.T) {
 // the claim, minted the budget token and reached Cloud Run on a job that does
 // not exist, and every run of the profile halted with cannotPlaceJob, which
 // blames a stale module version instead of the profile.
-const projectJobReservedTokenPolicy = `{"version":5,"allow_repos":["github/acme/*"],` +
+const projectJobReservedTokenPolicy = `{"version":9,"allow_repos":["github/acme/*"],` +
 	`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",` +
 	`"secrets":["claude-oauth-token"]}}}`
 
@@ -2112,7 +2112,7 @@ func TestLaunchRefusesARepositoryTheProfileDoesNotAdmit(t *testing.T) {
 	f := newProjectJobFixture(t)
 	// The project admits both of the fixture's repositories; the profile
 	// admits one of them.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":9,"allow_repos":["github/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h",`+
 		`"allow_repos":["github/acme/other"]}}}`)
 	projectJobCheckout(t)
@@ -2196,7 +2196,7 @@ func TestLaunchKeepsABitbucketProfileOnThePerRepositoryJob(t *testing.T) {
 	// github standard profile, and the Bitbucket one a Bitbucket workflow
 	// selects. The project admits the Bitbucket repository, and the Bitbucket
 	// profile admits it too — nothing below is about an admission.
-	publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
+	publishPolicy(t, f.launchBudgetFixture, `{"version":9,"allow_repos":["github/acme/*","bitbucket/acme/*"],`+
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},`+
 		`"standard-bitbucket":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`)
 	// The job a buggy launcher would compute, added to the fake so the failure
@@ -2424,10 +2424,10 @@ func admitSharedJobBaked(t *testing.T) {
 // provider, and the second provider's own default, named by the provider.
 const (
 	bitbucketProfile  = "standard-bitbucket"
-	githubFirstPolicy = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+	githubFirstPolicy = `{"version":9,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
 		`"profiles":{"standard":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
 		`"standard-bitbucket":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
-	bitbucketFirstPolicy = `{"version":5,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
+	bitbucketFirstPolicy = `{"version":9,"allow_repos":["github/acme/*","bitbucket/acme/*"],` +
 		`"profiles":{"standard":{"provider":"bitbucket","cpu":2,"memory":"4Gi","timeout_class":"6h"},` +
 		`"standard-github":{"provider":"github","cpu":2,"memory":"4Gi","timeout_class":"6h"}}}`
 )
@@ -2657,7 +2657,7 @@ func TestRunRepoWithoutItsCheckoutKeepsThePerRepositoryJob(t *testing.T) {
 		}},
 		{"a policy that defines no profiles", func(t *testing.T) *launchBudgetFixture {
 			f := newProjectJobFixture(t)
-			publishPolicy(t, f.launchBudgetFixture, `{"version":5,"allow_repos":["github/acme/*"]}`)
+			publishPolicy(t, f.launchBudgetFixture, `{"version":9,"allow_repos":["github/acme/*"]}`)
 			return f.launchBudgetFixture
 		}},
 	} {

@@ -2418,6 +2418,46 @@ func TestPushURLs(t *testing.T) {
 	}
 }
 
+// TestDisablePushLeavesTheFetchAndRefusesThePush is the guarantee DisablePush
+// exists for, at the level git decides it: a push in the checkout opens no
+// repository at all, and the read is untouched — the fetch URL is the remote's
+// own, so the checkout still fetches, which a blobless clone depends on for
+// every blob it left out. The runner reads the checkout's push URLs to answer
+// the same question about a checkout it holds to a repository
+// (checkBakedCheckoutOrigin), and that is why the push URL is a substitute and
+// not a removal: a remote with none answers with its fetch URL, which is
+// indistinguishable from a fetch URL that is a push target (PushURLs).
+func TestDisablePushLeavesTheFetchAndRefusesThePush(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.DisablePush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	origin, err := repo.OriginURL(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if origin != remote {
+		t.Errorf("origin is %q after DisablePush, want the fetch URL %q untouched: the checkout reads through it", origin, remote)
+	}
+	if got := mustPushURLs(t, repo, origin); !slices.Equal(got, []string{NoPushURL}) {
+		t.Errorf("a push goes to %q after DisablePush, want exactly [%s]", got, NoPushURL)
+	}
+	if err := repo.FetchBase(ctx, "main"); err != nil {
+		t.Errorf("fetching the base branch after DisablePush: %v", err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"more.txt": "more\n"})
+	if _, err := repo.CommitAll(ctx, "a commit nobody may push"); err != nil {
+		t.Fatal(err)
+	}
+	branch := RunBranchPrefix + "context-read-only"
+	if err := repo.Push(ctx, branch); err == nil {
+		t.Fatal("a push from a checkout whose push URL is disabled succeeded")
+	}
+	if refs := testutil.Git(t, remote, "for-each-ref", "--format=%(refname)"); strings.Contains(refs, branch) {
+		t.Errorf("the remote holds %s after a push from a checkout whose push URL is disabled:\n%s", branch, refs)
+	}
+}
+
 func mustPushURLs(t *testing.T, repo *Repo, origin string) []string {
 	t.Helper()
 	urls, err := repo.PushURLs(ctx, origin)

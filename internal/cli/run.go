@@ -436,8 +436,13 @@ func newRunCmd() *cobra.Command {
 			"A plan task already being worked on is a refusal: while a run of it is in\n" +
 			"flight, or a run of it left a pull request behind, the launch stops before\n" +
 			"anything is pushed or started and names what holds the task and the ways out\n" +
-			"(--pr, --retry, --continues). --allow-duplicate launches anyway, for a second\n" +
-			"attempt that is deliberate, such as the redundant attempts of one hard task.\n" +
+			"of what it found: --pr where a run of it left a pull request behind, and\n" +
+			"nothing but waiting (fugaro runs ls) where a run of it is still going.\n" +
+			"--retry and --continues are not among them: every run it could name has\n" +
+			"launched already, so a --retry of it would do nothing, and a --continues of\n" +
+			"it would start a second run of the task this refusal just stopped.\n" +
+			"--allow-duplicate launches anyway, for a second attempt that is deliberate,\n" +
+			"such as the redundant attempts of one hard task.\n" +
 			"The check reads the run records and never the code host, so a pull request a\n" +
 			"run left is still refused once it has been merged; a read that cannot be made\n" +
 			"is skipped with one warning, and the launch goes ahead: it never blocks on its\n" +
@@ -450,10 +455,13 @@ func newRunCmd() *cobra.Command {
 			"It may raise the mode the run resolves from its own configuration\n" +
 			"(rigor.default and rigor.areas in fugaro.yaml, the project layer's defaults)\n" +
 			"and never lower it, so a launch that asks for less cannot outvote a repository\n" +
-			"that asked for more. A follow-up (--pr) keeps the mode the PR's runs recorded\n" +
-			"and may only raise it: asking for less is refused, and so is hotfix, which\n" +
-			"only an operator's own run reaches. --path PATH declares a path this run will\n" +
-			"touch, repeatable, matched against those area rules before the run starts;\n" +
+			"that asked for more. hotfix is the one exception: it is off the rigor axis and\n" +
+			"ranks below every other mode, so it is taken whole rather than compared, needs\n" +
+			"no opt-in anywhere — a first run, a --pr follow-up and a launch from a coding\n" +
+			"agent's session alike — and no fence or refusal stands in that path. A\n" +
+			"follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it,\n" +
+			"and asking for less than that is refused. --path PATH declares a path this run\n" +
+			"will touch, repeatable, matched against those area rules before the run starts;\n" +
 			"without either flag a first run resolves from its configuration alone, and a\n" +
 			"follow-up from that and the mode it keeps. Both are\n" +
 			"recorded in the run's record and named in the pull request's status line.",
@@ -482,9 +490,9 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's ("+strings.Join(recipe.CatalogNames(), ", ")+"); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.StringVar(&o.token, "token", "", "named Claude account (claude_accounts in the local config) this run uses, for a workflow whose agent.auth is oauth; default: agent.oauth_token in fugaro.yaml, else the repository's default account; a follow-up (--pr) keeps its previous run's account unless this is given explicitly, which overrides it (checked the same way as a first run's)")
 	f.StringArrayVar(&o.attach, "attach", nil, "attach a file to the run: repeatable, uploaded to the run's own inputs/ and downloaded by a mode: artifact run into the checkout's inputs/ (needs a mode: artifact recipe; refused on a run ID that already has a task)")
-	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it, and takes no hotfix; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
+	f.StringVar(&o.rigor, "mode", "", "the rigor mode to ask for: "+rigor.ModeList()+"; it may raise the mode the run resolves from its configuration (rigor.default, rigor.areas, the project layer) and never lower it, except hotfix, which this run takes whole and which needs no opt-in anywhere — a first run, a follow-up and a launch from a coding agent's session alike; a follow-up (--pr) keeps the mode the PR's runs recorded and may only raise it; without it a first run resolves from those layers alone, and a follow-up from those and the mode it keeps")
 	f.StringArrayVar(&o.paths, "path", nil, "declare a path this run will touch, matched against the rigor.areas rules in effect (the repository's, and the project layer's beside them): repeatable; a run that declares none matches no area rule")
-	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list is recorded on the task and in the run's own identity, which is what the release that reads it fetches with — this release's runner does not clone a context repository yet. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
+	f.StringArrayVar(&o.contextRepos, "context", nil, "a repository this run reads and never writes, as owner/name: repeatable, at most "+fmt.Sprint(task.MaxContextRepos)+", each admitted by the project's allow_repos. The list goes into the task and into the run's own identity, and the run clones each one read-only, outside its working tree, as reference the prompt points it at: nothing in one is committed or pushed, and the read-only token a context repository is cloned with is the installation's credentials service's, which needs the GitHub App installed on it. Refused for a Bitbucket repository and where the installation's credentials service does not serve the repository")
 	f.StringVar(&o.tier, "tier", "", "the expectation tier to dispatch this run at: "+tier.List()+". It is what the run is expected to cost and take (governance.tiers in fugaro.yaml and the project layer), and never a cap: the run's own budget cap stays the ceiling. A --pr follow-up keeps the tier its PR's runs recorded; without this flag a run carries no expectation at all")
 	f.StringVar(&o.reviewLevelsPath, "review-levels", "", "read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone")
 	// Hidden: see the field's own note on the generated reference.
@@ -876,7 +884,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	// for a launch that starts a new task, since a --pr, --retry or --continues
 	// launch is a way out of its refusal rather than one that could meet it.
 	if o.retry == "" && !prSet && o.continues == "" {
-		if err := planTaskDuplicate(ctx, env, o, slug, spec.RunID, cmd.ErrOrStderr()); err != nil {
+		if err := planTaskDuplicate(ctx, env, o, slug, spec.Repo, spec.RunID, cmd.ErrOrStderr()); err != nil {
 			return err
 		}
 	}
@@ -2370,16 +2378,19 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := launchPolicyGates(ctx, env, slug, spec, kind, clone, shared, warn); err != nil {
 		return config.Inputs{}, err
 	}
-	// The list is recorded and not yet read: the token it is fetched with
-	// (plan task C5b) and the runner's own clone (C5c) are the releases that
-	// read it, and this launch writes it into the task and into the run's own
-	// identity for them. Said once, after the last gate that can refuse, so a
-	// launch that is not starting a run prints nothing about one — and said
-	// at all, because a flag that only records a list is a gap a person has
-	// to hear about, not one this command may leave them to discover.
+	// The list is recorded and read: this launch writes it into the task and
+	// into the run's own identity, the token the run fetches the repositories
+	// with is minted from that identity (plan task C5b), and the runner clones
+	// each of them read-only (C5c). Said once, after the last gate that can
+	// refuse, so a launch that is not starting a run prints nothing about one —
+	// and said at all, because the one thing the read needs that no gate here
+	// reads is GitHub-side state: the installation's App has to be installed on
+	// every repository named, since that installation is where the read-only
+	// token's repositories come from, and a person has to hear about it rather
+	// than discover it when a run ends.
 	if n := len(spec.ContextRepos); n > 0 {
-		fmt.Fprintf(warn, "warning: this launch records the read-only context repositories %s on %s's task and in its run identity, and this release's runner does not clone them yet: the run reads no file of them until the release that reads the list ships\n",
-			strings.Join(spec.ContextRepos, ", "), spec.Repo)
+		fmt.Fprintf(warn, "warning: this run reads the read-only context repositories %s with a read-only token the installation's credentials service mints for them, and that mint is scoped to what the installation's GitHub App covers: install the App on each of them, or the run has no read-only token for that one and ends at bootstrap\n",
+			strings.Join(spec.ContextRepos, ", "))
 	}
 	return caps, nil
 }
@@ -2777,14 +2788,16 @@ var changeSetExcludes = []struct{ name, why string }{
 	{"json", "the several runs a change set launches have no single document yet"},
 }
 
-// noteRigorRequest says, once per launch, when --mode asks for a mode the
-// layers already meet: the request may raise and never lower (D6), so such a
-// request is recorded as asked and changes nothing, and a launcher that typed
-// it — `--mode hotfix` above all, which ranks below every on-axis mode —
-// would otherwise believe it took effect. It reads the checkout's fugaro.yaml
-// with the project layer, the closest thing to the base branch the launcher
-// has; without a checkout of repo it cannot tell, and says nothing. Never an
-// error: the runner, reading the base branch, is the one that decides.
+// noteRigorRequest says, once per launch, when --mode asks for an on-axis mode
+// the layers already meet: the request may raise and never lower (D6), so such
+// a request is recorded as asked and changes nothing, and a launcher that typed
+// it would otherwise believe it took effect. Hotfix is not one of those cases:
+// it is the mode a request takes whole (rigor.Mode.PerRun), so a resolution
+// that names the request as the layer that decided it — which is what this
+// reads — is the request that did take effect. It reads the checkout's
+// fugaro.yaml with the project layer, the closest thing to the base branch the
+// launcher has; without a checkout of repo it cannot tell, and says nothing.
+// Never an error: the runner, reading the base branch, is the one that decides.
 func noteRigorRequest(ctx context.Context, o *runOptions, repo string, warn io.Writer) {
 	if o.rigor == "" {
 		return
@@ -3038,7 +3051,7 @@ func runAttempts(cmd *cobra.Command, env *cloudEnv, o *runOptions, text string, 
 	// that is already being worked on is exactly the second run the guard
 	// refuses, and it costs the batch's own run ids nothing -- none of them
 	// exists yet, so the read has no run of this launch's to leave out.
-	if err := planTaskDuplicate(ctx, env, o, plan.slug, "", warn); err != nil {
+	if err := planTaskDuplicate(ctx, env, o, plan.slug, plan.repo, "", warn); err != nil {
 		return err
 	}
 	noteRigorRequest(ctx, o, plan.repo, warn)
@@ -3205,7 +3218,7 @@ func runChangeSet(ctx context.Context, cmd *cobra.Command, env *cloudEnv, o *run
 	// read which lets each member's own launch skip the check (skipBudget).
 	for i := range plans {
 		o.repo = plans[i].repo
-		if err := planTaskDuplicate(ctx, env, o, slugs[i], specs[i].RunID, warn); err != nil {
+		if err := planTaskDuplicate(ctx, env, o, slugs[i], plans[i].repo, specs[i].RunID, warn); err != nil {
 			return err
 		}
 		noteRigorRequest(ctx, o, plans[i].repo, warn)

@@ -682,7 +682,18 @@
     },
     "orchestrator": {
       ".read": "(auth != null && auth.token.mu != null && auth.token.mu == auth.uid && root.child('config/admin/devices').child(auth.uid).exists())",
-      ".write": false
+      ".write": false,
+      "$id": {
+        "state": {
+          "work_items": {
+            "$item": {
+              "escalation": {
+                ".read": "(auth != null && auth.token.rj != null && auth.token.rj == root.child('fugaro/project').val())"
+              }
+            }
+          }
+        }
+      }
     },
     "workspaces": {
       ".read": false,

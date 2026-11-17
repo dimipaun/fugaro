@@ -72,7 +72,7 @@
       "then": { "not": { "required": ["outputs"] } }
     },
     {
-      "$comment": "A plan or render step is mode: artifact's own shape too: recipe.Parse refuses either in the other two modes with '<kind> is only for mode: artifact' (order), whatever the mode key's value. The steps oneOf above has to list artifactSteps as one alternative for an artifact recipe to have any shape at all, and without this branch that alternative admits [render] under mode: implement — which Go refuses (testdata/recipe/invalid/render-implement.yaml, and its mirror in this schema's own corpus test).",
+      "$comment": "A plan, render or diagnose step is mode: artifact's own shape too: recipe.Parse refuses any of them in the other two modes with '<kind> is only for mode: artifact' (order), whatever the mode key's value. The steps oneOf above has to list artifactSteps as one alternative for an artifact recipe to have any shape at all, and without this branch that alternative admits [render] (or [diagnose]) under mode: implement — which Go refuses (testdata/recipe/invalid/render-implement.yaml, and its mirror in this schema's own corpus test).",
       "if": { "not": { "properties": { "mode": { "const": "artifact" } }, "required": ["mode"] } },
       "then": { "properties": { "steps": { "not": { "$ref": "#/$defs/artifactSteps" } } } }
     },
@@ -108,13 +108,20 @@
     "artifactSteps": {
       "oneOf": [
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/render" }], "items": false, "minItems": 1 },
-        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/plan" }, { "$ref": "#/$defs/render" }], "items": false, "minItems": 2 }
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/plan" }, { "$ref": "#/$defs/render" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/diagnose" }], "items": false, "minItems": 1 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/plan" }, { "$ref": "#/$defs/diagnose" }], "items": false, "minItems": 2 }
       ],
-      "description": "A mode: artifact recipe's steps: one render, optionally led by one plan (recipe.Parse's orderArtifact)."
+      "description": "A mode: artifact recipe's steps: one render or one diagnose, optionally led by one plan (recipe.Parse's orderArtifact). A diagnose step delivers the two files the recipe's outputs block names, so it stands where a render stands and never beside one."
     },
     "plan": {
       "type": "object", "additionalProperties": false, "required": ["plan"],
       "properties": { "plan": { "type": ["object", "null"], "additionalProperties": false } }
+    },
+    "diagnose": {
+      "type": "object", "additionalProperties": false, "required": ["diagnose"],
+      "properties": { "diagnose": { "type": ["object", "null"], "additionalProperties": false } },
+      "description": "The cloud tier of `fugaro troubleshoot`'s own step (recipe.StepDiagnose, docs/troubleshoot-cloud D2402): one model stage reads the evidence a launcher left under the run's own prefix and writes the two files the recipe's outputs block names — out/diagnosis.md and out/diagnosis.json in the catalog's troubleshoot. It takes no options, like digest and render, and recipe.Parse refuses it anywhere but alone or after one plan in a mode: artifact recipe, at most once. The stage's own bounds are the recipe's (recipe.TroubleshootMaxTurns, recipe.TroubleshootReviewerMaxOutput)."
     },
     "render": {
       "type": "object", "additionalProperties": false, "required": ["render"],

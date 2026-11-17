@@ -83,7 +83,7 @@ import (
 // gives it. It is a constant because it is one sentence spoken at two doors: the
 // wizard's rigor question refuses the same value with it (setup.go's
 // setupRigorMode), and a second spelling is a second refusal.
-const rigorHotfixRefusal = "hotfix is not a mode a layer sets: it is an operator's own per-run mode, reached with `fugaro run --mode hotfix`, and no layer may set it as a default or as an area rule; nothing was written"
+const rigorHotfixRefusal = "hotfix is not a mode a layer sets: it is a per-run mode, reached with `fugaro run --mode hotfix`, and no layer may set it as a default or as an area rule; nothing was written"
 
 // rigorOptions are `fugaro rigor set`'s flags. It takes no --layer (D830: the
 // path is derived and there is nothing to choose) and no --dry-run (the
@@ -119,8 +119,10 @@ the strictest of the rules that match it. The file is the one ` + "`fugaro updat
 publishes, and every write ends with ` + "`next: fugaro update`" + `.
 
 A mode is ` + "`poc`, `startup`, `pro`, `critical`" + ` or ` + "`hotfix`" + `, and ` + "`hotfix`" + ` is the one
-no layer sets: it is an operator's per-run mode, reached with
-` + "`fugaro run --mode hotfix`" + `. A mode below what the project resolves to today is
+no layer sets: it is a per-run mode, reached with
+` + "`fugaro run --mode hotfix`" + ` from wherever a run is launched — a coding
+agent's session included (the owner's ruling of 2026-11-16). A mode below what the
+project resolves to today is
 the sensitive direction, so a coding agent's session is refused it with the
 command to run at your own terminal, and your own terminal writes it and asks
 nothing.`,
@@ -198,10 +200,13 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 	if !rigor.Known(mode) {
 		return userErr("%q is not a rigor mode: use %s; nothing was written", name, rigor.ModeList())
 	}
-	// §3 step 2 (D834): hotfix is off the axis and is an operator's own run
-	// mode (D12), so no layer sets it — as a default or as a rule — and the
-	// refusal names the one door that reaches it. It never offers a flag that
-	// would write it, because no layer write of it is what this refusal is.
+	// §3 step 2 (D834): hotfix is off the axis and is a per-run mode (D12),
+	// so no layer sets it — as a default or as a rule — and the refusal names
+	// the one door that reaches it, a run's own launch. It never offers a flag
+	// that would write it, because no layer write of it is what this refusal
+	// is. That door needs no opt-in and no session fence: the owner's ruling
+	// of 2026-11-16 says the D832/SD9 fence is about this write and not about
+	// a run's own request.
 	if mode == rigor.Hotfix {
 		return userErr(rigorHotfixRefusal)
 	}

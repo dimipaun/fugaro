@@ -594,6 +594,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// version drift so the person is told to update rather than handed a second
 	// command. It reads this machine's own file and reaches nothing.
 	o.Checks = append(o.Checks, doctorOrchestratorUnit())
+	// The resident orchestrator's own identity (P5.1b): the account exists only
+	// for an installation that opted into one, and when it does, this is the
+	// only place what it actually holds is read back against the design's
+	// section 4.3 table. Read-only, and it prints rather than asks.
+	o.Checks = append(o.Checks, doctorOrchestratorIdentity(ctx, lc, crmSvc)...)
 
 	// The installation's project-wide secret containers, listed once for
 	// doctor's three project-secret checks: the two per-repository ones

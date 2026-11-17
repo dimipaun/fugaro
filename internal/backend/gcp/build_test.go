@@ -37,7 +37,7 @@ func buildSpec(t *testing.T) BuildSpec {
 		Base: "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc", Image: ImageName(repoRegistry(slug), slug, "web"),
 		GitSecretID: SecretID(slug, "bitbucket-token"), GitUser: "x-token-auth",
 		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8",
-		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
+		WorkflowSecrets: []BuildSecret{{Name: "npm-token", Env: "NPM_TOKEN", ID: SecretID(slug, "npm-token")}},
 		Bucket:          "gs://fugaro-runs-proj-1234",
 	}
 }
@@ -100,13 +100,16 @@ func TestBuildRequest(t *testing.T) {
 		"IMAGE", "REPO_URL", "BASE_BRANCH", "SECRET_ENVS", "FUGARO_BASE", "DOCKER_BUILDKIT", "DOCKER_HOST", "BUILDKIT_PROGRESS",
 		"PATH", "HOME", "TMPDIR", "IFS", "BASH_ENV", "LC_ALL"} {
 		s := spec
-		s.WorkflowSecrets = []config.Secret{{Name: "x", Env: env}}
+		s.WorkflowSecrets = []BuildSecret{{Name: "x", Env: env, ID: spec.WorkflowSecrets[0].ID}}
 		if _, err := BuildRequest("proj-1234", s); !errors.Is(err, ErrBadBuildSpec) {
 			t.Errorf("the secret env name %q was accepted (%v)", env, err)
 		}
 	}
 	dup := spec
-	dup.WorkflowSecrets = []config.Secret{{Name: "a", Env: "X_TOKEN"}, {Name: "b", Env: "X_TOKEN"}}
+	dup.WorkflowSecrets = []BuildSecret{
+		{Name: "a", Env: "X_TOKEN", ID: spec.WorkflowSecrets[0].ID},
+		{Name: "b", Env: "X_TOKEN", ID: spec.WorkflowSecrets[0].ID},
+	}
 	if _, err := BuildRequest("proj-1234", dup); !errors.Is(err, ErrBadBuildSpec) {
 		t.Errorf("a repeated secret env name was accepted (%v)", err)
 	}
@@ -124,6 +127,11 @@ func TestBuildRequest(t *testing.T) {
 		func(s *BuildSpec) { s.GitProvider = "gitlab" },
 		func(s *BuildSpec) { s.GitUser = "" },
 		func(s *BuildSpec) { s.GitSecretID = "" },
+		// A secret with no container would put an empty ID in the available
+		// secret's version name, which is a request Cloud Build answers with
+		// nothing a reader can act on: the caller drops such an entry
+		// (internal/cli's buildSecrets), and one that reaches here is refused.
+		func(s *BuildSpec) { s.WorkflowSecrets = []BuildSecret{{Name: "npm-token", Env: "NPM_TOKEN"}} },
 		func(s *BuildSpec) { s.ServiceAccount = "" },
 		func(s *BuildSpec) { s.Image = "" },
 		func(s *BuildSpec) { s.Base = "" },

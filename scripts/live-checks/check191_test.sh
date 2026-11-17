@@ -1990,26 +1990,26 @@ test_a_review_runs_refusal_under_another_class_is_a_failure() {
   expect_contains "$out" "FACT refusal-other-repository: PASS" "the wrong class: the working run's own rows still hold"
 }
 
-# The state a review run whose agent made no attempt leaves: an empty reading,
-# recorded as NOT MEASURED rather than failed, because a FAIL here would name a
-# hole in an installation that is correct. It is not a claim about the code —
-# the way from inside a run to the service is the runner's own loopback
-# forwarder, which attaches the run's identity to whatever arrives and drops the
-# caller's Authorization (internal/gateway's gitforward), so an agent in that
-# container which finds the port DOES reach it. What nothing does is point a
-# review run at it: the runner gives its agent no git credential and no
-# forwarder rewrite (internal/runner's refreshGitAuth) and a mode: review recipe
-# allows exactly one review step and no repository command (internal/recipe).
+# The state a review run leaves when the service's lines hold no class and no
+# served call for it: an empty reading, recorded as NOT MEASURED rather than
+# failed, because a FAIL here would name a hole in an installation that is
+# correct. The reason is the design fact:
+# a review-mode run has no route to the service: the runner gives its agent no
+# git credential and no forwarder rewrite (internal/runner's refreshGitAuth) and
+# a mode: review recipe allows exactly one review step and no repository command
+# (internal/recipe), and the owner decided to leave it that way.
 test_a_review_run_that_reached_the_service_for_nothing_is_unmeasured() {
   local dir=$work/reviewnone
   prepare "$dir"
   run_check "$dir" "$script" FAKE_GCLOUD_MODE=no-review-refusal
   expect_status "$status" 2 "a review run whose push left no line"
   expect_contains "$out" "FACT review-run: FAIL" "a review run whose push left no line: the row is reported, never a PASS nobody took"
-  expect_contains "$out" "no attempt that reached the service" \
+  expect_contains "$out" "no class for it at all" \
     "a review run whose push left no line: what is missing is named"
-  expect_contains "$out" "loopback forwarder" \
-    "a review run whose push left no line: the row says a review run does have a way to the service"
+  expect_contains "$out" "has no route to the credentials service" \
+    "a review run whose push left no line: the row names the design fact"
+  expect_contains "$out" "NOT MEASURED, not a failure" \
+    "a review run whose push left no line: the row says it is not a failure"
   expect_contains "$out" "FACT ended-identity: PASS" "a review run whose push left no line: the rows after it were still measured"
 }
 
@@ -2037,7 +2037,7 @@ test_a_review_run_that_says_its_push_was_served_with_no_service_line_is_unmeasur
   run_check "$dir" "$script" FAKE_FUGARO_MODE=review-served FAKE_GCLOUD_MODE=review-no-served-line
   expect_status "$status" 2 "a served sentence with no service line behind it"
   expect_contains "$out" "FACT review-run: FAIL" "a served sentence with no line behind it: the row is reported"
-  expect_contains "$out" "no service line behind it" \
+  expect_contains "$out" "neither a class nor a served call" \
     "a served sentence with no line behind it: the row says what is missing"
 }
 
@@ -2048,6 +2048,7 @@ test_a_review_run_that_made_no_attempt_is_unmeasured() {
   expect_status "$status" 2 "a review run that reported no attempt"
   expect_contains "$out" "FACT review-run: FAIL" "a review run that reported no attempt: the row is reported"
   expect_contains "$out" "no line for the push attempt" "a review run that reported no attempt: the row says what it read"
+  expect_contains "$out" "has no route to the credentials service" "a review run that reported no attempt: the row names the design fact"
 }
 
 test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure() {
@@ -2057,7 +2058,7 @@ test_a_review_run_whose_line_is_not_the_one_asked_for_is_a_failure() {
   # proxy either way, and taking it for one — reading refused=maybe as the round
   # below reads refused=no — would call a garbled report a hole in the
   # installation.
-  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-garbled
+  run_check "$dir" "$script" FAKE_FUGARO_MODE=review-garbled FAKE_GCLOUD_MODE=review-read-only
   expect_status "$status" 1 "a review run whose line is not the one asked for"
   expect_contains "$out" "FACT review-run: FAIL" "a garbled line: the row is reported"
   expect_contains "$out" "refused=maybe" "a garbled line: the row carries what it read"
