@@ -461,10 +461,41 @@ the proxy (S1) is 0.14.0.
   build (`internal/cli/init_credentials.go` `resolveCredentialsImage`), so Check 191 runs only on a
   released 0.14.0, and the flip and Check 192 move to the next release. D490's "the proxy in 0.14.0" holds for
   the inert proxy; confirm that the flip follows in the next release.
-- **O8 (review round 3, left open after the last round).** The flip has no readiness gate that the
-  bundle holds a Bitbucket token (only the owner can read the bundle): the operator notes order it
-  first and doctor warns. Whether `fugaro update --repo` should require an explicit confirmation
-  before dropping the mount is the owner's call.
+- **O8 (review round 3, ruled by the owner on 2026-11-15).** The flip has no readiness gate that the
+  bundle holds a Bitbucket token (only the owner can read the bundle): the operator notes ordered it
+  first and doctor warned. Whether `fugaro update --repo` should require an explicit confirmation
+  before dropping the mount is the owner's call. **RULED 2026-11-15, and the hold released on
+  2026-11-16: neither an operator step nor a confirmation — `fugaro update` itself refuses the drop
+  until the bundle holds the token.** The refusal names the one command that stores it
+  (`fugaro creds set bitbucket-token`, the same command doctor's `--check-bitbucket-token` names),
+  and the "creds set before the re-apply" step of the operator draft **stays removed**: the HARD RULE
+  is that `fugaro update` is the whole upgrade, so a person handed a second command to type before
+  the re-apply has been given the step the rule forbids. It is built with the flip in **0.26.0**
+  (`docs/releases/v0.26.0.md`): `internal/cli/update_proxied.go`'s `refuseTheProxiedDrop`, called by
+  the repository door once the spec exists and before the apply's first cloud call, judged on the
+  plan's own condition (`infra.RepoSpec.DropsBitbucketToken` — the installation opted in, the
+  published node admits this repository with `proxy: true`, and `config.ProxiedGitSecretNames` names
+  the token) and on the run's ONE reading of the bundle (`credentialsBundleReady`'s third answer,
+  `credsBitbucket`), so exactly the applies that would take the mount away are judged and never a
+  second reading of the secret. It refuses where that reading says the bundle holds nothing, and on
+  a read that FAILED: the record the switch is judged by is left as the last reading wrote it
+  (`recordCredentialsServiceReady`), so the drop is still planned and an apply would make it on the
+  word of a read that did not happen. Where the session itself may not open the bundle — a coding
+  agent's session, a Fugaro run's own process, both of which `credsOwnerOnly` keeps out of it, and
+  the only two no-readings the run goes on under — it warns what the drop costs and goes on instead,
+  because refusing there would stop an ordinary update over a question that session may not answer,
+  and the drop is one a person puts back by storing the token and applying the root again
+  (`credsUnreadMarker` is what tells the two kinds of no-reading apart).
+  `--plan-only` is exempt, like the other refusals that stop a change rather than report a
+  contradiction (refuseClonesNotShipped, Readiness's D11 gate). Pinned by
+  `internal/cli/update_proxied_test.go`'s `TestUpdateRefusesTheProxiedDropWithoutTheToken` (the
+  refusal, its one command and no apply), `TestUpdateRefusesTheDropWhenTheBundleWasNotRead` (a read
+  that failed with the record on: refused, and nothing applied), `TestUpdateAppliesTheProxiedDropWithTheToken`,
+  `TestUpdateAppliesWhereNothingIsDropped` (the two halves of the condition) and
+  `TestUpdateRepoPlanOnlyDoesNotRefuseTheDrop`, and by `internal/infra/spec_test.go`'s
+  `TestDropsBitbucketTokenIsTheDropThePlanMakes`, which holds the predicate to the drop Readiness
+  makes on the same fixtures. **Check 191 has not been run**: the gate is judged against the plan and
+  the bundle alone, and no live step has read a proxied run.
 
 ## 8. Numbers this work holds
 

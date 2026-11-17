@@ -99,6 +99,7 @@ type projectReposOptions struct {
 
 func newProjectReposLsCmd() *cobra.Command {
 	var o projectReposOptions
+	var asJSON bool
 	// The Short names the list this command prints, never "running now": that
 	// is `project show`'s list — the run registry's runs in flight — while
 	// what is printed here is the durable seen, the runs bucket's
@@ -107,11 +108,20 @@ func newProjectReposLsCmd() *cobra.Command {
 	// command away rather than in that output") and the sibling add/rm
 	// commands point at it.
 	cmd := &cobra.Command{
-		Use:   "ls",
+		Use:   "ls [--json]",
 		Short: "List the allow-list and the repositories that have run here",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runProjectReposLs(cmd, &o) },
+		Long: "One row per repository — the ones this machine's config holds and the\n" +
+			"concrete names the published allow-list admits — with the image its job runs,\n" +
+			"its workflows, its Claude accounts, whether the allow-list admits it and\n" +
+			"whether this machine's config holds it; then the published allow_repos with\n" +
+			"the source of each entry; then the repositories that have run here, which is\n" +
+			"a reading of what has run and never of what is enrolled.\n\n" +
+			"Nothing is written, and `add`/`rm` are the only commands that enroll.\n" +
+			"--json prints the same answer as one versioned document.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runProjectReposLs(cmd, &o, asJSON) },
 	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -187,75 +197,6 @@ func newProjectReposRmCmd() *cobra.Command {
 	}
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
-}
-
-func runProjectReposLs(cmd *cobra.Command, o *projectReposOptions) error {
-	ctx := cmd.Context()
-	lc, db, err := openBudget(ctx, o.cloud)
-	if err != nil {
-		return err
-	}
-	out := cmd.OutOrStdout()
-	// The seen set is read before the node is printed: it is the half of this
-	// command that can fail on the way to the data (the bucket's marker, the
-	// Firestore mark), and a listing that printed half of itself before
-	// refusing would read as one that had finished.
-	seen, notes, err := seenRepos(ctx, lc, budgetNow())
-	if err != nil {
-		return err
-	}
-	p, found, err := projectpolicy.Read(ctx, db)
-	if err != nil {
-		return policyReadErr(err)
-	}
-	if !found {
-		return userErr("no policy is published for project %s (%s): enroll repositories by publishing one ('fugaro project policy publish'), which seeds the allow-list from this machine's config", lc.Name, projectpolicy.PathShared())
-	}
-	if err := refuseUnknownPolicyKeys(p); err != nil {
-		return err
-	}
-	sources, err := allowSources(ctx, lc)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "allow_repos (%s):\n", projectpolicy.PathShared())
-	if len(p.AllowRepos) == 0 {
-		fmt.Fprintln(out, "  (empty: a published policy with an empty allow-list admits no repository at all)")
-	}
-	for _, r := range p.AllowRepos {
-		fmt.Fprintf(out, "  %s%s\n", r, sourceSuffix(sources[r]))
-	}
-	fmt.Fprintln(out, seenHeader)
-	for _, n := range notes {
-		fmt.Fprintf(out, "  note: %s\n", n)
-	}
-	if len(seen) == 0 {
-		fmt.Fprintln(out, "  (none: no run of any repository has been recorded here)")
-	}
-	// The listing is bounded twice, and both bounds are needed. One entry is
-	// printableName (bounded to one inert line, and distinct from every other
-	// name, so the entry the allow-list refuses cannot print as the one it
-	// admits): every value on this list was written by a run, not by this
-	// program — a runs/<slug>/ prefix is a directory name in the runs bucket
-	// and spendDaily's slug is a field of a document the rollup writes, and
-	// neither path checks the shape of the name. Raw, an escape sequence in
-	// one rewrites the operator's screen, a newline adds a line that reads as
-	// another entry, and a long one pushes the note off the column. And the
-	// count is bounded (safetext.FieldListMax) because the list is as long as
-	// whoever wrote those names made it: a listing that grew with its input
-	// would push this command's own words — the header, the sources, the way
-	// to enroll — off the screen. What is left out is counted in this
-	// program's own words (safetext.FieldListNote), so a listing that stopped
-	// at twenty does not read as a list of twenty. The admission question
-	// above is asked of the name itself; only what is printed is bounded.
-	for i, r := range seen {
-		if i == safetext.FieldListMax {
-			fmt.Fprintf(out, "  (%s)\n", safetext.FieldListNote(len(seen)-i))
-			break
-		}
-		fmt.Fprintf(out, "  %s%s\n", printableName(r.Name), seenNote(r, projectpolicy.AdmitRepo(p.AllowRepos, r.Name)))
-	}
-	return nil
 }
 
 // seenHeader introduces the seen half of `project repos ls`. It names both

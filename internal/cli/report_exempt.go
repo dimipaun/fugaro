@@ -175,7 +175,7 @@ var exemptListings = map[string]exemptListing{
 	"project profile ls":   {"a listing: the project's run profiles, as a table or a document", true},
 	"project profile show": {"a listing: one run profile, or every one, as a table or a document", true},
 	"project routing show": {"a listing: the project's routing posture, as a table or a document", true},
-	"project repos ls":     {"a listing: the allow-list and the repositories that have run here, printed whole", false},
+	"project repos ls":     {"a listing: one row per repository, the allow-list and what has run here, table or document", true},
 	"project repos status": {"a listing: one repository's enrolment as the nine rows of checks, table or document, and never a secret's value", true},
 	"project show":         {"a listing: the effective project: caps, policy, allow-list and runs in flight", true},
 	"recipes ls":           {"a listing: the recipes of this checkout, the project and the catalog, and the winner", true},

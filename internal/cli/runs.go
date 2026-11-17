@@ -500,13 +500,15 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 // error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
-// It reads every run's objects first, keeps the runs f.pr selects -- and the
-// review run going on that pull request, which the fold needs and the listing
-// does not print -- and only then asks the backend about executions, so a PR's
-// listing costs no backend call for the runs off it. What --pr and --debt leave
-// out is dropped after the fold and never before it: a state is the pull
-// request's, read from every run of it the listing read, so the rows they print
-// carry the state their pull request has and not the state of the selection.
+// It reads every run's objects first -- but the two f.pr cannot need, for a
+// run whose own task names another pull request (taskOnOtherPR) -- keeps the
+// runs f.pr selects, and the review run going on that pull request, which the
+// fold needs and the listing does not print, and only then asks the backend
+// about executions, so a PR's listing costs no backend call for the runs off
+// it. What --pr and --debt leave out is dropped after the fold and never
+// before it: a state is the pull request's, read from every run of it the
+// listing read, so the rows they print carry the state their pull request has
+// and not the state of the selection.
 func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]runview.Row, error) {
 	warn := f.warn
 	if warn == nil {
@@ -540,7 +542,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	runs := make([]runObjects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
-		runs[i], errs[i] = readRunVia(ctx, env, readers[refs[i]], refs[i].slug, refs[i].id)
+		runs[i], errs[i] = readRunVia(ctx, env, readers[refs[i]], refs[i].slug, refs[i].id, f.pr)
 	})
 	if err := errors.Join(errs...); err != nil {
 		return nil, remote(err)
@@ -749,6 +751,24 @@ func (r runObjects) mayBeOnPR() bool {
 	return r.unreadRecord && (r.in.Task == nil || r.in.Task.PR == 0)
 }
 
+// taskOnOtherPR reports whether a run's task alone places it on a pull request
+// other than pr: pr is the one a --pr listing asked for, and the task names a
+// different one.
+//
+// Nothing else about the run can move it back onto pr. task.Validate writes a
+// spec's pr, branch and previous_run together and refuses them beside
+// review_prs, so a task that names a pull request is a follow-up; and a
+// follow-up's record names the pull request its own task does and never
+// another, because the runner records that number from the task, and only once
+// the pull request answered with the task's own branch
+// (internal/runner/followup.go's checkPullRequest). A run on some other pull
+// request is therefore one --pr leaves out whichever way it is read, and one
+// no warning of its can reach a --pr listing either (mayBeOnPR is false for a
+// task that names a pull request).
+func taskOnOtherPR(t *task.Spec, pr int) bool {
+	return pr != 0 && t != nil && t.PR != 0 && t.PR != pr
+}
+
 // runObjects is what the bucket holds about one run, before its
 // execution is joined.
 type runObjects struct {
@@ -768,14 +788,19 @@ type runObjects struct {
 // call. Every object comes from the bucket: a caller that wants the run
 // cache passes its own reader to readRunVia.
 func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, error) {
-	return readRunVia(ctx, env, runcache.Reader{}, slug, id)
+	return readRunVia(ctx, env, runcache.Reader{}, slug, id, 0)
 }
 
 // readRunVia is readRun through rd, which may answer an object from the
 // local run cache. rd's index decides absence as well as content, so a
 // reader built from a listing reads nothing for a run whose objects the
 // listing did not see.
-func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id string) (runObjects, error) {
+//
+// pr is the pull request a --pr listing asked for, 0 for a listing that asked
+// for none: a run whose task names a different pull request is left there, its
+// launch.json and result.json unread, because neither can place it on the pull
+// request the caller is listing (taskOnOtherPR).
+func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id string, pr int) (runObjects, error) {
 	s := runstore.Open(env.bucket.Bucket, slug, id)
 	r := runObjects{in: runview.Input{Slug: slug, RunID: id}, store: s}
 	in := &r.in
@@ -793,6 +818,9 @@ func readRunVia(ctx context.Context, env *cloudEnv, rd runcache.Reader, slug, id
 		return r, err
 	case raw != nil:
 		in.Task, _ = task.Parse(raw) // unparseable: the row says task.json unreadable
+	}
+	if taskOnOtherPR(in.Task, pr) {
+		return r, nil
 	}
 	// A corrupt object is this run's error row, with a warning; a read that
 	// fails otherwise (the bucket, the network) still fails the listing.
