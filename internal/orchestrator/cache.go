@@ -30,7 +30,18 @@ import (
 // current one rather than reading a shape that moved. It is deliberately its
 // own number: the state's schema_version answers a different question, and the
 // cache outlives the node it was generated from.
-const BriefCacheVersion = 1
+//
+// It moved to 2 with the brief's own content (S5): the generator now renders
+// the ready-by range of every node beside the state node when a caller hands it
+// them, so a brief is no longer a function of the state node alone and a file
+// written by the release behind is not one this generator wrote. The daemon's
+// writer hands it the state node and nothing else for now — reading every node
+// of a project is the tick's own work (X4) — so what this writer caches today is
+// that node's brief; the reader's constant (internal/cli's
+// orchestratorBriefCacheVersion) moves with this one, because the two are one
+// contract and a reader that moved alone would refuse every cache a daemon of
+// the release behind still writes.
+const BriefCacheVersion = 2
 
 // BriefCache is the file's shape on the wire. The reader (internal/cli's
 // orchestratorBriefCache) decodes exactly these three fields with unknown

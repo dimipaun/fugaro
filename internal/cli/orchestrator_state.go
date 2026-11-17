@@ -2,9 +2,11 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"runtime"
 	"strings"
@@ -12,14 +14,25 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/estimate"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // orchestratorBriefCacheVersion is the version of the cached brief's own
 // format, written beside the document it carries so that a reader tells an
 // older file from a current one rather than reading a shape that moved.
-const orchestratorBriefCacheVersion = 1
+//
+// It moved to 2 with the brief's own content (S5): the generated brief now
+// carries the ready-by range of every node beside the state node, so the number
+// answers which release's generator wrote a file. It moves with the writer's
+// constant (internal/orchestrator.BriefCacheVersion), because the two are one
+// contract: a reader that moved alone would refuse every cache a daemon of the
+// release behind still writes.
+const orchestratorBriefCacheVersion = 2
 
 // orchestratorStateOptions are `fugaro orchestrator state`'s flags.
 type orchestratorStateOptions struct {
@@ -86,7 +99,7 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 		}
 		return printCachedOrchestratorBrief(cmd, o, id)
 	}
-	lc, node, _, err := openOrchestrator(ctx, o.cloudOptions)
+	lc, node, db, err := openOrchestrator(ctx, o.cloudOptions)
 	if err != nil {
 		return err
 	}
@@ -94,12 +107,16 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 	if err != nil {
 		return dbErr(lc, err, false)
 	}
-	brief := orchestrator.Summarize(s)
+	brief, err := orchestratorBrief(ctx, lc, db, s)
+	if err != nil {
+		return err
+	}
+	text := brief.String()
 	w := cmd.OutOrStdout()
 	if o.json {
 		return writeJSON(w, orchestratorStateDoc{
 			Version: orchestratorOutputVersion, Kind: "state", ID: lc.Name, Source: "node",
-			Rev: &s.Rev, SchemaVersion: s.SchemaVersion, Brief: brief,
+			Rev: &s.Rev, SchemaVersion: s.SchemaVersion, Brief: text,
 		})
 	}
 	// The revision is what a patch is built from, so a reader who is about to
@@ -108,8 +125,101 @@ func runOrchestratorState(cmd *cobra.Command, o *orchestratorStateOptions) error
 	if !o.brief {
 		fmt.Fprintf(w, "orchestrator %s: rev %d, schema_version %d\n", safetext.Field(lc.Name), s.Rev, s.SchemaVersion)
 	}
-	fmt.Fprint(w, brief)
+	fmt.Fprint(w, text)
 	return nil
+}
+
+// orchestratorBrief is what `state --brief` prints: the state node, the nodes
+// beside it and the history its estimates are drawn from.
+//
+// The two inputs the command supplies rather than reads are the estimate's own:
+// how many tasks are assumed to run at once is the person's `max_parallel`,
+// which is what a daemon whose `orchestrator.max_running` was never set plans
+// under (A6, D2722), and the mode is the default one a run resolves to when no
+// layer and no request sets another (D19). The brief is a print and not a run, so
+// it has no `--rigor` of its own to be told otherwise.
+//
+// The table is the file the estimate's history is cached in, never the runs
+// bucket (D1243): the brief is a print a session makes before it does anything,
+// so the whole of it is a read of the database's orchestrator subtree and two
+// local files, and a machine that has no cache yet estimates from the seeds.
+func orchestratorBrief(ctx context.Context, lc *localcfg.Config, db *rtdb.Client, s orchestrator.State) (orchestrator.Brief, error) {
+	// Load refused a document another id or role wrote, so the state's own id is
+	// this project's orchestrator.
+	nodes, err := orchestratorBriefNodes(ctx, db, s.AgentID)
+	if err != nil {
+		return orchestrator.Brief{}, dbErr(lc, err, false)
+	}
+	table, err := orchestratorBriefTable()
+	if err != nil {
+		return orchestrator.Brief{}, err
+	}
+	return orchestrator.Brief{
+		State:      s,
+		Nodes:      nodes,
+		Table:      table,
+		MaxRunning: lc.MaxParallel,
+		Mode:       rigor.Default,
+		Now:        time.Now(),
+	}, nil
+}
+
+// orchestratorBriefNodes reads the nodes beside the state node: one per imported
+// plan and the backlog's (D2735, D2714).
+//
+// The plans are listed with a shallow read and then read one by one — the read
+// NodeIDs makes for the ids of an installation, and for its reason: a plan node
+// is a state document of up to MaxStateBytes, so a project with twenty plans is
+// not a read of all of them at once.
+//
+// A project that has imported no plan and holds nothing standing has neither
+// node, and both read as this orchestrator's empty state rather than being
+// refused: the brief of a project nobody has planned in is the brief it always
+// was.
+func orchestratorBriefNodes(ctx context.Context, db *rtdb.Client, id string) ([]orchestrator.NodeBrief, error) {
+	names, err := orchestrator.PlanNames(ctx, db, id)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]orchestrator.NodeBrief, 0, len(names)+1)
+	for _, name := range names {
+		s, err := orchestrator.ReadShard(ctx, db, id, orchestrator.RoleOrchestrator, orchestrator.PlanShard(name))
+		if err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, orchestrator.NodeBrief{Name: name, State: s})
+	}
+	s, err := orchestrator.ReadShard(ctx, db, id, orchestrator.RoleOrchestrator, orchestrator.ShardBacklog)
+	if err != nil {
+		return nil, err
+	}
+	return append(nodes, orchestrator.NodeBrief{Name: orchestrator.BacklogNode, State: s}), nil
+}
+
+// orchestratorBriefTable is the run history the estimates are drawn from: the
+// table cache this machine holds, which the command that reads the runs bucket
+// writes with the history it read.
+//
+// The brief reaches no runs bucket itself (D1243), so this file is the whole of
+// what it knows about how long work has taken, and a machine without one is the
+// tier seeds and nothing else (D2712). A file that is there and cannot be read is
+// refused rather than passed over: a table this release does not read would
+// otherwise be a figure drawn from something else, and what the refusal names is
+// the file to remove.
+func orchestratorBriefTable() (*estimate.Table, error) {
+	path, err := estimate.CachePath(os.Getenv, runtime.GOOS)
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	table, err := estimate.ReadCache(path)
+	switch {
+	case err == nil:
+		return table, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, nil
+	default:
+		return nil, userErr("%v; delete that file to estimate from the tier seeds again", err)
+	}
 }
 
 // orchestratorBriefCache is the file the daemon writes for the session-start
