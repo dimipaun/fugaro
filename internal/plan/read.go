@@ -17,6 +17,7 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/dimipaun/fugaro/internal/streams"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // Refusal is why a graph artifact could not be read as a graph. It is a typed
@@ -374,6 +375,7 @@ func schema3Fields(doc Document) []string {
 	for _, n := range doc.Nodes {
 		add("kind", n.Kind != "")
 		add("size", n.Size != nil)
+		add("tier", n.Tier != nil)
 		add("stubs", n.Stubs != nil)
 	}
 	return out
@@ -404,7 +406,7 @@ func schema3Keys(data []byte) []string {
 	if raw, ok := top["nodes"]; ok {
 		if err := json.Unmarshal(raw, &nodes); err == nil {
 			for _, n := range nodes {
-				for _, key := range []string{"kind", "size", "stubs"} {
+				for _, key := range []string{"kind", "size", "tier", "stubs"} {
 					if _, ok := n[key]; ok && !seen[key] {
 						seen[key] = true
 						out = append(out, key)
@@ -429,8 +431,9 @@ func schema3FieldsRefusal(path string, version int, carried []string) error {
 }
 
 // validateSchema3 checks what the third schema added: the kind a node is, the
-// weight it carries, the stubs a contract leaves behind, the record of each
-// broken edge and the change requests raised against merged contracts.
+// weight it carries, the tier it is expected to be run at, the stubs a contract
+// leaves behind, the record of each broken edge and the change requests raised
+// against merged contracts.
 //
 // Every rule here is a refusal, because the document is untrusted plan text
 // (D1821): a graph whose kinds and references do not hold together has no
@@ -449,6 +452,14 @@ func validateSchema3(path string, doc Document) error {
 		}
 		if n.Size != nil && *n.Size <= 0 {
 			return refuse(path, "node %q carries the size %v; a task's size is greater than 0, and a task with no size is 1", n.ID, *n.Size)
+		}
+		// The tier is the expectation a run is launched under, spelled in the
+		// launcher's own vocabulary, so a value outside it is a node no
+		// launcher can size rather than one drawn with an unknown size. A node
+		// saying nothing carries none; "" is not that silence — it is a written
+		// tier outside the four — so it is refused with the rest.
+		if n.Tier != nil && !tier.Known(*n.Tier) {
+			return refuse(path, "node %q carries the tier %q; a task's tier is one of %s", n.ID, *n.Tier, tier.List())
 		}
 		if len(n.Stubs) > 0 && kindOf(n) != KindContract {
 			return refuse(path, "node %q carries stubs and is a %s; the stubs a contract leaves behind are named by the contract", n.ID, kindOf(n))

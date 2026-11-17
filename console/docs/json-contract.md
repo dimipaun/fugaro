@@ -1394,6 +1394,7 @@ one entry of `nodes`:
 | `footprint` | object | never | never | the expected paths, below |
 | `kind` | string | **yes** | never | what this node is: `task` (the default, and every node of a v1 or v2 artifact), `contract`, `integration` or `contract_change`. A **schema-3** field; it is absent from the document this build emits when the node is a plain task, and a **non-empty** value outside those four is **refused** — an empty string means the default. A `contract` node carries the stubs and the literal files the graph holds every other task against; an `integration` node is the one that depends on both sides of a broken edge |
 | `size` | number | **yes** | **yes** | the task's weight relative to the others, greater than `0`; absent or null means `1`. A **schema-3** field, and the figure the accepted/refused comparison of a break is weighed with rather than a task count. `0` or a negative number is **refused** |
+| `tier` | string | **yes** | **yes** | how big the task is **expected** to be, in the launcher's own vocabulary: `trivial`, `small`, `medium` or `large` — the expectation a run of this task is launched under (design D2711). Absent, or null, is a task the planner did not size, which is a different statement from naming one of the four; a value outside them, the **empty string** included, is **refused**. It is not `size`: the numeric size is the weight a decoupling's gain is weighed in, and this is the expectation a run of the task is launched under. A **schema-3** field |
 | `stubs` | array of strings | **yes** | never | the whole files a `contract` node leaves for its dependents to compile against, each a literal repository-relative path — never a glob, never absolute, never with a `..` element, never carrying a character that does not print, and each one named **literally** in that node's own `footprint.paths`. A **schema-3** field, on a `contract` node and nowhere else: a **non-empty** list on any other node is **refused**, and absent, null or an empty list is a node that leaves no stub behind — the key is absent from the document this build emits |
 | `level` | number | never | never | the longest chain of dependencies *ending* at this task: `0` for a task that waits on nothing, otherwise one more than the deepest task it waits for |
 | `done` | bool | never | never | the task is in the `--done` set the read was given. **A fact the caller stated, not one the CLI derived**: a finished run is not the same claim as a done task (see below) |
@@ -1565,7 +1566,7 @@ shows the CLI's refusal sentence rather than a graph.
 
 **Three schema versions are read, and each older one is not a second dialect.**
 Schema **2** added the document's `stream` and the shape a node's `version` has;
-schema **3** added the node's `kind`, `size` and `stubs`, the document's
+schema **3** added the node's `kind`, `size`, `tier` and `stubs`, the document's
 `decoupling` and `contract_changes`, and the rules that hold them together.
 Schema **1** is a plan written before any of them, and it stays a document this
 build renders — its `version` is the planner's own words and is read as written,
