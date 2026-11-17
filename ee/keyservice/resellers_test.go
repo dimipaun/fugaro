@@ -917,19 +917,23 @@ func TestAResellersOrganisationsAndInvitationsAreBounded(t *testing.T) {
 	}
 }
 
-// burstCustomerDocs is burstCountDocs' window at the count this path takes: the
-// link read a customer creation makes (refuseAnotherCustomer) waits for the burst
-// it is part of, so the window between that count and the write beside it is the
-// one the case reads rather than the one a scheduler happened to leave open. A
-// read that arrives alone waits the window out, which is what makes a burst that
-// ran one creation after another still read the window.
-type burstCustomerDocs struct {
+// burstDocs is burstCountDocs' window at the collections the case names: a read
+// of one of them waits for the burst it is part of, so the window between that
+// read and the write beside it is the one the case reads rather than the one a
+// scheduler happened to leave open. A read that arrives alone waits the window
+// out, which is what makes a burst that ran one request after another still read
+// the window.
+type burstDocs struct {
 	*burstCountDocs
+	gated []string
 }
 
-func (d *burstCustomerDocs) Query(ctx context.Context, collection string, where Where) ([]Doc, error) {
-	if collection == resellerCustomersCollection {
-		d.burstCountDocs.waitForTheBurst()
+func (d *burstDocs) Query(ctx context.Context, collection string, where Where) ([]Doc, error) {
+	for _, gated := range d.gated {
+		if collection == gated {
+			d.burstCountDocs.waitForTheBurst()
+			break
+		}
 	}
 	return d.burstCountDocs.Docs.Query(ctx, collection, where)
 }
@@ -939,11 +943,14 @@ func (d *burstCustomerDocs) Query(ctx context.Context, collection string, where 
 // creating customers from many places at once. The count is a query and the write
 // beside it is a transaction, and without the lock the whole burst reads a count
 // that holds none of the others' organisations and makes as many as it sent
-// requests. The window is widened at the count itself (burstCustomerDocs).
+// requests. The window is widened at the count itself (burstDocs).
 func TestConcurrentCustomerCreationsRespectTheDailyLimit(t *testing.T) {
 	const burst = 8
 	f := newFixtureWith(t, Production, func(b *fixture) {
-		b.deps.Docs = &burstCustomerDocs{burstCountDocs: newBurstCountDocs(b.docs, burst)}
+		b.deps.Docs = &burstDocs{
+			burstCountDocs: newBurstCountDocs(b.docs, burst),
+			gated:          []string{resellerCustomersCollection},
+		}
 	})
 	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
 	f.actsAs(sellerUID, sellerMail, signInGoogle)
@@ -962,5 +969,46 @@ func TestConcurrentCustomerCreationsRespectTheDailyLimit(t *testing.T) {
 	// is not a way to hold more.
 	if got := len(f.organisations()); got != orgDailyLimit+1 {
 		t.Errorf("the burst left %d organisation(s), want the reseller and the day's %d", got, orgDailyLimit)
+	}
+}
+
+// TestConcurrentFirstOwnerInvitationsLeaveOnePending: F40's "the FIRST owner and
+// nothing after them" under the one thing that can break it — two invitations
+// posted at the same moment. The act reads whether the customer has a member or a
+// live invitation and then writes one, and two in flight together would each read
+// a customer with nobody in it and both write: the second address would be a
+// co-owner the reseller made, sitting beside the buyer whose organisation it is,
+// and any address at all that is not one of the reseller's own people is one it
+// may invite. The window is widened at the live-invitation read itself, which is
+// the read the write sits beside.
+func TestConcurrentFirstOwnerInvitationsLeaveOnePending(t *testing.T) {
+	const burst = 8
+	f := newFixtureWith(t, Production, func(b *fixture) {
+		b.deps.Docs = &burstDocs{
+			burstCountDocs: newBurstCountDocs(b.docs, burst),
+			gated:          []string{invitesCollection},
+		}
+	})
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	bought := f.soldBy("Example Ltd")
+
+	codes := together(burst, func(i int) *httptest.ResponseRecorder {
+		return f.firstOwnerInvite(bought.ID, fmt.Sprintf("buyer-%d@example.com", i), roleOwner)
+	})
+
+	// The first owner is one person: one invitation is written and every other
+	// request meets the organisation's own state rather than writing a second.
+	if got := answered(codes, http.StatusCreated); got != 1 {
+		t.Errorf("%d of %d concurrent invitations were answered 201, want one: a customer has one first owner", got, burst)
+	}
+	if got := answered(codes, http.StatusConflict); got != burst-1 {
+		t.Errorf("%d of %d invitations were refused as first_owner_set, want %d: %v", got, burst, burst-1, codes)
+	}
+	if held := f.invitationsOf(bought.ID); len(held) != 1 {
+		t.Errorf("the burst left %d invitation(s) on the customer, want one: %+v", len(held), held)
+	}
+	if len(f.mail.sent) != 1 {
+		t.Errorf("the burst mailed %d message(s), want one: the invitation nobody wrote is not a mail either", len(f.mail.sent))
 	}
 }

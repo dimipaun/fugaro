@@ -44,10 +44,23 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/access"
 )
+
+// firstOwnerMu is one customer's first-owner invitation at a time in this
+// process. The act reads whether the customer already has a member or a live
+// invitation and then writes one, and two of them in flight together would each
+// read a customer with nobody in it and both write: the second address is then a
+// co-owner of the customer's organisation, and any address at all that is not one
+// of the reseller's own people is one a reseller could put beside the buyer whose
+// organisation it is — F40's line crossed by a burst rather than by a body. It is
+// this process's, like seedMu and for the same reason: what a second instance
+// does is the store's to hold, and when the store can read the customer's members
+// and invitations inside the transaction that writes one, the lock is what goes.
+var firstOwnerMu sync.Mutex
 
 // The two collections this area keeps. They are this area's own names and not the
 // deploy's, for the reason the tenancy's two are (orgs.go): the store's ids are
@@ -692,6 +705,15 @@ func (s *Service) inviteCustomerFirstOwner(ctx context.Context, actor Caller, he
 	if _, err := access.Member(address); err != nil {
 		return WireInvite{}, fmt.Errorf("%w: %v", errInviteEmailRefused, err)
 	}
+	// The check below and the write at the end are ONE act, and they are held
+	// together (firstOwnerMu): what the check reads is the customer's members and
+	// its live invitations, and two invitations in flight together would each read
+	// a customer with nobody in it and both write — a second first owner, which is
+	// the one thing this act is named for not doing. The write is a record of its
+	// own (putInvitation) and not a transaction that could read the customer's
+	// records beside it, so the lock is what closes the window.
+	firstOwnerMu.Lock()
+	defer firstOwnerMu.Unlock()
 	members, err := membersOf(ctx, s.docs, org.ID)
 	if err != nil {
 		return WireInvite{}, err
