@@ -595,6 +595,14 @@ PY
 }
 
 write_service() { # dir
+  # SVC_SHARED=yes puts the shared class's own table (FUGARO_SHARED_JOB_ACCOUNTS)
+  # in the deployed revision's environment, which is the day the class is live:
+  # nothing under deploy/terraform/ renders that name yet, so absent is what this
+  # release deploys and a shared project job's service-side rows stop on it.
+  local shared_env=""
+  if [ "${SVC_SHARED:-no}" = yes ]; then
+    shared_env=', {"name": "FUGARO_SHARED_JOB_ACCOUNTS", "value": "[{\"profile\":\"shared\",\"provider\":\"github\",\"account\":\"team-a\",\"repos\":[\"github/acme/sandbox\"]}]"}'
+  fi
   cat >"$1/state/services.json" <<JSON
 [{"metadata": {"name": "history", "labels": {"fugaro_role": "history"}}},
  {"metadata": {"name": "$SERVICE", "labels": {"fugaro_role": "credentials", "fugaro": "managed"}}}]
@@ -602,7 +610,7 @@ JSON
   cat >"$1/state/service.json" <<JSON
 {"metadata": {"name": "$SERVICE", "labels": {"fugaro_role": "credentials"}},
  "spec": {"template": {"spec": {"serviceAccountName": "$SVCSA",
-   "containers": [{"env": [{"name": "FUGARO_PROJECT", "value": "$FUGARO_PROJECT"}]}]}}},
+   "containers": [{"env": [{"name": "FUGARO_PROJECT", "value": "$FUGARO_PROJECT"}$shared_env]}]}}},
  "status": {"url": "$SERVICE_URL"}}
 JSON
 }
@@ -1066,17 +1074,73 @@ test_a_job_whose_own_account_is_belong_is_refused() {
   expect_absent "$(cat "$dir/state/calls")" "curl " "a belong job account: a call before the refusal"
 }
 
-test_the_shared_project_job_with_the_url_is_a_fail() {
+# A shared project job is judged by the same switch a repository's own job is
+# (B5.2): credentialsServiceLaunchEnv decides its address from the repository the
+# run is for, exactly as it decides its own job's, so a switched-on repository's
+# shared job carrying the URL IS the wiring and its row passes. What it cannot do
+# is go on: every claim below the row calls the service as the job's own account,
+# and the service admits a shared caller only from its own
+# FUGARO_SHARED_JOB_ACCOUNTS table — which no module under deploy/terraform/
+# renders yet, so the deployed service refuses the class whole. The run ends
+# there, exit 2, which is this check's "it could not tell", and no call to the
+# service was made.
+test_the_shared_project_job_with_the_wiring_in_place_stops_the_service_side() {
   setup_case profilejob
   JOB_PROFILE=yes write_job "$dir"
   run96
-  expect_status "$status" 1 "shared project job"
-  expect_contains "$out" "FACT job-env: FAIL — " "shared project job: the row"
-  expect_contains "$out" "SHARED PROJECT job" "shared project job: what it found"
-  expect_contains "$out" "Global Constraint 6" "shared project job: why it is wrong"
-  # A finding, not a reason to stop: the claims after it are still measured.
-  expect_contains "$(cat "$dir/state/calls")" "curl " "shared project job: the run went on"
-  expect_contains "$out" "FACT mint: PASS — " "shared project job: the mint is still measured"
+  expect_status "$status" 2 "shared project job, class not deployed"
+  expect_contains "$out" "FACT job-env: PASS — " "shared project job: the wiring is judged and passes"
+  expect_contains "$out" "SHARED PROJECT job" "shared project job: the row says what the job is"
+  expect_contains "$out" "does not carry FUGARO_SHARED_JOB_ACCOUNTS" "shared project job: the class's table is what stops it"
+  expect_contains "$out" "refuses this class whole" "shared project job: why nothing below can be read"
+  expect_contains "$out" "unverified_job_identity" "shared project job: the refusal the rows below would report"
+  expect_contains "$out" "FACT mint: FAIL — not reached" "shared project job: the mint row was never measured"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "shared project job: no call to the service at all"
+}
+
+# The other half of the same rule: a shared project job of a repository whose
+# root the config in force does not record as switched on is not handed the
+# address either, and that is the expected state rather than a finding.
+test_a_shared_project_job_of_an_unswitched_repository_is_not_told_either() {
+  setup_case profilejoboff
+  READY=no write_config "$dir"
+  JOB_PROFILE=yes JOB_URL=no write_job "$dir"
+  run96
+  expect_status "$status" 2 "shared project job, repository off"
+  expect_contains "$out" "FACT job-env: PASS — " "shared project job off: the row"
+  expect_contains "$out" "does not carry FUGARO_CREDENTIALS_SERVICE_URL" "shared project job off: what it found"
+  expect_absent "$(cat "$dir/state/calls")" "curl " "shared project job off: no call to the service"
+}
+
+# And the FAIL direction for the same job: the config records the repository's
+# root as on and the shared project job carries no address, so the job and the
+# record it is launched from have moved apart. The FAIL is recorded before the
+# class's own stop, so the row prints the finding and the reason the run ended.
+test_a_shared_project_job_without_the_url_while_the_config_records_one_is_a_fail() {
+  setup_case profilejobnourl
+  JOB_PROFILE=yes JOB_URL=no write_job "$dir"
+  run96
+  expect_status "$status" 2 "shared project job, URL missing"
+  expect_contains "$out" "FACT job-env: FAIL — " "shared project job without the URL: the row"
+  expect_contains "$out" "carries no FUGARO_CREDENTIALS_SERVICE_URL" "shared project job without the URL: what it found"
+  expect_contains "$out" "a runner with no service to ask" "shared project job without the URL: what that state is"
+}
+
+# The day the class is deployed: the service's own container carries the class's
+# table, so a shared project job is a job the check can read end to end, and the
+# stop does not fire.
+test_a_shared_project_job_on_a_service_that_carries_the_class_is_measured() {
+  setup_case profilejobclass
+  SVC_SHARED=yes write_service "$dir"
+  JOB_PROFILE=yes write_job "$dir"
+  run96
+  expect_status "$status" 0 "shared project job, class deployed"
+  expect_contains "$out" "FACT job-env: PASS — " "shared project job, class deployed: the wiring"
+  expect_contains "$out" "which is the job a repository with no job of its own runs on" "shared project job, class deployed: the row says what the job is"
+  expect_contains "$out" "FACT service: PASS — " "shared project job, class deployed: the class's table is read off the service"
+  expect_contains "$out" "FUGARO_SHARED_JOB_ACCOUNTS reads present" "shared project job, class deployed: and it is present"
+  expect_contains "$(cat "$dir/state/calls")" "curl " "shared project job, class deployed: the service-side claims were measured"
+  expect_contains "$out" "FACT mint: PASS — " "shared project job, class deployed: the mint is measured"
 }
 
 test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail() {
@@ -1678,7 +1742,10 @@ t test_an_unknown_workflow_is_refused_with_the_workflows_found
 t test_a_workflow_of_the_belong_account_is_refused
 t test_a_job_whose_own_account_is_belong_is_refused
 t test_the_workflow_flag_is_what_selects_the_job
-t test_the_shared_project_job_with_the_url_is_a_fail
+t test_the_shared_project_job_with_the_wiring_in_place_stops_the_service_side
+t test_a_shared_project_job_of_an_unswitched_repository_is_not_told_either
+t test_a_shared_project_job_without_the_url_while_the_config_records_one_is_a_fail
+t test_a_shared_project_job_on_a_service_that_carries_the_class_is_measured
 t test_a_job_that_has_no_service_url_while_the_config_records_one_is_a_fail
 t test_the_switch_written_True_is_the_switch_on
 t test_a_switch_that_is_not_a_boolean_stops_the_read

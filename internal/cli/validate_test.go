@@ -2680,7 +2680,7 @@ func TestValidateJudgesALayerOnlyAgainstItsOwnProjectConfig(t *testing.T) {
 // run's table is built from the job's FUGARO_MODEL_PROVIDERS, which never
 // carries a claim, so a claimed ID has only the price the operator wrote under
 // model_prices — the built-in catalog cannot price one, because it materializes
-// a row only for a model some *route* matches (catalogRoutes) and the claim is
+// a row only for a model some *route* matches (CatalogRoutes) and the claim is
 // not in any route the environment carries. validate must judge with that same
 // pair, or it would accept a pin the run then refuses as unpriced: with the
 // merged providers in its table (what this test was written against) the
