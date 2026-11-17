@@ -60,6 +60,14 @@ job='fugaro-p-bb-bitbucket-7f3a2b'
 other_job='fugaro-p-bb-github-9c1d4e'
 run_base=20261117-120000
 run_id=$run_base-0580
+# credential_origin is the origin a token-based clone leaves behind: a GitHub URL
+# whose userinfo carries a credential, split by a `/`, which is where a strip that
+# cannot cross one leaves it in place. What it holds is not a credential and opens
+# nothing: it is the word the case below asserts never reaches the output, so one
+# that appears was printed by this check and by nothing else (Check 480 pins the
+# rule this check now shares, scripts/contract_checks_test.go's assertNoCredential).
+credential_origin='https://x-access-token:LEAK-CANARY/with-a-slash@github.com/acme/sandbox.git'
+credential_words='x-access-token LEAK-CANARY with-a-slash'
 
 # --------------------------------------------------------------------- fakes
 write_fake_git() { # dir
@@ -705,6 +713,28 @@ test_a_run_the_sandbox_does_not_name_is_refused() {
   assert_scratch_removed "$dir" "a GitHub checkout"
 }
 
+test_a_credential_in_the_origin_is_never_printed() {
+  local dir=$work/credentialled-origin
+  prepare "$dir"
+  run_check "$dir" "FAKE_ORIGIN=$credential_origin"
+  expect_status "$status" 1 "a credentialled origin"
+  # This is the documented mistake path — a GitHub checkout, the kind a CI or
+  # token clone leaves credentialled — and both refusals print the origin, into
+  # the block the register quotes and into stderr.
+  local word
+  for word in $credential_words; do
+    expect_absent "$err" "$word" "a credentialled origin: '$word' on stderr"
+    expect_absent "$out" "$word" "a credentialled origin: '$word' in the block"
+  done
+  # The URL itself is kept, minus its userinfo: the refusal still names the
+  # repository it refused, and reads the host through the credential.
+  expect_contains "$err" "https://github.com/acme/sandbox.git" "a credentialled origin: the URL is kept, without its credential"
+  expect_contains "$err" "is not a Bitbucket repository (its host is 'github.com')" "a credentialled origin: the refusal reads the host through the credential"
+  expect_contains "$out" "FACT aborted: FAIL" "a credentialled origin: the reason is in the block"
+  assert_no_launch "$dir" "a credentialled origin"
+  assert_scratch_removed "$dir" "a credentialled origin"
+}
+
 test_an_origin_that_names_no_repository_is_refused() {
   local dir=$work/odd-origin
   prepare "$dir"
@@ -1296,6 +1326,7 @@ t test_help
 t test_dry_run
 t test_happy_path
 t test_a_run_the_sandbox_does_not_name_is_refused
+t test_a_credential_in_the_origin_is_never_printed
 t test_an_origin_that_names_no_repository_is_refused
 t test_a_checkout_with_no_origin_is_refused
 t test_a_missing_sandbox_is_refused

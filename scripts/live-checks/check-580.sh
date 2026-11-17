@@ -346,6 +346,21 @@ redact() {
     -e 's/((oauth|api)[_-]?key["=: ]+)[A-Za-z0-9._~+/=-]{12,}/\1<redacted>/Ig'
 }
 
+# strip_credentials: every `scheme://user:token@` in the text becomes `scheme://`.
+# A token-based clone — a CI checkout, or the GitHub checkout the header tells the
+# owner not to point this at — carries its credential in the origin's userinfo,
+# and that URL is printed in the two refusals below, into a block the register
+# quotes. redact's rules do not reach it: nothing there says `token=`, and a value
+# the size of a personal access token is not a shape it knows. The rule is Check
+# 480's, character for character: the userinfo ends at the last @ before the host,
+# the way git's own URL parser reads it, so a pattern that cannot cross a `/`
+# leaves a credential holding one in place verbatim
+# (https://x-access-token:sec/ret@github.com/o/r.git); the class stops at
+# whitespace, so the match cannot run past the URL into an @ later in the line.
+strip_credentials() {
+  sed -E 's#([a-zA-Z][a-zA-Z0-9+.-]*://)[^@[:space:]]*@#\1#g'
+}
+
 # last_lines FILE [N]: the last N lines of a file, on one redacted line, cut
 # short. The one shape every failure row reads a command's own stderr with.
 last_lines() {
@@ -741,6 +756,12 @@ step_sandbox() {
   if [ "$rc" -ne 0 ] || [ -z "$url" ]; then
     stop "the checkout at $SANDBOX names no origin this check could read (git exited ${rc}): $(last_lines "$SCRATCH/origin.err"). The repository this check runs for is the one the checkout's own origin names, and a checkout without one is a repository this check cannot name"
   fi
+  # The credential goes before the URL is matched, recorded or printed: a
+  # credentialled origin reaches the refusals below, the scratch file and the
+  # reader alike, and the reader's patterns cannot cross a `/` inside a userinfo,
+  # so it reads the host of one as `https` — a refusal naming a host that is not
+  # there, which is what the header's never-print rule is the smaller half of.
+  url=$(printf '%s\n' "$url" | strip_credentials)
   printf '%s\n' "$url" >"$SCRATCH/origin.txt"
   local got host
   got=$(reader origin "$url" 2>"$SCRATCH/origin.reader.err") || stop "the origin of $SANDBOX could not be read: $(last_lines "$SCRATCH/origin.reader.err")"
