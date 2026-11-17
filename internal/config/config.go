@@ -204,6 +204,20 @@ type Config struct {
 	// them, and only this one is the key that has to be judged. Like the fields
 	// above it is never part of the file or of SHA256.
 	RepoMergeJudgeCraftSet bool `yaml:"-" json:"-"`
+	// RepoWorkflowABSet is the workflows of the repository's own file whose
+	// text writes an ab: key, at any value: the question RepoRigorSet answers
+	// for rigor:, asked once per workflow because the key is one per workflow
+	// (workflows.<name>.ab, the ask for an A/B reviewer arm, O12 of
+	// docs/review-levels-ab-jobmax), and Workflow.AB cannot answer it — an
+	// explicit null (`ab:`, which decodes to no block at all) is the same line
+	// to a runner older than workflowABSince as a full block, since the file is
+	// decoded whole with KnownFields and the key alone is what that decoder
+	// refuses, exactly as setsSecurity's null is. It is the names and not a
+	// bool because each gate names the keys it refuses (internal/cli's
+	// workflowABNames), and it is sorted so the same file always answers the
+	// same list. Like the fields above it is never part of the file or of
+	// SHA256.
+	RepoWorkflowABSet []string `yaml:"-" json:"-"`
 }
 
 // Planning is fugaro.yaml's planning: block and the project layer's

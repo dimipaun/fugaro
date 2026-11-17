@@ -213,10 +213,11 @@ func ReviewerArm(ctx context.Context, run fcli.PlannedRun, champion fcli.RunReco
 	}
 	// What this arm's challenger must not be is the model the slot it varies
 	// runs, and that model is read off the resolution the champion's own run
-	// made — the champion's task, resolved the way the champion's launch
-	// resolved its levels: the owner's list is still the owner's (D556) and
-	// every other check is a coder pair's, but a reviewer pair varies the
-	// review's model and not the coder's (O12).
+	// made — the champion's task, put through the call the champion's launch's
+	// own level gate makes (reviewSlotModel's doc has the one divergence, a
+	// recipe that travels as a name alone): the owner's list is still the
+	// owner's (D556) and every other check is a coder pair's, but a reviewer
+	// pair varies the review's model and not the coder's (O12).
 	variedModel, err := reviewSlotModel(ctx, run, championSpec, slot)
 	if err != nil {
 		return nil, "", err

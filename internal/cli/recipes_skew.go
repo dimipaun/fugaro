@@ -2728,10 +2728,11 @@ func checkCloneSlotImage(lc *localcfg.Config, spec *task.Spec, subject string, w
 // workflow's own ab: block (fugaro.yaml's workflows.<name>.ab,
 // config.WorkflowAB): the key a workflow asks its A/B reviewer arm with (the
 // owner's ruling of 2026-11-16, docs/review-levels-ab-jobmax O12). A runner
-// built from an older image decodes fugaro.yaml with KnownFields, so the block
+// built from an older image decodes fugaro.yaml with KnownFields, so the key
 // alone refuses the whole file at bootstrap — the champion's own launch, the
 // last moment a job image whose runner cannot carry the arm is still refusable
-// before the job is paid for, dies there whatever the block says.
+// before the job is paid for, dies there whatever the key says, an explicit
+// null included (workflowABNames).
 //
 // It is a constant of its own and not slotSince, because the two keys are
 // different kinds of thing: the ask is the repository's file, read by the job's
@@ -2762,15 +2763,34 @@ const workflowABKnows = "a workflow's ab: block (workflows.<name>.ab)"
 // fugaro.yaml is decoded whole, so a sibling workflow's ab: block is exactly as
 // fatal to an older runner as the selected one's — the file that fails to decode
 // is the whole file, and the job dies before it reads which workflow it runs.
+//
+// It reads the key being written and not the block it holds: the text's own
+// answer (Config.RepoWorkflowABSet, setsWorkflowAB) is what a runner older than
+// workflowABSince refuses, and an explicit null (`ab:`, which decodes to no
+// block at all) is one line to that decoder — the reason setsSecurity is a
+// presence read for security:. The decoded block is the second half of the
+// union, and not a second question: a configuration this process built in
+// memory rather than parsed (launchLayerConfig's empty one, a caller's own) has
+// no text to read, and the block it carries is the only answer there is.
 func workflowABNames(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	var names []string
+	wrote := map[string]bool{}
+	for _, name := range cfg.RepoWorkflowABSet {
+		wrote[name] = true
+	}
 	for name, wf := range cfg.Workflows {
 		if wf.AB != nil {
-			names = append(names, name)
+			wrote[name] = true
 		}
+	}
+	if len(wrote) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(wrote))
+	for name := range wrote {
+		names = append(names, name)
 	}
 	slices.Sort(names)
 	return names
@@ -2836,10 +2856,11 @@ func refuseWorkflowABSkew(repo string, cfg *config.Config, ref string, warn io.W
 
 // checkWorkflowABImage refuses a launch whose job image runs a fugaro older than
 // workflowABSince while the configuration the run will read writes a workflow's
-// ab: block: that runner decodes fugaro.yaml with KnownFields, so the block alone
-// kills the run at bootstrap. The judge is the build record's base_ref, as every
-// checkImageSince gate's is, and cfg is the file the run will read — nil, a launch
-// that could not read one, gated by nothing, as triageSources' nil is.
+// ab: key, at any value: that runner decodes fugaro.yaml with KnownFields, so the
+// key alone kills the run at bootstrap. The judge is the build record's base_ref,
+// as every checkImageSince gate's is, and cfg is the file the run will read —
+// nil, a launch that could not read one, gated by nothing, as triageSources' nil
+// is.
 func checkWorkflowABImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, cfg *config.Config, warn io.Writer) error {
 	names := workflowABNames(cfg)
 	if len(names) == 0 {

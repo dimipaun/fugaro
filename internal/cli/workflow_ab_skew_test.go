@@ -276,6 +276,58 @@ func TestRunRefusesWorkflowABOnAnOlderBaseImage(t *testing.T) {
 	}
 }
 
+// TestRunRefusesANullWorkflowABBlockOnAnOlderBaseImage: `ab:` with nothing
+// under it writes the key and decodes to no block at all, so the gate has to
+// judge the key and not the block it holds — an older runner's KnownFields
+// reader refuses the whole file either way, and a gate that read Workflow.AB
+// alone would launch a run that dies at bootstrap on a line the operator did
+// write (TestRunRefusesANullGovernanceBlockOnAnOlderBaseImage's case, on this
+// key).
+func TestRunRefusesANullWorkflowABBlockOnAnOlderBaseImage(t *testing.T) {
+	f := newCloudFixture(t)
+	configSkewCheckout(t, f, configSkewHead+
+		"workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n    ab:\n")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", "ghcr.io/dimipaun/fugaro-base:"+shiftRelease(t, workflowABSince, -1))
+	wantRefused(t, f, "fugaro.yaml's workflows.svc.ab of acme/other needs a job image whose runner knows a workflow's ab: block (workflows.<name>.ab) (fugaro "+workflowABSince+" or later)",
+		"run", "--run-id", "20261008-100000-abcd", "A task")
+}
+
+// TestWorkflowABNamesReadTheKeyNotTheBlock: the presence of the key is the
+// question the gates ask, and the text answers it where the decoded block
+// cannot — an explicit null (`ab:`, `ab: null`, `ab: ~`) is one line to a
+// runner older than workflowABSince, exactly as setsSecurity's null is to a
+// runner older than securitySince. The three spellings resolve to no block at
+// all, and every one of them is still named by workflowABNames and warned about
+// by workflowABImageWarnings.
+func TestWorkflowABNamesReadTheKeyNotTheBlock(t *testing.T) {
+	const head = "version: 1\nproject: example\ngcp_project: example-1a2b3c\ngit: { provider: github }\nagent: { auth: api-key }\n"
+	for _, wf := range []string{"    ab:\n", "    ab: null\n", "    ab: ~\n"} {
+		data := []byte(head + "workflows:\n  svc:\n    commands: { build: sh build.sh, test: sh test.sh }\n" + wf)
+		cfg, _, ps := config.Resolve(data, nil)
+		if len(ps) > 0 {
+			t.Fatalf("%q: %+v, want the file valid", wf, ps)
+		}
+		if cfg.Workflows["svc"].AB != nil {
+			t.Errorf("%q: the file decoded to a block, and this test is the null one", wf)
+		}
+		if got := workflowABNames(cfg); len(got) != 1 || got[0] != "svc" {
+			t.Errorf("%q: workflowABNames = %v, want [svc]: the gate judges the key being written", wf, got)
+		}
+		if ps := workflowABImageWarnings(cfg); len(ps) != 1 || ps[0].Path != "workflows.svc.ab" {
+			t.Errorf("%q: warnings = %+v, want one for workflows.svc.ab", wf, ps)
+		}
+	}
+	// A file that writes no ab: key at all is gated by nothing, the other side
+	// of the same read.
+	cfg, _, ps := config.Resolve([]byte(head+"workflows:\n  svc: { commands: { build: sh build.sh, test: sh test.sh } }\n"), nil)
+	if len(ps) > 0 {
+		t.Fatalf("%+v, want the file valid", ps)
+	}
+	if got := workflowABNames(cfg); len(got) != 0 {
+		t.Errorf("workflowABNames = %v, want none for a file that writes no key", got)
+	}
+}
+
 // validateWorkflowAB runs fugaro validate on a repository file whose workflows:
 // block is workflows, in a directory that is no checkout and has no project
 // config: the file's own key is all this judges. It is validateGrades' shape for
