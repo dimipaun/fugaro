@@ -403,8 +403,9 @@ blocks, their per-step `FACT` lines and their restores. The numbers are the owne
 that the pull request that wrote it wrote no row or section — this one does, for these three
 only): **80 and 83–88 are Task P4.2's, and P4.2 has written them** (the paragraph below), and
 nothing here is renumbered for them. **All ten are owner-run and none has been run**: 81 at P2.3 and P4.2, 82 at
-P2.3, 89 at P4.4, and 80 and 83–88 by the owner once the tasks they read have merged. Until they
-are run, every live claim of the mobile app is unverified and each of the ten rows stays **NOT RUN**.
+P2.3, 89 at P4.4. Until they are run, every live claim of the mobile app is unverified and each of
+the ten rows stays **NOT RUN**. **80 and 83–88 are the owner's to run** (the paragraph below),
+once the tasks each one reads have merged.
 
 **The mobile work's checks 80 and 83–88 are written by Task P4.2 (2026-11-17), beside 81's, 82's
 and 89's.** The seven are the register's 80 (the mailbox end to end, the phone writing and the
@@ -412,8 +413,8 @@ orchestrator answering), 83 (replay and duplicate delivery — one id delivered 
 once), 84 (presence: the heartbeat's staleness, the offline state and a clock skew shown as "clock
 differs"), 85 (the on-device STT/TTS bake-off: the same prompts through the local engine and each
 admitted remote provider), 86 (hands-free audio: the background mode, the microphone ask,
-Bluetooth and barge-in),
-87 (multi-account switching with no cross-leakage) and 88 (push delivery, written for the day the
+Bluetooth and barge-in), 87 (multi-account switching with no cross-leakage) and 88 (push delivery,
+written for the day the
 owner builds push), each with a row in the table below and a `## Check N` section below it, with
 its guard block, its per-step `FACT` lines and its restore. **Every one of the seven is
 owner-run** — no agent performs any step of any of them — and **no one of them has been run**:
@@ -7831,7 +7832,7 @@ app's entry wires no pairing/overview screen, so no installation can be added on
 # === Check 87: setup + guard. RE-RUN THIS BLOCK BEFORE EVERY STEP. ===
 set -u
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "Check 87 stopped: not inside a git checkout; the app this check drives is built from mobile/ in this repository" >&2; exit 1; }
-env | grep -Eq '^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CLAUDE_CODE_REMOTE|CURSOR_AGENT|AI_AGENT)=' && { echo "Check 87 stopped: a coding agent's marker is set in this shell; this check switches between two installations, one of them belong, and no agent touches belong (F31) — run it yourself at your own terminal (internal/cli/initsecrets.go's agentMarker reads the same markers)" >&2; exit 1; }
+env | grep -Eq '^(CLAUDECODE|CLAUDE_CODE_ENTRYPOINT|CLAUDE_CODE_REMOTE|CURSOR_AGENT|AI_AGENT)=' && { echo "Check 87 stopped: a coding agent's marker is set in this shell; this check switches between two installations, one of them belong, and no agent touches belong (F31) — run it yourself at your own terminal. The five read here are internal/agentenv's AgentMarkers, the ones an agent sets whatever the terminal; CLAUDE_CODE_SSE_PORT is deliberately not among them, because the IDE extension sets it in a person's own integrated terminal too" >&2; exit 1; }
 [ "${CHK87_OWNER_RUN:-}" = yes ] || { echo "Check 87 stopped: type CHK87_OWNER_RUN=yes at your own terminal before this check reads anything; it names belong, the owner's own installation, and every step of it is yours" >&2; exit 1; }
 [ -d "$ROOT/mobile/src/accounts" ] || { echo "Check 87 stopped: there is no mobile/src/accounts/ in this checkout, so the account store whose isolation this check proves is not here (P3.1)" >&2; exit 1; }
 [ -d "$ROOT/mobile/src/overview" ] || { echo "Check 87 stopped: there is no mobile/src/overview/ in this checkout, so there is no switcher to switch with (P6.8)" >&2; exit 1; }
