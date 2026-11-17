@@ -400,11 +400,31 @@ func replayPatchRefusal(patch []byte) string {
 	return ""
 }
 
-// replayWrittenPaths stages the checkout and lists the paths a commit would now
-// carry: every path the patch wrote, a rename read as the delete and the add it
-// is (--no-renames), NUL-separated so a path holding a newline survives the
+// replayWrittenPaths lists every path the patch put in the checkout: the ones a
+// commit would now carry, and the ones no commit carries at all.
+//
+// The first half stages the checkout and lists what that commit would hold:
+// every path the patch wrote, a rename read as the delete and the add it is
+// (--no-renames), NUL-separated so a path holding a newline survives the
 // listing. Staging is `git add -A`, the call the arm's own commit makes, so the
 // listing is exactly what that commit would carry and nothing beside it.
+//
+// The second half is why this is not that listing alone. `git add -A` honours
+// the checkout's ignore rules, so a path the base's own .gitignore already
+// excludes — CLAUDE.local.md and .claude/settings.local.json are the two names
+// git's own advice keeps out of a repository, and a champion's patch can write
+// either (the review of 2026-11-16) — is written by the patch, is in the
+// reviewer's reach for the whole round, and appears in no commit at all: the
+// commit's listing names it never, and the arm goes on to run the review with it
+// in place. `git status` names it, ignored and untracked alike, which is the
+// listing taken here.
+//
+// What the second listing names is the patch's own: the arm's checkout is the
+// champion's base, cloned and bootstrapped, with no stage of this arm run in it
+// yet, so a path git calls ignored or untracked there is one the patch just
+// wrote. A path the base itself carried untracked and ignored would be refused
+// for a patch that never touched it, and that is the safe side: the arm loses a
+// sample rather than run a review over a checkout nothing accounted for.
 //
 // It is the fence's second reading, and it is the one that decides, because it
 // is not a reading of the patch at all. The header fence reads the patch's own
@@ -414,22 +434,44 @@ func replayPatchRefusal(patch []byte) string {
 // quote never closed — is read by git from the line's own bytes with the first
 // path part stripped, which is not the name the fence's reader takes out of it.
 // The paths git wrote admit no such spelling: they are what git wrote
-// (TestABReplayRefusesPatchTouchingAgentConfig's last two cases).
+// (TestABReplayRefusesPatchTouchingAgentConfig's last three cases).
 func replayWrittenPaths(ctx context.Context, repo *gitops.Repo) ([]string, error) {
 	if _, err := replayGit(ctx, repo, nil, "add", "-A"); err != nil {
 		return nil, err
 	}
-	out, err := replayGit(ctx, repo, nil, "--no-replace-objects", "diff", "--cached", "--no-renames", "--name-only", "-z", "HEAD")
+	staged, err := replayGit(ctx, repo, nil, "--no-replace-objects", "diff", "--cached", "--no-renames", "--name-only", "-z", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	status, err := replayGit(ctx, repo, nil, "--no-replace-objects", "status", "--porcelain=v1", "-z",
+		"--no-renames", "--untracked-files=all", "--ignored=matching")
 	if err != nil {
 		return nil, err
 	}
 	var paths []string
-	for _, p := range strings.Split(out, "\x00") {
+	for _, p := range strings.Split(staged, "\x00") {
 		if p != "" {
 			paths = append(paths, p)
 		}
 	}
-	return paths, nil
+	return append(paths, replayStatusPaths(status)...), nil
+}
+
+// replayStatusPaths are the paths of a `git status --porcelain=v1 -z` listing:
+// one record per NUL, each "XY PATH" — the two status letters and the space
+// between them ahead of the path's own bytes, unquoted and never escaped
+// (-z), so a path holding a newline or a quote is read as itself.
+// --no-renames keeps a rename to one record, which is the shape parsed here: a
+// rename record's origin path rides in a record of its own.
+func replayStatusPaths(out string) []string {
+	var paths []string
+	for _, rec := range strings.Split(out, "\x00") {
+		if len(rec) <= len("XY ") {
+			continue
+		}
+		paths = append(paths, rec[len("XY "):])
+	}
+	return paths
 }
 
 // replayWrittenRefusal is the path among written that no reviewer arm may have

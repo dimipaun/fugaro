@@ -232,7 +232,7 @@ func TestABReplayRefusesPatchFromOtherRun(t *testing.T) {
 // name (the review's finding of 2026-11-15), while an unquoted escape is the
 // file's own name and not a refused one.
 //
-// That reading of the headers is not the one that decides, and the last two
+// That reading of the headers is not the one that decides, and the next two
 // cases are the reviews' findings of 2026-11-16: git's older `rename old`/
 // `rename new` header is applied by git and named by no prefix the header
 // reading holds, and a quote git never closes is read by git from the line's
@@ -240,6 +240,11 @@ func TestABReplayRefusesPatchFromOtherRun(t *testing.T) {
 // patches write a refused path and both are refused by the fence's second
 // reading — the paths git wrote, listed from git once the patch is applied —
 // which is why the reviewer below runs no stage in either case.
+//
+// The case after them is what that second reading missed: it listed the paths a
+// commit would carry, and a path the base's own .gitignore excludes is in the
+// checkout, in the reviewer's reach and in no commit at all. The listing now
+// takes git status as well, and that case is the one that fails without it.
 func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 	cases := []struct {
 		name string
@@ -253,6 +258,10 @@ func TestABReplayRefusesPatchTouchingAgentConfig(t *testing.T) {
 		// nothing: the refusal names the component and not the file, so a
 		// .claude/settings.json is refused as .claude.
 		comp string
+		// files, when set, are files the base repository carries, over the
+		// fixture's own: the .gitignore below is what makes the refused path
+		// one no commit of this checkout carries.
+		files map[string]string
 	}{
 		{name: "the agent's own settings", path: ".claude/settings.json", comp: ".claude"},
 		{name: "a plugin directory", path: ".claude-plugin/plugin.json", comp: ".claude-plugin"},
@@ -361,6 +370,29 @@ rename new CLAUDE.md
 			comp:  "CLAUDE.md",
 		},
 		{
+			// The same rename header as the case above, to a path the base's own
+			// .gitignore excludes: git apply writes it, and `git add -A` stages
+			// nothing for it, so a fence that reads the commit's own listing —
+			// the second reading before the review of 2026-11-16 — names it
+			// never and the reviewer runs with the file in its checkout. The
+			// rename is what makes the case bite: the patch stages README.md's
+			// deletion, so the arm has a change to commit and the review really
+			// runs, where a patch writing the ignored file alone would have been
+			// refused for changing nothing. What refuses it is the listing of
+			// the paths git status names, ignored and untracked alike.
+			name: "a rename to a path the base ignores",
+			path: "CLAUDE.local.md",
+			files: map[string]string{
+				".gitignore": "build/\nnode_modules/\nCLAUDE.local.md\n",
+			},
+			patch: `diff --git a/README.md b/README.md
+similarity index 100%
+rename old README.md
+rename new CLAUDE.local.md
+`,
+			comp: "CLAUDE.local.md",
+		},
+		{
 			// The same bytes unquoted: git takes them as they stand, so the
 			// file it writes is named \056claude2 and not .claude2.
 			name: "an unquoted escape is a name of its own",
@@ -376,7 +408,7 @@ new file mode 100644
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
+			g, _ := armGWFiles(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer, tc.files)
 			withBucket(g.harness)
 			patch := tc.patch
 			if patch == "" {
@@ -474,5 +506,35 @@ func TestABReplayQuotesGitsRefusal(t *testing.T) {
 	}
 	if strings.ContainsAny(rec.Reason, "\n\r") {
 		t.Fatalf("reason = %q, want git's message folded onto one line", rec.Reason)
+	}
+}
+
+// TestABReplayRefusesALevelTheRunDoesNotRun: a reviewer arm's one review is the
+// slot level's, and a level the run itself does not run has no stage to replay
+// it in — the champion's own run made no round there either, so the pair would
+// compare a round with nothing (applyReplayLevel). The fixture's rigor is the
+// default mode, whose row runs the senior level and leaves the adversarial one
+// unset, so a slot at level 3 is the shape of it: the arm is refused by name at
+// bootstrap, before the champion's patch object is even read, and the level is
+// never forced on — forcing it would hand the pair two rounds that are not the
+// same round, which is the comparison the arm exists to make.
+func TestABReplayRefusesALevelTheRunDoesNotRun(t *testing.T) {
+	g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL3), armLayer)
+	withBucket(g.harness)
+	putChampionPatch(t, g.harness, championPatch(t, g.harness, championChange(g.harness)))
+	rec, err := g.run(t, replayReview("ship", 0))
+	if err == nil {
+		t.Fatal("a task replaying a level the run does not run was run")
+	}
+	if len(g.agent.calls) != 0 {
+		t.Fatalf("a refused replay ran %d stage(s), want none", len(g.agent.calls))
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeNone || rec.FailureClass != failure.ConfigInvalid {
+		t.Fatalf("record = %s/%s/%s, want failed/none/%s", rec.Status, rec.Outcome, rec.FailureClass, failure.ConfigInvalid)
+	}
+	for _, want := range []string{"review level l3", "does not run that level"} {
+		if !strings.Contains(rec.Reason, want) {
+			t.Fatalf("reason = %q, want it to carry %q", rec.Reason, want)
+		}
 	}
 }
