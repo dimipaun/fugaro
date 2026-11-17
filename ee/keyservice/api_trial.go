@@ -420,7 +420,7 @@ func (s *Service) trial(w http.ResponseWriter, r *http.Request) {
 	// installation name (workspaces.go's `bindingSource`): what this key is, to
 	// everything that reads the store afterwards, is the key of the licence
 	// above, and the name is what a later binding or rebind of that licence reads
-	// the key it replaces back with (`bindingKeys`, D2198) — a trial whose key
+	// the key it replaces back with (`licenceKeys`, D2198) — a trial whose key
 	// could not be found that way would be a key left live at an installation the
 	// licence had moved away from. The name carries the licence's id and a nonce
 	// for the reason every binding's does: the store's source is an idempotency

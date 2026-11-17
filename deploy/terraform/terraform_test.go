@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -995,12 +996,16 @@ func skipString(code string, i int) int {
 // module's own validation pins the job's name to.
 func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	re := regexp.MustCompile(`job_name=~\\"\^([a-z0-9-]+)\\"`)
-	seen, reports := 0, 0
+	seen, reports, licences := 0, 0, 0
 	walk(t, func(path string, b []byte) {
 		for _, m := range re.FindAllSubmatch(b, -1) {
 			seen++
-			if prefix := string(m[1]); prefix == reportsJobPrefix {
+			switch prefix := string(m[1]); prefix {
+			case reportsJobPrefix:
 				reports++
+				continue
+			case licenceJobPrefix:
+				licences++
 				continue
 			}
 			for _, slug := range []string{"bitbucket-acme-sandbox", strings.Repeat("a", 80)} {
@@ -1016,6 +1021,9 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	if reports != 1 {
 		t.Errorf("found %d reports-job name filters, want the reports alert's one", reports)
 	}
+	if licences != 1 {
+		t.Errorf("found %d licence-renewal name filters, want the licence job's alert and no other", licences)
+	}
 	// ... and that prefix is the one the module's own validation pins the job's
 	// name to, which is the line this test can read while the job's Go name is
 	// internal/infra's (R7): a filter matching a prefix the module would not
@@ -1026,6 +1034,29 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	}
 	if !strings.Contains(string(vars), `startswith(var.reports.job, "`+reportsJobPrefix+`")`) {
 		t.Errorf("the reports alert filters on %q, which is not the prefix the module's own validation pins the job's name to", reportsJobPrefix)
+	}
+	// The licence job's filter is held to the name the update WRITES instead:
+	// its job name is not pinned in variables.tf (the block's `job` is the
+	// input, and the validation refuses only the fugaro- prefix `fugaro runs
+	// ls` counts as a workflow job), so the one line that says what the job is
+	// called is the fixture the installation root's golden plan is made from —
+	// internal/infra's own installation-coordinator.tfvars.json, the document
+	// `fugaro update` plans with on an installation whose coordinator's job is
+	// deployed, which is every installation this alert exists for.
+	var fixture struct {
+		Licence struct {
+			Job string `json:"job"`
+		} `json:"licence"`
+	}
+	b, err := os.ReadFile(filepath.Join("..", "..", "internal", "infra", "testdata", "installation-coordinator.tfvars.json"))
+	if err != nil {
+		t.Fatalf("reading the licence job's tfvars fixture: %v", err)
+	}
+	if err := json.Unmarshal(b, &fixture); err != nil {
+		t.Fatalf("parsing the licence job's tfvars fixture: %v", err)
+	}
+	if fixture.Licence.Job != licenceJobPrefix {
+		t.Errorf("the licence alert filters on %q, but the job `fugaro update` plans is %q (internal/infra/testdata/installation-coordinator.tfvars.json): a filter matching a name no update writes watches for a job nobody creates", licenceJobPrefix, fixture.Licence.Job)
 	}
 }
 
@@ -1809,7 +1840,7 @@ var (
 	// object, so it is read as the email it is rather than as a reference to a
 	// resource: the account belongs to the installation, and the repository
 	// root is a different apply of a different directory.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|voice|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -1925,6 +1956,14 @@ func publicMemberReviews() string {
 // internal/infra's (R7), which is why the literal lives here and not in
 // internal/backend/gcp beside CheckJobName's.
 const reportsJobPrefix = "fugarorpt-"
+
+// licenceJobPrefix is the name prefix the installation module's own licence
+// job carries (licence.tf, plan K4.2 of docs/licence-key-v2): the job's alert
+// filters on it, and TestCheckJobPrefixMatchesGo reads the name back off the
+// fixture `fugaro update` writes, so a filter watching a job no update creates
+// fails there. The job's Go name is internal/infra's (LicenceJob), for the
+// reports job's reason, which is why the literal lives here.
+const licenceJobPrefix = "fugarolicence"
 
 // memberAllowed is allowedMemberExprs plus the reviewed exceptions above, and
 // it is the single decision every IAM block of this tree is held to.

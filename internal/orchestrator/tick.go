@@ -153,8 +153,17 @@ type Report struct {
 	// started for, and a rung recorded for the hook the rungs past rung 2
 	// attach through. The floor, rung 1, is not a move — the item's own loop
 	// is what resumes it — and neither is an item the ladder asked a person
-	// about.
+	// about, nor a wait a hook retried (Waited).
 	Escalated int
+	// Waited is how many waits the cycle retried: a rung 3 hook that read a
+	// reading still moving and left the item where it stands for the next cycle
+	// to read again (LadderWaiting, MergeOutcome.Retry). It is not a move and
+	// it is not a question — nothing was launched, landed or asked — and it is
+	// what keeps such a cycle from being read as one that did nothing: the
+	// daemon is waiting on something the reading says is going, and three of
+	// those in a row would reach the breaker's threshold and pause the node over
+	// a wait the item's own question ends (D1228, mergeRetryWindow).
+	Waited int
 	// Decided is how many judgements the cycle made: the cases it handed the
 	// decision agent and had answered. It is one a cycle at most (the decide
 	// step is one call per cycle by design).
@@ -620,6 +629,13 @@ func (c *cycle) carry(ctx context.Context, view RunView) error {
 // them would raise the pause that refuses the very launch the merge is for
 // (D2705).
 //
+// A rung 3 hook that retried a wait is that same reading again (Waited): the
+// checks it read had not concluded, or the run it read had not ended, and the
+// cycle's news is something still going rather than nothing. The wait is not
+// left to the breaker to end — the item's own question is what a wait that never
+// ends owes a person, and the breaker names no item (boundRetry,
+// mergeRetryWindow).
+//
 // A judgement counts as work when it landed — Decided is the case the agent
 // answered and the patch it landed is committed — and a cycle whose only news
 // is a call is read by what the call came to: a call that failed or answered
@@ -631,7 +647,7 @@ func (c *cycle) outcome() CycleOutcome {
 		return CycleProgress
 	case c.rep.DecideOutcome != "":
 		return c.rep.DecideOutcome
-	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }):
+	case c.anyNode(func(s State) bool { return hasOpenIntent(s) || hasReviewWait(s) }) || c.rep.Waited > 0:
 		return CycleInFlight
 	}
 	return CycleEmpty
@@ -673,7 +689,7 @@ func (c *cycle) commit(ctx context.Context, next State) error {
 
 // reread takes the node as it now stands after a write this cycle did not make.
 //
-// The rung 3 hook lands its moves through its own seam (MergeSeams.Node), with
+// The rung 3 hook lands its moves through its own seam (BeyondSeams.Node), with
 // the store's own conditional write, and the ETag that leaves is not the one
 // this cycle holds: the state it derived and the ETag it read are both older
 // than the document the hook left, so the next write it makes in the same Step
@@ -955,6 +971,22 @@ func (c *cycle) triaged(ctx context.Context, target TriageTarget, in TriageInput
 		// only merge this package ever asks for: the head is the one the
 		// rule judged, and the actor's own implementation is what refuses a
 		// head that moved or a diff nothing corroborates.
+		//
+		// An item the daemon adopted at start-up is the one this rule may not
+		// hand the host at all (D2702): adoption writes it for a run in
+		// flight with no approval of a person's, and the ladder's rung 3 —
+		// the other place in this package that lands work — refuses an
+		// adopted item for exactly that reason (adoptedMergeRefused). The
+		// rule cannot see this: it reads the run's inputs and never the item,
+		// so the refusal is here, in the shape an actor's own refusal is
+		// recorded in, and the person the approval belongs to is asked.
+		if adoptedMergeRefused(target.Item, escalation.R3) {
+			text = triageLine(out) + " " + string(ReasonMergeRefused) + " (" + codeUnapproved + ")"
+			if op, question, ok := c.askPerson(target, mergeRefusedQuestion(target, codeUnapproved)); ok {
+				ops, told = append(ops, op), append(told, question)
+			}
+			break
+		}
 		err := c.tick.Triage.Act.Merge(ctx, target, *in.PR)
 		code := mergeRefusalCode(err)
 		switch {
@@ -1031,6 +1063,14 @@ var ErrTriageUncorroborated = errors.New("the changed paths are not corroborated
 
 // codeUncorroborated is that refusal's closed code in the log and the question.
 const codeUncorroborated = "uncorroborated"
+
+// codeUnapproved is the closed code of the other merge this file refuses: the
+// item the rule judged was adopted from a run the daemon did not start, and no
+// person has approved it (D2702). It is not an error an actor answers with — the
+// item is not the actor's to see — so it is written where the refusal is made
+// rather than mapped from one, and it is a closed code of the same vocabulary
+// for the same reason: the line and the question carry no untrusted text.
+const codeUnapproved = "unapproved"
 
 // mergeRefusalCode is the closed code of a merge the actor refused, or ""
 // when the error is not a refusal at all. A refusal is a person's: the head
@@ -1150,11 +1190,15 @@ func escalateQuestion(target TriageTarget, out TriageOutcome) string {
 // mergeRefusedQuestion is what a person is asked about a merge that was
 // refused: the refusal is theirs to act on — a moved head is a review, an
 // unbound merge and a missing credential are configuration, an uncorroborated
-// diff is the one the daemon will not land by itself — and the run keeps its
-// own record either way.
+// diff is the one the daemon will not land by itself, and an item nobody
+// approved is the one no daemon may land at all — and the run keeps its own
+// record either way.
 func mergeRefusedQuestion(target TriageTarget, code string) string {
 	if code == codeUncorroborated {
 		return "The triage will not land the pull request of run " + target.RunID + " by itself: the changed paths it judged are the run's own account of its diff, and no host read of the judged head corroborates them (" + code + "). Read the diff and land it yourself, or close it."
+	}
+	if code == codeUnapproved {
+		return "The triage will not land the pull request of run " + target.RunID + " by itself: the item stands for a run the daemon adopted at start-up and no person has approved it (" + code + "). Approve the item, or read the diff and land the pull request yourself."
 	}
 	return "The triage could not land the pull request of run " + target.RunID + " (" + code + "). Decide what happens to it."
 }

@@ -20,6 +20,7 @@
 package orchestrator
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -88,6 +89,35 @@ func PathBacklog(agentID string) (string, error) { return pathOf(agentID, Backlo
 // reader lists to find every plan the project has imported. It carries no
 // document of its own, a plan node being a child of it.
 func PathPlans(agentID string) (string, error) { return pathOf(agentID, PlansNode) }
+
+// PlanNames lists the plans an orchestrator id has a node for, in order.
+//
+// One shallow read, not a read of the subtree, for the reason NodeIDs takes
+// one: a plan node is a state document of up to MaxStateBytes, and a reader
+// that only means to name them is not a reader that meant to download them.
+// A key this release cannot address is left out rather than listed as a plan:
+// every one of these paths is built from the name by PathPlan, so a name that
+// function refuses is a node no reader of this release could have written and
+// none can open.
+func PlanNames(ctx context.Context, db Keys, agentID string) ([]string, error) {
+	path, err := PathPlans(agentID)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := db.Keys(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(keys))
+	for _, key := range keys {
+		name, ok := specName(key)
+		if !ok {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
 
 // shardPath is the node a shard names under one orchestrator id, and the whole
 // check on a shard: a name that is not one of the three is refused here, at the

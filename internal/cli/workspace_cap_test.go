@@ -26,9 +26,13 @@ func TestWorkspaceCapSetWritesTheLocalConfigOnly(t *testing.T) {
 	_, aurora, owner := workspaceOwnerHome(t)
 	auroraBefore := readFileString(t, aurora)
 	out, _, err := execute(t, "workspace", "cap", "set", "--workspace", "workspace-alpha", "--monthly", "50")
-	if err != nil {
-		t.Fatalf("workspace cap set: %v\n%s", err, out)
-	}
+	// AP6: the write is the first half of what this command does, and the second
+	// is the chain its change owes — the workspace's own project and the record.
+	// On a machine whose workspace has never been applied that chain ends in
+	// D1563's sentence rather than in a hand-off (workspaceAssertSavedNotLive
+	// says why the run cannot finish here), and the write still lands exactly as
+	// this test's own assertions below hold it.
+	workspaceAssertSavedNotLive(t, "workspace cap set", out, err)
 	if got := readFileString(t, aurora); got != auroraBefore {
 		t.Errorf("cap set wrote another project's config:\n%s", got)
 	}
@@ -38,9 +42,6 @@ func TestWorkspaceCapSetWritesTheLocalConfigOnly(t *testing.T) {
 	}
 	if lc.WorkspaceCap == nil || lc.WorkspaceCap.Monthly != 50 {
 		t.Errorf("the cap is %+v, want 50 a month", lc.WorkspaceCap)
-	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("the write does not hand off to fugaro update:\n%s", out)
 	}
 }
 

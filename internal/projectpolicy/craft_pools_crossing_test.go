@@ -76,8 +76,8 @@ func TestTheSplitStepCarriesACrossPathNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate = %v", err)
 	}
-	if len(changes) != 1 {
-		t.Fatalf("changes = %+v, want the one step from version 8", changes)
+	if len(changes) != Version-8 {
+		t.Fatalf("changes = %+v, want one step per version from 8", changes)
 	}
 	if changes[0].From != 8 || changes[0].To != 9 {
 		t.Errorf("the step is %d to %d, want 8 to 9", changes[0].From, changes[0].To)
@@ -269,13 +269,13 @@ func TestANodeWithNoCrossPathPoolOnlyMovesItsNumber(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Migrate = %v", err)
 	}
-	if len(changes) != 1 || changes[0].Changed != "the version field: 8 to 9" {
+	if len(changes) != Version-8 || changes[0].Changed != "the version field: 8 to 9" {
 		t.Fatalf("changes = %+v, want the version field alone: no pool of this node crosses", changes)
 	}
 	if !slices.Contains(changes[0].Kept, "craft_pools") || !slices.Contains(changes[0].Kept, "crafts") {
 		t.Errorf("Kept = %v, want craft_pools and crafts: the step wrote nothing inside either", changes[0].Kept)
 	}
-	want := strings.Replace(raw, `"version":8`, `"version":9`, 1)
+	want := strings.Replace(raw, `"version":8`, fmt.Sprintf(`"version":%d`, Version), 1)
 	if string(migrated) != want {
 		t.Errorf("the migrated node is not the node with its version rewritten:\n got %s\nwant %s", migrated, want)
 	}

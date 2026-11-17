@@ -185,13 +185,21 @@ func TestRunRefusesBeforeLaunch(t *testing.T) {
 //
 // The two directions of the same node are what the sub-tests pin apart: the
 // node this release writes needs an image at the release that introduced it,
-// and the node one version behind it is refused before the gate is reached —
-// the crossing's step is not shape-free (MC21), so this binary does not read
-// that node as it stands and no image can make it readable. The gate and the
-// reader are therefore one answer rather than two: the node the gate judges is
-// always one this release reads.
+// and a node below this release that the reader does not read as it stands is
+// refused before the gate is reached, so no image can make it readable. The
+// gate and the reader are therefore one answer rather than two: the node the
+// gate judges is always one this release reads.
+//
+// Which version that third row names is read from the release rather than
+// typed, because a version whose step is shape-free is read as it stands
+// (projectpolicy.ReadsVersion, D990): the version immediately behind this one
+// is one this CLI *serves* where its step moves the number and nothing else —
+// version 9 is (R14, D2752) — so the row names the newest version below this
+// release that the reader still refuses (newestRefusedVersion), which is where
+// a refusal is the answer.
 func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 	oldImage := "ghcr.io/dimipaun/fugaro-base:" + shiftRelease(t, projectpolicy.VersionSince[projectpolicy.Version], -1)
+	unread := newestRefusedVersion(t)
 	for _, tc := range []struct {
 		name    string
 		version int
@@ -205,8 +213,8 @@ func TestRunRefusesAJobImageThatCannotReadThePolicyNode(t *testing.T) {
 		{"this release's node on an image that predates it", projectpolicy.Version, oldImage, true,
 			[]string{"policy version " + strconv.Itoa(projectpolicy.Version), "fugaro " + projectpolicy.VersionSince[projectpolicy.Version], oldImage, "acme/app", "web", imageGateRemedy}},
 		{"this release's node on the image that introduced it", projectpolicy.Version, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version], false, nil},
-		{"the node one version behind, which this release does not read", projectpolicy.Version - 1, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[projectpolicy.Version-1], true,
-			[]string{"the project policy is version " + strconv.Itoa(projectpolicy.Version-1), "understands version " + strconv.Itoa(projectpolicy.Version), "fugaro update", "rewrites the node in place"}},
+		{"the newest node below this release that this binary does not read", unread, "ghcr.io/dimipaun/fugaro-base:" + projectpolicy.VersionSince[unread], true,
+			[]string{"the project policy is version " + strconv.Itoa(unread), "understands version " + strconv.Itoa(projectpolicy.Version), "fugaro update", "rewrites the node in place"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newLaunchBudget(t, "enforce")

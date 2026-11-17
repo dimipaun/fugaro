@@ -28,6 +28,10 @@ import (
 // phase budgets, ratio and fan-out are post-hoc flags in the reports
 // (reconciliation F5). What is here bounds a gateway run's calls as they are
 // made.
+//
+// The tier's expected cost is here with them (T8.2): it is the one rule about
+// the run rather than about a stage, and the gateway is the only place a run's
+// spend is known as it is made.
 
 // CheckpointStage is the stage the runner opens for the one call that fills a
 // halted run's checkpoint report (T6.1, T7.2). It is spent like any call —
@@ -45,12 +49,16 @@ const checkpointCalls = 1
 
 // StageLimit is the gateway's per-stage governor as the run's configuration
 // made it: what a stage may spend in dollars and tokens, how many calls review
-// may spend on the implementation it read, and how far one stage may fan out
-// (T7.2). It is what ee/register installs behind the core's hook.
+// may spend on the implementation it read, how far one stage may fan out
+// (T7.2) and what the whole run is expected to cost (T8.2). It is what
+// ee/register installs behind the core's hook.
 //
-// t is the tier the run was dispatched at, which moves one figure: the fan-out
-// maximum, 3 on trivial and small and the untiered default elsewhere (T8.1,
-// D332). A run that carries no tier is bounded by the governance block alone.
+// t is the tier the run was dispatched at, which moves two figures: the
+// fan-out maximum, 3 on trivial and small and the untiered default elsewhere
+// (T8.1, D332), and the expected cost of the whole run, which is the
+// checkpoint T8.2 takes. A run that carries no tier — and a tier nothing
+// expected anything of — has no expectation and is bounded by the governance
+// block alone.
 //
 // cap is the run's own per-run cap: the ceiling every stage bound here sits
 // under, and the figure the stage budgets are fractions of. A cap of 0 is a run
@@ -64,18 +72,22 @@ func StageLimit(g policy.Governance, t tier.Tier, cap pricing.Micros) gateway.St
 	if cap <= 0 {
 		return nil
 	}
-	return &stageLimit{g: g, cap: cap, maxAgents: fanoutMax(g, t)}
+	return &stageLimit{g: g, cap: cap, maxAgents: fanoutMax(g, t), tier: t, expect: expectation(g, t)}
 }
 
-// stageLimit is one run's limits: the policy it was built from, and what the
-// pass being run has spent on review. Everything else a decision reads arrives
-// with the call it decides, out of the view; the pass's own review figures are
-// the exception, because the gateway's stage state is keyed by stage name and
-// the name a previous pass reviewed under is still in the view (Begin).
+// stageLimit is one run's limits: the policy it was built from, the tier it
+// was dispatched at and what its tier expects the whole run to cost, and what
+// the pass being run has spent on review. Everything else a decision reads
+// arrives with the call it decides, out of the view; the pass's own review
+// figures are the exception, because the gateway's stage state is keyed by
+// stage name and the name a previous pass reviewed under is still in the view
+// (Begin).
 type stageLimit struct {
 	g         policy.Governance
 	cap       pricing.Micros
 	maxAgents int64
+	tier      tier.Tier
+	expect    pricing.Micros
 	pass      reviewPass
 }
 
@@ -116,14 +128,26 @@ func (l *stageLimit) Begin(v gateway.StageLimitView) {
 
 // Stop is the decision before one call of a stage. The order is the order of
 // the sentences a run is told in: the checkpoint stage first (its allowance is
-// the only rule that applies to it), then the stage's own budget, then the
-// review ratio, then the fan-out. A stage governance bounds is one of the
-// three spend stages — an artifact run's plan and render steps have no
-// governance budget (T7.1) — and any other stage is bounded by the run's cap
-// and the gateway's pins alone.
+// the only rule that applies to it), then the run's own expectation, then the
+// stage's own budget, then the review ratio, then the fan-out.
+//
+// The expectation is asked before the stage's rules because it is about the
+// run and not about the stage: a run that has passed what its tier expected of
+// it is one a person has to look at whatever stage it happens to be in, and
+// the sentence it is stopped with is the run's own rather than the narrower
+// one of the stage that happened to be running.
+//
+// A stage governance bounds is one of the three spend stages — an artifact
+// run's plan and render steps have no governance budget (T7.1) — and any other
+// stage is bounded by the run's cap and the gateway's pins alone, the run's
+// expectation aside: that one is every stage's, because every call a run makes
+// is money spent against the figure its tier expects.
 func (l *stageLimit) Stop(v gateway.StageLimitView) gateway.StageStop {
 	if v.Stage.Name == CheckpointStage {
 		return checkpointStop(v)
+	}
+	if dec := l.expectationStop(v); dec.Reason != "" {
+		return dec
 	}
 	if !governedStage(v.Stage.Name) {
 		return gateway.StageStop{}
@@ -144,6 +168,68 @@ func (l *stageLimit) Stop(v gateway.StageLimitView) gateway.StageStop {
 // rounds.
 func governedStage(stage string) bool {
 	return stage == "implement" || stage == "fix" || config.IsReviewStage(stage)
+}
+
+// expectationStop is the tier's expected cost as a checkpoint (T8.2, D329,
+// D330): a run that has spent what its tier expected of it stops, with the
+// reason the record carries for it and the checkpoint report the runner writes
+// from that stop (T7.3).
+//
+// What is spent is the ledger's Used: the money the run paid, tiers B and C,
+// with the tier-A notional part left out as it is left out of the stage budgets
+// (C1.16) and as the calibration compares the same expectation against the same
+// figure (T8.3, the record's billed). The figure is what the run has spent and
+// not the call's worst case beside it: an expectation is not a cap (D330), and
+// counting a reservation into it would stop a fresh run on a call that has
+// settled nothing. So the call that crosses the expectation is admitted and the
+// next one is refused, as the fan-out maximum admits the sub-agent that crosses
+// it.
+//
+// A run with no tier has none of this, and neither has a tier nothing expected
+// anything of (G5): `no tier, no threshold`, so an untiered run is bounded by
+// the governance block and the run's cap as it was before tiers existed.
+//
+// It never applies to the checkpoint stage, which Stop asks about first: a run
+// already past its expectation is exactly the run whose checkpoint report has
+// to be written, and the one call that stage admits is what writes it.
+func (l *stageLimit) expectationStop(v gateway.StageLimitView) gateway.StageStop {
+	if l.expect <= 0 || v.Ledger.Used < l.expect {
+		return gateway.StageStop{}
+	}
+	return gateway.StageStop{
+		Reason: string(runstore.HaltExpectedExceeded),
+		Detail: fmt.Sprintf("the run passed the cost its tier expected of it: tier %s expects %s, the run has spent %s", l.tier, usd(l.expect), usd(v.Ledger.Used)),
+	}
+}
+
+// expectation is what tier t expects a run of it to cost, in money: the figure
+// T8.2's checkpoint is taken at. Zero is no expectation — a run dispatched at
+// no tier of the vocabulary, or a tier whose figure is zero, which is the
+// absence of one and never a run expected to cost nothing (G5, and a NaN is
+// not above zero either).
+//
+// A figure past the largest amount a price may be is the largest threshold
+// instead: nothing can reach it, which is what an expectation that size means,
+// and it is deliberately not a wrapped figure, which would read as no threshold
+// at all or as one a run is stopped at for nothing. The bound is
+// pricing.MaxUSD, so the conversion below is the plain one for every amount a
+// run could mean.
+//
+// The dollars come off the run's own resolved governance and not a table here:
+// a repository whose layer tightened its tiers asked for that figure, and it is
+// the figure the record carries and the calibration reads back (T8.1, T8.3).
+func expectation(g policy.Governance, t tier.Tier) pricing.Micros {
+	if !tier.Known(t) {
+		return 0
+	}
+	want := g.Tiers.For(t).ExpectedUSD
+	if !(want > 0) {
+		return 0
+	}
+	if want > pricing.MaxUSD {
+		return math.MaxInt64
+	}
+	return pricing.Micros(math.Round(want * 1e6))
 }
 
 // budgetStop is the stage's own budget: its dollars, and its token ceiling

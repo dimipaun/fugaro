@@ -172,6 +172,16 @@ var secretReaderExceptions = []struct {
 	// The guard keys on the import, so it is a row of this table for the same
 	// reason E22 is.
 	{id: "E27", keys: []string{"internal/cli/repos_view.go"}},
+	// The licence renewal job's account (K4.2, docs/licence-key-v2): the one
+	// reader of the renewal container, which `update` creates empty and
+	// `fugaro licence set` later writes. The role is a CUSTOM one
+	// (fugaroLicenceRenewal) carrying exactly K4.1's four calls -- the
+	// container's metadata, its enabled versions, one version's payload and the
+	// version a renewal writes -- so no predefined role is close: the two that
+	// would cover the four (secretmanager.secretVersionManager and
+	// secretmanager.viewer) also carry create, delete, destroy, enable, disable
+	// and getIamPolicy on the container, none of which the job calls.
+	{id: "E30", keys: []string{"deploy/terraform/gcp/modules/installation/licence.tf google_secret_manager_secret_iam_member.licence_renewal"}},
 	// The pairing key's cloud copy (mobile plan task P5.1e, the mobile
 	// orchestrator design's section 4.2 and its section 4.7 step 2b), and it is
 	// the one row in this table whose value is a SECRET Secret Manager holds for

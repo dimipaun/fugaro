@@ -92,6 +92,23 @@ var tokenPermissions = map[string]string{
 	"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read",
 }
 
+// issueTokenPermissions is what the credentials service's issue route asks for
+// when it performs an issue act itself (B3 of
+// docs/orchestrator-graph-estimates/implementation-plan.md, D2718): the issues
+// it lists and reads and the one it opens, and metadata: read, the noun every
+// installation token carries. GitHub has no issue permission but the one the
+// creation needs — a repository's open issues are read with `issues: write`
+// exactly as they are written with it — so the one noun covers all three acts.
+//
+// It is the only set here that no run's token carries: tokenPermissions keeps
+// the read a run was already given, and this write belongs to the service,
+// which performs the act and hands no token over, so it is never in a job's
+// container. The App's installation must grant it all the same, and that is
+// what makes RequiredPermissions union this set in (installcheck.go): the
+// service mints from the installation, and GitHub refuses a mint that asks for
+// a permission the installation does not hold.
+var issueTokenPermissions = map[string]string{"issues": "write", "metadata": "read"}
+
 // buildTokenPermissions is what an image build's token asks for: it only
 // clones the repository.
 var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
@@ -143,6 +160,30 @@ func CoordinatorTokenPermissions() map[string]string {
 	return maps.Clone(coordinatorTokenPermissions)
 }
 
+// settleTokenPermissions is what a change set's settle step asks for (D641 of
+// docs/forge-authorship-images/implementation-plan.md): the one write that
+// flips a set's pull requests ready, and no reach beyond it.
+//
+// The coordinator's own token is read-only and stays so (P2, reconciliation Q3
+// answered (A)): a coordinator that could write would be a coordinator that
+// could answer a merge, which is what that question refused. Settling is the
+// one exception the plan grants, and it is granted as a set of its own rather
+// than a widening of the coordinator's — minted where the flip happens, for
+// the members' repositories alone, so the credential the project-wide view is
+// built with is a read for the whole of the view's life whatever the settle
+// step holds for the seconds it runs.
+//
+// Two permissions, and both are load-bearing: pull_requests: write is what the
+// draft flip (PUT /repos/{owner}/{repo}/pulls/{number}) and the requested
+// reviewers behind gitprov.Provider.ApplyReady ask for, and metadata: read is
+// what GitHub requires of any request at all. A run's token carries
+// pull_requests: write too, but it also carries contents: write and issues:
+// read, and a settle step writes no file, opens no branch and pushes nothing:
+// a permission nobody uses is reach a stolen token would have for nothing, so
+// this set is exactly the reach the flip needs. TestSettleTokenIsPullRequestsWriteOnly
+// holds it to these two and to the body the mint sends with them.
+var settleTokenPermissions = map[string]string{"pull_requests": "write", "metadata": "read"}
+
 // RunTokenPermissions are the permissions of a run's installation token, a
 // copy the caller may keep. It is the exported spelling of tokenPermissions,
 // which is the set the in-process provider mints with: a caller that mints a
@@ -150,6 +191,14 @@ func CoordinatorTokenPermissions() map[string]string {
 // asks for this and adds nothing, so the two paths cannot drift into asking
 // GitHub for different reaches on the same run.
 func RunTokenPermissions() map[string]string { return maps.Clone(tokenPermissions) }
+
+// IssueTokenPermissions are the permissions of the credentials service's issue
+// route, a copy the caller may keep. It is the exported spelling of
+// issueTokenPermissions, so the set the route asks GitHub for and the set
+// RequiredPermissions holds the installation to cannot drift apart: the service
+// mints what `fugaro doctor` requires, and an installation that grants only
+// `issues: read` is a missing grant rather than a refusal at the first issue.
+func IssueTokenPermissions() map[string]string { return maps.Clone(issueTokenPermissions) }
 
 // reviewTokenPermissions is what a review job's installation token asks for
 // (CSR1 of docs/cloud-senior-review/implementation-plan.md, D883): the head it
@@ -292,6 +341,22 @@ func MintRepositoriesToken(ctx context.Context, o Options, repos []string, perms
 	app, o := appClient(o)
 	src := &tokenSource{app: app, owner: o.Owner, repo: names[0], repos: names, now: o.Now, permissions: maps.Clone(perms)}
 	return src.Token(ctx, buildTokenMinValid)
+}
+
+// MintSettleToken mints ONE installation token covering the change set's
+// member repositories under o's owner, scoped to exactly them and carrying the
+// settle-only set (settleTokenPermissions), valid for at least half an hour.
+//
+// It is MintRepositoriesToken with the permission set fixed, and the fixing is
+// the point (D641): the settle step is its one caller, a settle token is
+// scoped to the members of the set it settles, and a caller that could pass
+// its own set could mint the settle's reach over anything. The repositories
+// are names within o's owner, exactly as MintRepositoriesToken takes them — a
+// change set's members may span owners (D642), so a caller holding members of
+// two installations mints once per owner and hands each member's provider the
+// token minted for its own.
+func MintSettleToken(ctx context.Context, o Options, repos []string) (string, time.Time, error) {
+	return MintRepositoriesToken(ctx, o, repos, settleTokenPermissions)
 }
 
 // repositoryNames holds the repositories of a multi-repository mint to what

@@ -204,6 +204,15 @@ type InstallationSpec struct {
 	EnableBudget bool             `json:"enable_budget,omitempty"`
 	History      *HistorySpec     `json:"history,omitempty"`
 	Coordinator  *CoordinatorSpec `json:"coordinator,omitempty"`
+	// Licence is the licence renewal job (K4.2): the scheduled
+	// `fugaro licence renew --job`, its own account and the empty container
+	// the renewal secret is written into. It hangs off the coordinator's
+	// opt-in rather than one of its own — its image IS the coordinator's, so
+	// an installation that has not opted in has no tagged image to run — and
+	// internal/cli's licenceJob drops the block again where this plan does not
+	// deploy the coordinator's job, which is the same fact
+	// modules/installation/licence.tf reads from local.deploy_coordinator.
+	Licence *LicenceSpec `json:"licence,omitempty"`
 	// MCPServer is the coordinator's front door (D920, D934), left out of an
 	// installation the owner has not turned it on for: the module creates the
 	// account, the service and the public invoker binding only for a variable
@@ -1934,6 +1943,70 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 	return sortedJSON(doc)
 }
 
+// LicenceKey is the installation root's variable for the licence renewal job's
+// block (plan K4.2 of docs/licence-key-v2) — the account, the job, the empty
+// container and its two bucket conditions — and it is the key CarriedLicence
+// reads and keeps.
+const LicenceKey = "licence"
+
+// CarriedLicence returns vars with the licence renewal job's block the document
+// prev carried, when vars carry none of their own: the last of the keys this
+// spec does not always carry, beside the credentials service's, the intake's,
+// the implicit review jobs', the shared jobs' and their accounts', the
+// deployer's scope and the orchestrator's.
+//
+// The block is not the installation's own composition — internal/cli's
+// licenceJob writes it, and every value in it is recomputed from the local
+// config on the run that writes it — but its PRESENCE is the installation's:
+// the module creates the account, the job, the schedule and the empty container
+// the renewal secret is written into the moment a document names the job, and
+// the container carries prevent_destroy (licence.tf), so a document that loses
+// the key while the installation holds them is a plan Terraform refuses rather
+// than applies, on every later run, for an installation whose coordinator's own
+// job is no longer deployed — a history image that is not tagged, a repository
+// the config has since dropped, an App ID it no longer records
+// (internal/cli's coordinatorJob recomputes that readiness on every run, and
+// licenceJob writes the block only where it holds).
+//
+// What this carry does NOT do is change what the module plans in that state:
+// licence.tf reads the block TOGETHER with the coordinator's own readiness
+// (local.licence_on), so a block on an installation whose job is not deployed
+// plans nothing either way, and the modules above leave the resources' fate to
+// that second conjunct. What the carry settles is only that the document which
+// is planned is never the thing that forgot the job — the readiness returning
+// true is then a no-op for the resources rather than a re-creation, and a
+// rewrite of this root by a path that decides nothing about the licence (the
+// compute stage's read of the installation's outputs, --config-only,
+// --print-vars, a rollback, which is what the carries above exist for) no
+// longer drops the key. Whether the readiness SHOULD be able to take back a job
+// the installation already holds is a decision about the module's switch, and
+// this carry does not make it.
+func CarriedLicence(vars, prev []byte) ([]byte, error) {
+	if prev == nil {
+		return vars, nil // no document held one: nothing to carry
+	}
+	previous, err := varsDoc(prev)
+	if err != nil {
+		// A tfvars that cannot be read is not a reason to write a plan that
+		// drops the installation's record of the job: fail rather than carry
+		// nothing forward.
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, ok := previous[LicenceKey]
+	if !ok || block == nil {
+		return vars, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return nil, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	if _, own := doc[LicenceKey]; own {
+		return vars, nil // the caller's own answer stands
+	}
+	doc[LicenceKey] = block
+	return sortedJSON(doc)
+}
+
 // varsDoc decodes an installation tfvars document, keeping numbers as
 // json.Number so that encoding it again writes the same digits.
 func varsDoc(vars []byte) (map[string]any, error) {
@@ -2103,6 +2176,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 				return InstallationSpec{}, err
 			}
 			s.Coordinator = &c
+			l, err := Licence(lc, bucket)
+			if err != nil {
+				return InstallationSpec{}, err
+			}
+			s.Licence = &l
 		}
 	}
 	// The front door's opt-in is refused rather than resolved when the

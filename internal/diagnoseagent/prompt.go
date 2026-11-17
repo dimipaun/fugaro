@@ -223,7 +223,7 @@ type Answer struct {
 // tier reads the job's: the same block the local tier parses out of its child's
 // text (parseAnswer), and then the same pass a person's copy of an answer has
 // always taken — the control characters off, both redaction passes, the masks
-// last (redactOutput, F20). It is one call because the two halves are one rule:
+// last (RedactOutput, F20). It is one call because the two halves are one rule:
 // an answer that skipped the second would be model output about untrusted text
 // reaching a file a person opens and a command prints.
 func ReadAnswer(text, nonce string, secrets []string) (Answer, error) {
@@ -233,8 +233,8 @@ func ReadAnswer(text, nonce string, secrets []string) (Answer, error) {
 	}
 	return Answer{
 		Outcome:   d.Outcome,
-		Signature: redactOutput(d.Signature, secrets),
-		Text:      redactOutput(d.Text, secrets),
+		Signature: RedactOutput(d.Signature, secrets),
+		Text:      RedactOutput(d.Text, secrets),
 	}, nil
 }
 

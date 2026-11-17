@@ -1058,7 +1058,7 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // withdrawn, whatever minted it. On top of that the walk follows the three steps
 // that reach a key whose record does not name the licence — the ones minted
 // before P3.6 wrote the field — which are the entitlement's own bindings, the
-// keys D2196 mints for it (`bindingKeys`); the subscription every other issuance
+// keys D2196 mints for it; the subscription every other issuance
 // of the licence stamps on its record — the key a **seat change** reissued, and
 // the merchant's own renewal, which is §5.1's ordinary route — and the record's
 // own word for the key it replaced, `rotation:<the key it replaces>` (see

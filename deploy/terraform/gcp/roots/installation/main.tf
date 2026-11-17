@@ -52,6 +52,7 @@ module "installation" {
   mcp_server                = var.mcp_server
   catalog_check             = var.catalog_check
   reports                   = var.reports
+  licence                   = var.licence
   credentials_service       = var.credentials_service
   intake                    = var.intake
   voice_service             = var.voice_service

@@ -782,7 +782,7 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * is still `runs ls --json` and rule 6's row carries the two words in its
  * parenthetical.
  *
- * **It is twenty-nine argvs, and this surface is the same twenty-nine.** (The
+ * **It is thirty argvs, and this surface is the same thirty.** (The
  * enumeration below numbers twenty-two of them: CG9a's `graph --json` landed
  * after it was written and sits between `plan status --json` and
  * `coordinator status --from-store --all --json`, and this plan's
@@ -835,7 +835,11 @@ const NOT_ON_THIS_TREE: readonly string[] = [
  * never appears
  * in this list at all, and needs no numbering: it is the one row in
  * `CONSOLE_OPERATIONS` that carries no command, so there is no argv of a child
- * for a renderer to fill.)
+ * for a renderer to fill.) **The composite-commands plan's AP8 is the thirtieth
+ * and the last**: the pending-steps read, `apply --status --json`, whose
+ * `--status` is a word of the command path rather than a flag this table fixes
+ * -- the bare `apply` is the chain, and the word is the whole difference
+ * between the read and the write.
  */
 const DESIGN_ARGV: readonly string[] = [
   'watch --json',
@@ -953,6 +957,17 @@ const DESIGN_ARGV: readonly string[] = [
   // -- the subcommand, the key and the operator's value are the operation's
   // three arguments (`src/main/spawn.ts`'s `settingsEdit`).
   'settings',
+  // The pending-steps read (the composite-commands plan's AP8, D1569). This row
+  // fixes the command's own leading words and `--json`, and **`--status` is one
+  // of those words rather than a flag this table fixes**: the bare `apply` is
+  // the chain that runs what is owed, so the operation's `command` is
+  // `apply --status` and the whole argv is the three words written here. The
+  // operation declares no argument at all (`src/main/spawn.ts`'s empty `args`),
+  // and the installation's two project flags are main-process state, which is
+  // this file's convention for taking them out. The design's own row states the
+  // whole argv, `apply --status --json --project <name> [--config <path>]` and
+  // all.
+  'apply --status --json',
 ]
 
 /** argvOf is an operation's command and the flags it fixes, as one string. */
@@ -1764,6 +1779,11 @@ const WELL_FORMED: Record<OperationName, Record<string, unknown>> = {
   // is well formed, and the value is a canonical `owner/name` rather than the
   // pattern a grant's scope may hold.
   'members.list': { repo: 'acme/app' },
+  // The empty payload again (the composite-commands plan's AP8, D1569): the
+  // pending-steps read takes no argument at all -- the command is cobra's
+  // `NoArgs` and the operation declares no key -- so there is no step name, no
+  // key and no project here for a caller to spell.
+  'apply.pending': {},
 }
 
 const RUN_ID = '20261016-121029-4a1b'
@@ -3295,6 +3315,27 @@ describe('the spend read’s arguments', () => {
  *     would widen what the read is about; the `repository` kind refuses one
  *     before a child exists, and the patterns that are stored arrive in the
  *     document.
+ *
+ * **The composite-commands plan's AP8 added the forty-first** (`apply.pending` /
+ * `readPendingSteps`: the pending steps a management command saved for a later
+ * `fugaro apply`, `fugaro apply --status --json`) and left the other forty
+ * exactly where they were. It is appended here for the reason every row above
+ * was: what the task added must be visible as a diff. It sits last, under the
+ * Members read, and three things about it are its own:
+ *
+ *   - **It is the read half of a command whose bare word is a write.** `fugaro
+ *     apply` runs the steps a management command saved; `--status` runs none of
+ *     them, writes no pending file, keeps no cache and remembers no checkout.
+ *     The word is therefore a word of the operation's `command` rather than a
+ *     flag this surface fixes (`src/main/spawn.ts`), so nothing a renderer sends
+ *     can drop it and reach the chain.
+ *   - **It takes no argument at all**, like `seats.read` and `models.list`
+ *     above: the command is cobra's `NoArgs`, so there is no field a caller
+ *     could fill and no word of the document a renderer interprets as a flag.
+ *   - **No screen asks for it yet.** The console's pending-steps panel is the
+ *     composite-commands plan's own console task, so this row is the surface's
+ *     fence rather than a read the shipped app makes today -- the same direction
+ *     the two managed rows stood in between that plan's CM3 and CM4.
  */
 const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   ['live.watch', 'subscribeLive'],
@@ -3361,6 +3402,13 @@ const SHIPPED_SURFACE: readonly (readonly [string, string])[] = [
   // is `models.list` -- and its one argument, the repository a role is asked
   // about, is optional.
   ['members.list', 'listMembers'],
+  // The pending-steps read (the composite-commands plan's AP8), appended for the
+  // reason every row above was. It is the read half of a command whose bare word
+  // is the chain (`fugaro apply`): `--status` is a word of the row's command
+  // path, and the operation takes no argument. No screen asks for it yet -- the
+  // pending-steps panel is that plan's own console task -- so the row is the
+  // surface's fence rather than a read the shipped app makes.
+  ['apply.pending', 'readPendingSteps'],
 ]
 
 /**
@@ -3391,7 +3439,7 @@ export function surfaceOffences(proposed: readonly (readonly [string, string])[]
 }
 
 describe('the frozen list of operations the preload exposes', () => {
-  it('is exactly these forty, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
+  it('is exactly these forty-one, with `spend.report` on `runReport`, the handshake on `getCompatibility` and the rail on `listInstallations`', () => {
     expect(EXPOSED_OPERATIONS).toEqual(SHIPPED_SURFACE)
     expect(surfaceOffences(EXPOSED_OPERATIONS)).toEqual([])
     expect(Object.isFrozen(EXPOSED_OPERATIONS)).toBe(true)
@@ -3408,11 +3456,11 @@ describe('the frozen list of operations the preload exposes', () => {
     // unmutated surface is asserted clean first.
     expect(surfaceOffences(SHIPPED_SURFACE)).toEqual([])
 
-    // A forty-first channel: what each task added must stay one row, and the
+    // A forty-second channel: what each task added must stay one row, and the
     // next task that adds a read cannot do it quietly.
-    const fortyFirst = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
-    expect(fortyFirst).toContain('fleet.report: a channel this console does not ship')
-    expect(fortyFirst).toContain('41 rows, and this console ships 40')
+    const fortySecond = surfaceOffences([...SHIPPED_SURFACE, ['fleet.report', 'fleetReport']])
+    expect(fortySecond).toContain('fleet.report: a channel this console does not ship')
+    expect(fortySecond).toContain('42 rows, and this console ships 41')
 
     // A write verb, which the allow-list forbids outright: it is refused here
     // for the same reason, one step earlier than `assertReachableSurface`.
@@ -3426,7 +3474,7 @@ describe('the frozen list of operations the preload exposes', () => {
       SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
     )
     expect(withoutTheNewRow).toContain('startup.compatibility: not on the surface at all')
-    expect(withoutTheNewRow).toContain('39 rows, and this console ships 40')
+    expect(withoutTheNewRow).toContain('40 rows, and this console ships 41')
     expect(
       surfaceOffences([
         ...SHIPPED_SURFACE.filter(([name]) => name !== 'startup.compatibility'),
@@ -3441,8 +3489,8 @@ describe('the frozen list of operations the preload exposes', () => {
     )
   })
 
-  it('is frozen, and hands the window a bridge with the forty methods and nothing else', () => {
-    // The bridge the window is handed: the forty methods and the names,
+  it('is frozen, and hands the window a bridge with the forty-one methods and nothing else', () => {
+    // The bridge the window is handed: the forty-one methods and the names,
     // with no `invoke`, no channel and no method of its own.
     const bridge = createConsoleBridge(fakeRenderer())
     expect(Object.keys(bridge).sort()).toEqual(
@@ -4616,7 +4664,7 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
 
   it('lets every other operation through, so a reduced console is still a console', async () => {
     const { bridge, reached } = reducedConsole(REDUCED_HANDSHAKE)
-    // The non-vacuity half: thirty-three of the surface's forty operations,
+    // The non-vacuity half: thirty-four of the surface's forty-one operations,
     // all of them reachable in a reduced mode (the handshake is the one the loop
     // skips and its own test covers; `installation.current`, Task 3.4b, is among
     // the nineteen, because a reduced console's header still names its
@@ -4688,8 +4736,13 @@ describe('the views a reduced console withholds, at the handler (rule 4)', () =>
     // and scopes -- and no field of it is money, so there is nothing for the mode
     // to withhold, and a reduced console is precisely the one whose operator may
     // need to see who still holds a role on the installation they are trying to
-    // bring back.
-    expect(THE_OPEN_OPERATIONS.length).toBe(33)
+    // bring back. **`apply.pending` (the composite-commands plan's AP8) is the
+    // thirty-fourth**, and it is here twice over: its document carries no spend
+    // and no cap -- a pending step is a state -- and the steps a management
+    // command saved are exactly what a reduced or lapsed installation still owes,
+    // so withholding the list would take away the one read that says what is
+    // left to do.
+    expect(THE_OPEN_OPERATIONS.length).toBe(34)
     expect(THE_OPEN_OPERATIONS).toContain('installation.current')
     for (const name of THE_OPEN_OPERATIONS) {
       const reply = await asCallable(
