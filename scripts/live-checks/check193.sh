@@ -375,6 +375,11 @@ MODEL_ENVS = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 # or not the env name above is the one it reads it under — so both spellings
 # are read, and a job whose container is named is one the flip has not reached.
 MODEL_SECRETS = ("anthropic-api-key", "claude-oauth-token")
+# A derived Secret Manager ID ends in the hash gcp.SecretID puts on it
+# (internal/backend/gcp/names.go: secretHashHex, 16 hex of sha256), which is
+# what tells the logical name the ID was built for from the slug in front of
+# it.
+SECRET_HASH_RE = re.compile(r"-[0-9a-f]{16}$")
 
 
 def word(v, cap=80):
@@ -441,6 +446,27 @@ def containers_of(doc):
     return (spec.get("containers") or []) if isinstance(spec, dict) else []
 
 
+def model_container(base):
+    """Whether a mounted secret's ID is one of the model containers.
+
+    The ID a deployment writes is the DERIVED one, and it is the only one a job
+    can be fed from: gcp.SecretID(slug, logical) builds
+    `fugaro-<readable slug>-<logical>-<16 hex>` and gcp.ProjectSecretID builds
+    `fugaro-project-<name>-<logical>-<16 hex>` (internal/backend/gcp/names.go:
+    derive), so the logical name is the LAST readable segment of the ID and
+    never the first. A named Claude account's own container is the same shape
+    with the account after the logical name
+    (`-claude-oauth-token-<account>-<hash>`, config.ClaudeOAuthTokenPrefix),
+    which is why the name is looked for with a dash after it as well. So the two
+    spellings are read off the hash-stripped ID, and a reading that matched the
+    ID against the logical names by PREFIX — where those names never are — would
+    answer "no mount" for every job a real installation has: a PASS on the
+    flip's central row for a job that still holds the credential."""
+    stem = SECRET_HASH_RE.sub("", base)
+    return any(stem.endswith("-" + s) or ("-" + s + "-") in stem
+               for s in MODEL_SECRETS)
+
+
 def mounts_of(containers):
     """The MODEL secret containers these containers are fed from, as names.
 
@@ -459,8 +485,7 @@ def mounts_of(containers):
             ref = ((src.get("secretKeyRef") or {}).get("secret")
                    or (src.get("secretKeyRef") or {}).get("name") or "")
             base = ref.split(":")[-1].split("/")[-1]
-            named = base.startswith(MODEL_SECRETS) or any(
-                base.startswith(s + "-") for s in MODEL_SECRETS)
+            named = model_container(base)
             if named or (name in MODEL_ENVS and (e.get("value") or "")):
                 short = base if named else name
                 if short not in out:

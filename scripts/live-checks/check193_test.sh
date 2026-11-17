@@ -213,7 +213,7 @@ specification), the access token the installation's Realtime Database record is
 read with, and Cloud Logging — whose lines for a run are the service's own
 `credsvc: audit` lines, built here from the mode the case names.
 """
-import json, os, re, sys
+import hashlib, json, os, re, sys
 
 LOG = os.environ["FAKE_LOG_DIR"]
 STATE = os.environ["FAKE_GCLOUD_STATE"]
@@ -273,6 +273,19 @@ def job_name(repo):
     return "%s-0123456789abcdef" % repo.lower().replace("/", "-")
 
 
+def secret_id(slug, logical):
+    """gcp.SecretID: the DERIVED Secret Manager ID a job's env is fed from —
+    `fugaro-<readable slug>-<logical>-<16 hex of sha256(slug NUL logical)>`
+    (internal/backend/gcp/names.go: derive, readableSlug and secretHashHex).
+    The logical name is the LAST readable segment and never the first, and the
+    readable part drops the slug's own 16-hex tail, so this is the shape a
+    deployment writes and the only one a case can use to test the check's
+    mount reading."""
+    readable = re.sub(r"-[0-9a-f]{16}$", "", slug.lower())
+    h = hashlib.sha256(("%s\x00%s" % (slug, logical)).encode()).hexdigest()[:16]
+    return "fugaro-%s-%s-%s" % (readable, logical, h)
+
+
 def job_doc(repo):
     envs = [{"name": "FUGARO_REMOTE", "value": "https://bitbucket.org/%s.git" % repo}]
     if mode != "no-url":
@@ -281,9 +294,21 @@ def job_doc(repo):
     if mode == "mounted" and repo == (repos[1] if len(repos) > 1 else ""):
         # The mount the flip exists to take off: the container the paid key is
         # served from, as the deployment mounts it (config.ModelSecretEnvs and
-        # the derived Secret Manager ID behind it).
+        # the derived Secret Manager ID behind it — never the logical name,
+        # which is what a check reading the ID by prefix would need to see).
         envs.append({"name": "ANTHROPIC_API_KEY",
-                     "valueSource": {"secretKeyRef": {"secret": "anthropic-api-key-abcdef", "key": "latest"}}})
+                     "valueSource": {"secretKeyRef": {
+                         "secret": secret_id(job_name(repo), "anthropic-api-key"),
+                         "version": "latest"}}})
+    if mode == "mounted-account" and repo == (repos[1] if len(repos) > 1 else ""):
+        # The other shape a real job is fed from: a NAMED Claude account's own
+        # container, whose logical name carries the account after the token's
+        # (config.ClaudeOAuthTokenPrefix, `claude-oauth-token-<account>`) — the
+        # mount the oauth sandbox repository's job holds before the flip.
+        envs.append({"name": "CLAUDE_CODE_OAUTH_TOKEN",
+                     "valueSource": {"secretKeyRef": {
+                         "secret": secret_id(job_name(repo), "claude-oauth-token-work"),
+                         "version": "latest"}}})
     if mode == "provider-key":
         envs.append({"name": "FUGARO_PROVIDER_KEY_OPENROUTER",
                      "valueSource": {"secretKeyRef": {"secret": "openrouter-key-abcdef", "key": "latest"}}})
@@ -972,9 +997,30 @@ test_after_flip_refuses_a_job_that_still_mounts_the_model_credential() {
   expect_status "$status" 1 "after the flip: the verdict"
   expect_contains "$out" "MODE: flip" "after the flip: the block's mode"
   expect_contains "$out" "FACT no-model-mounts: FAIL" "after the flip: the mount row"
-  expect_contains "$out" "anthropic-api-key-abcdef" "after the flip: the row names the container the job is fed from"
+  # The container the job is fed from, named as the deployment writes it: the
+  # derived ID, `fugaro-<readable slug>-<logical>-<16 hex>`, and never the
+  # logical name — an assertion on the logical spelling would pass against a
+  # check that cannot see a real mount at all.
+  expect_contains "$out" "fugaro-acme-sandbox-oauth-anthropic-api-key-71102c59f2b0e1e9" "after the flip: the row names the container the job is fed from"
   expect_contains "$out" "FACT inflight-mount: PASS" "after the flip: the untaken rows are still read"
   expect_absent "$out" "FACT declared-account" "after the flip: a row of the other mode is not in this block"
+}
+
+# The other container a real job is fed from, and the one the oauth sandbox
+# repository's own job holds before the flip: a NAMED Claude account's token,
+# whose derived ID carries the account after the logical name
+# (`-claude-oauth-token-<account>-<hash>`). A reading that knew only the bare
+# logical name would call this job unmounted.
+test_after_flip_refuses_a_job_that_still_mounts_an_accounts_token() {
+  local dir=$work/flipacct
+  prepare "$dir"
+  run193 "$dir" --after-flip \
+    FAKE_GCLOUD_MODE=mounted-account \
+    CHECK193_INFLIGHT=20261116-070000-aaaa \
+    FAKE_INFLIGHT=20261116-070000-aaaa FAKE_INFLIGHT_REPO=acme/sandbox-api
+  expect_status "$status" 1 "after the flip, an account's token: the verdict"
+  expect_contains "$out" "FACT no-model-mounts: FAIL" "after the flip, an account's token: the mount row"
+  expect_contains "$out" "fugaro-acme-sandbox-oauth-claude-oauth-token-work-b83d639928880e02" "after the flip, an account's token: the row names the container the job is fed from"
 }
 
 # The same run on a repository whose jobs mount nothing: every flip row holds,
@@ -1122,6 +1168,7 @@ t test_a_launch_that_failed_leaves_the_declared_account_unmeasured
 t test_a_proxied_repository_whose_run_did_not_reach_the_service_is_a_failure
 t test_a_policy_without_the_proxy_leaves_the_row_unmeasured
 t test_after_flip_refuses_a_job_that_still_mounts_the_model_credential
+t test_after_flip_refuses_a_job_that_still_mounts_an_accounts_token
 t test_after_flip_passes_when_no_job_mounts_a_model_credential
 t test_an_inflight_run_the_service_answered_is_a_failure
 t test_a_run_that_started_after_the_reapply_is_not_the_u9_case
