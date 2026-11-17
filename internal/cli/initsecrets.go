@@ -200,6 +200,13 @@ type secretsStage struct {
 	checked bool
 	missing []string // names with no stored value
 	stored  []string // names stored in this run, for Verify
+	// repoLevel are the names of the checkout's own that D2313 disables: a
+	// repository-level secret no job mounts project-wide for this repository.
+	// They are dropped from what the stage wants (nothing to ask, nothing to
+	// store, no line to leave -- every store that would take one answers a
+	// notice), and the ruling's one sentence about them is what Check and Plan
+	// say instead of a step.
+	repoLevel []string
 
 	// node is the project's published policy, read once when the stage
 	// resolves through the run's own memoized read (initRun.policy) and nil
@@ -432,6 +439,38 @@ func (s *secretsStage) resolve(ctx context.Context) {
 	// stage stops the run on the same error.
 	p, found, err := s.e.r.policy.read(ctx, lc)
 	s.node = repoPolicyInput(lc, p, found, err)
+	// A repository-level secret (D2313) is one no shared job mounts, so it is
+	// not a name this stage may take. The ruling closed the stores that would
+	// write one — both repository-scope forms of `fugaro secrets set` answer
+	// its notice and write nothing — and the only store a prompt here could
+	// write is that same repository container, through this stage's own
+	// Secret Manager write rather than the command's: leaving the name in
+	// would make one prompt the way around the ruling, and find() would then
+	// count the copy as covering the name and never ask again, so the stage's
+	// "stored" would be the last word over a name no shared job carries a
+	// variable for. The value a repository's OWN job still mounts (a
+	// repository a profile does not admit yet keeps one until M2 retires it)
+	// is the one already in the container, which the ruling leaves where it
+	// is: what it may not get is a new value, and that is what this drops.
+	//
+	// The commands that would store one answer the notice too, so there is no
+	// line to leave either. The name is therefore dropped here, once, before
+	// anything asks: what a person is told about it is the ruling's own
+	// sentence, which Check and Plan print (config.RepoSecretsIgnoredNotice).
+	//
+	// A name this repository may mount the project's copy of (projectScope) is
+	// kept: that copy IS mounted, and the stage's job for such a name is
+	// unchanged. That is why this sits after the node is read and not beside
+	// the mounts it filters: projectScope reads the node.
+	kept := make([]string, 0, len(s.tg.wanted))
+	for _, name := range s.tg.wanted {
+		if repoSecretsDisabledName(lc, name) && !s.projectScope(name) {
+			s.repoLevel = append(s.repoLevel, name)
+			continue
+		}
+		kept = append(kept, name)
+	}
+	s.tg.wanted = kept
 }
 
 // defaultBranchConfig is the fugaro.yaml of the checkout's default branch
@@ -616,6 +655,13 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	if s.tg.noConfig {
 		note = " (no fugaro.yaml on the default branch as last fetched, so the Claude credential is not assumed; git fetch, then rerun)"
 	}
+	if len(s.repoLevel) > 0 {
+		// The names the stage does not take (resolve dropped them), said in the
+		// ruling's own sentence: no line is left for one, so this is the whole
+		// of what a person learns about it here, and the only place the remedy
+		// (a project-wide entry for the name) is named.
+		note += "; " + config.RepoSecretsIgnoredNotice(s.repoLevel)
+	}
 	if len(s.missing) == 0 {
 		return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored" + note}, nil
 	}
@@ -679,6 +725,11 @@ func (s *secretsStage) Left() initflow.Left {
 		}
 		set := selfCommand() + " secrets set " + quoteWord(name)
 		if !s.projectScopeLocal(name) {
+			// The line is a repository-scope store, and a name D2313 disables
+			// never reaches it: no shared job mounts a repository-level secret,
+			// so such a name is not one this stage wants at all (resolve drops
+			// it, and Check prints the ruling's sentence for it). What is left
+			// here has a repository copy a run really mounts.
 			set += " --repo " + quoteWord(s.tg.repo)
 		}
 		switch {
@@ -866,8 +917,22 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	// projectReach is handed it too, and the sentence names the node's list
 	// where this machine's local config carries none.
 	if s.projectScope(name) {
-		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again):\n",
-			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name, s.node), selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
+		// The way out is a repository-scope store, and for a repository-level
+		// secret there is no such store left to offer (D2313): the command it
+		// would name answers the notice and changes nothing, so it would hand a
+		// person a step that does nothing. What it names instead is the store
+		// that works and does store the same thing answering here stores — the
+		// project's copy, in the user's own terminal rather than at this prompt
+		// — which is the bare form Left() hands the same name for the same
+		// reason.
+		wayOut := fmt.Sprintf("for this repository's own copy instead, press Ctrl-C here and run '%s secrets set %s --repo %s' in your own terminal, then start this again",
+			selfCommand(), quoteWord(name), quoteWord(s.tg.repo))
+		if repoSecretsDisabledName(s.e.lc, name) {
+			wayOut = fmt.Sprintf("its repository-level copy is disabled for now (D2313), so this project's copy is the only one it is stored in: answer here, or press Ctrl-C here and run '%s secrets set %s' in your own terminal, then start this again",
+				selfCommand(), quoteWord(name))
+		}
+		fmt.Fprintf(w, "%s for %s on %s (stored project-wide in project %s's Secret Manager, where %s; %s):\n",
+			name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject), projectReach(s.e.lc, name, s.node), wayOut)
 	} else {
 		fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager, in this repository's own copy):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
 	}
