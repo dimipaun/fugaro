@@ -2187,7 +2187,12 @@ func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (string, 
 	if gitprov.KindForHost(host) != gitprov.KindBitbucket {
 		return "", fmt.Errorf("%s names %s, which is on %s: this run's git and LFS traffic reaches bitbucket.org through the installation's credentials service, and it holds no credential for another host — a shared Bitbucket job mounts no token at all (D2302). A submodule or an LFS object of another host cannot be fetched by this run, so it stops here instead of failing part way through a fetch. Point the submodule at its Bitbucket repository, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote), safetext.OneLine(host))
 	}
-	repo, err := task.CanonicalRepo(gitprov.TrimRepoPath(repoPath))
+	repo := gitprov.TrimRepoPath(repoPath)
+	// The repository as the policy spells it, which is what the block's
+	// allow_repos is written in (projectpolicy.Canonical): a pattern is
+	// provider-qualified and a bare "acme/lib" — what the URL's path holds —
+	// matches nothing.
+	canonical, err := projectpolicy.Canonical(gitprov.KindBitbucket, repo)
 	if err != nil {
 		return "", fmt.Errorf("%s names %s, which does not name a Bitbucket repository as owner/name: a nested fetch is made through this run's forwarder, whose path is the repository it serves, and a path that is not one cannot be served. Point the submodule at the repository it is, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote))
 	}
@@ -2195,10 +2200,10 @@ func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (string, 
 	if err != nil {
 		return "", err
 	}
-	if !found || p == nil || p.BitbucketToken == nil || !projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, repo) {
-		return "", fmt.Errorf("%s is the repository %s, which this run's Bitbucket access does not cover: a submodule's fetch and an LFS object's reach bitbucket.org through the installation's credentials service, which serves a repository only when the published policy's bitbucket_token.allow_repos covers it (the block is derived from project_secrets.%s.allow_data_to). Add the repository with 'fugaro secrets allow %s %s', then run 'fugaro update', which publishes the widened list. The run stops before the agent starts and before any git credential is requested", what, repo, config.BitbucketSecret, config.BitbucketSecret, repo)
+	if !found || p == nil || p.BitbucketToken == nil || !projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical) {
+		return "", fmt.Errorf("%s is the repository %s, which this run's Bitbucket access does not cover: a submodule's fetch and an LFS object's reach bitbucket.org through the installation's credentials service, which serves a repository only when the published policy's bitbucket_token.allow_repos covers it (the block is derived at publish time from project_secrets.%s.allow_data_to). Add the repository with 'fugaro secrets allow %s %s', then run 'fugaro update', which publishes the widened list. The run stops before the agent starts and before any git credential is requested", what, canonical, config.BitbucketSecret, config.BitbucketSecret, repo)
 	}
-	return strings.TrimSuffix(r.forward.URL(), "/") + "/" + gitprov.TrimRepoPath(repoPath), nil
+	return strings.TrimSuffix(r.forward.URL(), "/") + "/" + repo, nil
 }
 
 // originURL returns the checkout's origin URL, or the remote it will be
