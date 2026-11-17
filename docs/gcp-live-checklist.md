@@ -12666,6 +12666,13 @@ not be set up (the node could not be written or did not read back, its record na
 execution, or its first call was never handed to the service). A key the run never reached reads `FAIL —
 not reached`; a
 key that could not be measured reads `FAIL` with the reason in its own detail, and nothing was launched.
+The keys a mode never records are the exception, and read `N/A — not part of this mode (<mode>)` instead:
+Check 191 reads the working run's rows and never Check 192's six (`jobs`, `mount`, `accessor`, `doctor`,
+`run-still-works`, `plain-repo`), nor `dry-run` (only a `--dry-run` plan writes that marker), while Check
+192 reads those six and none of Check 191's (`proxied`, `account-admitted`, `run-launch`, `run-outcome`,
+the seven refusals, `review-run`, `ended-identity` do not exist in that mode). `N/A` is neither a pass nor
+a failure — the exit code counts a `FAIL` alone — so a run whose measured rows all held ends `0` however
+many `N/A` rows its block carries: seven in a Check 191 run, fourteen in a Check 192 one.
 
 **Restore.** The scratch directory, and the one Realtime Database node the check wrote by hand — deleted
 and **read back** (the `restore` row is that reading, and a `restore: FAIL` names the node's URL so you can
@@ -12722,6 +12729,14 @@ as the plain half). The jobs are read with `gcloud run jobs list`, matched by th
 Its two runs are named from the same `CHECK191_RUN_ID` base as Check 191's (`YYYYMMDD-HHMMSS`, today by
 default, plus four hex characters per run), for the same reason: that is the only shape `fugaro run`
 admits, and the base's day is the day a run's outcome is looked up under.
+
+**What the block reads.** The same fixed key list Check 191 prints, headed `CHECK 192 RESULT`, with this
+mode's own six rows measured — `jobs`, `mount`, `accessor`, `doctor`, `run-still-works`, `plain-repo` — and
+the other fourteen (`proxied`, `account-admitted`, `run-launch`, `run-outcome`, the seven refusals,
+`review-run`, `ended-identity` and the `dry-run` marker) reading `N/A — not part of this mode (flip)`: this
+mode never records them, and `N/A` is neither a pass nor a failure — the exit code counts a `FAIL` alone —
+so they do not read as a check that stopped. A key this mode records, which the run stopped before
+reaching, still reads `FAIL — not reached`.
 
 **Restore.** The scratch directory and nothing else: this mode writes no Realtime Database node and
 deletes nothing. The two runs it launches open a branch and a pull request each, and the block names them

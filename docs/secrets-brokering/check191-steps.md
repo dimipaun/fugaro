@@ -365,11 +365,24 @@ record names no forwarder of this execution, or its call was never handed to the
 secret carries the label the accessor row is read from. A key
 the run never reached reads `FAIL — not reached`.
 
+**The rows a mode never records.** The block prints its own fixed key list whatever happened, and a mode
+does not record every key in it: Check 191 reads the working run's rows and never Check 192's six (`jobs`,
+`mount`, `accessor`, `doctor`, `run-still-works`, `plain-repo`), nor `dry-run` (only a `--dry-run` plan
+writes that marker); Check 192 reads those six and none of Check 191's — `proxied`, `account-admitted`,
+`run-launch`, `run-outcome`, the seven refusals, `review-run` and `ended-identity` do not exist in that
+mode. Those rows read
+`N/A — not part of this mode (<mode>)`, where `<mode>` is `proxy` for Check 191 and `flip` for Check 192.
+`N/A` is neither a pass nor a failure and settles nothing about the check: the exit code counts a `FAIL`
+alone, so a run whose measured rows all held ends `0` however many `N/A` rows its block carries (seven in
+a Check 191 run, fourteen in a Check 192 one). A key
+the run would have recorded and did not still reads `FAIL — not reached`.
+
 ## If it stops before the end
 
 A stop prints the same block first, with an `aborted` fact naming the reason, and exits `1` (a guard
 that stopped it before it could run) or `2` (it could not measure). A `proxied` row that FAILs ends
-Check 191 the same way — the block prints, every row below it reads `FAIL — not reached`, and nothing
+Check 191 the same way — the block prints, every row below it the mode records reads `FAIL — not
+reached` (the rows this mode never records read `N/A`, as they do in any run), and nothing
 was launched — with the reason in the row itself rather than in an `aborted` fact. The stops worth
 knowing by name:
 
