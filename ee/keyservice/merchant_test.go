@@ -1952,6 +1952,95 @@ func TestAReissueThatKeepsTheSecretWritesTheHashItKept(t *testing.T) {
 	}
 }
 
+// TestSeatChangeIsTheNextRenewal: D2200 — a seat change reissues under the
+// licence with the secret hash it already has, and the installation still
+// running the key that was replaced reaches its new key through `/renew`. That
+// is the whole reason the predecessor is left a handover: the seat change mails
+// its key, and a customer who never opens the mail would otherwise keep a key
+// whose seats are the old ones until its own term ended — the licence looking
+// dark from the installation's side while the service has already issued the key
+// it is for (F2).
+//
+// The call below is taken from *inside* the handover's day and *outside* the
+// replaced key's own renewal window, so the answer can only be the handover:
+// nothing about the old key's calendar would hand it anything, and a key minted
+// from its record would be a second successor beside the one the seat change
+// minted. What it is answered is the seat change's own key, no secret (the
+// secret is the licence's and the installation holds it already), and no mint.
+func TestSeatChangeIsTheNextRenewal(t *testing.T) {
+	f, spy := renewing(t)
+	bought := f.purchase("evt-next-1", "acme.example", 5, 365)
+	if bought.EntitlementID == "" {
+		t.Fatal("the purchase's key names no licence, so there is nothing here to reissue under (P3.6)")
+	}
+	licenceID := bought.EntitlementID
+	secret := f.secretOf(t, f.mintedKeys()[0])
+	f.advance(100 * day)
+	before := len(f.records())
+	f.event(Event{ID: "evt-next-2", Type: EventSeatChange, Organisation: "acme.example", Seats: 8, TermDays: 365})
+	records := f.records()
+	if len(records) != before+1 {
+		t.Fatalf("the seat change minted %d key(s), want one", len(records)-before)
+	}
+	reissued := records[len(records)-1]
+	if reissued.EntitlementID != licenceID {
+		t.Fatalf("the reissued key names the licence %q, want the one the purchase minted under (%q): a seat change is a reissue of that licence and not a second one (D2200)", reissued.EntitlementID, licenceID)
+	}
+	state, held, err := f.store.KeyState(context.Background(), reissued.KeyID)
+	if err != nil || !held {
+		t.Fatalf("the reissued key has no state (held=%v, err=%v), want one: a key with no state is one nothing can renew", held, err)
+	}
+	if state.RenewalSecretHash != digest(secret) {
+		t.Errorf("the reissued key's state holds %q, want the digest of the secret its holder already has: a reissue keeps the licence's secret and never rotates it (D2200)", state.RenewalSecretHash)
+	}
+
+	hand, live, err := f.store.Handover(context.Background(), bought.KeyID, f.now)
+	if err != nil || !live {
+		t.Fatalf("the store holds no live handover for the replaced key %s (live=%v, err=%v): a seat change leaves one for it or the installation only learns of its key from the mail", bought.KeyID, live, err)
+	}
+	if hand.SecretHash != digest(secret) {
+		t.Fatalf("the handover's digest is not the digest of the secret the installation holds, so the call below would be the mint rather than the handover")
+	}
+	// The replaced key is past its own end here — D2202's thirty days — and the
+	// installation is still running it, which is the state this handover exists
+	// for: nothing about that key's calendar reaches the seat change's key, so
+	// without the handover the call below would mint a second successor from its
+	// record and leave the installation on neither.
+	if bought.Expires.After(f.now) {
+		t.Fatalf("the replaced key still runs to %s, so a mint from its record would be an ordinary renewal and not the second successor this case is about", bought.Expires)
+	}
+
+	rec := f.call(RouteRenew, RenewalCall{KeyID: bought.KeyID, WorkspaceID: workspaceID, RenewalSecret: secret})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the replaced key's renewal was answered %d (%q), want the seat change's key", rec.Code, rec.Body.String())
+	}
+	answer := answerOf(t, rec)
+	if !answer.NewerKey {
+		t.Error("the answer is not marked as a newer key, want it: the seat change's key replaces the one the caller presented (D2200)")
+	}
+	if got := v1Verified(t, f, answer.Key).KeyID; got != reissued.KeyID {
+		t.Errorf("`/renew` handed the replaced key the key %s, want the licence's newest %s (D2200)", got, reissued.KeyID)
+	}
+	if answer.RenewalSecret != "" {
+		t.Errorf("the handover carried a renewal secret (%d bytes), want none: the secret is the licence's own and the installation keeps the one it holds (D2200)", len(answer.RenewalSecret))
+	}
+	if got := spy.minted(); got != 0 {
+		t.Errorf("the minter was asked for %d key(s) while handing over the seat change's key, want none: a second successor is one the licence's newest key is not", got)
+	}
+
+	// And the key the licence is on now is the one that carries it on: its own
+	// renewal mints a successor under the same licence, so the chain the seat
+	// change opened does not end at the key nobody installed.
+	theSubscriptionCovers(t, f, reissued.KeyID)
+	successor, _ := renewThroughTheEndpoint(t, f, reissued.KeyID, secret)
+	if successor.EntitlementID != licenceID {
+		t.Errorf("the seat change's key renewed into a successor naming %q, want the licence %q: a successor naming none could not be reissued or revoked with it (D2200, F29)", successor.EntitlementID, licenceID)
+	}
+	if got := spy.minted(); got != 1 {
+		t.Errorf("the minter was asked for %d key(s) in all, want the seat change's key's one successor", got)
+	}
+}
+
 // TestEnterpriseIsNotACheckoutPlan: D2141 and §5.5 — Enterprise is not sold at
 // the checkout. Its keys are invoiced directly by the entity and minted from the
 // admin page, so a deployment whose paid plan names the Enterprise tier is one

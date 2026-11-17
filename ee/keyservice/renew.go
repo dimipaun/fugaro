@@ -400,7 +400,7 @@ func (s *Service) renew(w http.ResponseWriter, r *http.Request) {
 	// it already asks at (`fugaro licence refresh`). What tells the two apart is
 	// only what the record below says about a spent secret, and neither is
 	// answered a second key by a mint here
-	// (TestSeatChangeIsTheNextRenewal, TestTheSeatChangesKeyIsTheNewestOne).
+	// (TestSeatChangeIsTheNextRenewal, TestTheOldSecretFetchesTheNextKeyForADay).
 	//
 	// The handover is answered above the gate below because it mints nothing:
 	// what it hands over is a key the licence already bought, so a licence the
