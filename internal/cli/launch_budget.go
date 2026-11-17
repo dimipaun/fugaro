@@ -803,14 +803,15 @@ func sealDevNote(spec *task.Spec, clone bool) string {
 // own rule (proxiedBitbucket, which reads the same variable off the job's
 // environment) and not a superset of it.
 //
-// The job half of that answer is asked with no job name, because the address is
-// written on a repository job and on that job alone: a shared project job
-// reaches Bitbucket through the deployment's own forwarder and is mounted no
-// token at all (D2302), so its execution never carries the address (Check 96).
-// What this gate reads through the function is therefore the repository's own
-// switch and the auth its runs use — the repository's facts, and not the job's
-// environment — and they stay the repository's facts whichever job a run lands
-// on, a Bitbucket workflow that names a profile now included (S4, D2304).
+// The job half of that answer is asked with no job name, so what this gate
+// reads through the function is the repository's own switch and the auth its
+// runs use — the repository's facts, and not the job's environment — and they
+// stay the repository's facts whichever job a run lands on, a Bitbucket
+// workflow that names a profile now included (S4, D2304). The address is not
+// written on a repository job alone: the deployer hands a shared Bitbucket job
+// the service's URL too (internal/infra's ProjectJobs), and the runner's own
+// rule (proxiedBitbucket) reads a run there off that URL and the node's block,
+// whatever this gate's repository-side answer was.
 //
 // A launch that is not proxied is judged by every gate it always was and
 // nothing about it changes (G9): an installation that carries no service, no
