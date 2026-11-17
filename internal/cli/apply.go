@@ -253,11 +253,27 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	if len(pending.Names()) == 0 {
 		return applyNothing(cmd, lc, path, pending, recorded, o)
 	}
+	return applyRunRecord(cmd, r, lc, path, pending, recorded, pending.Names(), o)
+}
+
+// applyRunRecord is the run itself: names, each once, in the order the record
+// gives them, settled against the record on disk when the run ends. It is the
+// one runner of a step — `fugaro apply` names every entry the record owes, and
+// a management command names the steps its own change owes (chainRun) — so the
+// order, the check-first rule, the clearing and the sentence a step left owed
+// are one code path and not two that can come to disagree.
+//
+// r is the run the caller opened, with the workdirs lock already held: the lock
+// is the caller's, because what a run reads before the lock is the caller's own
+// question (a command that owes nothing runs no step, and `fugaro apply` reads
+// the record for that answer).
+func applyRunRecord(cmd *cobra.Command, r *initRun, lc *localcfg.Config, path string, pending *apply.Pending, recorded bool, names []string, o applyOptions) error {
+	io := r.o
 	// The run's account is the reporter's, filed under this command's name
 	// (D1351, D1354): the steps it runs are the loop's, and a command that ran
 	// a converge without a reporter of its own would print a second account of
 	// the same run beside the one the census expects.
-	run := stepRunFor(cmd, "apply", cmd.ErrOrStderr())
+	run := stepRunFor(cmd, r.o.door, cmd.ErrOrStderr())
 	defer run.close()
 	// The reporter is this command's: the steps print one line each through it,
 	// and the closing line is printed where this command's own run ends
@@ -285,7 +301,6 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 		return err
 	}
 
-	names := pending.Names()
 	var ran, kept []string
 	// A stage that prints to cmd.OutOrStdout() directly — the policy stage's
 	// publish diff is the loudest — would land on the stdout this command's

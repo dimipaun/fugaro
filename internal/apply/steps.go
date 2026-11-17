@@ -53,6 +53,12 @@ const (
 	// project_enroll.go): onboarding one is what the repository stage's own
 	// plan is made from.
 	ResourceRepo = "repo"
+	// ResourceAccount is a model account of the project (internal/cli/
+	// accounts_rm.go).
+	ResourceAccount = "account"
+	// ResourceModel is a model of the project (internal/cli/models_add.go,
+	// models_rm.go).
+	ResourceModel = "model"
 	// ResourceWorkspace is the workspace this project is the owner of
 	// (internal/cli/workspace.go, D1292).
 	ResourceWorkspace = "workspace"
@@ -80,10 +86,33 @@ var catalogSteps = []string{CatalogBuild, initflow.Repository, initflow.Policy}
 // resourceSteps is the resource-type half of the table.
 var resourceSteps = map[string][]string{
 	ResourceImage: catalogSteps,
-	// Onboarding a repository is what the repository stage's plan is made
-	// from: its Terraform root is per repository, and so is the redeploy
-	// (F15, D1574).
-	ResourceRepo: []string{initflow.Repository},
+	// ResourceRepo is a repository of the project (internal/cli/
+	// project_enroll.go): onboarding one is what the repository stage's own
+	// plan is made from, and the three stages are the ones the enrolment's own
+	// converge runs (project_enroll_converge.go's reposEnrolmentStageList): the
+	// policy stage publishes the node the enrolment rewrote (`image_map` beside
+	// the `allow_repos` the command wrote itself), the installation stage
+	// deploys the jobs of the profiles this project's repositories use, and the
+	// repository stage is the new repository's own Terraform root — its jobs and
+	// its service accounts (F15, D1574).
+	ResourceRepo: []string{initflow.Policy, initflow.Installation, initflow.Repository},
+	// ResourceAccount is a model account of the project (internal/cli/
+	// accounts_rm.go): removing one takes the declaration out of the local
+	// config, and the three stages are the ones `accounts add` runs for the
+	// same change (accounts_add_converge.go's accountsAddStages) — the node
+	// stops naming the account, the job the account owned goes from the
+	// installation, and the checkout's repository is redeployed without it.
+	ResourceAccount: []string{initflow.Policy, initflow.Installation, initflow.Repository},
+	// ResourceModel is a model of the project (internal/cli/models_add.go,
+	// models_rm.go): the published node carries the `model_prices` and
+	// `budget.allowed_models` halves of the change, which is what the policy
+	// stage publishes. The route's own claims are in the copy of the providers
+	// block each job holds, and that copy is refreshed by the repository
+	// stage's own redeploy — which is per repository and per checkout (D1574),
+	// so it is queued by a change made in a repository (ResourceRepo) and never
+	// by a project-wide one: a models change that named it would leave every
+	// machine with no checkout of that repository holding a step it cannot run.
+	ResourceModel: []string{initflow.Policy},
 	// A workspace is both halves of the owner's own declaration, built from the
 	// `workspace_members` and `workspace_cap` this installation declares: the
 	// workspace's own project — its service account and the one grant that
