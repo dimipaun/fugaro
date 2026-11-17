@@ -36,7 +36,7 @@
 //
 // The list is the design's, in the design's order and in the design's words,
 // and it is held to the document rather than to this comment:
-// TestNeverRulesAreTheDesignsEleven reads section 6 of
+// TestOrchestratorNeverRulesAreTheDesignsEleven reads section 6 of
 // docs/mobile/design/always-on-orchestrator.md and fails when a rule is added
 // on one side and not the other. Each rule has one function below, in the same
 // order, and one test in never_test.go.
@@ -66,15 +66,16 @@ type Rule struct {
 	// "no-iam", "never-belong". It is stable and is not a wire format.
 	Key string
 	// Never is the rule's own sentence, verbatim from section 6, bold markers
-	// and trailing full stop included: TestNeverRulesAreTheDesignsEleven
-	// compares it to the document's line, so a rewording in one place and not
-	// the other fails rather than drifts.
+	// and trailing full stop included:
+	// TestOrchestratorNeverRulesAreTheDesignsEleven compares it to the
+	// document's line, so a rewording in one place and not the other fails
+	// rather than drifts.
 	Never string
 }
 
-// neverRules is section 6 in order. TestNeverRulesAreTheDesignsEleven holds it
-// to the document, and TestNeverRulesAreNumbered holds the numbering to the
-// slice's own order, so Number is never maintained by hand twice.
+// neverRules is section 6 in order. TestOrchestratorNeverRulesAreTheDesignsEleven
+// holds it to the document, and TestNeverRulesAreNumbered holds the numbering to
+// the slice's own order, so Number is never maintained by hand twice.
 var neverRules = []Rule{
 	{1, "no-iam", "No IAM."},
 	{2, "no-managed-applies", "No managed applies."},

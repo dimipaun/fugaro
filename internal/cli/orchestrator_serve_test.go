@@ -140,20 +140,53 @@ func TestOrchestratorServiceConfigRefusesWhatItCannotKnow(t *testing.T) {
 // itself: `belong` is the owner's own installation (F31), the resident
 // orchestrator is a sandbox or a fixture installation, and a deployment pointed
 // at the owner's own project refuses to start rather than serving it.
+//
+// The rule is about the INSTALLATION and not about one of its names, so both
+// names this deployment is made of are held to it. The second case is the one
+// that costs something to get wrong and is refused by the Firebase project
+// alone: its own project is a sandbox's and the database it reads is `belong`'s,
+// so the deployment would read and act on the owner's own node — and the URL
+// agrees with the Firebase project it is named after, so rule 10 has nothing to
+// say about it and rule 6 is the whole of the refusal.
 func TestOrchestratorServiceConfigRefusesBelong(t *testing.T) {
-	for _, id := range []string{"belong", "belong-sandbox"} {
-		env := map[string]string{
-			envProject:    id,
-			envFirebaseFP: id,
-			envRTDBURL:    "https://" + id + "-default-rtdb.firebaseio.com",
-		}
-		_, err := orchestratorServiceConfig(context.Background(), envFrom(env), io.Discard)
-		if err == nil {
-			t.Fatalf("a deployment whose project is %s was started: the resident orchestrator is never the owner's own installation (rule 6, F31)", id)
-		}
-		if !strings.Contains(err.Error(), orchestrator.NeverRules()[5].Never) {
-			t.Errorf("err = %v, want the rule's own sentence, so a reader is sent to section 6", err)
-		}
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{
+			name: "the installation's own name",
+			env: map[string]string{
+				envProject:    "belong",
+				envFirebaseFP: "belong",
+				envRTDBURL:    "https://belong-default-rtdb.firebaseio.com",
+			},
+		},
+		{
+			name: "the family, in both names",
+			env: map[string]string{
+				envProject:    "belong-sandbox",
+				envFirebaseFP: "belong-sandbox",
+				envRTDBURL:    "https://belong-sandbox-default-rtdb.firebaseio.com",
+			},
+		},
+		{
+			name: "only the firebase project is the family's",
+			env: map[string]string{
+				envProject:    "fugaro-sandbox",
+				envFirebaseFP: "belong-sandbox",
+				envRTDBURL:    "https://belong-sandbox-default-rtdb.firebaseio.com",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := orchestratorServiceConfig(context.Background(), envFrom(tc.env), io.Discard)
+			if err == nil {
+				t.Fatalf("a deployment of %v was started: the resident orchestrator is never the owner's own installation (rule 6, F31)", tc.env)
+			}
+			if !strings.Contains(err.Error(), orchestrator.NeverRules()[5].Never) {
+				t.Errorf("err = %v, want the rule's own sentence, so a reader is sent to section 6", err)
+			}
+		})
 	}
 }
 

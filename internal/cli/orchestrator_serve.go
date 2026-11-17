@@ -23,9 +23,11 @@
 // it can reach is this installation's own (never a second installation's
 // nodes). The rules themselves are internal/orchestrator/never.go — section 6's
 // eleven as refusals the code answers with — and this file is where two of them
-// meet a real deployment fact at start-up: the project it is told to serve is
-// never `belong` (rule 6, F31), and the database URL and the Firebase project
-// must name one installation (rule 10).
+// meet a real deployment fact at start-up: the installation it is told to serve
+// is never `belong` (rule 6, F31), which is held to both names the deployment
+// is made of, its own project and the Firebase project its database belongs to;
+// and the database URL and that Firebase project must name one installation
+// (rule 10).
 //
 // WHAT A PASS DOES TODAY, WHICH IS DELIBERATELY LITTLE. The tick's pass reads
 // the node the previous pass left — the state document, and the lease node
@@ -179,7 +181,11 @@ type orchestratorConfig struct {
 //     owner's own installation and the resident orchestrator is never it (F31).
 //   - FUGARO_FIREBASE_PROJECT is the installation's Firebase project, which is
 //     the project the realtime database belongs to. The database is named after
-//     it (<project>-default-rtdb), so the two names must be one installation's.
+//     it (<project>-default-rtdb), so the two names must be one installation's —
+//     and this one is held to rule 6 as well, because the database it names is
+//     the installation's own: a deployment whose GCP project is outside the
+//     `belong` family and whose database is inside it is still serving the
+//     owner's own installation.
 //   - FUGARO_RTDB_URL is the database itself, which is the only store this
 //     process reads, and the only reach it has beyond Google's own IAM.
 //
@@ -212,6 +218,17 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 	fb := getenv(envFirebaseFP)
 	if fb == "" {
 		return orchestratorConfig{}, userErr("the resident orchestrator needs %s in its environment: it is the installation's Firebase project, which the database it reads belongs to, and a process that does not know which installation it is serving acts on no node at all", envFirebaseFP)
+	}
+	// Rule 6 is about the INSTALLATION and not about one of its names, so it is
+	// held to both names this deployment is made of: `belong`'s Firebase
+	// project is the owner's own database whatever this revision's own project
+	// is called, and the database URL below is named after the Firebase project
+	// (rule 10's check reads the two back to each other), so the one name here
+	// covers the URL as well. A deployment that named only its GCP project
+	// outside the family and its database inside it would otherwise read and
+	// act on the owner's own node — the thing F31 fences.
+	if err := orchestrator.NeverBelong(fb); err != nil {
+		return orchestratorConfig{}, userErr("the resident orchestrator will not serve this installation: %v", err)
 	}
 	rawURL := getenv(envRTDBURL)
 	if rawURL == "" {
