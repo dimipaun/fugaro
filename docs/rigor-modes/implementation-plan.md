@@ -6,7 +6,7 @@ Nine slices, ordered so that each one merges alone and leaves `main` green, and
 so that a repository that configures nothing sees only what D19's answer made
 observable — the default is **Pro**, so what "ready" means for an unconfigured
 repository changes with the commit that gives the mode a reader, and the
-migration note (T8.2) and the one-line pin `rigor.default: critical` are what a
+migration note (T8.3) and the one-line pin `rigor.default: critical` are what a
 repository answers that with. This plan is written from [reconciliation.md](reconciliation.md)'s
 findings **F1–F48**, decisions **D1–D32**, items **O1–O7** and the UNVERIFIED
 table **U1–U12**, and it cites them rather than restating them. Slice 1 is
@@ -32,7 +32,7 @@ merging alone.
   Critical** (the D18 floors, outside every layer), and a repository that wants
   today's behaviour exactly pins it back with `rigor.default: critical`. Every
   claim below that a slice "relaxes nothing" or is "byte-identical to today" is
-  therefore **true of Critical mode only**, and T8.2's migration note is the loud
+  therefore **true of Critical mode only**, and T8.3's migration note is the loud
   version of this paragraph.
 - **It does not add a merge path, a deployer, or a scheduler.** `gitprov` has no
   merge call and the runner never deploys (F29); D13 and D15 say what Hotfix and
@@ -1153,14 +1153,33 @@ before Slice 3, and T3.1 waits for T4.5 (§2, §6).
 - **Commit.** `docs(live-checks): Check 119, <result>`
 
 **T8.3 — the migration note**
-- **Files.** `docs/releases/` (the 0.10.0 notes), where the default is stated:
-  **Critical, today's behaviour, nothing relaxed** (D19).
-- **Tests.** The release-notes pin.
-- **Red step.** The note does not state the default.
+- **Files.** `docs/releases/v0.11.0.md` — the release that ships the modes, and
+  whose Highlights already say a repository that configures nothing runs at Pro —
+  where the note states the default a reader of that release meets: **Pro**, with
+  `rigor.default: critical` the one line that puts a repository back on the
+  behaviour of the releases before this one (D19). It states the two bounds that
+  default does not move: **the security-sensitive tier stays Critical**, under the
+  floors — a credential path, an IAM path, `.github/workflows/` and whatever a
+  repository declares, outside every layer and only ever raised (D18) — and
+  **Hotfix is off the axis**: nothing resolves to it by configuring nothing, it is
+  the tightest bound of the five, and its rule is the security gate alone (D12,
+  D16). It claims what the release wires and no more, leaving the thresholds
+  table, the built-in floors, `fugaro run --mode` and the mode in `fugaro watch`
+  to the `### Known limits` section the file already carries, and it keeps the
+  `### For operators` section too. The file's one line in
+  `website/data/release-summaries.yaml` (no backticks, no links) moves only if the
+  line it carries stops being true.
+- **Tests.** The release-notes pin — `internal/cli/docs_release_notes_test.go`'s
+  format rules for a release file and its no-links rule over every file in
+  `docs/releases/` — and the site's own check that a released file has its line in
+  `website/data/release-summaries.yaml`.
+- **Red step.** The note states the default without stating what the security
+  tier and Hotfix are left at, so a repository cannot read what the change does
+  and does not reach.
 - **Verification.** `GOFLAGS=-p=2 go test ./internal/cli -run 'Docs|Release' -count=1 -timeout 40m`
 - **Depends on.** T8.1.
 - **Reviewer.** senior (in-loop).
-- **Commit.** `docs(releases): 0.10.0 runs at Critical until you say otherwise`
+- **Commit.** `docs(releases): 0.11.0 runs at Pro until you say otherwise`
 
 ## 9. The live checks the owner would run
 
@@ -1238,7 +1257,7 @@ from `Recipe` as the thing to watch for on an installation whose rules are older
    security-sensitive tier stays Critical (D18's floors), the one-line pin
    `rigor.default: critical` restores today's behaviour exactly, and **Pro's
    threshold table is now the behaviour of every unconfigured repository**, which
-   is why §7 gives it its own review question. T8.2's migration note is what tells
+   is why §7 gives it its own review question. T8.3's migration note is what tells
    those repositories about it.
 3. **T3.1 still gets a human eye.** It is the one change that can make a pull
    request ready that would not have been ready before, and it is now the change
