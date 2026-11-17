@@ -638,6 +638,12 @@ test_happy_path() {
   local dir
   dir=$work/happy
   prepare "$dir"
+  # The marker is made after every fixture is written, so only a write of the
+  # check's own can be newer than it: index.md is written before the checkouts'
+  # backlog files, and a reference taken from it counts the fixtures themselves
+  # whenever the writes land in different clock ticks.
+  : >"$dir/.fixtures-written"
+  sleep 1
   run127 "$dir" $(full_args "$dir")
   expect_status "$status" 0 "happy: exits 0"
   expect_contains "$out" "CHECK 127 RESULT END (exit 0)" "happy: the block ends clean"
@@ -676,7 +682,7 @@ test_happy_path() {
   # the scratch copy alone.
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "backlog index --dir" "happy: the index is regenerated in a copy"
   expect_absent "$(cat "$dir/logs/fugaro.calls")" "backlog index --dir $dir/scratch/docs" "happy: never in the checkout itself"
-  [ -z "$(find "$dir/scratch" "$dir/second" -newer "$dir/docs/index.md" -type f 2>/dev/null)" ] ||
+  [ -z "$(find "$dir/scratch" "$dir/second" -newer "$dir/.fixtures-written" -type f 2>/dev/null)" ] ||
     fail "happy: a fixture in the checkout was written"
 }
 
