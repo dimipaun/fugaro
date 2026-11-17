@@ -406,13 +406,16 @@ func accountsAliasLogName(removing bool) string {
 const accountsAliasDoor = "accounts alias"
 
 // ownerHand is whether this run's own command already IS the owner's hand at
-// their terminal: `fugaro accounts alias set` and `accounts alias rm` refuse a
-// coding agent's session before they read anything (accountsAliasSession,
-// D2097), so the account choice their publish carries was made by the owner
-// standing at their own terminal. The command they typed is that confirmation,
-// and the typed name the publish asks of every other door would be a second one
-// for the same decision — which the no-prompt policy does not have (D1540, F10).
-func (o *initOptions) ownerHand() bool { return o.door == accountsAliasDoor }
+// their terminal: `fugaro accounts alias set`, `accounts alias rm` and
+// `fugaro accounts switch` refuse a coding agent's session before they read
+// anything (accountsAliasSession, accountsSwitchSession, D2097), so the account
+// choice their publish carries was made by the owner standing at their own
+// terminal. The command they typed is that confirmation, and the typed name the
+// publish asks of every other door would be a second one for the same decision —
+// which the no-prompt policy does not have (D1540, F10).
+func (o *initOptions) ownerHand() bool {
+	return o.door == accountsAliasDoor || o.door == accountsSwitchDoor
+}
 
 // accountsAliasConverge is the publish and the deploy, through `accounts add`'s
 // own runner over the registered stages (accountsAddRunStages): the node has to
