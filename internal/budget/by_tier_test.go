@@ -160,21 +160,7 @@ func TestByTierSplitMovesAtMostOneLargestLeasePerWrite(t *testing.T) {
 	}
 	runC := budget.PathRunByTier(slug, runID, budget.TierC) + "/spent"
 	waitFor(t, "the split to land whole", func() bool { return f.num(runC) == 6_000_000 })
-	var steps []int64
-	for _, r := range f.db.Requests() {
-		if r.Method == http.MethodGet {
-			continue
-		}
-		var body map[string]any
-		if err := json.Unmarshal(r.Body, &body); err != nil {
-			continue // a stream or a delete, not this write's shape
-		}
-		v, ok := body[runC].(float64)
-		if !ok {
-			continue
-		}
-		steps = append(steps, int64(v))
-	}
+	steps := leafSteps(f, runC)
 	if len(steps) < 2 {
 		t.Fatalf("the split was written in %d steps (%v): 6.00 against a largest lease of 5.00 is two", len(steps), steps)
 	}
@@ -484,4 +470,79 @@ func TestByTierSplitStaysInsideTheReservation(t *testing.T) {
 	if got := f.num(runB); got != 1_400_000 {
 		t.Fatalf("the split grew past the reported money: %d", got)
 	}
+}
+
+// TestNewLeavesChunkedAtMaxRes (F26, SA5.1): every leaf of a model's day
+// counter is chunked at the largest single lease, exactly as `micros` always
+// has, because the rules bound a money leaf by limits.maxReserveMicros and one
+// multi-path update carries all of a model's leaves atomically -- one leaf
+// that ignored the bound would have the whole round, the totals beside it
+// included, refused in production. What a round does not fit waits for the one
+// after, which is what makes a day counter's four new leaves as safe to write
+// as its charge.
+func TestNewLeavesChunkedAtMaxRes(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.RulesGeneration = leavesGeneration
+	s := f.started(budget.AgentEntry{Stage: "implement"})
+	ctx := context.Background()
+	// Three largest-lease grants, as the by-tier chunk test makes them: this
+	// is about the leaves' own bound, not about the reservation under them.
+	for i := 0; i < 3; i++ {
+		if _, err := s.Lease().Grant(ctx, 5_000_000); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const want = 12_000_000
+	rep := gateway.StageReport{
+		Calls: 4, Used: want,
+		ByModel:    map[string]pricing.Micros{model: want},
+		NotionalBy: map[string]pricing.Micros{model: want},
+		ReportedBy: map[string]pricing.Micros{model: want},
+		TableLoBy:  map[string]pricing.Micros{model: want},
+		TableHiBy:  map[string]pricing.Micros{model: want},
+	}
+	if err := s.Lease().Report(ctx, rep); err != nil {
+		t.Fatal(err)
+	}
+	base := budget.PathByModel(today(), slug, model)
+	for _, leaf := range []string{"micros", "notional", "rep", "tlo", "thi"} {
+		path := base + "/" + leaf
+		waitFor(t, "the "+leaf+" leaf to land whole", func() bool { return f.num(path) == want })
+		steps := leafSteps(f, path)
+		if len(steps) < 3 {
+			t.Fatalf("%s was written in %d steps (%v): 12.00 against a largest lease of 5.00 is three", leaf, len(steps), steps)
+		}
+		var prev int64
+		for _, v := range steps {
+			if v-prev > 5_000_000 {
+				t.Fatalf("one write moved %s by %d, more than the 5000000 the rules allow: %v", leaf, v-prev, steps)
+			}
+			if v <= prev {
+				t.Fatalf("%s's steps are not increasing: %v", leaf, steps)
+			}
+			prev = v
+		}
+	}
+}
+
+// leafSteps is the value each write of a leaf's round left at path, in the
+// order the writes were made: what one write moved is the difference between
+// two of them.
+func leafSteps(f *fixture, path string) []int64 {
+	var steps []int64
+	for _, r := range f.db.Requests() {
+		if r.Method == http.MethodGet {
+			continue
+		}
+		var body map[string]any
+		if err := json.Unmarshal(r.Body, &body); err != nil {
+			continue // a stream or a delete, not this write's shape
+		}
+		v, ok := body[path].(float64)
+		if !ok {
+			continue
+		}
+		steps = append(steps, int64(v))
+	}
+	return steps
 }

@@ -770,6 +770,53 @@ func TestLedgerWindowsRefuseReplayAndExpiry(t *testing.T) {
 	}
 }
 
+// TestKindOfGivesAnAnswerThePromptsWindow: D173's two windows meet in one
+// message. An `answer` is the reply to a prompt the consumer is still holding,
+// so six hours after the phone spoke it, it is still a delivery — the same 72
+// hours the prompt itself has. An `action` of the same age is refused: a command
+// takes the six-hour window, which is the stricter of the two, and the mapping
+// is what tells them apart.
+func TestKindOfGivesAnAnswerThePromptsWindow(t *testing.T) {
+	long := testNow - DefaultWindowMs - 1_000
+	for _, tc := range []struct {
+		kind string
+		want string
+	}{
+		{"prompt", KindPrompt},
+		{"answer", KindPrompt},
+		{"action", KindCommand},
+		{"message", KindCommand},
+	} {
+		if got := KindOf(&Message{Kind: tc.kind}); got != tc.want {
+			t.Errorf("KindOf(%s) = %s, want %s", tc.kind, got, tc.want)
+		}
+	}
+
+	answer := ledgerMessage("m-1", "mb-a", "hi", long)
+	answer.Kind = "answer"
+	answer.ReplyTo = "pr-1"
+	answer.HasReplyTo = true
+	l := openLedger(t, t.TempDir())
+	got, err := l.Perform(answer, KindOf(answer), testNow, nil)
+	if err != nil {
+		t.Fatalf("delivering an answer: %v", err)
+	}
+	if got.Outcome != OutcomeActed {
+		t.Errorf("an answer inside the prompt's TTL answered %+v, and D173 gives it the prompt's own window", got)
+	}
+
+	action := ledgerMessage("m-2", "mb-a", "hi", long)
+	action.Kind = "action"
+	l = openLedger(t, t.TempDir())
+	got, err = l.Perform(action, KindOf(action), testNow, nil)
+	if err != nil {
+		t.Fatalf("delivering an action: %v", err)
+	}
+	if got.Refusal == nil || got.Refusal.Code != CodeReplay {
+		t.Errorf("an action past the command window answered %+v, want %s", got, CodeReplay)
+	}
+}
+
 // TestLedgerStalePendingPerformsNothing: a delivery whose window has passed is
 // still taken and acted on — the work is surfaced as late, never dropped — but
 // the consumer performs nothing for it (§7) and answers it instead. The record

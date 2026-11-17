@@ -329,8 +329,9 @@ func initStages(e *initEngine) []initflow.Stage {
 	stages = append(stages, newCheckoutStage(e))
 	// The login unit that runs the orchestrator daemon: `fugaro setup` writes
 	// the first one (init_orchestrator_stage.go, the owner's Q2 answer of
-	// 2026-11-04) and `fugaro update` re-renders one already installed and
-	// never installs one (update_unit_stage.go, T7's ruling of 2026-11-05).
+	// 2026-11-04) and `fugaro update` installs one where a machine has none
+	// and re-renders one already installed (update_unit_stage.go, T7's ruling
+	// of 2026-11-05 as amended by D2700 of 2026-11-16).
 	// The two are one stage — the loop takes one stage per name, and the
 	// canonical order holds one slot for it — and the door is what decides
 	// which of them this run gets, the way the door decides the project

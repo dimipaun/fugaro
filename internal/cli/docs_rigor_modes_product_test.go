@@ -301,29 +301,38 @@ func TestDocsRigorModesProductStatesTheOptInBound(t *testing.T) {
 	}
 }
 
-// TestDocsRigorModesProductStatesTheHotfixDoor: the document says that a
-// hand-written layer is what reaches `hotfix` and that `fugaro run --mode hotfix`
-// does not, since a request may only raise a run's mode and `hotfix` ranks below
-// every on-axis mode.
+// TestDocsRigorModesProductStatesTheHotfixDoor: the document says that
+// `fugaro run --mode hotfix` is what reaches `hotfix`, that it needs no opt-in
+// anywhere, and that a coding agent's session is one of the places the request
+// works — the owner's ruling of 2026-11-13 dropped the gate the spec named
+// rather than building it (docs/rigor-command/implementation-plan.md R7), and
+// the ruling of 2026-11-16 said the D832/SD9 and D12 fence does not apply to
+// hotfix, so the fence the document must not name is a session's.
 //
-// The two halves are the resolver's own behaviour, so they are asked of it here:
-// a page that named the flag as the door would send an operator to a launch that
-// does nothing, which is what this guard exists to catch.
+// The three halves are the resolver's own behaviour, so they are asked of it
+// here: a page that named a hand-written layer as the only door would send an
+// operator to a configuration edit for a mode a flag reaches, one that promised
+// an opt-in would send them looking for a key that does not exist, and one that
+// read the session fence as a fence on a run's own request would refuse a
+// session a door this product gives it.
 func TestDocsRigorModesProductStatesTheHotfixDoor(t *testing.T) {
-	doc := readDoc(t, rigorModesProductDoc)
+	doc := flattenDoc(readDoc(t, rigorModesProductDoc))
 	for _, want := range []string{
-		"What reaches it is a layer written by hand",
-		"`fugaro run --mode hotfix` does **not** reach it",
+		"`fugaro run --mode hotfix`",
+		"no opt-in and no authorization read from the base branch",
+		"dropped rather than built",
+		"no opt-in anywhere",
+		"a coding agent's session",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("%s lacks %q: the flag cannot raise a run to hotfix, and the page has to say which door does reach it", rigorModesProductDoc, want)
+			t.Errorf("%s lacks %q: the flag is the door to hotfix, it needs no opt-in anywhere, and a session may use it", rigorModesProductDoc, want)
 		}
 	}
-	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Mode: rigor.Hotfix}); got.Mode != rigor.Pro {
-		t.Errorf("a request for hotfix resolved %s, and %s reads the flag as reaching nothing: the request and the mode's rank have to move together", got.Mode, rigorModesProductDoc)
+	if got := rigor.Resolve(rigor.Config{Repo: rigor.Pro}, rigor.Request{Mode: rigor.Hotfix}); got.Mode != rigor.Hotfix || got.From != rigor.FromRequest {
+		t.Errorf("a request for hotfix resolved (%s, %s), and %s reads the flag as the door: the request and the resolver have to move together", got.Mode, got.From, rigorModesProductDoc)
 	}
 	if got := rigor.Resolve(rigor.Config{Repo: rigor.Hotfix}, rigor.Request{}); got.Mode != rigor.Hotfix {
-		t.Errorf("a rigor block naming hotfix resolved %s, and %s reads a hand-written layer as the way in", got.Mode, rigorModesProductDoc)
+		t.Errorf("a rigor block naming hotfix resolved %s, and %s reads a hand-written layer as a way in too", got.Mode, rigorModesProductDoc)
 	}
 }
 

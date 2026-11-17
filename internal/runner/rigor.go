@@ -87,7 +87,16 @@ func (r *run) roundRigor(ctx context.Context) {
 // matched, not the mode each moment resolved.
 func (r *run) recordRigor(at string, paths []string) {
 	before := r.reachedRigor()
-	res := rigor.Resolve(r.rigorCfg, rigor.Request{Mode: r.spec.Rigor, Paths: paths, Reached: before})
+	req := rigor.Request{Mode: r.spec.Rigor, Paths: paths, Reached: before}
+	res := rigor.Resolve(r.rigorCfg, req)
+	// The floor the run is held to is read off the mode it is at, so a request
+	// that takes it off the axis (hotfix) has to leave the mode the layers
+	// resolved in view: that mode's floor still holds (LayersMode, D8, LF5).
+	// It is folded the way the record's own mode is, so a later moment's paths
+	// never take it down.
+	if layers := rigor.LayersMode(r.rigorCfg, req, r.layersRigor); layers != "" {
+		r.layersRigor = layers
+	}
 	r.rec.Rigor = r.rec.Rigor.Applied(runstore.Moment{Resolved: res, At: at, Revision: r.rigorRev})
 	r.noteRigorRaise(at, before, res)
 	// The registry carries the same pair, so a live row in `fugaro watch`

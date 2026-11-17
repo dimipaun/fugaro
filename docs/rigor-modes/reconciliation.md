@@ -914,7 +914,11 @@ the output work ships, its row and its section, and the sibling test
 forge-authorship-images plan's C6, re-pointed by its owner's answer of
 2026-11-16 — the pin over
 `SECURITY.md`'s paragraph on the source an image carries and who can read it —
-moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_test.go`, the pin over the mobile orchestrator design, landed in the same sweep and its row was moved from 141 to 142 too; `internal/cli/docs_check601_test.go`, the pin over c39-review-identity's owner Check 601 in the register, landed on this branch beside them, so the merged tree holds 144.) They
+moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_test.go`, the pin over the mobile orchestrator design, landed in the same sweep and its row was moved from 141 to 142 too; `internal/cli/docs_check601_test.go`, the pin over c39-review-identity's owner Check 601 in the register, landed on this branch beside them, so the merged tree holds 144.)
+(Amended 2026-11-16: `internal/cli/docs_update_in_flight_test.go`, the pin over
+`docs/design/update-in-flight.md`'s installation row — the resident
+orchestrator's account and section 4.3's bindings ride that step, mobile plan
+task P5.1b — moved the table's row from 144 to 145.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -931,11 +935,11 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 50 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 51 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 145 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 146 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
-| Published project-policy version | 8 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
+| Published project-policy version | 9 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |
 | Fields of `gitprov.PRSpec` whose name is a repository | 0 | `sed -n '/^type PRSpec struct {/,/^}/p' internal/gitprov/gitprov.go \| grep -ci repo` |
 | Sites that narrow an installation token to one repository | 1 | `git grep -hc 'scope = \[\]string{s.repo}' internal/gitprov/github/apptoken.go` |
@@ -1010,6 +1014,11 @@ release. Declared beside `digestSince` because a release can ship the stored
 writer without the terminal digest step and the other way round, it added one
 more image-skew `Since` constant and left the image-skew row at 45, so it moves
 to 46.
+
+Amended 2026-11-16: MC23 of [docs/model-crafts/](../model-crafts/) adds the
+credentials service's reader for one declared credential's own key, a constant of
+its own (`keyCredentialSince`, the way every entry the service reads has one), so
+the image-skew row moves from 49 to 50. No other row of this table moved with it.
 
 Amended 2026-11-16: R1 of [docs/config-ownership/](../config-ownership/) gives the
 registry rows to two keys a repository states and nothing managed — its own
@@ -1445,7 +1454,8 @@ no person stands in that path.
 only if `runner.Decide` says so, and the mode changes only what `Decide` is
 given — its policy.** Every mode opens a draft and every mode's ready state is
 Decide's answer, Hotfix included: Hotfix's difference is that its policy tolerates
-more and D12's gate decides whether the run may open at all, not that some other
+more and the operator's own request is what makes a run a Hotfix at all (D12 as
+amended 2026-11-13), not that some other
 act marks it ready. This is today's practice, read correctly: the runner opens the
 draft (`internal/runner/prflow.go`'s `openDraftPR`, `Draft: true`) and marks it
 ready itself, through `provider.UpdatePR` with `Draft: !ready`
@@ -1482,6 +1492,30 @@ the base branch's configuration — never a pull request comment, never a
 follow-up.**
 Why: the mode with the least review must not be reachable from the surface the
 owner already treats as hostile.
+
+**Amended 2026-11-13: the gate is dropped, not built, and `--mode hotfix` needs
+no opt-in.** The owner ruled that there is no way to predict when a hotfix will
+be needed, so the base-branch key this decision named is read by nothing and no
+`rigor.hotfix` gate exists (docs/rigor-command/implementation-plan.md R7, and
+F13's amendment in `docs/rigor-command/reconciliation.md` §2). The half of the
+decision that stands is the one about surfaces: the request is the launch's own
+door — `fugaro run --mode hotfix`, on a first run or on a follow-up — and no
+comment reaches the mode, since a task filed from one never carries it.
+`fugaro rigor set` still refuses to **write** it as a
+default in any form it can write. A hand-written `rigor.default: hotfix` in a
+`fugaro.yaml` still resolves, as it always did; whether that stays reachable is
+the owner's to rule on separately.
+
+**Amended 2026-11-16: the door is the same everywhere, and the fence does not
+apply to it.** The owner ruled that `fugaro run --mode hotfix` takes effect with
+no opt-in *including a coding agent's session and a `--pr` follow-up*, and that
+the fence the rigor-command design writes — the typed project name a lowering
+`fugaro rigor set` asks for, and the diff-and-write-nothing answer a session gets
+for a write outside a repository, both that design's own rules
+(`docs/rigor-command/`) — does not apply to hotfix. So the launch paths are one
+door: the request decides that run and nothing after it, while what those two
+refusals guard is a **layer write** — a mode every later run of the project
+inherits (`fugaro rigor set`, which keeps both refusals).
 
 **Recommended: `fugaro run --mode hotfix` by a person, gated on the base branch's
 configuration (`rigor.hotfix` on, plus the trusted list) — never a PR comment,
@@ -1698,7 +1732,15 @@ the security-sensitive tier**, which includes a built-in set — `.github/workfl
 whatever the repository declares. Paths are declared as `doublestar` globs in the
 `rigor:` block (and, project-wide, in the published policy), each with a mode, and
 the pattern is validated the way config validates patterns today (F9). **A task or
-a follow-up comment cannot lower a mode below a floor, ever** (D6, D8). **The mode
+a follow-up comment cannot lower a mode below a floor, ever** (D6, D8). *(Amended
+2026-11-13: the floor holds a request that moves the mode as well. The only floor
+that exists is `review_floor`, a mode→levels map, and a run reads the row of the
+mode it is at — so a request that takes a run off the axis to `hotfix` is held to
+hotfix's row **and** to the row of the mode the layers resolved for it, both read
+(`policy.Effective.ReviewFloorFor`, D8/LF5's own rule): moving the mode moves no
+floor, and an owner floor of `pro l2,l3` keeps the adversarial step on for that run.
+`fugaro run --mode hotfix` needs no opt-in, task R7 of
+`docs/rigor-command/implementation-plan.md`.)* **The mode
 used is recorded in the PR body and in the run record**, in the same words, so the
 two can be diffed. Reason: the repository's security posture for this tier is
 already written (`docs/credentials-service/implementation-plan.md` Global

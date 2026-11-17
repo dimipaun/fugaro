@@ -6,12 +6,15 @@ package cli
 // containers and their values left alone, the code kept so the feature can
 // return.
 //
-// The ruling has four surfaces, and one test here is about each: the warning a
+// The ruling has five surfaces, and one test here is about each: the warning a
 // person reads (validate; `fugaro update` prints the same text from M7), the
 // repository-scope forms of the secrets commands, which answer the notice
 // instead of writing, the credentials service's record, which names no
-// repository-level container, and the Terraform input, which does not move at
-// all.
+// repository-level container, the Terraform input, which does not move at
+// all, and the secrets stage, which takes no value for such a name at all —
+// no line, no prompt, the ruling's own sentence instead — because the one
+// store a prompt could write is the repository's own copy, which no shared job
+// mounts.
 //
 // Every other test in this package drives the machinery the ruling keeps with
 // the door open, exactly as they did before it (main_test.go, TestMain), so
@@ -19,6 +22,7 @@ package cli
 // has for D1900's images.
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"testing"
@@ -27,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -288,6 +293,176 @@ func TestNoWorkflowSecretsRecordIsWrittenForAnIgnoredSecret(t *testing.T) {
 	}
 	if rec := workflowSecretsRecord(rs, cfg); !slices.Equal(rec.Workflows["app"], want) {
 		t.Errorf("with the door off the record holds %v, want %v", rec.Workflows["app"], want)
+	}
+}
+
+// TestTheBuildReadsTheMountsTheDeploymentHas: the derived-image build a
+// repository is offered reads the containers the spec it is handed mounts, each
+// by the precedence the plan's merge takes, and nothing for a name that spec
+// does not mount (D2313).
+//
+// The mounts, and neither the file's list nor the ruling's name test, because
+// the three part company in both directions. A repository-level secret whose
+// own container holds no version has no mount — Readiness drops it, and the
+// container it was declared with is left versionless for good — so a build
+// naming it asks Cloud Build for a version no store may ever put there, which
+// Cloud Build refuses: that is the build `fugaro update` newly offers such a
+// repository, failing after the apply, before the deploy plan and every later
+// stage, on every attempt. A repository-level secret whose own container DOES
+// hold a version keeps its mount and its job reads the value — Readiness's
+// version check comes before the ruling's branch, which
+// internal/infra's TestReadinessKeepsTheMountOfARepositorySecretThatHasAVersion
+// holds it to — so a build that dropped it by the name's kind alone would build
+// the image without a credential the job is using.
+//
+// The name the project covers is the third case, and the container beside it:
+// the copy its job mounts is the project's, whatever the file wrote and
+// whatever the repository's own container is. This is the layer nothing
+// reached before — the infra test stops at NeedsBuild, and no fake models an
+// available secret — so each container is asserted by name in the request.
+//
+// The spec here is Readiness's answer by construction, not by running it: the
+// fixture builds the pre-Readiness one and applies each decision Readiness
+// makes — the drop of the versionless name (the two maps its dropMount edits)
+// and the ProjectSecrets entry its resolveProject writes — so every case is a
+// state a deployment is really in.
+func TestTheBuildReadsTheMountsTheDeploymentHas(t *testing.T) {
+	cfg, problems := config.Parse([]byte(workflowSecretsYAML))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	repoSecretsOn(t)
+	spec, err := infra.Repo(infra.Inputs{LC: repoSecretsLC(t), Repo: "acme/app", Cfg: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoID, projectID := gcp.SecretID(spec.Slug, "npm-token"), gcp.ProjectSecretID("aurora", "deploy-token")
+	if got := spec.Secrets["npm-token"]; got != repoID {
+		t.Fatalf("the spec's own container for npm-token is %q, want %q: the fixture is not the state this case is about", got, repoID)
+	}
+	if _, mounted := spec.Workflows["app"].SecretEnv["NPM_TOKEN"]; !mounted {
+		t.Fatalf("the fixture does not build the file's own secret into the job (%v): there would be no mount to read", spec.Workflows["app"].SecretEnv)
+	}
+	// Readiness's own decision for the name the project covers (resolveProject):
+	// this repository may mount the project's copy, so that copy is the one its
+	// job mounts, whatever the file wrote under `secrets:`.
+	spec.ProjectSecrets = map[string]string{"deploy-token": projectID}
+
+	request := func(t *testing.T) string {
+		t.Helper()
+		bs, err := cloudBuildSpec(spec, cfg, "app", checkBase, "E2_HIGHCPU_8", "gs://fugaro-runs-proj-1234", appliedGitSecretID(spec))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req, err := gcp.BuildRequest("proj-1234", bs)
+		if err != nil {
+			t.Fatalf("the build of a repository whose declared secret the ruling ignores is not submittable: %v", err)
+		}
+		var versions []string
+		for _, s := range req.AvailableSecrets.SecretManager {
+			versions = append(versions, s.Env+"="+s.VersionName)
+		}
+		return strings.Join(versions, " ") + " | _SECRET_ENVS=" + req.Substitutions["_SECRET_ENVS"]
+	}
+	// The provider credential is always there and is what the fixture's
+	// provider names it: a github build reads the App key, where bitbucket's
+	// reads the token (cloudbuild.yaml's own variable, rewritten by
+	// BuildRequest).
+	gitVersion := "GITHUB_APP_KEY=projects/proj-1234/secrets/" + appliedGitSecretID(spec) + "/versions/latest"
+	both := gitVersion +
+		" NPM_TOKEN=projects/proj-1234/secrets/" + repoID + "/versions/latest" +
+		" DEPLOY_TOKEN=projects/proj-1234/secrets/" + projectID + "/versions/latest" +
+		" | _SECRET_ENVS=NPM_TOKEN DEPLOY_TOKEN"
+
+	// Both mounts stand: the repository-level secret the deployment keeps
+	// (Readiness's version check passed it), by the container its job reads,
+	// and the project's copy for the name the project covers.
+	if got := request(t); got != both {
+		t.Errorf("the build reads\n%s\nwant\n%s", got, both)
+	}
+
+	// The mount the ruling takes away, in the two maps Readiness's dropMount
+	// edits (the job's mounts, and the containers the repository root holds):
+	// the build names no container for the name then, and the versionless one
+	// appears nowhere in the request.
+	ws := spec.Workflows["app"]
+	delete(ws.SecretEnv, "NPM_TOKEN")
+	delete(ws.SecretIDs, "npm-token")
+	spec.Workflows["app"] = ws
+	got := request(t)
+	want := gitVersion +
+		" DEPLOY_TOKEN=projects/proj-1234/secrets/" + projectID + "/versions/latest" +
+		" | _SECRET_ENVS=DEPLOY_TOKEN"
+	if got != want {
+		t.Errorf("the build reads\n%s\nwant\n%s\nthe repository's own container for npm-token has no version and no store may give it one", got, want)
+	}
+	if strings.Contains(got, repoID) || strings.Contains(got, "NPM_TOKEN") {
+		t.Errorf("the request names the unmounted secret at all:\n%s", got)
+	}
+
+	// The door decides the mounts, not this: a build reads the same deployment
+	// with the ruling on and off, so nothing here is a second copy of it.
+	config.RepoSecretsOff = false
+	if again := request(t); again != got {
+		t.Errorf("with the door off the build reads\n%s\nwant\n%s", again, got)
+	}
+}
+
+// TestSecretsStageDoesNotAskForARepositoryLevelSecret: a repository-level
+// secret is one no shared job mounts (D2313), so the stage must not take one.
+// Every store a line or a prompt could name for it answers the ruling's notice
+// — `secrets set NAME` decides its scope from this same local config and finds
+// no project-wide meaning, and `--repo` is the notice — so a line for one
+// would be a step that stores nothing, while a prompt for one would write the
+// repository's own copy through this stage's own Secret Manager write — the
+// store the ruling closed at the command, reached here by another route — so
+// find() would then count that copy as covering the name, a later run would
+// never ask again, and the last "stored" would be over a value no shared job
+// reads.
+// What the stage does instead is say the ruling's fact, in the sentence
+// `validate` warns a file's block with.
+func TestSecretsStageDoesNotAskForARepositoryLevelSecret(t *testing.T) {
+	repoSecretsOn(t)
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	r.workflowSecretConfig(t, "app-signing-key")
+	r.stage.resolve(context.Background())
+	if r.stage.projectScope("app-signing-key") {
+		t.Fatal("the fixture is not the state this case is about: the secret has a project-wide meaning")
+	}
+	if slices.Contains(r.stage.tg.wanted, "app-signing-key") {
+		t.Fatalf("the stage still wants the repository-level secret: %v", r.stage.tg.wanted)
+	}
+	res, err := r.run(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var left []string
+	for _, l := range res.Left {
+		left = append(left, l.Commands...)
+	}
+	if joined := strings.Join(left, "\n"); strings.Contains(joined, "app-signing-key") {
+		t.Fatalf("the stage left a line for a secret no job mounts:\n%s", joined)
+	}
+	if n := r.store.setCalls(); n != 0 {
+		t.Fatalf("%d value(s) stored: the stage took the secret anyway", n)
+	}
+	detail := ""
+	for _, st := range res.Stages {
+		if st.Name == initflow.Secrets {
+			detail = st.Detail
+		}
+	}
+	for _, want := range []string{
+		"app-signing-key",
+		"disabled for now and ignored",
+		"a shared job mounts only the project's secrets",
+		"project_secrets",
+		"workflow_secrets",
+		"D2313",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the stage's line does not say %q:\n%s", want, detail)
+		}
 	}
 }
 

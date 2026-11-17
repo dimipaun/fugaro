@@ -11,7 +11,9 @@ to zero: not the recommendation;
 D502, staying opt-in, was relayed with it), and **D494**, which follows the recommendation and
 **departs from the owner's spec** (no RTDB token store). **D497a is amended after review** (the
 claim also names the run's pull requests) and waits for the owner's confirmation (O5). Open items
-O1–O8 wait for the owner. Each task needs the
+O1–O7 wait for the owner; **O8 was ruled on 2026-11-15 and its hold released on 2026-11-16** —
+`fugaro update` itself refuses the flip's drop until the bundle holds the token, and the "creds set
+before the re-apply" operator step stays removed (§7's O8 entry). Each task needs the
 owner's own explicit go.
 
 **Updated 2026-11-10.** The proxy chain's runner half, docs and checks are merged too (B1.7

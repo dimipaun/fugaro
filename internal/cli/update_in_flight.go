@@ -260,9 +260,25 @@ func (e *initEngine) policyReadsLive(ctx context.Context, db *rtdb.Client) bool 
 // release's is one the move may be held back from pinning (credentialsMoveHeld).
 // Naming the window over a run that turns out not to open it is the direction
 // this line errs in.
+//
+// The first half is the node's STATED version, and the chain carrying it: the
+// policy stage migrates what projectpolicy.Migratable admits and refuses the
+// rest with the republish remedy, so a node it cannot carry is one the stage
+// does not raise. That is the same pair init_policy_migrate.go's own write
+// reads, which is why the version comes off the document's bytes
+// (projectpolicy.ReadStatedVersion) rather than from a decoded node: from the
+// step that is not shape-free, the node every installation holds while the
+// upgrade runs is one Read refuses and ReadCarriedForward answers for with this
+// release's own version, and neither reports whether the policy stage will
+// raise it.
 func (e *initEngine) credentialsWindowOpens(ctx context.Context, db *rtdb.Client) bool {
-	p, found, err := projectpolicy.Read(ctx, db)
-	if err != nil || !found || p == nil || p.Version >= projectpolicy.Version {
+	// The version the node STATES, not the one a decoded node reports: the
+	// question is whether this run's policy stage raises it, and from the step
+	// that is not shape-free no reader of the node answers that — Read refuses
+	// the node every installation holds while the upgrade runs, and
+	// ReadCarriedForward returns this release's own version.
+	v, found, err := projectpolicy.ReadStatedVersion(ctx, db)
+	if err != nil || !found || v >= projectpolicy.Version || !projectpolicy.Migratable(v) {
 		return false
 	}
 	doc, image, err := e.recordedCredentialsImage()

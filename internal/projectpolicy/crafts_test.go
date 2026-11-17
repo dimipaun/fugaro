@@ -44,10 +44,10 @@ func TestPolicyWithNoCraftsWritesNoMember(t *testing.T) {
 // member for it.
 func TestCraftBlockNormalizesAnEmptyOne(t *testing.T) {
 	for _, raw := range []string{
-		`{"version":6}`,
-		`{"version":6,"crafts":{}}`,
-		`{"version":6,"crafts":null}`,
-		`{"version":6,"crafts":{"coder":{},"review":{}}}`,
+		`{"version": 9}`,
+		`{"version": 9,"crafts":{}}`,
+		`{"version": 9,"crafts":null}`,
+		`{"version": 9,"crafts":{"coder":{},"review":{}}}`,
 	} {
 		p, found, err := Decode([]byte(raw))
 		if err != nil || !found || p == nil {
@@ -68,7 +68,7 @@ func TestCraftBlockNormalizesAnEmptyOne(t *testing.T) {
 // and a node that carries a craft keeps it — the model and the access each on
 // their own, since a craft may set one and inherit the other.
 func TestCraftBlockRoundTrips(t *testing.T) {
-	raw := []byte(`{"version":6,"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-main"},"security-review":{"model":"claude-sonnet-5"}}}`)
+	raw := []byte(`{"version": 9,"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-main"},"security-review":{"model":"claude-sonnet-5"}}}`)
 	p, found, err := Decode(raw)
 	if err != nil || !found || p == nil {
 		t.Fatalf("Decode = (%v, %v, %v), want a policy", p, found, err)
@@ -93,7 +93,7 @@ func TestCraftBlockRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatal(err)
 	}
-	back, _, err := Decode([]byte(`{"version":6,"crafts":` + string(doc["crafts"]) + `}`))
+	back, _, err := Decode([]byte(`{"version": 9,"crafts":` + string(doc["crafts"]) + `}`))
 	if err != nil || back == nil || back.Crafts == nil {
 		t.Fatalf("the member this package wrote does not decode = (%v, %v)", back, err)
 	}
@@ -113,10 +113,10 @@ func TestCraftBlockRoundTrips(t *testing.T) {
 // publish time (project_cmd.go's "publishing would drop them") and a runner of
 // it logs (P8), which is why the publisher keeps them and writes none of them.
 func TestCraftMembersAreUnknownToAReaderThatPredatesThem(t *testing.T) {
-	if Version != 8 {
-		t.Fatalf("the policy Version is %d, and this test's node is written for 8: update both together, deliberately", Version)
+	if Version != 9 {
+		t.Fatalf("the policy Version is %d, and this test's node is written for 9: update both together, deliberately", Version)
 	}
-	raw := []byte(`{"version":8,"budget":{"mode":"observe"},` +
+	raw := []byte(`{"version":9,"budget":{"mode":"observe"},` +
 		`"craft_credentials":[{"name":"acme-main","type":"openrouter"}],` +
 		`"craft_pools":[{"name":"acme-pool","members":["acme-main"],"owner":"owner@example.com"}],` +
 		`"crafts":{"coder":{"model":"claude-opus-5-5","access":"acme-pool"}}}`)
@@ -163,7 +163,7 @@ func TestCraftBlockDecodesStrictly(t *testing.T) {
 		{name: "the default account as an access", block: `{"coder":{"access":"default"}}`, want: "not a credential's name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p, _, err := Decode([]byte(`{"version":6,"crafts":` + tc.block + `}`))
+			p, _, err := Decode([]byte(`{"version": 9,"crafts":` + tc.block + `}`))
 			if err == nil {
 				t.Fatalf("the block %s was read: %+v", tc.block, p.Crafts)
 			}
