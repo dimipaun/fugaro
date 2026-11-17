@@ -186,14 +186,14 @@ var neverCommands = []string{"ls", "watch", "state", "run"}
 // forbidden verbs: a deny-list is a list of the commands somebody thought of,
 // and section 6's own sentence is that "this list is not widened". name is the
 // bare command word a caller is about to run, e.g. "allow-delete", "budget",
-// "secrets", "restore", "ls".
+// "secrets", "init", "restore", "ls".
 func NeverCommand(name string) error {
 	for _, admitted := range neverCommands {
 		if name == admitted {
 			return nil
 		}
 	}
-	return refuse(3, "running `fugaro "+name+"`, which is not one of the commands the resident orchestrator runs ("+strings.Join(neverCommands, ", ")+"): allow-delete, budget's writes, secrets set/rm, a rules deploy and restore are destructive, and the D128 three are the spoken confirmation's")
+	return refuse(3, "running `fugaro "+name+"`, which is not one of the commands the resident orchestrator runs ("+strings.Join(neverCommands, ", ")+"): allow-delete, budget's writes, secrets set/rm, the Firebase setup and restore are destructive, and the D128 three are the spoken confirmation's")
 }
 
 // NeverModelCredential is rule 4: no model credential of its own, ever.

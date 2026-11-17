@@ -25,13 +25,15 @@ func TestChangeSetMemberRecord(t *testing.T) {
 	}
 	at := time.Date(2026, 11, 16, 14, 0, 0, 0, time.UTC)
 	m := &ChangeSetMember{
-		Version: 1,
-		SetID:   "20260926-221530-a1b2",
-		Repo:    "acme/app",
-		RunID:   "20260926-221530-a1b2",
-		PRURL:   "https://github.com/acme/app/pull/7",
-		Verdict: "ship",
-		At:      at,
+		Version:  1,
+		SetID:    "20260926-221530-a1b2",
+		Repo:     "acme/app",
+		RunID:    "20260926-221530-a1b2",
+		PRURL:    "https://github.com/acme/app/pull/7",
+		Verdict:  "ship",
+		HeadSHA:  "3f2b1c0d9e8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c",
+		Verified: true,
+		At:       at,
 	}
 	if err := s.WriteChangeSetMember(ctx, m); err != nil {
 		t.Fatal(err)

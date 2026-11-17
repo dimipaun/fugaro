@@ -305,7 +305,12 @@ import (
 // account, a run or a log view naming belong, a read that fails, hangs or
 // answers something that is not a document, a record naming no execution, a
 // record and a listing that disagree about the execution, a doctor that exits 1
-// (an answer, #2719) and one that does not answer at all.
+// (an answer, #2719) and one that does not answer at all. Check 127's fakes are
+// a fake `fugaro`, a fake `git` and a fake `gh`, each answering out of the
+// case's own documents and logging every call: the check reads a sandbox
+// repository's runs, its config and its pull requests and launches nothing, so
+// a case says which repository each read named and that the backlog index was
+// regenerated in a copy rather than in the checkout.
 // Check 197's fakes are a fake `fugaro` -- a published policy whose one
 // GitHub profile admits one sandbox repository, a `run` that RECORDS the run it
 // was asked for and refuses a repository outside that profile with the
@@ -392,6 +397,7 @@ var liveCheckScripts = []struct {
 	{"check550.sh", "check550_test.sh"},
 	{"check139.sh", "check139_test.sh"},
 	{"check200.sh", "check200_test.sh"},
+	{"check127.sh", "check127_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent

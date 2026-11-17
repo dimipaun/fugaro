@@ -54,16 +54,13 @@ type WireSeatChange struct {
 // Paddle's own customer portal: the session's URL, which is where invoices,
 // payment methods and cancellation live.
 //
-// **It is the one shape of this area that the wire registry does not hold**
-// (wire.go), and the gap is the SPA's side of the tree rather than this one.
-// The registry is kept to a fixture in `ee/portal/schemas/fixtures/`, a `$defs`
-// entry in the area's schema and the sweep that reads both (`wire_test.go`,
-// `ee/portal/test/types.test.ts`); the screen that reads this answer declares
-// its own `CustomerPortal` beside itself (P4.4, a level before this route
-// existed) instead of in `ee/portal/src/api/types/billing.ts`, and this task
-// writes no file under `ee/portal/`. The field is spelled the way the screen
-// reads it, and the task's pull request carries the missing registration as the
-// finding it is.
+// It is registered like the other shapes of this area, so all three readers of
+// it are held to each other (wire.go): this type, the `portal` def of
+// `ee/portal/schemas/billing.schema.json` and the fixture
+// `ee/portal/schemas/fixtures/billing.portal.json`, with the SPA's own
+// `CustomerPortal` (`ee/portal/src/api/types/billing.ts`) read against that
+// same fixture by `ee/portal/test/types.test.ts`. The field is spelled the way
+// the screen reads it.
 type WireCustomerPortal struct {
 	URL string `json:"url"`
 }
@@ -71,4 +68,5 @@ type WireCustomerPortal struct {
 func init() {
 	registerWire("billing.subscription", func() any { return new(WireSubscription) })
 	registerWire("billing.seats", func() any { return new(WireSeatChange) })
+	registerWire("billing.portal", func() any { return new(WireCustomerPortal) })
 }

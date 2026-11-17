@@ -179,21 +179,53 @@ func newProjectReposAddCmd() *cobra.Command {
 	return cmd
 }
 
+// newProjectReposRmCmd is `fugaro project repos rm`: the inverse of `add`'s
+// converge, store by store (RE4, docs/repos-management).
 func newProjectReposRmCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
-		Use:   "rm <provider/owner/name | owner/name | *>",
-		Short: "Un-enroll a repository: remove it from the allow-list",
-		Long: "Remove an entry from the published policy's allow_repos. Removing an allowed\n" +
-			"repository stops its runs — a run of a repository the list does not admit is\n" +
-			"refused before it mints a git token — unless another entry on the list still\n" +
-			"admits it, which is the case a pattern makes (github/acme/app stays admitted\n" +
-			"while github/acme/* is there); the confirmation says which of the two it is.\n" +
-			"Removing * refuses every repository the rest of the list does not admit.\n" +
+		Use:   "rm <provider/owner/name | owner/name | pattern>",
+		Short: "Un-enroll a repository: remove its enrolment and its jobs",
+		Long: "Remove a repository's enrolment in one step, the way `fugaro project repos add`\n" +
+			"writes it: the published allow-list entry, this machine's repos: entry, this\n" +
+			"machine's image mapping, the published per-repository admission\n" +
+			"(config/policy/repos/<slug>), the repository's Cloud Run jobs (its workflow job\n" +
+			"and its check job) and its Cloud Scheduler job. Every step is the writer the\n" +
+			"enrolment used, one confirmation covers them all, and a store that holds\n" +
+			"nothing says so rather than failing. The allow-list entry is written last,\n" +
+			"because it is the store this command reads to know the repository is enrolled\n" +
+			"at all — so a removal left half done by an earlier failure is finished by\n" +
+			"running it again.\n" +
+			"\n" +
+			"It keeps the repository's Terraform state and the repository root's own IAM\n" +
+			"members — the grants of the repository's job accounts and of its build\n" +
+			"account, on the project, on the runs bucket, on its secrets and on its image\n" +
+			"registry. Neither is this command's to take away: the state is what an apply\n" +
+			"of that root plans from, and the grants are members only such an apply\n" +
+			"deletes. There is no command that does it: the root goes by hand,\n" +
+			"docs/how-to/offboarding.md lays the sequence out, and the state goes in its\n" +
+			"last step, `fugaro update --repo --forget`. It says so before the\n" +
+			"confirmation and after the write.\n" +
+			"\n" +
+			"Removing an allowed repository stops its runs — a run of a repository the list\n" +
+			"does not admit is refused before it mints a git token — unless another entry on\n" +
+			"the list still admits it, which is the case a pattern makes (github/acme/app\n" +
+			"stays admitted while github/acme/* is there); the confirmation says which of\n" +
+			"the two it is. It also names, before the confirmation and after the write, what\n" +
+			"it deliberately leaves: the provider's App installation, the built images, the\n" +
+			"secrets and their versions, the run history, every pull request a run opened and\n" +
+			"the remote branch. Nothing here deletes a secret, an image or a run's history.\n" +
+			"\n" +
 			"So it asks you to type the project's name, and while a run is in flight only\n" +
-			"that typing confirms it.",
+			"that typing confirms it: the sentence names the run, which keeps its job, its\n" +
+			"record and its ledger until it ends.\n" +
+			"\n" +
+			"`*` and a pattern such as github/acme/* are allow-list entries and not\n" +
+			"repositories: neither has a provider, a repos: entry, a job or a state of its\n" +
+			"own, so removing one takes that entry away and says nothing about the\n" +
+			"repositories it admitted.",
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposEdit(cmd, &o, args[0], true) },
+		RunE: func(cmd *cobra.Command, args []string) error { return runProjectReposRm(cmd, &o, args[0]) },
 	}
 	addCloudFlags(cmd, &o.cloud)
 	return cmd

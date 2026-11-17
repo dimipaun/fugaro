@@ -24,7 +24,11 @@ const VerdictShip = "ship"
 
 // ChangeSetMember is what one member run records about the change set it was
 // launched in (task.Spec.ChangeSet): the set it belongs to, the run it is, its
-// own pull request and the verdict it ended on.
+// own pull request, the commit its verdict is about and the verdict it ended
+// on. The record is written by whichever run last answered for the member's
+// pull request — the member run or a follow-up on it — which is why the commit
+// travels with the verdict rather than being read from the member run's own
+// result.json (D2).
 //
 // It sits under the member's own prefix because that is the only one a run
 // reaches (SECURITY.md): a run reads and writes its own record, and the step
@@ -55,6 +59,21 @@ type ChangeSetMember struct {
 	// that ended without shipping writes the empty word over whatever an
 	// earlier attempt at the same pull request recorded (D2).
 	Verdict string `json:"verdict,omitempty"`
+	// HeadSHA is the commit the verdict is about: the head the run that wrote
+	// this record had pushed when it wrote it, written with the verdict and
+	// never on its own. It is here and not read from the member run's own
+	// result.json because the run that writes this record is not always the run
+	// the set was launched from: a follow-up to a member's pull request pushes
+	// to the member's branch, keeps its own commit under its own run id, and
+	// answers on the MEMBER's record (D2), so a step settling a whole set (D3)
+	// takes the commit from here.
+	HeadSHA string `json:"head_sha,omitempty"`
+	// Verified is whether a clean-tree test passed on HeadSHA, as the run that
+	// wrote the record read its own verify table (the rule the runner's own
+	// pushedVerified keeps). A verdict whose commit nothing verified is one no
+	// settle acts on, and that table lives under the run that pushed, where a
+	// reader of the member's prefix cannot see it.
+	Verified bool `json:"verified,omitempty"`
 	// At is when the record was last written, UTC.
 	At time.Time `json:"at"`
 }
