@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,6 +62,53 @@ func TestSecretsRmRemovesTheVersionAndTheEntry(t *testing.T) {
 	}
 	if strings.Contains(out+errOut, tokenValue) {
 		t.Fatalf("the value leaked: %q %q", out, errOut)
+	}
+}
+
+// TestSecretsRmAimsTheConfig: --config and --project are the aiming pair every
+// cloud command of this family takes, and both halves of this removal are the
+// named installation's — the entry is in that installation's config file, and
+// the container is the one that file's name derives (gcp.ProjectSecretID). A
+// selection read from the environment alone would delete one installation's
+// container and leave another installation's entry standing over it, which is
+// the state D1171 gives this command the job of preventing. The aimed file is
+// a second config of the same installation, so the two are told apart by which
+// file holds the entry; --project is localcfg.Select's other step and resolves
+// through the same call (settingsAimedSelection).
+func TestSecretsRmAimsTheConfig(t *testing.T) {
+	sm := secretsFixture(t)
+	selected := os.Getenv("FUGARO_CONFIG")
+	// The entry is in the aimed file alone: the file the environment selects
+	// holds none, so a run that read the environment's file has nothing to
+	// write there while its container lookup deletes the one the flag named.
+	data, err := os.ReadFile(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aimed := filepath.Join(t.TempDir(), "aurora.yaml")
+	if err := os.WriteFile(aimed, append(data, []byte("project_secrets:\n  bitbucket-token: { allow_data_to: [\"acme/app\"] }\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.ProjectSecretID("aurora", "bitbucket-token")
+	sm.Seed(id, map[string]string{
+		gcp.LabelManaged: gcp.ManagedValue,
+		gcp.LabelProject: "aurora",
+		gcp.LabelSecret:  "bitbucket-token",
+	}, []byte(tokenValue))
+	before := readFileString(t, selected)
+
+	out, errOut, err := execute(t, "secrets", "rm", "bitbucket-token", "--config", aimed)
+	if err != nil {
+		t.Fatalf("--config: %v\nstdout %s\nstderr %s", err, out, errOut)
+	}
+	if got := sm.Deleted(); len(got) != 1 || got[0] != id {
+		t.Fatalf("deleted %v, want just %s", got, id)
+	}
+	if after := readFileString(t, aimed); strings.Contains(after, "bitbucket-token") {
+		t.Fatalf("the container is gone but the entry the flag named is still there:\n%s", after)
+	}
+	if after := readFileString(t, selected); after != before {
+		t.Fatalf("a removal aimed at another config changed the selected one:\n%s", after)
 	}
 }
 

@@ -133,7 +133,16 @@ func secretsRm(cmd *cobra.Command, o secretsRmOptions, name string) error {
 			pluginwire.Printable(name), marker, command)
 	}
 
-	sel, lc, err := settingsSelection()
+	// --config and --project are the aiming pair this command takes with the
+	// rest of the family's cloud commands, and both halves of the removal are
+	// the named installation's: the entry is in that installation's config
+	// file, and the container is the one its own name derives (the id below).
+	// A selection read from the environment alone would delete a container
+	// while leaving the entry standing in the file it never read — the state
+	// D1171 gives this command the job of preventing — which is why the
+	// family's writers resolve the pair (settingsAimedSelection), and the
+	// value half of this command already does (openCloud).
+	sel, lc, err := settingsAimedSelection(settingsWriteOptions{project: o.cloud.project, config: o.cloud.config})
 	if err != nil {
 		return err
 	}
