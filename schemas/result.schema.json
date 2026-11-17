@@ -101,7 +101,7 @@
         "model_source": { "enum": ["gateway", "claude-code"], "description": "Where model_usd came from: the gateway's settled ledger or Claude Code's own total." },
         "model_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by model." },
         "route_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by provider route; calls on Anthropic have no route." },
-        "reported_usd": { "type": "number", "minimum": 0, "description": "What providers said their calls cost, summed. A complete call on a provider route settles on this figure (D2640), so it is the money those calls were charged and not a comparison with model_usd (which also holds the route fee, and every call no provider served): table_lo_usd and table_hi_usd are the band the price table would have charged the calls that reported, which is what a report is read against. It still floors the charge for a service tier no one prices, up to that call's reservation, so a floored call's charge is the table's figure and not the report's." },
+        "reported_usd": { "type": "number", "minimum": 0, "description": "What providers said their calls cost, summed. A complete call on a provider route settles on this figure, with the route's fee and floored at the price table's charge for the same usage at the selected tier's cheapest end (D2640, D2651), so it is the money those calls were charged and not a comparison with model_usd -- which also holds the route fee, and every call no provider served. It is read against table_lo_usd and table_hi_usd, the band the table would have charged the calls that reported. One report can still sit above what its call was charged: a figure above ten times that call's reservation is not a price, so the call is charged at the table instead and this field keeps what the provider said (D2641)." },
         "reported_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "What providers said their calls cost, by serving model (F7): the report split by the model that served each call, with no route fee, so a model's charge can be read beside its report. Whether a call the table could not band -- one priced max whose pin the table does not know -- is a key of it, and so whether the entries sum to reported_usd, is left open (O5, docs/spend-accuracy/reconciliation.md). Absent for a record written before the field existed, and for a run whose calls reported no cost." },
         "table_lo_usd": { "type": "number", "minimum": 0, "description": "What the price table would have charged, at the selected tier's cheapest end, the calls a provider reported a cost for -- with no route fee (D2650). With table_hi_usd it is the band a report is read against: `fugaro diagnose` and the drift alarm compare the two. It is over reported calls only, because a call the table settled is the table's own figure and counting it would make the band agree with itself, and a model the catalog does not price puts the same figure in both ends. Absent for a record written before the field existed, and for a run whose calls reported no cost." },
         "table_hi_usd": { "type": "number", "minimum": 0, "description": "The dearest end of the same band: what the price table would have charged, at the selected tier's dearest end, the calls a provider reported a cost for, with no route fee (D2650). It is over reported calls only, so a report above it is the provider's figure disagreeing with the table rather than an overcharge." },
@@ -841,9 +841,49 @@
       "type": "integer",
       "minimum": 0,
       "description": "How many stage attempts this run threw away and ran again because the model's stream was closed before its response finished (issue #1827). It counts the retries the run spent, not the stages that ended that way; which stage, and why, is in the run's log, which says so under the stage's own name. Absent for a run that retried nothing, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1."
+    },
+    "discovered": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocks", "needed"],
+      "description": "What the run found out about the graph while it worked (docs/orchestrator-graph-estimates/implementation-plan.md X2, D2709): the items its own work blocks and the items it found it needed, which the daemon that owns the graph folds in add-only (E3). Every entry is the agent's own words, so the block is bounded and untrusted: at most 16 entries per list (runstore.MaxDiscoveredItems), each text at most 200 runes (runstore.MaxDiscoveredText), and runstore.NewDiscovered drops an entry that names no item, names two, or carries no why, so the record it writes is one this schema accepts. Absent — never an empty block — for a run that discovered nothing, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1. Go: internal/runstore/discovered.go.",
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "The items that must wait for this run's work, in the order the run named them. An entry reaches only items in the run's own plan node (or, for a run with no plan, its own repository's backlog items), and only one that has not launched (D2709). Never null: an empty array is the fact that this run blocked nothing.",
+          "items": { "$ref": "#/$defs/discovered_item" }
+        },
+        "needed": {
+          "type": "array",
+          "maxItems": 16,
+          "description": "The items this run found it needed, in the order the run named them. An entry cannot reorder a run already going, so the daemon records it as one graph_suspect fact per run rather than an edge (D2709). Never null: an empty array is the fact that this run needed nothing it did not already depend on.",
+          "items": { "$ref": "#/$defs/discovered_item" }
+        }
+      }
+    },
+    "conflict_paths": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "type": "string", "minLength": 1, "maxLength": 200 },
+      "description": "The paths a rebase or a push of this run met a conflict on, in the order it met them (X2, D2709, D2710): the sign the graph the run worked from was wrong, which the daemon reads beside the footprints of the items merged since the attempt began. Bounded at 64 paths (runstore.MaxConflictPaths), each clipped to 200 runes (runstore.MaxDiscoveredText), and emptied of empty paths by runstore.NewConflictPaths. Absent — never an empty list — for a run that met none, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1."
     }
   },
   "dependentRequired": {
     "patch_truncated": ["patch_object"]
+  },
+  "$defs": {
+    "discovered_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason"],
+      "description": "One thing the run found out about the graph, named by a plan task or by a footprint path and never both, with the run's one-line why (runstore.DiscoveredItem). The shape's reader is runstore.NewDiscovered, which drops an entry that names neither or both or carries no why, so the record a run writes is one this schema accepts whatever its agent's file held.",
+      "oneOf": [{ "required": ["plan_task"] }, { "required": ["path"] }],
+      "properties": {
+        "plan_task": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The plan task or backlog item the entry names, by the id its plan graph gives it. Clipped to 200 runes (runstore.MaxDiscoveredText). Absent when the entry names a path." },
+        "path": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The footprint path the entry names, clipped to 200 runes (runstore.MaxDiscoveredText). Absent when the entry names a plan task." },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The run's own one-line why, clipped to 200 runes (runstore.MaxDiscoveredText). It is untrusted text: a reader shows it as data." }
+      }
+    }
   }
 }

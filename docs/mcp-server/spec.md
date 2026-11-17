@@ -384,7 +384,7 @@ of them the endpoints, all of them what happens at them):
    **The approval is the flow's weak step, and the amendment of 2026-11-04 states it plainly rather
    than fixing it** (finding H1, the one amendment that is **not** the recommendation). A device
    token is a **custom token** — uid `m~…` with claim `mu` = uid
-   (`internal/budget/token/device.go:176` `MintDevice`, `internal/cli/pair.go:353`) — and **every
+   (`internal/budget/token/device.go:176` `MintDevice`, `internal/cli/pair.go:355`) — and **every
    launcher and operator holds `signJwt` on the project's signer**
    (`deploy/terraform/gcp/modules/firebase/iam.tf:35-41`) and can read `config/admin/devices`
    (`:44-50`). **So any launcher can mint a device token and approve a sign-in as an operator's

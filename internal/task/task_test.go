@@ -807,6 +807,46 @@ func TestSpecMode(t *testing.T) {
 	}
 }
 
+// TestReviewClassFieldRefusedOutsideArtifactMode covers Spec.ReviewClass
+// (docs/troubleshoot-cloud T-TC12, D2411): the cloud diagnosis's launch writes
+// the marker on a mode: artifact spec, and that is the only spec the decoder
+// accepts it on. That bound is the field's whole protection inside this
+// package: the marker admits a run to the review-only job variant — the
+// container that holds no App key and no Claude token — so a spec that is not
+// the diagnosis's shape must not reach that container by setting a boolean.
+// Mode: review is refused by the same rule rather than admitted: it is already
+// the review class, and nothing writes the field beside it.
+//
+// Mutation (drop the review-class arm from Validate): every refused case below
+// parses, and a mode: implement spec can claim the review class.
+func TestReviewClassFieldRefusedOutsideArtifactMode(t *testing.T) {
+	const head = `{"version":1,"run_id":"20261015-120000-a1b2","repo":"acme/app","ref":"main","task":"x"`
+	for _, mode := range []string{"", "implement", "review", "evaluate"} {
+		in := head + `,"mode":"` + mode + `","review_class":true}`
+		if _, err := Parse([]byte(in)); err == nil || !strings.Contains(err.Error(), "review_class is only for mode artifact") {
+			t.Errorf("mode %q with review_class: err = %v, want a refusal naming the artifact mode", mode, err)
+		}
+	}
+	in := head + `,"mode":"artifact","review_class":true}`
+	spec, err := Parse([]byte(in))
+	if err != nil {
+		t.Fatalf("the diagnosis's own spec was refused: %v", err)
+	}
+	if !spec.ReviewClass || spec.Mode != recipe.ModeArtifact {
+		t.Fatalf("parsed mode %q review_class %v, want the artifact mode and the review class", spec.Mode, spec.ReviewClass)
+	}
+	// Additive: an unset field is omitted, so every spec that is not a
+	// diagnosis is byte-identical to what the previous release wrote.
+	data, err := json.Marshal(&Spec{Version: 1, RunID: "20261015-120000-a1b2", Repo: "acme/app", Ref: "main",
+		Task: "x", Mode: recipe.ModeArtifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "review_class") {
+		t.Fatalf("an unset review class is written: %s", data)
+	}
+}
+
 // TestSpecInputsValidate is the decoder's own arm for the attached-files list
 // (design artifact-runs.md §4, plan Task 6): the three fields are all
 // required and structural — a name, a size that cannot be negative, and a

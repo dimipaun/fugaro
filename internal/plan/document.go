@@ -22,16 +22,19 @@
 //     be inventing them.
 package plan
 
-import "github.com/dimipaun/fugaro/internal/streams"
+import (
+	"github.com/dimipaun/fugaro/internal/streams"
+	"github.com/dimipaun/fugaro/internal/tier"
+)
 
 // SchemaVersion is the graph schema this build writes, and the newest it reads.
 // It is 3 since the plan's graph learned the contract-first decoupling pass
-// (D1811): a node's `kind`, a node's relative `size`, the stubs a contract names,
-// the record of each broken edge and the change requests raised against a
-// merged contract. The field is on the document rather than in this package's
-// head because the console has to be able to tell "this graph is from a newer
-// CLI" from "this graph is broken", and it can only do that if the number is in
-// the document it was handed.
+// (D1811): a node's `kind`, a node's relative `size`, a node's expectation
+// `tier`, the stubs a contract names, the record of each broken edge and the
+// change requests raised against a merged contract. The field is on the
+// document rather than in this package's head because the console has to be
+// able to tell "this graph is from a newer CLI" from "this graph is broken",
+// and it can only do that if the number is in the document it was handed.
 const SchemaVersion = 3
 
 // FirstSchemaVersion is the graph schema this build reads beside the current
@@ -159,6 +162,15 @@ type Node struct {
 	// absent when the planner did not say, which means one — and a size of zero
 	// or less is refused rather than read as "free work".
 	Size *float64 `json:"size,omitempty"`
+	// Tier is how big the task is expected to be, one of internal/tier's four,
+	// and it is optional: absent, or null, is a task the planner did not size,
+	// which is a different statement from naming a tier nothing knows (that one
+	// is refused). It is not the weight `size` carries: the numeric size is what
+	// a decoupling's gain is weighed in (D1816), while the tier is the
+	// expectation a run is launched under, the `--tier` of the launcher (D2711).
+	// Additive to schema 3, so the documents written before it existed read and
+	// print exactly as they did.
+	Tier *tier.Tier `json:"tier,omitempty"`
 	// Stubs is the whole files a contract node leaves for its dependents to
 	// compile against, which the integration task deletes (D1815, F9). It is
 	// set on a contract node and nowhere else, each entry is a literal

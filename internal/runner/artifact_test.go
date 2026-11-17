@@ -29,6 +29,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -42,6 +43,12 @@ import (
 const (
 	sizzlePlanRenderYAML = "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - plan: {}\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"
 	sizzleRenderOnlyYAML = "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - render: {}\noutputs: { globs: [out/*.mp4] }\n"
+	// sizzlePlanDiagnoseYAML is the diagnosis shape of the same mode: the
+	// catalog's troubleshoot entry (docs/troubleshoot-cloud T-TC3), with a
+	// plan stage in front because recipe.Parse's orderArtifact admits both
+	// shapes. It is spelled here rather than read from the catalog so the
+	// render arm's own cases are about the arm and not about the entry.
+	sizzlePlanDiagnoseYAML = "version: 1\nname: sizzle\nmode: artifact\nsteps:\n  - plan: {}\n  - diagnose: {}\noutputs: { globs: [out/*.md] }\n"
 	// sizzleDefaultYAML is the render-only shape under the DEFAULT recipe
 	// name: the file a run reads when its task names no recipe, which is
 	// what a follow-up that inherits none does (recipe.go's resolveRecipe
@@ -475,6 +482,73 @@ func TestBlankRenderCommandRefusesTheRun(t *testing.T) {
 	}
 }
 
+// TestRenderCommandNotRequiredWithoutARenderStep: the render arm of
+// RecipeGateProblems judges a recipe that renders, and only one. A mode:
+// artifact recipe whose own step is a diagnose (recipe.StepDiagnose, the cloud
+// tier of `fugaro troubleshoot`, docs/troubleshoot-cloud D2402) runs no
+// command of the workflow's at all — the step reads the bundle the launcher
+// left under the run's own prefix and writes its answer — so a workflow that
+// declares no commands.render is nothing it needs. Firing on the mode alone
+// refused the tier at the launch and again at the runner's bootstrap in
+// exactly that repository (T-TC11), and a repository that renders nothing is
+// where a person with a broken machine is as likely to be as anywhere.
+//
+// The control is the same recipe text with the render step back in it
+// (TestRenderCommandStillRequiredWithARenderStep): the reading below is about
+// the step, not about the mode.
+//
+// Mutation (read rcp.Mode alone in the render arm again): both readings come
+// back with "render step needs commands.render".
+func TestRenderCommandNotRequiredWithoutARenderStep(t *testing.T) {
+	rcp, ps := recipe.Parse([]byte(sizzlePlanDiagnoseYAML))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	for _, test := range []string{"", "   "} {
+		wf := config.Workflow{
+			Commands:  config.Commands{Build: "sh build.sh", Test: "sh test.sh", Render: test},
+			Resources: config.Resources{Memory: "8Gi"},
+		}
+		if got := runner.RecipeGateProblems(rcp, wf); len(got) != 0 {
+			t.Fatalf("RecipeGateProblems for a diagnose recipe with commands.render %q = %+v, want none", test, got)
+		}
+	}
+}
+
+// TestRenderCommandStillRequiredWithARenderStep is the other half of the
+// narrowing, and the half that must not move: a recipe that really does render
+// keeps the refusal exactly as it was — the step would run `sh -c ""`, exit 0
+// and record a render that rendered nothing (Review Focus 1). The whole list
+// is read, so a narrowing that traded this refusal for another shows up here.
+//
+// Mutation (drop the render arm, or exempt the render step with the diagnose
+// one): the reading comes back empty and TestBlankRenderCommandRefusesTheRun
+// loses the bootstrap refusal it pins.
+func TestRenderCommandStillRequiredWithARenderStep(t *testing.T) {
+	rcp, ps := recipe.Parse([]byte(sizzlePlanRenderYAML))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	// The control: a workflow that has commands.render is no problem at all,
+	// so what the readings below report is that key alone.
+	if got := runner.RecipeGateProblems(rcp, config.Workflow{
+		Commands:  config.Commands{Build: "sh build.sh", Test: "sh test.sh", Render: "sh render.sh"},
+		Resources: config.Resources{Memory: "8Gi"},
+	}); len(got) != 0 {
+		t.Fatalf("RecipeGateProblems for a render recipe over a workflow that renders = %+v, want none", got)
+	}
+	for _, test := range []string{"", "   "} {
+		got := runner.RecipeGateProblems(rcp, config.Workflow{
+			Commands:  config.Commands{Build: "sh build.sh", Test: "sh test.sh", Render: test},
+			Resources: config.Resources{Memory: "8Gi"},
+		})
+		want := runner.GateProblem{Field: runner.GateCommands, Message: "render step needs commands.render"}
+		if len(got) != 1 || got[0] != want {
+			t.Fatalf("RecipeGateProblems with commands.render %q = %+v, want %+v alone", test, got, want)
+		}
+	}
+}
+
 // TestPlanStageIsOptional: steps: [render] runs with no agent call at all —
 // a recipe whose deliverable needs no plan and whose render needs no model.
 func TestPlanStageIsOptional(t *testing.T) {
@@ -570,6 +644,39 @@ func TestAModeArtifactRecipeWithAnImplementSpecModeIsRefused(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	if !strings.Contains(rec.Reason, "is mode: artifact, but the task says mode: implement") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if n := len(h.agent.calls); n != 0 {
+		t.Fatalf("%d agent calls, want none", n)
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+}
+
+// TestAReviewClassSpecWithARenderRecipeIsRefused (docs/troubleshoot-cloud
+// T-TC12): the review-class marker belongs to the diagnosis, and the diagnose
+// step is what makes a run one. task.Spec.ReviewClass is admitted by
+// task.Validate on mode: artifact alone (the recipe is not resolved yet) and
+// is what the class doors and the model path read, so a mode: artifact spec
+// naming a recipe that renders would be admitted to the review-only variant
+// and have its stages' model calls served by the credentials service's review
+// class — the account's own credential and its allow_repos are not what bounds
+// them then. This is the arm that ties the marker to the step, on the RESOLVED
+// recipe, before any stage.
+//
+// Mutation (drop the review-class case from resolveRecipe's cross-check): this
+// test fails, and the run renders under the class the field claimed.
+func TestAReviewClassSpecWithARenderRecipeIsRefused(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	spec.ReviewClass = true
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	pushes := countPushes(t, h)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(rec.Reason, "holds no diagnose step") {
 		t.Fatalf("reason = %q", rec.Reason)
 	}
 	if n := len(h.agent.calls); n != 0 {

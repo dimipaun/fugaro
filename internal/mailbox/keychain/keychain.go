@@ -157,7 +157,13 @@ var (
 	// ErrNoKey: there is no key at the item — it is absent, empty, or holds a
 	// value that is not a key.
 	ErrNoKey = errors.New("keychain: no key at the item")
-	// ErrBackend: the OS keychain could not be used — read, or written.
+	// ErrBackend: the source of the pairing keys could not be used — read, or
+	// written. One row covers both sources, and the words tell them apart: an
+	// OS keychain failure carries the text below, and the installation's Secret
+	// Manager container wraps the same sentinel under a sentence of its own
+	// (cloud.go's cloudFailure), so everything keyed on this row — mac.go's
+	// §8.3 exit, the commands' exit codes — reads the two alike while an
+	// operator is sent to the source that actually failed.
 	ErrBackend = errors.New("keychain: the OS keychain could not be used")
 )
 

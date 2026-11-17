@@ -1312,9 +1312,13 @@ question still open when D121 had been answered, and the row was rewritten in th
 added this document. A quotation of a plan row that the same pull request rewrites is exactly the
 kind of citation this document's other quotes are checked against.)* So this design **proposes
 nothing and renumbers nothing**: it reads
-the number the plan holds. `docs/gcp-live-checklist.md` carries **no `## Check 88` section and
-no `| 88 |` row** on `main` today, because the check has not been written yet — not because
-the number is unclaimed.
+the number the plan holds. **The register carries the check now**: Task **P4.2** wrote it on
+**2026-11-17**, as a `| 88 |` summary row and a `## Check 88:` section with its guard block, its
+numbered steps and their `FACT` lines, and its restore. It is written text and it is **not run** —
+the section's own header says so, and the row ends **USER-RUN, NOT RUN** — because the check is
+the owner's to run and only if the owner builds push. *(This paragraph said the opposite until then:
+`docs/gcp-live-checklist.md` carried **no `## Check 88` section and no `| 88 |` row** while the
+check was unwritten — which was never a sign that the number was unclaimed.)*
 
 **Who writes it: the plan says P4.2, and this design says so too rather than claiming it.**
 The plan allocates the *writing* explicitly — "**checks 80 and 83–88 by P4.2**", and Task
@@ -1326,11 +1330,11 @@ stands; what the plan now does is put the allocation itself to the owner as a qu
 P5.2 is approved and P4.2 is not.)* So the register entry for 88 is written by P4.2, in the register's own block form, under
 the plan's rule that a check is never run before its text is in the register; the check is
 **run by the owner only if the owner builds push**. This design **names Check 88 and does not write it**,
-and it does not move the writing to a task that may never be scheduled. It is
+and it did not move the writing to a task that may never be scheduled; P4.2 wrote it, and it is
 **owner-run — no agent performs any step of it**.
 
-**What Check 88 would have to prove** (outline only; P4.2 owns the register text the owner
-runs):
+**What Check 88 has to prove** (the outline below is what the register's section puts to the
+owner; the register's own text, not this one, is what the owner runs):
 a real notification arrives on a real device for each category of §1's reconciled set (D160's
 three, cap-near, and the prompt); **the payload
 as the provider sees it carries a category and nothing else** (read the FCM/APNs record, not

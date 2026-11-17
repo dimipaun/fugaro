@@ -65,6 +65,15 @@ func TestRankOrdersTheAxis(t *testing.T) {
 	if Hotfix.Rank() >= POC.Rank() {
 		t.Error("Hotfix ranks at or above POC; a Hotfix rule would then beat a POC one, which is the fail-open direction")
 	}
+	// PerRun is exactly the off-axis mode. It is the one exception to the
+	// raise-only rule a request is held to (the owner's ruling of 2026-11-13,
+	// R7), and a mode that gained it without being off the axis would be a
+	// request able to lower a run.
+	for _, m := range append([]Mode{""}, Modes...) {
+		if got, want := m.PerRun(), m == Hotfix; got != want {
+			t.Errorf("%q.PerRun() = %v; want %v", m, got, want)
+		}
+	}
 }
 
 // TestDefaultIsPro pins D19's answer: the built-in default is Pro, the mode

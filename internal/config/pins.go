@@ -253,25 +253,30 @@ func catalogWarning(model string, m pricing.Model) string {
 	if c.Tier == "zdr" {
 		n = c.ZdrEndpoints
 	}
-	// The bound the compiler charged, said in the owner's own words: the
-	// default (cheapest) charges the cheapest of the tier's endpoints, and
-	// a call may still be served by a dearer one (P11) — which is why the
-	// sentence below names the switch that moves it, and why the numbers of
-	// the dearest end are here: the undercharge is dollars, not only
+	// The bound the compiler charged, said in the owner's own words, and the
+	// switch that would move it to the other end (P11): highest is what an
+	// unset price_policy means (D2644), so a row already at the top of its
+	// range names cheapest instead — naming the default would be advice to
+	// change nothing. The numbers of the dearest end are here too, when the
+	// charge leaves room above it: the undercharge is dollars, not only
 	// accuracy (design D6).
-	end := "the dearest of those endpoints"
+	end, move := "the dearest of those endpoints", "price_policy: cheapest charges the bottom of the range"
 	if c.Bound == "min" {
-		end = "the cheapest of those endpoints"
+		end, move = "the cheapest of those endpoints", "price_policy: highest charges the top of the range"
 	}
 	where := fmt.Sprintf("the %s tier of %d endpoint(s), checked %s, charged at %s", c.Tier, n, c.CheckedAt, end)
 	if c.Stale {
+		// A stale catalog charges the dearest end whatever the policy says,
+		// so the sentence keeps naming highest: it is the policy under which
+		// the charge and the switch agree.
 		where = fmt.Sprintf("the %s tier of %d endpoint(s), and the catalog is stale (checked %s), so the dearest end is charged", c.Tier, n, c.CheckedAt)
+		move = "price_policy: highest charges the top of the range"
 	}
 	if r := m.CatalogRange(); r != "" {
 		where += "; " + r
 	}
-	return fmt.Sprintf("%s is priced from the built-in provider price catalog: %s. require_zdr selects the tier and price_policy selects the end of its range: price_policy: highest charges the top of the range (an owner's model_prices replaces this row whole)",
-		model, where)
+	return fmt.Sprintf("%s is priced from the built-in provider price catalog: %s. require_zdr selects the tier and price_policy selects the end of its range: %s (an owner's model_prices replaces this row whole)",
+		model, where, move)
 }
 
 // CheckAllowed is the rule for a run under an allow-list of models: the

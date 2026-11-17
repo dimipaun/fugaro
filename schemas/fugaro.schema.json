@@ -488,7 +488,7 @@
             "test": { "type": "string", "minLength": 1 },
             "lint": { "type": "string", "minLength": 1, "description": "The check step's gate command (build | test | lint)." },
             "fix": { "type": "string", "minLength": 1, "description": "The check step's autofix command; needs lint, since the gate runs fix, then lint." },
-            "render": { "type": "string", "minLength": 1, "description": "A mode: artifact recipe's render command: repository text, run once, in the checkout, as the agent's user (docs/design/artifact-runs.md §3). Absent, no artifact recipe may run against this workflow." },
+            "render": { "type": "string", "minLength": 1, "description": "A mode: artifact recipe's render command: repository text, run once, in the checkout, as the agent's user (docs/design/artifact-runs.md §3). Absent, no recipe with a render step may run against this workflow." },
             "probe": { "type": "string", "minLength": 1, "description": "The artifact recipe's optional check on what it rendered: one command, given the outputs directory and the names in its environment. Absent, the recipe's outputs.probe must be none." },
             "rerun_failed": {
               "type": "object",

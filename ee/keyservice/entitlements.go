@@ -43,18 +43,30 @@ const (
 	entitlementSourceOperations = "operations"
 )
 
-// The two statuses this area writes. The wire shape's other two are other
-// areas': `revoked` is the licensor withdrawing a grant (P5.1) and `expired` is
-// a term that has run out, which is read from EndsAt rather than written here.
+// The statuses this area writes. The wire shape's fourth, `expired`, is a term
+// that has run out, which is read from EndsAt rather than written here.
+//
+// `revoked` is a grant withdrawn — by operations (P5.1) and by the money going
+// back, which is F29's revocation by entitlement (merchant.go's `withdrawn`).
+// The two are one status because they are one thing: the licence stops serving
+// keys, and every key minted for it is withdrawn.
 const (
 	entitlementActive     = "active"
 	entitlementSuperseded = "superseded"
+	entitlementRevoked    = "revoked"
 )
 
 // entitlementGrant is one grant as the area that makes it hands it over: a
 // purchase, a trial, an operations grant and the free seat differ in their row,
 // their source and who they are for, and in nothing else.
 type entitlementGrant struct {
+	// ID is the record's own id, for the one caller whose grant has to be the same
+	// record when it is made twice: a purchase is granted from a merchant event the
+	// merchant may deliver again, and the id it names is derived from the
+	// transaction that bought the licence, so a delivery applied twice writes the
+	// licence the first one did rather than a second one that supersedes it (P4.2,
+	// D2204). Empty means a fresh id, which is every other grant.
+	ID string
 	// At is when the grant is written. The zero time means the term's own start,
 	// which is what a grant made at the instant it was paid for is.
 	At time.Time
@@ -104,6 +116,17 @@ type entitlementGrant struct {
 // is read-before-write and refuses a document read after one the same transaction
 // has written (docstore's ErrReadAfterWrite), so the candidates and the workspace
 // are read together and the writes follow them.
+//
+// A grant that names an id the store already holds is **answered** and not
+// rewritten. The id is derived from the merchant's transaction (P4.2's
+// `purchaseLicenceID`), so a delivery the merchant makes again after a failure
+// downstream of the grant — the subscription's write, the origin, the record
+// that names the licence, the notice — reaches this with the record the first
+// delivery already wrote. Rewriting it would reset a licence the money has since
+// taken back (a refund in that window revokes it, and the event is processed, so
+// nothing revokes it a second time) or a licence the customer has since bound
+// (BoundAt and RebindableAt are dropped, and the portal serves it as unbound
+// again). Neither is a grant: the record is there, so what this answers is it.
 func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) (WireEntitlement, error) {
 	row, known := DefaultPolicy(grant.Row)
 	if !known {
@@ -111,6 +134,16 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 	}
 	var granted WireEntitlement
 	err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		if grant.ID != "" {
+			held, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, grant.ID)
+			if err != nil {
+				return err
+			}
+			if present {
+				granted = held
+				return nil
+			}
+		}
 		superseding, err := s.supersededBy(ctx, tx, grant, row)
 		if err != nil {
 			return err
@@ -186,6 +219,28 @@ func (s *Service) supersededBy(ctx context.Context, from recordReader, grant ent
 		collect(seats)
 	}
 	return replaced, nil
+}
+
+// revokeEntitlement withdraws one licence: its record stops being active, and a
+// licence that is not active is one no key is minted from again — the binding
+// route refuses it, on the state its own transaction re-reads
+// (`bindEntitlement`), so the keys a withdrawal reached are not replaced the
+// moment after it ran (F29).
+//
+// It is the write half of a refund's revocation and not a grant's: nothing is
+// superseded, which is a grant another grant replaced in its workspace, and
+// nothing expires, which is read from the term. What moves is the status alone,
+// so the licence keeps the term, the seats and the buyer the money was for.
+func (s *Service) revokeEntitlement(ctx context.Context, entitlement WireEntitlement) error {
+	entitlement.Status = entitlementRevoked
+	doc, err := storedDoc(entitlement)
+	if err != nil {
+		return err
+	}
+	if err := s.docs.Put(ctx, entitlementsCollection, entitlement.ID, doc); err != nil {
+		return fmt.Errorf("keyservice: the licence %s was withdrawn and its record could not be written: %w", entitlement.ID, err)
+	}
+	return nil
 }
 
 // entitlementWrite is one grant's write, worked out before the transaction
@@ -284,9 +339,13 @@ func entitlementRecord(grant entitlementGrant) (WireEntitlement, error) {
 	if at.IsZero() {
 		at = grant.StartsAt
 	}
-	id, err := newID()
-	if err != nil {
-		return WireEntitlement{}, fmt.Errorf("keyservice: the entitlement's id: %w", err)
+	id := grant.ID
+	if id == "" {
+		minted, err := newID()
+		if err != nil {
+			return WireEntitlement{}, fmt.Errorf("keyservice: the entitlement's id: %w", err)
+		}
+		id = minted
 	}
 	entitlement := WireEntitlement{
 		ID:             id,

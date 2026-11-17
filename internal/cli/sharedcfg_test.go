@@ -994,7 +994,12 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// into the shared file would be choosing what code every teammate's runs
 	// run -- the catalog's own reason, one step out -- and the triage switch
 	// decides which of a review round's findings hold a pull request back
-	// (D1854), which is the floor's reason one level down.
+	// (D1854), which is the floor's reason one level down. `rigor_pending` is
+	// the wizard's rigor answer waiting for the Layer stage to write it into the
+	// project layer (task W of docs/rigor-command/implementation-plan.md, D900),
+	// and it is refused for the floor's reason read from the other end: the mode
+	// is how much review every run of the project gets, so a launcher who could
+	// write the key would be choosing that for every teammate.
 	//
 	// `backend` joined the list with the enable (plan
 	// 2026-10-19-compute-backend.md Task 10 step 4), for a reason of the same
@@ -1003,7 +1008,7 @@ func TestSharedConfigRefusesEveryForbiddenSection(t *testing.T) {
 	// choice into the shared file would move every teammate with no local
 	// config onto VMs with a block that same launcher chose and no check ever
 	// saw.
-	for _, k := range []string{"image_map", "bake_repos", "triage", "backend"} {
+	for _, k := range []string{"image_map", "bake_repos", "triage", "rigor_pending", "backend"} {
 		if !slices.Contains(sharedForbidden, k) {
 			t.Errorf("sharedForbidden does not name %s, so a published %s would be read", k, k)
 		}
@@ -1022,6 +1027,7 @@ func TestSharedNeverPublishedCatchesTheDecodedSections(t *testing.T) {
 		{"image_map", "image_map:\n    acme/app: tools\n"},
 		{"bake_repos", "bake_repos: false\n"},
 		{"triage", "triage: false\n"},
+		{"rigor_pending", "rigor_pending: critical\n"},
 		{"backend", "backend: cloud-batch\n"},
 		{"clone_urls", "clone_urls:\n    github/acme/app: https://github.com/acme/app\n"},
 		{"bitbucket_tokens", "bitbucket_tokens:\n    - {name: ci, type: repo, coverage: [belong/edgeweb]}\n"},
