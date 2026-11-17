@@ -407,8 +407,11 @@ func TestSecretsSetRefusesAnEmptyName(t *testing.T) {
 		{"secrets", "set", "", "--project-wide"},
 		{"secrets", "set", "", "--repo", "acme/app"},
 		{"secrets", "set", "", "--allow-data-to", "acme/app"},
+		{"secrets", "set", "", "--proxy"},
+		{"secrets", "set", "", "--proxy=false"},
 		{"secrets", "set", "", "--expires", "2026-12-01"},
 		{"secrets", "set", "", "--rotation-days", "30"},
+		{"secrets", "set", "", "--dry-run", "--json"},
 	} {
 		line := strings.Join(args, " ")
 		out, errOut, err := executeStdinReader(t, secretsUnreadableStdin{}, args...)
@@ -430,6 +433,39 @@ func TestSecretsSetRefusesAnEmptyName(t *testing.T) {
 	}
 	if len(*hooked) != 0 {
 		t.Fatalf("an empty NAME told the hook %v", *hooked)
+	}
+}
+
+// TestSecretsSetRefusesAnExpiryWithNoName: --expires is the one record flag
+// that is about one secret rather than about the installation — a lapse date
+// belongs to a name — and a run that names no NAME at all is refused for it
+// rather than recorded against nothing. The other three flags are the
+// installation's own and a run of them alone is the whole command line
+// (`secrets set --rotation-days 30`), which is why this refusal is --expires'
+// alone and sits before anything is opened: the unreadable reader below is what
+// says no value was read, and the file it ends on is the one it started with.
+func TestSecretsSetRefusesAnExpiryWithNoName(t *testing.T) {
+	settingsFixture(t, "")
+	secretsClock(t, secretsTestToday)
+	hooked := secretsHookRecord(t)
+	path := os.Getenv("FUGARO_CONFIG")
+	before := readFileString(t, path)
+
+	out, errOut, err := executeStdinReader(t, secretsUnreadableStdin{}, "secrets", "set", "--expires", "2026-12-01")
+	if err == nil {
+		t.Fatalf("an --expires with no NAME was recorded (stdout %q, stderr %q)", out, errOut)
+	}
+	if !strings.Contains(err.Error(), "it needs the secret's NAME") {
+		t.Fatalf("the refusal does not say --expires needs the NAME: %v", err)
+	}
+	if strings.Contains(out+errOut, "stdin was read") || strings.Contains(err.Error(), "stdin was read") {
+		t.Fatalf("the run read the value from stdin: %v", err)
+	}
+	if after := readFileString(t, path); after != before {
+		t.Fatalf("an --expires with no NAME wrote the config:\n%s", after)
+	}
+	if len(*hooked) != 0 {
+		t.Fatalf("an --expires with no NAME told the hook %v", *hooked)
 	}
 }
 
