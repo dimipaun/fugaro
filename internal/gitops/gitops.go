@@ -523,6 +523,164 @@ func withLFSFiltersOff(args ...string) []string {
 	return append(append([]string{}, lfsFiltersOff...), args...)
 }
 
+// Submodule is one submodule a checkout declares in its .gitmodules: git's own
+// name for it, and the URL git would fetch it from.
+type Submodule struct {
+	// Name is git's key for the submodule: the one piece of
+	// "submodule.<Name>.url", which is where a nested fetch's route is written
+	// (PointSubmoduleAt). It is the submodule's path for almost every
+	// repository and need not be — .gitmodules names the path and the name
+	// separately, and a repository that names them differently is why the two
+	// are read apart here.
+	Name string
+	// URL is the URL the submodule is fetched from, resolved the way git
+	// resolves it when it begins with "./" or "../" (resolveSubmoduleURL).
+	URL string
+}
+
+// Submodules lists the submodules this checkout declares, in the order
+// .gitmodules lists them, and nothing for a checkout that declares none. The
+// URLs are resolved against the checkout's *configured* origin
+// (OriginConfigURL) rather than the URL git reports for the remote: a remote
+// the run's own environment rewrites (url.*.insteadOf, a proxied run's) is
+// resolved by git against what the configuration says, not against the
+// endpoint the rewrite produces.
+//
+// It reads the file in the working tree, so a caller reaches it only once the
+// tree is there: a clone job's clone is --no-checkout (CloneBlobless), where
+// .gitmodules is a blob in the revision and not yet a file, and Submodules
+// answers "none" for it — which is a checkout that declares no submodule, not
+// a checkout whose submodules the caller may skip. Nothing but a checkout
+// fetches a submodule, so a caller that routes them (the runner's
+// routeNestedFetches) is free to run after the checkout.
+func (r *Repo) Submodules(ctx context.Context) ([]Submodule, error) {
+	file := filepath.Join(r.Dir, ".gitmodules")
+	if _, err := os.Stat(file); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	origin, err := r.OriginConfigURL(ctx)
+	if err != nil {
+		// A checkout with submodules and no origin at all reaches this: the
+		// URLs that are relative to it cannot be resolved, and one that is not
+		// is returned as the repository wrote it.
+		origin = ""
+	}
+	out, err := r.gitRaw(ctx, "config", "--file", file, "-z", "--list")
+	if err != nil {
+		return nil, err
+	}
+	var subs []Submodule
+	for _, entry := range strings.Split(string(out), "\x00") {
+		key, value, ok := strings.Cut(entry, "\n")
+		if !ok {
+			continue
+		}
+		name, ok := strings.CutPrefix(key, "submodule.")
+		if !ok {
+			continue
+		}
+		if name, ok = strings.CutSuffix(name, ".url"); !ok {
+			continue
+		}
+		subs = append(subs, Submodule{Name: name, URL: resolveSubmoduleURL(origin, value)})
+	}
+	return subs, nil
+}
+
+// resolveSubmoduleURL resolves a submodule URL the way git resolves one: a URL
+// beginning with "./" or "../" — the shape almost every repository writes — is
+// relative to the URL of the repository that declares it, and each "../"
+// removes one path component of that URL, so "../lib.git" under a repository at
+// acme/app.git is acme/lib.git.
+//
+// This is git's own chop and not a path join (submodule.c's relative_url, which
+// `git submodule init` and every nested clone go through), because a resolution
+// that differed from git's would have the run decide coverage for one
+// repository while git fetched another: the component a "../" removes is the
+// base URL's last "/" and nothing else, so one "../" too many cuts into the
+// "//" of the scheme — git's own answer for "../../../../x/y.git" under an
+// https base is "https:/x/y.git" — and one further cuts at the ":" of an
+// scp-like remote (git@bitbucket.org:acme/app.git) and joins with the ":" back.
+// A base with nothing left to cut leaves the URL as the repository wrote it,
+// which reaches the caller as one no remote can be resolved against — git dies
+// here ("cannot strip one component off url") for the base shapes it holds
+// relative, and a run that refused the whole checkout for a submodule URL git
+// would have refused anyway is the worse of the two. The joined result loses
+// one trailing "/", which is what git does to it, and nothing else is cleaned:
+// an absolute URL is returned exactly as written, trailing slash and all.
+//
+// A base that is a local path — a local run's checkout, which routeNestedFetches
+// never routes — is chopped and joined the same way and keeps its leading "/",
+// and an empty base leaves the URL as written.
+func resolveSubmoduleURL(origin, raw string) string {
+	if !strings.HasPrefix(raw, "./") && !strings.HasPrefix(raw, "../") {
+		return raw
+	}
+	if origin == "" {
+		return raw
+	}
+	out, rest := strings.TrimSuffix(origin, "/"), raw
+	colon := false
+	for {
+		switch {
+		case strings.HasPrefix(rest, "../"):
+			rest = rest[3:]
+			i := strings.LastIndex(out, "/")
+			if i < 0 {
+				if i = strings.LastIndex(out, ":"); i < 0 {
+					return raw
+				}
+				colon = true
+			}
+			out = out[:i]
+		case strings.HasPrefix(rest, "./"):
+			rest = rest[2:]
+		default:
+			if colon {
+				return strings.TrimSuffix(out+":"+rest, "/")
+			}
+			return strings.TrimSuffix(out+"/"+rest, "/")
+		}
+	}
+}
+
+// OriginConfigURL returns the URL this checkout's origin is *configured* with,
+// as the configuration spells it. It is not OriginURL: git applies the
+// url.*.insteadOf rules to that read, so on a proxied run it answers with this
+// execution's loopback endpoint — while what a URL the repository itself
+// declares is resolved against (a submodule's, an LFS endpoint's) is the remote
+// as it is written.
+func (r *Repo) OriginConfigURL(ctx context.Context) (string, error) {
+	return r.git(ctx, "config", "--get", "remote.origin.url")
+}
+
+// PointSubmoduleAt sends one submodule's fetch to url, in the checkout's own
+// configuration: submodule.<name>.url, which git reads in preference to the URL
+// .gitmodules declares and which `git submodule init` writes and never
+// overwrites. The tracked file is left exactly as the repository wrote it, so a
+// route a run installs is the run's own environment and never a change of the
+// work it commits.
+func (r *Repo) PointSubmoduleAt(ctx context.Context, name, url string) error {
+	_, err := r.git(ctx, "config", "submodule."+name+".url", url)
+	return err
+}
+
+// PointLFSAt points this checkout's LFS endpoint at url: lfs.url, the key
+// git-lfs reads in preference to the endpoint it derives from the remote, so
+// the smudge, clean and process filters a `git lfs install` left configured
+// fetch this checkout's objects from there. The checkout's own configuration
+// also outranks a .lfsconfig the repository commits — measured with
+// `git lfs env` against a checkout carrying both (git-lfs 3.6.1: it reports
+// the local lfs.url) — which is the other reason the route is written here
+// and not into a file the repository's own content decides.
+func (r *Repo) PointLFSAt(ctx context.Context, url string) error {
+	_, err := r.git(ctx, "config", "lfs.url", url)
+	return err
+}
+
 // CheckoutDetached fetches rev (a commit, full, never abbreviated — see
 // ValidCommitSHA) from origin and checks it out with a detached HEAD,
 // review mode's single-pull-request case (design generic-tool §3.6, G12):

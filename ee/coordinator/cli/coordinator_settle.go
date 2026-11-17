@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -401,9 +402,14 @@ func (f fixedToken) Token(context.Context, time.Duration) (string, time.Time, er
 }
 
 // writeCoordinatorSettle prints one settle's report: the set, whether it is
-// settled, and one line per member saying what happened to it. It is a report
-// and never advice: a member that is not ready is named with the reason the step
-// found, and what to do about it is the reader's.
+// settled, the set's advisory merge order and one line per member saying what
+// happened to it. It is a report and never advice: a member that is not ready is
+// named with the reason the step found, and what to do about it is the reader's.
+//
+// The merge order is the set's own and is stated for the reader who sees the
+// whole set here and none of its pull requests: each member's body carries the
+// same order (gitprov.ChangeSetLine), and this is the coordinator's view of the
+// set stating it (D4). Nothing enforces it (D615).
 func writeCoordinatorSettle(w io.Writer, rep coordinator.SettleReport) error {
 	head := "not settled"
 	if rep.Settled {
@@ -412,6 +418,16 @@ func writeCoordinatorSettle(w io.Writer, rep coordinator.SettleReport) error {
 	if _, err := fmt.Fprintf(w, "change set %s: %s (%d of %d members flipped ready)\n",
 		task.ShortRun(rep.SetID), head, rep.Flipped, len(rep.Members)); err != nil {
 		return err
+	}
+	if len(rep.MergeOrder) > 0 {
+		repos := make([]string, 0, len(rep.MergeOrder))
+		for _, repo := range rep.MergeOrder {
+			repos = append(repos, safetext.OneLine(repo))
+		}
+		if _, err := fmt.Fprintf(w, "merge order (advisory): %s — merge in this order; nothing blocks a merge\n",
+			strings.Join(repos, ", then ")); err != nil {
+			return err
+		}
 	}
 	for _, m := range rep.Members {
 		var what string

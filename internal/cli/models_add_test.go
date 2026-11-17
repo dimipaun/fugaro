@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
 // modelsAddCloudExtra is what the offline test appends to the cloud fixture's
@@ -437,14 +439,12 @@ func TestModelsAddBacksUpAndWritesAtomically(t *testing.T) {
 	}
 }
 
-// TestModelsAddPrintsOnlyFugaroUpdateNext: the hand-off is `fugaro update`, the
-// one command of the HARD RULE, and never `project policy publish` — the price
-// and the allow-list entry reach every run from its publish. The claim is the
-// exception the help text states: it lives in the providers block each job
-// holds its own copy of, so the line names `update --repo .` too — until E2's
-// converge re-converges the recorded repositories from the one command, which
-// the plan records M3/M4 do not ship without (D780, D787).
-func TestModelsAddPrintsOnlyFugaroUpdateNext(t *testing.T) {
+// TestModelsAddNamesNoSecondCommand: the write is the whole of what the person
+// is told to do (AP6, spec rule 1). The command runs the steps its own change
+// owes — the publish, here — and never names `fugaro update` or
+// `project policy publish` as the next thing to run; `fugaro apply` is named
+// only where a step did not finish, and nothing here left one owed.
+func TestModelsAddNamesNoSecondCommand(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	modelsWriteCheckout(t, modelsWriteHomeDir(t, path), "owner/repo-b", modelsWriteRepoYAML)
 
@@ -452,19 +452,20 @@ func TestModelsAddPrintsOnlyFugaroUpdateNext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "next: fugaro update, then fugaro update --repo . in each repository that should run the model\n") {
-		t.Errorf("the hand-off does not name both halves of the change:\n%s", out)
+	for _, forbidden := range []string{"next:", "fugaro update", "policy publish", "fugaro apply"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("the command sends the person to run something else (%q):\n%s", forbidden, out)
+		}
 	}
-	if strings.Contains(out, "policy publish") {
-		t.Errorf("the hand-off names `project policy publish`, which is not a command the owner runs:\n%s", out)
+	if steps := pendingSteps(record(t)); len(steps) != 0 {
+		t.Errorf("the run left %v owed, want nothing: the publish is the command's own step", steps)
 	}
 }
 
-// TestModelsAddPrintsTheOneNextLineWhenTheRouteAlreadyClaimedIt: a model the
-// route already serves leaves the providers block alone, so the one command is
-// the whole hand-off — the line that names `update --repo .` is for the claim
-// this command wrote and not for the write itself.
-func TestModelsAddPrintsTheOneNextLineWhenTheRouteAlreadyClaimedIt(t *testing.T) {
+// TestModelsAddNamesNoSecondCommandWhenTheRouteAlreadyClaimedIt: the same rule
+// for the write that leaves the providers block alone — a model the route
+// already claims still owes the publish, which this command runs.
+func TestModelsAddNamesNoSecondCommandWhenTheRouteAlreadyClaimedIt(t *testing.T) {
 	_, path := modelsWriteHome(t)
 	modelsWriteCheckout(t, modelsWriteHomeDir(t, path), "owner/repo-b", modelsWriteRepoYAML)
 
@@ -472,34 +473,40 @@ func TestModelsAddPrintsTheOneNextLineWhenTheRouteAlreadyClaimedIt(t *testing.T)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	if !strings.Contains(out, "next: fugaro update\n") {
-		t.Errorf("the hand-off is not `next: fugaro update`:\n%s", out)
-	}
-	if strings.Contains(out, "update --repo") {
-		t.Errorf("a write that left the providers block alone names the repository command:\n%s", out)
+	for _, forbidden := range []string{"next:", "fugaro update", "fugaro apply"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("the command sends the person to run something else (%q):\n%s", forbidden, out)
+		}
 	}
 }
 
-// TestModelsAddWritesNothingInTheCloud: every models command is a local file
-// edit whose change reaches the cloud through the next `fugaro update` (D780).
-// The fakes the fixture points at are reachable and counted, so a write that
-// went to the bucket, the database or a host is red here.
-func TestModelsAddWritesNothingInTheCloud(t *testing.T) {
+// TestModelsAddNoApplyWritesNothingInTheCloud: --no-apply is the one word that
+// keeps a models write a local file edit (D1565). The fakes the fixture points
+// at are reachable and counted, so a write that went to the bucket, the
+// database or a host is red here — and what the flag leaves behind is the step
+// the command did not run, recorded for `fugaro apply`.
+func TestModelsAddNoApplyWritesNothingInTheCloud(t *testing.T) {
 	f := newLaunchBudget(t, "observe")
 	f.appendConfig(t, modelsAddCloudExtra)
 	t.Setenv("PATH", t.TempDir())
 	path := os.Getenv("FUGARO_CONFIG")
 
-	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2")
+	out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--no-apply")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if n := len(f.run.Requests()) + len(f.logging.Requests()) + len(f.db.Requests()); n != 0 {
-		t.Errorf("models add made %d cloud call(s), want none", n)
+		t.Errorf("models add --no-apply made %d cloud call(s), want none", n)
 	}
 	lc := modelsWriteLocalConfig(t, path)
 	if _, ok := lc.ModelPrices["vendor/model-z"]; !ok {
 		t.Errorf("the write did not land in the local project config: %v", lc.ModelPrices)
+	}
+	if steps := pendingSteps(record(t)); !slices.Equal(steps, []string{initflow.Policy}) {
+		t.Errorf("--no-apply left %v owed, want the publish the flag skipped", steps)
+	}
+	if !strings.Contains(out, "Run `fugaro apply`") {
+		t.Errorf("the answer does not name the command that runs what the flag left:\n%s", out)
 	}
 }
 
