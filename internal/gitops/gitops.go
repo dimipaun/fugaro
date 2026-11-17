@@ -545,6 +545,14 @@ type Submodule struct {
 // the run's own environment rewrites (url.*.insteadOf, a proxied run's) is
 // resolved by git against what the configuration says, not against the
 // endpoint the rewrite produces.
+//
+// It reads the file in the working tree, so a caller reaches it only once the
+// tree is there: a clone job's clone is --no-checkout (CloneBlobless), where
+// .gitmodules is a blob in the revision and not yet a file, and Submodules
+// answers "none" for it — which is a checkout that declares no submodule, not
+// a checkout whose submodules the caller may skip. Nothing but a checkout
+// fetches a submodule, so a caller that routes them (the runner's
+// routeNestedFetches) is free to run after the checkout.
 func (r *Repo) Submodules(ctx context.Context) ([]Submodule, error) {
 	file := filepath.Join(r.Dir, ".gitmodules")
 	if _, err := os.Stat(file); err != nil {

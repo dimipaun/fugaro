@@ -18,6 +18,7 @@ package runner
 import (
 	"context"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -426,48 +427,54 @@ func TestProxyFalseUnchanged(t *testing.T) {
 	})
 }
 
-// nestedCheckout is a real checkout whose origin answers with origin and whose
-// .gitmodules declares urls, each submodule with the gitlink in the index that
-// `git submodule init` reads .gitmodules for: git copies a submodule's URL
-// into a checkout's config only for the submodules the index names, so a
-// checkout without them would let a test pass on an empty answer.
+// nestedOrigin is the URL a launcher writes for this repository: the clone's
+// configured origin, and what a relative submodule URL is resolved against.
+const nestedOrigin = "https://bitbucket.org/acme/app.git"
+
+// nestedClone is the checkout a clone job's bootstrap has right after
+// openCheckout: a blobless, --no-checkout clone of a remote whose main branch
+// declares urls in .gitmodules (gitops' CloneBlobless, which openCheckout picks
+// for a job with no baked checkout), with the configured origin the launcher's
+// URL.
 //
-// The origin is set after the clone, so nothing here fetches anything:
-// routeNestedFetches reads and writes configuration alone, and the URL matters
-// only because it is what a relative submodule URL is resolved against and
-// what the run's own repository is named by.
-func nestedCheckout(t *testing.T, origin string, urls map[string]string) *gitops.Repo {
+// The clone's own remote stays reachable through a url.<path>.insteadOf rule —
+// the shape a proxied run's environment installs for its own forwarder
+// (credentialVars) — so a checkout made from it below fetches what it checks
+// out with no network, while everything this package reads and writes stays the
+// launcher's URL. Nothing here writes a .gitmodules by hand: the file the route
+// is read from is the one the checkout writes.
+func nestedClone(t *testing.T, urls map[string]string) *gitops.Repo {
 	t.Helper()
 	testutil.IsolateGit(t)
-	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n"})
-	repo, err := gitops.OpenOrClone(context.Background(), filepath.Join(t.TempDir(), "work"), remote, gitops.IdentityEnv())
+	files := map[string]string{"README.md": "hello\n"}
+	if len(urls) > 0 {
+		var gm strings.Builder
+		for _, name := range slices.Sorted(maps.Keys(urls)) {
+			gm.WriteString("[submodule \"" + name + "\"]\n\tpath = " + name + "\n\turl = " + urls[name] + "\n")
+		}
+		files[".gitmodules"] = gm.String()
+	}
+	remote := testutil.NewRemote(t, files)
+	repo, err := gitops.CloneBlobless(context.Background(), filepath.Join(t.TempDir(), "work"), remote, "main", gitops.IdentityEnv())
 	if err != nil {
-		t.Fatalf("opening the checkout: %v", err)
+		t.Fatalf("cloning: %v", err)
 	}
-	testutil.Git(t, repo.Dir, "remote", "set-url", "origin", origin)
-	names := slices.Sorted(maps.Keys(urls))
-	var gm strings.Builder
-	for _, name := range names {
-		gm.WriteString("[submodule \"" + name + "\"]\n\tpath = " + name + "\n\turl = " + urls[name] + "\n")
-	}
-	testutil.WriteFiles(t, repo.Dir, map[string]string{".gitmodules": gm.String()})
-	testutil.Git(t, repo.Dir, "add", ".gitmodules")
-	sha := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
-	for _, name := range names {
-		testutil.Git(t, repo.Dir, "update-index", "--add", "--cacheinfo", "160000,"+sha+","+name)
-	}
-	testutil.Git(t, repo.Dir, "commit", "--quiet", "-m", "submodules")
+	testutil.Git(t, repo.Dir, "config", "url."+remote+".insteadOf", nestedOrigin)
+	testutil.Git(t, repo.Dir, "remote", "set-url", "origin", nestedOrigin)
 	return repo
 }
 
-// nestedRun is a proxied run over that checkout, with allow as the published
-// block's allow_repos and its forwarder started: the three things N2 joins --
-// the checkout's own nested fetches, this execution's forwarder and the policy
-// the coverage question is answered from -- are the real ones, so what the
-// tests below reach is what a run reaches.
-func nestedRun(t *testing.T, origin string, urls map[string]string, allow []string) (*run, *gitops.Repo) {
+// nestedRun is a proxied run over that clone, with allow as the published
+// block's allow_repos and its forwarder started: the three things N2 joins —
+// the checkout's own .gitmodules, this execution's forwarder and the policy the
+// coverage question is answered from — are the real ones.
+//
+// Nothing is checked out yet, as nothing is on a clone job at that point in
+// bootstrap: the tests below make the checkout themselves, in bootstrap's own
+// order.
+func nestedRun(t *testing.T, urls map[string]string, allow []string) (*run, *gitops.Repo) {
 	t.Helper()
-	repo := nestedCheckout(t, origin, urls)
+	repo := nestedClone(t, urls)
 	r := proxiedRun(t, pushIdentity(t), func(r *run) {
 		r.repo = repo
 		r.projPolicy = policyRead{done: true, found: true, policy: &projectpolicy.Policy{
@@ -479,22 +486,48 @@ func nestedRun(t *testing.T, origin string, urls map[string]string, allow []stri
 	return r, repo
 }
 
+// nestedCheckoutOut is the checkout the default arm makes (CheckoutNewBranch,
+// which is where a --no-checkout clone gets its tree). It is what makes the
+// .gitmodules the submodule half reads exist: a run that read the submodules
+// before it was reading a file the clone had not written yet, which is the bug
+// this fixture is here to catch.
+func nestedCheckoutOut(t *testing.T, repo *gitops.Repo) {
+	t.Helper()
+	if err := repo.CheckoutNewBranch(context.Background(), "main", "fugaro/"+svcRunID); err != nil {
+		t.Fatalf("checking out the clone's branch: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, ".gitmodules")); err != nil {
+		t.Fatalf("the checkout left no .gitmodules to read: %v", err)
+	}
+}
+
 // TestSubmoduleURLsUseTheForwarder: a proxied run's nested fetches ride its
 // own forwarder, in the checkout's configuration and never in the tracked
-// file. Each URL is the endpoint for the repository the submodule *is* -- a
+// file. Each URL is the endpoint for the repository the submodule *is* — a
 // relative one resolved against the checkout's own remote, as git resolves it
-// -- because that is the repository the credentials service checks the block
+// — because that is the repository the credentials service checks the block
 // for.
+//
+// The tree is a clone job's: a --no-checkout clone, then the checkout
+// CheckoutNewBranch makes, and the route is written after it, where bootstrap
+// writes it. Written before the checkout instead, there is no .gitmodules in
+// the working tree at all, and this test fails on the missing
+// submodule.lib.url.
 //
 // Mutation (run, restored): drop the PointSubmoduleAt call from
 // routeNestedFetches -- every submodule keeps the URL .gitmodules declares and
 // this fails on it.
 func TestSubmoduleURLsUseTheForwarder(t *testing.T) {
-	r, repo := nestedRun(t, "https://bitbucket.org/acme/app.git", map[string]string{
+	r, repo := nestedRun(t, map[string]string{
 		"lib":        "../lib.git",
 		"vendor/dep": "https://bitbucket.org/acme/dep.git",
 	}, []string{"bitbucket/acme/*"})
-	if err := r.routeNestedFetches(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := r.routeLFSEndpoint(ctx); err != nil {
+		t.Fatalf("pointing the LFS endpoint before the checkout: %v", err)
+	}
+	nestedCheckoutOut(t, repo)
+	if err := r.routeNestedFetches(ctx); err != nil {
 		t.Fatalf("routing the nested fetches of a checkout the block covers: %v", err)
 	}
 	endpoint := strings.TrimSuffix(r.forward.URL(), "/")
@@ -512,15 +545,12 @@ func TestSubmoduleURLsUseTheForwarder(t *testing.T) {
 	// The origin stays the URL the launcher wrote: the route is this
 	// execution's, and an endpoint written into the checkout outlives the
 	// listener it names.
-	if got := testutil.Git(t, repo.Dir, "config", "--get", "remote.origin.url"); got != "https://bitbucket.org/acme/app.git" {
+	if got := testutil.Git(t, repo.Dir, "config", "--get", "remote.origin.url"); got != nestedOrigin {
 		t.Errorf("the checkout's origin is %q, want the launcher's remote", got)
 	}
-	// And none of it is a change the run would commit. The status is asked
-	// about the one tracked file a route could have been written into: the
-	// fixture's gitlinks have no worktree directory (the clone never fetched
-	// them), which git reports as deleted whatever this code does.
-	if got := testutil.Git(t, repo.Dir, "status", "--porcelain", "--", ".gitmodules"); got != "" {
-		t.Errorf("routing the nested fetches changed .gitmodules: git status reports %q", got)
+	// And none of it is a change the run would commit.
+	if got := testutil.Git(t, repo.Dir, "status", "--porcelain"); got != "" {
+		t.Errorf("routing the nested fetches changed the checkout: git status reports %q", got)
 	}
 }
 
@@ -531,13 +561,23 @@ func TestSubmoduleURLsUseTheForwarder(t *testing.T) {
 // is a URL git-lfs composes the batch request from, not one the run's git
 // opens.
 //
-// Mutation (run, restored): drop the PointLFSAt call from routeNestedFetches
-// -- no lfs.url is written, git-lfs derives bitbucket.org from the remote
-// again, and this fails on the empty read.
+// It is written before the checkout, and the clone has no tree yet: the
+// checkout is itself a fetch, and the smudge filters the image installed run
+// over the files it writes.
+//
+// Mutation (run, restored): drop the PointLFSAt call from routeLFSEndpoint --
+// no lfs.url is written, git-lfs derives bitbucket.org from the remote again,
+// and this fails on the empty read.
 func TestLFSEndpointUsesTheForwarder(t *testing.T) {
-	r, repo := nestedRun(t, "https://bitbucket.org/acme/app.git", nil, []string{"bitbucket/acme/*"})
-	if err := r.routeNestedFetches(context.Background()); err != nil {
-		t.Fatalf("routing the nested fetches of a checkout with no submodules: %v", err)
+	r, repo := nestedRun(t, nil, []string{"bitbucket/acme/*"})
+	// The clone is --no-checkout: a file of the revision is not in the working
+	// tree until something checks it out, which is why the endpoint cannot wait
+	// for the checkout either.
+	if _, err := os.Stat(filepath.Join(repo.Dir, "README.md")); !os.IsNotExist(err) {
+		t.Fatalf("the clone already has its tree: %v", err)
+	}
+	if err := r.routeLFSEndpoint(context.Background()); err != nil {
+		t.Fatalf("pointing the LFS endpoint of a checkout the block covers: %v", err)
 	}
 	want := strings.TrimSuffix(r.forward.URL(), "/") + "/acme/app.git/info/lfs"
 	if got := testutil.Git(t, repo.Dir, "config", "--get", "lfs.url"); got != want {
@@ -552,13 +592,22 @@ func TestLFSEndpointUsesTheForwarder(t *testing.T) {
 // class (G7): nothing has been fetched yet, and the operator's fix is the same
 // list the service would have refused on.
 //
+// It reads the checkout the run makes, and the checkout has to be there: the
+// same call before it finds no .gitmodules, no submodule at all, and no
+// refusal (measured: routing first makes this fail on err = nil while the
+// other test fails on the missing submodule.lib.url).
+//
 // Mutation (run, restored): answer the coverage question with the run's own
 // repository, or skip it -- the submodule is routed, the service refuses it
 // one stage later, and this fails on err = nil.
 func TestUncoveredSubmoduleNamesTheRepo(t *testing.T) {
-	r, repo := nestedRun(t, "https://bitbucket.org/acme/app.git", map[string]string{"lib": "../lib.git"},
-		[]string{"bitbucket/acme/app"})
-	err := r.routeNestedFetches(context.Background())
+	r, repo := nestedRun(t, map[string]string{"lib": "../lib.git"}, []string{"bitbucket/acme/app"})
+	ctx := context.Background()
+	if err := r.routeLFSEndpoint(ctx); err != nil {
+		t.Fatalf("pointing the LFS endpoint: %v", err)
+	}
+	nestedCheckoutOut(t, repo)
+	err := r.routeNestedFetches(ctx)
 	if err == nil {
 		t.Fatal("a submodule outside the run's Bitbucket access was routed to the forwarder")
 	}
@@ -571,10 +620,11 @@ func TestUncoveredSubmoduleNamesTheRepo(t *testing.T) {
 			t.Errorf("the refusal does not name %q: %v", want, err)
 		}
 	}
-	// Nothing of it was written: the run stopped before the first route, so
-	// the checkout is the one the clone left.
-	if got := testutil.Git(t, repo.Dir, "config", "--list"); strings.Contains(got, "submodule.") || strings.Contains(got, "lfs.url") {
-		t.Errorf("a run that refused the checkout wrote a route into it:\n%s", got)
+	// No submodule route was written: the run stopped on the first submodule
+	// it read. (The LFS endpoint is the earlier half, written before the
+	// checkout, and is not what this refusal is about.)
+	if got := testutil.Git(t, repo.Dir, "config", "--list"); strings.Contains(got, "submodule.") {
+		t.Errorf("a run that refused the checkout's submodules wrote a route into it:\n%s", got)
 	}
 }
 
@@ -585,12 +635,12 @@ func TestUncoveredSubmoduleNamesTheRepo(t *testing.T) {
 // image stay exactly as they are: turning them off for every run that is not
 // proxied would break the LFS content of the runs that are not.
 //
-// Mutation (run, restored): drop the r.forward == nil arm of
-// routeNestedFetches -- this run writes routes to a listener that does not
-// exist, and the policy it has no answer for (this fixture's read is "not
-// found") stops it on a refusal that is not about the run.
+// Mutation (run, restored): drop the r.forward == nil arm of routedOrigin --
+// this run writes routes to a listener that does not exist, and the policy it
+// has no answer for (this fixture's read is "not found") stops it on a refusal
+// that is not about the run.
 func TestLFSEndpointStaysOffWithoutAForwarder(t *testing.T) {
-	repo := nestedCheckout(t, "https://bitbucket.org/acme/app.git", map[string]string{"lib": "../lib.git"})
+	repo := nestedClone(t, map[string]string{"lib": "../lib.git"})
 	r := proxiedRun(t, pushIdentity(t), func(r *run) {
 		r.repo = repo
 		// A read that found nothing: a run that is not proxied needs no
@@ -600,7 +650,12 @@ func TestLFSEndpointStaysOffWithoutAForwarder(t *testing.T) {
 	if r.forward != nil {
 		t.Fatal("the fixture started a forwarder: this is the arm without one")
 	}
-	if err := r.routeNestedFetches(context.Background()); err != nil {
+	ctx := context.Background()
+	if err := r.routeLFSEndpoint(ctx); err != nil {
+		t.Fatalf("pointing the LFS endpoint of a run with no forwarder: %v", err)
+	}
+	nestedCheckoutOut(t, repo)
+	if err := r.routeNestedFetches(ctx); err != nil {
 		t.Fatalf("routing the nested fetches of a run with no forwarder: %v", err)
 	}
 	if got := testutil.Git(t, repo.Dir, "config", "--list"); strings.Contains(got, "submodule.") || strings.Contains(got, "lfs.url") {

@@ -2107,40 +2107,85 @@ func (r *run) forwarderRemote(remote string) string {
 	return strings.TrimSuffix(r.forward.URL(), "/") + "/" + owner + "/" + name + ".git"
 }
 
-// routeNestedFetches sends this run's nested fetches — the fetches of the
-// checkout's submodules and of its LFS objects — through this execution's
-// forwarder (N2, R4), so that a nested fetch reaches no more than the run's own
-// fetch does: the same listener, the same credentials service, and the same
-// repository list the published block holds (D2302).
+// routedOrigin is the checkout's own remote when this run has an endpoint to
+// route a nested fetch at and that remote is bitbucket.org's, and "false" for
+// every other run: a run with no forwarder has no endpoint to point anything at
+// (a per-repository job holds the token its own nested fetches need), and a
+// checkout this run's provider does not host is one whose nested fetches are
+// not this run's route to decide — a local run's own checkout, cloned from a
+// path, declares its submodules against that path, and a route the run cannot
+// map is not one it may refuse.
 //
-// What it writes is the checkout's own configuration and never a tracked file
-// (gitops' PointSubmoduleAt and PointLFSAt): submodule.<name>.url outranks what
-// .gitmodules declares — `git submodule init` writes it and never overwrites it
-// — and lfs.url is where git-lfs looks before it derives an endpoint from the
-// remote. A route written into a tracked file would be a change of the run's
-// own making in the work it commits, and the route belongs to this execution
-// alone: the endpoint's port dies with it, and the next execution routes its
-// own.
-//
-// A run with no forwarder has no endpoint to point anything at, and writes
-// nothing: no submodule URL is sent anywhere and no LFS endpoint is installed,
-// so the checkout keeps exactly what the job's own configuration gives it —
-// lfsFiltersOff is how review mode's checkouts already turn the filters off,
-// and a per-repository job that is not proxied holds the token its own LFS
-// traffic needs. A checkout this run's provider does not host is not routed
-// either: a local run's own checkout, cloned from a path, declares its
-// submodules against that path, and a route the run cannot map is not one it
-// may refuse.
-func (r *run) routeNestedFetches(ctx context.Context) error {
+// The origin is read as it is *configured* (gitops' OriginConfigURL) and never
+// as git reports it: a proxied run's environment rewrites every bitbucket.org
+// URL to this execution's listener, and what a URL the repository itself
+// declares is resolved against is the remote as it is written.
+func (r *run) routedOrigin(ctx context.Context) (string, bool, error) {
 	if r.forward == nil || r.repo == nil {
-		return nil
+		return "", false, nil
 	}
 	origin, err := r.repo.OriginConfigURL(ctx)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	if gitprov.KindForURL(origin) != gitprov.KindBitbucket {
-		return nil
+		return "", false, nil
+	}
+	return origin, true, nil
+}
+
+// routeLFSEndpoint points git-lfs at this execution's forwarder (N2, R4): the
+// checkout's lfs.url, which git-lfs reads in preference both to the endpoint it
+// derives from the remote and to a .lfsconfig the repository commits
+// (gitops' PointLFSAt).
+//
+// It is called before the checkout, and that is what the split from
+// routeNestedFetches is for: the checkout is itself a fetch — a clone job's
+// clone is --no-checkout (gitops.CloneBlobless), so CheckoutNewBranch fetches
+// what it checks out, and the smudge filters the image installed run over the
+// files it writes — so the LFS route has to be in the checkout's configuration
+// before anything checks it out.
+//
+// Nothing else is written here. A run with no forwarder, or one whose checkout
+// is not on bitbucket.org, writes nothing at all: no LFS endpoint is installed,
+// so the checkout keeps exactly what the job's own configuration gives it —
+// lfsFiltersOff is how review mode's checkouts already turn the filters off,
+// and a per-repository job that is not proxied holds the token its own LFS
+// traffic needs.
+func (r *run) routeLFSEndpoint(ctx context.Context) error {
+	origin, routed, err := r.routedOrigin(ctx)
+	if err != nil || !routed {
+		return err
+	}
+	endpoint, err := r.nestedEndpoint(ctx, "the origin of this checkout", origin)
+	if err != nil {
+		return err
+	}
+	return r.repo.PointLFSAt(ctx, strings.TrimSuffix(endpoint, "/")+"/info/lfs")
+}
+
+// routeNestedFetches sends the fetches of the checkout's submodules through
+// this execution's forwarder (N2, R4), so that a nested fetch reaches no more
+// than the run's own fetch does: the same listener, the same credentials
+// service, and the same repository list the published block holds (D2302).
+//
+// It is called once the run's own tree is checked out, because the tree is what
+// it reads: gitops.Submodules reads the checkout's .gitmodules, and a clone
+// job's clone is --no-checkout (gitops.CloneBlobless), so before the checkout
+// there is no file to read — every submodule would go unrouted, and neither
+// refusal below could fire. Nothing but a checkout fetches a submodule, so
+// moving it after the checkout costs the route nothing: the LFS endpoint is the
+// half that has to be written first (routeLFSEndpoint).
+//
+// What it writes is the checkout's own configuration and never a tracked file
+// (gitops' PointSubmoduleAt): submodule.<name>.url outranks what .gitmodules
+// declares, and `git submodule init` writes it and never overwrites it. A route
+// written into a tracked file would be a change of the run's own making in the
+// work it commits, and the route belongs to this execution alone: the
+// endpoint's port dies with it, and the next execution routes its own.
+func (r *run) routeNestedFetches(ctx context.Context) error {
+	if _, routed, err := r.routedOrigin(ctx); err != nil || !routed {
+		return err
 	}
 	subs, err := r.repo.Submodules(ctx)
 	if err != nil {
@@ -2157,11 +2202,7 @@ func (r *run) routeNestedFetches(ctx context.Context) error {
 			return err
 		}
 	}
-	endpoint, err := r.nestedEndpoint(ctx, "the origin of this checkout", origin)
-	if err != nil {
-		return err
-	}
-	return r.repo.PointLFSAt(ctx, strings.TrimSuffix(endpoint, "/")+"/info/lfs")
+	return nil
 }
 
 // nestedEndpoint is the endpoint this execution's forwarder serves remote at:
@@ -2826,11 +2867,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
 	r.repo = strip(repo)
-	// Before any stage and before the checkout itself, which is where a
-	// smudge filter would fetch an LFS object: a nested fetch this run may
-	// not make stops it here, naming the repository, rather than at git's own
-	// "could not read Username" once a stage is under way.
-	if err := r.routeNestedFetches(ctx); err != nil {
+	// Before the checkout, which is where an LFS object would be fetched: a
+	// checkout of an LFS repository brings its objects in through the smudge
+	// filters, and a route written after it would be written after the fetch
+	// that needed it.
+	if err := r.routeLFSEndpoint(ctx); err != nil {
 		return err
 	}
 	var cfg *config.Config
@@ -2905,6 +2946,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if cfg, err = r.resolveConfig(data); err != nil {
 			return err
 		}
+	}
+	// The submodules of the tree this run will work on, once that tree is
+	// here: a clone job's clone is --no-checkout (openCheckout, gitops'
+	// CloneBlobless), so the .gitmodules it is read from exists only after the
+	// checkout each arm above makes (a run whose arm checks nothing out —
+	// evaluate, whose step reads no file of the tree — has no tree and so no
+	// nested fetch to route). Before any stage, so a submodule this run may not
+	// fetch stops it here, naming the repository, rather than at git's own
+	// "could not read Username" once the agent is running.
+	if err := r.routeNestedFetches(ctx); err != nil {
+		return err
 	}
 	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
 	if err != nil {
