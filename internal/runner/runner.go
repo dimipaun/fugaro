@@ -2184,10 +2184,10 @@ func (r *run) routeNestedFetches(ctx context.Context) error {
 func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (string, error) {
 	host, repoPath, ok := gitprov.SplitRemote(remote)
 	if !ok {
-		return "", fmt.Errorf("%s names %s, which is not a URL a repository is fetched from: a nested fetch is made through this run's forwarder, and a URL with no repository in it is one the forwarder cannot serve. Give the submodule a URL git can resolve — a relative one, which git resolves against this checkout's own remote, is the shape almost every repository writes — and launch the run again", what, remoteDisplay(remote))
+		return "", fmt.Errorf("%s names %s, which is not a URL a repository is fetched from: a nested fetch is made through this run's forwarder, and a URL with no repository in it is one the forwarder cannot serve. Give it a URL git can resolve — a relative one, which git resolves against this checkout's own remote, is the shape almost every repository writes — and launch the run again", what, remoteDisplay(remote))
 	}
 	if gitprov.KindForHost(host) != gitprov.KindBitbucket {
-		return "", fmt.Errorf("%s names %s, which is on %s: this run's git and LFS traffic reaches bitbucket.org through the installation's credentials service, and it holds no credential for another host — a shared Bitbucket job mounts no token at all (D2302). A submodule or an LFS object of another host cannot be fetched by this run, so it stops here instead of failing part way through a fetch. Point the submodule at its Bitbucket repository, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote), safetext.OneLine(host))
+		return "", fmt.Errorf("%s names %s, which is on %s: this run's git and LFS traffic reaches bitbucket.org through the installation's credentials service, and it holds no credential for another host — a shared Bitbucket job mounts no token at all (D2302). A submodule or an LFS object of another host cannot be fetched by this run, so it stops here instead of failing part way through a fetch. Point it at its Bitbucket repository, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote), safetext.OneLine(host))
 	}
 	repo := gitprov.TrimRepoPath(repoPath)
 	// The repository as the policy spells it, which is what the block's
@@ -2196,7 +2196,7 @@ func (r *run) nestedEndpoint(ctx context.Context, what, remote string) (string, 
 	// matches nothing.
 	canonical, err := projectpolicy.Canonical(gitprov.KindBitbucket, repo)
 	if err != nil {
-		return "", fmt.Errorf("%s names %s, which does not name a Bitbucket repository as owner/name: a nested fetch is made through this run's forwarder, whose path is the repository it serves, and a path that is not one cannot be served. Point the submodule at the repository it is, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote))
+		return "", fmt.Errorf("%s names %s, which does not name a Bitbucket repository as owner/name: a nested fetch is made through this run's forwarder, whose path is the repository it serves, and a path that is not one cannot be served. Point it at the repository it is, or at a relative URL git resolves against this checkout's own remote", what, remoteDisplay(remote))
 	}
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
