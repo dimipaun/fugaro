@@ -925,7 +925,12 @@ func TestAProviderKeyTheServiceCannotReadRefuses(t *testing.T) {
 // and none may hold a byte of the key.
 func TestTheValueIsInNoDocumentTheRunRecordCarries(t *testing.T) {
 	r := newAddRig(t)
-	out, errOut := r.add(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
+	// addTyped and not add: a key credential's declaration puts
+	// craft_credentials and an accounts entry on the shared node, and a publish
+	// that loosens it is confirmed by the project's name typed at a terminal
+	// (D846) — the same command shape TestAccountsAddAnthropicKey stands at,
+	// and the reason the other key tests of this file use addTyped too.
+	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
 	value := addToken()
 	// The documents below are worth scanning only because they are the ones a
 	// run about this credential decodes: the config declares it, so the node and
