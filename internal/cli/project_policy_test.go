@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -3905,6 +3906,21 @@ func TestPolicyShowPrintsTheDesignatedReportsRepository(t *testing.T) {
 	}
 	if want := "  reports_commit: none (no report may be committed anywhere)"; !strings.Contains(out, want) {
 		t.Errorf("policy show does not print %q for a node that designates nothing:\n%s", want, out)
+	}
+}
+
+// TestTheReportsCommitFolderIsTheLayoutsFolder pins the one thing
+// projectpolicy cannot say about its own default: that it is the report
+// layout's folder. The constant is spelled there as a literal rather than read
+// from internal/digest, because that package's own test binary reaches
+// projectpolicy through internal/orchestrator and importing it there would be
+// an import cycle — so the two are held equal here, where both are readable,
+// and a layout that moved its folder fails this test instead of quietly
+// committing a project's reports beside the folder the layout writes.
+func TestTheReportsCommitFolderIsTheLayoutsFolder(t *testing.T) {
+	if projectpolicy.DefaultReportsCommitDir != digest.Dir {
+		t.Errorf("projectpolicy.DefaultReportsCommitDir = %q, and the report layout's folder (digest.Dir) is %q: a project that designates a repository and names no folder means the place its reports already live",
+			projectpolicy.DefaultReportsCommitDir, digest.Dir)
 	}
 }
 

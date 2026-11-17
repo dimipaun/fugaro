@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -38,7 +37,7 @@ import (
 // comparison against the repository it is running in has one form to compare.
 //
 // `dir` is optional and is DefaultReportsCommitDir when it is absent: the
-// layout's own folder (digest.Dir), which is where a repository's reports live
+// layout's own folder (D960), which is where a repository's reports live
 // unless the project says otherwise.
 //
 // Both members carry omitempty so a project with no designation writes no
@@ -52,10 +51,18 @@ type ReportsCommit struct {
 }
 
 // DefaultReportsCommitDir is the folder a designated repository's reports live
-// under when the block names none: the report layout's own folder (D960,
-// digest.Dir), because a project that designates a repository and says nothing
-// more means the place its reports already live, not a second folder beside it.
-const DefaultReportsCommitDir = digest.Dir
+// under when the block names none: the report layout's own folder (D960),
+// because a project that designates a repository and says nothing more means
+// the place its reports already live, not a second folder beside it.
+//
+// The folder is spelled here as a literal rather than read from the layout's
+// own constant (digest.Dir, internal/digest): this package is imported by that
+// one's test binary through internal/orchestrator, so naming it here would be
+// an import cycle. The two are held equal by
+// TestTheReportsCommitFolderIsTheLayoutsFolder (internal/cli), which imports
+// both, and a layout that moved would fail there rather than silently commit
+// a project's reports into a folder beside the one the layout writes.
+const DefaultReportsCommitDir = "docs/fugaro-reviews"
 
 // reportsCommitMembers is the block's own member spelling, read from the
 // struct's json tags (carrierMembers) so a field added here is known without a
