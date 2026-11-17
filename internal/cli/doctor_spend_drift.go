@@ -17,9 +17,10 @@ import (
 // database with the operator's own credentials.
 //
 // It is the line `fugaro watch` draws, asked of the database instead of a
-// stream: the same two days, the same leaves, the same 10% and $1, so a reader
-// who sees one of the two sees what the other would say — and the rule itself
-// is watch's (driftLines), which is the only place it is written down. The
+// stream: the same two days, the same clock deciding which two they are (the
+// database's), the same leaves, the same 10% and $1, so a reader who sees one
+// of the two sees what the other would say — and the rule itself is watch's
+// (driftLines), which is the only place it is written down. The
 // counters are per UTC day, so D2649's "a rolling day" can only be today plus
 // yesterday (F30), and the leaves are summed per model across every repository
 // because what is being read is the table's reading of a model, not a
@@ -49,11 +50,24 @@ const spendDriftCheckID = "spend-drift"
 // A read that did not answer is an info line carrying the unread marker rather
 // than silence or a pass: with the counters unreadable, whether nothing drifted
 // is unknown, and "unknown" is not "nothing to say" (doctorClassOf).
+//
+// now is the local clock, and the day is the database's (rtdb.Client.ServerNow):
+// the counters are keyed by the database's UTC day, and `fugaro watch` reads
+// that same clock (watch.Supervisor.now), so a host whose own clock is off by a
+// day would otherwise sum two days that are not today and yesterday while its
+// sentence says they are, and answer differently from the screen this line is
+// copied from. The local clock is what is left when no response has stamped the
+// client yet, which is watch's own fallback — and by the time this check runs
+// the checks above have read the same client several times, so the fallback is
+// for a caller that reaches here alone.
 func doctorSpendDrift(ctx context.Context, db *rtdb.Client, now time.Time) []doctorCheck {
 	unread := func(path string, err error) []doctorCheck {
 		return []doctorCheck{{ID: spendDriftCheckID, Severity: "info", unread: true,
 			Problem: fmt.Sprintf("whether a model's reported cost has left the price table's band could not be checked (%s: %v), so a drift over today and yesterday is unknown rather than absent", path, err),
 			Fix:     "check that the credentials doctor uses can read the budget database, then run doctor again"}}
+	}
+	if sn, ok := db.ServerNow(); ok {
+		now = sn
 	}
 	day := budget.Day(now)
 	st := watch.NewState()

@@ -4,10 +4,24 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
+
+// driftRig is doctorPolicyRig with the database's clock pinned to the instant
+// the rig's own clock is pinned to (pinCatalogClock): the check reads the
+// window's day from the database (rtdb.Client.ServerNow), so a test that seeded
+// its counters at budgetNow() and let the fake answer with the wall clock would
+// be seeding one day and reading another.
+func driftRig(t *testing.T) *gcpfake.RTDB {
+	t.Helper()
+	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	at := budgetNow()
+	db.SetClock(func() time.Time { return at })
+	return db
+}
 
 // driftSeed writes one model's day-counter leaves, as a run's gateway wrote
 // them: micros is what the model has spent, and rep/tlo/thi are the provider's
@@ -52,7 +66,7 @@ func driftChecks(t *testing.T) []doctorCheck {
 // with is silent.
 func TestDriftAlarmOutsideBandOnly(t *testing.T) {
 	const model = "openai/gpt-5.1"
-	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	db := driftRig(t)
 	day := budget.Day(budgetNow())
 	driftSeed(t, db, day, "gh-acme-app", model, map[string]any{
 		"micros": 500000, "rep": 700000, "tlo": 250000, "thi": 300000})
@@ -103,7 +117,7 @@ func TestDriftAlarmOutsideBandOnly(t *testing.T) {
 // leaves at the floor itself are a line, so the silence is the floor and not
 // leaves nothing reads.
 func TestDriftAlarmBelowOneDollarQuiet(t *testing.T) {
-	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	db := driftRig(t)
 	day, model := budget.Day(budgetNow()), "openai/gpt-5.1"
 	leaves := map[string]any{"micros": 1000000, "rep": 5000000, "tlo": 900000, "thi": 1000000}
 	driftSeed(t, db, day, "gh-acme-app", model, leaves)
@@ -121,7 +135,7 @@ func TestDriftAlarmBelowOneDollarQuiet(t *testing.T) {
 // no report is quiet too, which is what today's node is below.
 func TestDriftAlarmOldDayQuiet(t *testing.T) {
 	const model = "openai/gpt-5.1"
-	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	db := driftRig(t)
 	day := budget.Day(budgetNow())
 	driftSeed(t, db, day, "gh-acme-app", model, map[string]any{"micros": 2000000})
 	driftSeed(t, db, day-2, "gh-acme-app", model, map[string]any{
@@ -142,6 +156,29 @@ func TestDriftAlarmOldDayQuiet(t *testing.T) {
 	}
 }
 
+// TestDriftAlarmEmptyDayQuiet: a project that has spent nothing has no node
+// under today's counters at all, and the alarm reads that absence as a day of
+// no counters rather than as the unread note a refused read draws — the two
+// outcomes look alike from outside and only one of them is honest (D2649 has
+// nothing to compare over a day nobody wrote). The check does speak once the
+// node is there, which is what makes the silence above a read of the absence
+// and not a check that never ran.
+func TestDriftAlarmEmptyDayQuiet(t *testing.T) {
+	db := driftRig(t)
+	if checks := driftChecks(t); len(checks) != 0 {
+		t.Fatalf("the alarm spoke about a database with no counters: %+v", checks)
+	}
+	driftSeed(t, db, budget.Day(budgetNow()), "gh-acme-app", "openai/gpt-5.1", map[string]any{
+		"micros": 2000000, "rep": 700000, "tlo": 1000000, "thi": 1000000})
+	checks := driftChecks(t)
+	if len(checks) != 1 {
+		t.Fatalf("the alarm said %d things once today's counters were written, want one: %+v", len(checks), checks)
+	}
+	if c := checks[0]; c.OK || c.Severity != "warning" {
+		t.Errorf("the report outside the band is %+v, want the warning", c)
+	}
+}
+
 // TestDriftAlarmUnreadDayIsNotAPass: a day's counters the rules do not let
 // doctor read are not a day without a drift. The line says so at an info
 // severity, carries the unread marker — so no view files it as a measurement
@@ -149,7 +186,7 @@ func TestDriftAlarmOldDayQuiet(t *testing.T) {
 // under (doctorClassOf, TestDoctorReadFailureIsCounted) — and names the path
 // that could not be read.
 func TestDriftAlarmUnreadDayIsNotAPass(t *testing.T) {
-	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	db := driftRig(t)
 	day := budget.Day(budgetNow())
 	driftSeed(t, db, day, "gh-acme-app", "openai/gpt-5.1", map[string]any{
 		"micros": 2000000, "rep": 700000, "tlo": 1000000, "thi": 1000000})
@@ -183,6 +220,67 @@ func TestDriftAlarmUnreadDayIsNotAPass(t *testing.T) {
 	}
 }
 
+// TestDriftAlarmUnreadYesterdayIsNotAPass: yesterday is the window's other
+// half, and the same ruling holds for it — a read of it that did not answer is
+// unknown and not silence, so the note names the node nobody could read and
+// never passes the half it could not see off as nothing to report. The counters
+// under it are the ones that would have drifted, so the day the reader is told
+// nothing about is the day there was something to say about.
+func TestDriftAlarmUnreadYesterdayIsNotAPass(t *testing.T) {
+	db := driftRig(t)
+	day := budget.Day(budgetNow())
+	node := "spend/" + budget.DayKey(day-1) + "/repos"
+	driftSeed(t, db, day-1, "gh-acme-app", "openai/gpt-5.1", map[string]any{
+		"micros": 2000000, "rep": 700000, "tlo": 1000000, "thi": 1000000})
+	db.DenyRead(node)
+
+	checks := driftChecks(t)
+	if len(checks) != 1 {
+		t.Fatalf("the alarm said %d things about yesterday, want the one note: %+v", len(checks), checks)
+	}
+	c := checks[0]
+	if c.OK || c.Severity != "info" {
+		t.Fatalf("the unread yesterday is %+v, want an info note and not a warning about a comparison nobody made", c)
+	}
+	if c.Class != doctorClassAudit {
+		t.Errorf("the unread yesterday is classed %q, want %q", c.Class, doctorClassAudit)
+	}
+	if !strings.Contains(c.Problem, node) {
+		t.Errorf("the note does not name the node that could not be read: %q", c.Problem)
+	}
+}
+
+// TestDriftAlarmDayIsTheDatabases: the two days the window covers are the
+// database's, not this host's (rtdb.Client.ServerNow, the clock `fugaro watch`
+// reads) — otherwise a host clock off by a day would have doctor sum two days
+// that are not today and yesterday while its own sentence says they are, and
+// answer differently from the screen it is copied from. The database's day is a
+// day ahead of the rig's clock here and the counters settle which two days were
+// read: the leaves two days behind the database's today are outside the window,
+// though the host clock would have called them yesterday, and the ones under
+// the database's own today are the report the line is about.
+func TestDriftAlarmDayIsTheDatabases(t *testing.T) {
+	const model = "openai/gpt-5.1"
+	db := driftRig(t)
+	host := budget.Day(budgetNow())
+	server := budgetNow().Add(26 * time.Hour)
+	db.SetClock(func() time.Time { return server })
+	driftSeed(t, db, host-1, "gh-acme-app", model, map[string]any{
+		"micros": 2000000, "rep": 700000, "tlo": 1000000, "thi": 1000000})
+	if checks := driftChecks(t); len(checks) != 0 {
+		t.Fatalf("the alarm read a day outside the database's window: %+v", checks)
+	}
+	driftSeed(t, db, budget.Day(server), "gh-acme-app", model, map[string]any{
+		"micros": 3000000, "rep": 1500000, "tlo": 1000000, "thi": 1000000})
+	checks := driftChecks(t)
+	if len(checks) != 1 {
+		t.Fatalf("the alarm said %d things about the database's own today, want the one report the window holds: %+v", len(checks), checks)
+	}
+	if p := checks[0].Problem; !strings.Contains(p, "1.50x") || !strings.Contains(p, "dearest end") {
+		t.Errorf("the check is not the report the database's today holds: %q", p)
+	}
+}
+
 // TestDriftAlarmOfflineSkipped: `--offline` checks the update class and
 // nothing else (D945, D952), and the drift alarm is not that class — a report
 // outside the band is a fact about the price table, which no `fugaro update`
@@ -190,7 +288,7 @@ func TestDriftAlarmUnreadDayIsNotAPass(t *testing.T) {
 // for it, exactly as it treats the budget mode and the build budget, its
 // neighbours on the same database. It makes no request either.
 func TestDriftAlarmOfflineSkipped(t *testing.T) {
-	_, db := doctorPolicyRig(t, doctorPolicy(nil), "")
+	db := driftRig(t)
 	driftSeed(t, db, budget.Day(budgetNow()), "gh-acme-app", "openai/gpt-5.1", map[string]any{
 		"micros": 2000000, "rep": 700000, "tlo": 1000000, "thi": 1000000})
 	before := len(db.Requests())
