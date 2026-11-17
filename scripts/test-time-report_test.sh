@@ -182,6 +182,23 @@ top1=$(bash "$script" --source-root "$tree" --peak-mib 1 --top 1 "$work/stream.j
 rows=$(printf '%s\n' "$(section "$top1" "slowest tests")" | grep -cE 'alpha_test.go|beta_test.go' || true)
 [ "$rows" -eq 1 ] || fail "--top 1 printed $rows test rows, want 1"
 
+# A table longer than --top, so the cut has rows to leave behind: cutting a
+# pipe with head instead of awk kills the sort behind it with SIGPIPE, which
+# pipefail turns into the script's own death partway through the report -- and
+# a stream of ten tests does not show that, because the sort has finished
+# writing before head exits.
+awk 'BEGIN {
+  for (i = 0; i < 5000; i++) {
+    printf "{\"Action\":\"pass\",\"Package\":\"example.com/big\",\"Test\":\"TestBig%d\",\"Elapsed\":%d.5}\n", i, i
+  }
+  print "{\"Action\":\"pass\",\"Package\":\"example.com/big\",\"Elapsed\":5000.0}"
+}' > "$work/big.jsonl"
+big=$(bash "$script" --source-root "$tree" --peak-mib 1 --top 1 "$work/big.jsonl")
+expect_contains "$big" "== peak memory ==" "the report reaches its last section with a table longer than --top"
+expect_contains "$big" "1 MiB (recorded)" "and prints the peak it was given"
+big_rows=$(printf '%s\n' "$(section "$big" "slowest tests")" | grep -cE 'TestBig' || true)
+[ "$big_rows" -eq 1 ] || fail "a 5000-test stream cut at --top 1 printed $big_rows rows, want 1"
+
 skipped=$(bash "$script" --source-root - --peak-mib 1 "$work/stream.jsonl")
 expect_contains "$skipped" "(no test body holds a wait primitive, or no source root was scanned)" "--source-root - skips the scan"
 expect_contains "$skipped" "tests:          6" "the tables are still built without a source root"

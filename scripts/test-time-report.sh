@@ -183,6 +183,9 @@ printf '  failed:         %s tests, %s packages\n' "$failed_tests" "$failed_pkgs
 # empty first file would make the second one look like the first.
 [ -s "$work/files.tsv" ] || printf '\t-\n' > "$work/files.tsv"
 
+# Each table is cut to --top rows by awk and never by head: head closes the
+# pipe as soon as it has its rows, the sort behind it dies of SIGPIPE, and
+# pipefail turns that into this script's own death partway through the report.
 echo
 echo "== $top slowest tests =="
 printf '  %9s  %-38s %-46s %s\n' seconds package test file
@@ -196,8 +199,8 @@ awk -F'\t' '
     f = (file[name] != "" ? file[name] : file[parent])
     printf "%s\t%s\t%s\t%s\n", $3, $1, name, (f == "" ? "-" : f)
   }
-' "$work/files.tsv" "$work/tests.tsv" | sort -rn | head -n "$top" \
-  | awk -F'\t' '{printf "  %9.2f  %-38s %-46s %s\n", $1, $2, $3, $4}'
+' "$work/files.tsv" "$work/tests.tsv" | sort -rn \
+  | awk -F'\t' -v n="$top" 'NR <= n {printf "  %9.2f  %-38s %-46s %s\n", $1, $2, $3, $4}'
 
 echo
 echo "== time per package =="
@@ -230,8 +233,8 @@ else
     "$(awk -v w="$wait_seconds" -v t="$total_seconds" 'BEGIN { if (t > 0) printf "%.1f", 100 * w / t; else print "0.0" }')"
   echo
   printf '  %9s  %-38s %-46s %s\n' seconds package test file
-  sort -k4,4rn "$work/waitrows.tsv" | head -n "$top" \
-    | awk -F'\t' '{printf "  %9.2f  %-38s %-46s %s\n", $4, $3, $2, $1}'
+  sort -k4,4rn "$work/waitrows.tsv" \
+    | awk -F'\t' -v n="$top" 'NR <= n {printf "  %9.2f  %-38s %-46s %s\n", $4, $3, $2, $1}'
 fi
 
 echo
