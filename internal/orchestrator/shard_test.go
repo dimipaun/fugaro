@@ -371,6 +371,32 @@ func TestSaveOfOneNodeKeepsOthersETags(t *testing.T) {
 			t.Errorf("the plan node is %q in one spelling and %q in the other: a plan whose two spellings differed would be a plan in two nodes", upper, lower)
 		}
 	})
+
+	t.Run("a shard that names no node is refused at the store", func(t *testing.T) {
+		// Shard is a string, so a caller can put any value in it, and the
+		// store reads whatever it is given as a plan unless it is one of the
+		// three: `Shard("lease")` would write `orchestrator/<id>/plans/lease`,
+		// a node no reader of this subtree ever looks at, and the save would
+		// report success. So a shard that names no node is refused where the
+		// store is built, with the plan names above and for their reason.
+		for _, bad := range []orchestrator.Shard{
+			"lease", "state", "audit", "plans", "plans/", "pland/x", "backlog/", "/backlog",
+		} {
+			if _, err := orchestrator.NewNode(orchestrator.NodeOptions{
+				DB: rtdbClient(t, gcpfake.NewRTDB(t)), AgentID: daemonID, Role: orchestrator.RoleOrchestrator,
+				Shard: bad,
+			}); !errors.Is(err, orchestrator.ErrInvalid) {
+				t.Errorf("the shard %q built a store (%v): a shard is one of the three nodes or a plan's own, and anything else is a node no reader looks at", bad, err)
+			}
+		}
+		// And the three that are nodes still build, so what is refused above is
+		// the shard's own shape and not every shard.
+		for _, ok := range []orchestrator.Shard{
+			orchestrator.ShardState, orchestrator.ShardBacklog, orchestrator.PlanShard(planFolder),
+		} {
+			mustShardNode(t, rtdbClient(t, gcpfake.NewRTDB(t)), nil, ok)
+		}
+	})
 }
 
 // mustShardNode is mustNode for a node other than the state node: a plan's or
