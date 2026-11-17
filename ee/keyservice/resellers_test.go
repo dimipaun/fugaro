@@ -337,6 +337,25 @@ func TestCreditLimitAndRatesAreOperationsSet(t *testing.T) {
 		t.Errorf("a refused set left the terms %+v, want the 7000000 the admitted set wrote", after)
 	}
 
+	// Setting them is a CHANGE and not a read, which is the whole of D2187's
+	// gate here: an operations member decides nothing, and an owner whose sign-in
+	// is hours old is refused the change. Read as a read's rule this route would
+	// pass both — a read-only operator, or one with an old sign-in, rewriting a
+	// reseller's credit limit and its rates, which is the accrual itself.
+	admitted := resellerTermsBody(t, created.OrganisationID, 9_000_000, f.now,
+		WireResellerRate{Row: PolicyTeamMonthly, DailyRateMicros: 500})
+	f.setRole(opsOrgID, opsUID, roleMember)
+	readAPIRefusal(t, f.apiAsCaller(http.MethodPut, resellerTermsSetPathOf(created.OrganisationID), admitted),
+		http.StatusForbidden, "not_permitted")
+	f.setRole(opsOrgID, opsUID, roleOwner)
+	f.signIn.caller.AuthTime = f.now.Add(-3 * time.Hour)
+	readAPIRefusal(t, f.apiAsCaller(http.MethodPut, resellerTermsSetPathOf(created.OrganisationID), admitted),
+		http.StatusForbidden, "stale_sign_in")
+	if held, _ := f.terms(created.OrganisationID); held.CreditLimitMicros != 7_000_000 || len(held.Rates) != 2 {
+		t.Errorf("a set the gate refused left the terms %+v, want the 7000000 the admitted set wrote", held)
+	}
+	f.signIn.caller.AuthTime = f.now
+
 	// An id that is a customer organisation is not a reseller: the same answer
 	// an id nobody has gets, because which ids are which organisations is not
 	// something this service says.
@@ -633,7 +652,23 @@ func TestRelinkIsAudited(t *testing.T) {
 			after-ledgerBefore)
 	}
 
+	// Moving a customer is a CHANGE and not a read, which is D2187's gate: an
+	// operations member decides nothing, and an owner whose sign-in is hours old
+	// is refused the change. Read as a read's rule this route would pass both,
+	// and the move is which reseller a customer's accrual belongs to from there.
 	f.actsAs(opsUID, opsEmail, signInGoogle)
+	f.setRole(opsOrgID, opsUID, roleMember)
+	readAPIRefusal(t, f.apiAsCaller(http.MethodPost, apiResellerRelinkPath, relinkBody(t, bought.ID, first.ID)),
+		http.StatusForbidden, "not_permitted")
+	f.setRole(opsOrgID, opsUID, roleOwner)
+	f.signIn.caller.AuthTime = f.now.Add(-3 * time.Hour)
+	readAPIRefusal(t, f.apiAsCaller(http.MethodPost, apiResellerRelinkPath, relinkBody(t, bought.ID, first.ID)),
+		http.StatusForbidden, "stale_sign_in")
+	f.signIn.caller.AuthTime = f.now
+	if held, _ := f.link(bought.ID); held.ResellerOrganisationID != second.ID {
+		t.Errorf("a relink the gate refused left the link %+v, want %s", held, second.ID)
+	}
+
 	cases := []struct {
 		name string
 		body string
