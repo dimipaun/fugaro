@@ -990,6 +990,8 @@ probe account carries predefined grants only).
 | 130 | The licence detectors after the open-core skeleton ([`docs/licensing/`](licensing/implementation-plan.md), its Check 130, task L1.10, and the reconciliation's F8 and U1 under the owner's **O2** answer of 2026-10-24; the block **130–134** is that work's and only 130 is written): that GitHub **still reports MIT** for the repository with the skeleton's new root `LICENSING.md` beside an untouched `LICENSE` — read twice and recorded both times, as the repository page's own licence label and the file it opens, and as the licence API's machine-readable reading (`spdx_id: MIT`, `key: mit`, and **`path: LICENSE`**, so the file GitHub classified is the untouched one and not the new statement file, which is what a `path` of `LICENSING.md` would mean) — and that **`LICENSING.md` renders on GitHub** as a page whose every relative link works — every link the guard's `grep` reads out of the file and not a list remembered here, among them `LICENSE`, `ee/README.md`, the vendored skills' `.agents/LICENSE` and the README's trademark paragraph anchor. **What it is not:** pkg.go.dev's classification (U2, not this check's after O2) and the release labels — the plugin manifest's, the Homebrew cask's and the archive's — which stay `MIT` at 0.11.0 because the release build sets no `ee` tag (D303 as amended) and move together in the release that first sets it (plan slice L5) | See "Check 130" below; **you** run it as ONE script — `bash scripts/live-checks/check130.sh`, with its own test `scripts/live-checks/check130_test.sh` — read-only, in a browser and with three `curl` calls against `api.github.com` — the repository read out of the checkout's origin and cross-checked against `go.mod`, so the tree and the page are the same repository — on no cloud project and no installation, never `belong`, holding no credential and writing nothing anywhere, and **no agent runs any step of it**. Its guard stops until task L1.3's `LICENSING.md` is in the tree, so it is run in full by task L1.11, after L1.3 merges | Nothing: three anonymous API reads, which spend part of the anonymous rate limit and change nothing; no image, no bucket, no model call, no Terraform, no node and no file. **USER-RUN, RUN 2026-11-11: PASS.** |
 | 135 | A per-repository job account's read of the runs bucket ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 135, task T3.5, and the reconciliation's **U2** and **U8**): impersonating the sandbox repository's **job account**, the owner reads one of **its own** run records by name — `runs/<slug>/<run-id>/result.json` — which must **succeed**, and one of a **sibling** repository's the same way, which must be **refused**; then records, for **U8**, whether `gcloud storage ls` of the account's own prefix is allowed (the design leaves a prefix-limited list unverified, and the plan does not need it). **What it is not:** the job's write reach (Checks 7 and 60 read the prefixes' writes) and a **project** job's reach, which is the owner's accepted one (G2) | See "Check 135" below; **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, impersonating the sandbox repository's job account, which needs `roles/iam.serviceAccountTokenCreator` on it: you grant it to yourself first and remove it in the Restore, the same step the register's earlier impersonation checks take; **no agent runs any step of it** | One impersonation grant added and removed, and four read-only `gcloud storage` calls: no object written, no run launched, no model call, no image, no bucket and no Terraform. **USER-RUN, NOT RUN.** |
 | 136 | A report run's own pull request ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 136, task T3.5; **D321/D322/D323** and **G3/G5**; task T3.1's `run-digest` recipe, T3.6's launcher manifest, T3.2's digest step and **T3.3's byte-for-byte guard, all merged**): in the sandbox repository, `fugaro run --recipe run-digest "periodic run review"`, then `fugaro runs ls --watch` until it settles, then the pull request it opened — one file per **due** period under `docs/fugaro-reviews/<YYYY>/` (the seven closed days, plus the week, month or year that closed), the generated index regenerated, and **no address and no task text in any of them** (D323) — with the figures equal to the ones the CLI prints for the same day: the run count and dollars against `fugaro runs ls --json --since 8d` filtered by the finish date the report buckets by, and two sampled rows' stage figures against `fugaro diagnose <run-id> --json` | See "Check 136" below; **you** run it, on the sandbox repository only — **never `belong`** — at your own terminal, launching one report run; it is **run only against a release carrying T3.3's guard**, because the reading it takes — that the pull request holds exactly the generated files — is the guard T3.3 adds, and its guard stops until you confirm T3.3 is in the release you run; **no agent runs any step of it** | One sandbox report run: one `digest` step (no model call of its own), one senior `review` stage's model calls, one job execution and one pull request you decline or merge yourself. **USER-RUN, PARTLY RUN (2026-11-14):** launch, eight files and no-address passed (the pull request was merged); the run halted `budget_unavailable` (`state_unavailable` from the credentials service), so the check's result is FAIL on run-settled. Step 5 (figures): the 2026-11-13 run count (9) and dollars ($0) match the repository-filtered CLI listing; the two sampled `fugaro diagnose` rows are still open. |
+| 137 | A stage budget stop ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 137, task T7.5, and the reconciliation's **D329** and **D331**; **T7.2**'s stage limit and **T7.3**'s halt, both merged): the owner republishes the sandbox project's **project layer** with one key added — `governance.stage_budget.review: 0.0001`, a fraction of the run's per-run cap, so that stage's whole budget is sub-cent at any cap under $100 — launches **one sandbox run** with **no `--tier`** and a task small enough to reach the review stage cheaply, and reads the stop: status `halted` with outcome `draft`, `halt.reason` `stage_budget` and the gateway's own detail naming the review stage, the budget it computed and what the call about to be made needed, a **checkpoint report** on the record (the runner's `trigger`, `why_over` and `estimate_usd`, and the stopping agent's `done`, `next` and `hard_instructions`) and the same report in the **Fugaro status** section of a **draft** pull request with no reviewer requested; the layer is then republished from the copy step 1 saved and its sha256 read back against step 1's. **What it is not:** the stage's own **time** bound (`governance.stage_timeout`, Check 200), the review **ratio**, the **fan-out** (Check 138), the review-scope stop and the run's own dollar cap (`run_cap`), and no judgement about the work — the review stage is stopped before its first call | See "Check 137" below; **you** run it, on the sandbox project's repository only — **never `belong`** — at your own terminal, launching one sandbox run (billable) and publishing the project layer for the length of that run; its guard stops rather than reading anything unless the budget mode is `enforce`, a per-run cap exists, the job image is a build with the `ee` tag (`fugaro validate`'s own warning is the reading) and the repository's early draft is on, because in any of those states nothing halts and the reading would answer a different question; **no agent runs any step of it** | One project-layer publish and its restore (three lines added, taken back byte for byte), one sandbox run through its implement stage and into review, one job execution, and one draft pull request you merge or close yourself. **USER-RUN, NOT RUN.** |
+| 138 | The fan-out stop ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 138, task T7.5, and the reconciliation's **D332**; **T7.2**'s fan-out maximum and **T7.3**'s halt, both merged): the owner republishes the sandbox project's **project layer** with `governance.max_subagents: 1`, launches **one sandbox run** with **no `--tier`** — a tiered run's maximum is the tier's own 3 or 5 — on a task that **asks its implement stage for two parallel sub-agents**, each with its own file and no overlap, and reads the stop: status `halted` with outcome `draft`, `halt.reason` `fanout` and the gateway's own detail naming the stage, the distinct sub-agents it counted and a maximum of 1, a **checkpoint report** on the record (trigger, the runner's `why_over`, the run's spend, and the stopping agent's `done`, `next` and `hard_instructions`) and the same report in the **Fugaro status** section of a **draft** pull request with no reviewer requested; the layer is then republished from the copy and its sha256 read back. **What it is not:** Check 139's reading — what the gateway's count of non-empty agent IDs is worth as a sub-agent count is that check's own, and it is owner-run and **has not run** — and not the stage budget (Check 137), the review ratio or the review-scope stop; the sub-agent that crosses the maximum is admitted its first call and the stage stops on the next one, which is the tripwire working rather than a leak | See "Check 138" below; **you** run it, on the sandbox project's repository only — **never `belong`** — at your own terminal, launching one sandbox run (billable) and publishing the project layer for the length of that run; the same guard as Check 137's stops it unless the mode is `enforce`, a per-run cap exists, the image is tagged and the early draft is on; **no agent runs any step of it** | One project-layer publish and its restore (two lines added, taken back byte for byte), one sandbox run whose implement stage fans out, one job execution, and one draft pull request you merge or close yourself. **USER-RUN, NOT RUN.** |
 | 139 | What an agent ID distinguishes in a gateway run's log ([`docs/task-governance/`](task-governance/implementation-plan.md), its Check 139, task T3.5, and the reconciliation's **U4**): read-only, in an **existing** sandbox gateway run's logs, the `model call` lines' `agent_id` — the main session's lines carry **an empty one**, each sub-agent a **distinct** non-empty one, and the background model's calls carry **none** — so the distinct-agent count **T7.2**'s fan-out stop spends is a sub-agent count. **It gates T7.2:** that task does not merge until this check has run | See "Check 139" below; `bash scripts/live-checks/check139.sh` is the whole of it — `--run <run-id>` for one run, and no argument to find one — its sibling test `scripts/live-checks/check139_test.sh` drives it against fake `fugaro` and `gcloud` only, and **you** run it, read-only, on the sandbox installation only — **never `belong`** — at your own terminal, over a run that already exists, reading the gateway's `model call` entries where they are (`gcloud logging read` with the filter the CLI's own log reader builds, scoped to the run's execution) — **not** `fugaro logs`, which prints the time, severity, stage and message only and would answer nothing; **no agent runs any step of it**, and it launches nothing | Nothing: one read of one run's log entries and one `fugaro diagnose <run-id> --json`. No model call, no run, no object and no policy. **USER-RUN, NOT RUN.** |
 | 145 | The Bitbucket read consumer's facts ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 145, task T2.8 and the script T2.7 writes; the reconciliation's U1–U5, U8, U11, U12, U14 and U15): the sandbox consumer read from a file **you** name and never printed — the token's lifetime (U1); whether the `client_credentials` grant returns a refresh token and whether a single minted token can be revoked (U2); whether the token reaches a second workspace you belong to (U3); whether the sandbox's plan admits consumers (U4); the workspace's seat count before and after (U5); whether IP allowlisting applies to OAuth tokens, and U8 stays **UNVERIFIED** if the plan offers none (U8); whether the token response lists the granted scopes (U11); whether two grants return distinct tokens (U12); whether creating a consumer needs workspace-admin rights and whether the token then reaches admin endpoints (U14); and whether the consumer must be marked private (U15). **It gates the read mint (O4):** tasks T2.3 and T3.1 do not merge before this check passes, and if U3 shows reach beyond the workspace, D360 and D361 go back to the owner before T2.3 merges. It also shows that a write with the read token is refused | See "Check 145" below; **you** run it at your own terminal, on sandbox workspaces only, never `belong`, with the consumer file you name and the script never printing it, and **no agent runs any step of it**. The script lands with task **T2.7**; this section is task **T0.2**'s and carries no steps of its own until then | A sandbox workspace and a second one you belong to, one read consumer created as the installing person, and two `client_credentials` grants; the script's own Restore says what it leaves behind. **USER-RUN, RAN (2026-11-14, exit 0; U3 measured on the second run against the Bitbucket workspace `dimi_bmb`):** U1 the grant's token lives 7200s; U3 the token reaches PAST its own workspace (the consumer's workspace and `dimi_bmb` both answered 200, so a `client_credentials` token reads every workspace its owner can reach), so D360 and D361 went back to the owner (O4), who ruled 2026-11-14 to accept the reach: they stand as answered and the read mint is unblocked; U4 the plan admits an OAuth consumer; U12 two grants return distinct tokens; a write is refused (403). Unverified, and left so: U2 (revoking one token: 401), U5 (seats: 403), U8 (IP allowlist: 404), U11 (the answer lists no scopes, so G7 rests on Check 147), U14 (404), U15 (needs one more run with a consumer that is not private). |
 | 146 | The coordinator sweep reads a Bitbucket repository through the service, and its GitHub views are unchanged ([`docs/bitbucket-credentials/`](bitbucket-credentials/implementation-plan.md), its Check 146, task T2.10 and the script T2.9 writes; D361 and D362): on a sandbox installation with the credentials service on, the sweep's stored view for a Bitbucket repository is **read** rather than `StaleUnsupported`, and the installation's GitHub views — the ones the sweep already writes — are unchanged | See "Check 146" below; **you** run it on a sandbox installation, never `belong`, and **no agent runs any step of it**: `scripts/live-checks/check146.sh --installation <sandbox>`. The script lands with task **T2.9**; this section is task **T0.2**'s and carries no steps of its own until then | One sandbox installation with the service on and one sweep; the script's own Restore says what it leaves behind. **USER-RUN, NOT RUN.** |
@@ -11470,8 +11472,9 @@ one page and one blob read in a browser, and the browser's own history.
 ([task-governance/implementation-plan.md](task-governance/implementation-plan.md), its Check 135). **No
 agent runs any step of it**: every command below is yours, at your own terminal, and the guard stops
 rather than reading anything for you. The
-plan's block is **Checks 135–144**: 135, 136 and 139 are this task's, 137 and 138 are task **T7.5**'s
-and are not written yet, and **140–144** stay reserved. Its only write is the impersonation grant step
+plan's block is **Checks 135–144**: 135, 136 and 139 are this task's, 137 and 138 were written by task
+**T7.5** (the stage budget and the fan-out stop, written later and also **NOT RUN**), and **140–144**
+stay reserved. Its only write is the impersonation grant step
 1 adds and the Restore removes; no object, policy or run is otherwise touched, so it is safe to run at
 any time and running it twice costs nothing but a few more reads.
 
@@ -11807,6 +11810,478 @@ the date with your CLI's version. Nothing else: no report body, no log line and 
   lifecycle; nothing here deletes them by hand.
 - **Never touch `belong`, EdgeWeb or EdgeServer**: the launch is aimed at the sandbox repository by
   the checkout it runs in, and this check has no command that names another installation.
+
+## Check 137: a stage budget stop — a run under a deliberately tiny review stage budget halts with `stage_budget`, a checkpoint report on the record and on the draft pull request (the sandbox project's repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **task T7.5** of the task-governance plan
+([task-governance/implementation-plan.md](task-governance/implementation-plan.md), its Check 137).
+**No agent runs any step of it**: every command below is yours, at your own terminal, and the guard
+stops rather than reading or writing anything for you. The plan's block is **Checks 135–144**: T3.5
+wrote 135, 136 and 139, this check and Check 138 are task **T7.5**'s, and **140–144** stay reserved.
+What it exercises is the stage limit **T7.2** installs in the gateway and **T7.3** turns into a halt
+(`ee/governance`; D527, D530), so it is **run only against a release carrying them and a job image
+built with the `ee` tag**: a build without the tag installs no stage limit at all
+(`internal/runner/gateway.go`), the run below would simply finish, and the guard reads that half off
+`fugaro validate`'s own warning. It launches **one sandbox run**, which is billable; its other write is
+one **project-layer publish**, which the Restore takes back, and the branch and draft pull request it
+leaves are yours to decide about.
+
+**Why the check exists.** D329 is the shape of every governance stop: the run **halts** — it does not
+fail — leaves a **checkpoint report** on the record and a **draft** pull request, and leaves the
+decision of continuing, redirecting or stopping to a person. D331 puts the guardrail where a live stop
+can be made: in the gateway, **per stage, in dollars and calls**. The hermetic tests take the
+arithmetic (`stageBudget`, `budgetStop` and `Stop` in `ee/governance`) and the runner's plumbing
+(`governanceHalt`, `internal/runner/halt.go`); what no hermetic test can take is the deployed half —
+that a job image's gateway really stops a real run's stage, that the stop lands in the record as a
+**halt** with the figures the gateway counted rather than as a failure, and that the checkpoint report
+a person needs reaches the record and the pull request. That is this check.
+
+**What this check is not.** It is not the stage's own **time** bound: `governance.stage_timeout` stops
+a stage through the same halt with `halt.detail` `time`, and Check 200 reads that one on the tagged
+release. It is not the review **ratio** (`review_ratio`), the **fan-out** (`fanout`, Check 138) or the
+review-scope stop (`review_scope`, T5.2's), and it is not the run's own dollar cap: the cap is the
+ceiling a stage budget is a fraction of, and a run stopped at the cap records the halt `run_cap`
+instead. It is not the review's judgement — the review stage here is stopped before its first call and
+has read nothing, so there is nothing for a reviewer to have got wrong. And it changes nothing
+permanently: the Restore republishes the layer as it was, byte for byte.
+
+**Method.** One checkout, one project-layer publish, one run, one pull request. The key goes in the
+**project layer** because that is the layer a governance budget is configured in (D331) and the layer
+the plan's own step names; it is published for the length of the run and put back in the Restore from
+the copy step 1 takes. Every name this check uses is a placeholder you fill in once, and no step of it
+names another installation.
+
+```bash
+# === Check 137: setup + guard. RE-RUN THIS WHOLE BLOCK before every step. ===
+
+# Run this block from the sandbox repository checkout: the slug and the project
+# layer are read from it, and the launch in step 3 is aimed by the directory it
+# runs in.
+SLUG=$(git remote get-url origin | sed -E 's#^.*[:/]([^/]+)/([^/]+?)(\.git)?$#\2#')
+[ -n "${SLUG}" ] || { echo "Check 137 stopped: this checkout origin names no repository, so which repository and which project layer this check is about is unknown" >&2; exit 1; }
+
+# One scratch directory, made once and exported: step 1 saves the layer there
+# and the Restore republishes it from there, so a fresh mktemp on every re-run
+# would throw away the only copy of the layer this check has to put back.
+: "${CHECK137_DIR:?a scratch directory outside every git work tree, made once with mktemp -d and exported, such as /tmp/check137.keep}"
+[ -d "${CHECK137_DIR}" ] || { echo "Check 137 stopped: CHECK137_DIR is not a directory, so the layer copy this check restores from would land nowhere" >&2; exit 1; }
+
+# Whether a stop would be enforced at all, read rather than assumed: a stage
+# budget is a fraction of the run per-run cap, so a run with no cap is handed
+# no stage limit, and in mode observe a stage limit is counted as a would-halt
+# and logged rather than enforced. A run launched in either state would finish
+# and read as a failure this check is not.
+fugaro budget show --repo "${SLUG}" >"${CHECK137_DIR}/budget.txt" 2>&1 || { echo "Check 137 stopped: this CLI cannot read the budget of this repository, so whether the stop below would be enforced is unknown (its own line above says why)" >&2; exit 1; }
+if ! grep -q '^mode: enforce$' "${CHECK137_DIR}/budget.txt"; then
+  echo "Check 137 stopped: the budget mode is not enforce (the mode line above says what it is). In observe a stage limit is a would-halt the run counts and logs, and nothing halts." >&2
+  exit 1
+fi
+if grep -q '(no per-run cap anywhere)' "${CHECK137_DIR}/budget.txt"; then
+  echo "Check 137 stopped: this repository has no per-run cap, and a stage budget is a fraction of that cap. With no cap the run is handed no stage limit at all, so nothing here would stop." >&2
+  exit 1
+fi
+
+# The job image edition, which nothing hermetic can read for this installation:
+# a core build decodes the governance block and enforces nothing in it (D522),
+# and this warning is the CLI own sentence for exactly that.
+fugaro validate >"${CHECK137_DIR}/validate.txt" 2>&1 || true
+if grep -q 'is a core build of fugaro' "${CHECK137_DIR}/validate.txt"; then
+  echo "Check 137 stopped: the job image of one of this repository workflows is a core build, so it reads the governance block and ignores it and carries no stage limit. Run fugaro update in that checkout, or fugaro image refresh for a derived image, and launch again." >&2
+  exit 1
+fi
+
+# The pull request half of the checkpoint report is read in the run status
+# section, which a run whose early draft is off never writes: the default is
+# on, and this catches the repository own file.
+if grep -qE '^[[:space:]]*early_draft:[[:space:]]*false' fugaro.yaml 2>/dev/null; then
+  echo "Check 137 stopped: this repository turns the early draft off (git.pr.early_draft false), so the run writes no status section and the checkpoint report has no pull request half to read. Turn it on, or run this check on a repository that has it on." >&2
+  exit 1
+fi
+
+printf 'CHECK 137 SETUP: repository %s, mode enforce, layer %s\n' "${SLUG}" "$(fugaro config layer 2>/dev/null | head -1)"
+```
+
+1. **Save the layer, and make the copy the check publishes.** The published project layer is what every
+   run of the project resolves, so this check keeps it before it touches it:
+
+   ```bash
+   # The published layer as this machine reads it, kept three ways: the JSON for
+   # its sha256, its own YAML as a file the Restore republishes byte for byte,
+   # and a copy that step 2 adds the one key to.
+   fugaro config layer --json >"${CHECK137_DIR}/before.json" \
+     || { echo "Check 137: no project layer applies to this checkout. This check changes the project layer and puts it back, and a project with no layer published has nothing to put back: publish one with fugaro config publish first." >&2; exit 1; }
+   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],"w").write(d["yaml"]); print("CHECK 137 STEP 1: layer sha256 %s, generation %s" % (d["sha256"], d["generation"]))' \
+     "${CHECK137_DIR}/before.json" "${CHECK137_DIR}/layer-before.yaml"
+
+   # The copy: the layer as it is, plus the one key this check is about. A layer
+   # that already carries a governance: block is left to you rather than edited
+   # twice — a second governance: key is a file the strict decoder refuses at a
+   # run bootstrap — so set the key it has to 0.0001 by hand and go on.
+   cp "${CHECK137_DIR}/layer-before.yaml" "${CHECK137_DIR}/layer-check.yaml"
+   if grep -qE '^governance:' "${CHECK137_DIR}/layer-check.yaml"; then
+     echo "CHECK 137: ${CHECK137_DIR}/layer-check.yaml already carries a governance: block: set governance.stage_budget.review to 0.0001 in it by hand before step 2, and set the same value back in ${CHECK137_DIR}/layer-before.yaml, because the Restore republishes that file." >&2
+   else
+     printf 'governance:\n  stage_budget:\n    review: 0.0001\n' >>"${CHECK137_DIR}/layer-check.yaml"
+   fi
+   diff -u "${CHECK137_DIR}/layer-before.yaml" "${CHECK137_DIR}/layer-check.yaml" || true
+   ```
+
+   **FACT:** the layer's sha256 and generation as this machine reads them, and that the diff between the
+   saved layer and the copy is the `governance:` block and nothing else. `0.0001` is a fraction of the
+   run's per-run cap, so the review stage's whole budget is under a cent at any cap below $100 — well
+   under the worst case of one review call, which is why the stage stops **before** its first call
+   rather than after it.
+
+2. **Publish it — when nothing is in flight.** The layer reaches **every repository of the project**,
+   and a run re-reads it at its own model calls, so publish it when nothing of the sandbox project is
+   going: `fugaro budget show`'s `running:` listing is where you read that. Then:
+
+   ```bash
+   fugaro budget show >"${CHECK137_DIR}/in-flight.txt"
+   grep -q '^  running: none$' "${CHECK137_DIR}/in-flight.txt" \
+     || echo "CHECK 137: a run is listed as going: the layer below can stop its review stage at its first call, so decide whether to wait for it before publishing" >&2
+   fugaro config publish "${CHECK137_DIR}/layer-check.yaml"
+   fugaro config layer --json >"${CHECK137_DIR}/published.json"
+   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("CHECK 137 STEP 2: published sha256 %s, generation %s" % (d["sha256"], d["generation"]))' "${CHECK137_DIR}/published.json"
+   ```
+
+   **FACT:** the sha256 the publish reported as the new layer and the generation it landed at, and the
+   same two read back — the layer every run of this project now resolves carries
+   `governance.stage_budget.review: 0.0001`, and what the publish's own diff printed as added is those
+   three lines. A publish that refuses is a finding for this check's record, not something to work
+   around.
+
+3. **Write the task, and launch.** Write the task brief with your editor or Write tool — never an
+   unquoted shell heredoc, which runs any backticked text in it — with a first line `# Task: <title>` and
+   a body asking for one small, reviewable change: one page or one function with its test, no wider, so
+   the run reaches the review stage cheaply. Then:
+
+   ```bash
+   : "${CHECK137_TASK:?the task file written for this check, <path>}"
+   [ -s "${CHECK137_TASK}" ] || { echo "Check 137 stopped: CHECK137_TASK is empty or missing, so there is nothing to launch" >&2; exit 1; }
+   head -1 "${CHECK137_TASK}" | grep -q '^# Task: ' || { echo "Check 137 stopped: the task first line is not a # Task: title, which is where the run title and the pull request title come from" >&2; exit 1; }
+   fugaro run --task-file "${CHECK137_TASK}"
+   ```
+
+   **FACT:** the run id it printed, the release it launched, and the launch's own line
+   `project layer: … generation N (sha256 …)`, whose generation is the one step 2's publish landed at —
+   that line is the launch-side half of this check, and it says the run carries the layer this check
+   wrote. The launch must **not** carry `--tier`: a tier is an expectation and moves the fan-out
+   maximum only, and this check is about the stage budget the layer sets.
+
+4. **Wait for it to settle.** `fugaro runs ls --watch` until the run has a terminal status. **FACT:**
+   the status, the outcome, the pull request number and the run's dollars. A run that ended another way
+   is not read further here — step 5 is where the reason is read, and what another ending means is in
+   **Fails when** below.
+
+5. **The halt, and the checkpoint on the record.**
+
+   ```bash
+   : "${CHECK137_RUN:?the run id step 3 printed, <run-id>}"
+   fugaro diagnose "${CHECK137_RUN}" --json >"${CHECK137_DIR}/diagnose.json"
+   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("status", d["row"]["status"], "outcome", d["row"]["outcome"], "failure_class", d.get("failure_class","")); print("halt", json.dumps(d.get("halt", {}))); print("checkpoint", json.dumps(d.get("checkpoint", {})))' "${CHECK137_DIR}/diagnose.json"
+   ```
+
+   **FACT:** the row's status `halted` and outcome `draft`; the failure class `halted_governance`; the
+   `halt` block — `reason` `stage_budget`, `scope` `run`, `at`, and `detail` **the gateway's own
+   sentence**, naming the review stage that stopped (one of `review`, `review_first` or `adversarial`),
+   the stage budget it computed as the layer's fraction of the run's cap (printed with six decimals when
+   it is under a cent), what that stage had spent and what the call about to be made needed; and the
+   `checkpoint` block — `trigger` `stage_budget`, `why_over` the runner's own sentence "a stage passed
+   its own budget", `estimate_usd` the model spend the run had reached, and the three the **stopping
+   agent** fills, `done`, `next` and `hard_instructions`, with the run's log carrying the line
+   `the stopping agent answered the checkpoint prompt`. Three readings are the findings this step is
+   for: a `halt.detail` naming a budget the tiny fraction did not make (so the layer this run resolved
+   was not the one step 2 published), a `checkpoint` block whose runner fields are there and whose three
+   agent fields are empty (the one checkpoint call failed, was refused, or answered nothing the report
+   could read — the log line says which), and a halt whose `reason` is not `stage_budget` (another
+   tripwire stopped this run, and its own detail is the fact).
+
+6. **The same report on the pull request.** Open the pull request in the row's `pr_url`.
+
+   **FACT:** it is a **draft** — a halted run is never made ready, so no reviewer was requested — and its
+   **Fugaro status** section is headed **Halted** and carries the checkpoint line: the trigger in a code
+   span, then the runner's sentence "a stage passed its own budget", then `done: …`, `next: …`, the
+   estimate as the model spend so far, and "hard to satisfy: …" where the agent filled them; and the
+   section's stage table shows the review stage that stopped with no calls of its own. A repository whose
+   `git.pr.early_draft` is false writes no status section at all: its pull request then carries the run's
+   own description and the checkpoint half is **not measurable** on it — record that as the result, with
+   the record's block as the reading you have, rather than reading the absence as a pass.
+
+7. **Put the layer back.**
+
+   ```bash
+   fugaro config publish "${CHECK137_DIR}/layer-before.yaml"
+   fugaro config layer --json >"${CHECK137_DIR}/after.json"
+   python3 -c 'import json,sys
+   b=json.load(open(sys.argv[1])); a=json.load(open(sys.argv[2]))
+   print("CHECK 137 RESTORE: sha256 %s -> %s" % (b["sha256"], a["sha256"]))
+   sys.exit(0 if b["sha256"] == a["sha256"] else 1)' "${CHECK137_DIR}/before.json" "${CHECK137_DIR}/after.json"
+   ```
+
+   **FACT:** the restore line itself — the layer read back carries step 1's sha256 again, so what the
+   project resolves is what it resolved before this check — and that the key this check added is gone
+   from it (the publish's own diff is the reading). If step 1 found a `governance:` block already there
+   and you edited it by hand, this same line is the check: the restored layer carries the value you
+   saved. A restore that cannot confirm it is the one thing to finish by hand before you stop.
+
+**Passes when:** the run reaches `halted` with outcome `draft`; `halt.reason` is `stage_budget` and its
+detail is the gateway's sentence for the review stage's own budget, naming a figure the published
+fraction made of the run's cap; the record carries a checkpoint report whose `trigger` is
+`stage_budget`, whose `why_over` is the runner's sentence, whose `estimate_usd` is the run's own model
+spend, and whose `done`, `next` and `hard_instructions` the stopping agent filled; the pull request is a
+draft whose status section carries that report, with no reviewer requested; and the layer is
+republished at step 1's own sha256.
+
+**Fails when:** the run finished or failed instead of halting, or halted on another reason; the detail
+names a budget the published fraction did not make; the checkpoint's three agent fields are empty; the
+pull request is ready, or is a draft with no status section on a repository whose early draft is on; or
+the layer is left published. **What failing is not:** a review stage that spent nothing (this check stops
+it before its first call on purpose), a draft whose own description is thin, or a change smaller than you
+would have asked for — the stage budget is this check's subject and the work's quality is not.
+
+**Paste back** (no address, no task text, no credential): the guard's `CHECK 137 SETUP` line; step 1's
+sha256, generation and diff; step 2's published sha256 and generation with what the publish printed as
+added; the launch's `project layer:` line and the run id; the status, outcome, pull request number and
+dollars; the `halt`, `failure_class` and `checkpoint` blocks step 5 printed; the status section's
+checkpoint line with the pull request's draft state; the restore line; and the date with your CLI's
+version. Nothing else: no report body, no log line and no token.
+
+**Restore.** Three things this check moved, and each has its own way back:
+
+- **The project layer** is step 7: it is republished from the copy step 1 saved, and the sha256 read
+  back is what confirms it. A project layer is the one thing here that would otherwise be left behind,
+  because there is no command that unpublishes one.
+- **The run's branch and pull request are yours to decide.** Merge or close the draft, or leave it as
+  the record of the reading; deleting the branch (`fugaro/<run-id>`) discards the work. Whichever you
+  take, the check records it.
+- The run's objects under `runs/<slug>/<run-id>/` are the run's own and expire with the bucket's
+  lifecycle; nothing here deletes them by hand.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: every step is aimed at the sandbox project's
+  repository by the checkout it runs in, and no command in this check names another installation.
+
+## Check 138: the fan-out stop — a run under `governance.max_subagents: 1` whose implement stage asks for two parallel sub-agents halts with `fanout`, a checkpoint report on the record and on the draft pull request (the sandbox project's repository only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by **task T7.5** of the task-governance plan
+([task-governance/implementation-plan.md](task-governance/implementation-plan.md), its Check 138).
+**No agent runs any step of it**: every command below is yours, at your own terminal, and the guard
+stops rather than reading or writing anything for you. It is Check 137's twin — the same publish, the
+same launch, the same readings — with one key and one task changed, so read Check 137's section for the
+mechanics it shares and this one for what differs. What it exercises is **T7.2**'s fan-out stop and
+**T7.3**'s hook (`ee/governance`; D527, D530), so it is **run only against a release carrying them and
+a job image built with the `ee` tag**. It launches **one sandbox run**, which is billable, and publishes
+the project layer for the length of that run.
+
+**Why the check exists.** D332's tripwire is the spec's own incident: a stage that fans out to about
+ten sub-agents is refused. T7.2 implements it as a stop on the gateway's count of the **distinct
+non-empty agent IDs** a stage's calls carried, and the reason it is a stop rather than a report is that
+a sub-agent is real money and real breadth on the same change. The hermetic tests take the arithmetic
+(`fanoutStop`, and `fanoutMax`'s read of the tier); what no hermetic test can take is the deployed
+half — that a real agent's sub-agents reach the gateway as distinct IDs, that the count crosses the
+maximum the project layer set, and that the stop lands in the record as a **halt** with a checkpoint
+report instead of killing the run.
+
+**What this check is not.** It is not Check 139's reading, and that matters here: what the gateway
+counts is the non-empty agent IDs its calls carried, and whether a live run's IDs really do distinguish
+every sub-agent from the main session is Check 139's own reading — that check is owner-run and **has
+not run**, which `fanoutStop`'s own comment says. So this check's result is a fact about the **stop**,
+and a sub-agent count is what the count is spent as only as far as Check 139 has said. It is not the
+tier's own maximum either: trivial and small runs allow 3 sub-agents a stage and an untiered one 5
+(`internal/policy`, `ee/governance`'s `TierExpectations`), so a maximum of 3 or 5 in the detail below is
+a run that carried a tier and not this check's. It is not the review **ratio** or the stage **budget**
+(Check 137), and it is not a limit on the sub-agents themselves: the sub-agent that crosses the maximum
+is admitted its first call, and the stage stops on the next one — a sub-agent's first call is the only
+evidence there is that it exists.
+
+**Method.** One checkout, one project-layer publish, one run, one pull request, and the only difference
+from Check 137's method is what goes in the layer (`governance.max_subagents: 1`), what the task asks
+for (two parallel sub-agents in the implement stage), and one launch flag that must be absent
+(`--tier`).
+
+```bash
+# === Check 138: setup + guard. RE-RUN THIS WHOLE BLOCK before every step. ===
+
+# Run this block from the sandbox repository checkout: the slug and the project
+# layer are read from it, and the launch in step 3 is aimed by the directory it
+# runs in.
+SLUG=$(git remote get-url origin | sed -E 's#^.*[:/]([^/]+)/([^/]+?)(\.git)?$#\2#')
+[ -n "${SLUG}" ] || { echo "Check 138 stopped: this checkout origin names no repository, so which repository and which project layer this check is about is unknown" >&2; exit 1; }
+
+# One scratch directory, made once and exported: step 1 saves the layer there
+# and the Restore republishes it from there.
+: "${CHECK138_DIR:?a scratch directory outside every git work tree, made once with mktemp -d and exported, such as /tmp/check138.keep}"
+[ -d "${CHECK138_DIR}" ] || { echo "Check 138 stopped: CHECK138_DIR is not a directory, so the layer copy this check restores from would land nowhere" >&2; exit 1; }
+
+# Whether a stop would be enforced at all: the fan-out maximum is a governance
+# key, and in mode observe a stage limit is counted as a would-halt and logged
+# rather than enforced. A run launched in observe finishes, and this check would
+# read that as a failure it is not.
+fugaro budget show --repo "${SLUG}" >"${CHECK138_DIR}/budget.txt" 2>&1 || { echo "Check 138 stopped: this CLI cannot read the budget of this repository, so whether the stop below would be enforced is unknown (its own line above says why)" >&2; exit 1; }
+if ! grep -q '^mode: enforce$' "${CHECK138_DIR}/budget.txt"; then
+  echo "Check 138 stopped: the budget mode is not enforce (the mode line above says what it is). In observe a stage limit is a would-halt the run counts and logs, and nothing halts." >&2
+  exit 1
+fi
+if grep -q '(no per-run cap anywhere)' "${CHECK138_DIR}/budget.txt"; then
+  echo "Check 138 stopped: this repository has no per-run cap, and the run is handed no stage limit at all without one, so no fan-out stop exists to read." >&2
+  exit 1
+fi
+
+# The job image edition: a core build decodes the governance block and enforces
+# nothing in it (D522), so no fan-out stop exists in it.
+fugaro validate >"${CHECK138_DIR}/validate.txt" 2>&1 || true
+if grep -q 'is a core build of fugaro' "${CHECK138_DIR}/validate.txt"; then
+  echo "Check 138 stopped: the job image of one of this repository workflows is a core build, so it reads the governance block and ignores it and carries no fan-out stop. Run fugaro update in that checkout, or fugaro image refresh for a derived image, and launch again." >&2
+  exit 1
+fi
+
+# The pull request half of the checkpoint report is read in the run status
+# section, which a run whose early draft is off never writes.
+if grep -qE '^[[:space:]]*early_draft:[[:space:]]*false' fugaro.yaml 2>/dev/null; then
+  echo "Check 138 stopped: this repository turns the early draft off (git.pr.early_draft false), so the run writes no status section and the checkpoint report has no pull request half to read. Turn it on, or run this check on a repository that has it on." >&2
+  exit 1
+fi
+
+printf 'CHECK 138 SETUP: repository %s, mode enforce, layer %s\n' "${SLUG}" "$(fugaro config layer 2>/dev/null | head -1)"
+```
+
+1. **Save the layer, and make the copy.** The same read as Check 137's step 1, with the fan-out key:
+
+   ```bash
+   fugaro config layer --json >"${CHECK138_DIR}/before.json" \
+     || { echo "Check 138: no project layer applies to this checkout. This check changes the project layer and puts it back, and a project with no layer published has nothing to put back: publish one with fugaro config publish first." >&2; exit 1; }
+   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],"w").write(d["yaml"]); print("CHECK 138 STEP 1: layer sha256 %s, generation %s" % (d["sha256"], d["generation"]))' \
+     "${CHECK138_DIR}/before.json" "${CHECK138_DIR}/layer-before.yaml"
+
+   cp "${CHECK138_DIR}/layer-before.yaml" "${CHECK138_DIR}/layer-check.yaml"
+   if grep -qE '^governance:' "${CHECK138_DIR}/layer-check.yaml"; then
+     echo "CHECK 138: ${CHECK138_DIR}/layer-check.yaml already carries a governance: block: set governance.max_subagents to 1 in it by hand before step 2, and set the same value back in ${CHECK138_DIR}/layer-before.yaml, because the Restore republishes that file." >&2
+   else
+     printf 'governance:\n  max_subagents: 1\n' >>"${CHECK138_DIR}/layer-check.yaml"
+   fi
+   diff -u "${CHECK138_DIR}/layer-before.yaml" "${CHECK138_DIR}/layer-check.yaml" || true
+   ```
+
+   **FACT:** the layer's sha256 and generation, and that the diff between the saved layer and the copy is
+   the `governance:` block and nothing else.
+
+2. **Publish it — when nothing is in flight.** As Check 137's step 2: the layer reaches every repository
+   of the project, so publish it when nothing of the sandbox project is going, and read back what the
+   publish landed at.
+
+   ```bash
+   fugaro budget show >"${CHECK138_DIR}/in-flight.txt"
+   grep -q '^  running: none$' "${CHECK138_DIR}/in-flight.txt" \
+     || echo "CHECK 138: a run is listed as going: the layer below changes what its stages may fan out to, so decide whether to wait for it before publishing" >&2
+   fugaro config publish "${CHECK138_DIR}/layer-check.yaml"
+   fugaro config layer --json >"${CHECK138_DIR}/published.json"
+   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("CHECK 138 STEP 2: published sha256 %s, generation %s" % (d["sha256"], d["generation"]))' "${CHECK138_DIR}/published.json"
+   ```
+
+   **FACT:** the publish's own sha256 and generation and the same two read back — the layer every run of
+   this project now resolves allows **one** sub-agent a stage.
+
+3. **Write the task, and launch it with no tier.** The task brief, written with your editor or Write
+   tool — never an unquoted shell heredoc — has the first line `# Task: <title>` and a body that **asks
+   the implement stage for two parallel sub-agents**, each with its own file to write and no overlap
+   between them: two changes a single sequential pass would not need to make together. A task that
+   merely permits sub-agents is not this check's: the reading below is of a run that really fanned out.
+
+   ```bash
+   : "${CHECK138_TASK:?the task file written for this check, <path>}"
+   [ -s "${CHECK138_TASK}" ] || { echo "Check 138 stopped: CHECK138_TASK is empty or missing, so there is nothing to launch" >&2; exit 1; }
+   head -1 "${CHECK138_TASK}" | grep -q '^# Task: ' || { echo "Check 138 stopped: the task first line is not a # Task: title, which is where the run title and the pull request title come from" >&2; exit 1; }
+   grep -qiE 'sub-agent|subagent' "${CHECK138_TASK}" || { echo "Check 138 stopped: the task never names a sub-agent, so the implement stage below has nothing asking it to fan out" >&2; exit 1; }
+   fugaro run --task-file "${CHECK138_TASK}"
+   ```
+
+   **FACT:** the run id, the release, the launch's own `project layer: … generation N (sha256 …)` line —
+   the generation step 2 landed at — and that the command carried **no `--tier`**. The flag is what this
+   step is most likely to get wrong: a tiered run's fan-out maximum is the tier's own 3 or 5 and not the
+   layer's 1, and the detail read in step 5 is where that shows.
+
+4. **Wait for it to settle.** `fugaro runs ls --watch` until the run has a terminal status. **FACT:** the
+   status, the outcome, the pull request number and the run's dollars.
+
+5. **The halt, and the checkpoint on the record.**
+
+   ```bash
+   : "${CHECK138_RUN:?the run id step 3 printed, <run-id>}"
+   fugaro diagnose "${CHECK138_RUN}" --json >"${CHECK138_DIR}/diagnose.json"
+   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("status", d["row"]["status"], "outcome", d["row"]["outcome"], "failure_class", d.get("failure_class","")); print("halt", json.dumps(d.get("halt", {}))); print("checkpoint", json.dumps(d.get("checkpoint", {}))); print("stages", json.dumps([{k: s.get(k) for k in ("stage","calls","agents","sub_agents")} for s in d.get("stages", [])]))' "${CHECK138_DIR}/diagnose.json"
+   ```
+
+   **FACT:** the row's status `halted` and outcome `draft`; the failure class `halted_governance`; the
+   `halt` block — `reason` `fanout`, `scope` `run`, `at`, and `detail` **the gateway's own sentence**,
+   `<stage> stage used N distinct sub-agents, its maximum is 1`, naming the implement stage (or
+   the fix round, if the fan-out happened there), the sub-agents the gateway counted and the maximum the
+   layer set; and the `checkpoint` block — `trigger` `fanout`, `why_over` the runner's own sentence "a
+   stage used more sub-agents than the maximum", `estimate_usd` the model spend the run had reached, and
+   the three the **stopping agent** fills, `done`, `next` and `hard_instructions`, with the run's log
+   carrying the line `the stopping agent answered the checkpoint prompt`. *N* is the gateway's count of
+   distinct non-empty agent IDs, and the stage stops on the first call **after** the one that crossed
+   the maximum, so a stage that stopped has had at least two — and the record's own stage row for it
+   (`agents`, the agent's reported sub-agent count) is the corroboration when the two agree. The
+   findings this step is for: a halt on another reason; a maximum of 3 or 5 in the detail, which is a
+   tier in play; and a run that finished, whose stage row shows one sub-agent or none — that is a task
+   that did not fan out, which is the fact to record and to re-run with a task that names the two
+   sub-agents, not a stop that failed to fire.
+
+6. **The same report on the pull request.** Open the pull request in the row's `pr_url`.
+
+   **FACT:** it is a **draft** with no reviewer requested, and its **Fugaro status** section is headed
+   **Halted** and carries the checkpoint line — the trigger `fanout` in a code span, the runner's
+   sentence, then `done: …`, `next: …`, the estimate as the model spend so far, and "hard to satisfy: …"
+   where the agent filled them. A repository whose `git.pr.early_draft` is false writes no status
+   section: the checkpoint half is then **not measurable** on the pull request, and the record's block
+   is the reading you have — say so rather than reading the absence as a pass.
+
+7. **Put the layer back.** Check 137's step 7 with this check's directory and files:
+
+   ```bash
+   fugaro config publish "${CHECK138_DIR}/layer-before.yaml"
+   fugaro config layer --json >"${CHECK138_DIR}/after.json"
+   python3 -c 'import json,sys
+   b=json.load(open(sys.argv[1])); a=json.load(open(sys.argv[2]))
+   print("CHECK 138 RESTORE: sha256 %s -> %s" % (b["sha256"], a["sha256"]))
+   sys.exit(0 if b["sha256"] == a["sha256"] else 1)' "${CHECK138_DIR}/before.json" "${CHECK138_DIR}/after.json"
+   ```
+
+   **FACT:** the restore line — the layer read back carries step 1's sha256 again, and `max_subagents` is
+   gone from the layer's own diff. A restore that cannot confirm it is the one thing to finish by hand
+   before you stop.
+
+**Passes when:** the run reaches `halted` with outcome `draft`; `halt.reason` is `fanout` and its detail
+is the gateway's sentence naming a stage, the distinct sub-agents it counted and a maximum of **1**; the
+record carries a checkpoint report whose `trigger` is `fanout`, whose `why_over` is the runner's
+sentence, whose `estimate_usd` is the run's own model spend, and whose `done`, `next` and
+`hard_instructions` the stopping agent filled; the pull request is a draft whose status section carries
+that report, with no reviewer requested; and the layer is republished at step 1's own sha256.
+
+**Fails when:** the run finished instead of halting, or halted on another reason; the detail's maximum
+is not 1; the detail's stage is a stage whose maximum nothing asked the run to exceed; the checkpoint's
+three agent fields are empty; the pull request is ready, or is a draft with no status section on a
+repository whose early draft is on; or the layer is left published. **What failing is not:** a task whose
+implement stage used one sub-agent or none — that is the task not asking for parallelism, recorded as
+such and re-run; and a sub-agent admitted its first call before the stop, which is the tripwire working
+as designed rather than a leak.
+
+**Paste back** (no address, no task text, no credential): the guard's `CHECK 138 SETUP` line; step 1's
+sha256, generation and diff; step 2's published sha256 and generation; the launch's `project layer:` line
+and the run id, with the confirmation that no `--tier` was passed; the status, outcome, pull request
+number and dollars; the `halt`, `failure_class`, `checkpoint` and stage rows step 5 printed; the status
+section's checkpoint line with the pull request's draft state; the restore line; and the date with your
+CLI's version. Nothing else: no report body, no log line and no token.
+
+**Restore.** The same three things as Check 137, and the same order:
+
+- **The project layer** is step 7's republish, confirmed by the sha256 read back. Nothing here leaves a
+  key behind, and there is no command that unpublishes a layer, which is why the restore is a copy.
+- **The run's branch and pull request are yours to decide**: merge or close the draft, or leave it as the
+  record of the reading; deleting the branch (`fugaro/<run-id>`) discards the work.
+- The run's objects under `runs/<slug>/<run-id>/` expire with the bucket's lifecycle; nothing here
+  deletes them by hand.
+- **Never touch `belong`, EdgeWeb or EdgeServer**: every step is aimed at the sandbox project's
+  repository by the checkout it runs in, and no command in this check names another installation.
 
 ## Check 139: what an agent ID distinguishes in a gateway run's log — the main session empty, each sub-agent distinct, the background model's calls none (an existing sandbox gateway run's logs, read-only; sandbox installation only, never `belong`; run by you; NOT RUN)
 
