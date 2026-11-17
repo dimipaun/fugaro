@@ -125,4 +125,4 @@ Time saved is against the invocation it applies to — the step's 707.5 s wall, 
 
 ## What this changes about the landing rule
 
-The landing rule refuses to land a pull request whose final commit has failing tests, and the tests it means are the ones the run's own verify step ran. Every option above except (d), (e) and (f) changes *which* tests that is — so a green verify on a final commit would stop meaning "this tree's tests pass" and start meaning "the tests this PR was judged by pass". That is a different sentence, and it is the owner's to say, not this measurement's.
+The landing rule refuses to land a pull request whose final commit has failing tests, and the tests it means are the ones the run's own verify step ran. Every option above except (a), (d), (e) and (f) — that is, the two that select tests, (b) and (c) — changes *which* tests that is — so a green verify on a final commit would stop meaning "this tree's tests pass" and start meaning "the tests this PR was judged by pass". That is a different sentence, and it is the owner's to say, not this measurement's.
