@@ -43,6 +43,13 @@ const (
 	statusReserve = 6 * 1024
 	// maxStatusText bounds the free text (a reason) placed in the section.
 	maxStatusText = 200
+	// maxStatusBinaries is how many of the run's admitted binaries the section
+	// names before it counts the rest (D993). The body is a surface a run can
+	// grow — a task that adds a hundred assets is one task — and the paths are
+	// there to say an unreadable file is in the diff, not to list it: a reader
+	// who needs every path reads the diff, and the count says how many there
+	// are.
+	maxStatusBinaries = 3
 )
 
 // earlyOpenTimeout bounds the whole early open (its retries included), so a
@@ -978,6 +985,37 @@ func (r *run) ownerPart() string {
 	return b.String()
 }
 
+// binariesPart is the section's line for the binaries this run added at a path
+// the project's policy admits (D993, spec.md §5): the run used the rule, and a
+// reader of the pull request is told an unreadable file is in it without having
+// to open the diff and find one. "" for a run that added none, which is every
+// run whose task was not an asset — the section says nothing about a rule the
+// run did not use.
+//
+// The list is bounded (maxStatusBinaries) and the count is always the whole
+// one: a line that showed three paths of seven and stopped would read as a run
+// that added three. The paths are the run's own diff and go through inlineText,
+// so a path an agent named with a newline or a mention cannot break the line or
+// notify anyone.
+func (r *run) binariesPart() string {
+	if len(r.binariesAdmitted) == 0 {
+		return ""
+	}
+	shown, more := r.binariesAdmitted, 0
+	if len(shown) > maxStatusBinaries {
+		more, shown = len(shown)-maxStatusBinaries, shown[:maxStatusBinaries]
+	}
+	paths := make([]string, len(shown))
+	for i, p := range shown {
+		paths[i] = inlineText(p)
+	}
+	out := fmt.Sprintf("binaries: %d admitted (%s", len(r.binariesAdmitted), strings.Join(paths, ", "))
+	if more > 0 {
+		out += fmt.Sprintf(", and %d more", more)
+	}
+	return out + ")"
+}
+
 func (r *run) updated(label string) string {
 	return label + " " + r.d.Now().UTC().Format("2006-01-02 15:04Z")
 }
@@ -1051,7 +1089,7 @@ func (r *run) finalSection(ready bool, reason string, records []verify.Record) s
 	case r.rec.Status == runstore.StatusCancelled:
 		head = "**Cancelled**"
 	}
-	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.costPart(), r.updated("finished"))
+	return r.sectionLines(head, why, r.checkpointReportPart(), r.rigorPart(), verifyPart(records), reviewsPart(r.rec.Reviews, r.findingsPolicy()), r.levelsPart(), r.narrowText, r.binariesPart(), r.costPart(), r.updated("finished"))
 }
 
 // ---- finalize ----

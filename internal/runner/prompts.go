@@ -42,6 +42,17 @@ type PromptData struct {
 	// produces. Empty for a task that names none, and the rule is then absent
 	// rather than saying there are none.
 	ContextRepos []string
+	// BinariesAllow are the paths the project's policy admits a binary at
+	// (binaries.allow) and BinariesMaxBytes the cap one may be added at, both
+	// as the run resolved them — the project layer's node narrowed by the
+	// run's own layers, never a value read from the checkout (D986).
+	// BinariesAllow empty means the project admits no path, and the brief is
+	// then the one every run had before this rule: a sentence about a list
+	// that is not there would be a rule the coder could not act on. The cap
+	// is the effective one (binaryCap), so a project that wrote none is named
+	// the shipped bound it is really held to.
+	BinariesAllow    []string
+	BinariesMaxBytes int64
 	// NoImageReads adds the rule that the coder must not read an image and
 	// says why: the stage's own model is priced without an image rate, so the
 	// gateway refuses a request carrying an image, and the stage's managed
@@ -71,6 +82,32 @@ func imageReadKinds() string {
 		kinds[i] = "*." + ext
 	}
 	return strings.Join(kinds, ", ")
+}
+
+// binariesRule is the brief's clause for a project that admits a binary
+// somewhere (D992, spec.md §5): the paths, the cap, and what happens to a file
+// that is neither. The list is not a secret — the policy node is readable by
+// the run's own token — and stating it is what makes a run that needs to add an
+// asset put it where the project admitted it instead of failing once and
+// finding out.
+//
+// The cap is named beside the paths because the two are one rule: a file at an
+// admitted path is refused over the project's cap, so a brief naming only the
+// paths would send the coder to write an over-sized asset at the one place that
+// looks admitted. A caller that names no cap leaves it out rather than writing
+// a cap of zero.
+//
+// The rule's own sentence is here too — a build product is refused and the run
+// ends a draft — because the coder is the reader that would otherwise learn it
+// by failing. What the clause does not say is where the list is changed: that
+// belongs to the refusal (stray.go), which is the only place a reader has a
+// reason to ask.
+func binariesRule(allow []string, maxBytes int64) string {
+	line := "- The project admits a binary only at " + strings.Join(allow, ", ")
+	if maxBytes > 0 {
+		line += ", and no larger than " + fmtBytes(maxBytes)
+	}
+	return line + ": a binary you add anywhere else, or one over that size, is refused when the run ends and the pull request stays a draft, so delete a build product or an asset the task does not need instead of leaving it in the tree."
 }
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
@@ -103,6 +140,9 @@ func SystemPrompt(d PromptData, instructions string) string {
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")
+	}
+	if len(d.BinariesAllow) > 0 {
+		lines = append(lines, binariesRule(d.BinariesAllow, d.BinariesMaxBytes))
 	}
 	if d.Checkpoints {
 		lines = append(lines, fmt.Sprintf("- Commit early and often, after every step that works: Fugaro pushes each new commit to %s within about a minute, and if this container dies only pushed commits survive; uncommitted changes are lost. Add new commits rather than amending or rebasing commits you already made: rewritten commits are not pushed until the run ends.", d.Branch))

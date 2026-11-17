@@ -505,6 +505,13 @@ type run struct {
 	// narrowText is narrowSummary's line, read once at finalize for both the
 	// status section and the report.
 	narrowText string
+	// binariesAdmitted are the binaries this run added at a path the project's
+	// policy admits, both readings together, sorted (stray.go's
+	// admittedBinaries). The two checks fill it at finalize and the pull
+	// request's status section reports it, so a reader knows an unreadable file
+	// is in the diff (D993); it is empty for a run that added none, which is
+	// every run whose task was not an asset.
+	binariesAdmitted []string
 	// rigorCfg is the run's rigor configuration *as the base branch has it*
 	// (docs/rigor-modes D25), read once at bootstrap and reused at every
 	// later moment (rigor.go); rigorRev is the revision it was read from, ""
@@ -3624,6 +3631,12 @@ func (r *run) systemPromptData() PromptData {
 		ContextRepos: r.contextRepoLines(),
 		NoWorkflows:  r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
 		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
+		// The paths the project admits a binary at, and the cap it holds one
+		// to, are the run's resolved policy: a coder that has to add an asset
+		// is told where before it writes one (D992). An empty list leaves the
+		// clause out (prompts.go's binariesRule), and the cap is the effective
+		// one, so a project that wrote none is named the shipped bound.
+		BinariesAllow: r.policy.BinariesAllow, BinariesMaxBytes: r.binaryCap(),
 		// The brief is the coder's, and "implement" is one of its stages: the
 		// answer is the coder's own model, never a review stage's, which is
 		// why denyBinaryReads' review half cannot reach it (D2014).
@@ -5804,7 +5817,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// same draft a failed run leaves — the work pushed, the pull request open,
 	// the reason naming the file. That is what makes it actionable; a run that
 	// returned here would put nothing on the branch and open nothing.
-	strays, err := r.strayArtifacts(ctx)
+	strays, admitted, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
@@ -5821,7 +5834,7 @@ func (r *run) finalize(ctx context.Context) error {
 	// other refusal here. Returning the error instead would leave the person
 	// with nothing at all: no branch, no pull request, and a run whose work the
 	// agent did and nobody can see.
-	added, err := r.committedBinaries(ctx)
+	added, committedAdmitted, err := r.committedBinaries(ctx)
 	unread := ""
 	if err != nil {
 		unread = r.redact(err.Error())
@@ -5830,6 +5843,13 @@ func (r *run) finalize(ctx context.Context) error {
 	if len(strays) > 0 || len(added) > 0 || unread != "" {
 		r.fail(strayRefusal(strays, added, unread))
 	}
+	// The other answer of the two readings: the binaries the run added at a
+	// path the project's list admits, which the pull request's status section
+	// names so a reader knows an unreadable file is in the diff (D993,
+	// prflow.go's binariesPart). It is read here, where the two readings are,
+	// and read once: the section is written later, and no part of it may go
+	// looking through the run's diff of its own.
+	r.binariesAdmitted = admittedBinaries(admitted, committedAdmitted)
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)

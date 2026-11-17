@@ -353,7 +353,7 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// and an arm whose record said succeeded while the champion's said failed
 	// would be a pair read as two runs of different work (D555). What this arm
 	// has no branch for is the push, not the answer.
-	strays, err := r.strayArtifacts(ctx)
+	strays, _, err := r.strayArtifacts(ctx)
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
@@ -368,7 +368,12 @@ func (r *run) shadowFinalize(ctx context.Context) error {
 	// and not returned as an error: the two arms' records have to say the same
 	// thing about the same work (D555), and the champion's own finalize refuses
 	// the run and carries on (runner.go).
-	added, err := r.committedBinaries(ctx)
+	//
+	// What the arm drops is the admitted half of the two answers, which the
+	// champion's status section reports and this arm has no surface for: it
+	// writes no pull request and no section (D554), so a list here would be
+	// text nothing reads.
+	added, _, err := r.committedBinaries(ctx)
 	unread := ""
 	if err != nil {
 		unread = r.redact(err.Error())
