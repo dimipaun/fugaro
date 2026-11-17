@@ -230,7 +230,11 @@ describe('the account screen', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Delete my account' }))
 
-    expect(fetch).toHaveBeenCalledWith('/api/account', expect.objectContaining({ method: 'DELETE' }))
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith('/api/account', expect.objectContaining({ method: 'DELETE' }))
+    })
+    // The sign-out follows the API's answer and never precedes it: signing out
+    // first would leave an account nobody is signed in to delete.
     await waitFor(() => {
       expect(auth.signOut).toHaveBeenCalled()
     })
