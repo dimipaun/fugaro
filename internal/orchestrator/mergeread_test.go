@@ -470,9 +470,10 @@ func TestBitbucketMergeReadGetsEachItem(t *testing.T) {
 
 // TestNoReadConsumerRecordsOneFact: an installation that can read no Bitbucket
 // pull request records one fact naming the repository and the fix, once per
-// repository and not once per cadence (G3, D2736). The items stay in `review`:
-// the merge is still what they wait for, and the fix is what makes a read
-// possible.
+// repository and not once per cadence (G3, D2736) — the fact is the record and
+// the node is where it lives, so a cadence that finds it there writes nothing
+// at all. The items stay in `review`: the merge is still what they wait for,
+// and the fix is what makes a read possible.
 func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
@@ -515,7 +516,12 @@ func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 
 	// The next cadence: the read is tried again — a consumer set since has to
 	// heal the repository without a restart — and the fact it already recorded
-	// is not written again.
+	// is not written again. The node's own revision is what says so: a fact is
+	// one key of one map, so writing the same sentence over it again would
+	// leave the count below at one all the same, and the write of a daemon
+	// whose memory is empty — a restarted one, or this cycle's — is what the
+	// node-side guard is for.
+	before := h.rev()
 	h.clock.at = now.Add(orchestrator.MergeReadEvery)
 	h.step()
 
@@ -524,5 +530,8 @@ func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 	}
 	if got := len(h.state().Facts); got != 1 {
 		t.Errorf("the node carries %d facts after a second cadence, and the fact is recorded once per repository", got)
+	}
+	if got := h.rev(); got != before {
+		t.Errorf("the node moved from revision %d to %d over a cadence whose only write would be the fact it already carries", before, got)
 	}
 }
