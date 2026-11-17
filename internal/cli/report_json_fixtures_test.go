@@ -308,6 +308,19 @@ var jsonCases = map[string]jsonCase{
 			return []string{"mailbox", "--once"}
 		},
 	},
+	// The sweeper's --json is one document for the run, and a different document
+	// from the consumer's pass: the mailbox it walked, what it deleted and what
+	// it kept. --dry-run is the write-free run of that same body, so this pin
+	// takes it: a prompt a day past D118's TTL is named among the deleted, which
+	// is what says the run reached its own work rather than a refusal before it.
+	"mailbox sweep": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := newMailboxFixture(t, "")
+			f.announce(t, "p-old", time.Now().Add(-73*time.Hour).UnixMilli())
+			return []string{"mailbox", "sweep", "--dry-run"}
+		},
+	},
 	"models ls": {
 		reads: true,
 		run: func(t *testing.T) []string {

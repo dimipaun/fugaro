@@ -187,12 +187,16 @@ func isPlanPath(p string) bool {
 // command and its tests are in the tree — and T6's runner left with them:
 // `internal/mailbox/action.go` is P6.7's port of `shared/confirm`'s rules, in
 // the tree and checked like every other cited path, while T6's remaining half
-// and T7's sweeper add to files that are already there rather than leaving an
-// entry behind. The remaining entries are the tasks still unbuilt — T7's
-// sweeper and T8's corpus — and each of them must stay absent until its own
-// task lands.
+// adds to files that are already there rather than leaving an entry behind. T7's
+// test file left the map next, and by another plan's hand: the pairing plan's T7
+// is mobile P6.13 whole — the store-side deletion, in this same file — and its
+// landing put the hidden command's stored-prompt rule in `internal/cli/mailbox.go`
+// and its tests in `internal/cli/mailbox_sweep_test.go`, so the test file is
+// checked like any other cited path while T7's own half (the local delete set
+// and the presence verdict `internal/mailbox/expiry.go` holds) is still to come.
+// The remaining entries are the tasks still unbuilt — T7's remaining half and
+// T8's corpus — and each of them must stay absent until its own task lands.
 var planWillCreate = map[string]string{
-	"internal/cli/mailbox_sweep_test.go":      "T7",
 	"internal/mailbox/expiry.go":              "T7 (the hidden sweeper; the plan names it there, not under T3 or T4)",
 	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
 	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
@@ -930,7 +934,11 @@ var planPhaseSixUnbuilt = map[string][]string{
 // more here for the same reason — `internal/cli/mailbox.go` runs the consumer's
 // inbound gate, its ledger and its refusal at the action seam, while neither
 // task's own file was in the tree — and T6 then landed P6.7's, so P6.7 moved up
-// to the merged list and only P6.13 is left half-built. Both halves of an entry
+// to the merged list and only P6.13 is left half-built, in the narrowest sense:
+// the pairing plan's T7 landed its store-side deletion in
+// `internal/cli/mailbox.go`, so what the `unbuilt` half has left to excuse is
+// this plan's own T7 — the local delete set and the reported presence verdict.
+// Both halves of an entry
 // are held to the tree here: the sentence a reader plans against is a fact
 // about this branch rather than a memory of one.
 var planPhaseSixPartial = map[string]struct {
