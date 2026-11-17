@@ -425,8 +425,22 @@ func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName str
 		// config.EffectiveBaseBranch's answer, the one launchBaseBranch hands
 		// every launch, and never the empty string an entry that names none
 		// holds.
-		next.Workflows = reposViewWorkflowNames(*plan.viewRow)
+		//
+		// A row carries no workflows at all where this machine's config has no
+		// key for the repository, which is the row a concrete allow-list entry
+		// and a pattern admission produce (reposViewNamed inserts it) and the
+		// state every freshly checked-out repository of a project with a
+		// wildcard list is in. The selection is then the checkout here's, the
+		// same source the row itself reads it from behind a key
+		// (reposViewWorkflowDefs): taking the row's emptiness for the answer
+		// would refuse that checkout with the sentence written for one that
+		// states none, about a file that states them.
 		next.BaseBranch = plan.viewRow.BaseBranch
+		if names := reposViewWorkflowNames(*plan.viewRow); len(names) > 0 {
+			next.Workflows = names
+		} else if cfg != nil {
+			next.Workflows = slices.Sorted(maps.Keys(cfg.Workflows))
+		}
 	case cfg != nil:
 		next.Workflows = slices.Sorted(maps.Keys(cfg.Workflows))
 	}

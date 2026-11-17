@@ -336,6 +336,56 @@ func TestProjectReposAddHalfEnrolledConverges(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddConvergesARepositoryTheAllowListAloneAdmits is the half
+// TestProjectReposAddHalfEnrolledConverges does not cover, and the state every
+// newly checked-out repository of a project with a wildcard allow-list is in:
+// the published node admits the repository — by its own concrete entry, or by a
+// pattern that matches it — and this machine's config has no key for it.
+//
+// The shared view draws a row for such a repository (repos_view.go's
+// reposViewNamed inserts the row a published admission stands for), and that row
+// carries no workflows: a row's workflow names come from the checkout only where
+// this machine's config has a key (reposViewWorkflowDefs returns none for a row
+// whose Local.Key is ""), which is exactly the row a concrete allow-list entry
+// and a pattern admission produce. A converge that took the row's names as the
+// entry's — unconditionally, as the first branch of reposEnrolmentEntry's switch
+// did — would then refuse a checkout that states them with the sentence written
+// for a checkout that states none ("the checkout here at <path> states none"),
+// which is a false statement about the file it just read, and would block the
+// very command `doctor` and `project repos ls` name as the remedy.
+func TestProjectReposAddConvergesARepositoryTheAllowListAloneAdmits(t *testing.T) {
+	for _, tc := range []struct{ name, admit string }{
+		{"its own entry", enrolEntry},
+		{"a pattern admitting it", "github/owner/*"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := enrolRig(t)
+			node := addPolicyNode()
+			node["allow_repos"] = []string{tc.admit}
+			r.db.Set(projectpolicy.PathShared(), node)
+
+			out, errOut, err := r.enrol(t, enrolRepo)
+			if err != nil {
+				t.Fatalf("project repos add %s, admitted by %s in the published allow-list and unknown to this machine's config: %v\nstdout:\n%s\nstderr:\n%s",
+					enrolRepo, tc.admit, err, out, errOut)
+			}
+			entry, ok := r.addLocal(t).Repos[enrolRepo]
+			if !ok {
+				t.Fatalf("no %s entry was written: %v\n%s", enrolRepo, slices.Sorted(maps.Keys(r.addLocal(t).Repos)), out)
+			}
+			if !slices.Equal(entry.Workflows, []string{"web"}) {
+				t.Errorf("repos.%s.workflows = %v, want the selection the checkout here states ([web])", enrolRepo, entry.Workflows)
+			}
+			if entry.BaseBranch == "" {
+				t.Errorf("repos.%s names no base branch: the entry every launch resolves a branch from needs one", enrolRepo)
+			}
+			if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) || !slices.Contains(p.AllowRepos, tc.admit) {
+				t.Errorf("allow_repos = %v, want %s on it beside the admission it converged from (%s)", p.AllowRepos, enrolEntry, tc.admit)
+			}
+		})
+	}
+}
+
 // TestProjectReposAddAllowListOnlyWritesOnlyTheList is the flag that keeps the
 // behaviour the command had before RE1: one entry in the published list and
 // nothing else.
