@@ -2,13 +2,23 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/estimate"
 	"github.com/dimipaun/fugaro/internal/plan"
+	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // planGraphFixture writes a plan and its graph artifact into a directory of the
@@ -573,5 +583,114 @@ func TestPlanGraphRefusesADoneSetItCannotPlace(t *testing.T) {
 				t.Errorf("refusal = %q, want it to say %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// planTieredDoc is the fixture the estimate tests read: three tasks in a chain,
+// each a size the planner wrote itself, two of them carrying the tier a run is
+// launched under and the third leaving it out -- the three bases a task's figure
+// can come from (D2711, D2722), with the sizes deliberately unlike the tiers so
+// a figure drawn from a size rather than a tier fails the pinned line.
+const planTieredDoc = `{
+  "schema_version": 3,
+  "plan": "docs/plans/tiered.md",
+  "nodes": [
+    {"id": "A", "title": "the base", "tier": "small", "size": 2, "run": null, "version": "0.12",
+     "footprint": {"prediction": true, "paths": ["internal/a/**"]}},
+    {"id": "B", "title": "the middle", "tier": "medium", "size": 3, "run": null, "version": "0.12",
+     "footprint": {"prediction": true, "paths": ["internal/b/**"]}},
+    {"id": "C", "title": "the end", "size": 1, "run": null, "version": "0.13",
+     "footprint": {"prediction": true, "paths": ["internal/c/**"]}}
+  ],
+  "edges": [
+    {"task": "B", "needs": "A", "reason": "B reads what A writes"},
+    {"task": "C", "needs": "B", "reason": "C reads what B writes"}
+  ]
+}`
+
+// TestPlanGraphMakesNoNetworkCall: the read answers when there is no
+// installation, no project and no credential at all -- the machine every
+// repository starts on, and the one the console spawns the read from with
+// nothing selected -- and it spawns nothing that could reach the network
+// (D2714 as amended). Mutation caught: opening the runs bucket here to read the
+// history rather than reading the cache this machine already has.
+func TestPlanGraphMakesNoNetworkCall(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	gh := testutil.FakeCommand(t, "gh", "exit 1\n")
+	gcloud := testutil.FakeCommand(t, "gcloud", "exit 1\n")
+	_, planPath := planGraphFixture(t, planTieredDoc)
+
+	text, _, err := execute(t, "plan", "graph", "--plan", planPath)
+	if err != nil {
+		t.Fatalf("a checkout with no installation: %v", err)
+	}
+	want := "ready in 105–420 min, no history yet for 3 tasks (3 tasks; seeds for 2, assumed for 1; from the seeds: no history is cached on this machine yet)"
+	if !strings.Contains(text, want) {
+		t.Errorf("the estimate line is not %q:\n%s", want, text)
+	}
+	for name, calls := range map[string]string{"gh": gh, "gcloud": gcloud} {
+		if _, err := os.Stat(calls); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s ran during a local read: %v", name, err)
+		}
+	}
+}
+
+// TestPlanGraphUsesCacheThenSeeds: the offline read answers from the history
+// table the network-side read cached, and from the seeds where the cache holds
+// none -- a machine that has cached nothing, and a tier no run of it has paid
+// for, are the same answer with a different sentence (D2714 as amended), and
+// --done recalibrates what is left (D2722). Mutation caught: reading the cache
+// and ignoring it, or estimating a done task's minutes as if it were still
+// ahead of the plan.
+func TestPlanGraphUsesCacheThenSeeds(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	_, planPath := planGraphFixture(t, planTieredDoc)
+	stamp := time.Date(2026, 11, 17, 9, 0, 0, 0, time.UTC)
+
+	text, _, err := execute(t, "plan", "graph", "--plan", planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "ready in 105–420 min, no history yet for 3 tasks (3 tasks; seeds for 2, assumed for 1; from the seeds: no history is cached on this machine yet)"; !strings.Contains(text, want) {
+		t.Errorf("with no cache the line is not %q:\n%s", want, text)
+	}
+
+	// The table `plan status` writes, written here through the same path that
+	// command uses: five runs of the small tier have paid for a task at it.
+	path, err := estimate.CachePath(os.Getenv, runtime.GOOS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	end := start.Add(30 * time.Minute)
+	var records []runstore.Record
+	for i := range estimate.MinRuns {
+		records = append(records, runstore.Record{
+			Version: 1, RunID: fmt.Sprintf("20261116-09000%d-aaaa", i), Repo: "acme/app",
+			Status: runstore.StatusSucceeded, StartedAt: start, FinishedAt: &end,
+			Tier: &runstore.TierRecord{Tier: tier.Small}, Rigor: &runstore.RigorRecord{Mode: rigor.Pro},
+			Cost: &runstore.Cost{TotalUSD: 2},
+		})
+	}
+	if err := estimate.Build(records, stamp).WriteCache(path); err != nil {
+		t.Fatal(err)
+	}
+
+	text, _, err = execute(t, "plan", "graph", "--plan", planPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ready in 120–390 min, no history yet for 2 tasks (3 tasks; history for 1, seeds for 1, assumed for 1; from the cached history of 2026-11-17 09:00 UTC)"
+	if !strings.Contains(text, want) {
+		t.Errorf("with a cache the line is not %q:\n%s", want, text)
+	}
+
+	text, _, err = execute(t, "plan", "graph", "--plan", planPath, "--done", "A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = "ready in 90–360 min, no history yet for 3 tasks (3 tasks; history for 1, seeds for 1, assumed for 1; from the cached history of 2026-11-17 09:00 UTC)"
+	if !strings.Contains(text, want) {
+		t.Errorf("with A done the line is not %q:\n%s", want, text)
 	}
 }
