@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -255,6 +257,78 @@ func TestProjectReposAddSecondRunChangesNothing(t *testing.T) {
 	}
 }
 
+// TestProjectReposAddLeavesAPlainUpdateNothingToWrite is D2416, pinned with a
+// fixture rather than with prose: `add` writes only what `update` re-derives,
+// runs the same stages in the same order, and a plain `fugaro update` over the
+// installation it left therefore writes nothing — a second deployment path, or
+// a door that told the operator to run `update` afterwards, would show up here
+// as one of the three documents moving.
+//
+// The three are the whole of what an enrolment can leave behind: the local
+// config (the settings writer's), the published node (the policy stage's) and
+// the job set the Installation stage deployed (the installation's own
+// variables). The second `add` of TestProjectReposAddSecondRunChangesNothing is
+// not this question — a command that borrowed update's stages inherits update's
+// own re-marshal of the file — so this fixture asks the other door, the one the
+// HARD RULE makes the whole upgrade.
+func TestProjectReposAddLeavesAPlainUpdateNothingToWrite(t *testing.T) {
+	r := enrolRig(t)
+	if _, _, err := r.enrol(t, enrolRepo); err != nil {
+		t.Fatal(err)
+	}
+	before, node, jobs := r.addLocal(t), r.nodeText(t), r.projectJobs(t)
+	if len(jobs) == 0 {
+		t.Fatalf("the enrolment deployed no job at all, so this test has no job set to watch")
+	}
+	// What the enrolment leaves for the person — the repository's own
+	// credential, which F11's shape is about — is stored here as `project sync`
+	// stores it, because an update that stopped on that one step would report
+	// the step it leaves rather than the three documents this test is about.
+	slug := mustSlug("github", enrolRepo)
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{config.GitHubAppKeySecret, "claude-oauth-token"} {
+		r.sm.Seed(gcp.SecretID(slug, name), map[string]string{
+			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name,
+		}, []byte(addToken()))
+	}
+
+	out, errOut, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Fatalf("a plain fugaro update over the installation the enrolment converged: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	// The local config is compared as the config it decodes to, exactly as
+	// TestProjectReposAddSecondRunChangesNothing compares it and for the same
+	// reason: the ONE thing that moves in the file is not content — the
+	// installation stage re-marshals it (writeConfig), and the
+	// policy_generation the enrolment's publish appended through yamledit moves
+	// to the position the writer puts it in — so the second update below is
+	// what pins the bytes, and this pins what the file says.
+	if got := r.addLocal(t); !reflect.DeepEqual(got, before) {
+		t.Errorf("the update after the enrolment changed the local config:\n--- before\n%+v\n--- after\n%+v\nstdout:\n%s", before, got, out)
+	}
+	if got := r.nodeText(t); got != node {
+		t.Errorf("the update after the enrolment rewrote the published node:\n--- before\n%s\n--- after\n%s\nstdout:\n%s", node, got, out)
+	}
+	if got := r.projectJobs(t); !reflect.DeepEqual(got, jobs) {
+		t.Errorf("the update after the enrolment wrote a job set of its own:\n--- before\n%v\n--- after\n%v\nstdout:\n%s",
+			slices.Sorted(maps.Keys(jobs)), slices.Sorted(maps.Keys(got)), out)
+	}
+
+	// Settled: the file the first update left is the file the second one
+	// leaves, so the move above happened once and nothing here re-writes what
+	// the enrolment wrote.
+	settled := r.cfgText(t)
+	if _, errOut, err := executeStdin(t, "", "update"); err != nil {
+		t.Fatalf("the second plain fugaro update: %v\nstderr:\n%s", err, errOut)
+	}
+	if got := r.cfgText(t); got != settled {
+		t.Errorf("the second update rewrote the local config:\n--- before\n%s\n--- after\n%s", settled, got)
+	}
+}
+
 // TestProjectReposAddPublishesWhenTheFileRecordsTheGeneration is the state
 // every machine that has published a policy before is in — the file records the
 // generation of the node it was written from — and the one no fixture had.
@@ -376,8 +450,13 @@ func TestProjectReposAddConvergesARepositoryTheAllowListAloneAdmits(t *testing.T
 			if !slices.Equal(entry.Workflows, []string{"web"}) {
 				t.Errorf("repos.%s.workflows = %v, want the selection the checkout here states ([web])", enrolRepo, entry.Workflows)
 			}
-			if entry.BaseBranch == "" {
-				t.Errorf("repos.%s names no base branch: the entry every launch resolves a branch from needs one", enrolRepo)
+			// The entry names the branch the checkout here states, and this
+			// checkout states none: base_branch in the entry outranks the
+			// project's own, so a value written here would be one nobody
+			// stated, pinning the repository to it
+			// (TestProjectReposAddWritesNoBranchNobodyStated).
+			if entry.BaseBranch != "" {
+				t.Errorf("repos.%s names base_branch %q where the checkout here names none", enrolRepo, entry.BaseBranch)
 			}
 			if p := r.policy(t); !slices.Contains(p.AllowRepos, enrolEntry) || !slices.Contains(p.AllowRepos, tc.admit) {
 				t.Errorf("allow_repos = %v, want %s on it beside the admission it converged from (%s)", p.AllowRepos, enrolEntry, tc.admit)
@@ -787,6 +866,54 @@ func TestProjectReposAddHasNoYesFlag(t *testing.T) {
 	}
 	if got := r.cfgText(t); got != before {
 		t.Errorf("the refused run wrote the local config:\n%s", got)
+	}
+}
+
+// TestProjectReposAddWritesNoBranchNobodyStated is the entry an enrolment may
+// not write: base_branch in a repos: entry outranks the project's own value
+// (config.EffectiveBaseBranch resolves the repository's entry above the
+// project's), so an entry that carried the branch a resolution happens to
+// produce — the checkout's config resolved, its default main filled in — would
+// pin the repository to the branch the project uses today, and every later
+// change to the project's own branch would never reach it. A run of that
+// repository would then start from a branch nobody named.
+//
+// The fixture is the state that shows it: the project's base branch is develop,
+// the checkout here names none, and this repository is admitted by no published
+// entry and held by no config key — the state every `add` of a new repository
+// is in, and the one where no row of the shared view stands for it and the
+// checkout's resolved config is the only thing that could name a branch.
+func TestProjectReposAddWritesNoBranchNobodyStated(t *testing.T) {
+	local := strings.Replace(enrolRigLocal, "user: test@example.com\n", "user: test@example.com\nbase_branch: develop\n", 1)
+	r := enrolRigOver(t, local)
+	if got := r.addLocal(t).BaseBranch; got != "develop" {
+		t.Fatalf("the fixture's project base branch is %q, want develop", got)
+	}
+
+	out, errOut, err := r.enrol(t, enrolRepo)
+	if err != nil {
+		t.Fatalf("project repos add %s: %v\nstdout:\n%s\nstderr:\n%s", enrolRepo, err, out, errOut)
+	}
+	entry, ok := r.addLocal(t).Repos[enrolRepo]
+	if !ok {
+		t.Fatalf("the converge wrote no repos entry for %s:\n%s", enrolRepo, r.cfgText(t))
+	}
+	if entry.BaseBranch != "" {
+		t.Errorf("repos.%s names base_branch %q where the checkout here names none: the entry outranks the project's base branch, so the repository is pinned to %q and the project's develop never reaches it", enrolRepo, entry.BaseBranch, entry.BaseBranch)
+	}
+
+	// The view, after the converge: the branch this repository's runs start
+	// from is the project's, as it was before the enrolment wrote its entry.
+	db, err := newBudgetClient(t.Context(), r.db.URL, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := newReposView(t.Context(), r.addLocal(t), db, enrolEntry)
+	if err != nil {
+		t.Fatalf("the view the listings print: %v", err)
+	}
+	if row := viewRow(t, view, enrolEntry); row.BaseBranch != "develop" {
+		t.Errorf("the view prints base_branch %q for %s after the converge, want the project's own develop: the enrolment moved the branch this repository's runs start from\nstdout:\n%s", row.BaseBranch, enrolEntry, out)
 	}
 }
 

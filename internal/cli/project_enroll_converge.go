@@ -407,24 +407,26 @@ func originHost(origin string) string {
 // reposEnrolmentEntry is the `repos:` entry the file must hold, and the line
 // the plan prints for it.
 //
-// The workflow selection and the branch come from the shared view's row where
-// the view draws one, and from the checkout's own fugaro.yaml otherwise: the
-// selection is the repository's own statement, and a converge that guessed one
-// would write a selection no run reads. The rest is read from the project — the
-// App ID the project's other GitHub repositories are onboarded with, and the
-// account they name — or carried as the entry already has it.
+// The workflow selection comes from the shared view's row where the view draws
+// one, and from the checkout's own fugaro.yaml otherwise: the selection is the
+// repository's own statement, and a converge that guessed one would write a
+// selection no run reads. The base branch is written only where that same file
+// states one (checkoutBaseBranch, the layer the view itself reads it from): any
+// other value is config.EffectiveBaseBranch's answer rather than anybody's
+// statement — the project's branch, or the default main — and the entry layer
+// sits above the project's, so an entry that kept one would pin the repository
+// to the branch the project happens to use today, and no later project-level
+// change would reach it. The rest is read from the project — the App ID the
+// project's other GitHub repositories are onboarded with, and the account they
+// name — or carried as the entry already has it.
 func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName string, plan reposEnrolment, provider string, cfg *config.Config) (localcfg.Repo, string, error) {
 	next := plan.entryNow
 	next.Provider = provider
 	switch {
 	case plan.viewRow != nil:
-		// The row's own two facts, so the entry this step writes is the entry a
-		// listing prints for the repository: its workflows — the checkout's own
-		// selection where this machine has one, this config's names otherwise —
-		// and the branch a run of it starts from, which is
-		// config.EffectiveBaseBranch's answer, the one launchBaseBranch hands
-		// every launch, and never the empty string an entry that names none
-		// holds.
+		// The row's own selection, so the entry this step writes is the entry a
+		// listing prints for the repository: the checkout's own where this
+		// machine has one, this config's names otherwise.
 		//
 		// A row carries no workflows at all where this machine's config has no
 		// key for the repository, which is the row a concrete allow-list entry
@@ -435,7 +437,6 @@ func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName str
 		// (reposViewWorkflowDefs): taking the row's emptiness for the answer
 		// would refuse that checkout with the sentence written for one that
 		// states none, about a file that states them.
-		next.BaseBranch = plan.viewRow.BaseBranch
 		if names := reposViewWorkflowNames(*plan.viewRow); len(names) > 0 {
 			next.Workflows = names
 		} else if cfg != nil {
@@ -459,8 +460,14 @@ func reposEnrolmentEntry(ctx context.Context, lc *localcfg.Config, ownerName str
 		return next, "", userErr("cannot read %s's workflow list, and nothing here guesses one: it is the repository's own selection (fugaro.yaml, workflows:), so %s. Write it with 'fugaro settings set repos.%s.workflows' and run this again, or write the allow-list entry and nothing else with `fugaro project repos add %s --allow-list-only`",
 			pluginwire.Printable(ownerName), where, ownerName, pluginwire.Printable(plan.canonical))
 	}
-	if next.BaseBranch == "" && cfg != nil {
-		next.BaseBranch = cfg.Git.BaseBranch
+	// The branch, from the file's own text and from nowhere else. A checkout
+	// that names none leaves the entry as it stands, and an entry that names
+	// no branch is one the project's value reaches — now, and at every later
+	// change to it. checkoutBaseBranch is the read the view's own row makes of
+	// the same file, so the entry written here and the row a listing prints
+	// come from one derivation.
+	if branch, fileSets := checkoutBaseBranch(ctx, ownerName); fileSets {
+		next.BaseBranch = branch
 	}
 	if next.GitHubAppID == "" && provider == "github" {
 		appID, ok := projectGitHubAppID(lc, ownerName)
