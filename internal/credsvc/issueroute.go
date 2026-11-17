@@ -220,13 +220,20 @@ func (t *issueTokenSource) Token(ctx context.Context, minValid time.Duration) (s
 // has no read-only issue permission beside it — and `metadata: read` is the
 // noun every installation token carries.
 //
+// The set is declared in the github package and required of the App's
+// installation there (github.IssueTokenPermissions, unioned into
+// RequiredPermissions), because the mint asks GitHub for what the installation
+// holds: the owner's ruling of 2026-11-17 is that the App grants `issues:
+// write`, so `fugaro doctor` and init name a missing grant before a call
+// reaches this route, and the two spellings cannot drift apart.
+//
 // It is deliberately NOT the label route's set: `pull_requests: write` cannot
 // touch an issue at all, and a token that carried both would be one credential
 // serving two routes' acts (F39). There is no contents noun, which the run's
 // own set carries and no act here needs. The set is a constant of this service
 // and not a field of the call, which is what makes a caller unable to widen it.
 func issueTokenPermissions() map[string]string {
-	return map[string]string{"issues": "write", "metadata": "read"}
+	return github.IssueTokenPermissions()
 }
 
 // readIssueCall reads an issue call's body out of the call the handler already

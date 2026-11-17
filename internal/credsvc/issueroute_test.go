@@ -963,6 +963,18 @@ func TestIssueRouteAuditsEveryCall(t *testing.T) {
 			code: StatusUnverified, status: ErrorUnverifiedRunIdentity,
 		},
 		{
+			// The other half of the same refusal: a daemon names no job
+			// either, and one that named only this is turned away under the
+			// same name, with the job sentence rather than the run one.
+			name: "the daemon naming a run job",
+			call: func(t *testing.T, s *svc) (*http.Response, []byte) {
+				return s.issueRead(t, creds.IssueActionList, 0, func(r *http.Request) {
+					r.Header.Set(HeaderRunJob, "fugaro-a-job")
+				})
+			},
+			code: StatusUnverified, status: ErrorUnverifiedRunIdentity,
+		},
+		{
 			name:   "the operator's stop switch",
 			mutate: func(_ *testing.T, s *svc, _ *Config, _ *issueFake) { s.kills.global = true },
 			call:   func(t *testing.T, s *svc) (*http.Response, []byte) { return s.issueRead(t, creds.IssueActionList, 0) },
