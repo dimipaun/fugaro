@@ -259,7 +259,9 @@ type runOptions struct {
 	// the follow-up comparison reads it back. Empty (the default) is no
 	// title at all: the task prompt's first line is the title, exactly as
 	// before the flag existed. A follow-up (--pr) inherits its previous
-	// run's title unless this is given (newFollowUpSpec).
+	// run's title unless this is given, and, with no title and no task of
+	// its own, takes the title of the pull request it continues
+	// (newFollowUpSpec, followUpPRTitle).
 	title string
 	// token is the named Claude account (docs/design/named-oauth-tokens.md)
 	// this run uses: fugaro run --token. A follow-up (--pr) inherits its
@@ -426,8 +428,10 @@ func newRunCmd() *cobra.Command {
 			"heading) of the pull request the run opens when the agent writes no pr.md of\n" +
 			"its own. Without it the run is named by the task's first line, so briefs that\n" +
 			"start with the same preamble all read alike. A follow-up (--pr) keeps its run's\n" +
-			"title unless --title is given, and --retry takes none (the stored task keeps its\n" +
-			"own).\n\n" +
+			"title unless --title is given, and with neither a title nor a task of its own it\n" +
+			"takes the title of the pull request it continues, read from the code host (a host\n" +
+			"that cannot be read leaves the run named by its own instructions). A task of its\n" +
+			"own always wins, and --retry takes none (the stored task keeps its own).\n\n" +
 			"--plan-task PLAN/TASK records which task of which plan this run works on, so\n" +
 			"the console's graph can join the run to that node. One plan and one task id,\n" +
 			"as the plan's own graph spells them, at most 128 bytes; what the run does is\n" +
@@ -475,7 +479,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.workflow, "workflow", "", "workflow to run (default: the repo's only workflow)")
 	f.StringVar(&o.runID, "run-id", "", "run ID to use; repeating one reports its launch instead of starting another")
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro runs ls")
-	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given")
+	f.StringVar(&o.title, "title", "", "the run's title, one line: what fugaro watch and runs ls list the run by, and the pull request's title unless the agent wrote its own pr.md (default: the task's first line); a follow-up (--pr) keeps its run's title unless this is given, and with no title and no task of its own it takes the pull request's title instead")
 	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway)")
 	f.BoolVar(&o.allowDuplicate, "allow-duplicate", false, "launch even though the plan task named by --plan-task is already being worked on: a run of it in flight, or a pull request a run of it left behind. It turns that one refusal off, for a second attempt that is deliberate (the redundant attempts of a hard task); it records nothing, and with no --plan-task there is nothing to duplicate and it changes nothing")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
@@ -2083,9 +2087,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// The job title's own gate, for the same reason as the two
 		// above: task.Parse decodes with DisallowUnknownFields, so a
 		// runner older than titlesSince refuses a task carrying a title
-		// outright. A launch with no --title carries no such field (the
-		// spec is byte-identical to what the previous release wrote) and
-		// is never gated: the check is the field's, not the flag's.
+		// outright. A launch with no title at all carries no such field
+		// (the spec is byte-identical to what the previous release wrote)
+		// and is never gated: the check is the field's, not the flag's —
+		// which is also why a follow-up that took the title of the pull
+		// request it continues is gated here like any other titled launch,
+		// without a line of its own.
 		if spec.Title != "" {
 			if err := checkImageSince(ctx, env, slug, spec, kind, titlesSince,
 				"a job title (--title, kept by --pr follow-ups and --retry)", "the job title", "", warn); err != nil {
@@ -2573,7 +2580,10 @@ func ownerRuledText(cmd *cobra.Command, value string) (string, error) {
 //
 // The flag's absence is not a title, and leaves o.title empty — every
 // surface then falls back to the task's first line, exactly as before the
-// flag existed. Its PRESENCE with nothing in it is a mistake and is
+// flag existed (a follow-up that also has no task of its own takes the pull
+// request's title instead, which is followUpPRTitle's business and not this
+// function's: the flag's value is the one thing here that a person typed).
+// Its PRESENCE with nothing in it is a mistake and is
 // refused: --title "" would otherwise be silently the same as no --title at
 // all, which is the one reading nobody meant. The emptiness check runs
 // again on the sanitised value, because the characters safetext.Field drops
