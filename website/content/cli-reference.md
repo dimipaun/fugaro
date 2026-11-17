@@ -9348,8 +9348,9 @@ selects that project.
 
 Before the first billable image build of a GitHub repository, setup asks GitHub
 (as the App, with the App's key read from Secret Manager into memory only)
-whether the App is installed on the repository with the permissions runs ask
-for (Contents: Write, Pull requests: Write, Issues: Read, Metadata: Read): if
+whether the App is installed on the repository with the permissions Fugaro
+requires (Contents: Write, Pull requests: Write, Issues: Read and write,
+Metadata: Read): if
 not, the build is left for you with each missing permission and its fix and
 nothing is billed. A repository the local config does not list is asked about
 first, at the start, before any plan.

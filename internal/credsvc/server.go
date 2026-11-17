@@ -131,6 +131,19 @@ func routeAct(path string) (purpose, credential string) {
 		// run's mint or a person's read, even though all four are signed with the
 		// one key.
 		return PurposeLabel, config.GitHubAppKeySecret
+	case IssuePath:
+		// The issue route issues from the same credential the four routes above
+		// issue from — the App key, which is what the service signs the token it
+		// performs the issue act with — and names it here for their reason. The
+		// label route's credential NAME is the whole of it here and not the
+		// label route's TOKEN: this route mints its own set (`issues: write`,
+		// D2718), and it is the purpose that tells the two daemon acts apart
+		// (D2718): a daemon's issue call is not its label call even though both
+		// are signed with the one key. This route has one host, so the credential
+		// is its own answer for every line of it and never the read consumer's,
+		// which the label route names for the one act a Bitbucket repository
+		// answers.
+		return PurposeIssue, config.GitHubAppKeySecret
 	case SlipPath:
 		// A grant's line names the launcher and no credential: the act is a
 		// request for a run's grant and not an issuance, so there is no name of
@@ -237,7 +250,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath:
+	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath:
 		return true
 	}
 	return false
@@ -783,6 +796,13 @@ type Server struct {
 	// than the store because a token this route mints never leaves the process
 	// that mints it.
 	labels *labelState
+	// issues is the issue route's own state (D2718, B3): the installation
+	// tokens IT has minted and the two rate windows it counts its acts in. It
+	// is a value of its own and not a second use of labels, because the two
+	// routes' tokens are minted at two different permission sets for the same
+	// repository and App — one cache keyed by those two facts alone would serve
+	// one route's act with the other's token (F39).
+	issues *issueState
 }
 
 // NewServer validates cfg and returns the service.
@@ -903,7 +923,7 @@ func NewServer(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now), labels: newLabelState(cfg.Now)}
+	s := &Server{cfg: cfg, log: cfg.Log, now: cfg.Now, jobs: make(map[string]JobAccount, len(cfg.JobAccounts)), review: make(map[string]ReviewJobAccount, len(cfg.ReviewAccounts)), shared: make(map[string]SharedJobAccount, len(cfg.SharedAccounts)), audit: audit, slips: newSlipCache(), mergeMints: newMergeMintRate(cfg.Now), labels: newLabelState(cfg.Now), issues: newIssueState(cfg.Now)}
 	for _, ja := range cfg.JobAccounts {
 		if ja.Email == "" || ja.Slug == "" || ja.Repo == "" {
 			return nil, errors.New("credsvc: a job account with no email, slug or repository binds nothing")
@@ -1029,7 +1049,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+" and "+BuildTokenPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+" and "+BuildTokenPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -1092,6 +1112,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// (readBuildRequest below), and the run-identity headers are refused by
 		// name inside the handler.
 		s.buildToken(ctx, w, r)
+		return
+	}
+	if r.URL.Path == IssuePath {
+		// The eighth route answered before the shared parse, and the orchestrator
+		// daemon's reason is the merge mint's and the label route's (D2718): the
+		// daemon is not a run of this installation and holds no run identity, so
+		// RequestFromHTTP would refuse the call — for the missing identity headers
+		// — before the daemon class ever read the token. What replaces the parse
+		// is this route's own read of the call, and the run-identity headers are
+		// refused by name inside the handler.
+		s.issueRoute(ctx, w, r)
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, BitbucketProxyPrefix) && r.Header.Get(HeaderBuild) != "" {

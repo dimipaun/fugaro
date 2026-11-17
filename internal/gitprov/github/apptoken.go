@@ -92,6 +92,23 @@ var tokenPermissions = map[string]string{
 	"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read",
 }
 
+// issueTokenPermissions is what the credentials service's issue route asks for
+// when it performs an issue act itself (B3 of
+// docs/orchestrator-graph-estimates/implementation-plan.md, D2718): the issues
+// it lists and reads and the one it opens, and metadata: read, the noun every
+// installation token carries. GitHub has no issue permission but the one the
+// creation needs — a repository's open issues are read with `issues: write`
+// exactly as they are written with it — so the one noun covers all three acts.
+//
+// It is the only set here that no run's token carries: tokenPermissions keeps
+// the read a run was already given, and this write belongs to the service,
+// which performs the act and hands no token over, so it is never in a job's
+// container. The App's installation must grant it all the same, and that is
+// what makes RequiredPermissions union this set in (installcheck.go): the
+// service mints from the installation, and GitHub refuses a mint that asks for
+// a permission the installation does not hold.
+var issueTokenPermissions = map[string]string{"issues": "write", "metadata": "read"}
+
 // buildTokenPermissions is what an image build's token asks for: it only
 // clones the repository.
 var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
@@ -174,6 +191,14 @@ var settleTokenPermissions = map[string]string{"pull_requests": "write", "metada
 // asks for this and adds nothing, so the two paths cannot drift into asking
 // GitHub for different reaches on the same run.
 func RunTokenPermissions() map[string]string { return maps.Clone(tokenPermissions) }
+
+// IssueTokenPermissions are the permissions of the credentials service's issue
+// route, a copy the caller may keep. It is the exported spelling of
+// issueTokenPermissions, so the set the route asks GitHub for and the set
+// RequiredPermissions holds the installation to cannot drift apart: the service
+// mints what `fugaro doctor` requires, and an installation that grants only
+// `issues: read` is a missing grant rather than a refusal at the first issue.
+func IssueTokenPermissions() map[string]string { return maps.Clone(issueTokenPermissions) }
 
 // reviewTokenPermissions is what a review job's installation token asks for
 // (CSR1 of docs/cloud-senior-review/implementation-plan.md, D883): the head it
