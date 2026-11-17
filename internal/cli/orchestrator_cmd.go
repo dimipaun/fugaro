@@ -123,6 +123,7 @@ func newOrchestratorCmd() *cobra.Command {
 			"is asked at your own login level.",
 	}
 	cmd.AddCommand(newOrchestratorLsCmd(), newOrchestratorStateCmd(), newOrchestratorEventsCmd(), newOrchestratorPatchCmd(),
-		newOrchestratorImportCmd(), newOrchestratorRunCmd(), newOrchestratorInstallCmd(), newOrchestratorUninstallCmd(), newOrchestratorStatusCmd())
+		newOrchestratorImportCmd(), newOrchestratorRunCmd(), newOrchestratorInstallCmd(), newOrchestratorUninstallCmd(), newOrchestratorStatusCmd(),
+		newOrchestratorServeCmd())
 	return cmd
 }
