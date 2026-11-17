@@ -1155,7 +1155,7 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	// the subscription of a licence bought after D2196 names no key at all until
 	// a seat change or a renewal mints one.
 	subscription := e.Subscription
-	keys, err := s.licenceKeys(ctx, entitlement.ID)
+	keys, err := s.bindingKeys(ctx, entitlement.ID)
 	if err != nil {
 		return err
 	}
