@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // The holder is this test binary, re-executed with lockHelperEnv set: a real
@@ -27,6 +29,16 @@ func TestMain(m *testing.M) {
 		runWorkdirLockHelper(mode)
 		return
 	}
+	// D2313's door (config.RepoSecretsOff), opened for every other test in this
+	// package exactly as internal/cli's TestMain opens it. A repository's
+	// `secrets:` is disabled for now, so this package mounts none of it and
+	// lists no step for one; the tests of the machinery the ruling keeps — a
+	// repository's own container, its mount, its place in Readiness's missing
+	// list and in SecretCommands' steps, all of it still in the tree because
+	// the ruling keeps the code — drive it with the door open, exactly as they
+	// did before the ruling. secrets_disabled_test.go is the test of the ruling
+	// itself, and it turns the door on again for its own run.
+	config.RepoSecretsOff = false
 	os.Exit(m.Run())
 }
 

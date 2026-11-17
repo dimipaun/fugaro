@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -143,8 +144,13 @@ func TestAccountsLsDefaultFirstThenNamedSorted(t *testing.T) {
 // (its own Short) — and printing it beside the accounts that are leaves the
 // operator with a name whose only two answers are a refusal and a job that
 // mounts nothing. Its declaration is the account's entry, written by
-// `accounts add --type` and bounded by allow_data_to; what lists the credential
-// as what it is, with its type and the half that serves it, is MC24's.
+// `accounts add --type` and bounded by allow_data_to.
+//
+// The two readings are one output and may not be confused for one another
+// (MC24): the name is not an account line, and it IS a line of the credentials
+// block, which says what it is — its type and the half that serves it
+// (TestAccountsLsNamesTheServingPath) — so leaving the name out of the accounts
+// costs the operator nothing.
 func TestAccountsLsLeavesAKeyCredentialOut(t *testing.T) {
 	f := newCloudFixture(t)
 	f.appendConfig(t, claudeAccountsConfig+"credentials:\n  - { name: acme-overflow, type: openrouter }\n")
@@ -164,8 +170,9 @@ func TestAccountsLsLeavesAKeyCredentialOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(text, "acme-overflow") {
-		t.Errorf("the text output names the key credential:\n%s", text)
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if got := []string{"default", "acme-personal", "acme-overflow (openrouter, served by a run's own gateway)"}; !slices.Equal(lines, got) {
+		t.Errorf("the text output is %v, want %v: the account names alone, then the credential as what it is", lines, got)
 	}
 }
 

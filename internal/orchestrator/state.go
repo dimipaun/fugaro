@@ -45,8 +45,9 @@ import (
 // refuses a field it does not model — so an older reader meets a field it
 // cannot see as an unknown one rather than as an addition it may ignore, and
 // the version is what tells it to stop instead (F20 of docs/outer-loop-
-// escalation, where the ladder's ledger bought the same bump).
-const SchemaVersion = 3
+// escalation, where the ladder's ledger bought the same bump, and E12 of the
+// same plan, where the block's repo and run id did).
+const SchemaVersion = 5
 
 // ApprovalAttempts is what one approval covers: the attempt the person
 // approved and at most one automatic retry of that same spec (the owner's
@@ -116,8 +117,14 @@ type Phase string
 
 // The phases, in the order the spec's table moves through them.
 const (
-	PhaseQueued    Phase = "queued"
-	PhaseRunning   Phase = "running"
+	PhaseQueued  Phase = "queued"
+	PhaseRunning Phase = "running"
+	// PhaseReview is an item whose run succeeded and whose work is not in the
+	// base branch yet: what unlocks a dependent is the pull request merging,
+	// not the run reporting success (D2705). An item whose run left a pull
+	// request waits here, one whose run left none is done at once, and a pull
+	// request closed unmerged fails it — so `done` means merged, and a
+	// dependent never starts on work that was only proposed.
 	PhaseReview    Phase = "review"
 	PhaseDone      Phase = "done"
 	PhaseFailed    Phase = "failed"
@@ -288,10 +295,22 @@ type Approval struct {
 // already approved (D2042). Only the daemon writes it, and the patch appends
 // to it rather than replacing it.
 //
-// Nothing here is free text (G8). A rung, a reason code, a count, times and a
-// head: every string is a value of a closed vocabulary or a git object name,
-// so a prompt, a finding or a diff has nowhere to sit.
+// Nothing here is free text (G8). A rung, a reason code, a count, times, a
+// head, a repository name and a run id: every string is a value of a closed
+// vocabulary, a git object name or a name of a known shape, so a prompt, a
+// finding or a diff has nowhere to sit.
 type Escalation struct {
+	// Repo is the item's repository and RunID is the run this block's last move
+	// was about — the ladder's own where it launched one, the item's where the
+	// rung starts nothing — both copied from the item the block sits on. They
+	// are here because the block is what a reader outside the daemon may read
+	// (E12, F27): the reports job's grant covers this block and nothing above
+	// it, so a per-repository digest filters on Repo, and RunID is the join to
+	// the run record that carries the chain's pull request, hours and cost.
+	// Both are the daemon's: a patch that names neither writes a block without
+	// them, and only the daemon's own ladder writes these.
+	Repo  string `json:"repo,omitempty"`
+	RunID string `json:"run_id,omitempty"`
 	// Rung is the rung the item is at, and it is the highest it has entered:
 	// the ladder does not walk back down, and Apply refuses a patch that tries.
 	Rung escalation.Rung `json:"rung"`
@@ -346,7 +365,33 @@ type WorkItem struct {
 	// because there is no plan import to derive it from (D2438). That makes it
 	// part of the spec a person approves, and an item carrying none is an item
 	// no tick labels with a spec.
-	Spec      string    `json:"spec,omitempty"`
+	Spec string `json:"spec,omitempty"`
+	// External is the ticket this item came from outside Fugaro with, and it
+	// is the dedupe key of the whole backlog: `github:<owner>/<repo>#<n>`,
+	// lower-case as the installation's own App answers a repository name,
+	// written by the daemon's ingest alone (D2728). One issue is one item, so a
+	// mirroring loop — an item pushed out as an issue and pulled back in —
+	// meets itself here rather than as a second item, and an item that carries
+	// one never has a second one of the same key beside it. It is part of the
+	// spec a person approves: an item whose issue changed is not the work they
+	// read.
+	External string `json:"external,omitempty"`
+	// BodySHA256 is the SHA-256 of the external ticket's body as it was when
+	// the item was ingested, lower-hex and with no `sha256:` prefix — the
+	// ingest stores this and never the body itself (D2720). The body is read
+	// again at launch and an item whose body no longer hashes to this is put
+	// back to queued and unapproved, so what a person approved is what the run
+	// is briefed with. It is digested with the declaration for the same
+	// reason: an edit revokes the approval like any other.
+	BodySHA256 string `json:"body_sha256,omitempty"`
+	// PlanTask joins the item to the node of the plan it came from, as
+	// `<plan>/<task>` in the shape task.PlanTaskProblem checks (D2704). It is
+	// the declaration of an item a plan import wrote, so a session or a person
+	// writes it and not the daemon alone, and it is what tells an item the
+	// daemon adopted from a duplicate of the one the session's import is about
+	// to write: the two meet on this name instead of both existing (D2702). It
+	// is digested: the plan task is part of what the person approved.
+	PlanTask  string    `json:"plan_task,omitempty"`
 	Brief     string    `json:"brief"`
 	DependsOn []string  `json:"depends_on"`
 	Phase     Phase     `json:"phase"`
@@ -363,6 +408,15 @@ type WorkItem struct {
 	// (AttemptsUnder), which the caps count from too.
 	Attempts int    `json:"attempts"`
 	Note     string `json:"note,omitempty"`
+	// Adopted marks an item the daemon wrote for a run already in flight when
+	// it took the id over (D2702): the run was started by something else, so
+	// the item is the daemon's record of it rather than a launch it planned,
+	// and the ladder skips every rung that merges until a person approves it.
+	// It is the daemon's alone to write, and it is bookkeeping: an item marked
+	// adopted is still the work the same brief describes, and a mark that
+	// moved the digest would revoke an approval a person then has to give
+	// again for a run they did not start.
+	Adopted bool `json:"adopted,omitempty"`
 	// Escalation is the ladder's ledger, absent until the ladder first acts on
 	// the item. It is the daemon's alone to write (applyUpsert) and it is
 	// bookkeeping, so a rung change leaves a standing approval where it is.
@@ -412,6 +466,19 @@ func (d Decision) Resolved() bool { return d.ResolvedAt != nil }
 // Fact is one thing the loop has learned, with the class that learned it:
 // provenance is what lets a brief show a fact a session wrote beside one the
 // daemon derived.
+//
+// Facts are free key/value pairs — there is no vocabulary and no list of
+// names this package refuses — but two of the keys are what a reader outside
+// the daemon goes by, so they are the two the daemon writes on purpose:
+//
+//   - `plan_in_flight` names a plan one of the runs the daemon adopted at
+//     start-up belongs to, so the session that opens a checkout afterwards
+//     imports that plan (D2702, R5). One fact per plan.
+//   - `graph_suspect` is a run reporting a dependency the graph did not have:
+//     an item it needed, or a merge conflict with one merged since its attempt
+//     began (D2709, D2710). It is a fact rather than a new field because the
+//     graph is repaired on the item's next attempt and what is worth keeping
+//     is the note that the graph was wrong.
 type Fact struct {
 	Value string `json:"value"`
 	By    Class  `json:"by"`
@@ -618,13 +685,18 @@ func DecisionCalls(s State, now time.Time) Counters {
 // daemon records about the attempts at an item rather than what the person
 // approves. It is a skip list and not an include list on purpose, so a field
 // added to WorkItem later is digested without anyone remembering to add it
-// here (TestSpecDigestCoversEveryFieldButTheBookkeepingList pins the seven).
+// here (TestSpecDigestCoversEveryFieldButTheBookkeepingList pins the eight).
 //
 // The ledger is one of them, and it is the one whose absence would stop the
 // ladder: the daemon writes a transition every time it moves an item, and a
 // digested ledger would revoke the approval at each move, so an item would
-// have to be approved again for every rung it climbed (D2042, G12).
-var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attempts", "note", "approved", "escalation"}
+// have to be approved again for every rung it climbed (D2042, G12). The
+// adoption mark is one because it says how the item entered the node rather
+// than what the work is: the person approving an adopted item approves the
+// brief in front of them, and a digest that covered the mark would make "a
+// run the daemon took over" and "the work that was read" one question
+// (D2702).
+var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attempts", "note", "approved", "escalation", "adopted"}
 
 // SpecDigest is the digest of everything a person approves when they approve
 // a work item: every field but the bookkeeping list, hashed in declaration
@@ -634,17 +706,32 @@ var bookkeepingFields = []string{"phase", "run_id", "spent_approval_at", "attemp
 // function, so what the person was shown and what is about to start cannot
 // drift apart.
 func SpecDigest(w WorkItem) Digest {
-	return specDigestSkipping(w, "")
+	return specDigestSkipping(w)
 }
 
-// specDigestSkipping is SpecDigest's walk with one field left out beside the
-// bookkeeping list: the digest a release that did not model that field
-// computed. Migrate's 2 -> 3 step is its only caller, and it computes the
-// digest release 2 stored for an item — its WorkItem carried no `spec`, so
-// its walk skipped one field fewer than this one's. It has to keep answering
-// what that release answered for as long as a node from it may still be read,
-// which is the whole of what a migration is.
-func specDigestSkipping(w WorkItem, skip string) Digest {
+// The fields each migration step's front half leaves out of the walk: what the
+// release that wrote the document being raised did not model, and so never
+// hashed. A field added to WorkItem is in this release's walk and in no older
+// one's, which is why a step names the fields rather than a version.
+var (
+	// digestSkippedV4 is what the release before this one left out: the three
+	// fields X1 adds to the walk. `adopted` is absent from both lists because
+	// it is bookkeeping, and the bookkeeping list is skipped by every walk.
+	digestSkippedV4 = []string{"external", "body_sha256", "plan_task"}
+	// digestSkippedV2 is what release 2 left out: those three, and `spec`.
+	digestSkippedV2 = []string{"spec", "external", "body_sha256", "plan_task"}
+)
+
+// specDigestSkipping is SpecDigest's walk with fields left out beside the
+// bookkeeping list: the digest a release that did not model them computed.
+// Migrate's steps are its only callers, and each computes the digest the
+// release it raises from stored for an item — release 2's WorkItem carried no
+// `spec`, `external`, `body_sha256` or `plan_task`, and release 3's and 4's
+// carried no external id, body hash or plan task — so their walks skipped
+// fields this one's does not. It has to keep answering what those releases
+// answered for as long as a node from one of them may still be read, which is
+// the whole of what a migration is.
+func specDigestSkipping(w WorkItem, skip ...string) Digest {
 	// Over the item as it is written, so that the empty case has one spelling:
 	// an item built in Go carries a nil slice where the document carries [].
 	// A digest that read those as two specs would revoke an approval by
@@ -659,7 +746,7 @@ func specDigestSkipping(w WorkItem, skip string) Digest {
 		if tag := f.Tag.Get("json"); tag != "" {
 			name = strings.Split(tag, ",")[0]
 		}
-		if name == "" || name == "-" || name == skip || isBookkeeping(name) {
+		if name == "" || name == "-" || slices.Contains(skip, name) || isBookkeeping(name) {
 			continue
 		}
 		raw, err := json.Marshal(v.Field(i).Interface())
@@ -707,12 +794,26 @@ var digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 //     is what a ledger is for — so the stamp is the whole step here too, and
 //     the daemon's next tick writes the first transition of an item it acts on.
 //   - 2 is the node from before a work item carried a spec, which SpecDigest
-//     covers. This is the one step that rewrites something a person wrote:
-//     the walk sees one field more, so every digest stored under the old walk
-//     is a digest the item no longer digests to, and a standing approval left
-//     that way is an approval that never launches again (nextAttempt refuses
-//     it, recovery abandons the intent as an edited spec, and the ladder has
-//     nothing to stand on). redigestV2 rewrites exactly those and nothing else.
+//     covers. This is one of the two steps that rewrite something a person
+//     wrote: the walk sees one field more, so every digest stored under the old
+//     walk is a digest the item no longer digests to, and a standing approval
+//     left that way is an approval that never launches again (nextAttempt
+//     refuses it, recovery abandons the intent as an edited spec, and the ladder
+//     has nothing to stand on). redigest rewrites exactly those and nothing else.
+//   - 3 is the node from before the ladder's ledger named the item it is on.
+//     The block is what the reports job may read and the item beside it is what
+//     that reader is refused (E12, F27), so a ledger written before `repo` and
+//     `run_id` joined it is a ledger a per-repository digest cannot place. Both
+//     values are already on the item, so fillEscalationV3 copies them across;
+//     the ladder rewrites the whole block at the item's next move anyway, and
+//     this step is what covers an item that has stopped moving.
+//   - 4 is the node from before a work item carried the ticket it came from,
+//     that ticket's body hash and its plan task (X1, D2720, D2728). All three
+//     are digested — the person approving a ticket item approves the body they
+//     read — so this step rewrites stored digests as the 2 -> 3 step does, and
+//     for the same reason: an approval left under the old walk is an approval
+//     that never matches its item again. The three fields are empty on every
+//     item of such a node, so what changes is the walk and not the item.
 //
 // A state newer than this release is left exactly as it is and reported as
 // unchanged: the caller's validator refuses it, which is the fail-closed
@@ -728,6 +829,12 @@ func Migrate(s State) (State, bool) {
 		case 2:
 			s.SchemaVersion = 3
 			redigestV2(&s)
+		case 3:
+			s.SchemaVersion = 4
+			fillEscalationV3(&s)
+		case 4:
+			s.SchemaVersion = 5
+			redigestV4(&s)
 		default:
 			// A version with no step of its own is one this release cannot
 			// place — the chain has a hole in it, which is a bug here rather
@@ -743,37 +850,75 @@ func Migrate(s State) (State, bool) {
 // redigestV2 rewrites the digests a schema version 2 document stored, so that
 // an approval a person gave before `spec` joined the walk is still the item's
 // own after it.
+func redigestV2(s *State) { redigest(s, digestSkippedV2) }
+
+// redigestV4 rewrites the digests a schema version 4 document stored, so that
+// an approval a person gave before the item's external id, its ticket body's
+// hash and its plan task joined the walk is still the item's own after it.
+func redigestV4(s *State) { redigest(s, digestSkippedV4) }
+
+// redigest is the one step both of those are: it rewrites every digest on the
+// node that equals what the walk of the release being raised answered for its
+// own item, and the digest the item has now. skip is the fields that release's
+// walk left out.
 //
-// Only a digest that equals what the old walk answers for its own item is
-// touched. That is what makes the step exact: a stored digest that was the
-// item's is rewritten to the digest the item has now, and one that was not —
-// an approval an edit has since moved past, an intent left behind by that edit
-// — is left as it is, because there is no spec it ever matched and rewriting
-// it would be this release approving something nobody read. Rewriting only the
-// values equal to the old walk's answer also keeps every agreement between
-// them: two digests that were equal to it were equal to each other, and two
-// that were not stay as unequal as they were (approvalCovers, normalRunsUnder).
+// Only a digest equal to the old walk's answer is touched. That is what makes
+// the step exact: a stored digest that was the item's is rewritten, and one
+// that was not — an approval an edit has since moved past, an intent left
+// behind by that edit — is left as it is, because there is no spec it ever
+// matched and rewriting it would be this release approving something nobody
+// read. Rewriting only the values equal to the old walk's answer also keeps
+// every agreement between them: two digests that were equal to it were equal
+// to each other, and two that were not stay as unequal as they were
+// (approvalCovers, normalRunsUnder).
 //
 // An intent whose item the node no longer carries is left alone: the item was
 // archived out, there is nothing to compute a digest from, and no plan reaches
 // an archived item.
-func redigestV2(s *State) {
+func redigest(s *State, skip []string) {
 	items := make(map[string]WorkItem, len(s.WorkItems))
 	for _, w := range s.WorkItems {
 		items[w.ID] = w
 	}
 	for i := range s.WorkItems {
 		w := &s.WorkItems[i]
-		if w.Approved != nil && w.Approved.SpecDigest == specDigestSkipping(*w, "spec") {
+		if w.Approved != nil && w.Approved.SpecDigest == specDigestSkipping(*w, skip...) {
 			w.Approved.SpecDigest = SpecDigest(*w)
 		}
 	}
 	for i := range s.Intents {
 		w, ok := items[IntentItem(s.Intents[i].ID)]
-		if !ok || s.Intents[i].SpecDigest != specDigestSkipping(w, "spec") {
+		if !ok || s.Intents[i].SpecDigest != specDigestSkipping(w, skip...) {
 			continue
 		}
 		s.Intents[i].SpecDigest = SpecDigest(w)
+	}
+}
+
+// fillEscalationV3 gives every ledger on the node the two names the reports
+// job's read needs and the item beside it holds: the item's repository, and a
+// run for the chain (E12, F27). What this node records is the item's own run —
+// its last transition names no run, so the transition the block's EnteredAt is
+// the `at` of carries nothing finer to copy — which is the same value a block
+// written today carries when the rung that entered it launched nothing. An
+// item with no run keeps an empty RunID, which is the absence the reader
+// already handles; the ladder rewrites the whole block at the item's next move
+// anyway, and this step is what covers an item that has stopped moving.
+//
+// A block that already names either one is left as it is: this release's own
+// ledger has them, and a guess never overwrites a value.
+func fillEscalationV3(s *State) {
+	for i := range s.WorkItems {
+		w := &s.WorkItems[i]
+		if w.Escalation == nil {
+			continue
+		}
+		if w.Escalation.Repo == "" {
+			w.Escalation.Repo = w.Repo
+		}
+		if w.Escalation.RunID == "" {
+			w.Escalation.RunID = w.RunID
+		}
 	}
 }
 

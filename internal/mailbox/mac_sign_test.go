@@ -455,39 +455,78 @@ func TestAHeartbeatSignerCannotSignAReply(t *testing.T) {
 	}
 }
 
-// TestAHeartbeatAdvertisingAgentsIsRefused pins the one thing the heartbeat
-// signer will not do quietly. The merged heartbeat is `{at, boot, agents?, mac}`
-// and `agents` is in the covered set when it is present, but the list is P6.7's
-// and P4.1 writes the heartbeat without it (§13's ownership table) — so a tag
-// computed over a list would be a tag over bytes the stored heartbeat does not
-// carry: a value that verifies nowhere, with no error, and no lease either
-// because the heartbeat write IS the lease (M1). This is the mutation that
-// produces that silently.
-func TestAHeartbeatAdvertisingAgentsIsRefused(t *testing.T) {
+// TestAHeartbeatAdvertisingAgentsIsSignedAndCovered is P6.7's half of the
+// heartbeat's field set (D161). The merged heartbeat is
+// `{at, boot, agents?, mac}` and `agents` is in the covered set when it is
+// present, so the list the consumer advertises must be **in the bytes the tag
+// covers**: a tag over a list the stored record does not carry — or a stored
+// record whose list the tag does not cover — is a heartbeat that verifies
+// nowhere, with no error, and no lease either, because the heartbeat write IS
+// the lease (M1). The advertised list is therefore signed here and, when it is
+// changed afterwards, no longer verifies.
+func TestAHeartbeatAdvertisingAgentsIsSignedAndCovered(t *testing.T) {
 	key := []byte(vectorKey(t))
 	signer := NewHeartbeatSigner(keychain.NewKey(key))
-	hb := Heartbeat{At: leaseAt, Boot: leaseHolder, Agents: []Agent{{ID: "a-0001", Name: "the first agent"}}}
+	agents := []Agent{{ID: "orchestrator", Name: "Orchestrator"}, {ID: "scout", Name: "Scout"}}
+	hb := Heartbeat{At: leaseAt, Boot: leaseHolder, Agents: agents}
 
 	tag, err := signer.Heartbeat(hb)
-	if err == nil {
-		t.Fatalf("a heartbeat advertising %d agents was signed (%s): the tag would cover bytes the stored heartbeat does not carry", len(hb.Agents), tag)
-	}
-	if !errors.Is(err, ErrUnsignable) {
-		t.Errorf("the refusal is %v, which is not ErrUnsignable: nothing is written for it and it is a per-write refusal, not a startup exit", err)
-	}
-	if strings.Contains(err.Error(), hb.Agents[0].Name) {
-		t.Errorf("the refusal quotes the advertised name: %v", err)
-	}
-	// The same heartbeat without the list is the one P4.1 writes, and it signs
-	// and verifies in its own direction.
-	hb.Agents = nil
-	tag, err = signer.Heartbeat(hb)
 	if err != nil {
-		t.Fatalf("the heartbeat P4.1 writes could not be signed: %v", err)
+		t.Fatalf("a heartbeat advertising %d agents could not be signed: %v", len(agents), err)
 	}
-	value := Record{"at": hb.At, "boot": hb.Boot, "mac": tag}
+	value := Record{"at": hb.At, "boot": hb.Boot, "agents": AgentList(agents), "mac": tag}
 	if ok, err := VerifyMAC(value, key, directionHeartbeat); err != nil || !ok {
-		t.Errorf("the heartbeat just signed does not verify in the heartbeat direction: %v, %v", ok, err)
+		t.Errorf("the heartbeat advertising its agents does not verify in the heartbeat direction: %v, %v", ok, err)
+	}
+	// The list is inside the covered bytes, so a heartbeat whose list was edited
+	// after it was signed is refused.
+	edited := Record{"at": hb.At, "boot": hb.Boot, "mac": tag,
+		"agents": AgentList([]Agent{{ID: "orchestrator", Name: "Orchestrator"}, {ID: "impostor", Name: "Scout"}})}
+	if ok, err := VerifyMAC(edited, key, directionHeartbeat); err != nil {
+		t.Fatalf("verifying a heartbeat whose agent list was changed: %v", err)
+	} else if ok {
+		t.Error("a heartbeat whose advertised agent list was changed after signing still carries a valid tag, so the list is not in the covered bytes")
+	}
+	// A heartbeat advertising nothing is the one P4.1 writes, and it still signs
+	// and verifies: the list is optional, not required.
+	tag, err = signer.Heartbeat(Heartbeat{At: leaseAt, Boot: leaseHolder})
+	if err != nil {
+		t.Fatalf("a heartbeat advertising no agent could not be signed: %v", err)
+	}
+	value = Record{"at": leaseAt, "boot": leaseHolder, "mac": tag}
+	if ok, err := VerifyMAC(value, key, directionHeartbeat); err != nil || !ok {
+		t.Errorf("a heartbeat with no agents does not verify in the heartbeat direction: %v, %v", ok, err)
+	}
+}
+
+// TestTheLeaseWritesTheAdvertisedAgents is the other half of that rule on the
+// node itself: the heartbeat a take stores carries the list the caller
+// advertised, and the value that landed verifies under the pairing's key in the
+// heartbeat direction — so the list the phone reads out is the list the consumer
+// signed, and not a list written beside an unrelated tag.
+func TestTheLeaseWritesTheAdvertisedAgents(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	key := []byte(vectorKey(t))
+	agents := []Agent{{ID: "orchestrator", Name: "Orchestrator"}}
+	opts := leaseOptions(leaseHolder, leaseAt)
+	opts.Agents = agents
+	opts.Sign = NewHeartbeatSigner(keychain.NewKey(key)).Heartbeat
+
+	run, err := Take(context.Background(), leaseClient(t, f), opts)
+	if err != nil || run.Verdict != LeaseHeld {
+		t.Fatalf("a take advertising %d agents answered %s, %v", len(agents), run.Verdict, err)
+	}
+	path, _ := HeartbeatPath(leaseMailbox)
+	stored := storedRecord(t, f, path)
+	hb, refusal := ValidateHeartbeat(stored)
+	if refusal != nil {
+		t.Fatalf("the heartbeat this consumer wrote is not a heartbeat the schema accepts (%s at %q): %v", refusal.Code, refusal.Field, stored)
+	}
+	if len(hb.Agents) != 1 || hb.Agents[0] != agents[0] {
+		t.Errorf("the stored heartbeat advertises %v, not %v", hb.Agents, agents)
+	}
+	if ok, err := VerifyMAC(stored, key, directionHeartbeat); err != nil || !ok {
+		t.Errorf("the stored heartbeat does not carry its own tag in the heartbeat direction: %v, %v", ok, err)
 	}
 }
 

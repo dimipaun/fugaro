@@ -28,10 +28,12 @@ const (
 	MissingSecret MissingKind = "secret"
 	// MissingImage is the job's image, not built yet.
 	MissingImage MissingKind = "image"
-	// MissingNote is not a gate at all: something the run will need in one
-	// case, reported so it is not a surprise later (the optional Anthropic
-	// key: the job deploys without it, and a call that needs Anthropic is
-	// refused until a key is stored).
+	// MissingNote is not a gate at all: something a person should read about
+	// this deploy, reported so it is not a surprise later — what the run will
+	// need in one case (the optional Anthropic key: the job deploys without it,
+	// and a call that needs Anthropic is refused until a key is stored), or a
+	// name the deploy leaves alone and no step can be printed for (D2313's
+	// ignored repository-level secret).
 	MissingNote MissingKind = "note"
 	// MissingFirebase is a job that does not carry both the RTDB URL and the
 	// Firebase web key — carries neither, or only one of the two — so a run
@@ -221,6 +223,10 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 	maps.Copy(out.Secrets, ex.ExtraSecrets)
 	versions := map[string]bool{} // secret ID → has an enabled version
 	var missing []Missing
+	// The names D2313 ignores for this repository, collected as the workflow
+	// loop meets them and reported once below: one sentence about the file, not
+	// one per workflow that declares the name.
+	var ignored []string
 	hasVersionID := func(id string) (bool, error) {
 		ok, seen := versions[id]
 		if !seen {
@@ -338,6 +344,13 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 		}
 		var reasons []gate
 		var unresolved []string
+		// The names D2313 ignores for THIS workflow's job, which the job's own
+		// environment states below (runner.IgnoredSecretsVar): the runner is the
+		// last reader that could still demand a value for one of them, and its
+		// mounts cannot tell it which they are — a job the credentials service
+		// serves mounts none of its workflow's secrets (B3.8) — so the plan
+		// says it rather than leaving it to be inferred.
+		var ignoredHere []string
 		for _, logical := range uniqueSecrets(ws) {
 			ok, err := hasVersion(logical)
 			if err != nil {
@@ -354,6 +367,27 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 				return RepoSpec{}, nil, err
 			}
 			if resolved {
+				continue
+			}
+			// D2313: a repository-level secret is accepted and ignored, and
+			// this is where that reaches the job. No store can be named for
+			// such a name — the branch above would have found the project's
+			// copy if this repository could mount one, and both
+			// repository-scope forms of `fugaro secrets set` answer the
+			// ruling's notice — so its absence is not a gate: the fix below
+			// would print a command that stores nothing, and a job held back
+			// for it is a repository that can never be brought up. The mount
+			// goes with the gate, because a secret_key_ref on a container with
+			// no version is a job Cloud Run refuses to create — the shape the
+			// optional Anthropic key's branch below has for the same reason.
+			// The CONTAINER is untouched: out.Secrets was built before this,
+			// and it is what var.repo.secrets carries, so nothing plans a
+			// prevent_destroy container's destruction and the value a
+			// returning feature wants is still there (D2313).
+			if ignoredRepoSecret(spec, logical) {
+				dropMount(ws, logical)
+				ignored = append(ignored, logical)
+				ignoredHere = append(ignoredHere, logical)
 				continue
 			}
 			if OptionalSecret(logical) {
@@ -385,6 +419,17 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			}
 			unresolved = append(unresolved, logical)
 			reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: %s", logical, fix)})
+		}
+		// The job's own environment states which of its workflow's secrets the
+		// ruling ignored (D2313), for the runner's reader
+		// (runner.IgnoredSecretsVar): the value is the names and not the
+		// variables, because the name is the file's own identity for the secret
+		// and the one this loop decided about. Written only when there is one: a
+		// job whose plan ignored no name carries no such variable and the runner
+		// reads its mounts instead, so nothing here claims the plan had spoken
+		// where it had nothing to say.
+		if len(ignoredHere) > 0 && ws.Env != nil {
+			ws.Env[runner.IgnoredSecretsVar] = strings.Join(ignoredHere, ",")
 		}
 		// D11: project-centric mode requires the Firebase backend, and there
 		// is no other way to detect the mode (plan task 1.4 step 2). The
@@ -573,6 +618,18 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing, plan
 			missing = append(missing, Missing{Workflow: name, Kind: r.kind, Reason: r.reason, Deployed: exists})
 		}
 		out.Workflows[name] = ws
+	}
+	// D2313's line about this repository, asked once for the repository and
+	// never per workflow: a name two workflows declare is one fact about the
+	// file, and an oauth repository mounts one name in several variants of the
+	// same job. It is the ruling's own sentence — the one `fugaro validate`
+	// warns the file's block with, over the same names — because the whole of
+	// what a person can do about it is the thing that sentence names: store the
+	// value once for the project, or add the project-wide entry that would
+	// admit this repository to one.
+	if len(ignored) > 0 {
+		slices.Sort(ignored)
+		missing = append(missing, Missing{Kind: MissingNote, Reason: config.RepoSecretsIgnoredNotice(slices.Compact(ignored))})
 	}
 	if spec.Check != nil {
 		var unresolved []string

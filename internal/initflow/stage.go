@@ -174,12 +174,15 @@ const (
 	// Unit is the login unit that runs the orchestrator daemon
 	// (internal/cli/init_orchestrator_stage.go for `setup`, which installs the
 	// first one, and internal/cli/update_unit_stage.go for `update`, which
-	// re-renders one already installed and never installs one). The two are
+	// installs one where a machine has none and re-renders one already
+	// installed). The two are
 	// one stage because the loop takes one stage per name and the door decides
 	// which of them it is (initStages): the owner's ruling Q2 of 2026-11-04
-	// gives the first install to `setup`, and T7's of 2026-11-05 makes
+	// gives the first install to `setup`, T7's of 2026-11-05 makes
 	// `fugaro update` re-render an installed unit so that one command stays
-	// the whole upgrade.
+	// the whole upgrade, and D2700 of 2026-11-16 as corrected (F48) has that
+	// same command install the unit a machine is missing, at a person's own
+	// terminal and with nothing asked.
 	Unit = "unit"
 	// Compute is the Batch backend's installation-level provisioning
 	// (design docs/design/compute-backend.md §8.1 task 6). It is last
