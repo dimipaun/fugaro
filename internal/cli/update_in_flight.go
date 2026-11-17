@@ -93,8 +93,8 @@ func (e *initEngine) announceRunsInFlight(ctx context.Context) error {
 	}
 	// The registry read is the door's slow one on an installation with many
 	// runs, and it is the reason this door has a step of its own before the
-	// loop: the line in flight says what the wait is for (the owner's feedback
-	// of 2026-11-15 — with fourteen runs running, the command sat there).
+	// loop: the step names the wait while it happens (the owner's feedback of
+	// 2026-11-15 — with fourteen runs running, the command sat there).
 	var step *report.Step
 	if r.rep != nil {
 		step = r.rep.Step("Checking for runs in flight")
