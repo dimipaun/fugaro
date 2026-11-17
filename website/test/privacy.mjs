@@ -1202,6 +1202,26 @@ export const SIGNUP_QUEUE_NOTIFY = 'return s.alerts.Notify(ctx, queueAlert(s.cfg
 export const SIGNUP_KEPT_PHRASE = 'kept with what they carried'
 export const SIGNUP_ALERT_PHRASE = 'mailed a notification carrying them'
 
+/** What a function writes into the mail it builds: the argument of every `body.WriteString(…)` call
+ * in `text`, each read to that call's own matching close rather than to the end of its line, because
+ * a field is written inside an expression (`strings.Join(a.Repositories, ", ")`). A field the
+ * function merely names — in a guard, a comment, a variable it never writes — is not in here at all,
+ * which is the point: the card's sentence is about the mail the owner receives, and a mention of a
+ * field is not a line of it. */
+function writtenInto(text) {
+  const call = 'body.WriteString('
+  const out = []
+  for (let at = text.indexOf(call); at >= 0; at = text.indexOf(call, at + call.length)) {
+    let end = at + call.length
+    for (let depth = 1; depth > 0 && end < text.length; end += 1) {
+      if (text[end] === '(') depth += 1
+      else if (text[end] === ')') depth -= 1
+    }
+    out.push(text.slice(at + call.length, end - 1))
+  }
+  return out.join('\n')
+}
+
 /** Every way the statement and the key sign-up disagree, or []. `page` is the built privacy
  * page's markup and the rest are the repository's own files, each as text. The fields are read
  * off the built keys page rather than typed here twice, because the form is the artifact a reader
@@ -1305,13 +1325,15 @@ export function keySignupFailures({ page, keysPage, terms, design, store, servic
     )
   } else {
     // And what the mail CARRIES, which is the other half of that sentence: the card says the
-    // notification carries the request's own facts, so a field the alert stopped writing is a
-    // request the owner is told about and cannot read without opening the page.
+    // notification carries the request's own facts, so the guard reads the lines the alert WRITES
+    // into it — an alert that still names a field in a guard while the mail it builds has stopped
+    // carrying it is a request the owner is told about and cannot read.
     const alert = queue.slice(queue.indexOf(SIGNUP_QUEUE_ALERT)).split('\n}')[0]
+    const mail = writtenInto(alert)
     for (const field of SIGNUP_APPLICATION_FIELDS) {
-      if (!alert.includes(`a.${field}`)) {
+      if (!new RegExp(`\\ba\\.${field}\\b`).test(mail)) {
         out.push(
-          `${SIGNUP_QUEUE}'s queueAlert no longer carries the applicant's ${field}: the card says the notification the owner is mailed carries the request's own facts, and a field the mail has dropped leaves that sentence describing a mail the owner cannot read the request out of`,
+          `${SIGNUP_QUEUE}'s queueAlert no longer writes the applicant's ${field} into the mail it builds: the card says the notification the owner is mailed carries the request's own facts, and a field the mail has dropped — or one the function only names without writing — leaves that sentence describing a mail the owner cannot read the request out of`,
         )
       }
     }
@@ -2212,6 +2234,22 @@ test('a statement without the key sign-up card, or one of its facts, is refused,
     assert.ok(
       without.some((line) => line.includes(`the applicant's ${field}`)),
       `a queueAlert that stopped carrying the applicant's ${field} was not refused: the card says the owner is mailed a notification carrying the request's own facts, and a mail with a field missing is not that notification`,
+    )
+  }
+
+  // And the reading itself, which is the other thing a mail can lose: an alert whose mail stopped
+  // carrying a field while the function still names it. A guard that asked whether `queueAlert`
+  // mentions `a.Email` anywhere would pass this one, and the owner would be mailed a request with
+  // the address missing — so the mention is planted back, as the record's own guard would be.
+  for (const field of SIGNUP_APPLICATION_FIELDS) {
+    const named = sources.queue
+      .split(`a.${field}`)
+      .join('a.Gone')
+      .replace(SIGNUP_QUEUE_ALERT, `${SIGNUP_QUEUE_ALERT}\n\t_ = a.${field}`)
+    const without = keySignupFailures({ page, ...sources, queue: named })
+    assert.ok(
+      without.some((line) => line.includes(`the applicant's ${field}`)),
+      `a queueAlert whose mail no longer writes the applicant's ${field}, while the function still names it, was not refused: the card's sentence is about the mail the owner receives, so the guard reads what the alert writes and not every mention of the field in it`,
     )
   }
 
