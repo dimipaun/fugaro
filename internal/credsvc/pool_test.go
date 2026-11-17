@@ -674,38 +674,54 @@ func TestPublishedPoolOrderReachesTheService(t *testing.T) {
 	}
 }
 
-// TestRunnerPathMemberIsNotOfferedToTheService is MC19's seam: a node lists a
-// member of the path this service does not serve — an OpenRouter key, whose
-// value is mounted in the job that spends it (D1634) — and this service answers
-// it by not offering the member at all, rather than by serving a call out of a
-// secret the job's own gateway holds.
+// TestRunnerPathMemberIsNotOfferedToTheService is MC19's seam, and the reason a
+// crossing pool is harmless on this path: a node may list a member of the path
+// this service does not serve — an OpenRouter key, whose value is mounted in the
+// job that spends it (D1634) — and the reader still accepts that pool, because
+// the refusal that splits a crossing pool is the write door's
+// (config.ValidatePoolPaths, MC20) and converging a node an earlier release
+// published is MC21's migration (the activation plan's row 43). So this service
+// is where the crossing is answered for a call, and it answers it by not
+// offering the member at all: the pool's own service-path member serves, and the
+// runner path's is not in the candidate list. internal/projectpolicy's
+// TestTheNodeReadsACrossPathPoolUntilItsSplitLands is the reader's half of the
+// staging, and TestOpenRouterAndVertexMembersNeverReachCredsvc is what this
+// service ANSWERS such a pool (MC6).
 //
-// The fixture this test was written on listed that member BESIDE a
-// subscription, and no reader is handed such a node any more: from MC20 a pool
-// stays on one path (D1668), so the node's read refuses one that crosses
-// (config.ValidatePublishedPools, which projectpolicy.Decode runs) and
-// TestOpenRouterAndVertexMembersNeverReachCredsvc is that refusal's own clause.
-// The pin is therefore kept on a node the reader accepts — a pool of the runner
-// path's members — where the member is refused instead of served, and the
-// fixture's bundle is what makes it a pin at all: it holds a model credential
-// NAMED after the member (Bundle.byName answers an account's name to every
-// claude-oauth-token-<name> key), so the member's path is the only thing that
-// can keep it out of the offering. A bundle that held no such name would drop
-// the member on the bundle check instead and the guard this test names would be
-// pinned by nothing (a review round found exactly that of the first cut —
-// deleting the guard left the package green); that bundle is
-// TestOpenRouterAndVertexMembersNeverReachCredsvc's second clause, and this one
-// is the clause that holds the guard.
+// The fixture's bundle holds a model credential NAMED after the member, so that
+// the member's path is the only thing that can keep it out of the offering: a
+// bundle that held no such name would drop it on the bundle check instead, and
+// the guard this test names would be pinned by nothing (a review round found
+// exactly that of the first cut — deleting the guard left the package green).
+// The name is one an account may take, which is what makes the two documents
+// meet: the node points the name at the runner's path and the bundle could
+// serve a call by it.
 func TestRunnerPathMemberIsNotOfferedToTheService(t *testing.T) {
 	if config.CredentialServingPath(config.CredentialTypeOpenRouter) != config.CredentialPathRunner {
 		t.Fatalf("the fixture's OpenRouter credential is served by %q, and this test is written against it being the runner path's",
 			config.CredentialServingPath(config.CredentialTypeOpenRouter))
 	}
-	s := poolSvcHolding(t, `"credentials": {"fallback": "auto"},
+	// The reader now refuses a pool naming both halves (MC21), so the crossing
+	// the old reader accepted is rebuilt from a node it accepts: both members
+	// are written as subscriptions, and the router's type is changed after the
+	// decode, which leaves the offering the same document the earlier release
+	// published would have produced.
+	s := newSvcWith(t, func(s *svc, _ *Config) {
+		s.src.docs = [][]byte{poolBundleDoc(t, testRouterCredential)}
+		p := decodeTestPolicy(t, poolNode(`"credentials": {"fallback": "auto"},
 		`+poolCraftBlock(
-		`{"name": "`+testRouterCredential+`", "type": "openrouter"}`,
-		testRouterCredential)+`,
-		"subscription_spread": true`, testRouterCredential)
+			`{"name": "`+testRouterCredential+`", "type": "claude-oauth"},
+			{"name": "`+testPoolAccount+`", "type": "claude-oauth"}`,
+			testRouterCredential, testPoolAccount)+`,
+		"subscription_spread": true`))
+		for i := range p.CraftCredentials {
+			if p.CraftCredentials[i].Name == testRouterCredential {
+				p.CraftCredentials[i].Type = config.CredentialTypeOpenRouter
+			}
+		}
+		s.policy.shared = p
+		s.policy.admissions[s.slug] = decodeTestChild(t, testChildDoc(config.DefaultClaudeAccount, testAccount, testPoolAccount))
+	})
 
 	// The bundle the offering is read off is the one the service holds, the
 	// member's name included: a document without it would drop the member on the
@@ -715,23 +731,22 @@ func TestRunnerPathMemberIsNotOfferedToTheService(t *testing.T) {
 		t.Fatalf("the fixture's bundle is not one ParseBundle accepts: %v", err)
 	}
 	offer, _, _, err := poolOffering(s.policy.shared, b)
-	if err == nil || len(offer) != 0 {
-		t.Fatalf("the offering is (%v, %v), want none of the pool's members and the reason: this path never offers the runner's member, which this service's bundle holds by name", offer, err)
+	if err != nil {
+		t.Fatalf("the pool's own member serves, so the call is not refused: %v", err)
 	}
-	if !strings.Contains(err.Error(), testRouterCredential) {
-		t.Errorf("the refusal %q does not name the member this path cannot serve", err)
+	if len(offer) != 1 || offer[0].Name != testPoolAccount {
+		t.Fatalf("the offering is %v, want the pool's subscription member alone: this path never offers the runner's member", offer)
 	}
 
 	resp, body := s.call(t, callBody("published-runner-member"))
-	if resp.StatusCode == http.StatusOK {
-		t.Fatalf("a pool of the runner path's members served the call: %d %s", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the call is %d, want the pool's own member to serve it: %s", resp.StatusCode, body)
 	}
-	e := refusal(t, resp.StatusCode, body)
-	if !strings.Contains(e.Message, testPoolName) || !strings.Contains(e.Message, testRouterCredential) {
-		t.Errorf("the refusal %q names neither the pool nor the member this path cannot serve", e.Message)
+	if got := resp.Header.Get(HeaderCredential); got != testPoolAccount {
+		t.Errorf("%s = %q, want %q", HeaderCredential, got, testPoolAccount)
 	}
-	if n := s.up.Count(); n != 0 {
-		t.Errorf("the upstream saw %d requests, want 0: the member of the other path is never tried", n)
+	if n := s.up.Count(); n != 1 {
+		t.Errorf("the upstream saw %d requests, want 1: the member of the other path is not tried", n)
 	}
 }
 

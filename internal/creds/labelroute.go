@@ -22,6 +22,17 @@ package creds
 // status labels and R3's spec shape (F26). A stolen daemon identity can
 // therefore ask for an allowed label on a pull request the service corroborates
 // and for nothing else, which is what bounds it (F18).
+//
+// `get` serves BOTH hosts, and the four acts around it serve GitHub alone
+// (D2736, G5). The read is the one thing a Bitbucket repository of the
+// installation can answer: the state of one pull request, open, merged or
+// closed, with no labels, which is what the daemon's merge read waits on. The
+// four others are refused on a Bitbucket repository rather than answered with
+// an empty success, because Bitbucket Cloud pull requests carry no labels at
+// all. A Bitbucket `get` also carries no App ID — there is no GitHub App to
+// name on that host, and the service mints its read token from the
+// installation's Bitbucket read consumer instead — so a call that names one is
+// refused.
 
 import "errors"
 
@@ -38,7 +49,8 @@ const (
 	// read of the repository (R5, D2435).
 	LabelActionList = "list"
 	// LabelActionGet reads one pull request's state and its labels, open,
-	// merged or closed (R5, R8).
+	// merged or closed (R5, R8). It is the one act that also serves a
+	// Bitbucket repository, where it answers the state alone (D2736, G5).
 	LabelActionGet = "get"
 	// LabelActionEnsure creates one label with D2437's colour and
 	// description, treating one that already exists as success (R6, D2440).
@@ -65,7 +77,9 @@ const (
 // never from the run record, which the job can write — and Name is the label.
 // AppID is not a secret: it is the one thing a GitHub App mint needs from its
 // caller, and the service's own environment does not hold it (Global Constraint
-// 12), so a caller names it exactly as it names it to the merge mint.
+// 12), so a caller names it exactly as it names it to the merge mint. A
+// Bitbucket call names none — that host has no GitHub App, and the service
+// refuses a Bitbucket call that carries one (D2736, G5).
 type LabelRequest struct {
 	Repository string `json:"repository"`
 	Action     string `json:"action"`
@@ -88,7 +102,8 @@ type LabelRequest struct {
 // person's alike. It is the host's answer and not a filtered one: which of them
 // the daemon may write is R5's rule and the service's namespace check, and a
 // read that dropped the others would hide from the syncer that a name it wants
-// to add is already there.
+// to add is already there. A Bitbucket answer carries none, because that host
+// has no labels (D2736, G5).
 type LabelPullRequest struct {
 	Number int      `json:"number"`
 	State  string   `json:"state"`

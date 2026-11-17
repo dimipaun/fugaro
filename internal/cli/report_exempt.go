@@ -51,6 +51,7 @@ var reporterCommands = map[string]string{
 	"accounts alias set": "accounts-alias-set",
 	"accounts clear":     "accounts-clear",
 	"accounts rm":        "accounts-rm",
+	"accounts switch":    "accounts-switch",
 	"allow-delete":       "allow-delete",
 	"backlog add":        "backlog-add",
 	"backlog index":      "backlog-index",

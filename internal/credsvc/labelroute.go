@@ -59,12 +59,26 @@ import (
 //     that pull request against the run id the call carries before anything is
 //     written (F17, O3).
 //
-// The credential is this service's own: it mints an installation token scoped to
-// the one repository and to `{pull_requests: write, metadata: read}`, caches it
-// until it is near expiry, and never puts it in an answer, a log line or an audit
-// line (D2439, U2). The acts are rate-limited per repository, with the reads
-// counted apart from the writes (F22), and every call that reaches a verified
-// caller writes exactly one audit line, served or refused (C1.13).
+// `get` serves BOTH hosts, and it is the one act that does (D2736, G5). The
+// route resolves the repository it names against the GitHub inventory first and
+// the Bitbucket inventory after it: a name only the second holds is a Bitbucket
+// repository, its `get` is answered with the state of one pull request and no
+// labels, and the four acts around it are refused as unsupported, because
+// Bitbucket Cloud pull requests carry no labels at all. A Bitbucket call carries
+// no App ID — there is no GitHub App on that host — and one that does is
+// refused. Its credential is the installation's Bitbucket read consumer, its
+// token is cached per workspace here and never leaves this process, and its
+// guards are the read mint's own, spelled out in labelroute_bitbucket.go.
+//
+// The credential is this service's own, and WHICH credential it is depends on
+// the host: a GitHub act's token is an installation token scoped to the one
+// repository and to `{pull_requests: write, metadata: read}`, and a Bitbucket
+// `get`'s is a read-only token minted from the read consumer. Both are cached
+// until near expiry, neither is put in an answer, a log line or an audit line,
+// and the audit line names the one that was used (D2439, U2, D2736). The acts
+// are rate-limited per repository, with the reads counted apart from the writes
+// (F22), and every call that reaches a verified caller writes exactly one audit
+// line, served or refused (C1.13).
 
 // LabelPath is the path the daemon asks for a label read or a label write on.
 // It is this service's own contract and not a forge path: the call names a
@@ -230,9 +244,13 @@ type labelToken struct {
 // windows bound is a daemon looping on this service, and a node under creds/
 // would be a second writer of a fact that has no reader.
 type labelState struct {
-	tokens labelTokenCache
-	writes *labelWindow
-	reads  *labelWindow
+	// tokens are the GitHub installation tokens this route minted, keyed by the
+	// repository and the App; bitbucket are the Bitbucket read tokens it minted,
+	// keyed by the workspace they were minted for.
+	tokens    labelTokenCache
+	bitbucket labelTokenCache
+	writes    *labelWindow
+	reads     *labelWindow
 }
 
 func newLabelState(now func() time.Time) *labelState {
@@ -251,11 +269,13 @@ func (st *labelState) allow(slug string, write bool) bool {
 	return st.reads.allow(slug)
 }
 
-// labelTokenCache is the installation tokens this route has minted, keyed by the
-// repository and the App they were minted for. Both are part of the key because
-// a token is scoped to one repository by GitHub and signed as one App by this
-// service: a token minted for another repository or another App is one this
-// route must not write with.
+// labelTokenCache is the tokens this route has minted, keyed by what one token
+// is scoped to and by nothing else: the repository and the App for a GitHub
+// installation token, because such a token is scoped to one repository by GitHub
+// and signed as one App by this service and a token minted for another
+// repository or another App is one this route must not write with; the workspace
+// for a Bitbucket read token, because an access token minted from the read
+// consumer reaches the whole workspace (U3, D2736).
 type labelTokenCache struct {
 	mu   sync.Mutex
 	held map[string]labelToken
@@ -402,8 +422,13 @@ func readLabelCall(body []byte) (labelCall, error) {
 	if _, _, ok := gitprov.SplitRepo(req.Repository); !ok {
 		return labelCall{}, errors.New("the call names no repository (owner/name)")
 	}
-	if !appIDRE.MatchString(req.AppID) {
-		return labelCall{}, errors.New("the call carries no GitHub App ID (1 to 20 digits)")
+	// The App ID's SHAPE is checked here and its presence is not: which hosts a
+	// call names one on is the host's own rule, and the host is not known until
+	// the repository has been resolved against the two inventories (labelHostOf,
+	// below the stop flag). An empty field is one this code does not read as a
+	// malformed ID but as a call that may be a Bitbucket one (D2736).
+	if req.AppID != "" && !appIDRE.MatchString(req.AppID) {
+		return labelCall{}, errors.New("the call's App ID is not a GitHub App ID (1 to 20 digits)")
 	}
 	switch req.Action {
 	case creds.LabelActionList:
@@ -501,10 +526,19 @@ func labelCallNamed(req creds.LabelRequest) (labelCall, error) {
 //     before anything is resolved or reached.
 //   - the operator's stop flag, read BEFORE any credential, so a stopped
 //     service reads none.
-//   - the repository, resolved through the installation's inventory.
+//   - the repository, resolved through the installation's two inventories, which
+//     is also where the host is decided and where the credential the line names
+//     is (labelHostOf, labelCredential): the GitHub inventory first and the
+//     Bitbucket one after it, an ambiguous name refused, and the App ID's
+//     presence held to what the host takes (a GitHub call names one, a
+//     Bitbucket call names none, D2736).
+//   - the acts a Bitbucket repository cannot answer, refused as unsupported
+//     BEFORE the rate, because a call this host has no answer for is not an act
+//     (ErrLabelUnsupported).
 //   - the rate limit, checked before the bundle so that a repository that has
 //     been labelled as often as this service allows reads no credential at all.
-//   - the bundle and the App key, failing closed.
+//   - the bundle and the host's own credential, failing closed: the App key for
+//     a GitHub act, the read consumer for a Bitbucket `get` (labelBitbucketGet).
 //   - the provider, built with the bundle's key so that the one read that makes
 //     Fugaro's own identity decidable is possible, and with this service's own
 //     mint installed over its in-job one.
@@ -525,48 +559,70 @@ func (s *Server) labelRoute(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	}
 	if id := r.Header.Get(HeaderRunIdentity); id != "" {
-		s.refuseLabel(ctx, w, caller, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+		s.refuseLabel(ctx, w, caller, "", credential, StatusUnverified, ErrorUnverifiedRunIdentity,
 			"this route takes no run identity: it performs label calls for the orchestrator daemon, and a caller presenting a run is a call of a shape it does not have")
 		return
 	}
 	if job := r.Header.Get(HeaderRunJob); job != "" {
-		s.refuseLabel(ctx, w, caller, "", StatusUnverified, ErrorUnverifiedRunIdentity,
+		s.refuseLabel(ctx, w, caller, "", credential, StatusUnverified, ErrorUnverifiedRunIdentity,
 			"this route takes no run identity: it performs label calls for the orchestrator daemon, and a caller naming a job is a call of a shape it does not have")
 		return
 	}
 	cl, err := readCall(r, []string{tok})
 	if err != nil {
-		s.refuseLabel(ctx, w, caller, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		s.refuseLabel(ctx, w, caller, "", credential, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
 		return
 	}
 	call, err := readLabelCall(cl.body)
 	if err != nil {
-		s.refuseLabel(ctx, w, caller, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
+		s.refuseLabel(ctx, w, caller, "", credential, StatusRequestRefused, ErrorRequestRefused, requestRefused+err.Error())
 		return
 	}
 	on, which, err := s.cfg.Kills.Stop(ctx, "")
 	if err != nil {
-		s.refuseLabel(ctx, w, caller, "", StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
+		s.refuseLabel(ctx, w, caller, "", credential, StatusUnavailable, ErrorStateUnavailable, "the operator's stop switches could not be read")
 		return
 	}
 	if on {
-		s.refuseLabel(ctx, w, caller, "", StatusUnavailable, ErrorStateUnavailable,
+		s.refuseLabel(ctx, w, caller, "", credential, StatusUnavailable, ErrorStateUnavailable,
 			"the credentials service is stopped by the "+which+" kill switch")
 		return
 	}
-	slug, owner, repo, err := githubRepository(s.cfg.Repos, call.req.Repository)
+	host, err := labelHostOf(s.cfg.Repos, call.req.Repository)
 	if err != nil {
-		s.refuseLabel(ctx, w, caller, "", StatusRequestRefused, ErrorRequestRefused,
+		s.refuseLabel(ctx, w, caller, "", credential, StatusRequestRefused, ErrorRequestRefused,
 			readRefusalMessage(err, call.req.Repository))
 		return
 	}
-	if !s.labels.allow(slug, call.write) {
-		s.refuseLabel(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable, labelRateRefusal(call.write))
+	// The host is known from here on, and so is the credential the act is
+	// performed with: every line below — the App ID's own refusal included,
+	// which is a refusal of this host's rule and not of the route's — names the
+	// one this host's acts use. A line written for a refused Bitbucket call
+	// therefore names the read consumer, which is the credential a Bitbucket
+	// act is performed with; the App key it names above is the route's own
+	// answer, and it is the right one only while the host is still unknown.
+	credential = labelCredential(host.bitbucket)
+	if err := host.checkAppID(call.req.AppID); err != nil {
+		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusRequestRefused, ErrorRequestRefused, err.Error())
+		return
+	}
+	if host.bitbucket && call.req.Action != creds.LabelActionGet {
+		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, ErrLabelUnsupported.Error())
+		return
+	}
+	if !s.labels.allow(host.slug, call.write) {
+		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, labelRateRefusal(call.write))
+		return
+	}
+	if host.bitbucket {
+		// The one act a Bitbucket repository answers, and the whole of its path:
+		// the bundle's read consumer, the mint, the read and the answer.
+		s.labelBitbucketGet(ctx, w, caller, purpose, host, call)
 		return
 	}
 	b, err := s.cfg.Bundles.Load(ctx)
 	if err != nil {
-		s.refuseLabel(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
+		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, BundleRefusal(err))
 		return
 	}
 	key, err := appKey(b)
@@ -576,42 +632,42 @@ func (s *Server) labelRoute(ctx context.Context, w http.ResponseWriter, r *http.
 		} else {
 			err = ErrLabelBadAppKey
 		}
-		s.refuseLabel(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable, err.Error())
+		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, err.Error())
 		return
 	}
 	provider, err := github.New(github.Options{
-		Owner: owner, Repo: repo, AppID: call.req.AppID, PrivateKey: key,
+		Owner: host.owner, Repo: host.name, AppID: call.req.AppID, PrivateKey: key,
 		HTTP: s.cfg.Client, Now: s.now,
 	})
 	if err != nil {
-		s.log.Warn("credsvc: the label route's provider could not be built", "purpose", purpose, "credential", credential, "repository", slug)
-		s.refuseLabel(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable, ErrLabelGitHub.Error())
+		s.log.Warn("credsvc: the label route's provider could not be built", "purpose", purpose, "credential", credential, "repository", host.slug)
+		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, ErrLabelGitHub.Error())
 		return
 	}
 	provider.UseServiceTokens(&labelTokenSource{
-		state: s.labels, s: s, slug: slug, owner: owner, repo: repo, appID: call.req.AppID, key: key,
+		state: s.labels, s: s, slug: host.slug, owner: host.owner, repo: host.name, appID: call.req.AppID, key: key,
 	})
 	switch call.req.Action {
 	case creds.LabelActionAdd, creds.LabelActionRemove:
-		if err := s.labelCorroborate(ctx, provider, call.req.Number, call.req.RunID, owner+"/"+repo); err != nil {
+		if err := s.labelCorroborate(ctx, provider, call.req.Number, call.req.RunID, host.owner+"/"+host.name); err != nil {
 			if errors.Is(err, ErrLabelNotCorroborated) {
-				s.refuseLabel(ctx, w, caller, slug, StatusRequestRefused, ErrorRequestRefused, err.Error())
+				s.refuseLabel(ctx, w, caller, host.slug, credential, StatusRequestRefused, ErrorRequestRefused, err.Error())
 				return
 			}
-			s.labelUpstreamRefusal(ctx, w, caller, slug, purpose, credential, "the label call's pull request could not be read", err)
+			s.labelUpstreamRefusal(ctx, w, caller, host.slug, purpose, credential, "the label call's pull request could not be read", err)
 			return
 		}
 	}
 	ans, err := s.labelPerform(ctx, provider, call)
 	if err != nil {
 		if errors.Is(err, ErrLabelUnsupported) {
-			s.refuseLabel(ctx, w, caller, slug, StatusUnavailable, ErrorStateUnavailable, ErrLabelUnsupported.Error())
+			s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, ErrLabelUnsupported.Error())
 			return
 		}
-		s.labelUpstreamRefusal(ctx, w, caller, slug, purpose, credential, "the label call was not performed", err)
+		s.labelUpstreamRefusal(ctx, w, caller, host.slug, purpose, credential, "the label call was not performed", err)
 		return
 	}
-	s.answerLabel(ctx, w, caller, slug, ans)
+	s.answerLabel(ctx, w, caller, host.slug, credential, ans)
 }
 
 // labelUpstreamRefusal answers a refusal whose cause is this service's or
@@ -625,7 +681,7 @@ func (s *Server) labelUpstreamRefusal(ctx context.Context, w http.ResponseWriter
 		attrs = append(attrs, "status", se.Status)
 	}
 	s.log.Warn("credsvc: "+what, attrs...)
-	s.refuseLabel(ctx, w, caller, repository, StatusUnavailable, ErrorStateUnavailable, ErrLabelGitHub.Error())
+	s.refuseLabel(ctx, w, caller, repository, credential, StatusUnavailable, ErrorStateUnavailable, ErrLabelGitHub.Error())
 }
 
 // labelCorroborate is F17's whole answer, and it is why a write carries a run
@@ -775,16 +831,16 @@ func labelRateRefusal(write bool) string {
 // The acts are idempotent, so the refusal is safe in a way the merge mint's is
 // not: a caller that retries a call whose line could not be written re-does an
 // act that changed nothing the second time.
-func (s *Server) answerLabel(ctx context.Context, w http.ResponseWriter, caller, repository string, ans creds.LabelAnswer) {
+func (s *Server) answerLabel(ctx context.Context, w http.ResponseWriter, caller, repository, credential string, ans creds.LabelAnswer) {
 	body, err := json.Marshal(ans)
 	if err != nil {
 		s.log.Error("credsvc: the label route's answer could not be built", "error", err)
-		s.refuseLabel(ctx, w, caller, repository, StatusUnavailable, ErrorStateUnavailable, readAnswerRefusal)
+		s.refuseLabel(ctx, w, caller, repository, credential, StatusUnavailable, ErrorStateUnavailable, readAnswerRefusal)
 		return
 	}
-	if err := s.auditLabel(ctx, caller, repository, StatusOK); err != nil {
+	if err := s.auditLabel(ctx, caller, repository, credential, StatusOK); err != nil {
 		s.log.Error("credsvc: the label route's audit line was not written", "error", err)
-		s.refuseLabel(ctx, w, caller, repository, StatusUnavailable, ErrorStateUnavailable, ErrLabelUnaudited.Error())
+		s.refuseLabel(ctx, w, caller, repository, credential, StatusUnavailable, ErrorStateUnavailable, ErrLabelUnaudited.Error())
 		return
 	}
 	writeReadAnswer(w, body)
@@ -798,27 +854,30 @@ func (s *Server) answerLabel(ctx context.Context, w http.ResponseWriter, caller,
 // It is reached only once the caller IS verified — the refusals above that
 // point are answered by refuseVerifier alone, with no line, because an
 // unverified caller has no name for one.
-func (s *Server) refuseLabel(ctx context.Context, w http.ResponseWriter, caller, repository string, status int, typ, message string) {
-	if err := s.auditLabel(ctx, caller, repository, typ); err != nil {
+func (s *Server) refuseLabel(ctx context.Context, w http.ResponseWriter, caller, repository, credential string, status int, typ, message string) {
+	if err := s.auditLabel(ctx, caller, repository, credential, typ); err != nil {
 		s.log.Error("credsvc: a refused label call could not be audited", "error", err)
 	}
 	s.refuse(w, status, typ, message)
 }
 
 // auditLabel writes one label route's line: the daemon as its caller, the
-// repository the act was for, the App key as its credential, and NEITHER a run
-// nor a job — the caller is the installation's orchestrator daemon, which holds
-// no run identity and is not a job of this installation. A refusal taken before
-// the call was read has no repository to name, and the repository is the one
-// thing a line for the act itself adds.
+// repository the act was for, the credential the act was performed with, and
+// NEITHER a run nor a job — the caller is the installation's orchestrator
+// daemon, which holds no run identity and is not a job of this installation. A
+// refusal taken before the call was read has no repository to name, and the
+// repository is the one thing a line for the act itself adds.
 //
 // It does not go through Identity.Audit because there is no Identity: the route
 // is answered ahead of Verify, which is the only thing that builds one. The
 // repository is the installation's SLUG for it and not the "owner/name" the
 // caller typed, so the line is keyed the way every other line of this log is.
-// purpose and credential come from routeAct, the ONE rule.
-func (s *Server) auditLabel(ctx context.Context, caller, repository, status string) error {
-	purpose, credential := routeAct(LabelPath)
+// purpose comes from routeAct, the ONE rule; credential does too for every act a
+// GitHub repository answers, and a Bitbucket `get` is the one line that names
+// the read consumer instead (labelCredential), because that is the credential
+// the act really used.
+func (s *Server) auditLabel(ctx context.Context, caller, repository, credential, status string) error {
+	purpose, _ := routeAct(LabelPath)
 	return s.audit.Write(ctx, AuditEvent{
 		Caller:     caller,
 		Repository: repository,

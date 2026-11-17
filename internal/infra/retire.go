@@ -616,6 +616,69 @@ func RetireAllowDelete(p *tf.Plan, rets []Retirement) []string {
 	return slices.Compact(out)
 }
 
+// ProxiedTokenAccessorAllowDelete is the guard's allow-list for p when the
+// flip's drop is this repository's (RepoSpec.DropsBitbucketToken, B1.13 part
+// two, D500): each delete in p of a job account's own accessor on a credential
+// the credentials service holds instead — the accessor half of the flip, one
+// per workflow this spec deploys that mounts the name.
+//
+// It exists because that delete is fugaro's own decision and it must not cost
+// the user a flag or a second command (CLAUDE.md's HARD RULE). A managed
+// project's plain `fugaro update` converges the same address through its own
+// retirement (init's retireManaged, whose guard is RetireAllowDelete above). A
+// project that is not managed takes the ordinary plan, where the retirement
+// set is read and NAMED but nothing removes or deletes it for the user — it is
+// a report there — so the guard would refuse the plan's own delete of an
+// address the state holds and this spec no longer produces, and the run would
+// stop with `fugaro update --repo . --retire` (its two typed confirmations) or
+// `--allow-delete <address>` as the only ways past. Neither may be a step a
+// plain `fugaro update --repo` owes for the flip, so the addresses the flip
+// itself takes away are admitted here instead.
+//
+// spec is the repository's own, BEFORE Readiness: the mounts the drop removes
+// are still in it, which is what lets mountsServiceHeldSecret state the
+// module's rule here rather than a second version of it. That rule is the
+// whole filter — a name config.ProxiedGitSecretNames lists, mounted by a
+// workflow this spec still deploys — so the accessor of a variant that has
+// left the configuration is not one of these and stops the run as it always
+// has (that retirement is what --retire is for), and nothing else a plan does
+// to any address is touched: the guard judges every other change as before.
+//
+// The plan is the state's own answer about what exists: Terraform plans a
+// destroy only for an instance the state holds, so an address p does not
+// delete is not named here whatever the spec says, and a run whose state read
+// failed still converges (it has no plan delete to admit).
+func ProxiedTokenAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
+	if p == nil || !spec.DropsBitbucketToken() {
+		return nil
+	}
+	var out []string
+	for _, rc := range p.ResourceChanges {
+		if !slices.Contains(rc.Change.Actions, "delete") {
+			continue
+		}
+		segs := addressSegments(rc.Address)
+		if len(segs) < 4 || segs[0] != "module" || segs[1] != "repo" {
+			continue
+		}
+		typ, name, key := resourceOf(segs)
+		if typ != "google_secret_manager_secret_iam_member" || name != "job" {
+			continue
+		}
+		variant, ok := workflowVariantOf(segs)
+		if !ok {
+			continue
+		}
+		ws, deployed := spec.Workflows[variant]
+		if !deployed || !mountsServiceHeldSecret(ws, key, spec.BitbucketProxied) {
+			continue
+		}
+		out = append(out, rc.Address)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // StateRmFunc is (*tf.TF).StateRm: the one terraform call a retirement's
 // state removal makes. It is an interface here so that the removal's own
 // behaviour -- one call per address, in order, and a vanished address

@@ -64,7 +64,8 @@ import (
 // restore §2's "rules.go:583-590"; give §2 the citation it carried before
 // mobile-auth P2's comment grew the file, "rules.go:584-592"; rename a
 // `## Check 49:` heading; delete a
-// `| 49 |`, `| 57 |`, `| 11b |`, `| 81 |`, `| 82 |` or `| 89 |` summary row;
+// `| 49 |`, `| 57 |`, `| 11b |`, `| 81 |`, `| 82 |`, `| 85 |` or `| 89 |`
+// summary row;
 // rename `## Check 19:`; add a
 // `| 48 |` row or a `## Check 69c` section; restore §13's "the register says so
 // of itself"; drop "11 also carries **11b**" from §13's run; add a `| 67a |`
@@ -79,11 +80,12 @@ import (
 // voiceSwitchWritten is every number §13 of the design names as written in the
 // register — each a summary row AND a `## Check` section: the eight written
 // since the baseline a573870 (49, 50, 52, 58, 69a, 69b, 70a, 70c), 70b, which
-// §13's 70a–70c row names as written, and the mobile work's 81, 82 and 89.
+// §13's 70a–70c row names as written, and the mobile work's ten (81, 82 and 89,
+// written by Task P4.2a, and 80 and 83–88, written by Task P4.2 on 2026-11-17).
 // Named once; its length is never stated, because a stated count over a list is
 // the drift this file keeps catching — the counts §13 gives are derived from the
 // register at test time (part 1c).
-var voiceSwitchWritten = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c", "81", "82", "89"}
+var voiceSwitchWritten = []string{"49", "50", "52", "58", "69a", "69b", "70a", "70b", "70c", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89"}
 
 func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	const designPath = "docs/mobile/design/voice-evaluation-switch.md"
@@ -129,7 +131,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 	// 2–18 (11 also carries 11b), 19–23 and 26–38, 40–47, 49, 50, 52, 57, 58,
 	// 69a, 69b, 70a and 70c — that is the run as §13 writes it, a count taken at
 	// 07022b1, so the list this half wants is the run plus the numbers §13 names
-	// as written since (70b, 81, 82, 89). Every number in that list must have a
+	// as written since (70b, and the mobile work's 80–89). Every number in that list must have a
 	// row; and every number §13 says is written as a `## Check` section (19–47
 	// with 39 living in the retire-image-mirror plan as 39a–39f, plus
 	// voiceSwitchWritten) must have one. Without
@@ -142,7 +144,7 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 			wantRows = append(wantRows, strconv.Itoa(i))
 		}
 	}
-	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70b", "70c", "81", "82", "89")
+	wantRows = append(wantRows, "49", "50", "52", "57", "58", "69a", "69b", "70a", "70b", "70c", "80", "81", "82", "83", "84", "85", "86", "87", "88", "89")
 	for _, n := range wantRows {
 		if !rows[n] {
 			t.Errorf("%s's summary table has no `| %s |` row, but %s §13 names %s as a written row — in its row run, or, for 70b, in its 70a–70c row; correct the design's reading or this test's list", checklistPath, n, designPath, n)
@@ -231,19 +233,12 @@ func TestDocsVoiceSwitchRegisterClaims(t *testing.T) {
 		}
 	}
 	// The numbers §13 names as in neither half of the register: a row or a
-	// section for any of them means the design's reading is stale. (85 is the
-	// bake-off, which §13 says is written nowhere; 110 is the number this
-	// document names and writes nothing into. 81, 82 and 89 are excluded from
-	// the 80–89 run because §13's row names them as written by Task P4.2a, and
-	// the first half above requires their rows and sections; 70b is not here
-	// because §13's 70a–70c row names it as written.)
-	absent := []string{"48", "51", "53", "54", "55", "56", "69c", "85", "110"}
-	for i := 80; i <= 89; i++ {
-		if i == 81 || i == 82 || i == 89 {
-			continue
-		}
-		absent = append(absent, strconv.Itoa(i))
-	}
+	// section for any of them means the design's reading is stale. (110 is the
+	// number this document names and writes nothing into. The whole 80–89 run is
+	// gone from this list: 81, 82 and 89 are Task P4.2a's and 80 and 83–88 are
+	// Task P4.2's, all written, and the first half above requires their rows and
+	// sections; 70b is not here because §13's 70a–70c row names it as written.)
+	absent := []string{"48", "51", "53", "54", "55", "56", "69c", "110"}
 	for _, n := range absent {
 		if rows[n] {
 			t.Errorf("%s now has a `| %s |` summary row, but %s §13 says %s is not in the register; recount the row", checklistPath, n, designPath, n)

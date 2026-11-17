@@ -923,15 +923,12 @@ func TestAProviderKeyTheServiceCannotReadRefuses(t *testing.T) {
 // command's own answer. Every one of them NAMES the credential — that is what
 // makes the scan about the value and not about a document that says nothing —
 // and none may hold a byte of the key.
-//
-// The command is run at a terminal (addTyped): a key credential's declaration is
-// what puts craft_credentials and an accounts entry on the published node, and a
-// publish that loosens it takes the project's own name typed at one (D846, and
-// no flag stands in) — `add` stands at a terminal only for a managed project, so
-// a run through it stops at the publish, and the node and the job set this test
-// scans are the step it stopped before.
 func TestTheValueIsInNoDocumentTheRunRecordCarries(t *testing.T) {
 	r := newAddRig(t)
+	// addTyped and not add: a key credential's declaration puts
+	// craft_credentials and an accounts entry on the shared node, which the
+	// publish confirms by the project's own name typed at a terminal (D846),
+	// and add is for a publish that loosens nothing.
 	out, errOut := r.addTyped(t, "team-a", "--repos", "owner/repo-a", "--type", "anthropic")
 	value := addToken()
 	// The documents below are worth scanning only because they are the ones a

@@ -755,10 +755,25 @@ type initRun struct {
 	// A read that FAILED answers nothing at all — the entry keeps the record
 	// the last reading left on it, and credsRecord is what carries that answer
 	// to this run's second door — and the warning it prints is why.
-	credsRead   bool
-	credsNames  map[string]bool
-	credsAppKey bool
-	credsRecord bool
+	// credsBitbucket is the same reading's other answer, whether the bundle
+	// holds the upstream Bitbucket token, which the gate on the flip's drop
+	// reads before it applies a proxied repository's root
+	// (bundleBitbucketToken, update_proxied.go).
+	credsRead      bool
+	credsNames     map[string]bool
+	credsAppKey    bool
+	credsRecord    bool
+	credsBitbucket bool
+
+	// credsUnreadMarker is the marker of a session whose own rule kept the
+	// bundle unopened — a coding agent's session or a Fugaro run's own process
+	// (readCredentialsBundle's two refusals before the read) — and it is empty
+	// wherever a read was attempted, whether it answered or failed. The two are
+	// not the same fact to a caller: no reading may be JUDGED on, so the gate on
+	// the flip's drop goes on with a warning under a marker and refuses where the
+	// read failed, which is a state the person can be sent to fix
+	// (refuseTheProxiedDrop, update_proxied.go).
+	credsUnreadMarker string
 
 	// managed is true once this run read that the project it installs into
 	// is managed (managedProject): a guard refusal's text is then the managed
@@ -1480,6 +1495,16 @@ func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
 		return "", userErr("%s needs terraform (>= 1.9, < 2) on PATH: %v", r.o.doorProgram(), err)
 	}
 	for _, w := range lc.Warnings() {
+		r.warn(w)
+	}
+	// The prices this config writes below the marketplace's, in the same place
+	// and for the same reason as its own warnings above: this is where the one
+	// command the owner runs says what it read in their file, once, before the
+	// stages that act on it. Nothing is refused — a price below the cheapest
+	// endpoint the catalog prices the model at is the owner's to hold — and the
+	// model_prices stage beside those stages is where the file's key names are
+	// brought up to date (update_model_prices.go, SA4.2).
+	for _, w := range modelPriceUndercuts(lc) {
 		r.warn(w)
 	}
 	return bin, nil
@@ -4631,6 +4656,19 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	printWorkflowWarnings(r, spec)
 	r.warnCatalogSecrets(ctx, lc, spec)
+	// The flip's drop, refused here rather than left to the plan: this is the
+	// apply that gives a proxied repository's jobs up their Bitbucket token,
+	// and it runs only while the credentials service's bundle holds one to
+	// fetch instead (update_proxied.go, the owner's ruling O8). Judged on the
+	// spec just built, so exactly the applies that would take the mount away
+	// are judged; and on the run's one bundle reading, taken above by
+	// recordCredentialsServiceReady, never a second one. The place is this
+	// one: past the spec (the fact is in it), past the version gates (they
+	// refuse on the checkout's own config) and before the apply's first cloud
+	// call.
+	if err := r.refuseTheProxiedDrop(ctx, lc, outs, spec); err != nil {
+		return err
+	}
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
@@ -5422,7 +5460,15 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 		if gated {
 			r.res.Changes = &counts
 		} else {
-			if err := r.guard(ctx, c, plan, r.o.allowDelete); err != nil {
+			// The flag's list and the flip's own accessor deletes: the drop
+			// is fugaro's decision, and the ordinary path — the one a project
+			// that is not managed takes — may not owe the user a flag or a
+			// second command for it (infra.ProxiedTokenAccessorAllowDelete,
+			// CLAUDE.md's HARD RULE, and the switch in init_retire.go's
+			// retireManaged is the managed path's own). Every other change in
+			// this plan is judged exactly as it was.
+			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
+			if err := r.guard(ctx, c, plan, allowed); err != nil {
 				return plan, err
 			}
 			r.res.Changes = &counts

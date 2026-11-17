@@ -880,11 +880,11 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 		// against the charge agrees with it by construction (F16).
 		switch {
 		case d.TableHiUSD > 0 && d.Reported > d.TableHiUSD*(1+reportedGapPct/100.0):
-			// Two answers, because a catalog-priced route has two: the
-			// owner's own price, or the built-in catalog's dearest end
-			// while the route served an endpoint dearer still (design §7,
-			// D12).
-			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table would have charged the calls they reported at the tier's dearest end: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the tier's range — set price_policy: highest, or price the model under model_prices; check model_prices and the account's provider settings",
+			// The one answer left: the catalog already charges its dearest
+			// end by default (D2644), so a report above it is the owner's
+			// own price being too low, or an endpoint dearer than the whole
+			// tier (design §7, D12).
+			d.BandWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table would have charged the calls they reported at the tier's dearest end: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the tier's range — price the model under model_prices; check model_prices and the account's provider settings",
 				d.Reported, reportedGapPct, d.TableHiUSD)
 		case d.TableLoUSD > 0 && d.Reported < d.TableLoUSD*(1-reportedGapPct/100.0):
 			// Below the band the table over-prices those calls, which is the
@@ -900,7 +900,7 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 			// and only a report above it is a sign of under-pricing: a lower
 			// one may be partial reporting (a cut stream, a call without a
 			// cost).
-			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route was charged its cheapest end while a dearer endpoint served the call — set price_policy: highest, or price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
+			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low, or a catalog-priced route served an endpoint dearer than the end it charged — price the model under model_prices (partial reporting is also possible); check model_prices and the account's provider settings",
 				d.Reported, reportedGapPct, bare)
 		}
 	}

@@ -1609,24 +1609,28 @@ func TestRouteOfComparesWithoutTheRouteFee(t *testing.T) {
 	}
 }
 
-// TestDiagnoseReportedWarningNamesPricePolicy: on a catalog-priced route a
-// reported cost above the charge is as likely to be OpenRouter serving a
-// dearer endpoint as a wrong model_prices, so the warning names both ways
-// out (design §7, D12, Task 5 step 4). A record that carries the band warns
-// the same way in band_warning, whose two directions name the same two
-// answers -- the band's dearest end for a report above it, and a price too
-// high for a report below the cheapest one (D2650).
-func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
+// TestDiagnoseReportedWarningNamesModelPrices: a reported cost above the
+// charge or above the table's dearest end has one answer left, model_prices,
+// because the catalog already charges its dearest end by default (D2644) —
+// the switch the warning used to name is the default, so naming it would be
+// advice to change nothing. A record that carries the band warns the same way
+// in band_warning, whose two directions name the same answers -- the band's
+// dearest end for a report above it, and a price too high for a report below
+// the cheapest one (D2650).
+func TestDiagnoseReportedWarningNamesModelPrices(t *testing.T) {
 	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
 	cost.RouteBy = map[string]float64{"openrouter": 0.30}
 	cost.ReportedUSD = 0.40
 	rec := &runstore.Record{Version: 1, RunID: "20261001-120000-abcd", Cost: &cost}
 	var d Diagnosis
 	routeOf(&d, rec, nil, func(s string) string { return s })
-	for _, want := range []string{"model_prices", "price_policy: highest", "reported"} {
+	for _, want := range []string{"model_prices", "reported"} {
 		if !strings.Contains(d.ReportedWarning, want) {
 			t.Errorf("the warning lacks %q: %q", want, d.ReportedWarning)
 		}
+	}
+	if strings.Contains(d.ReportedWarning, "price_policy") {
+		t.Errorf("the warning still names a price_policy, which is the default it already applies: %q", d.ReportedWarning)
 	}
 	// A report within the margin warns nothing.
 	cost.ReportedUSD = 0.31
@@ -1641,10 +1645,13 @@ func TestDiagnoseReportedWarningNamesPricePolicy(t *testing.T) {
 	cost.ReportedUSD, cost.TableLoUSD, cost.TableHiUSD = 0.40, 0.30, 0.35
 	d = Diagnosis{}
 	routeOf(&d, rec, nil, func(s string) string { return s })
-	for _, want := range []string{"model_prices", "price_policy: highest", "reported", "above"} {
+	for _, want := range []string{"model_prices", "reported", "above"} {
 		if !strings.Contains(d.BandWarning, want) {
 			t.Errorf("the band warning lacks %q: %q", want, d.BandWarning)
 		}
+	}
+	if strings.Contains(d.BandWarning, "price_policy") {
+		t.Errorf("the band warning still names a price_policy, which is the default it already applies: %q", d.BandWarning)
 	}
 	if d.ReportedWarning != "" {
 		t.Errorf("a record with a band kept the charge comparison: %q", d.ReportedWarning)
