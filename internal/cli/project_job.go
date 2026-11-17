@@ -88,13 +88,13 @@ type launchProjectJob struct {
 
 // sharedJobProvider is whether a shared project job serves this git provider
 // kind, and it is internal/infra's own answer (SharedJobProvider, the one
-// place the phase-3 list lives) read through a variable for one reason: the
-// Bitbucket half of this launcher is written and tested before the list admits
-// Bitbucket (S1 leaves the list as it is, so that S1 to S4 merge with no effect
-// on a Bitbucket project, and I1 makes the one-line change), and a test
-// admits the provider the way S1's own test for the deployer does. What is
-// admitted here is admitted by the deployer in production: both ask the same
-// predicate.
+// place the phase-3 list lives) read through a variable for one reason: a test
+// has to answer for a provider the list does not hold, to walk the
+// per-repository path an installation keeps for one. S1 wrote the Bitbucket
+// half of this launcher behind the list and left the list as it was, so that S1
+// to S4 merged with no effect on a Bitbucket project, and I1 admitted Bitbucket
+// in the one-line change the list is. What is admitted here is admitted by the
+// deployer in production: both ask the same predicate.
 //
 // Every question the launcher asks about the provider it is about to launch on
 // goes through this variable, so a test cannot admit a provider for one half
@@ -104,21 +104,21 @@ type launchProjectJob struct {
 var sharedJobProvider = infra.SharedJobProvider
 
 // sharedJobBaked is whether a `checkout: baked` workflow runs on a shared
-// project job, and it is false for the reason sharedJobProvider is github
-// alone: the half D2304's decision depends on has not shipped. D2304 gives the
-// job model to the profile and not to the checkout mode, and the *image* is
-// what made the checkout mode matter — a shared project job runs the image its
-// profile was deployed with (internal/infra's ProjectJobs deploys the
-// installation's base image; S10 gives it the project's catalog default image,
-// D2305), while a workflow's declared tools — image.apt, image.setup, a
-// dockerfile, the catalog entry whose build the deploy stamps — live in the
-// repository's own derived image and nowhere else. Moving a baked workflow onto
-// a shared job before that job carries them loses every one of them — a test
-// that needs postgres, say — and nothing would say so: the launch still judges
-// it as baked (the derived image's build record is what its image gate reads,
-// and the task it seals has clone false), so the run starts and fails on the
-// tool it does not have. The move therefore waits for the image, and S10 flips
-// this value in the change that deploys the catalog default for a profile.
+// project job, and it is false because the half D2304's decision depends on has
+// not shipped. D2304 gives the job model to the profile and not to the checkout
+// mode, and the *image* is what made the checkout mode matter — a shared
+// project job runs the image its profile was deployed with (internal/infra's
+// ProjectJobs deploys the installation's base image; S10 gives it the project's
+// catalog default image, D2305), while a workflow's declared tools — image.apt,
+// image.setup, a dockerfile, the catalog entry whose build the deploy stamps —
+// live in the repository's own derived image and nowhere else. Moving a baked
+// workflow onto a shared job before that job carries them loses every one of
+// them — a test that needs postgres, say — and nothing would say so: the launch
+// still judges it as baked (the derived image's build record is what its image
+// gate reads, and the task it seals has clone false), so the run starts and
+// fails on the tool it does not have. The move therefore waits for the image,
+// and S10 flips this value in the change that deploys the catalog default for a
+// profile.
 //
 // It is a variable for the same reason sharedJobProvider is: S4's test of the
 // baked half admits the workflow the way S10's own test will
@@ -157,13 +157,13 @@ var sharedJobBaked = false
 func (e *cloudEnv) launchConfigWhereTheTreeGivesNone(ctx context.Context, spec *task.Spec) (*config.Config, error) {
 	// The provider is the decision's first question (D908): a provider no
 	// shared job serves (sharedJobProvider, which is internal/infra's list —
-	// GitHub alone until I1 admits Bitbucket, the owner's ruling of 2026-10-15
-	// on a Bitbucket credential a shared job may not hold) has no shared job
-	// for any repository, so for such a repository the per-repository job is
-	// not a guess about a document nobody read: it is the same answer the
-	// checkout path gives for the same repository, from the same fact. It is
-	// asked of the repository's own provider rather than of the profile's
-	// because there is no profile to read here, and it is asked through
+	// both kinds a repository may use since I1, neither of them before it) has
+	// no shared job for any repository, so for such a repository the
+	// per-repository job is not a guess about a document nobody read: it is the
+	// same answer the checkout path gives for the same repository, from the same
+	// fact. It is asked of the repository's own provider rather than of the
+	// profile's because there is no profile to read here, and it is asked
+	// through
 	// localRepoProvider, which needs no checkout (F3): the comparison the
 	// caller makes would dereference a nil co, and the local config's entry is
 	// the one source that answers without a document.
