@@ -600,6 +600,19 @@ resource "google_project_iam_member" "api_datastore" {
   member  = google_service_account.api.member
 }
 
+# A person deleting their own account takes their sign-in with them (D2195), and
+# the act on the Identity Toolkit that does it — `accounts:delete` — is an admin
+# call: the API is the process that makes it, through the account it already runs
+# as, and this is the predefined role that call is granted by. The history job
+# holds the same role for its own deletion of Auth users (the firebase module),
+# and this reaches no key, so Check 571's boundary around the API's other four
+# reaches is where it was.
+resource "google_project_iam_member" "api_deletes_signins" {
+  project = var.project
+  role    = "roles/firebaseauth.admin"
+  member  = google_service_account.api.member
+}
+
 # The reveal handover's key: the API seals the bundle it stores and opens it once,
 # 24 hours later, and nothing else in this project may use the key (D2182,
 # Check 571). ENCRYPT_DECRYPT with the symmetric algorithm, because this key seals
