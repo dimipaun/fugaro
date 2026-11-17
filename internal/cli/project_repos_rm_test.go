@@ -27,11 +27,16 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/budget"
@@ -597,6 +602,140 @@ func TestReposRmKeepsAJobItCannotAttribute(t *testing.T) {
 	if allow := allowReposOf(t, r.db); len(allow) != 1 || allow[0] != rmEntryB {
 		t.Errorf("allow_repos = %v, want [%s]", allow, rmEntryB)
 	}
+}
+
+// TestReposRmLeavesAPublishedImageMappingAndNamesACommandThatExists is the
+// image-map half of D1906's keep rule: a machine whose project config names no
+// map keeps the published node's (localcfg.ImageMapEffective), so there is
+// nothing here for `rm` to take away and it says so rather than reporting a
+// removal it did not make.
+//
+// The sentence has to name a door that exists. `fugaro image map` registers only
+// `set` (image_map.go), so there is no verb that unsets an entry: the entry goes
+// out of the file the map is published from, and `fugaro update` publishes it.
+// The test resolves every `fugaro …` the sentence names against the command tree,
+// which is what a sentence naming `fugaro image map rm` fails — a sentence that
+// sends the operator to an unknown-command error at the moment they are cleaning
+// up.
+func TestReposRmLeavesAPublishedImageMappingAndNamesACommandThatExists(t *testing.T) {
+	// The file names no map at all: a publish from a machine that names one is
+	// what leaves the node's, and D1906's rule reads the node's map here.
+	local := strings.Replace(rmRigLocal, "image_map:\n  owner/repo-a: base\n  owner/repo-b: base\n", "", 1)
+	if local == rmRigLocal {
+		t.Fatal("the fixture's image_map block was not found")
+	}
+	r := rmRigFor(t, local, rmGone{})
+	// The node's own spelling of the block: an ImageMap marshals its keys under
+	// escKey (a repository name carries a "/", which RTDB refuses as a key), so
+	// the fixture hands the fake the value a publish would have written rather
+	// than a map with the name in it.
+	r.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{rmEntryA, rmEntryB},
+		"image_map":   projectpolicy.ImageMap{rmRepoA: "base", rmRepoB: "base"},
+	})
+
+	out, _ := r.rmOut(t, rmEntryA)
+	const why = "left alone: image_map[" + rmRepoA + "] is the published node's mapping"
+	line := rmLineWith(out, why)
+	if line == "" {
+		t.Fatalf("the removal does not say the published mapping is left alone:\n%s", out)
+	}
+	cmds := rmFugaroCommands(line)
+	if len(cmds) == 0 {
+		t.Fatalf("the sentence names no command:\n%s", line)
+	}
+	root := NewRootCmd()
+	for _, path := range cmds {
+		if err := rmResolveCommand(root, path); err != nil {
+			t.Errorf("%v\n%s", err, line)
+		}
+	}
+	// The mapping is still there, in the node that owns it, and this machine's
+	// file still names no map of its own: "left alone" is a claim about both.
+	b, err := json.Marshal(r.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, found, err := projectpolicy.Decode(b)
+	if err != nil || !found {
+		t.Fatalf("the node does not decode (found=%v): %v", found, err)
+	}
+	if got := p.ImageMap[rmRepoA]; got != "base" {
+		t.Errorf("image_map[%s] = %q in the node, want base: the removal changed a map that is not this file's", rmRepoA, got)
+	}
+	if lc := r.rmLocal(t); lc.ImageMap != nil {
+		t.Errorf("this machine's config gained an image map: %v", lc.ImageMap)
+	}
+}
+
+// rmLineWith is the one line of out that holds want, without its newline, and ""
+// when there is none: the sentences this file asserts on are lines, and a
+// sentence read out of a whole transcript would sweep in the paragraphs around
+// it.
+func rmLineWith(out, want string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, want) {
+			return line
+		}
+	}
+	return ""
+}
+
+// rmFugaroCommands are the `fugaro …` invocations a sentence names, each as the
+// words to hand the command tree: the backticked spans that begin with `fugaro`,
+// up to the first flag, since what is checked is the command path and not the
+// flags of the invocation.
+func rmFugaroCommands(sentence string) [][]string {
+	var out [][]string
+	for _, part := range strings.Split(sentence, "`") {
+		fields := strings.Fields(part)
+		if len(fields) < 2 || fields[0] != "fugaro" {
+			continue
+		}
+		var path []string
+		for _, f := range fields[1:] {
+			if strings.HasPrefix(f, "-") {
+				break
+			}
+			path = append(path, f)
+		}
+		if len(path) > 0 {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// rmResolveCommand walks path down the command tree from root, and reports the
+// first word that is not a command the one before it has. The walk is by hand
+// because cobra's own lookup is not this check: `Find` stops at the deepest
+// command it recognizes and hands the rest back as arguments, and a parent it
+// stops at is not runnable, so cobra prints that parent's help and exits 0 —
+// `fugaro image map rm x` is a help screen, not an error, and Find returns none.
+// A word is an argument only where the command before it has no subcommands at
+// all, which is what makes this the shape of the sentence's own claim: a verb
+// named here runs.
+func rmResolveCommand(root *cobra.Command, path []string) error {
+	at := root
+	for i, want := range path {
+		var next *cobra.Command
+		for _, sub := range at.Commands() {
+			if sub.Name() == want || slices.Contains(sub.Aliases, want) {
+				next = sub
+				break
+			}
+		}
+		if next == nil {
+			if len(at.Commands()) == 0 {
+				return nil
+			}
+			return fmt.Errorf("the sentence names `fugaro %s`, and %s has no subcommand %q — a person typing that gets %s's help, not the command the sentence promises", strings.Join(path[:i+1], " "), at.CommandPath(), want, at.CommandPath())
+		}
+		at = next
+	}
+	return nil
 }
 
 // rmPutRunInFlight records one run of rmRepoA in the registry, which is what

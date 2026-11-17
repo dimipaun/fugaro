@@ -374,13 +374,20 @@ func reposRemovalEntryWhy(plan reposRemoval) string {
 // has nothing here to take away. A published mapping is the published node's,
 // and this command does not edit that node's image_map any more than `add`
 // writes one there.
+//
+// The sentence for that case names the door that does exist: `fugaro image map`
+// has only `set` (image_map.go), so there is no verb that unsets an entry, and
+// the map is published from the file that names one — the entry goes out of
+// that file, and `fugaro update` publishes the map. Naming a command that is not
+// there would send the operator to an unknown-command error at the one moment
+// they are cleaning up.
 func reposRemovalImage(plan *reposRemoval, p *projectpolicy.Policy) {
 	plan.imageNow = plan.local.ImageMapEffective(p.ImageMap)
 	plan.imageOwn = plan.local.ImageMap != nil
 	switch {
 	case !plan.imageOwn:
 		if _, mapped := plan.imageNow[plan.ownerName]; mapped {
-			plan.imageWhy = "left alone: image_map[" + plan.ownerName + "] is the published node's mapping, and this machine's project config names no map of its own to edit (`fugaro image map rm " + plan.ownerName + "` takes it away)"
+			plan.imageWhy = "left alone: image_map[" + plan.ownerName + "] is the published node's mapping, and this machine's project config names no map of its own to edit — a file that names no map keeps the published one (D1906), so the entry is removed in the project config that published it, and `fugaro update` publishes the map"
 			return
 		}
 		plan.imageWhy = "left alone: this machine's project config names no repo-to-image map and the published node maps no entry for " + plan.ownerName
