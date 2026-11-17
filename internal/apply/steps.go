@@ -98,11 +98,24 @@ var resourceSteps = map[string][]string{
 	ResourceRepo: []string{initflow.Policy, initflow.Installation, initflow.Repository},
 	// ResourceAccount is a model account of the project (internal/cli/
 	// accounts_rm.go): removing one takes the declaration out of the local
-	// config, and the three stages are the ones `accounts add` runs for the
-	// same change (accounts_add_converge.go's accountsAddStages) — the node
-	// stops naming the account, the job the account owned goes from the
-	// installation, and the checkout's repository is redeployed without it.
-	ResourceAccount: []string{initflow.Policy, initflow.Installation, initflow.Repository},
+	// config, and the two stages below are the project-wide halves of what that
+	// change affects — the node stops naming the account (`accounts.NAME`, which
+	// the policy stage derives from the profiles' lists), and the job the account
+	// owned goes from the installation's job set (one job and one service account
+	// per profile, provider and account).
+	//
+	// The repository stage is deliberately not one of them. The third thing
+	// `accounts add` converges is "the running checkout's own repository root",
+	// whose workflows mount the named secret (the accounts spec §2.5), which is a
+	// fact about where the command is run and not about the account: the
+	// command's converge runs it for the checkout it is run in, and a project
+	// directory that is no checkout is the ordinary case for both commands. D865
+	// answers for that case by naming the repository rather than leaving work
+	// owed, and queuing the redeploy here would contradict it — every such
+	// machine would hold a step whose subject it cannot name (`fugaro apply`
+	// redeploys the checkout it is run in, D1574) while the removal's own report
+	// says the installation is done.
+	ResourceAccount: []string{initflow.Policy, initflow.Installation},
 	// ResourceModel is a model of the project (internal/cli/models_add.go,
 	// models_rm.go): the published node carries the `model_prices` and
 	// `budget.allowed_models` halves of the change, which is what the policy

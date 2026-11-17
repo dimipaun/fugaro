@@ -40,6 +40,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/apply"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
@@ -80,11 +81,18 @@ func chainSteps(changes []apply.Change) ([]string, error) {
 // step nobody would run, and the command has already written its change — so
 // the failure is said with the sentence that names `fugaro apply`, which is
 // the same sentence the run below ends on when a step does not finish.
-func chainSave(lc *localcfg.Config, changes []apply.Change, names []string) error {
+//
+// It answers the record as it was read, before these entries were queued: that
+// is what the settle below matches the entries of the run against, so a step
+// somebody queued while the run was going — the same step, for a change made
+// after this command's — stays owed rather than reading as the entry this run
+// answered (apply.Pending.ClearUnchanged, D1563).
+func chainSave(lc *localcfg.Config, changes []apply.Change, names []string) (*apply.Pending, error) {
 	p, _, err := loadPendingSteps(lc)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	before := p.Clone()
 	for _, name := range names {
 		p.Add(apply.PendingStep{
 			Step:       name,
@@ -94,9 +102,58 @@ func chainSave(lc *localcfg.Config, changes []apply.Change, names []string) erro
 		})
 	}
 	if err := apply.SavePending(os.Getenv, lc.Name, p); err != nil {
+		return nil, userErr("%v", err)
+	}
+	return before, nil
+}
+
+// chainSettle is the other end of chainSave for a command whose own converge
+// runs the steps — accounts rm, whose block of step lines is read off the
+// stages' results and not off print this runner would make (accountsRmReport).
+// It clears the steps the stages answered from the record chainSave wrote,
+// keeps every other one owed, and answers D1563's sentence and a non-zero exit
+// for them: the change stays, the step is remembered, and the command names
+// what finishes it rather than pretending a run that did not finish did.
+//
+// states is what the caller's run answered for each step, keyed by stage name.
+// A step the run reported no result for is owed and not dropped — a run that
+// quietly did fewer steps than it was asked for is the one thing neither the
+// record nor the command may do (applyRunRecord's own rule) — and the rule that
+// reads a result is applyStepAnswered's, the one applyRunRecord uses, so the
+// two doors cannot come to disagree about whether a step is done.
+func chainSettle(cmd *cobra.Command, lc *localcfg.Config, path string, before *apply.Pending, names []string, states map[string]initflow.StageResult) error {
+	after, afterRecorded, err := applyRecordRead(lc)
+	if err != nil {
 		return userErr("%v", err)
 	}
-	return nil
+	var ran, kept []string
+	for _, n := range names {
+		if applyStepAnswered(n, states[n], applyOptions{chain: true}) {
+			ran = append(ran, n)
+			continue
+		}
+		kept = append(kept, n)
+	}
+	after.ClearUnchanged(before, ran...)
+	// The stamp is written on the same rule applyRunRecord writes it (D1575): a
+	// run that answered everything and left nothing owed stamps the config as it
+	// stands now, so a later read can tell a config that changed since from one
+	// that did not. A machine that had no record and answered nothing is not
+	// given one: nothing was ever owed here, and a write would be this command
+	// inventing state.
+	if len(kept) == 0 && len(after.Steps) == 0 {
+		after.LastApply = applyConfigStamp(path)
+	}
+	if afterRecorded || len(ran) > 0 {
+		if err := apply.SavePending(os.Getenv, lc.Name, after); err != nil {
+			return userErr("%v", err)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	applyKeptLine(cmd.OutOrStdout(), kept)
+	return userErr("%s still owed; run `fugaro apply` to finish the job", strings.Join(kept, ", "))
 }
 
 // chainChangeFor is the change one owed step answers: the first of the
@@ -161,7 +218,7 @@ func chainApply(ctx context.Context, cmd *cobra.Command, lc *localcfg.Config, se
 	// remembers is not live. The steps the run answers are cleared from it as it
 	// ends (applyRunRecord, ClearUnchanged), so a run that finished leaves an
 	// empty record rather than an owed step.
-	if err := chainSave(lc, changes, names); err != nil {
+	if _, err := chainSave(lc, changes, names); err != nil {
 		return err
 	}
 	if noApply {

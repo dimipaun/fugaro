@@ -360,15 +360,7 @@ func applyRunRecord(cmd *cobra.Command, r *initRun, lc *localcfg.Config, path st
 			kept = append(kept, n)
 			continue
 		}
-		if n == initflow.Repository && states[n].State == initflow.Skipped {
-			// The redeploy is per repository (D1574): a checkout that is not
-			// this repository's — or a machine that has no checkout of it at
-			// all — cannot redeploy it, and the step stays owed with the
-			// sentence that says where to run this command.
-			kept = append(kept, n)
-			continue
-		}
-		if o.answered(states[n]) {
+		if applyStepAnswered(n, states[n], o) {
 			ran = append(ran, n)
 			continue
 		}
@@ -535,6 +527,22 @@ func (o applyOptions) answered(st initflow.StageResult) bool {
 		return chainAnswered(st)
 	}
 	return applyAnswered(st)
+}
+
+// applyStepAnswered is whether ONE step of a run is answered by the stage that
+// ran it: the run's own rule (answered) with the exception that is the step's
+// and not the door's.
+//
+// The redeploy is that exception (D1574): the repository stage's Terraform root
+// is per repository and per checkout, so a skip of it says this machine has no
+// checkout of the repository the change was made for — the step did not run and
+// stays owed, with the sentence that says where to run it, whichever door asked
+// for it. Every other step's skip is the run's own rule's to read.
+func applyStepAnswered(step string, st initflow.StageResult, o applyOptions) bool {
+	if step == initflow.Repository && st.State == initflow.Skipped {
+		return false
+	}
+	return o.answered(st)
 }
 
 // chainAnswered reports whether a stage's own answer means the step a
