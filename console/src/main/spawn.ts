@@ -495,9 +495,33 @@ export const SPAWN_FLAGS: readonly string[] = Object.freeze([
   // read's own row named, and `--dry-run` is the classification phase the main
   // process decided -- no renderer argument, and no field of the operation's
   // schema, spells either (`SETTINGS_EDIT_PHASE_WORDS`). The write itself
-  // carries no flag at all: the CLI asks nothing.
+  // carries no flag of that kind: the CLI asks nothing.
   '--layer',
   '--dry-run',
+  // The settings write's own "save this and stop" (docs/composite-commands,
+  // D1565 and D1572), and `settings.edit`'s argv is its only user. The word is
+  // the plan's, spelled once for every management command by one CLI helper
+  // (`addNoApplyFlag`): `settings set` and `settings unset` gain it with that
+  // plan's AP5 and AP6, and no release of the CLI registers it yet -- which is
+  // why the console holds it behind `NO_APPLY_CLI_FLOOR`
+  // (`SETTINGS_EDIT_PHASE_WORD_GATES`) and passes it to no child today. **It is
+  // on this list because the row word is the plan's** (D1572: the design's row,
+  // the equality test and the typed contract all carry it), and the gate is
+  // what keeps a word no CLI answers off the wire. Where it does go out, the
+  // console passes it so the change is saved and none of its follow-up steps
+  // run -- the steps are what `apply.pending` reads and what the console's own
+  // chain runs afterwards. It is **not** the confirmation the CLI used to ask
+  // for: the CLI asks nothing (`docs/no-prompt-policy/`), and this word is the
+  // opposite of a question -- it is the console saying which of the command's
+  // two jobs it wants today.
+  '--no-apply',
+  // The pending-steps read's own mode word (docs/composite-commands, D1569), and
+  // `apply.pending`'s argv is its only user. It is a word of that row's command
+  // path rather than a flag the row fixes, so nothing a renderer sends can turn
+  // it on or off -- `assertSpawnSurface` holds a row's leading words to its
+  // operation's `command`, and on this command that word is the whole
+  // difference between a read and the chain.
+  '--status',
   // The roadmap move's two (GV3.2), and `roadmap.move`'s argv is the only place
   // either can appear: `--to` is the release box the task was dropped on (or the
   // CLI's `none`), and `--expect` is the release the document this installation
@@ -1156,12 +1180,16 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     //
     // **`<phase>` is the main process's too, and it is one of three spellings**
     // (`SETTINGS_EDIT_PHASE_WORDS`): the dry run's `--dry-run --json`, and then
-    // no word at all for the confirmed write -- for a widening and for a
-    // narrowing alike. The write carries no flag because the CLI asks nothing:
-    // `applySettingsEdit` refuses a write only inside a coding agent's session,
-    // never a plain piped one (`internal/cli/settings_write.go`), so no flag,
-    // marker variable or typed name of the console's exists for it. The
-    // console's extra tick is the window's business and not an argv word.
+    // `--no-apply` for the confirmed write -- for a widening and for a
+    // narrowing alike. The write's one word says *save this and run none of its
+    // follow-up steps* (D1565, D1572): the console's chain runs after the
+    // operator has seen what is owed rather than between the write and the
+    // screen. It answers nothing the CLI asks -- `applySettingsEdit` refuses a
+    // write only inside a coding agent's session, never a plain piped one
+    // (`internal/cli/settings_write.go`), and the CLI asks no question at all
+    // (`docs/no-prompt-policy/`) -- so no marker variable or typed name of the
+    // console's exists for it either. The console's extra tick is the window's
+    // business and not an argv word.
     //
     // **The value is the one word behind a `--` terminator**, and it is emitted
     // last, after the installation's two flags: `--` is where pflag stops
@@ -1421,6 +1449,32 @@ export const SPAWN_COMMANDS: readonly SpawnCommand[] = Object.freeze([
     ],
     dirFlag: false,
   },
+  {
+    // The pending-steps read (the composite-commands plan's AP8, D1569): what a
+    // management command saved for a later `fugaro apply`, as the one closed
+    // document the command prints (`internal/cli/apply.go`, AP3;
+    // `schemas/apply-status.schema.json`).
+    //
+    // **`--status` is a word of this row's command path and not a flag it
+    // fixes**, exactly as CG9b's `--watch` is on the graph feed and for a
+    // sharper version of the same reason: the bare `apply` is the chain that
+    // runs what is owed, and this word is the whole difference between that
+    // write and this read. The operation's `command` carries it, so
+    // `assertSpawnSurface` refuses a row that dropped it, and `SpawnCommand.flags`
+    // -- which is what a renderer's controls may reach -- fixes only `--json`.
+    //
+    // **No argument at all**: the command is cobra's `NoArgs`, `--status` and
+    // `--json` are the row's own two words, and the installation's two flags are
+    // `takesProject`'s (rule 3), so nothing a renderer sends reaches this child.
+    // Its document is the project's own text carried as data -- a step's name,
+    // the key or the repository a change was about -- and no screen reads a word
+    // of it as a flag (rule 2).
+    operation: 'apply.pending',
+    words: ['apply', '--status', '--json'],
+    takesProject: true,
+    args: [],
+    dirFlag: false,
+  },
 ] as const satisfies readonly SpawnCommand[])
 
 /**
@@ -1523,12 +1577,32 @@ export const SETTINGS_EDIT_OPERATION = 'settings.edit'
  *   - `narrowing` is the second spawn otherwise, answered by the window the
  *     operator read with no tick of its own.
  *
- * The two write phases are spawned with **the same argv**: neither carries a
- * flag (D1107, the settings-edit plan's C3). What the classification decides is
- * the console's own question -- the tick, which gates Confirm -- and not a word
- * of what the child is told: `applySettingsEdit` writes for any session that is
- * not a coding agent's, terminal or not (`internal/cli/settings_write.go`), so
- * the two phases differ in nothing the CLI sees.
+ * The two write phases are spawned with **the same argv**: `--no-apply` and
+ * nothing else (D1572, docs/composite-commands). What the classification
+ * decides is the console's own question -- the tick, which gates Confirm -- and
+ * not a word of what the child is told: `applySettingsEdit` writes for any
+ * session that is not a coding agent's, terminal or not
+ * (`internal/cli/settings_write.go`), so the two phases differ in nothing the
+ * CLI sees.
+ *
+ * **`--no-apply` answers no question any phase could ask** (D1565): it is the
+ * word that says *save this and run none of its follow-up steps*, which is the
+ * console's own shape -- it writes one key and then reads what is owed
+ * (`apply.pending`) rather than running a chain between the operator and the
+ * screen. The write phases carry it because the CLI asks nothing either way
+ * (`docs/no-prompt-policy/`), and the dry run does not: a dry run runs no step
+ * by definition.
+ *
+ * **And a write carries it only to a CLI that registers it**
+ * (`noApplySupported`, `src/shared/version.ts`): no release of the CLI has the
+ * flag yet -- `settings set` and `settings unset` gain it in the
+ * composite-commands plan's AP5 and AP6 -- so the constant is unset and the
+ * write the console spawns today goes without it, which is the argv every
+ * installed CLI answers. The plan's own answer to that gap is here and not in
+ * the table's spelling: the row word is landed (D1572's "a row word in
+ * `spawn.ts`"), and the gate above it is what keeps it off the wire until a
+ * release can answer it. A write below the floor leaves the change saved and
+ * what it owes run by the CLI itself, exactly as it is today.
  *
  * **The phase words live here and nowhere else**, which is what keeps them out
  * of a renderer's reach: no argument, no schema key and no row declares them. A
@@ -1538,15 +1612,69 @@ export const SETTINGS_EDIT_OPERATION = 'settings.edit'
  */
 export type SettingsEditPhase = 'dry-run' | 'widening' | 'narrowing'
 
+/**
+ * SettingsEditFacts is the whole of what a settings edit's plan takes from the
+ * main process rather than from the payload: the phase `settingsedit.ts`
+ * decided from the dry run's document, the layer the read's own row named, and
+ * `noApply` -- the answer to `NO_APPLY_CLI_FLOOR` for the binary this source
+ * resolved (`noApplySupported`, asked once in `CliSource`'s `#plan`, the only
+ * builder of a settings edit's plan). **`noApply` absent is a child that does
+ * not register the word**, which is the safe direction: the write is spawned
+ * without it and the CLI runs what the change owes itself.
+ */
+export type SettingsEditFacts = {
+  readonly phase: SettingsEditPhase
+  readonly layer: string
+  readonly noApply?: boolean
+}
+
+/** SettingsEditGate is the plan fact a phase word can be held behind: the
+ * boolean facts of `SettingsEditFacts` and nothing else, so a word cannot be
+ * gated on the phase or the layer -- both of those decide the argv rather than
+ * permit a word of it, and a table entry that named one would hold a word off
+ * the wire for every plan. */
+export type SettingsEditGate = 'noApply'
+
+/** NO_APPLY_PHASE_WORD is the write's one phase word, named once so the table
+ * below and the gate that holds it are the same string read twice rather than
+ * two spellings of it. */
+export const NO_APPLY_PHASE_WORD = '--no-apply'
+
 /** SETTINGS_EDIT_PHASE_WORDS is, per phase, the whole of what that phase adds
  * to the argv. It is a table rather than a branch so the three spellings are
  * read in one place, and `argvFor` refuses a phase this table does not name
  * (`summarySince`'s rule: membership is asked again here rather than trusted,
- * because a string off a wire reads as a key of any table). */
+ * because a string off a wire reads as a key of any table).
+ *
+ * **The table is the spelling and not the argv**: the write's one word is
+ * emitted only for a plan whose `settingsEdit.noApply` is set, which is the main
+ * process's answer to `NO_APPLY_CLI_FLOOR` for the resolved binary
+ * (`SETTINGS_EDIT_PHASE_WORD_GATES` below states which word that is), so the
+ * three spellings here stay whole while the wire carries what the child's own
+ * version can take. */
 export const SETTINGS_EDIT_PHASE_WORDS: Readonly<Record<SettingsEditPhase, readonly string[]>> = Object.freeze({
   'dry-run': Object.freeze(['--dry-run', '--json']),
-  widening: Object.freeze([]),
-  narrowing: Object.freeze([]),
+  widening: Object.freeze([NO_APPLY_PHASE_WORD]),
+  narrowing: Object.freeze([NO_APPLY_PHASE_WORD]),
+})
+
+/** SETTINGS_EDIT_PHASE_WORD_GATES is, per phase word a release has to carry
+ * before it may go out, the fact on the plan that answers for it: `--no-apply`
+ * is emitted only for a plan whose `settingsEdit.noApply` is set, which is
+ * `CliSource`'s answer to `NO_APPLY_CLI_FLOOR` for the resolved binary
+ * (`noApplySupported`, `src/shared/version.ts`). Every other word of
+ * `SETTINGS_EDIT_PHASE_WORDS` is one every CLI this console drives registers,
+ * so it is emitted whenever its phase is.
+ *
+ * The table is one entry because one word is newer than the command it goes on,
+ * and it is what makes the gate readable rather than implied: `argvFor` reads
+ * the entry for a word before emitting it, so a second word that a release has
+ * to carry is a row here and no branch. The Go pin beside it
+ * (`docs_desktop_console_test.go`) holds every word of this table and of
+ * `SPAWN_FLAGS` to the flags the CLI in this tree registers, and fails when a
+ * word here gains the flag -- so the entry and the constant move together. */
+export const SETTINGS_EDIT_PHASE_WORD_GATES: Readonly<Record<string, SettingsEditGate>> = Object.freeze({
+  [NO_APPLY_PHASE_WORD]: 'noApply',
 })
 
 /** SETTINGS_EDIT_LAYERS is the whole of the layer vocabulary
@@ -1750,13 +1878,15 @@ export function argvFor(
      * required by the one row that carries a `runIdFlag` and refused by every
      * other row, so an id cannot be smuggled into a read's argv. */
     readonly runId?: string | undefined
-    /** `settingsEdit` is the settings write's own two facts (C3): the phase the
-     * main process decided from the dry run's document, and the layer the read's
-     * own row named. Both are required by the one row that carries a
-     * `layerFlag` and refused by every other row, for `runId`'s reason -- the
+    /** `settingsEdit` is the settings write's own facts (C3): the phase the
+     * main process decided from the dry run's document, the layer the read's
+     * own row named, and the answer to `NO_APPLY_CLI_FLOOR` this plan's child
+     * gets (`SettingsEditFacts`). They are required by the one row that carries
+     * a `layerFlag` and refused by every other row, for `runId`'s reason -- the
      * layer and the phase are the two facts a renderer must not be able to
-     * choose (D1105, D1107). */
-    readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
+     * choose (D1105, D1107), and the third is the one the read of the binary's
+     * version decides. */
+    readonly settingsEdit?: SettingsEditFacts | undefined
     /** `roadmapMove` is the move's own three words (GV3.2): the document's `id`
      * for the node the payload keyed, the release key the payload named (or the
      * CLI's `none` for the unassign), and the release the same document recorded
@@ -2011,7 +2141,17 @@ export function argvFor(
     if (words === undefined) {
       refused(`${operation} was given a phase that is neither a dry run nor a write`)
     }
-    for (const word of words) argv.push(word)
+    for (const word of words) {
+      // A word a release has to carry (`SETTINGS_EDIT_PHASE_WORD_GATES`) goes
+      // out only for a plan whose fact answers for it -- an absent `noApply` is
+      // a child whose CLI does not register the word, and the write is spawned
+      // without it rather than into a refusal. Nothing a renderer sends reaches
+      // this: the fact is the main process's own reading of the binary's
+      // version.
+      const gate = SETTINGS_EDIT_PHASE_WORD_GATES[word]
+      if (gate !== undefined && edit[gate] !== true) continue
+      argv.push(word)
+    }
   } else if (context.settingsEdit !== undefined) {
     refused(`${operation} takes no settings phase: only the settings write's own row carries one`)
   }
@@ -3717,12 +3857,12 @@ export function planFor(
      * on `run.launch`'s plan and absent from every read's, so a read cannot
      * carry a run id and the one row that must cannot leave it out. */
     readonly runId?: string | undefined
-    /** `settingsEdit` is the settings write's own two facts (`argvFor`'s
-     * `context.settingsEdit`), for `runId`'s reason: it is present on
-     * `settings.edit`'s two plans -- the dry run's and the write's -- and absent
-     * from every other row's, and it is the **only** way a layer or a phase
-     * reaches an argv. */
-    readonly settingsEdit?: { readonly phase: SettingsEditPhase; readonly layer: string } | undefined
+    /** `settingsEdit` is the settings write's own facts (`argvFor`'s
+     * `context.settingsEdit`, `SettingsEditFacts`), for `runId`'s reason: it is
+     * present on `settings.edit`'s two plans -- the dry run's and the write's --
+     * and absent from every other row's, and it is the **only** way a layer, a
+     * phase or the write's floor answer reaches an argv. */
+    readonly settingsEdit?: SettingsEditFacts | undefined
     /** `roadmapMove` is the move's own three words (`argvFor`'s
      * `context.roadmapMove`), for `runId`'s reason: it is present on
      * `roadmap.move`'s plan -- the preview's and the write's alike, since they
