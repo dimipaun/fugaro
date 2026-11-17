@@ -89,18 +89,18 @@ type mergeClock struct{ at time.Time }
 
 func (c *mergeClock) now() (time.Time, bool) { return c.at, true }
 
-// mergeHarness is one daemon's tick with the merge read wired to a fake, and
+// mergeReadHarness is one daemon's tick with the merge read wired to a fake, and
 // the clock a test moves. A second step is the same daemon's next tick, which
 // is what a cadence is measured across; moving the clock is the server
 // answering a later reading.
-type mergeHarness struct {
+type mergeReadHarness struct {
 	*harness
 	reads *mergeReader
 	lines *mergeLines
 	clock *mergeClock
 }
 
-func newMergeHarness(t *testing.T, s orchestrator.State, now time.Time, runs ...string) *mergeHarness {
+func newMergeReadHarness(t *testing.T, s orchestrator.State, now time.Time, runs ...string) *mergeReadHarness {
 	t.Helper()
 	h := newHarness(t, s, now, runs...)
 	reads := &mergeReader{
@@ -111,13 +111,13 @@ func newMergeHarness(t *testing.T, s orchestrator.State, now time.Time, runs ...
 		stateErr: map[string]error{},
 	}
 	lines, clock := &mergeLines{}, &mergeClock{at: now}
-	h.tick.Merge = orchestrator.MergeSeams{Reader: reads, Log: lines}
+	h.tick.Merge = orchestrator.MergeWaitSeams{Reader: reads, Log: lines}
 	h.tick.Now = clock.now
-	return &mergeHarness{harness: h, reads: reads, lines: lines, clock: clock}
+	return &mergeReadHarness{harness: h, reads: reads, lines: lines, clock: clock}
 }
 
 // mergePhase is one item's phase as the node now stands.
-func (h *mergeHarness) mergePhase(id string) orchestrator.Phase {
+func (h *mergeReadHarness) mergePhase(id string) orchestrator.Phase {
 	h.t.Helper()
 	w, ok := h.state().Item(id)
 	if !ok {
@@ -126,10 +126,10 @@ func (h *mergeHarness) mergePhase(id string) orchestrator.Phase {
 	return w.Phase
 }
 
-// mergeItem is one item of these tests: the standard declaration on the
+// mergeReadItem is one item of these tests: the standard declaration on the
 // repository the caller names, the phase it is in, and a person's standing
 // approval over it.
-func mergeItem(id, repo string, phase orchestrator.Phase, approvedAt time.Time) orchestrator.WorkItem {
+func mergeReadItem(id, repo string, phase orchestrator.Phase, approvedAt time.Time) orchestrator.WorkItem {
 	w := workItemOf(id)
 	w.Repo = repo
 	w.Phase = phase
@@ -165,7 +165,7 @@ func mergeAttempt(w orchestrator.WorkItem, runID string, outcome orchestrator.Ou
 // mergeOpenItem is an item whose attempt is committed and has not reported: the
 // position the fold reads its run's outcome from.
 func mergeOpenItem(id, repo, runID string, approvedAt time.Time) (orchestrator.WorkItem, orchestrator.Intent) {
-	w := mergeItem(id, repo, orchestrator.PhaseRunning, approvedAt)
+	w := mergeReadItem(id, repo, orchestrator.PhaseRunning, approvedAt)
 	w.RunID = runID
 	w.Attempts = 1
 	return w, mergeAttempt(w, runID, "")
@@ -174,7 +174,7 @@ func mergeOpenItem(id, repo, runID string, approvedAt time.Time) (orchestrator.W
 // mergeReviewItem is an item waiting on a merge: its attempt reported succeeded
 // and left a pull request, which is where the fold leaves such an item (D2705).
 func mergeReviewItem(id, repo, runID string, approvedAt time.Time) (orchestrator.WorkItem, orchestrator.Intent) {
-	w := mergeItem(id, repo, orchestrator.PhaseReview, approvedAt)
+	w := mergeReadItem(id, repo, orchestrator.PhaseReview, approvedAt)
 	w.RunID = runID
 	w.Attempts = 1
 	return w, mergeAttempt(w, runID, orchestrator.OutcomeSucceeded)
@@ -241,7 +241,7 @@ func TestBitbucketSucceededGoesToReview(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
 	w, it := mergeOpenItem("wi-1", mergeBitbucket, mergeRunA, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	h := newMergeReadHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
 	h.reads.noList[mergeBitbucket] = true
 	h.reads.states[mergeKey(mergeBitbucket, 12)] = orchestrator.MergeOpen
@@ -262,7 +262,7 @@ func TestMergedPRMovesToDone(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
 	w, it := mergeReviewItem("wi-1", mergeRepo, mergeRunA, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	h := newMergeReadHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
 	// A merged pull request is not in the listing of what is open: that is the
 	// `get` D2742 spends its budget on.
@@ -292,7 +292,7 @@ func TestClosedUnmergedFails(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
 	w, it := mergeReviewItem("wi-1", mergeRepo, mergeRunA, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	h := newMergeReadHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
 	h.reads.open[mergeRepo] = map[int]bool{}
 	h.reads.states[mergeKey(mergeRepo, 12)] = orchestrator.MergeClosed
@@ -313,7 +313,7 @@ func TestFailedMergeReadLeavesReview(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
 	w, it := mergeReviewItem("wi-1", mergeRepo, mergeRunA, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	h := newMergeReadHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
 	h.reads.listErr[mergeRepo] = fmt.Errorf("the host said no")
 
@@ -338,7 +338,7 @@ func TestDependentWaitsForMerge(t *testing.T) {
 	approvedAt := now.Add(-time.Hour)
 	a, itA := mergeOpenItem("wi-a", mergeRepo, mergeRunA, approvedAt)
 	b := mergeDependent("wi-b", mergeRepo, []string{"wi-a"}, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA}), now, mergeRunC)
+	h := newMergeReadHarness(t, tickState(t, now, []orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA}), now, mergeRunC)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
 	h.reads.open[mergeRepo] = map[int]bool{12: true}
 
@@ -387,7 +387,7 @@ func TestReviewWaitDoesNotTripTheBreaker(t *testing.T) {
 	approvedAt := now.Add(-time.Hour)
 	a, itA := mergeOpenItem("wi-a", mergeRepo, mergeRunA, approvedAt)
 	b := mergeDependent("wi-b", mergeRepo, []string{"wi-a"}, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA}), now, mergeRunC)
+	h := newMergeReadHarness(t, tickState(t, now, []orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA}), now, mergeRunC)
 	h.tick.Breaker = &orchestrator.Breaker{}
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
 	h.reads.open[mergeRepo] = map[int]bool{12: true}
@@ -445,7 +445,7 @@ func TestMergeReadKeepsItsCadence(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
 	w, it := mergeReviewItem("wi-1", mergeRepo, mergeRunA, approvedAt)
-	h := newMergeHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
+	h := newMergeReadHarness(t, tickState(t, now, []orchestrator.WorkItem{w}, []orchestrator.Intent{it}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12)}
 	h.reads.open[mergeRepo] = map[int]bool{12: true}
 
@@ -481,7 +481,7 @@ func TestMergeReadGetsOnlyMissing(t *testing.T) {
 	approvedAt := now.Add(-time.Hour)
 	open, itOpen := mergeReviewItem("wi-open", mergeRepo, mergeRunA, approvedAt)
 	merged, itMerged := mergeReviewItem("wi-merged", mergeRepo, mergeRunB, approvedAt)
-	h := newMergeHarness(t, tickState(t, now,
+	h := newMergeReadHarness(t, tickState(t, now,
 		[]orchestrator.WorkItem{open, merged}, []orchestrator.Intent{itOpen, itMerged}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
 	h.reads.open[mergeRepo] = map[int]bool{12: true}
@@ -512,7 +512,7 @@ func TestBitbucketMergeReadGetsEachItem(t *testing.T) {
 	approvedAt := now.Add(-time.Hour)
 	a, itA := mergeReviewItem("wi-a", mergeBitbucket, mergeRunA, approvedAt)
 	b, itB := mergeReviewItem("wi-b", mergeBitbucket, mergeRunB, approvedAt)
-	h := newMergeHarness(t, tickState(t, now,
+	h := newMergeReadHarness(t, tickState(t, now,
 		[]orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA, itB}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
 	h.reads.noList[mergeBitbucket] = true
@@ -544,7 +544,7 @@ func TestNoReadConsumerRecordsOneFact(t *testing.T) {
 	approvedAt := now.Add(-time.Hour)
 	a, itA := mergeReviewItem("wi-1", mergeBitbucket, mergeRunA, approvedAt)
 	b, itB := mergeReviewItem("wi-2", mergeBitbucket, mergeRunB, approvedAt)
-	h := newMergeHarness(t, tickState(t, now,
+	h := newMergeReadHarness(t, tickState(t, now,
 		[]orchestrator.WorkItem{a, b}, []orchestrator.Intent{itA, itB}), now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
 	h.reads.noList[mergeBitbucket] = true
@@ -628,7 +628,7 @@ func TestFullFactTableStillLetsTheMergeLand(t *testing.T) {
 	gh, itGH := mergeReviewItem("wi-gh", mergeRepo, mergeRunB, approvedAt)
 	s := tickState(t, now, []orchestrator.WorkItem{bb, gh}, []orchestrator.Intent{itBB, itGH})
 	s.Facts = fullFacts()
-	h := newMergeHarness(t, s, now)
+	h := newMergeReadHarness(t, s, now)
 	h.reader.reports = []orchestrator.RunReport{mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14)}
 	h.reads.noList[mergeBitbucket] = true
 	h.reads.stateErr[mergeKey(mergeBitbucket, 12)] = orchestrator.ErrMergeNoReadConsumer
@@ -670,7 +670,7 @@ func TestQueuedFactsCountTowardsTheBound(t *testing.T) {
 	gh, itGH := mergeReviewItem("wi-gh", mergeRepo, mergeRunC, approvedAt)
 	s := tickState(t, now, []orchestrator.WorkItem{one, two, gh}, []orchestrator.Intent{itOne, itTwo, itGH})
 	s.Facts = factsUpTo(orchestrator.MaxFacts - 1)
-	h := newMergeHarness(t, s, now)
+	h := newMergeReadHarness(t, s, now)
 	h.reader.reports = []orchestrator.RunReport{
 		mergeReport(mergeRunA, 12), mergeReport(mergeRunB, 14), mergeReport(mergeRunC, 16),
 	}

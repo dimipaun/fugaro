@@ -78,14 +78,14 @@ const (
 // about what to do.
 var ErrMergeNoReadConsumer = errors.New("orchestrator: the credentials service holds no Bitbucket read consumer for this repository")
 
-// MergeReader reads the pull request state the merge wait is about: the open
+// MergeWaitReader reads the pull request state the merge wait is about: the open
 // pull requests of a repository, and one pull request's own lifecycle state.
 //
 // It is one method set and not two seams because the two halves are one host's
 // answer and one cadence's read, and because what the daemon decides with them
 // is one decision: a listing that carries an item's pull request is the whole
 // answer for it, and only what the listing does not carry is read one by one.
-type MergeReader interface {
+type MergeWaitReader interface {
 	// ListOpen returns the open pull requests of repo, keyed by number, and
 	// false where the host behind it has no such listing at all — Bitbucket,
 	// where a `get` per item is the only read there is. An error is a host
@@ -98,26 +98,26 @@ type MergeReader interface {
 	State(ctx context.Context, repo string, number int) (MergeState, error)
 }
 
-// MergeLog is where the merge read's failures go: one line per cause. Its shape
+// MergeWaitLog is where the merge read's failures go: one line per cause. Its shape
 // is the label syncer's (LabelLog) and it is a second interface rather than the
 // same one because a daemon wires the two separately, and a line about a merge
 // read in the label syncer's log would be read as the syncer's own.
-type MergeLog interface {
+type MergeWaitLog interface {
 	Warn(ctx context.Context, line string)
 }
 
-// MergeSeams is what one cycle keeps the merge wait through: the reader of the
+// MergeWaitSeams is what one cycle keeps the merge wait through: the reader of the
 // repositories' pull requests and the log every failure leaves a line in. Both
 // or none — a Tick built with neither reads nothing at all, which is the
 // direction a daemon whose path to the credentials service could not be built
 // fails in: an item whose pull request is never read stays in `review`, where
 // its dependents wait, rather than being called done on nobody's word.
-type MergeSeams struct {
+type MergeWaitSeams struct {
 	// Reader answers the pull request state of the repository an item is on.
-	Reader MergeReader
+	Reader MergeWaitReader
 	// Log is where a read that failed goes: one line per cause, and nothing
 	// else.
-	Log MergeLog
+	Log MergeWaitLog
 	// kept is what this daemon carries between ticks (mergeMemory). It is
 	// made on first use, because a Tick carries its seams as a value and has
 	// nowhere to build one.
@@ -125,7 +125,7 @@ type MergeSeams struct {
 }
 
 // Set reports whether every seam is there.
-func (s MergeSeams) Set() bool { return s.Reader != nil && s.Log != nil }
+func (s MergeWaitSeams) Set() bool { return s.Reader != nil && s.Log != nil }
 
 // merge is one cycle's turn at the merge read, and the write its answer lands
 // in.
@@ -261,7 +261,7 @@ type mergeItem struct {
 // listing of what the host reports open, and a `get` for each item the listing
 // does not carry (D2742) — or for each item at all, where the host has no
 // listing (Bitbucket).
-func (c *cycle) mergeRepo(ctx context.Context, seams *MergeSeams, facts *mergeFacts, g mergeGroup) []Op {
+func (c *cycle) mergeRepo(ctx context.Context, seams *MergeWaitSeams, facts *mergeFacts, g mergeGroup) []Op {
 	items, err := c.mergeItems(ctx, g)
 	if err != nil {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
@@ -361,7 +361,7 @@ func (c *cycle) mergeOp(repo string, it mergeItem, state MergeState) (Op, bool) 
 //
 // The items are left in `review` by both: a read that failed is not an answer,
 // and the wait it was reading for goes on.
-func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeSeams, facts *mergeFacts, repo string, err error) []Op {
+func (c *cycle) mergeRefusal(ctx context.Context, seams *MergeWaitSeams, facts *mergeFacts, repo string, err error) []Op {
 	if !errors.Is(err, ErrMergeNoReadConsumer) {
 		warnMerge(ctx, seams, fmt.Sprintf("the pull requests of %s could not be read: %s",
 			repo, safetext.OneLine(err.Error())))
@@ -422,7 +422,7 @@ func mergeFactValue(repo string) string {
 }
 
 // warnMerge leaves one line in the seam's log.
-func warnMerge(ctx context.Context, seams *MergeSeams, line string) {
+func warnMerge(ctx context.Context, seams *MergeWaitSeams, line string) {
 	seams.Log.Warn(ctx, line)
 }
 
@@ -443,7 +443,7 @@ type mergeMemory struct {
 // memory is this seam's memory, made on first use. A daemon that restarted is
 // a daemon whose memory is empty, which costs one read per repository before its
 // cadence is known.
-func (s *MergeSeams) memory() *mergeMemory {
+func (s *MergeWaitSeams) memory() *mergeMemory {
 	if s.kept == nil {
 		s.kept = &mergeMemory{at: map[string]time.Time{}}
 	}
