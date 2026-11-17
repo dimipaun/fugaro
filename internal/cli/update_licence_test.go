@@ -129,6 +129,79 @@ func TestASecondUpdateLeavesTheLicenceJobAlone(t *testing.T) {
 	}
 }
 
+// TestAnUpdateKeepsTheLicenceJobTheInstallationHolds is the other installation
+// the drop above is about: one that HOLDS the renewal job — an earlier run
+// deployed the coordinator's job, so the renewal job, its account and its empty
+// container are this installation's — and whose coordinator's readiness turns
+// false afterwards. The block must survive that run in the installation's own
+// document, or the record of a job the installation still holds is lost to the
+// next document the root is written from.
+//
+// The readiness is recomputed on every run from three facts (init_firebase.go's
+// coordinatorJob): the Firebase outputs the config records, the repositories it
+// records, and the history image's tag. Here it is the third that goes — the tag
+// leaves the fake registry between the two runs — and the run then plans no
+// licence job at all, because the module's own condition is the coordinator's
+// (licence.tf's local.licence_on) and not the block's presence: what licenceJob
+// composes and what the module creates are two different questions.
+//
+// So this pins the DOCUMENT and not the plan: the block is carried forward from
+// the document the run before wrote (infra.CarriedLicence, prepare's last
+// carry), so a run whose readiness is false leaves the installation's record
+// whole. The plan in that state is unchanged — the module creates nothing either
+// way — and whether a readiness recomputed false should take back a job the
+// installation already holds (the container carries prevent_destroy, so the
+// plan that would is the one Terraform refuses) is a decision about that
+// condition, not about this carry.
+func TestAnUpdateKeepsTheLicenceJobTheInstallationHolds(t *testing.T) {
+	r := convergeRigWithTheCoordinator(t)
+	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	if first := licenceBlock(t, r); first == "null" {
+		t.Fatalf("the first update wrote no licence block, so this is not the installation this test is about: %s", first)
+	}
+
+	// The history image's tag goes, which is the fact the renewal job hangs off:
+	// one image serves the sweep, the front door and this job (infra.Licence's
+	// spec takes HistoryImage), and a plain `fugaro update` mirrors no image, so
+	// nothing of the second run puts the tag back.
+	r.ar.RemoveTag(initProject, "us-east5", infra.BaseRegistry, infra.HistoryImagePackage, "latest")
+
+	fakeTerminal(t)
+	// The second run is allowed to end non-zero, and the tolerance is the
+	// fixture's rather than the update's: the first converge left this
+	// checkout's fugaro.yaml differing from origin/main (the anchor it writes),
+	// and the repository stage refuses a checkout that is not the default
+	// branch's from then on — a fact of one temp clone nobody re-onboards, not
+	// of the licence job. The installation stage runs BEFORE it, which is the
+	// stage this test is about, and what it wrote is what is asserted below.
+	out, _, err := executeStdin(t, "", "update")
+	if err != nil {
+		t.Logf("the second update ended with %v", err)
+	}
+	vars := r.tfvars(t)
+	// The fixture's own precondition: the run really did recompute the
+	// coordinator's deployment to false, which is what stops licenceJob
+	// composing the block from the spec.
+	if c, ok := vars["coordinator"].(map[string]any); !ok || c["deploy_job"] == true {
+		t.Fatalf("the second run still deployed the coordinator's job, so this is not the state the test is about:\n%s\n%s", vars["coordinator"], out)
+	}
+	l, ok := vars["licence"].(map[string]any)
+	if !ok {
+		t.Fatalf("the update dropped the licence block of an installation that holds the job (%v):\nthe container the block names carries prevent_destroy, so a document that forgets the key is a plan Terraform refuses rather than applies, and the installation's own record of the job has to outlive a run whose readiness is false (infra.CarriedLicence, prepare's last carry)", vars["licence"])
+	}
+	for _, want := range []struct {
+		what, got string
+		key       string
+	}{
+		{"the account", "fugaro-licence", "account_id"},
+		{"the job", "fugarolicence", "job"},
+	} {
+		if got, _ := l[want.key].(string); got != want.got {
+			t.Errorf("the kept licence block's %s is %q, want %q", want.what, got, want.got)
+		}
+	}
+}
+
 // TestNoCoordinatorMeansNoLicenceJob: an installation that has not opted into
 // the coordinator gets no licence job, no account and no container — and no
 // variable, so its plan is byte for byte the one the release before this one

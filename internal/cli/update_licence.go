@@ -44,14 +44,30 @@ import (
 // block is dropped where it is not.
 //
 // Dropping it is not decoration. The module reads the same condition, so a
-// block left in a plan that does not deploy the coordinator's job creates
-// nothing — but it would be a key in the tfvars that plans nothing and says
-// nothing, the trap the module's own variable comments name, and it would make
-// the first `fugaro update --firebase-project` of an installation that has just
-// opted in write a document no apply of its reads. With the block dropped, the
-// state every installation that never opted in plans is byte for byte the
-// document the release before this one wrote, which is what makes a converge of
-// such an installation a no-op (TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning).
+// block this function leaves in a spec that does not deploy the coordinator's
+// job creates nothing — but it would be a key the run COMPOSES for an
+// installation that asked for nothing, the trap the module's own variable
+// comments name, and it would make the first `fugaro update --firebase-project`
+// of an installation that has just opted in write a document no apply of its
+// reads. With the block dropped, the state every installation that never opted
+// in plans is byte for byte the document the release before this one wrote,
+// which is what makes a converge of such an installation a no-op
+// (TestUpdateAddsTheRenewalJobAndLeavesARunInFlightRunning).
+//
+// What this function's own answer is NOT is the whole of what the installation
+// holds. The two questions are different, and the second is prepare's
+// (infra.CarriedLicence, the last carry): an installation that has the job —
+// one whose coordinator's readiness held on the run that wrote the block — keeps
+// its record of it in the document across a run whose readiness no longer does,
+// so the plan is never written from a document that forgot a job the
+// installation still holds. What the module plans in that state is unchanged
+// either way: licence.tf reads the block together with the coordinator's own
+// condition (local.licence_on), so a carried block on an installation whose job
+// is not deployed plans nothing, exactly as one this function dropped. Which of
+// the two the switch should follow — whether a readiness recomputed false takes
+// back a job the installation already holds, whose empty container carries
+// prevent_destroy — is a decision about the module's condition, and it is not
+// made here.
 //
 // Both answers are recorded on the run as they are made, and that is the other
 // half of the completion rather than bookkeeping: the plan review reads the

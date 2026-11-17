@@ -2949,6 +2949,22 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the licence renewal job's block (K4.2), the last of the keys this spec
+	// does not always carry. licenceJob writes it only while the coordinator's own
+	// readiness holds, and it recomputes that on every run from the history
+	// image's tag, the repositories the config records and the App ID it holds
+	// (init_firebase.go's coordinatorJob) — so an installation that holds the
+	// job and then loses one of the three writes a document without the key, and
+	// the container the block names carries prevent_destroy. The carry keeps the
+	// installation's record of the job across that rewrite, so the plan is never
+	// written from a document that forgot a job the installation still holds;
+	// what the module then plans in that state is its own condition's to say
+	// (infra.CarriedLicence).
+	for _, prev := range documents {
+		if vars, err = infra.CarriedLicence(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
 	if err := wd.WriteVars(vars); err != nil {
 		return nil, userErr("writing the tfvars: %v", err)
 	}
