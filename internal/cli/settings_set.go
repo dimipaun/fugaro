@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/escalation"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -372,6 +373,11 @@ type settingsWriteOptions struct {
 	// the rest of config.ExecutableKeys — is refused without it (spec §3.7,
 	// workflowExecutableGate).
 	executableChanges bool
+	// noApply is --no-apply (D1565): the write lands and none of the steps it
+	// owes runs, so the change is saved and not live and `fugaro apply` is the
+	// command that finishes it. The flag is the shared helper's
+	// (addNoApplyFlag), so every management command spells it identically.
+	noApply bool
 }
 
 // settingsDocKind names the document a write lands in: the local project
@@ -426,6 +432,10 @@ nearest registry names.`,
 // newSettingsSetCmd is `fugaro settings set`: the generic write path.
 func newSettingsSetCmd() *cobra.Command {
 	var o settingsWriteOptions
+	// noApply is the shared flag helper's (D1565), registered below the literal
+	// and read at RunE time: the closure needs the variable in scope, and the
+	// flag can only be registered on a command that exists.
+	var noApply *bool
 	cmd := &cobra.Command{
 		Use:   "set KEY VALUE",
 		Short: "Write one setting into one of the three documents",
@@ -484,12 +494,20 @@ schemas/settings-write.schema.json describes, which is what a caller that draws
 an edit reads. --dry-run takes no bare --json (the two answer different
 questions).
 
-Every write ends with one line: next: fugaro update.`,
+A write runs the steps its key declares: the published policy node for a key
+the machine's own config carries, the project layer file for a project-layer
+key, and nothing at all for a write into a checkout's fugaro.yaml — that file
+is live once the change is merged, and no step here can make it live before
+then. A step that fails leaves the change saved and the step pending and exits
+non-zero. --no-apply saves the change and runs none of the steps: ` + "`fugaro apply`" + `
+runs them later.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.noApply = *noApply
 			return runSettingsSet(cmd, args, o)
 		},
 	}
+	noApply = addNoApplyFlag(cmd)
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
@@ -510,6 +528,10 @@ Every write ends with one line: next: fugaro update.`,
 // place.
 func newSettingsUnsetCmd() *cobra.Command {
 	var o settingsWriteOptions
+	// noApply is the shared flag helper's (D1565), registered below the literal
+	// and read at RunE time: the closure needs the variable in scope, and the
+	// flag can only be registered on a command that exists.
+	var noApply *bool
 	cmd := &cobra.Command{
 		Use:   "unset KEY",
 		Short: "Remove one setting from one of the three documents",
@@ -535,12 +557,20 @@ terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes. --dry-run takes no bare --json
 (the two answer different questions).
 
-Every write ends with one line: next: fugaro update.`,
+A removal runs the steps its key declares, exactly as writing one does: the
+published policy node for a key the machine's own config carries, the project
+layer file for a project-layer key, and nothing at all for a checkout's
+fugaro.yaml — that file is live once the change is merged, and no step here can
+make it live before then. A step that fails leaves the change saved and the
+step pending and exits non-zero. --no-apply saves the change and runs none of
+the steps: ` + "`fugaro apply`" + ` runs them later.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			o.noApply = *noApply
 			return runSettingsUnset(cmd, args, o)
 		},
 	}
+	noApply = addNoApplyFlag(cmd)
 	f := cmd.Flags()
 	settingsAimFlags(cmd, &o.project, &o.config)
 	f.StringVar(&o.layer, "layer", "", "the layer to write ("+strings.Join(settingsWriteLayers, ", ")+")")
@@ -2339,6 +2369,17 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 		// dry run must not classify it as a widening either.
 		typed, why = false, ""
 	}
+	// The cap fence, before the sentence and before a byte is written, and for
+	// a dry run exactly as for a write: a dry run answers for the write, so it
+	// is refused wherever the write would be (D1106, and the widening fence
+	// above holds the same line). It is asked of the row the edit is classified
+	// as — the leaf key of an entry write — because that is the key whose
+	// ceiling the write moves.
+	if changed {
+		if err := settingsChainCapFence(cmd, checked.Key, base, settingsWriteCommand("set", key, value, o, target.layer), writersTableStore(target.layer)); err != nil {
+			return err
+		}
+	}
 	// The rigor block is the one entry write the pure class above cannot always
 	// reach: only `default` has a row of its own to be classified as
 	// (settingsRigorFloorKey), and `areas` — the rules that are floors over a
@@ -2414,8 +2455,7 @@ func runSettingsSet(cmd *cobra.Command, args []string, o settingsWriteOptions) e
 	if err := gate.recorded(cmd.Context()); err != nil {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
-	return nil
+	return settingsChain(cmd, lc, sel, target, checked.Key, o)
 }
 
 // runSettingsUnset is `settings unset`: remove the key from one layer so the
@@ -2520,8 +2560,125 @@ func runSettingsUnset(cmd *cobra.Command, args []string, o settingsWriteOptions)
 	if err := gate.recorded(cmd.Context()); err != nil {
 		return err
 	}
-	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
+	return settingsChain(cmd, lc, sel, target, row.Key, o)
+}
+
+// settingsChain is what a settings write owes once its change has landed
+// (composite AP5, D1562, D1563, D1564, D1565): the steps the key's own row
+// declares for the layer this write landed in, queued in this machine's own
+// pending record and run in process, or left pending for `fugaro apply`.
+//
+// The steps are apply.WriteSteps' answer — the key's row plus the store the
+// write landed in — and the after-write hook asks the same function for the
+// same change, so what this command says it owes and what it runs cannot be two
+// answers (D1561). Running them here rather than leaving the record for a later
+// command is rule 1 of the composite design: a management command runs the
+// follow-up steps that make its change live, and a person who wrote one setting
+// runs nothing else.
+//
+// The record is written before the steps run and cleared of what ran
+// afterwards, so a run that stops short leaves the steps owed (D1563) and a
+// crash between the two leaves them owed as well. Clearing is
+// ClearUnchanged's, over the copy read before the run: a step queued while the
+// run was going stays owed (D1567).
+//
+// A checkout's `fugaro.yaml` is the one target that owes nothing and says so
+// (D1564): the branch's merge is what makes it live, no step of this machine's
+// can run before it, and nothing is pending.
+func settingsChain(cmd *cobra.Command, lc *localcfg.Config, sel localcfg.Selection, target settingsTarget, key string, o settingsWriteOptions) error {
+	out := cmd.OutOrStdout()
+	if target.layer == settingsLayerRepo {
+		fmt.Fprintf(out, "%s is written in %s: nothing is pending, because no step of this machine's can make it live — a checkout's file is live once the change is merged\n",
+			safetext.Field(key), target.path)
+		return nil
+	}
+	change := apply.Change{Kind: apply.Setting, Key: key}
+	steps := apply.WriteSteps(change, writersTableStore(target.layer))
+	if len(steps) == 0 {
+		// A key no step of this machine's serves — the local config's own keys,
+		// the workspace member's pin — is live once the file is written, and
+		// the write above is the whole of it. Nothing is recorded: a record
+		// entry for a step that does not exist would be a debt nobody can pay.
+		return nil
+	}
+	pending, err := apply.LoadPending(os.Getenv, lc.Name, lc.GCPProject)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	for _, step := range steps {
+		pending.Add(apply.PendingStep{
+			Step:       step,
+			Project:    lc.Name,
+			GCPProject: lc.GCPProject,
+			Change:     change,
+		})
+	}
+	if err := apply.SavePending(os.Getenv, lc.Name, pending); err != nil {
+		return userErr("%v", err)
+	}
+	if o.noApply {
+		// D1565: the change is saved and none of its steps ran, which is
+		// D1563's sentence and the one command it names. The record above is
+		// what makes that sentence true — `fugaro apply` reads it and runs
+		// exactly these steps.
+		applyKeptLine(out, steps)
+		return nil
+	}
+	if err := runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: key, Store: writersTableStore(target.layer)}); err != nil {
+		// The steps stay queued, and the hook's own sentence says what
+		// happened: the change is saved and it is not live. Its wording is the
+		// contract's one helper (afterWriteNotLive, D2614), which every other
+		// command's write ends on as well, so it is not respelled here.
+		return err
+	}
+	after, err := apply.LoadPending(os.Getenv, lc.Name, lc.GCPProject)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	after.ClearUnchanged(pending, steps...)
+	if len(after.Steps) == 0 {
+		after.LastApply = applyConfigStamp(sel.Path)
+	}
+	if err := apply.SavePending(os.Getenv, lc.Name, after); err != nil {
+		return userErr("%v", err)
+	}
+	fmt.Fprintf(out, "applied %s\n", strings.Join(steps, ", "))
 	return nil
+}
+
+// settingsChainCapFence is D1576's fence over the caps the chain publishes: in
+// a coding agent's session, a write that may raise one is refused before it
+// lands, whatever --no-apply says, so a later `fugaro apply` or `fugaro update`
+// never publishes an agent-queued raise (F13).
+//
+// It is narrower than the widening fence and answers the case that one cannot:
+// a ceiling key whose value no layer and no built-in default states has no base
+// to compare a write against (settingsCeilingBase answers ""), so a first write
+// of it is not classified as a widening at all — and it is exactly the write
+// that may raise the cap, because nothing says what the cap is today. F2 closed
+// the same hole for `agent.max_budget_usd` by giving it a built-in default to
+// compare against; every other cap key has none, and `budget.per_run_usd`'s
+// unset means the deployed ceiling, which this binary holds nowhere as a value.
+// A write the chain would publish is a write every run of the project then
+// lives under, so the class is the owner's own step in a session (D1552).
+//
+// Two conditions make it narrower than "every cap key": the write must land
+// where the chain publishes (a checkout's `fugaro.yaml` owes nothing and is
+// live once merged, D1564), and the base must be unreadable (a cap the layers
+// above do state is classified by the widening fence, which refuses a raise and
+// allows a tightening, and a tightening is what a session may do).
+//
+// The refusal is raiseOwnerOnly's — the same one `budget set` answers with
+// (D1542) — and the command it names is this invocation with the layer it
+// writes, which is what the owner types themselves.
+func settingsChainCapFence(cmd *cobra.Command, key, base, command string, store settings.Store) error {
+	if base != "" || !settingsCeilingKey(key) {
+		return nil
+	}
+	if len(apply.WriteSteps(apply.Change{Kind: apply.Setting, Key: key}, store)) == 0 {
+		return nil
+	}
+	return raiseOwnerOnly(cmd, fmt.Sprintf("writing %s, whose ceiling nothing here states: the write may raise it, and this machine publishes it to every run of the project", safetext.Field(key)), command)
 }
 
 // settingsLayerReservedGate is config publish's reserved-run refusal

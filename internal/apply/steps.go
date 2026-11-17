@@ -5,11 +5,15 @@
 // Two things live here and nothing else. steps.go is the one table from a
 // change — a setting key or a resource type — to the steps that make it live:
 // the initflow stage names plus the one step that is not a stage, a catalog
-// image's build. The order and the dedupe are initflow's (Names, Needs); this
-// package keeps no second list of stages, so a stage renamed or reordered
-// there moves here with no edit. pending.go is the local document beside the
-// project config that records the steps still owed, bound to the project and
-// the GCP project ID and holding no value of anything.
+// image's build. For a setting it holds the exceptions only — the steps no
+// layer of the key's own row names, the catalog's build and the workspace's two
+// stages — and every other key answers from its registry row
+// (internal/settings/steps.go, AP5), so the declaration is one place per key
+// and not a second list beside the registry. The order and the dedupe are
+// initflow's (Names, Needs); this package keeps no second list of stages, so a
+// stage renamed or reordered there moves here with no edit. pending.go is the
+// local document beside the project config that records the steps still owed,
+// bound to the project and the GCP project ID and holding no value of anything.
 //
 // Nothing here reads the cloud, the config files or the command line: a Change
 // is a value, and the pending document is a file the caller names a project
@@ -21,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/settings"
 )
 
 // CatalogBuild is the one step of the table that is not an initflow stage: the
@@ -99,11 +104,14 @@ var resourceSteps = map[string][]string{
 // row answers every key that starts with it, and an exact row answers its own
 // key and nothing else.
 //
-// A key that matches no row is a gap in the table and not an answer (Steps says
-// so), because every setting a command writes has to declare what it affects
-// (spec rule 2, D1561). A row with no steps is a declaration too — it says the
-// change is live once the config is written — and it is a different answer from
-// the gap, which is why the two are not spelled the same way.
+// A key that matches no row here is asked of the registry itself, whose rows
+// declare what a write of their key owes through their own layers
+// (settings.KeySteps, AP5): a key no row of either answers for is a gap and not
+// an answer (Steps says so), because every setting a command writes has to
+// declare what it affects (spec rule 2, D1561). A row with no steps is a
+// declaration too — it says the change is live once the config is written — and
+// it is a different answer from the gap, which is why the two are not spelled
+// the same way.
 var settingSteps = []struct {
 	// match is the key this row answers for, or the prefix of the family it
 	// answers for when exact is false.
@@ -174,9 +182,53 @@ func Steps(change Change) ([]string, bool) {
 			}
 			return Order(row.steps), true
 		}
-		return nil, false
+		// The rows above are the exceptions this table adds to what the
+		// registry declares: the catalog's build and the workspace's two
+		// stages are steps no layer of the key's row names. Everything else
+		// answers from the row itself (settings.KeySteps, AP5), so a key the
+		// registry holds is declared by being there and this table does not
+		// restate it.
+		steps, ok := settings.KeySteps(change.Key)
+		if !ok {
+			return nil, false
+		}
+		return Order(steps), true
 	}
 	return nil, false
+}
+
+// WriteSteps is what a write of change landed in store owes: the steps of the
+// change itself (Steps) plus the store's own stage, and nothing at all for a
+// write into a checkout's `fugaro.yaml` (D1564).
+//
+// The store is the second half of the answer and neither half alone is it. A
+// key's own declaration says what the key is — the layers it may be set in, and
+// so the stages that serve it — while the store says where THIS write landed:
+// `--layer project` owes the layer stage, and `--layer repo` on a key that has a
+// project layer too owes it nothing, because a checkout's file is a file the
+// next run reads and the change that makes it live is the merge of the branch
+// holding it (D1564, docs/contracts/config-ownership.md §3). The node is the
+// one store whose stage is its own publish, which a row's `policy` layer states
+// already — the union dedupes.
+//
+// It is the one rule for every caller: the settings commands' own chain and the
+// after-write hook both ask it, so the steps a command says it owes and the
+// steps it runs cannot come to be two answers (D1561).
+func WriteSteps(change Change, store settings.Store) []string {
+	// A checkout's file owes nothing, whatever the key's own row says: the
+	// branch's merge is what makes the change live, and no step of this
+	// machine's can run before it (D1564).
+	if store == settings.StoreRepo {
+		return nil
+	}
+	steps, _ := Steps(change)
+	switch store {
+	case settings.StoreProject:
+		steps = append(steps, initflow.Layer)
+	case settings.StoreNode:
+		steps = append(steps, initflow.Policy)
+	}
+	return Order(steps)
 }
 
 // Order returns names deduped and in the order initflow runs them: the stage
