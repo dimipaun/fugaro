@@ -109,9 +109,16 @@ type Pattern struct {
 }
 
 // Patterns is the fixed rules (D326, D968) read over the summaries of the
-// reports committed before this one and this report's own. prev is in any
-// order and may repeat a period; the rules run in RuleNames order over periods
-// in key order, so the same summaries give the same patterns (G3).
+// reports before this one and this report's own. prev is in any order and may
+// repeat a period; the rules run in RuleNames order over periods in key order,
+// so the same summaries give the same patterns (G3).
+//
+// The reports before this one are the series its caller read, whatever hold it
+// came from: the stored reports of the repository's prefix in the runs bucket,
+// and the committed ones too where a checkout has them (Store, E7). The rules
+// read summaries and never a place, so the two are one series to them -- and on
+// the project's job, which has no checkout, the stored one is the only series
+// there is.
 //
 // The rules are a table, not a search: each reads the periods it names, and a
 // summary whose period key is not one this package writes is in none of them

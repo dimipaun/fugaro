@@ -18,12 +18,15 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
@@ -387,16 +390,16 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	// holds it: C2.1 landed and credsvc.CredentialKey answers KindGitHubApp
 	// for it, so it is a bundle credential like any other and
 	// TestCredsSetAcceptsTheAppKeyAsABundleEntry is where that is asserted.
-	// What stays refused is a name no bundle key can be, whatever it looks
-	// like, and one key of the Bitbucket token family (D2350), which IS a
-	// bundle key and is not written here yet
-	// (TestCredsSetRefusesTheBitbucketTokenFamily).
+	// A key of the Bitbucket token family (D2350) WAS refused here too, and T11
+	// took it out of this list the way C2.1 took the App key out: the family is
+	// a name this command writes now, and creds_bitbucket_test.go is where that
+	// write is asserted. What stays refused is a name no bundle key can be,
+	// whatever it looks like.
 	for _, name := range []string{
 		"not-a-credential",
 		// The namespace is reserved but the suffix is not a name any policy
 		// can admit: a key no account can be named.
 		config.ClaudeOAuthTokenPrefix + strings.Repeat("a", config.MaxClaudeAccountNameLen+1),
-		config.BitbucketTokenKey("ci"),
 	} {
 		_, _, err := executeStdin(t, value+"\n", "creds", "set", name)
 		if err == nil || ExitCode(err) != ExitUserError {
@@ -456,58 +459,6 @@ func TestCredsSetRefusesUnknownKeyAndOversizeDoc(t *testing.T) {
 	}
 	if got := f.value(t); got != doc.String() {
 		t.Errorf("the document changed: %q", got)
-	}
-}
-
-// TestCredsSetRefusesTheBitbucketTokenFamily: a member of the family of named
-// Bitbucket tokens (config.BitbucketTokenKey, D2350) is a key the credentials
-// service's loader reads and this command does not write yet. It is refused at
-// the door — the same refusal a name that is no bundle key gets, before the
-// project is opened, with the value unread and the document untouched.
-//
-// What the refusal is about is the RELEASE THE DOCUMENT WOULD LAND ON and not
-// the key's shape, and the last two assertions are what holds that: the loader
-// reads the very key this write refuses. The family's reader is a credentials
-// service newer than the one an installation may have deployed, and a service
-// refuses the WHOLE document for a key it does not know — a service-wide
-// refusal, every caller of it halted, coding runs included — so the write is
-// held back until the guard that judges the release SERVING the bundle lands
-// with the command that writes the family as a whole: the token's type and
-// coverage, its local record and its verified scopes are the same task's (T11),
-// and a bundle entry written here alone would be a token no other half of the
-// feature can see.
-func TestCredsSetRefusesTheBitbucketTokenFamily(t *testing.T) {
-	f := credsFixtureFor(t)
-	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
-	before := f.value(t)
-	value := credsValue(t, "ours")
-	for _, name := range []string{config.BitbucketTokenKey("ci"), config.BitbucketTokenKey("workspace")} {
-		out, _, err := executeStdin(t, value+"\n", "creds", "set", name)
-		if err == nil || ExitCode(err) != ExitUserError {
-			t.Fatalf("creds set %q = %v, want a user error", name, err)
-		}
-		if strings.Contains(out, value) || strings.Contains(err.Error(), value) {
-			t.Errorf("the refusal echoed the value: stdout %q, err %q", out, err)
-		}
-		if !strings.Contains(err.Error(), "Nothing was read and nothing was written") {
-			t.Errorf("the refusal does not say nothing happened: %v", err)
-		}
-	}
-	if n := len(f.Requests()); n != 0 {
-		t.Fatalf("%d request(s) were made for a refused name: the refusal is not before the cloud", n)
-	}
-	if n := f.writes(); n != 0 {
-		t.Fatalf("%d version(s) written", n)
-	}
-	if got := f.value(t); got != before {
-		t.Errorf("the document changed: %q", got)
-	}
-	key := config.BitbucketTokenKey("ci")
-	if _, kind, _, ok := credsvc.CredentialKey(key); !ok || kind != credsvc.KindGit {
-		t.Errorf("CredentialKey(%q) = %q, %v; the key this write refuses is one the loader reads", key, kind, ok)
-	}
-	if _, err := credsvc.ParseBundle([]byte(key + ": " + credsValue(t, "token") + "\n")); err != nil {
-		t.Errorf("the loader refuses the key this write refuses: %v", err)
 	}
 }
 
@@ -1337,17 +1288,19 @@ func TestCredsSetBitbucketToken(t *testing.T) {
 	// (docs/credentials-service/runbook.md §11), so it cannot say the proxy
 	// does not exist yet while SECURITY.md, docs/git-providers.md and the
 	// runbook document it as built. It says which repositories the entry
-	// serves, and keeps the half that is still true on this tree: the job of
-	// every other Bitbucket repository still mounts its own copy.
+	// serves, and keeps the half that is still true after the flip: every
+	// Bitbucket repository the published node does not proxy keeps its own
+	// mounted copy — which is why the sentence names the node and not the job
+	// it used to speak of "until the flip".
 	t.Run("the help names the proxy that issues it", func(t *testing.T) {
 		help := newCredsSetCmd().Long
 		if !strings.Contains(help, "the git proxy issues this entry for the repositories the published node admits with proxy: true") {
 			t.Errorf("`creds set` help does not say what the %s entry is for: %q", config.BitbucketSecret, help)
 		}
-		if !strings.Contains(help, "every other Bitbucket run's job still uses its own mounted copy until the flip") {
-			t.Errorf("`creds set` help does not keep the mount that is still there on this tree: %q", help)
+		if !strings.Contains(help, "every other Bitbucket repository's job keeps its own mounted copy") {
+			t.Errorf("`creds set` help does not keep the mount a repository the node does not proxy still has: %q", help)
 		}
-		for _, banned := range []string{"a later release adds", "still uses its own mounted token"} {
+		for _, banned := range []string{"a later release adds", "still uses its own mounted token", "until the flip"} {
 			if strings.Contains(help, banned) {
 				t.Errorf("`creds set` help still says %q: the proxy is built and this command writes the entry it issues", banned)
 			}
@@ -1522,6 +1475,212 @@ func TestCredsLsNamesBitbucketToken(t *testing.T) {
 	if n := f.writes(); n != 0 {
 		t.Errorf("the listing wrote %d version(s)", n)
 	}
+}
+
+// credsBitbucketRow is one row of `creds ls --json` read back with the half a
+// Bitbucket token carries (T10). The fields are named as the JSON spells them,
+// so a rename in the shape fails here rather than passing as a nil field.
+type credsBitbucketRow struct {
+	Name             string   `json:"name"`
+	Present          bool     `json:"present"`
+	Changed          string   `json:"changed"`
+	Type             string   `json:"type"`
+	Coverage         []string `json:"coverage"`
+	Expires          string   `json:"expires"`
+	VerifiedAt       string   `json:"verified_at"`
+	State            string   `json:"state"`
+	ThrottledUntil   string   `json:"throttled_until"`
+	RequestsInWindow *int     `json:"requests_in_window"`
+}
+
+// credsRowsByKey reads a `creds ls --json` listing back by row name.
+func credsRowsByKey(t *testing.T, out string) map[string]credsBitbucketRow {
+	t.Helper()
+	var list struct {
+		Credentials []credsBitbucketRow `json:"credentials"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	rows := make(map[string]credsBitbucketRow, len(list.Credentials))
+	for _, r := range list.Credentials {
+		rows[r.Name] = r
+	}
+	return rows
+}
+
+// `creds ls --json` lists every Bitbucket token the document holds — the legacy
+// key and the family's named tokens alike — with the record's own facts and the
+// state store's (T10): the type, the coverage, the recorded expiry, when the
+// add-time check last proved it, the state, and R7's two NEW fields, the hold
+// and the count of requests in the window. A value is in none of them.
+//
+// The typed token is written by `creds set` itself rather than seeded, because
+// the record and the identity the listing reads are that command's own two
+// writes (T11), and a fixture that spelled them by hand would pin the listing
+// against its own idea of them. The hold and the count are then written as the
+// proxy's reactions write them (T6), which is the one state a `creds set` never
+// leaves behind.
+func TestCredsLsJSONBitbucketTokens(t *testing.T) {
+	f := newBitbucketFixture(t, "", repoTokenAnswers())
+	legacy, oauth, ci := credsValue(t, "legacy"), credsValue(t, "oauth"), credsValue(t, "ci")
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+oauth+"\n"+
+		config.BitbucketSecret+": "+legacy+"\n"))
+	// The legacy key's own two facts live in the operator's config and not in a
+	// record: R3 makes its coverage the allow_data_to list the published node
+	// carries as allow_repos, and R6 keeps its expiry in the secret_expires
+	// entry of the same name.
+	cfg := f.configBytes(t)
+	if err := os.WriteFile(f.path, []byte(cfg+
+		"project_secrets:\n  "+config.BitbucketSecret+":\n    allow_data_to: [acme/fugaro]\n"+
+		"secret_expires:\n  "+config.BitbucketSecret+": 2026-12-31\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, credsValue(t, "typed")+"\n", setArgs(config.BitbucketTokenPrefix+"ci",
+		append(repoTokenFlags("ci"), "--expires", "2027-01-31")...)...); err != nil {
+		t.Fatalf("creds set %sci = %v", config.BitbucketTokenPrefix, err)
+	}
+	until := time.Now().UTC().Add(30 * time.Minute).Truncate(time.Second)
+	verified := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	f.db.Set(creds.PathTokenStatus(config.BitbucketTokenKey("ci")), map[string]any{
+		"state":       string(creds.StateExhausted),
+		"until":       until.Format(time.RFC3339),
+		"since":       until.Add(-time.Minute).Format(time.RFC3339),
+		"verified_at": verified.Format(time.RFC3339),
+		"count":       7,
+	})
+
+	out, errOut, err := execute(t, "creds", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	rows := credsRowsByKey(t, out)
+	if len(rows) != 3 {
+		t.Fatalf("the listing holds %d row(s), want the legacy token, the typed one and the model credential: %v", len(rows), rows)
+	}
+
+	got := rows[config.BitbucketTokenKey("ci")]
+	if got.Type != config.BitbucketTokenTypeRepo || !slices.Equal(got.Coverage, []string{"acme/fugaro"}) {
+		t.Errorf("the typed token's row is %+v, want a repo token covering acme/fugaro", got)
+	}
+	if got.Expires != "2027-01-31" {
+		t.Errorf("the typed token's expiry is %q, want the day the record holds", got.Expires)
+	}
+	if got.VerifiedAt != verified.Format(time.RFC3339) {
+		t.Errorf("verified_at is %q, want %q (the add-time check's own record)", got.VerifiedAt, verified.Format(time.RFC3339))
+	}
+	if got.State != string(creds.StateExhausted) {
+		t.Errorf("state is %q, want %q", got.State, creds.StateExhausted)
+	}
+	if got.ThrottledUntil != until.Format(time.RFC3339) {
+		t.Errorf("throttled_until is %q, want the hold's own end %q", got.ThrottledUntil, until.Format(time.RFC3339))
+	}
+	if got.RequestsInWindow == nil || *got.RequestsInWindow != 7 {
+		t.Errorf("requests_in_window is %v, want the 7 the store counted", got.RequestsInWindow)
+	}
+
+	// The legacy key: the implicit untyped record (R3), so it has no type of the
+	// three and no record to read a coverage or an expiry from. It carries no
+	// hold, so it carries no throttled_until — an empty one would read as a hold
+	// that ended — and the store's answer for it is the zero status, which is
+	// available (T6).
+	legacyRow := rows[config.BitbucketSecret]
+	if legacyRow.Type != bitbucketUntypedType {
+		t.Errorf("the legacy token's type is %q, want %q", legacyRow.Type, bitbucketUntypedType)
+	}
+	if !slices.Equal(legacyRow.Coverage, []string{"acme/fugaro"}) || legacyRow.Expires != "2026-12-31" {
+		t.Errorf("the legacy token's row is %+v, want the config's own allow_data_to list and secret_expires date", legacyRow)
+	}
+	if legacyRow.State != string(creds.StateAvailable) || legacyRow.ThrottledUntil != "" {
+		t.Errorf("the legacy token's row is %+v, want an available token with no hold", legacyRow)
+	}
+	if legacyRow.RequestsInWindow == nil || *legacyRow.RequestsInWindow != 0 {
+		t.Errorf("the legacy token's requests_in_window is %v, want the zero the store holds", legacyRow.RequestsInWindow)
+	}
+
+	// The model credential's row is what it always was: it is not a Bitbucket
+	// token, and none of the new fields is true of it.
+	if model := rows[config.ClaudeOAuthToken]; model.Type != "" || model.State != "" || model.RequestsInWindow != nil {
+		t.Errorf("the model credential's row carries a Bitbucket fact: %+v", model)
+	}
+	assertNoValue(t, out+errOut, legacy, oauth, ci)
+
+	// The same facts on the screen a person reads, under the table: the state
+	// and the hold are what an operator runs this command for.
+	text, errOut, err := execute(t, "creds", "ls")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	for _, want := range []string{
+		config.BitbucketTokenKey("ci") + ": type repo, coverage acme/fugaro, expires 2027-01-31, verified " + verified.Format(time.RFC3339) + ", state exhausted, throttled until " + until.Format(time.RFC3339) + ", 7 request(s) in the window",
+		config.BitbucketSecret + ": type " + bitbucketUntypedType + ", coverage acme/fugaro, expires 2026-12-31, state available, 0 request(s) in the window",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the listing does not hold %q:\n%s", want, text)
+		}
+	}
+	assertNoValue(t, text+errOut, legacy, oauth, ci)
+}
+
+// The fields this task adds are ADDED: every field the `--json` shape already
+// carried keeps its name and its meaning, and the keys a row of any other
+// credential holds are the three it always held. R7 is read as the shape it
+// is, and the CLAUDE.md rule behind it — a field never changes meaning — is
+// what makes a reader of the old shape still right about the new one.
+func TestCredsLsAddsFieldsOnly(t *testing.T) {
+	f := newBitbucketFixture(t, "", repoTokenAnswers())
+	value, oauth := credsValue(t, "legacy"), credsValue(t, "oauth")
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+oauth+"\n"+
+		config.BitbucketSecret+": "+value+"\n"))
+
+	out, errOut, err := execute(t, "creds", "ls", "--json")
+	if err != nil {
+		t.Fatalf("%v (stderr %q)", err, errOut)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(out), &fields); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	var keys []string
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	if want := []string{"changed", "credentials", "project", "secret", "version"}; !slices.Equal(keys, want) {
+		t.Errorf("the listing holds %q, want %q", keys, want)
+	}
+	var list struct {
+		Changed     string           `json:"changed"`
+		Credentials []map[string]any `json:"credentials"`
+	}
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		t.Fatalf("unmarshal %q: %v", out, err)
+	}
+	for _, row := range list.Credentials {
+		name, _ := row["name"].(string)
+		// The three the shape always carried, with the meanings they always
+		// had: the document key, the presence, the version's own time.
+		if name == "" {
+			t.Errorf("a row lost its name: %v", row)
+		}
+		if present, ok := row["present"].(bool); !ok || !present {
+			t.Errorf("row %s: present = %v, want the bool it always was", name, row["present"])
+		}
+		if changed, _ := row["changed"].(string); changed != list.Changed {
+			t.Errorf("row %s: changed = %q, want the document's own %q", name, changed, list.Changed)
+		}
+		if name == config.ClaudeOAuthToken {
+			var rowKeys []string
+			for k := range row {
+				rowKeys = append(rowKeys, k)
+			}
+			slices.Sort(rowKeys)
+			if want := []string{"changed", "name", "present"}; !slices.Equal(rowKeys, want) {
+				t.Errorf("a credential that is not a Bitbucket token holds %q, want %q: the new fields are omitempty, so the old shape is the old shape", rowKeys, want)
+			}
+		}
+	}
+	assertNoValue(t, out+errOut, value, oauth)
 }
 
 // assertRedacted fails if s still carries a secret the way the production

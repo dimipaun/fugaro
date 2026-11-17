@@ -32,25 +32,75 @@ type RunReport struct {
 	Started  bool
 	Finished bool
 	Outcome  Outcome
+	// PRNumber is the pull request the run left, and 0 for a run that left
+	// none. It is the record's own answer (result.json's `pr`, F25), so a run
+	// that opened one carries it from the moment it did, and it never moves
+	// after that.
+	//
+	// The fold reads it to tell work that is finished from work that is
+	// waiting on a merge (D2705): a succeeded run that left a pull request
+	// leaves its item in `review`. The merge read reads it for the number the
+	// host is asked about, which is why it is here and not a second read of
+	// the record: one attempt left one pull request, and both readers of that
+	// fact read it from the report.
+	PRNumber int
+	// WorkspaceRefusal is the marker the run's record carries when the
+	// workspace's own credentials service refused it, and which of the
+	// workspace's refusals it was (runstore.Halt.WorkspaceRefusal, O19). It is
+	// empty for every run no workspace refused.
+	//
+	// It is here and not read off Halt because the two are separate facts a
+	// reader fills from separate places in the record, and because the seam
+	// that answers whether this is a workspace's refusal is handed both: the
+	// marker is the run's own write, so a rule over it has to hold it against
+	// the halt beside it rather than believe it (ee/orchestrator).
+	WorkspaceRefusal string
+	// Halt is the halt the run's record carries, as the record states it. A
+	// run that ended without one carries the zero Halt.
+	Halt Halt
+}
+
+// Halt is the halt a run's record carries, as the record states it: what
+// stopped the run, at what scope, and the sentence the run's operator reads.
+// It is the three fields a refusal is corroborated against and no more — the
+// fold decides nothing else with them, and nothing here reads a database or a
+// clock.
+type Halt struct {
+	Reason string
+	Scope  string
+	Detail string
 }
 
 // RunViewReader reads the runs the state recorded. It is handed the run ids of
-// the attempts that have not reported and answers one report per id it knows,
-// or an error for a read that did not happen. The daemon implements it over the
-// run records; nothing in this package reaches a store of its own, which is
-// what keeps a tick a deterministic pass over the node.
+// the attempts that have not reported — and the run ids of the items waiting on
+// a merge, whose attempts have reported but whose pull requests the merge read
+// is about — and answers one report per id it knows, or an error for a read
+// that did not happen. The daemon implements it over the run records; nothing in
+// this package reaches a store of its own, which is what keeps a tick a
+// deterministic pass over the node.
 type RunViewReader interface {
 	Runs(ctx context.Context, runIDs []string) ([]RunReport, error)
 }
 
 // foldPhase is the phase an item takes when the run behind its attempt reports
-// this outcome, and false for an outcome no run reports. An outcome it does not
-// read is refused by the caller rather than guessed at: the alternative is an
-// item whose attempt has ended and whose phase says it is still going, with
-// nothing on the node that a person could read as the reason.
-func foldPhase(o Outcome) (Phase, bool) {
+// this outcome and left, or did not leave, a pull request, and false for an
+// outcome no run reports. An outcome it does not read is refused by the caller
+// rather than guessed at: the alternative is an item whose attempt has ended
+// and whose phase says it is still going, with nothing on the node that a
+// person could read as the reason.
+//
+// leftPR is D2705's whole distinction: a succeeded run that left a pull
+// request leaves the item in `review`, where it waits for that pull request to
+// merge, and one that left none is `done` at once — there is nothing to wait
+// for, and an item held in `review` for a merge that will never come would
+// hold everything that depends on it for ever. What leaves `review` is the
+// merge read, the only reader that can say a pull request merged or closed.
+func foldPhase(o Outcome, leftPR bool) (Phase, bool) {
 	switch o {
 	case OutcomeSucceeded:
+		if leftPR {
+			return PhaseReview, true
+		}
 		return PhaseDone, true
 	case OutcomeFailed, OutcomeRefused:
 		// A refusal is an attempt like any other (O6): a run started and came
@@ -133,7 +183,7 @@ func foldOps(s State, reports []RunReport) ([]Op, []Notification, error) {
 		if !ok || !r.Finished {
 			continue
 		}
-		phase, known := foldPhase(r.Outcome)
+		phase, known := foldPhase(r.Outcome, r.PRNumber > 0)
 		if !known {
 			return nil, nil, fmt.Errorf("%w: the run %q reported %q for the attempt %q, and that is not an outcome a run reports",
 				ErrInvalid, safetext.OneLine(it.RunID), safetext.OneLine(string(r.Outcome)), safetext.OneLine(it.ID))

@@ -476,6 +476,107 @@ func TestStageRefusesAnotherRepositorysURL(t *testing.T) {
 	}
 }
 
+// stageFinalize is the last step a generated stage runs: the base image's own
+// script, which no test can put on the absolute path the definition spells. The
+// test below points that one word at a stub of its own, so what it observes is
+// whether the step ran at all.
+const stageFinalize = "/usr/local/lib/fugaro/finalize-checkout"
+
+// stageShell is the shell the builder runs for a generated stage: the RUN
+// instruction's own text with the BuildKit flags off the first line and the line
+// continuations joined, which is what the instruction is to /bin/sh. A test
+// about how the stage's parts are joined has to run the join: the parts are one
+// line of text, and where a guard sits in it is what its own text cannot show.
+func stageShell(t *testing.T, stage string) string {
+	t.Helper()
+	at := strings.Index(stage, "\nRUN ")
+	if at < 0 {
+		t.Fatalf("the stage carries no RUN instruction:\n%s", stage)
+	}
+	body := stage[at+len("\nRUN "):]
+	// The instruction's first line is its BuildKit flags, and the shell begins
+	// on the line after it.
+	flags := strings.Index(body, " \\\n")
+	if flags < 0 {
+		t.Fatalf("the RUN instruction carries no continued shell line:\n%s", stage)
+	}
+	return strings.TrimSuffix(strings.ReplaceAll(body[flags+len(" \\\n"):], " \\\n", ""), "\n")
+}
+
+// TestStageFailsWhenTheResetDoes: the stage's steps are one shell line joined
+// with "&&", and the guard that ends it is several commands of its own. "&&"
+// binds tighter than ";", so a guard whose commands are not one brace group is
+// joined to the step AHEAD of it — the commit pin — and the step behind it
+// (finalize-checkout) is joined to the guard's last command alone. A `git reset
+// --hard` that failed then leaves the stage running on to the guard and to
+// finalize-checkout over the branch head, and the image bakes a commit other
+// than FUGARO_COMMIT with every check passing.
+//
+// So what this runs is the generated stage's own shell, with the build's tools
+// replaced by stubs: git, whose reset is the step under test, install, which
+// would write under the image's own root, and finalize-checkout, which is the
+// base image's script and is pointed at a stub that records that it ran.
+func TestStageFailsWhenTheResetDoes(t *testing.T) {
+	p := Decide(reqApp())
+	stage, err := Stage(p.Baked[len(p.Baked)-1], p.Baked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	finalized := filepath.Join(bin, "finalized")
+	stub := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stub("git", "#!/bin/sh\ncase \"$*\" in *'reset --quiet --hard'*) exit \"${RESET_STATUS:-0}\" ;; esac\nexit 0\n")
+	stub("install", "#!/bin/sh\nexit 0\n")
+	stub("finalize-checkout", "#!/bin/sh\n: > "+finalized+"\n")
+
+	shell := stageShell(t, stage)
+	pointed := strings.ReplaceAll(shell, stageFinalize, filepath.Join(bin, "finalize-checkout"))
+	if pointed == shell {
+		t.Fatalf("the stage does not run %s, so this test would observe nothing:\n%s", stageFinalize, stage)
+	}
+	run := func(t *testing.T, reset string) (string, error) {
+		t.Helper()
+		if err := os.Remove(finalized); err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", "-c", pointed)
+		cmd.Dir = t.TempDir()
+		cmd.Env = []string{
+			"PATH=" + bin + ":" + os.Getenv("PATH"),
+			"HOME=" + t.TempDir(),
+			"REPO_URL=https://github.com/acme/app.git",
+			"BASE_BRANCH=main",
+			"FUGARO_COMMIT=",
+			"RESET_STATUS=" + reset,
+		}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	// The control: with a reset that succeeds the whole stage runs, finalize
+	// included, so what fails below is the reset and not the stubs.
+	if out, err := run(t, "0"); err != nil {
+		t.Fatalf("the stage failed with a reset that succeeded: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(finalized); err != nil {
+		t.Fatalf("the stage did not run finalize-checkout with a reset that succeeded: %v", err)
+	}
+	// And a reset that fails fails the stage, before the guard and before the
+	// final step: a stage that ran on would bake the branch head under the marker
+	// and the tag the definition gave the commit it was composed for.
+	out, err := run(t, "1")
+	if err == nil {
+		t.Fatalf("the stage passed with a failed reset, so the image bakes a commit other than FUGARO_COMMIT:\n%s", out)
+	}
+	if _, err := os.Stat(finalized); err == nil {
+		t.Errorf("the stage ran finalize-checkout after a failed reset:\n%s", out)
+	}
+}
+
 // TestOtherStageSpellsTheURLAndBranch: the stage of one of the entry's other
 // repositories carries that repository's URL and branch in the definition
 // itself, because the arguments a catalog build passes name the repository the
@@ -601,13 +702,14 @@ func TestRepoURLGuardHoldsTheRepositoryNotTheSpelling(t *testing.T) {
 //
 // The declaration is read with git's own parser and what the refusal names is
 // the repository the URL resolves to, folded to host/owner/name. That fold is
-// what keeps a credential out of the build log — everything before the last "@",
-// and everything from a "?" or a "#", is off the text printed, and so is every
-// control character — and what refuses a repository of the entry's own owner and
-// name that lives on another host. A checkout with no .gitmodules declares
-// nothing and the guard passes; one whose .gitmodules git cannot read is not the
-// same answer, and the guard fails rather than passing over declarations it
-// never saw.
+// what keeps a credential out of the build log — everything from a "?" or a "#"
+// is off the text printed, and so is the userinfo, which is dropped from the
+// host part alone — and what refuses a repository of the entry's own owner and
+// name that lives on another host, including one whose URL puts a covered
+// repository's path behind its own host's name. A checkout with no .gitmodules
+// declares nothing and the guard passes; one whose .gitmodules git cannot read
+// is not the same answer, and the guard fails rather than passing over
+// declarations it never saw.
 func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
 	dir := t.TempDir()
 	covered := []Repo{repoSpec("acme/app", "app-1234abcd"), repoSpec("acme/web", "web-2222bbbb")}
@@ -654,7 +756,24 @@ func TestBakedSubmoduleOutsideTheCredentialNamesTheRepo(t *testing.T) {
 		{"a submodule it covers, spelt another way", sub("lib", "https://GitHub.com/Acme/Web/"), false, ""},
 		{"a submodule it does not cover", sub("lib", "https://github.com/acme/lib.git"), false, "github.com/acme/lib"},
 		{"a submodule of another host", sub("lib", "https://gitlab.com/acme/web.git"), false, "gitlab.com/acme/web"},
+		// Another host whose URL carries a covered repository's path after an "@":
+		// git contacts evil.example and the credential goes with it, so a fold that
+		// dropped everything before the last "@" of the whole URL would read this as
+		// the covered repository and fetch it.
+		{"another host with a covered path after an @", sub("lib", "https://evil.example/x@github.com/acme/app"), false, "evil.example/x@github.com/acme/app"},
+		// The same with the "@" behind a fragment: what git sends the credential to
+		// is still evil.example, and the fragment is off the URL before the host is
+		// read, so the fold cannot be pushed past it. The declaration is quoted
+		// because git's own config parser would otherwise cut the value at the "#"
+		// and the shell would never see one — a .gitmodules may quote it, and then
+		// this fold is the only thing between that declaration and a fetch.
+		{"another host with a covered path behind a fragment", sub("lib", `"https://evil.example/#@github.com/acme/app"`), false, "evil.example"},
 		{"a relative submodule", sub("lib", "../lib"), false, "../lib"},
+		// A declaration that is a glob is the text the checkout declared and not
+		// the build's own files: the loop splits what it reads into words, and a
+		// word holding "*" would otherwise be expanded against the working
+		// directory and compared and printed as whatever it matched.
+		{"a declaration that is a glob", sub("lib", "*"), false, "*"},
 		{"a submodule in git's scp spelling", sub("lib", "git@github.com:acme/web.git"), false, "github.com:acme/web"},
 		{"the second of two declared", sub("a", "https://github.com/acme/app.git") + sub("b", "https://github.com/acme/zzz.git"), false, "github.com/acme/zzz"},
 	} {

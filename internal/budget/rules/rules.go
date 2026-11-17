@@ -614,12 +614,16 @@ func wordMacro(m string, depth int) (string, error) {
 		return fallback("dailyMicros", "repoDailyMicros"), nil
 	case "KINDREQ":
 		// The per-kind *required* half of a message's shape (P6.3's
-		// KIND_REQUIRED): an `answer` must name the prompt it answers, and an
-		// `action` must carry its action record. The other half — the fields a
+		// KIND_REQUIRED): an `answer` must name the prompt it answers, an
+		// `action` must carry its action record, and a `registration` — the kind
+		// P5.2.2 adds — must carry the token and the platform it registers, which
+		// the schema requires of that kind too. The other half — the fields a
 		// kind may not carry — is on the field's own node (see PARENTKIND),
 		// where it cannot be reached by a kind the message does not have.
 		k := kindOf("newData")
-		return "((" + k + " == 'answer' ? newData.child('reply_to').exists() : true) && (" + k + " == 'action' ? newData.child('action').exists() : true))", nil
+		return "((" + k + " == 'answer' ? newData.child('reply_to').exists() : true) && (" +
+			k + " == 'action' ? newData.child('action').exists() : true) && (" +
+			k + " == 'registration' ? (newData.child('token').exists() && newData.child('platform').exists()) : true))", nil
 	case "PARENTKIND":
 		// A field's own kind test: the kind of the message this field is on,
 		// read through parent() because the rules give a validating node no
@@ -656,8 +660,9 @@ func wordMacro(m string, depth int) (string, error) {
 		// checked; the *value* never is, and cannot be: verifying a tag needs
 		// the key, which is D171's and never passes through the database, so the
 		// rules can require a well-formed tag and nothing more (P6.7 is what
-		// verifies one).
-		return fmt.Sprintf("(newData.isString() && newData.val().length == %d && newData.val().matches(%s))", MaxMacLength, patternHex), nil
+		// verifies one). PARENTMACOK applies the same expression one node up,
+		// through the shared helper.
+		return macOK("newData"), nil
 	case "AGENTID":
 		// An agent id: the schema's identity, at most AGENT_MAX.
 		return boundedMatch(MaxAgentLength, patternIdentity), nil
@@ -699,9 +704,88 @@ func wordMacro(m string, depth int) (string, error) {
 			return "", err
 		}
 		return "(" + rc + " == " + d + " && " + gc + " == " + d + ")", nil
+	case "TOKENOK":
+		// A registration token's bound, and nothing else about its characters:
+		// the providers' own alphabets differ (an FCM token is URL-safe base64
+		// carrying a `:`, an APNs token is hex, an Expo token is bracketed), so
+		// a character class here would refuse a real token — and a refused token
+		// is a phone that never receives another notification. The schema's
+		// tokenField makes the same choice for the same reason; what the two
+		// artifacts do agree on is the bound (MaxTokenLength, the schema's
+		// TOKEN_MAX) and non-emptiness, which is what makes a token an identity
+		// of a known shape rather than a body.
+		return fmt.Sprintf("(newData.isString() && newData.val().length > 0 && newData.val().length <= %d)", MaxTokenLength), nil
+	case "PLATFORMOK":
+		// A registration's platform: the two names §3.4's device node carries, a
+		// closed vocabulary like the kind enumeration and for the same reason —
+		// the consumer reads it to decide which provider's endpoint it addresses,
+		// and a platform it has never heard of is not one it can send to.
+		return "(newData.isString() && (newData.val() == 'ios' || newData.val() == 'android'))", nil
+	case "ZONEOK":
+		// A quiet-hours zone: the schema's ZONE_PATTERN at the schema's ZONE_MAX,
+		// which is an IANA name and not an offset — a stored offset is a fixed
+		// offset, and it drifts onto the wrong hour at every DST transition.
+		return boundedMatch(MaxZoneLength, patternZone), nil
+	case "MINUTEOK":
+		// One end of a quiet-hours window: an integer minute of the local day, 0
+		// through MaxMinute (the schema's MINUTE_MAX). A float, a string, a
+		// negative minute and a minute past the day are each something else, and
+		// each is refused rather than floored, as the schema's minuteField
+		// refuses them.
+		return fmt.Sprintf("(newData.isNumber() && newData.val() >= 0 && newData.val() <= %d && newData.val() %% 1 == 0)", MaxMinute), nil
+	case "PARENTMACOK":
+		// The tag of the message a field sits on, read from the field: the shape
+		// MACOK checks, one node up. It is a restatement — hasChildren on the
+		// message already requires `mac`, and `mac`'s own node already refuses a
+		// malformed one — and the registration's three fields carry it because
+		// they are the fields a consumer trusts with a device's address and the
+		// token that reaches it: what gates them is then the tag itself and not a
+		// list on another node, so an edit that shortens that list cannot leave
+		// them valid on a message whose tag is absent or badly shaped.
+		return macOK("newData.parent().child('mac')"), nil
+	case "REPORTSJOB":
+		// The reports job's own identity (E12, F27): the one reader of the
+		// ladder's ledger. It is a custom-token claim and deliberately not the
+		// job's service account, because these rules bind client tokens only —
+		// a service account reads the database over IAM, whose binding has no
+		// path-level scope and never reaches this file
+		// (deploy/terraform/gcp/modules/installation/state_read.tf, and the
+		// orchestrator node's own note below), so a grant written for the
+		// account would be a fence that looks like one and is not. The mint is
+		// the job's own half and is not in this release: it takes signJwt on
+		// its own account the way a run's token takes it on the launcher's
+		// (internal/budget/token), and until it exists no token the rules
+		// evaluate carries this claim, so the node is inert rather than open.
+		return reportsJobClaim, nil
 	}
 	return "", fmt.Errorf("unknown macro %s", m)
 }
+
+// reportsJobClaim is the reports job's claim (E12, F27): what may read the
+// escalation block of the ladder's ledger and nothing else of the database.
+//
+// Its shape is TOKEN's project half and nothing more, because the location it
+// is granted at names no subject to bind it to: the node is
+// `orchestrator/$id/...`, and `$id` is the orchestrator's id and not the
+// reader's, so there is no `$mb`-shaped half for the claim to agree with. What
+// it says is therefore "a token minted for this installation's reports job",
+// which is as strong as every other mint here: whoever mints a custom token
+// chooses the claims in it, and a launcher that can mint a run's token can
+// already mint anything TOKEN and RUN are built on.
+//
+// Finding the block is the reader's own job, and the two halves of the path are
+// found differently. `$id` is the project's name — `orchestrator/<project>/…` is
+// what the tree is (`internal/cli`'s orchestratorID: "the orchestrator id is the
+// project's name") and it is the same value this claim compares against, so a
+// reader that holds the claim already knows it. `$item` is a position in the
+// work items array (`orchestrator.State.WorkItems` is a slice), which shifts as
+// items are archived out of it, and the reader may not list it: the node holding
+// the array carries no rule of its own and is refused. So it walks the positions
+// — the array is bounded by `orchestrator.MaxWorkItems`, and each read is one
+// block — and takes what it finds there, which is why the block itself carries
+// the item's `repo` and the run its last move was about (E12): the reader
+// filters and joins on those and never on the position it found the block at.
+const reportsJobClaim = "(auth != null && auth.token.rj != null && auth.token.rj == root.child('fugaro/project').val())"
 
 // PathMCPAuth is the hosted MCP server's own subtree (docs/mcp-server/spec.md
 // §6 and §8; D922, answered and restated on 2026-11-04): the token records —
@@ -900,3 +984,53 @@ func perRunOK(depth int) (string, error) {
 		repoSide+" && "+tern(hasGlobal, within(global), "true"),
 		tern(hasGlobal, within(global), "false")), nil
 }
+
+// MaxTokenLength bounds a registration's push token (mobile plan task P5.2.2,
+// design §3.5 (b)): the schema's TOKEN_MAX, above every token that really
+// exists (an FCM token at roughly 150-200 characters, an APNs token at 64 hex
+// characters, an Expo token at about 41) with room for the provider to grow and
+// far below MaxText. The distance is the point: a token is an identity string
+// and never a body, so "bounded" means something here.
+//
+// MaxZoneLength bounds a quiet-hours zone name (design §3.8): the schema's
+// ZONE_MAX, the longest IANA name plus room, and the same bound the other short
+// identity strings carry.
+//
+// MaxMinute is the largest minute of the local day a quiet-hours window may
+// name: the schema's MINUTE_MAX, so a window's ends are minutes since local
+// midnight 0 through 1439, one spelling of every time of day and no clock
+// format for the two artifacts to disagree about.
+//
+// They sit below the macro table, as PathMCPAuth and the family constants above
+// them do: a constant added above those citations moves the lines the tests
+// that resolve them read.
+const (
+	MaxTokenLength = 256
+	MaxZoneLength  = 64
+	MaxMinute      = 1439
+)
+
+// patternZone is the schema's ZONE_PATTERN, byte for byte
+// (TestMailboxRulesCheckTheSchemasCharacters reads shared/mailbox-schema and
+// fails when either side moves): a zone name is dot-separated IANA labels, so
+// `Europe/Berlin` is one and a path, an offset or a blank label is not.
+const patternZone = `/^[A-Za-z][A-Za-z0-9._+-]*(\/[A-Za-z0-9._+-]*[A-Za-z0-9_+-][A-Za-z0-9._+-]*)*$/`
+
+// macOK is a tag's shape at one snapshot: a string of exactly MaxMacLength
+// characters, every one of them the schema's lowercase hex. Shared by MACOK
+// (the message's own `mac`) and PARENTMACOK (the message's, read from a field),
+// so the two cannot drift.
+func macOK(at string) string {
+	return fmt.Sprintf("(%s.isString() && %s.val().length == %d && %s.val().matches(%s))", at, at, MaxMacLength, at, patternHex)
+}
+
+// PathByModel is the parent of one model's counters under a repository's day
+// counter: `spend/<day>/repos/<slug>/byModel/<model>`, whose leaves are the
+// dollars and the tokens of that model on that day (internal/budget's
+// PathByModel renders the same path for a concrete day, slug and model). The
+// four leaves generation 7 adds hang here, and doctor's sentence for a marker
+// below that generation names them, so the path is written once.
+//
+// It sits at the end of the file for PathMCPAuth's reason: a constant added
+// above those citations moves the lines the tests that resolve them read.
+const PathByModel = "spend/$day/repos/$slug/byModel/$model"

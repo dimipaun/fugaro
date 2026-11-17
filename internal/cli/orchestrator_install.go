@@ -212,9 +212,10 @@ func newOrchestratorInstallCmd() *cobra.Command {
 			"compares with its own before it hands over to a new release.\n\n" +
 			"It is idempotent: a unit that is already there is re-rendered from this\n" +
 			"release's template and the service restarted, which is also what `fugaro\n" +
-			"update` does to an installed unit (and `fugaro update` never installs\n" +
-			"one). It writes no state and migrates none: the daemon's own start-up\n" +
-			"does that.\n\n" +
+			"update` does to an installed unit. `fugaro update` writes the unit on a\n" +
+			"machine that has none too, at your own terminal and asking nothing, so no\n" +
+			"release needs this command as an operator step. It writes no state and\n" +
+			"migrates none: the daemon's own start-up does that.\n\n" +
 			"A unit is code that runs at every login, so this command asks you to type\n" +
 			"the word install at a real terminal, has no flag that stands in for it,\n" +
 			"and refuses in a coding agent's session. Running it yourself, without the\n" +
@@ -357,7 +358,7 @@ func runOrchestratorStatus(cmd *cobra.Command) error {
 		return userErr("reading %s: %v", u.Path, err)
 	case !ok:
 		fmt.Fprintf(out, "the login unit is not installed: %s does not exist\n", safetext.Field(u.Path))
-		fmt.Fprintf(out, "  `%s orchestrator install` writes it (fugaro setup does it as one of its steps)\n", selfCommand())
+		fmt.Fprintf(out, "  `%s orchestrator install` writes it (fugaro setup does it as one of its steps, and `fugaro update` installs it at your terminal)\n", selfCommand())
 		return nil
 	case was == u.Text:
 		fmt.Fprintf(out, "the login unit at %s is installed and current (%s)\n", safetext.Field(u.Path), u.Platform)

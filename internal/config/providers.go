@@ -411,6 +411,15 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			// key could never be written, and every repository the provider
 			// allows would mount a secret that does not exist.
 			add(at+".secret", "%q is a harness's OAuth credential name (claude-oauth-token or codex-oauth-token, and the names in their -<name> namespaces): that is a person's subscription token, never a provider's key", p.Secret)
+		case KeyCredentialSecret(p.Secret):
+			// A typed credential's own derived secret name (CredentialSecret,
+			// MC22): that container is where the credential's reader looks for
+			// the key it spends on a call, so a provider pointing .secret at it
+			// would have the credential's key read as the provider's and sent
+			// wherever this entry's calls route. The name is derived from the
+			// credential and never chosen, so unlike the harness names above
+			// there is no provider key an operator could have meant by it.
+			add(at+".secret", "names starting %s are a typed credential's own derived secret name (credentials in the local config): that container holds a credential's key, never a provider's", CredentialSecretPrefix)
 		default:
 			if other, dup := secrets[p.Secret]; dup {
 				add(at+".secret", "%q is already the secret of provider %s: each provider has its own key", p.Secret, other)
@@ -574,6 +583,61 @@ const GitHubAppKeySecret = "github-app-key"
 // per job (F7, D461).
 var ServiceHeldSecretNames = []string{}
 
+// ServiceServedAuths are the agent.auth values whose repositories reach the
+// credentials service besides the cascade (B2.1–B2.7, D498): the auths the
+// service's own cascade serves a run's model calls for, once the installation
+// has opted in, the repository's root has been re-applied with the switch on
+// and its budget mode is a gateway one.
+//
+// It is the FLIP LIST of D2072's second step, not a condition of the switch:
+// the switch admits `api-key` and `oauth` from the release that hands them the
+// service's address (B2.3), and this list is what decides whether their jobs
+// still MOUNT the model credential the service now serves them
+// (infra.ModelSecretsServed, dropModelMounts). It is EMPTY until B2.7, so
+// every mount stays for every auth but the cascade, which is G17's rule: a job
+// never loses a mount before the service serves that credential to the image
+// it runs.
+//
+// A name in it is a name the credentials service can serve a model call under,
+// and the two that belong here — "api-key" and "oauth" (B2.7) — are the two
+// whose runs the service's cascade and pool serve. `vertex` is not one of
+// them: a Vertex workflow's calls go to Vertex AI on the job's own service
+// account, which is not a credential this service holds. `cascade` is not one
+// either, and never will be: a cascade job has no model mount at all
+// (ModelSecretsServed answers `all` for it), so there is no mount for a flip
+// to take away.
+//
+// deploy/terraform's mirror tests hold the module's own lists to this package;
+// this one has no Terraform literal to be held to, because the value it feeds
+// is the per-repository model_secrets_served input Go writes into the tfvars,
+// whose three values ARE held to Go by TestModelSecretsServedValidationMatchesGo.
+var ServiceServedAuths = []string{}
+
+// The three values of the repository root's model_secrets_served input — which
+// model secrets the credentials service serves to a job, and therefore which
+// of its mounts the module may drop (infra.ModelSecretsServed is the one
+// function that answers it; deploy/terraform's
+// TestModelSecretsServedValidationMatchesGo holds the module's validation to
+// these three).
+//
+// They are the flip's vocabulary rather than the switch's: `none` is a job the
+// service serves no model credential — the switch is off for it, or its auth is
+// one no release serves yet — and it keeps every mount, accessor included;
+// `anthropic` is a job whose service serves the Claude OAuth token and the
+// Anthropic key and nothing else, so those two mounts go and a provider's key
+// stays (R6, D1634: a provider key is spent on a route the service forwards
+// rather than attaches, and its mount is the run's own); `all` is the cascade's
+// job, which mounts no model credential at all.
+const (
+	ModelSecretServedAll       = "all"
+	ModelSecretServedAnthropic = "anthropic"
+	ModelSecretServedNone      = "none"
+)
+
+// ModelSecretsServedValues are the three values above, for the mirror test
+// that holds the module's validation block to them.
+var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedAnthropic, ModelSecretServedNone}
+
 // IsServiceHeldSecretEnv reports whether a job mounting the logical secret
 // name under the variable env carries a credential the credentials service
 // holds once an installation opts in, and which the job's own account has
@@ -616,25 +680,33 @@ func IsServiceHeldSecretEnv(env, name string) bool {
 // --repo` reads through the operator's own credentials and hands to infra.Repo
 // as Inputs.Policy — the tfvars carry it as the repo object's own
 // bitbucket_proxied, and the same derivation refuses a local project_secrets
-// entry that disagrees with the node for this repository (G15). So this list
-// is inert once over on this branch and not twice: it is EMPTY, and that is
-// the only thing left that stops the drop. The fact itself is false for every
-// repository until the node admits it with `proxy: true` and the installation
-// has opted in, so the drop is gated twice even after this list is filled.
+// entry that disagrees with the node for this repository (G15). The fact is
+// false for every repository until the node admits it with `proxy: true` and
+// the installation has opted in, so the drop is gated twice: this list names
+// the credential, the fact names the repository.
 //
 // Terraform cannot ask Go, so the same names are a literal in
 // modules/workflow/sa.tf's proxied_git_secret_names, held to this list by
 // deploy/terraform's TestProxiedGitSecretNamesMatchTheModule, and read beside
 // the module's own bitbucket_proxied input.
 //
-// It is EMPTY, and it stays empty until the flip. B1.13 part two fills it with
-// "bitbucket-token", and the flip is 0.16.0 — the release after B1.12's Check
-// 191 on the released 0.15.0 and the owner's go on it (D500, G1; O7 and the S1
-// row of docs/secrets-brokering/implementation-plan.md). The module's mirror,
-// the guard test and the tftest runs move in that one commit. Until then no job
-// loses an accessor or a mount for it, whatever the node admits, and a proxied
-// repository's run reads its token exactly as it always has.
-var ProxiedGitSecretNames = []string{}
+// It is FILLED, and that is B1.13 part two: the flip ships in 0.26.0 — the
+// release after the proxy chain's, which is the one `proxySince` names (0.22.0,
+// internal/cli/recipes_skew.go), and after 0.23.0, which went out without it;
+// the owner released the hold on 2026-11-16 (D500, G1; the plan's B1.13 and
+// its S1 row). The module's mirror, the guard test and the
+// tftest runs moved in that one commit. Two gates still stand in front of the
+// drop, and both are per repository: the installation opted in, and the
+// published node's block admits the repository with `proxy: true`. So filling
+// this list changed nothing for a repository the node does not admit, and a
+// proxied repository's job gives up the mount and the accessor its run no
+// longer reads.
+//
+// There is no version gate on that fill: the drop is compiled in and fires
+// wherever the two gates above hold. What keeps it from stranding a proxied
+// run is `fugaro update`, which refuses the drop until the bundle holds the
+// token and names the one command that stores it (O8).
+var ProxiedGitSecretNames = []string{BitbucketSecret}
 
 // ProviderBySecret is the provider whose key is the secret named secret.
 // Provider secrets are the owner's, in the local config, so a workflow's own

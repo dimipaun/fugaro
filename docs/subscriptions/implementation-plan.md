@@ -8,9 +8,9 @@ Subscription Terms amended to the owner's answers (#1146, licensing L4.5, done) 
 in the four licence files (#1140, merged).
 
 **Status: partly built — of the 51 tasks below, 7 are done, 7 partial, 27 not started and 10 are
-owner-run — and NO TASK IS APPROVED; the census of every task against `origin/main` is
+owner-run — and, **since 2026-11-16, every agent task is approved** (the owner's approval of that day; before it NO TASK WAS APPROVED); the census of every task against `origin/main` is
 [status-2026-11-07.md](status-2026-11-07.md).** Each task needs the owner's
-explicit go. Answering D430–D448 and B1–B17, and ruling T10–T26, O4 and the key binding, approved
+explicit go, **given for all agent tasks on 2026-11-16; the counsel-gated (S8.4) and entity-gated (S8.1, and what is built after the entity exists) tasks, the owner-run checks and key operations, and a task whose own decision is unanswered stay gated and are not approved away.** Answering D430–D448 and B1–B17, and ruling T10–T26, O4 and the key binding, approved
 none of them. Some tasks also wait on counsel (S8.4) or on the new entity (S8.1); each task says
 which. **T27, the one consequence of the rulings, was ruled (b) on 2026-10-29:** the paid commands
 warn, not refuse, until enforcement ships, and that warning is itself deferred with the key work

@@ -36,7 +36,14 @@
     "noUnusedParameters": true,
 
     "noEmit": true,
-    "skipLibCheck": false
+    // The one library whose own declarations do not type-check. Paddle's
+    // `PaddleEventData` extends `Partial<CheckoutEventError>` and widens `name`
+    // while it does it, so every import of `@paddle/paddle-js` -- the
+    // checkout's only reach for Paddle's overlay (P4.1) -- reports the
+    // library's own inconsistency as this app's error, with the fix inside a
+    // file nobody here may edit. The app's own code and its wire types are
+    // still checked; only the `.d.ts` files a package ships are skipped.
+    "skipLibCheck": true
   },
   // vite.config.ts is named rather than left to a directory: it sits at the
   // portal's root, and a config file that escapes the type check is a guard

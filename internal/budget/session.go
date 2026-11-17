@@ -86,6 +86,22 @@ type Config struct {
 	PolicyCap, CommittedDaily Micros
 	LocalEnforce              bool
 
+	// RulesGeneration is the generation of the database's security rules this
+	// installation has deployed, which the runner reads off
+	// config/limits/policyRules through projectpolicy.RulesGeneration and
+	// hands the session here before it opens (F27, spend-accuracy SA5.1). It
+	// decides which of a model's day-counter leaves the session may write:
+	// the four spend-accuracy leaves (`notional`, `rep`, `tlo` and `thi`)
+	// arrived in generation 7, and a session under a document without them
+	// writes the leaves it always wrote, because Realtime Database applies a
+	// stage report's multi-path update atomically and one leaf the deployed
+	// document lacks refuses the whole report (F10).
+	//
+	// Zero is the reading of an absent marker -- the pre-policy rules -- and
+	// a session that was told no generation writes today's leaves, which every
+	// document carries.
+	RulesGeneration int
+
 	// Grace is the D14 window (zero: DefaultGrace); HeartbeatEvery the
 	// registry and usage cadence (zero: DefaultHeartbeatEvery).
 	Grace          time.Duration

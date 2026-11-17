@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
 )
 
@@ -61,6 +63,11 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		// the first slash — a source stating the default registry as userinfo
 		// is another host's artifact.
 		"is read as a URL and not as text",
+		// The other half of the image claim, and the one a repository's jobs
+		// actually run on: what source a catalog image carries and who can
+		// read it (C6 as re-pointed by D651; the sentences themselves are
+		// pinned in docs_registry_readers_test.go).
+		"### The source an image carries, and who can read it",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)
@@ -78,6 +85,17 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 	// against.
 	for _, v := range regexp.MustCompile("`([A-Z][A-Z0-9_]{2,})`").FindAllStringSubmatch(s, -1) {
 		if v[1] == "PIP_INDEX_URL" {
+			continue
+		}
+		// B5.4: a name the credentials service reads and no module renders yet
+		// is a name this document has to be able to state — the class's own
+		// table is exactly the limit B5.4 exists to write down — and the
+		// exemption expires by itself rather than by memory: the day the
+		// deployment renders the name it leaves
+		// CredentialsServiceEnvAwaitingTheModule (internal/infra/tf's own
+		// tripwire), and this loop then fails over the sentence until the name
+		// is one knownEnvName can find.
+		if slices.Contains(tf.CredentialsServiceEnvAwaitingTheModule(), v[1]) {
 			continue
 		}
 		if !knownEnvName(t, v[1]) {
@@ -407,22 +425,61 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"**Deployed for every installation, and reached only where the switch is on (the owner's ruling of 2026-11-05; DON1 and DON8).**",
 		"**`fugaro update` deploys it on every installation**",
 		"the deploy alone changes no run",
+		// The switch's terms, per auth. The section said a repository whose
+		// auth is not the cascade "is never switched on", which B2.2 and B2.3
+		// made false (infra.CredentialsServiceServes admits `api-key` and
+		// `oauth` under a gateway mode, runner.ServiceSwitchedAuth names them,
+		// and internal/cli's credentialsServiceLaunchEnv hands them the
+		// address), and the auth-blind drop it named beside that was false for
+		// the same reason — the review of this branch caught both still
+		// standing ten lines above the paragraph that says the opposite.
+		"**The switch admits an `api-key` or `oauth` repository too (B2.2, B2.3, D2071)**:",
+		"a budget mode of `observe` or `enforce`, because the gateway that reaches the service exists only there",
+		"`anthropic-api-key` for `api-key` and every account's `claude-oauth-token[-<account>]` for `oauth`",
+		"a `vertex` repository is the one `agent.auth` it never admits",
+		// And what the switch does not do for the two auths it now admits: the
+		// mount stays until B2.7's flip (D2072), which is the limit the bullet
+		// below states in full.
+		"the mount drop has not landed",
+		"while its job still declares its model credential, mounts it, and its account still holds `secretAccessor` on it",
 		// The job holds nothing — and the one job that is not reached, named
 		// rather than left to be assumed, because a shared project job keeps
-		// its accessors and its token mount.
-		"a per-repository job holds no model credential at all",
-		"a shared project job is the one job it does not reach",
+		// its accessors and its token mount. The claim is the cascade job's as
+		// of B2.4: the switch admits api-key and oauth repositories too, and
+		// their jobs keep the mount until the flip, so a sentence that says
+		// "a per-repository job" flat is false for them (B2.3, D2072).
+		"a per-repository `cascade` job holds no model credential at all",
+		"an `api-key` or `oauth` one is served by the service while its job still mounts its credential",
+		"the job keeps its model mount and its service account keeps `secretAccessor` on it",
+		// B5.4. The shared class is a caller the service serves now (B5.1's
+		// pairing, B5.2's address), so the section states what a shared coding
+		// run reaches and what its job keeps, where it used to state the
+		// refusal. Three separate facts, pinned separately, because a reader
+		// outside the same binary consumes them: the launch hands the address,
+		// the service admits the caller for the profile's repositories, and the
+		// job keeps every mount (G17 — the drop is B5.7's flip).
+		"**A shared project job is given the address too, on the same switch, and the class is served for its profile's repositories (B5.1, B5.2, D2078)**",
+		"the profile, and not an IAM grant, is the boundary between the repositories one job serves",
+		"**A shared coding run is served by the service for its profile's repositories, and no shared job loses a mount here**",
+		"the job keeps the GitHub App key, the profile's provider keys and its Claude account's token",
+		// The class has no deployment: the table its callers are read from is
+		// rendered by no module, so every deployed service starts empty and
+		// refuses the class whole. Stated rather than left to be discovered,
+		// because it is the difference between "served" and "served here".
+		"its table is `FUGARO_SHARED_JOB_ACCOUNTS`",
+		"refuses the class whole",
 		"fugaro creds set",
 		// The invariant, spelled as the code enforces it.
 		"an OAuth token is only ever sent to Anthropic's own endpoint",
 		// Unreachable halts rather than falls back (D143) — and the claim is
 		// scoped to the job the opt-in reaches: a shared project job keeps its
 		// mounts, so "the job has nothing to fall back to" is only true of a
-		// per-repository job, and the shared job is refused rather than served
-		// from its own token.
+		// per-repository job, while a shared job's run that the service cannot
+		// serve stops at the service rather than being answered from the App
+		// key its container still holds.
 		"never falls back",
 		"the mount is the switch's, not the outage's",
-		"refused at the gateway rather than answered from the job's own token",
+		"halts at the service's door rather than being answered from the App key its container still holds",
 		// The stop flag.
 		"fugaro budget kill --all",
 		// The database role's reach, said plainly rather than left to be
@@ -443,9 +500,16 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// only bound until it exists.
 		"the write-once outcome",
 		"the only bound on a replayed identity",
-		// The accepted limits the owner ruled on 2026-10-19.
+		// The accepted limits the owner ruled on 2026-10-19, and the one S5
+		// adds to them (B5.4, the residue the plan names): one account serves a
+		// whole profile, so a launcher can aim a run at another of that
+		// profile's repositories and the service will serve it. Recorded
+		// beside the other two rather than closed, because closing it is an
+		// identity per repository, which is what a shared job is not.
 		"The launcher's reach",
 		"The replay bounds",
+		"**A shared job's reach is its profile's, and that is the residue this slice accepts (D475, G21):**",
+		"can still mint a run identity naming another repository the profile admits",
 		// The cap is advisory.
 		"ADVISORY",
 		// Egress stays a known limit (D144).
@@ -465,6 +529,27 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"the service is the only identity with access to Secret Manager",
 		"the service audits every issuance",
 		"the bundle cannot leak",
+		// The pre-B2.3 rule, in the two spellings this section carried before
+		// the review of this branch: a non-cascade repository is switched on
+		// under the mode and the bundle entry named above, and its job keeps
+		// its model mount until the flip — so a reader who meets either
+		// sentence concludes that a credential this release brokers never
+		// leaves its job, which is the exposure the service exists to shrink.
+		"A repository whose `agent.auth` is not `cascade` is never switched on",
+		"a repository job in another `agent.auth` mode has no model credential at all",
+		"the drop is auth-blind",
+		// The pre-B5.1 refusal, in every spelling this document carried before
+		// B5.4: the service serves a shared coding caller for its profile's
+		// repositories now, so each of these sentences tells a `cascade` user
+		// that a path which exists is closed to them — and tells a reader of
+		// the trust model that a class of caller is excluded when the gate is
+		// the published profile instead.
+		"the service refuses a caller whose account belongs to one",
+		"A shared project job is not given the address and is not served",
+		"a `cascade` workflow cannot be served",
+		"A shared project job is not wired either",
+		"is deployed with no address at all",
+		"refused at the gateway rather than answered from the job's own token",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: that claim is wider than the code on this tree", banned)
@@ -496,20 +581,41 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// launcher's.
 		"the launcher makes no account allow-list check of its own",
 		// The dormancy limit is GONE and replaced, deliberately: the release
-		// that wires the service is this one. The bullet it used to carry
+		// that wires the service is 0.10.1. The bullet it used to carry
 		// said the opt-in gave a job no address and that no installation
 		// should opt in — both false once internal/cli/run.go sets
 		// FUGARO_CREDENTIALS_SERVICE_URL on a repository job's execution.
-		// What is stated instead is the half that is still not wired (every
-		// other agent.auth mode, and the shared project jobs), so the
-		// section cannot be read as "the service now serves everything".
+		// B2.4 rewrote the half that replaced it again: as of this release the
+		// switch admits `api-key` and `oauth` repositories too (B2.2, B2.3,
+		// D2071), so "the half it does not carry is the other auth modes'" and
+		// the auth-blind drop it named are both false. What has not landed is
+		// the MOUNT: a switched `api-key` or `oauth` repository's job keeps its
+		// credential and its accessor until the flip (B2.7, D2072).
 		"the service is wired as of 0.10.1",
-		"the half it does not carry is the other auth modes'",
+		// The auths the switch admits, named rather than "every `agent.auth`":
+		// `vertex` — the default — is the one it never admits, and the launcher
+		// puts no address on such a repository's job at all (the switch,
+		// infra.CredentialsServiceServes; internal/cli's credentialsServiceLaunchEnv),
+		// so "every `agent.auth` reaches it" told a `vertex` repository's owner
+		// that a credential the service never sees was brokered.
+		"every `agent.auth` the switch admits — `cascade`, `api-key` and `oauth` — reaches it",
+		"`vertex` is the one it does not admit at all",
+		"its calls go to Vertex AI on the job's own service account",
+		"what has not landed is the mount drop",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
-		"the mount drop is auth-blind",
-		"no model credential of their own and nothing yet to replace it",
-		"agent.auth: cascade",
-		"A shared project job is not wired either",
+		"a switched `api-key` or `oauth` repository's job still declares its model credential and its account still holds `secretAccessor` on it",
+		"the credential is the job's own copy until that release and the agent can reach it",
+		// B5.4 rewrote this limit, deliberately: B5.2 hands a switched
+		// profile's shared job the address on the same switch a repository's
+		// own job is judged with, and B5.1 pairs its account, so "not wired
+		// either" is false. What HAS not landed is the class's own table —
+		// FUGARO_SHARED_JOB_ACCOUNTS is rendered by no module, so a deployed
+		// service starts with the empty set and refuses the class whole.
+		// Stated rather than dropped: an owner who reads "wired" and finds a
+		// shared run refused at the door has to be able to find out why here.
+		"**A shared project job is wired too, and it is the last job the switch reaches**",
+		"the class's own table (`FUGARO_SHARED_JOB_ACCOUNTS`) is rendered by no module yet",
+		"a deployed service refuses the class whole",
 		"a repository whose root has not been re-applied with the switch on is byte for byte what it was",
 		// And the App key's own limit stays: the mount and the grant are
 		// still there, the runner just no longer reads the key.
@@ -528,8 +634,8 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 // "state the limit" voice. The claims pinned here are the ones the plan's
 // task B1.10 names: the agent can act as the run at the proxy (R3, O1), the
 // reach it is narrowed to (one repository, the run's branch and pull
-// requests, the run's life), D462's reach ending for a proxied repository and
-// the flip that has not landed on this tree, the build account's copy until
+// requests, the run's life), D462's reach ending for a proxied repository with
+// the flip landed, the build account's copy until
 // S4, D501's cold starts and no redundancy, D504's revocation and what a
 // cancel does not end, and O6's cross-repository fetch refusal.
 //
@@ -540,6 +646,37 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 // Mutation (verified, run and restored): the R3 sentence removed from the
 // section -- "The agent can act as the run at the proxy (R3, O1)." -- fails
 // this on that pin and on the "one repository" sentence that follows it.
+//
+// The pins T14 of docs/bitbucket-token-types added are the three paragraphs
+// this section gained (any mix of the three token types and the narrowest
+// covering one; a failing token marked, and the node's facts readable and
+// trusted at the writer's level; a rolled-back service refusing the whole
+// bundle), the widening of the first paragraph's "the one Bitbucket token the
+// bundle carries" to the plural, and the two banned spellings of that singular
+// -- the red step this task was written around: the plural pin and the banned
+// singular fail together until SECURITY.md and its pins move. The ban is the
+// whole phrase and never the word "one", because the section says "that one
+// token" and "a wider one" about what a request is served with, which is a
+// different claim and still true.
+//
+// Third mutation (verified, run and restored), from the review of this round:
+// the R5 skew sentence's "the row naming that fallback in
+// docs/design/update-in-flight.md is the publisher's, T12, and is not written
+// on this tree either" put back as the citation the first cut of this round
+// gave it -- "(`docs/design/update-in-flight.md` names it)" -- fails this on
+// that pin and on the banned phrase alone, which is the finding's second half:
+// the page cited a row that is not there, and the fallback is the publisher's
+// (T12) to write with the key.
+//
+// Fourth mutation (verified, run and restored), from the review that blocked
+// the pull request once T12 had landed: the pins that describe the publisher
+// put back as the not-yet-written wording this section carried before it --
+// "**no non-test code on this release writes it into the published node**",
+// "a typed token stored today serves nothing" and "**that line is owed with
+// T12**" -- fail this on those three pins and on the three banned spellings of
+// the same claim, and on nothing else. The landed wording is the stage that
+// writes the key, the token that serves nothing until the update after the
+// store, and the citation by line of the row and of the release notes' line.
 //
 // Second mutation (verified, run and restored), from the review of B1.10: the
 // D504 paragraph put back as it was written first -- cancel "cancels the
@@ -565,23 +702,96 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"the run's life",
 		"There is no agent sandbox, and none is planned",
 		// The switch a repository is proxied by, and the one source of that
-		// fact (G15): the published node's block with `proxy: true`.
+		// fact (G15): the published node's block with `proxy: true`. B2.4 adds
+		// the second half of that fact's reach (F29): before the switch
+		// admitted `api-key` and `oauth` repositories, `proxy: true` was inert
+		// for every repository whose `agent.auth` was not `cascade`, because
+		// the launcher writes the address on a job's execution only where the
+		// switch holds — and a `vertex` repository is still not admitted at all.
 		"bitbucket_token",
 		"proxy: true",
+		"`proxy: true` was inert for every repository whose `agent.auth` was not `cascade`",
+		"a `vertex` repository is still not admitted by the switch at all and so cannot be proxied",
 		// The forwarder's shape (G5): loopback, the job's ID token, no
 		// credential of its own.
 		"loopback forwarder",
 		"no credential of its own",
-		// D462's reach ends for a proxied repository, and the flip that takes
-		// the mount is not on this tree -- the claim is "the job reads no
-		// token", not "the token is out of the job".
+		// D462's reach ends for a proxied repository: the run's own traffic
+		// carries no token, and the flip has landed -- the list names the token
+		// -- so the mount and the accessor are gone too. What is left is the
+		// build account's copy, and every repository the node does not proxy.
 		"config.ProxiedGitSecretNames",
-		"empty on this tree",
+		"names `bitbucket-token`",
 		"reads no token at all",
-		"not that the token is out of the job",
+		"holds no `secretAccessor` on the token",
 		// The build account's copy until S4.
 		"build account still holds the token",
 		"until S4",
+		// The three token types (T14 of docs/bitbucket-token-types, D2350,
+		// D2355): the bundle holds any mix, the narrowest covering one serves
+		// each request, a reader of this page has to know that coverage is not
+		// permission, and one run can carry several bot identities because the
+		// token is chosen per request (D472, D2354). The plural is the whole
+		// point of this round and the sentence that used to stand here -- the
+		// bundle carrying "the one Bitbucket token" -- is banned below.
+		"holds the Bitbucket tokens the bundle carries",
+		"**The bundle may hold any mix of the three token types, and the narrowest covering one serves each request (D2350, D2355).**",
+		"`fugaro creds set bitbucket-token--<name>`",
+		"Every request is then served by the **narrowest token whose coverage admits the repository it names**",
+		"carry **several bot identities**, because each token is a different author at Bitbucket (D472)",
+		"so **coverage never widens what a run may reach** (D2354)",
+		"A repository no usable token covers is refused **naming the repository** (`token_not_covered`), never served by a wider token that does not admit it.",
+		// A failing token is marked, and the mark is a limit of this release:
+		// the state store is the operator's to clear, no command here clears
+		// it, and the mark is a node of its own so no reader takes a token for
+		// a model account (R4, R12).
+		"**A token that fails is marked, not trusted, and the node's facts are readable by every run.**",
+		"a 403 or a 404 marks nothing and evicts the cached project match",
+		"the **legacy** untyped `bitbucket-token` entry is never marked, because an installation holding only it keeps today's behaviour with no step (R3)",
+		"the mark lives under the token's own subtree of the credential state store (`creds/tokens/<name>`)",
+		"**No Fugaro command clears a Bitbucket token's mark in this release**",
+		// What the published node says, who may read it, and whom it is
+		// trusted to (F21, R5, R12), including the skew the new top-level key
+		// brings to a CLI of the release behind.
+		"**Each token's facts are readable by every run token of the job when they are published, and that is deliberate (F21, R5).**",
+		// The publisher is T12, and T12 is in this release: the policy stage
+		// of `fugaro update` writes the key (`buildProjectPolicy`,
+		// `internal/cli/init_policy_publish.go`), from the local config's
+		// records and the identities the state store holds (R5, R12), and
+		// `fugaro project policy publish` is the same write. The three pins
+		// below were the review's own finding, read the other way once T12
+		// landed: the section used to say the publisher was not on the tree,
+		// so the pins say which stage writes the key, that the node carries no
+		// member until it runs, and where the row naming the older runner's
+		// fallback is.
+		"the policy stage of `fugaro update`",
+		"`projectpolicy.DeriveBitbucketTokens` derives the key from the local config's typed records and from the identities the credential state store holds for them",
+		"(`buildProjectPolicy`, `internal/cli/init_policy_publish.go`; `fugaro project policy publish` makes the same write)",
+		"a typed token stored before the next `fugaro update` serves nothing",
+		"`docs/design/update-in-flight.md:62`",
+		"**upgrade the CLI before the `fugaro update` that publishes a typed Bitbucket token's coverage**",
+		// The step's own release, and the one whose notes state the rule
+		// without being able to publish the key: the review found the section
+		// naming v0.25.0's `### For operators` section, which does not carry
+		// the step, and v0.25.0 is the release whose `fugaro update` cannot
+		// publish the key at all.
+		"That step is written by the release that carries the publisher, under its `For operators` heading (`docs/releases/v0.26.0.md`)",
+		"recorded under that release's `Known limits` heading (`docs/releases/v0.25.0.md`), because v0.25.0's own `fugaro update` cannot publish the key",
+		"never a value and never a secret version",
+		"**The identity set is trusted at the level of the node's writer (F21, R12):**",
+		// The set can be partial, and R14 is why: a repository token answers no
+		// GET /user, so a set naming fewer accounts than the bundle holds
+		// tokens is the honest state and never a missing entry.
+		"it can be **partial**, because a repository token answers no `GET /user` at all, so a set that names fewer accounts than the bundle holds tokens is the honest state and not a missing entry (R14)",
+		"a hand-edited config states no identity, because the identity is never read from config",
+		"**And a node carrying the key is a skew (R5):**",
+		"a **CLI of the previous release refuses an unknown top-level key**",
+		"a runner of the previous release tolerates the key and falls back to its single `GET /user` identity for a run already in flight",
+		// The rollback the key family brings (T1, T11): the loader refuses the
+		// whole document, so the service moves before the write.
+		"**An older service refuses the whole bundle, so the service moves first.**",
+		"the bundle loader refuses a document with a key it does not know **whole** — every credential in it, the model credentials included",
+		"`docs/credentials-service/runbook.md` §11",
 		// D501: cold starts on the critical path, and no redundancy.
 		"scales to zero",
 		"cold start",
@@ -620,16 +830,15 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		}
 	}
 	// The overclaims a rewrite drifts into: the proxy is not a sandbox, the
-	// token is not out of the job on this tree, the job is not tokenless,
-	// and the reach is not "no reach". Read out of the whole document,
+	// token is not out of every job, the reach is not "no reach", and the
+	// drop is not a repository's whole cloud. Read out of the whole document,
 	// because a bullet that points here is as wrong as the section.
 	//
-	// Every one of them was written into this section once and is false
-	// while `config.ProxiedGitSecretNames` is empty: the mount stays, so the
-	// agent can read the token out of the runner's `/proc` and use the
-	// token's own reach, workspace-wide where the token is a workspace one.
-	// What the proxy narrows is the job's **own git traffic**, and the
-	// job-wide reach ends only once the flip lands.
+	// Every one of them was written into this section once and is still false
+	// after the flip: the flip takes the mount off a **proxied** repository's
+	// job and nothing else, so a repository the node does not proxy keeps its
+	// mount and the token's own reach, the build account keeps its copy until
+	// S4, and what the proxy narrows is still the job's **own git traffic**.
 	for _, banned := range []string{
 		"the agent cannot reach Bitbucket at all",
 		"the Bitbucket token is out of the job",
@@ -649,6 +858,32 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		// (internal/cli/cancel.go:76-84, 235-321).
 		"once the run has launched, cancels the execution",
 		"a cancelled run still finishes what it was launched to do",
+		// The singular that was true before the three token types and is now
+		// false twice over: the bundle carries a set of Bitbucket tokens, and
+		// which one serves a request is decided per request (T14, D2350).
+		"the one Bitbucket token the bundle carries",
+		"the Bitbucket token the bundle carries",
+		// The citation the first cut of this round gave for the R5 skew, which
+		// the review found false: the page's row names the fallback, and it is
+		// cited by its line now (`docs/design/update-in-flight.md:62`), so a
+		// pointer that says the page does not carry it can never come back.
+		"(`docs/design/update-in-flight.md` names it)",
+		// What the second review found false once T12 landed: the publisher is
+		// on this tree and `fugaro update` runs it, so every spelling of "it is
+		// not here" is a claim about the tree that is no longer true -- and the
+		// one that said the release-notes line was owed.
+		"and the publisher is not on this tree",
+		"no non-test code on this release writes it into the published node",
+		"a typed token stored today serves nothing",
+		"is the publisher's, T12, and is not written on this tree either",
+		"that line is owed with T12",
+		// What the third review found false: the operator step is not written
+		// in v0.25.0's `### For operators` section (that file's sentence sits
+		// under `### Known limits`), and v0.25.0 is the one release whose
+		// `fugaro update` cannot publish the key, so a citation that names it
+		// as the release the step belongs to can never come back.
+		"what it asks of an operator is the release notes' `### For operators` line",
+		"the release notes' `### For operators` line: **upgrade the CLI before",
 	} {
 		if strings.Contains(flattenDoc(s), banned) {
 			t.Errorf("SECURITY.md says %q: the proxy narrows the run, and the flip that takes the mount has not landed on this tree", banned)

@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261116-140001-c3d4", "repo": "acme/app", "ref": "main", "task": "Move the client onto the new contract", "change_set": { "id": "20261116-140000-a1b2", "members": [ { "repo": "acme/lib", "run_id": "20261116-140000-a1b2" }, { "repo": "acme/app", "run_id": "20261116-140001-c3d4" } ] } }

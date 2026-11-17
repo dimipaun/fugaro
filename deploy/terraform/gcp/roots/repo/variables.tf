@@ -29,12 +29,18 @@ variable "installation" {
     launchers = list(string)
     operators = list(string)
     # The installation's credentials service (D146, D147), absent while it has
-    # not opted in: its Cloud Run service name and region. This root passes it
-    # to the workflow module, which grants each job account roles/run.invoker on
-    # it and drops that job's model-secret accessors.
+    # not opted in: its Cloud Run service name, its region and the email of its
+    # own account. This root passes it to the workflow module, which grants each
+    # job account roles/run.invoker on it, drops that job's model-secret
+    # accessors, and grants the service's account secretAccessor on each secret
+    # the job mounts (D2074). `account` is optional so a repository root
+    # planned against an installation whose outputs predate it plans what it
+    # planned before; the object names it, because an object-typed variable
+    # drops an attribute it does not name.
     credentials_service = optional(object({
-      name   = string
-      region = string
+      name    = string
+      region  = string
+      account = optional(string, "")
     }))
     # The project's catalog check job account (D1148), its email, or "" on an
     # installation whose project publishes no catalog. modules/repo grants it
@@ -63,6 +69,13 @@ variable "repo" {
     # never proxies a repository, and every tfvars written before the fact
     # existed, plans exactly what it planned.
     bitbucket_proxied = optional(bool, false)
+    # Which of the model credentials the credentials service serves this
+    # repository's runs (D2072, G17): `all`, `anthropic` or `none`, computed by
+    # Go (infra.ModelSecretsServed) and passed to every workflow of this
+    # repository. Optional and `all`: a tfvars written before the input existed
+    # — every golden one — plans exactly what it planned, which is the drop
+    # every switched repository's root has made since the opt-in.
+    model_secrets_served = optional(string, "all")
     registry = object({
       repository_id   = string
       cleanup_dry_run = bool

@@ -467,6 +467,58 @@
           "name": "Extra"
         }
       }
+    },
+    {
+      "name": "a registration token of exactly TOKEN_MAX",
+      "why": "a token is bounded (P5.2.1): `> TOKEN_MAX` narrowed to `>= TOKEN_MAX` refuses a token of the bound itself, and widened by one accepts the 257-code-unit one the merged file's refusals do not carry",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "register this phone",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "platform": "ios",
+        "token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "past": {
+        "mode": "grow",
+        "at": "token",
+        "code": "too-long"
+      }
+    },
+    {
+      "name": "a quiet-hours zone of exactly ZONE_MAX",
+      "why": "an IANA zone name is bounded like the other short identity strings: `> ZONE_MAX` narrowed to `>= ZONE_MAX` refuses the bound itself",
+      "record": "message",
+      "value": {
+        "id": "m-0001",
+        "sender": "phone",
+        "text": "register this phone",
+        "at": 1700000000000,
+        "mac": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "registration",
+        "platform": "ios",
+        "token": "not-a-real-registration-token",
+        "prefs": {
+          "kill_switch": true,
+          "cap_reached": true,
+          "consumer_offline": true,
+          "cap_near": false,
+          "prompt": true,
+          "quiet_hours": {
+            "zone": "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "start": 1320,
+            "end": 420
+          }
+        }
+      },
+      "past": {
+        "mode": "grow",
+        "at": "prefs.quiet_hours.zone",
+        "code": "too-long"
+      }
     }
   ],
   "refusals": [

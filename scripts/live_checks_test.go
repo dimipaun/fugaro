@@ -22,7 +22,13 @@ import (
 // and a fake upstream for Check 90, fake `gcloud`, `fugaro` and `curl` for
 // Check 91, fake `gcloud` and `fugaro` for Checks 27, 111, 146 and 401, fake `gcloud`,
 // `git`, `curl` and `fugaro` for Check 190, fake `gcloud`, `fugaro` and a fake
-// Realtime Database behind a fake `curl` for Check 191, fake `gcloud`, `fugaro`
+// Realtime Database behind a fake `curl` for Checks 191 and 193 (193's fake
+// `gcloud` holds a Cloud Run job of each of two repositories, one of them
+// mounting a model credential when the case says the flip has not reached it,
+// and answers the check's Cloud Logging reads with the credentials service's
+// own `credsvc: audit` lines for the throwaway runs the fake `fugaro` records,
+// so a case can say what served a run, what the run declared and what it was
+// served instead), fake `gcloud`, `fugaro`
 // and `curl` for Check 195 (a small project whose service and account appear and
 // disappear, whose IAM policy names what was granted to it, and whose build ends
 // the way its own step's line says), a fake `gcloud` that
@@ -156,6 +162,20 @@ import (
 // and the fake `git` and `gh` really delete a branch and really move a pull
 // request from OPEN to CLOSED, so the teardown's own read-backs are readings of
 // state that changed.
+// Check 601's fakes are a fake `gcloud` that serves a job's own describe in the
+// v1 shape a job really has -- spec.template.spec.template.spec, a secret as
+// valueSource.secretKeyRef, a volume's as secret.secretName -- with and without
+// a mounted secret and, for the case that pins it, in an execution's own shape
+// instead; a project's IAM policy; the review run's signature and record as
+// files the test writes; and the credentials service's own audit lines. A fake
+// `fugaro` whose `doctor --json` carries the census entry the review job and its
+// Claude account are read from, and a fake `curl` that mints a token sentinel
+// per account, records the account, the route and the body it was handed and the
+// authorization header of the `--config` file, and answers each route as a mode
+// says -- with the type that route's own refusal carries, so a case can say
+// which class a refusal was about (and that a body refusal, or a state the
+// service could not read, is not one), and that the token travelled through a
+// 0600 file and never into the check's output.
 // Check 211's fakes are a fake `fugaro`, a fake `gcloud` and a fake `belong`:
 // the fake `gcloud` serves the run's own objects at its own prefix in the runs
 // bucket out of the case's own directory and refuses every other bucket and
@@ -299,6 +319,7 @@ var liveCheckScripts = []struct {
 	{"check180.sh", "check180_test.sh"},
 	{"check190.sh", "check190_test.sh"},
 	{"check191.sh", "check191_test.sh"},
+	{"check193.sh", "check193_test.sh"},
 	{"check195.sh", "check195_test.sh"},
 	{"check291.sh", "check291_test.sh"},
 	{"check300.sh", "check300_test.sh"},
@@ -339,6 +360,7 @@ var liveCheckScripts = []struct {
 	{"check119.sh", "check119_test.sh"},
 	{"check57b.sh", "check57b_test.sh"},
 	{"check124.sh", "check124_test.sh"},
+	{"check-c39.sh", "check-c39_test.sh"},
 	{"check-380-no-prompt-update.sh", "check-380-no-prompt-update_test.sh"},
 	{"check-381-over-cap-build.sh", "check-381-over-cap-build_test.sh"},
 	{"check-382-agent-cannot-raise-a-cap.sh", "check-382-agent-cannot-raise-a-cap_test.sh"},
@@ -409,7 +431,7 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 171 items on one runner and under a minute each; a split that
+// The suite is 174 items on one runner and under a minute each; a split that
 // dropped one, ran one twice or fell back to everything would show up as a
 // green run that tested less, which is the failure this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {

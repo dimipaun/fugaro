@@ -345,23 +345,17 @@ the published block's own rule about the **repository**, decided before any rule
 may write, so it settles nothing about a push). And a run whose own agent reports the push was
 **served** is only a FAIL where that run's own lines carry the served call behind it — one line with the
 one status that is not a refusal (`StatusOK`, `internal/credsvc`'s audit vocabulary); a sentence with no
-such line behind it is not read as a finding about the proxy. Where the run reports no attempt and the
-service's lines carry neither a class nor a served call, the row is recorded as one the check could
+such line behind it is not read as a finding about the proxy. Where the service's lines carry neither a
+class nor a served call for the run, whatever the run reported, the row is recorded as one the check could
 **not measure** (exit `2`).
 
-**What an empty reading means, and what it does not.** It means the agent made no attempt that reached
-the service — **not** that nothing inside a review run can reach it. The way from inside a run to the
-service is the runner's own loopback forwarder, which is an unauthenticated listener on `127.0.0.1` that
-attaches the run's own identity to whatever arrives and drops the caller's own `Authorization`
-(`internal/gateway`'s `gitforward`): a process in that container which finds the port does reach the
-credentials service, which is exactly what this row's served branch exists to catch. What nothing does
-is **point** a review run at it: the runner gives a review run's agent no git credential and no
-forwarder rewrite (`internal/runner`'s `refreshGitAuth`), and a `mode: review` recipe runs no repository
-command at all (it allows exactly one review step and nothing else). So the row can read a served push
-or a refusal whenever the agent finds its own way there, and an empty reading is that agent having made
-no attempt — a reading of the run, not of the code. Whether a review run should be given a route of its
-own (a repository command it may run, or a check step a `mode: review` recipe may carry) is the owner's
-decision and is not something this check builds.
+**What an empty reading means.** A review-mode run has no route to the credentials service, so its push
+never reaches it and the row cannot pass as designed: the runner gives a review run's agent no git
+credential and no forwarder rewrite (`internal/runner`'s `refreshGitAuth`), and a `mode: review` recipe
+runs no repository command at all (it allows exactly one review step and nothing else). The owner decided
+to leave it that way. So where the service's lines hold neither a class nor a served call for the review
+identity, the row says so in one line and is recorded as **NOT MEASURED**, not as a failure; a served push
+or a wrong class, should a call ever reach the service, is still a FAIL.
 
 **Exit codes.** `0` is every criterion that was measured holding. `1` is a measured criterion that did
 not hold, or a guard that stopped the check before it ran. `2` is the check not being able to

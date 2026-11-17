@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -592,6 +593,216 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 	return problems
 }
 
+// validateCraftLayers are the documents `fugaro validate` resolves the crafts
+// over, narrowest first: the file in hand and the project layer file that file
+// resolved over — the two a run of it resolves over, which are the repository's
+// own agent.crafts block (where the file's crafts and the project layer file's
+// defaults both arrive) and the layer the owner published (internal/runner's
+// craftLayers). The installation's config is not among them: a run in a job has
+// no installation config, it carries what the owner published, so a craft only
+// that config writes reaches no slot of any run — judging it would refuse a
+// file for a model nothing reads.
+//
+// The crafts are resolved here rather than off cfg.Agent.Crafts, which is the
+// layer a launch reads: a problem has to be named at the key of the document
+// that wrote the model (craft.Layer.CraftKey), and the merged block cannot say
+// which document that was. The panel `fugaro craft ls` prints reads one layer
+// more (craftLsLayers: the installation's own crafts too), because it answers
+// what the owner's documents say rather than what one run reads.
+func validateCraftLayers(data []byte, rf resolvedFile) []craft.Layer {
+	var layers []craft.Layer
+	if agent, ok := config.AgentOf(data); ok {
+		layers = append(layers, craft.Layer{Name: craft.SourceRepo, Crafts: agent.Crafts})
+	}
+	if l := rf.Layer.Layer; l != nil {
+		layers = append(layers, craft.Layer{Name: craft.SourceProject, Crafts: l.Defaults.Agent.Crafts,
+			KeyPrefix: craftProjectKeyPrefix})
+	}
+	return layers
+}
+
+// craftResolution is one caller's crafts resolved: the models in the shape
+// config.LevelInputs.CraftModels takes — the model each craft runs, which is
+// the value MC12 writes into the run's slots and MC13's levelDef reads back —
+// and the same answer in the shape MC15's checks read, which also carries the
+// key that wrote the model in the document that wrote it and the access the
+// craft's calls go out on.
+type craftResolution struct {
+	// models is one entry per craft that resolved a model, and no entry for
+	// one that resolved none: an unset craft has to stay absent rather than
+	// inherit a neighbour's model in the level resolver's hands (F17).
+	models map[string]string
+	crafts []config.CraftModel
+	// eff is the resolver's own answer, which is what MC12's write reads
+	// (internal/runner's WriteCraftRoles and WriteCraftLevels, through
+	// craft.ModelFor): the two shapes above answer the level resolver and MC15's
+	// checks, and neither of them is what the run's bootstrap writes from.
+	eff map[string]craft.Effective
+}
+
+// craftsOf answers every craft from the layers a caller holds, narrowest
+// first, and says where each model was written: a problem about a craft's model
+// is reported at the key of the document that wrote it (craft.Layer.CraftKey),
+// because a reader sent to a key that is not in the file they have is being
+// sent to the wrong file.
+//
+// A model no layer set is the model of the craft this one follows (F16), and it
+// is reported at the key that wrote it there: the review craft's model is the
+// coder's, so the line to change is the coder's — the answer craft ls prints
+// for the same configuration ("inherited from coder", craft.InheritedFrom).
+func craftsOf(layers []craft.Layer) craftResolution {
+	// The resolver's own problems — an access naming no credential and no pool
+	// any layer holds — are dropped here and that is the point: a launch warns
+	// about one and starts anyway, without a slip (slipCredentialNames,
+	// TestASlipNeverNamesAnAccessNoLayerHolds), and a problem out of either
+	// caller is a refusal. Reporting it would make these two surfaces refuse a
+	// configuration the launcher launches, and `fugaro craft ls` is the read
+	// that names them, where they are a list rather than an exit code.
+	eff, _ := craft.Resolve(layers, false)
+	r := craftResolution{models: map[string]string{}, crafts: make([]config.CraftModel, 0, len(config.CraftNames)), eff: eff}
+	for _, name := range config.CraftNames {
+		e := eff[name]
+		if e.Model != "" {
+			r.models[name] = e.Model
+		}
+		r.crafts = append(r.crafts, config.CraftModel{Craft: name, Model: e.Model,
+			Path: craftModelWrittenAt(name, eff, layers), Access: e.Access})
+	}
+	return r
+}
+
+// craftModelWrittenAt is the key that wrote the model this craft resolved to,
+// "" when no layer wrote one anywhere (a craft with no model, which MC15 does
+// not judge — F17 — and which this package's own key would be the wrong answer
+// for). The craft whose key it is is the craft that wrote it, not the craft
+// that inherited it: walking ModelFrom's inheritance chain backwards is what
+// turns "inherited from coder" into the coder's own key.
+func craftModelWrittenAt(name string, eff map[string]craft.Effective, layers []craft.Layer) string {
+	from, owner := eff[name].ModelFrom, name
+	for {
+		parent, inherited := strings.CutPrefix(from, craft.InheritedFrom(""))
+		if !inherited {
+			break
+		}
+		owner, from = parent, eff[parent].ModelFrom
+	}
+	for _, l := range layers {
+		if l.Name == from {
+			return l.CraftKey(owner, "model")
+		}
+	}
+	return ""
+}
+
+// craftOnly keeps the lines a call reported about the crafts' models out of one
+// that judged the pins and the crafts together: MC15's checks take both in the
+// same call (CheckAllowed, CheckPins), and the pins are budgetProblems' to
+// report — from the same configuration, through the same rules, at their own
+// keys — so a craft's own lines are the ones reported at a key a craft's model
+// is written in, which is what the caller's own resolution answers
+// (craftModelWrittenAt, and CraftModel's own key for a craft whose document is
+// unknown).
+func craftOnly(ps []config.Problem, crafts []config.CraftModel) []config.Problem {
+	key := make(map[string]bool, len(crafts))
+	for _, c := range crafts {
+		if p := c.Path; p != "" {
+			key[p] = true
+			continue
+		}
+		key["agent.crafts."+c.Craft+".model"] = true
+	}
+	out := make([]config.Problem, 0, len(ps))
+	for _, p := range ps {
+		if key[p.Path] {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// craftModelProblems is the model half's own verdict over a configuration
+// (MC14, D1665): every problem MC15's checks report about the crafts' models —
+// the allow-list that bounds them, the route that has to claim them, the price
+// row that has to cover them and the access whose members have to admit this
+// repository — each at the path of the key in the document that wrote the model
+// (craft.Layer.CraftKey).
+//
+// It is one function because two surfaces ask it and may not answer
+// differently: `fugaro validate`, where the author still is, and a launch,
+// before the task is written (launchReviewLevelsAsk). The checks are MC15's own
+// — config.CheckAllowed, config.CheckPins, config.CheckCraftAccess — and this
+// function adds no rule of its own; what it builds is what they read: the
+// ceiling merged with the file exactly as budgetProblems merges them, the routes
+// a run of this repository carries (runner.ProvidersFor) and the price table the
+// run's gateway charges from.
+//
+// Which crafts the caller hands it is the one thing the two surfaces differ in,
+// and it is the caller's to decide: `fugaro validate` judges every craft the
+// documents resolve, because a model written at a craft's key is a problem of
+// the file whatever a run of it would do with the model, while a launch narrows
+// to the crafts the run it would start reads (launchCraftsRead) — a craft whose
+// level that run leaves off is a craft it charges nothing for and refuses
+// nothing for, so refusing the launch for one would be a refusal the run does
+// not make.
+//
+// A configuration that is not this installation's own project judges nothing,
+// the guard budgetProblems, providerProblems and cascadeProblems carry: another
+// project's routes, prices and credentials are not this file's to be refused by.
+//
+// fileSubject is what a message calls the file the merge read, whose source the
+// merge labels the default branch (policy.SourceDefaultBranch): `fugaro
+// validate` says "this file" because the file in hand is the one it judges, and
+// a launch names the ref's own fugaro.yaml, because a launcher's working tree
+// is not the document the run reads (cascadeRefConfig). "" leaves the merge's
+// own label.
+//
+// The price rule runs where the run's gateway does (runner.GatewayOn): a run
+// with no gateway is charged for nothing, and a table that was refused is not
+// judged on (budgetProblems has already said why it was refused).
+func craftModelProblems(cfg *config.Config, lc *localcfg.Config, repo string, claimed map[string]config.ModelProvider,
+	fileSubject string, crafts []config.CraftModel) []config.Problem {
+	if cfg == nil || lc == nil || lc.Name != cfg.Project {
+		return nil
+	}
+	ceiling := runCeiling(lc, cfg)
+	e := policy.Merge(ceiling, runner.FileLayer(cfg))
+	if fileSubject != "" {
+		ef := e
+		ef.Sources = make(map[string]string, len(e.Sources))
+		for k, v := range e.Sources {
+			if v == policy.SourceDefaultBranch {
+				v = fileSubject
+			}
+			ef.Sources[k] = v
+		}
+		e = ef
+	}
+	routes := runner.ProvidersFor(claimed, repo)
+	ps := config.CheckAllowed(cfg.Agent, e, ceiling.AllowedModels, lc.Routing, routes, crafts...)
+	if runner.GatewayOn(cfg.Agent.Auth, e.Mode) {
+		// The table is the run's own — lc.Providers' rows and the owner's
+		// model_prices — and a refused one is left alone: budgetProblems and
+		// providerProblems have already reported why (a malformed catalog, a
+		// route the switches cannot price), and a craft model "without a price"
+		// counted off another table would be that refusal's fault rather than
+		// the file's.
+		if prices, _, err := priceTable(lc, budgetNow()); err == nil && prices != nil {
+			ps = append(ps, config.CheckPins(cfg.Agent, prices, crafts...)...)
+		}
+	}
+	ps = append(ps, config.CheckCraftAccess(crafts, config.CraftAccess{
+		Repo: repo, Credentials: lc.Credentials, Pools: lc.Pools, Accounts: lc.ClaudeAccounts, Providers: claimed,
+	})...)
+	// The same fact can be reported twice, in one sentence at one path: two
+	// crafts can be served by one model written in one document, since the
+	// review craft follows the coder's (F16) — so a coder model the allow-list
+	// leaves out is a problem about both, and both lines name the key that
+	// wrote it. dedupeLines drops the second copy, the repetition it exists
+	// for, and it is here rather than in a caller so that the panel and the
+	// launch print one line each for one thing to fix.
+	return dedupeLines(craftOnly(ps, crafts))
+}
+
 // reviewLevelProblems is `fugaro validate`'s half of the review-level
 // resolution (L3.2, G2): the refusals that would stop a run of this file, and
 // the warnings such a run goes on with.
@@ -614,7 +825,12 @@ func cascadeProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Confi
 //
 // The task's review_levels block is a launcher's field and this command has
 // no task: the file itself is what validate judges.
-func reviewLevelProblems(root string, cfg *config.Config, lc *localcfg.Config, lcErr error, claimed map[string]config.ModelProvider) (problems, warnings []config.Problem) {
+//
+// The crafts' models are handed to the resolver (crafts, MC13's
+// LevelInputs.CraftModels), because that is what a launch and the run's own
+// bootstrap hand it: D1664's guard is about the models the two levels will
+// really run, and a level's model is its craft's where the level wrote none.
+func reviewLevelProblems(root string, cfg *config.Config, lc *localcfg.Config, lcErr error, claimed map[string]config.ModelProvider, crafts map[string]string) (problems, warnings []config.Problem) {
 	mode := rigor.Resolve(cfg.RigorConfig(), rigor.Request{}).Mode
 	// The floor lives in the owner-only policy node and is published from this
 	// file's own project config (L1.4): a config selected for another project
@@ -630,6 +846,7 @@ func reviewLevelProblems(root string, cfg *config.Config, lc *localcfg.Config, l
 		Config: cfg, Mode: mode, Floor: floor, Recipe: rcp,
 		CatalogDefault: catalogDefaultRecipe(root, rcp),
 		Providers:      claimed,
+		CraftModels:    crafts,
 	})
 	for _, w := range warns {
 		warnings = append(warnings, config.Problem{Path: "agent.levels", Message: oneLine(w.String())})
@@ -2004,6 +2221,12 @@ func newValidateCmd() *cobra.Command {
 				// (selectedProjectConfigErr), so the rules below see the same
 				// nil they saw before.
 				var routes, claimed map[string]config.ModelProvider
+				// repo is this checkout's origin: the repository the file's runs
+				// are for, which the craft-model checks below name (a repository
+				// is what an access admits, and what a route's own rules are
+				// read for). "" when there is no checkout to read one from, the
+				// reading every rule below already gives that state.
+				repo := ""
 				if lc != nil {
 					routes, claimed = lc.Providers, lc.Providers
 				}
@@ -2012,9 +2235,8 @@ func newValidateCmd() *cobra.Command {
 					// the checkout's origin, and "" (only the routes written
 					// for every repository) when there is none — the reading
 					// the rules below already give that state.
-					repo, rerr := originRepo(cmd.Context())
-					if rerr != nil {
-						repo = ""
+					if r, rerr := originRepo(cmd.Context()); rerr == nil {
+						repo = r
 					}
 					merged, withClaims, lp := layerRoutes(lc, rf.Layer.Layer, repo)
 					routes, claimed = merged, withClaims
@@ -2046,18 +2268,51 @@ func newValidateCmd() *cobra.Command {
 				rtp, rtn := routingProblems(cmd.Context(), ecfg, lc, routes, lcErr)
 				problems, notes = append(problems, rtp...), append(notes, rtn...)
 				problems = append(problems, cascadeProblems(cmd.Context(), ecfg, lc, lcErr, offline)...)
+				// The crafts this file's runs would resolve, over the same two
+				// documents a run of it resolves them over (validateCraftLayers):
+				// the models the two resolutions below are judged on, resolved
+				// once so that the levels and the model half's own checks cannot
+				// read two answers.
+				cr := craftsOf(validateCraftLayers(data, rf))
 				// The review levels this file's runs would resolve (L3.2). The
 				// resolver reads the file's own agent.levels, agent.models and
 				// rigor:, so it is judged on the file as it is, and the recipe
 				// role aliasing config.ResolveLevels applies itself: ecfg is
-				// for the checks that judge the pins the run's roles leave.
-				rlp, rlw := reviewLevelProblems(filepath.Dir(path), cfg, lc, lcErr, claimed)
-				problems, warnings = append(problems, rlp...), append(warnings, rlw...)
+				// for the checks that judge the pins the run's roles leave. The
+				// crafts' models go in because a launch hands them to the same
+				// resolver (MC13's CraftModels), and the guard is about the
+				// models the two levels will really run (D1664).
+				rlp, rlw := reviewLevelProblems(filepath.Dir(path), cfg, lc, lcErr, claimed, cr.models)
+				warnings = append(warnings, rlw...)
+				// The model half's own checks (MC14, D1665), the ones a launch
+				// makes before it writes a task: the allow-list, the route, the
+				// price and the access, at the key of the document that wrote
+				// each craft's model. The file in hand is what the merge below
+				// reads, so a message calls it "this file".
+				//
+				// The level resolution answers about the same models — a level
+				// whose model comes from a craft runs the craft's model, and the
+				// resolver refuses it at the craft's own key (MC13's check, which
+				// for a craft the file in hand wrote is the very key this prints)
+				// — so the two are deduped against each other. Not against the
+				// file's own checks: those report at the pins' keys, and a craft's
+				// key is not one of them.
+				rlc := append(rlp, craftModelProblems(cfg, lc, repo, claimed, "this file", cr.crafts)...)
+				problems = append(problems, dedupeLines(rlc)...)
 				warnings = append(warnings, reviewFloorUnpublishable(lc)...)
 				notes = append(notes, reviewJobNotes(cfg, lc)...)
 				sp, sn := stageAccountProblems(lc, ecfg)
 				problems, notes = append(problems, sp...), append(notes, sn...)
 				problems = append(problems, catalogSourceProblems(lc)...)
+				// The owner's own model_prices against the routes that would
+				// have priced those models without them: a price below the
+				// cheapest endpoint the catalog prices the model at is reported
+				// with both figures, and nothing is refused (SA4.2/SA4.3, R4).
+				// It reads the selected config the way catalogSourceProblems
+				// above reads it — the prices are that config's own, whichever
+				// project this checkout names — and the path it prints is the
+				// key in that file the owner would edit.
+				warnings = append(warnings, undercutProblems(lc)...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {

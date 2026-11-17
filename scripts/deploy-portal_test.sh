@@ -100,6 +100,18 @@ run() {
 
 called() { grep -qF -- "$1" "$work/calls"; }
 
+# The seed job's name, read out of the Terraform root that declares it rather than
+# written here a second time: the deploy executes the job that root applies, so a
+# name the two spell differently is an execution of nothing -- and the failure it
+# produces is a deploy that has already built, deployed and revised everything.
+# Case 10 reads the two services' names the same way.
+SEED_JOB=$(sed -n '/^variable "seed_job"/,/^}/p' "$root/ee/keyservice/terraform/services/variables.tf" |
+  sed -n 's/.*default *= *"\(.*\)".*/\1/p' | head -1)
+if [[ -z $SEED_JOB ]]; then
+  echo "FAIL: ee/keyservice/terraform/services/variables.tf gives seed_job no default, and scripts/deploy-portal.sh's seed step executes that job by name" >&2
+  exit 1
+fi
+
 # 1. --dry-run with no arguments: the defaults, the SPA built, nothing deployed.
 setup
 run --dry-run
@@ -176,23 +188,29 @@ done
 [[ $out == *"re-apply ee/keyservice/terraform/services with -var api_image=us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-portal-api:abc1234 -var minter_image=us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-key-minter:abc1234"* ]] ||
   fail "the deploy does not name the images to apply the services with: $out"
 
-# 4. --seed-operations runs the API program's one-time subcommand, after the
-#    deploy, against the project the deploy named.
+# 4. --seed-operations executes the services root's seed job with the address,
+#    after the deploy, against the project the deploy named. It is never run from
+#    this shell: the program's loader requires the whole environment a revision
+#    runs in, which no terminal has (see the script's header), so a `go run` here
+#    would be a seed that refuses after the site and both services are deployed.
 setup
 run --project my-portal-1 --seed-operations owner@example.test
 [[ $status -eq 0 ]] || fail "the seeded run exited $status: $out"
-called "go run ./ee/keyservice/cmd/portal-api seed-operations owner@example.test" ||
-  fail "the seed did not run: $(cat "$work/calls")"
-called "go-env GOOGLE_CLOUD_PROJECT=my-portal-1" || fail "the seed did not name the project: $(cat "$work/calls")"
+called "go " && fail "the seed was run from this machine, which cannot start it: $(cat "$work/calls")"
+called "gcloud run jobs execute $SEED_JOB --args=seed-operations,owner@example.test --project my-portal-1 --region us-east5 --wait" ||
+  fail "the seed job was not executed with the address, in the project the deploy named: $(cat "$work/calls")"
+called "gcloud run jobs update $SEED_JOB --image us-east5-docker.pkg.dev/my-portal-1/fugaro-portal/fugaro-portal-api:abc1234 --project my-portal-1 --region us-east5" ||
+  fail "the seed job was not revised to the image just pushed, so the seed may run the previous revision: $(cat "$work/calls")"
 [[ $(grep -n "seed-operations" "$work/calls" | cut -d: -f1) -gt $(grep -n "firebase deploy" "$work/calls" | cut -d: -f1) ]] ||
   fail "the seed ran before the deploy: $(cat "$work/calls")"
 
 setup
 run --dry-run --project my-portal-1 --seed-operations owner@example.test
 [[ $status -eq 0 ]] || fail "the seeded dry run exited $status: $out"
-[[ $out == *"would run: GOOGLE_CLOUD_PROJECT=my-portal-1 go run ./ee/keyservice/cmd/portal-api seed-operations owner@example.test"* ]] ||
-  fail "the dry run does not print the seed: $out"
-called "go " && fail "the dry run ran the seed: $(cat "$work/calls")"
+[[ $out == *"would run: gcloud run jobs execute $SEED_JOB --args=seed-operations,owner@example.test --project my-portal-1 --region us-east5 --wait"* ]] ||
+  fail "the dry run does not print the seed's execution: $out"
+called "gcloud" && fail "the dry run ran the seed: $(cat "$work/calls")"
+[[ $out == *"seeding the operations organisation"* ]] && fail "the dry run says it is seeding, and nothing was seeded: $out"
 
 # 5. A build with no Firebase configuration is refused before anything runs: it
 #    would deploy a portal nobody can sign into.

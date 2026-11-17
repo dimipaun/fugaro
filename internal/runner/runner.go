@@ -401,6 +401,18 @@ type run struct {
 	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int
+	// reportedBy, tableLoBy and tableHiBy are the run's provider reports and
+	// the price table's band behind them, by serving model, and
+	// unreportedCalls counts the settled calls that came back with none:
+	// the ledger's figures, taken when the gateway closes (F24, D2650).
+	// They are the ledger's and never a sum of the stage reports, which do
+	// not hold a call that settled after its stage's wait ran out -- such a
+	// call is in the ledger's figures and in no report, so adding the two
+	// would count it twice (SA1.5).
+	reportedBy      map[string]pricing.Micros
+	tableLoBy       map[string]pricing.Micros
+	tableHiBy       map[string]pricing.Micros
+	unreportedCalls int
 	// serviceTiers are the service tiers the run's calls came back at that
 	// the price table has no multiplier for, from every stage's report:
 	// those calls were charged conservatively rather than failing the
@@ -502,6 +514,14 @@ type run struct {
 	// review, and the mode must not come from there.
 	rigorCfg rigor.Config
 	rigorRev string
+	// layersRigor is the mode the layers alone resolved at the moments that
+	// have run — the run's own request left out (rigor.LayersMode) — and it is
+	// set only when that request took the run off the axis
+	// (rigor.Mode.PerRun, hotfix). It is the mode whose floor holds beside
+	// hotfix's own row: a request raises a mode and never lowers a floor (D8,
+	// LF5), so reading only the row of the mode the request chose would lower
+	// one (policy.Effective.ReviewFloorFor, resolveLevelsForcing).
+	layersRigor rigor.Mode
 	// baseCfg is the whole resolved configuration the base branch's
 	// fugaro.yaml produced at bootstrap, of which rigorCfg is the mode's
 	// half: the triage stage's switch is the other key read from there and
@@ -1093,6 +1113,26 @@ func (r *run) addSecret(v string) {
 // runner's environment either way, where the agent can read them.
 const SecretEnvsVar = "FUGARO_SECRET_ENVS"
 
+// IgnoredSecretsVar is set on the Cloud Run job to the comma-separated NAMES
+// of the repository-level secrets D2313 ignores for this repository: the ones
+// the plan that deployed the job left out of its mounts, no store being
+// writable for a name the ruling disables (config.RepoSecretsOff).
+//
+// The plan STATES them, and the runner does not infer them from SecretEnvsVar,
+// because the mounts cannot answer that question: a job the credentials service
+// serves mounts none of its workflow's secrets — the flip puts the values in
+// the run's environment from the service instead (workflowsecrets.go) — so a
+// name absent from that list is not the ruling's answer about it, and a reader
+// that took it for one dropped every workflow secret of every switched
+// repository, fetching nothing and starting the run with the variable empty
+// where it used to fail closed.
+//
+// A job that carries no such variable is one whose plan ignored no name, or one
+// no plan wrote at all (a local `fugaro exec --task-file`, a job deployed
+// before this release): the two are told apart by the same rule the mounts are,
+// and neither drops anything on a guess.
+const IgnoredSecretsVar = "FUGARO_IGNORED_SECRETS"
+
 // minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
 // shorter declared secret for the same reason.
 const minSecretLen = 4
@@ -1125,11 +1165,8 @@ func (r *run) addSealKey() {
 // skipped; one too short to redact safely is skipped with a warning that
 // names only the variable.
 func (r *run) addMountedSecrets() {
-	for _, name := range strings.Split(envLookup(r.d.Env, SecretEnvsVar), ",") {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
+	names, _ := r.mountedEnvs()
+	for _, name := range names {
 		switch v := envLookup(r.d.Env, name); {
 		case v == "":
 		case len(v) < minSecretLen:
@@ -1138,6 +1175,106 @@ func (r *run) addMountedSecrets() {
 			r.addSecret(v)
 		}
 	}
+}
+
+// mountedEnvs are the variable names SecretEnvsVar lists: the secrets the job
+// this run is in mounts, which is the fugaro.yaml it was deployed from and not
+// necessarily the one the run's ref declares. The second return says whether
+// the job carries the list at all — an empty list the deployment wrote (a job
+// that mounts no secret) and an environment nobody described (a local `fugaro
+// exec --task-file`) are different answers, and the callers read them apart.
+func (r *run) mountedEnvs() ([]string, bool) {
+	return r.envList(SecretEnvsVar)
+}
+
+// ignoredSecrets are the names IgnoredSecretsVar lists: the repository-level
+// secrets the plan that deployed this job left out of its mounts (D2313), which
+// are the ones this run must not require a value of. The second return is
+// mountedEnvs's: a job whose plan ignored no name carries no variable, and that
+// is a different fact from a list the plan wrote empty, so the callers here too
+// read the two apart.
+func (r *run) ignoredSecrets() ([]string, bool) {
+	return r.envList(IgnoredSecretsVar)
+}
+
+// envList is a comma-separated list of names out of the run's environment: the
+// one parser behind every such list a job carries, so a list is split one way
+// and its absence is read one way. Last one wins, as envLookup reads every
+// other variable: a list a test or a launcher appends must override the one
+// already there, and the value addMountedSecrets redacts from has to be the
+// value this parses.
+func (r *run) envList(name string) ([]string, bool) {
+	for i := len(r.d.Env) - 1; i >= 0; i-- {
+		k, value, ok := strings.Cut(r.d.Env[i], "=")
+		if !ok || k != name {
+			continue
+		}
+		var out []string
+		for _, v := range strings.Split(value, ",") {
+			if v = strings.TrimSpace(v); v != "" {
+				out = append(out, v)
+			}
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// declaredSecrets are the secrets this run's workflow declares in the checkout
+// and its own job can still supply a value for. The two are not the same list
+// under D2313 (config.RepoSecretsOff): a repository-level secret is accepted and
+// ignored, and no store may be written for it — so a bootstrap that demanded
+// its value would refuse every run of a repository the ruling says is brought
+// up, failing at the agent's own start in a job that was deployed exactly as the
+// ruling intends.
+//
+// Which names those are is the DEPLOYMENT's answer and not the file's, and it is
+// three facts rather than one:
+//
+//   - The plan that deployed this job states them (IgnoredSecretsVar, written by
+//     internal/infra's Readiness as it drops each mount). That is the ruling's
+//     own answer and it is read first, because it is the one that survives the
+//     credentials service's flip: a switched job mounts none of its workflow's
+//     secrets, so its SecretEnvsVar names none of them whatever the plan decided
+//     about the file (B3.8).
+//   - A job the credentials service serves is therefore required to hold every
+//     declared name: its mounts say nothing about the workflow's secrets, and
+//     each value comes from the service instead (workflowsecrets.go), so a
+//     name dropped here is a variable the run starts with empty. A local run is
+//     never this case (D149), and the service's URL is the fact the fetch
+//     itself reads (gateway.go's credentialsServiceURLEnv).
+//   - Every other job's mounts ARE the plan's decision about its workflow's
+//     secrets, so a repository-level name absent from them is one the plan left
+//     out (the pre-ruling deployment, a shared job that mounts only the
+//     project's secrets) and demanding it would refuse a run nothing can
+//     supply. A name the job does mount is required whatever the ruling says of
+//     the file — a name the project covers included, which the file does not
+//     decide.
+//
+// A job that carries no list at all is not read as one mounting nothing: no plan
+// computed that environment (a local `fugaro exec --task-file`, a shell a person
+// assembled), so there is no deployment to trust here and the pre-ruling answer
+// stands — the declared name is required. Every job this release deploys carries
+// the list, the empty one included, so the ruling's own deployment is never the
+// ambiguous case.
+func (r *run) declaredSecrets(wf config.Workflow) []config.Secret {
+	if !config.RepoSecretsOff {
+		return wf.Secrets
+	}
+	ignored, stated := r.ignoredSecrets()
+	mounted, described := r.mountedEnvs()
+	switched := !r.d.Local && envLookup(r.d.Env, credentialsServiceURLEnv) != ""
+	out := make([]config.Secret, 0, len(wf.Secrets))
+	for _, s := range wf.Secrets {
+		if stated && slices.Contains(ignored, s.Name) {
+			continue
+		}
+		if !switched && described && config.RepoLevelSecret(s.Name) && !slices.Contains(mounted, s.Env) {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // redactRecords returns records with the text the agent can influence
@@ -1507,7 +1644,7 @@ func (r *run) unstampedCommits(ctx context.Context) (total, unstamped int, err e
 	// gitops.readableBounds: a base branch's tip that this checkout never
 	// fetched is a bound git ignores rather than a git that refuses the whole
 	// range, so a base the remote moved on to cannot cost the run its count.
-	args := []string{"--no-replace-objects", "log", "--ignore-missing",
+	args := []string{"log", "--ignore-missing",
 		"--format=%H%x09%(trailers:key=" + gitops.TrailerRun + ",valueonly)",
 		"--end-of-options", since + "..HEAD"}
 	for _, e := range except {
@@ -2169,9 +2306,17 @@ func BakedDir(workDir, slug string) string {
 // will open (credentialVars). bootstrap therefore calls this before it asks
 // where the run clones from.
 //
-// Only a per-repository job looks. A project job's image bakes no checkout and
-// the run refuses any it finds (checkProjectCheckoutOrigin), so there is nothing
-// for it to adopt. And the run must be able to name the repository its task
+// Only a per-repository job looks here, and returns below for the other class:
+// a project job's image bakes the project's repositories, and the run settles
+// the checkout it works on in checkProjectCheckoutOrigin instead — the reset,
+// the verification and the removal of the rest that D2308 and D2309 put there.
+// What this class shares with that one is D2309, and it is done here: the other
+// repositories the image baked are removed before this function adopts the
+// per-slug directory, because that read is a property of the image's layout and
+// not of the job class — this class runs the same shared image (D1900). So
+// whichever class a run is in, the checkout it works on is settled under this
+// binding, and the image's other repositories are gone, before anything of the
+// run reads one. And the run must be able to name the repository its task
 // names under the kind its own slug derives (providerForSlug): a slug no
 // provider kind produces — what `--provider fake` gives a local invocation —
 // names no repository to call a baked directory after and no remote to hold the
@@ -2190,6 +2335,17 @@ func (r *run) openBakedCheckout(ctx context.Context) error {
 	}
 	if _, project := r.projectJob(); project {
 		return nil
+	}
+	// The other repositories the image baked go before anything of this run
+	// reads one (D2309, review F23): this class runs the same shared image a
+	// project job does (D1900), so the image bakes the project's repositories
+	// and not just this run's. Here rather than after the adoption below, which
+	// rewrites r.d.WorkDir: the directories are found by their position beside
+	// the work directory the job started in — the image's own, which is why a
+	// local invocation, whose work directory is its caller's, removes nothing
+	// there at all (review F24, removeOtherBakedRepos).
+	if err := r.removeOtherBakedRepos(); err != nil {
+		return err
 	}
 	repo, err := gitops.Open(r.d.WorkDir, nil)
 	if err != nil {
@@ -2423,10 +2579,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// fetch, the agent's git and the final push would all run with no git
 	// credential at all (the review finding on this change).
 	//
-	// It is also the other half of checkProjectCheckoutOrigin's question, for
-	// the job that may hold a baked checkout: which repository the one in the
-	// image is a checkout of, and whether this run may work on it at all (a
-	// shared image bakes several). Here rather than in openCheckout, which is
+	// It is also the per-repository half of checkProjectCheckoutOrigin's
+	// question, for the job that may hold a baked checkout: which repository the
+	// one in the image is a checkout of, and whether this run may work on it at
+	// all (a shared image bakes several; the project job's half is that
+	// function's, which resets this run's own and removes the rest, D2308,
+	// D2309). Here rather than in openCheckout, which is
 	// called once the provider below has minted this run's git credential, so a
 	// refusal is still a run that requested nothing.
 	if err := r.openBakedCheckout(ctx); err != nil {
@@ -2637,6 +2795,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
+	// The diagnose step is a model stage this build's runner does not execute
+	// yet (T-TC4 lands it), and artifactMode runs the recipe's plan stage, if
+	// it has one, and then always commands.render (artifact.go) — so a run of
+	// a recipe holding the step would run the repository's render command in
+	// the step's place and end succeeded/artifacts having diagnosed nothing:
+	// no error, and no answer either. The catalog's troubleshoot names
+	// out/diagnosis.md and out/diagnosis.json, which no repository's render
+	// writes, so its own run would even end with an empty artifact set.
+	// Refused here, right after the recipe is resolved and before any stage,
+	// the way the digest step was refused until T3.2 dispatched it, and for
+	// the reason internal/recipe's RegisterStepKind gives: a step the parser
+	// accepts and the run drops may never happen. The launcher's image gate
+	// cannot make this refusal yet — the *Since constant for the step is
+	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
+	// way out: no release's runner runs the stage yet, so a refreshed job image
+	// would refuse the recipe again, and the release that runs it is T-TC4's to
+	// carry — not a step a person is sent to take here.
+	if recipe.UsesDiagnose(rcp) {
+		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
+	}
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
 	// nothing and it opens no pull request — what it delivers is a branch put
@@ -2669,6 +2847,27 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// whose branch it rebases (--pr N, E10a).
 	if r.follow == nil && recipe.UsesRebase(rcp) {
 		return fmt.Errorf("recipe %s puts the branch of an existing pull request back on its base, and this task continues no pull request, so there is no branch to rebase: launch it on the pull request it rebases (--pr N)", rrec.Name)
+	}
+	// A merge judge recipe (E6) judges one thing: the brief its launch left
+	// under the run's own prefix — the diff at a pull request's head, the
+	// findings the ladder still has open there and the head they belong to
+	// (MergeJudgeInput, runstore.MergeJudgeInputName). Without one the run
+	// would start, resolve this recipe and die at its first step on a missing
+	// object, as a config error rather than as the launch that was wrong;
+	// refused here by name instead, at this run's base and before any stage, as
+	// the rebase arm above is. The test is the brief itself and not the recipe,
+	// because the launcher that writes one is the escalation ladder's (E10a,
+	// E10b): a launch it serves carries the brief and passes here, and one it
+	// could not write is refused with the object named rather than halfway
+	// through a run.
+	if recipe.UsesMergeJudge(rcp) {
+		_, err := r.d.Store.ReadFile(ctx, runstore.MergeJudgeInputName)
+		if errors.Is(err, runstore.ErrNotFound) {
+			return fmt.Errorf("recipe %s holds the merge_judge step, whose whole work is one read of a brief left under the run's own prefix — the diff at a pull request's head, the findings the ladder still has open there and the head they belong to — and this launch left none at %s: the launcher that writes one is the escalation ladder's, so a merge judge run is launched by the ladder rather than by hand", rrec.Name, runstore.MergeJudgeInputName)
+		}
+		if err != nil {
+			return fmt.Errorf("the brief a merge judge run reads at %s could not be read: %w", runstore.MergeJudgeInputName, err)
+		}
 	}
 	switch {
 	case r.review && rcp.Mode != recipe.ModeReview:
@@ -3022,6 +3221,25 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
 	}
+	// A declared secret this job does not mount is fetched from the
+	// installation's credentials service here, before any of it is read
+	// (workflowsecrets.go, B3.4): the flip's runs hold no value of their own,
+	// and the values this leaves in r.d.Env are the ones a mount would have
+	// left. A fetch that cannot be served stops the run here, before the
+	// agent's environment is built and long before any stage.
+	if err := r.fetchWorkflowSecrets(ctx, wf); err != nil {
+		return err
+	}
+	// Every name the workflow declares a secret for, whether this job mounts the
+	// value or the fetch above read it from the installation's credentials
+	// service. The image arm drops an undeclared name by this set as well as by
+	// the job's own FUGARO_SECRET_ENVS (agentenv.go's imageEnv): after the flip a
+	// job names none of these, and a review run declares none of them, so this is
+	// what keeps a fetched value out of a review run's agent (G12).
+	wfSecretEnvs := make([]string, len(wf.Secrets))
+	for i, s := range wf.Secrets {
+		wfSecretEnvs[i] = s.Env
+	}
 	// A review run's agent gets none of the workflow's secrets (design
 	// generic-tool §3.6, G12): it runs a reviewed pull request's own,
 	// untrusted checkout and prompt (a hook, an auto-loaded CLAUDE.md), so
@@ -3029,10 +3247,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// code. The model credential it still needs (cfg.Agent.Auth, below)
 	// is the one exception, and stays reachable by a trusted author's own
 	// prompt injection: that is the residual risk the design accepts.
+	declared := r.declaredSecrets(wf)
 	var secretEnvs []string
 	if !r.review {
-		secretEnvs = make([]string, len(wf.Secrets))
-		for i, s := range wf.Secrets {
+		secretEnvs = make([]string, len(declared))
+		for i, s := range declared {
 			secretEnvs[i] = s.Env
 		}
 	} else {
@@ -3053,8 +3272,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// review mode; failing here, the same as BuildEnv would for every
 		// other run, is this registration's whole point: a secret that
 		// silently isn't here to redact is exactly the "last line of
-		// defense" the comment above describes failing open.
-		for _, s := range wf.Secrets {
+		// defense" the comment above describes failing open. The one list
+		// this does not catch is declaredSecrets' own: a repository-level
+		// secret the job does not mount (D2313) has no value here to
+		// redact, because it has no value anywhere.
+		for _, s := range declared {
 			v := envLookup(r.d.Env, s.Env)
 			if v == "" {
 				return fmt.Errorf("secret %s is not set in the runner environment", s.Env)
@@ -3082,7 +3304,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.IdentityFor(r.identity) {
 		set[k] = v
 	}
-	if r.follow == nil && !r.review && !r.artifact && !r.shadow {
+	if r.follow == nil && !r.review && !r.artifact && !r.evaluate && !r.shadow {
 		// A follow-up's agent gets no git credentials and no GH_TOKEN
 		// (design §6.1): the runner fetched the branch and pushes it, and
 		// the comments arrive in the prompt. A review run's agent gets
@@ -3093,7 +3315,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// deliverable is uploaded by the runner. A challenger arm's gets
 		// none because the arm pushes nothing at all (A2.1): the token in
 		// this environment would be one an agent could push with, which is
-		// exactly what no challenger may hold.
+		// exactly what no challenger may hold. A mode: evaluate run's gets
+		// none for the same reason again, and the merge judge is why it
+		// matters (E6, G1): its whole input is a diff anybody who opened
+		// the pull request wrote, the run checks out no branch and pushes
+		// none, and a judge that could push would be a veto with a
+		// credential behind it — the one thing rung 3 may never be.
 		agentAuthVars, err := r.authVars()
 		if err != nil {
 			return fmt.Errorf("building git credentials: %w", err)
@@ -3137,7 +3364,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// The operator's own catalog image's variables, for a job whose image
 		// the catalog chose (agentenv.go's imageEnv): nil for every other job,
 		// whatever its environment holds.
-		ImageEnv: r.imageEnv(secretEnvs),
+		ImageEnv: r.imageEnv(secretEnvs, wfSecretEnvs),
 		Gateway:  r.gateway(), Compression: r.compression,
 		// Docker stays false here, so the agent's environment has no
 		// DOCKER_HOST: nothing yet tells this runner that its workflow asked
@@ -3178,6 +3405,18 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// A kill switch or the grace may have halted the run while bootstrap
 	// was busy: nothing is pushed yet, so it ends as a bootstrap halt.
 	if err := r.haltedErr(); err != nil {
+		return err
+	}
+	// The read-only context repositories this task was launched with, cloned
+	// outside the work tree (C5c, D613; context_repos.go). Last, because the
+	// clone spends a mint at the credentials service and a read of somebody
+	// else's repositories, and every refusal that can end this run — an
+	// admission, a halt, a checkout that is not this run's repository — has
+	// been made by now: a run that was going to be refused gets away without
+	// either. Before the record is saved below, because a run whose context is
+	// not in place has not bootstrapped, and the record is what the next
+	// execution and the follow-up read.
+	if err := r.cloneContextRepos(ctx); err != nil {
 		return err
 	}
 	r.save(ctx)
@@ -3382,7 +3621,8 @@ func (r *run) readRepoFile(rel string) (string, error) {
 // from: the run's own state decides each conditional rule.
 func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
+		ContextRepos: r.contextRepoLines(),
+		NoWorkflows:  r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn(),
 		LintConfigured: strings.TrimSpace(r.wf.Commands.Lint) != "",
 		// The brief is the coder's, and "implement" is one of its stages: the
 		// answer is the coder's own model, never a review stage's, which is
@@ -4454,6 +4694,20 @@ type stageOpts struct {
 	// under review in reach is what the empty tool list and the empty
 	// setting sources are there to prevent (F25).
 	Dir string
+	// Ordinal is which of the run's triage rounds this stage's call serves: the
+	// triage stage is the one today, and it reaches the record on each of the
+	// stage's attempt rows so that the report pairs a row with its round's
+	// failure by a key and not by position (runstore.StageTiming.Ordinal,
+	// D1846). It is the row's key where Round and Level are not: a level numbers
+	// its own rounds from 1 and a bounce starts that numbering again (D727,
+	// D1847), so the pair repeats where this does not. 0 for every stage that is
+	// not tied to a round.
+	Ordinal int
+	// Round is the review round this stage's call serves, and Level is the
+	// level that round belongs to; both are set wherever Ordinal is. They say
+	// which review round a row is for a reader, and not which triage round.
+	Round int
+	Level policy.Level
 }
 
 // transientRetries is the run's own bound on the retry a closed model stream
@@ -4804,11 +5058,12 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, stageEnv, tw, sw
 	if opts.Dir != "" {
-		// The stage's own directory rather than the checkout: the one stage
-		// that asks for it is the triage judge, which must have nothing of the
-		// run in reach (F25). Everything the stage's own environment names —
-		// the state directory, the home it runs with, the git credentials — is
-		// an absolute path, so nothing else moves with the working directory.
+		// The stage's own directory rather than the checkout: the stages that
+		// ask for it are the two judges — internal/triage's (F25) and the merge
+		// judge's (E6, mergejudge.go) — which must have nothing of the run in
+		// reach. Everything the stage's own environment names — the state
+		// directory, the home it runs with, the git credentials — is an
+		// absolute path, so nothing else moves with the working directory.
 		req.Dir = opts.Dir
 	}
 	req.Model, req.MaxBudgetUSD = r.stageModel(name), r.cfg.Agent.MaxBudgetUSD
@@ -4976,7 +5231,11 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 	// and repeats, for every auth mode (task-governance T1.3, T1.4).
 	res.SubAgents = relay.SubAgents
 	res.Repeats = relay.Repeats
-	r.rec.Stages = append(r.rec.Stages, r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats))
+	st := r.stageTiming(name, started, res.CostUSD, res.SubAgents, res.Repeats)
+	st.Ordinal = opts.Ordinal
+	st.Round = opts.Round
+	st.Level = opts.Level
+	r.rec.Stages = append(r.rec.Stages, st)
 	var errText any // the agent's error may carry a key an upstream echoed
 	if err != nil {
 		errText = r.redact(err.Error())
@@ -5535,7 +5794,10 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	// A build's artifact the run left in the tree is never this commit's
 	// (stray.go): it is refused by name, and held out of the commit, so what
-	// the branch carries is the run's work and no compiled file beside it.
+	// the branch carries is the run's work and no compiled file beside it. A
+	// binary the run's own policy admits at that path and size is not one —
+	// the check reads the policy the run resolved, and no file in the checkout
+	// may widen it (D986) — so a task whose work is an asset ships it.
 	//
 	// The refusal is a failure and not a stop, like every other failure at this
 	// point of a run: finalize carries on, and what a refused run leaves is the
@@ -5546,8 +5808,27 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listing what the run left untracked: %w", err)
 	}
-	if len(strays) > 0 {
-		r.fail(strayRefusal(strays))
+	// And the other end of the same reading: a binary the run's own commits
+	// added is in a commit, so the untracked listing above cannot see it and no
+	// commit finalize makes would carry it (stray.go, spec.md §4.2, D997). Both
+	// are answers of one predicate, and a run refused by both is refused once,
+	// with both lists named.
+	//
+	// A reading that fails is one of those answers and not an error out of
+	// finalize: a run whose own commits nothing read is refused rather than
+	// passed — the check is the last thing between a payload and the branch —
+	// and refusing it is not a stop, which is what the note above says of every
+	// other refusal here. Returning the error instead would leave the person
+	// with nothing at all: no branch, no pull request, and a run whose work the
+	// agent did and nobody can see.
+	added, err := r.committedBinaries(ctx)
+	unread := ""
+	if err != nil {
+		unread = r.redact(err.Error())
+		r.d.Log.Error("reading the run's own diff for binaries it added failed; the run is refused for it", "err", unread)
+	}
+	if len(strays) > 0 || len(added) > 0 || unread != "" {
+		r.fail(strayRefusal(strays, added, unread))
 	}
 	committed, err := r.repo.CommitAllExcept(ctx, leftover, strayPaths(strays))
 	if err != nil {

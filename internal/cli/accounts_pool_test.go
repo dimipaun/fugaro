@@ -67,7 +67,7 @@ pools:
   - name: routes
     members:
       - router-one
-      - oauth-one
+      - vertex
 `
 
 // accountsPoolExtra is the whole fixture: the credentials, the crafts and the
@@ -141,7 +141,7 @@ func TestPoolAddReplacesTheWholeMemberListInPlace(t *testing.T) {
   - name: routes
     members:
       - router-one
-      - oauth-one
+      - vertex
 `
 	if got := accountsPoolBlock(t, path); got != want {
 		t.Errorf("the pools block is\n%s\nwant\n%s", got, want)
@@ -242,19 +242,83 @@ func TestPoolAddRefusesWhatTheBlockRefuses(t *testing.T) {
 	}
 }
 
+// TestAccountsPoolAddRefusesACrossPathMembership is MC20's other red step: the
+// write carries the crossing's refusal (D1668), because it writes through
+// config.ValidatePools — a pool whose members are served by different halves of
+// a run is one whose listed order can mean nothing, and the one sentence an
+// operator gets names the two members, the two halves and the fix. The write is
+// refused before the file is read for it, so the config is left byte-identical.
+func TestAccountsPoolAddRefusesACrossPathMembership(t *testing.T) {
+	const want = "members oauth-one and router-one are served by different halves of a run (oauth-one's type is served by the credentials service, router-one's by the run's own gateway), and a pool's order can therefore mean nothing: name two pools, one per half, and let each craft's access name the one its stages need"
+	path := accountsPoolHome(t, "")
+	before := readFileString(t, path)
+
+	out, _, err := execute(t, "accounts", "pool", "add", "mixed", "router-one", "oauth-one")
+	if err == nil {
+		t.Fatalf("a pool naming a member of each half was written:\n%s", out)
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Errorf("exit %d, want a user error: %v", ExitCode(err), err)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal is not the crossing's own sentence:\n%v\nwant\n%s", err, want)
+	}
+	// The other way round is the same refusal: the sentence names the halves,
+	// so it does not depend on which member the pool listed first.
+	if _, _, err := execute(t, "accounts", "pool", "add", "mixed", "oauth-one", "router-one"); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("a pool listing the subscription first is not refused with the same sentence: %v", err)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the refused write changed the file:\n%s", got)
+	}
+}
+
+// TestPoolAddOwnerOnlyLeavesALegacyCrossingPoolAlone is the other side of the
+// refusal above: it judges the member list the command was given and not the
+// document it lands in (poolsWithNewMembers). A pool 0.25.0 already wrote may
+// name both halves, and the owner of such an installation must still be able to
+// write the people the pool is served to — the write that converges the
+// crossing is the update's own migration, not this door. An owner-only edit is
+// the case that parts the two: no member list is given, so there is nothing to
+// judge, and the pool's own list is left exactly as the file has it.
+func TestPoolAddOwnerOnlyLeavesALegacyCrossingPoolAlone(t *testing.T) {
+	path := accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsCrossingPools)
+
+	out, _, err := execute(t, "accounts", "pool", "add", "mixed", "--owner", "owner@example.com")
+	if err != nil {
+		t.Fatalf("an owner-only edit of a pool an earlier release wrote was refused: %v\n%s", err, out)
+	}
+	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
+	if err != nil {
+		t.Fatalf("the config this command wrote does not read back: %v", err)
+	}
+	pool, ok := accountsPoolOf(lc, "mixed")
+	if !ok {
+		t.Fatalf("pools.mixed is not in the config this command wrote: %+v", lc.Pools)
+	}
+	if pool.Owner != "owner@example.com" {
+		t.Errorf("pools.mixed.owner = %q, want owner@example.com", pool.Owner)
+	}
+	if got := strings.Join(pool.Members, ", "); got != "oauth-one, router-one" {
+		t.Errorf("pools.mixed.members = %q, want the crossing list the file already had", got)
+	}
+}
+
 // TestPoolAddAcceptsTheBuiltInVertex: vertex is a credential every installation
-// has without defining one, so it is a member like any other — the spec's own
-// shape is a pool of subscriptions with the built-in as its last fallback
-// (D1624). It is the ONE name a pool may list that this config does not define.
+// has without defining one, so it is a member like any other — the pool a route
+// is kept behind ends with the built-in as its last fallback (D1624). It is the
+// ONE name a pool may list that this config does not define, and it is on the
+// run's own gateway's path, so it is the fallback of a pool of that path and
+// never of a pool of subscriptions (D1668).
 func TestPoolAddAcceptsTheBuiltInVertex(t *testing.T) {
 	path := accountsPoolHome(t, "")
 
-	out, _, err := execute(t, "accounts", "pool", "add", "routes", "oauth-one", "vertex")
+	out, _, err := execute(t, "accounts", "pool", "add", "routes", "router-one", "vertex")
 	if err != nil {
 		t.Fatalf("accounts pool add with vertex: %v\n%s", err, out)
 	}
 	block := accountsPoolBlock(t, path)
-	if !strings.Contains(block, "  - name: routes\n    members:\n      - oauth-one\n      - vertex\n") {
+	if !strings.Contains(block, "  - name: routes\n    members:\n      - router-one\n      - vertex\n") {
 		t.Errorf("the built-in was not written as the pool's last member:\n%s", block)
 	}
 	lc, err := localcfg.Parse([]byte(readFileString(t, path)))
@@ -262,8 +326,8 @@ func TestPoolAddAcceptsTheBuiltInVertex(t *testing.T) {
 		t.Fatalf("the written config does not read back: %v", err)
 	}
 	paths, unplaced := config.PoolServingPaths(lc.Pools[1], lc.Credentials)
-	if len(unplaced) != 0 || len(paths) != 2 {
-		t.Errorf("a pool of a subscription and the built-in is served by %q (unplaced %q), want both paths", paths, unplaced)
+	if len(unplaced) != 0 || len(paths) != 1 || paths[0] != config.CredentialPathRunner {
+		t.Errorf("a pool of a route and the built-in is served by %q (unplaced %q), want the run's own gateway alone", paths, unplaced)
 	}
 }
 
@@ -425,9 +489,10 @@ func TestPoolWritesRefuseInAgentSession(t *testing.T) {
 }
 
 // accountsPoolLsPools is the read's own fixture: a round-robin pool of two
-// subscriptions (the credentials service alone), a pool of a route and the
-// built-in vertex (a run's own gateway alone), and one that lists a member of
-// each, which is the pool that can only fail over at a stage boundary.
+// subscriptions (the credentials service alone) and a pool of a route and the
+// built-in vertex (a run's own gateway alone). Neither lists a member of each
+// half: a pool this release writes is one path's, because the door it comes
+// through refuses a crossing (D1668).
 const accountsPoolLsPools = `
 pools:
   - name: subs
@@ -439,19 +504,14 @@ pools:
     members:
       - router-one
       - vertex
-  - name: mixed
-    members:
-      - oauth-one
-      - router-one
 `
 
 // TestPoolLsReadsEachMemberAndThePathThatServesIt is the read: each pool's
-// strategy, its members in order, and which half of a run serves them — the
+// strategy, its members in order, and the half of a run that serves them — the
 // credentials service for the Anthropic and OAuth members, a run's own gateway
-// for the OpenRouter and Vertex ones, and both, failing over at a stage
-// boundary, for a pool that lists one of each (F7, D1634). It is offline: the
-// fixture has no endpoints and no budget backend, so a read that reached the
-// cloud would fail rather than print.
+// for the OpenRouter and Vertex ones (F7, D1634). It is offline: the fixture has
+// no endpoints and no budget backend, so a read that reached the cloud would
+// fail rather than print.
 func TestPoolLsReadsEachMemberAndThePathThatServesIt(t *testing.T) {
 	accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsPools)
 
@@ -460,14 +520,58 @@ func TestPoolLsReadsEachMemberAndThePathThatServesIt(t *testing.T) {
 		t.Fatalf("accounts pool ls: %v\n%s", err, out)
 	}
 	for _, want := range []string{
-		"NAME    STRATEGY     MEMBERS                SERVED BY",
-		"subs    round-robin  oauth-one, oauth-two   the credentials service",
-		"routes  failover     router-one, vertex     a run's own gateway",
-		"mixed   failover     oauth-one, router-one  the credentials service and a run's own gateway: failover at a stage boundary",
+		"NAME    STRATEGY     MEMBERS               SERVED BY",
+		"subs    round-robin  oauth-one, oauth-two  the credentials service",
+		"routes  failover     router-one, vertex    a run's own gateway",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the read does not carry %q:\n%s", want, out)
 		}
+	}
+}
+
+// accountsPoolLsCrossingPools is a pools block 0.25.0 could have left behind:
+// `mixed` names a subscription and a route, which that release's `accounts pool
+// add` wrote and whose `accounts pool ls` read as valid.
+const accountsPoolLsCrossingPools = `
+pools:
+  - name: mixed
+    members:
+      - oauth-one
+      - router-one
+`
+
+// TestPoolLsReadsAPoolAnEarlierReleaseWrote is the reason the rule is the write
+// door's and not the config load's: a config 0.25.0 wrote may hold a pool naming
+// a member of each half, and this read must not refuse it. The read loads the
+// config through the very path `fugaro update` loads it through, so a read that
+// prints is an installation that still works — and it renders the pool with both
+// halves and the boundary its failover is left at rather than hiding a pool the
+// person wrote. It stays true after MC21: the split is written by the update's
+// own migration (derivePathPools, on every write of the file) and never by a
+// read, so a config that has not been through an update yet is still read.
+func TestPoolLsReadsAPoolAnEarlierReleaseWrote(t *testing.T) {
+	accountsPoolHomeWith(t, accountsPoolCredentials+accountsPoolLsCrossingPools)
+
+	out, _, err := execute(t, "accounts", "pool", "ls")
+	if err != nil {
+		t.Fatalf("a config an earlier release wrote no longer loads: %v\n%s", err, out)
+	}
+	for _, want := range []string{
+		"mixed",
+		"oauth-one, router-one",
+		"the credentials service and a run's own gateway: failover at a stage boundary",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the read does not carry %q:\n%s", want, out)
+		}
+	}
+	// The pool already there does not stand in the way of the next write: the
+	// door refuses the list it is given, not the document it is given it in, so
+	// an installation holding a crossing pool can still declare the two pools
+	// the refusal's sentence tells it to.
+	if _, _, err := execute(t, "accounts", "pool", "add", "subs", "oauth-one", "oauth-two"); err != nil {
+		t.Errorf("a write beside a pool an earlier release wrote was refused: %v", err)
 	}
 }
 
@@ -494,39 +598,6 @@ func TestPoolFamilyUnknownSubcommand(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "want ls, add or rm") {
 		t.Errorf("the refusal does not name the subcommands there are: %v", err)
-	}
-}
-
-// TestAccountsAddTypeRefusesATypeNoRunCouldServe: --type is a definition's own
-// type, so the config's rule judges it — the built-in vertex is never defined,
-// and the two types the spec calls future work are refused in words that say so
-// — and the types whose key no command stores yet are refused rather than
-// half-declared: a credentials entry with no secret is inert config that a pool
-// would still be allowed to list.
-func TestAccountsAddTypeRefusesATypeNoRunCouldServe(t *testing.T) {
-	for _, tc := range []struct{ typ, want string }{
-		{"vertex", "vertex is built in: it needs no secret and exists in every installation, so it is never defined as an entry"},
-		{"openai", "openai is not yet supported"},
-		{"codex-oauth", "codex-oauth is not yet supported"},
-		{"bedrock", "must be one of openrouter, anthropic, claude-oauth"},
-		{"anthropic", "no command stores one under a credential's own name yet"},
-		{"openrouter", "no command stores one under a credential's own name yet"},
-	} {
-		t.Run(tc.typ, func(t *testing.T) {
-			path := accountsPoolHome(t, "")
-			before := readFileString(t, path)
-
-			out, _, err := execute(t, "accounts", "add", "team-a", "--repos", "acme/app", "--type", tc.typ)
-			if err == nil {
-				t.Fatalf("--type %q was accepted:\n%s", tc.typ, out)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("the refusal does not say %q: %v", tc.want, err)
-			}
-			if got := readFileString(t, path); got != before {
-				t.Errorf("the refused write changed the file:\n%s", got)
-			}
-		})
 	}
 }
 

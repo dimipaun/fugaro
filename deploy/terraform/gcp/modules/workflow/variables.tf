@@ -139,19 +139,24 @@ variable "runs_bucket" {
 }
 
 variable "credentials_service" {
-  description = "The installation's credentials service (D146, D147): its Cloud Run service name and region, or null while the installation has not opted in. Null is what keeps the job's model-secret accessors and creates no invoker grant; set, it is what drops them (the service holds those credentials) and grants the job's account roles/run.invoker on it (D135)."
+  description = "The installation's credentials service (D146, D147): its Cloud Run service name, its region and the email of its own account, or null while the installation has not opted in. Null is what keeps the job's model-secret accessors and creates no invoker grant; set, it is what drops them (the service holds those credentials), grants the job's account roles/run.invoker on it (D135) and grants the service's account a secretAccessor on each secret the job mounts (D2074) — that last one only when account is set, which it is not in an installation applied before this input existed."
   type = object({
     name   = string
     region = string
+    # The service's own account (D2074). Empty, not required: an installation
+    # whose outputs predate this input plans no new grant, exactly as it did
+    # before, and the next `fugaro update` fills it in.
+    account = optional(string, "")
   })
   default = null
 
   validation {
     condition = var.credentials_service == null ? true : (
       can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.credentials_service.name)) &&
-      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region))
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.credentials_service.region)) &&
+      (var.credentials_service.account == "" || can(regex("^[a-z0-9-]+@[a-z0-9-]+\\.iam\\.gserviceaccount\\.com$", var.credentials_service.account)))
     )
-    error_message = "credentials_service needs a Cloud Run service name and a region such as us-east5."
+    error_message = "credentials_service needs a Cloud Run service name, a region such as us-east5, and, when it carries one, its account as an email (name@project.iam.gserviceaccount.com)."
   }
 }
 
@@ -160,6 +165,18 @@ variable "bitbucket_proxied" {
   type        = bool
   default     = false
   nullable    = false
+}
+
+variable "model_secrets_served" {
+  description = "Which of the model credentials the credentials service serves THIS repository's runs (D2072, G17), which is what the job's account keeps its secretAccessor on: `all` for a cascade repository the switch admits, `anthropic` for an `api-key` or `oauth` one it admits and the service holds the credential of, `none` for every other. Go writes it per repository (infra.ModelSecretsServed, RepoSpec.ModelSecretsServed), and the default is `all` because that is what a tfvars written before the input existed means: every root applied then planned with the model clauses of the drop in force, and only a switched repository has them read at all."
+  type        = string
+  default     = "all"
+  nullable    = false
+
+  validation {
+    condition     = contains(["all", "anthropic", "none"], var.model_secrets_served)
+    error_message = "model_secrets_served must be one of \"all\", \"anthropic\" or \"none\" (config.ModelSecretsServedValues)."
+  }
 }
 
 variable "job_runner_role" {

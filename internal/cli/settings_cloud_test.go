@@ -515,3 +515,105 @@ func TestSettingsCapsRowsSurviveACheckoutlessRepo(t *testing.T) {
 		}
 	}
 }
+
+// TestSettingsReadsThePolicyOnlyRowsFromTheNode: the cascade the credentials
+// service runs on (D152, D153) is stated in the published node and nowhere
+// else, so its six rows are the one family whose only store is that layer — and
+// a read that answered them from the registry's default while the node carried
+// a value would print a figure no run of the project gets, WINS default for a
+// node that decided it. The members the node does not carry keep the protective
+// default the row states, which is what a run gets for them, and an unread node
+// is the STATE and nothing else, the shape capsRow already has.
+func TestSettingsReadsThePolicyOnlyRowsFromTheNode(t *testing.T) {
+	f := settingsCloudFixture(t)
+	node := settingsCloudPolicyNode("enforce", 5)
+	// Written false and not absent: the two are different states for this key,
+	// and a node that carries the opt-out is a node this read must show.
+	node["credentials"] = map[string]any{
+		"fallback":                         "auto",
+		"stop_after_exhaustion_per_window": false,
+		"concurrency_per_token":            3,
+		"backoff":                          map[string]any{"cap": "2h"},
+	}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	doc := readSettingsJSON(t, "credentials.fallback", "credentials.concurrency_per_token",
+		"credentials.stop_after_exhaustion_per_window", "credentials.backoff.cap", "credentials.backoff.initial")
+	for _, want := range []struct{ key, value string }{
+		{"credentials.fallback", "auto"},
+		{"credentials.concurrency_per_token", "3"},
+		{"credentials.stop_after_exhaustion_per_window", "false"},
+		{"credentials.backoff.cap", "2h"},
+	} {
+		row := rowOf(t, doc, want.key, "project")
+		if deref(row.Value) != want.value || row.Wins != "policy" || row.State != "ok" {
+			t.Errorf("%s = %q/%q/%q, want %q/policy/ok: the node is its only store",
+				want.key, deref(row.Value), row.Wins, row.State, want.value)
+		}
+		if len(row.Levels) != 1 || row.Levels[0].Layer != "policy" || row.Levels[0].Outcome != "wins" {
+			t.Errorf("%s levels = %+v, want the policy layer winning alone", want.key, row.Levels)
+		}
+	}
+	// A member the node is silent about: the protective default stands, WINS
+	// stays default, and nothing claims a level that set no value.
+	row := rowOf(t, doc, "credentials.backoff.initial", "project")
+	if row.Wins != "default" || row.State != "ok" || len(row.Levels) != 0 {
+		t.Errorf("credentials.backoff.initial = %q/%q/%+v, want the default with WINS default: the node carries no such member",
+			row.Wins, row.State, row.Levels)
+	}
+	if deref(row.Value) == "" {
+		t.Error("credentials.backoff.initial prints no value, and a read never prints a blank (a blank reads as off)")
+	}
+
+	// The node was not read at all: the reason is the row's state and the value
+	// stays the default's, so an offline read does not claim the cascade is at
+	// the protective default — it says the read that would have answered did
+	// not happen (D850).
+	offline := rowOf(t, readSettingsJSON(t, "--offline", "credentials.fallback"), "credentials.fallback", "project")
+	if offline.Wins != "default" || offline.State != "unread: offline" {
+		t.Errorf("under --offline credentials.fallback = %q/%q, want the default with the flag's own reason", offline.Wins, offline.State)
+	}
+}
+
+// TestSettingsReadsTheOrchestratorSwitchAndIssueSync: R1 of
+// docs/orchestrator-graph-estimates/'s two rows are `policy`-only, so the
+// published node is their only store and this read is where a person learns
+// what a run of the project gets. The switch is the case the pointer on the node
+// exists for: a member the node does not carry is the daemon on, a written false
+// is the opt-out, and a read that rendered the absent member as `false` would
+// print every project that never mentioned the key as a project whose daemon is
+// stopped.
+func TestSettingsReadsTheOrchestratorSwitchAndIssueSync(t *testing.T) {
+	f := settingsCloudFixture(t)
+	node := settingsCloudPolicyNode("enforce", 5)
+	node["orchestrator_enabled"] = false
+	node["issue_sync"] = map[string]any{"github": map[string]any{"repos": []any{"acme/app"}, "mirror": true}}
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	doc := readSettingsJSON(t, "orchestrator_enabled", "issue_sync")
+	for _, want := range []struct{ key, value string }{
+		{"orchestrator_enabled", "false"},
+		{"issue_sync", `{"github":{"repos":["acme/app"],"mirror":true}}`},
+	} {
+		row := rowOf(t, doc, want.key, "project")
+		if deref(row.Value) != want.value || row.Wins != "policy" || row.State != "ok" {
+			t.Errorf("%s = %q/%q/%q, want %q/policy/ok: the node is its only store",
+				want.key, deref(row.Value), row.Wins, row.State, want.value)
+		}
+	}
+
+	// A node silent about both: the protective answers stand, WINS stays
+	// default, and no level claims a value the node does not carry.
+	f.db.Set(projectpolicy.PathShared(), settingsCloudPolicyNode("enforce", 5))
+	silent := readSettingsJSON(t, "orchestrator_enabled", "issue_sync")
+	for _, key := range []string{"orchestrator_enabled", "issue_sync"} {
+		row := rowOf(t, silent, key, "project")
+		if row.Wins != "default" || row.State != "ok" || len(row.Levels) != 0 {
+			t.Errorf("%s = %q/%q/%+v, want the default with WINS default: the node carries no such member",
+				key, row.Wins, row.State, row.Levels)
+		}
+		if deref(row.Value) == "" {
+			t.Errorf("%s prints no value, and a read never prints a blank (a blank reads as off)", key)
+		}
+	}
+}

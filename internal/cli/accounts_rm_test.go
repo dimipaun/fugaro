@@ -208,8 +208,21 @@ func TestAccountsRmRemovesTheDefinitionAndItsAllowListEntry(t *testing.T) {
 // block defines is the file this config's own loader rejects, and `accounts
 // pool rm` is what drops one; the craft's access is not, because no command of
 // this release writes a crafts key, so the entry's own crafts are cleared with
-// it (accountsRmCraftAccesses, and the test below).
+// it (craftsNaming, and the test below).
+//
+// The declaration is the file's, so the removal is run on its own rather than
+// after an `accounts add`: that command's own publish would write this file's
+// craft key onto a node that does not hold it, which is the craft grant the
+// gate wants a person's typed name for in a project with no gate of its own
+// (init_policy_publish.go's policyCraftWidening) — and a file that declares the
+// account is the world a removal reaches its declaration in
+// (accountsRmDeclaredLocal's own comment says the same thing), while the
+// removal itself publishes the key's REMOVAL and asks nothing.
 const accountsRmTypedLocal = addRigLocal + `
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
 credentials:
   - name: team-a
     type: claude-oauth
@@ -225,6 +238,10 @@ pools:
 
 // accountsRmTypedCraftLocal is the same entry named by a craft alone.
 const accountsRmTypedCraftLocal = addRigLocal + `
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
 credentials:
   - name: team-a
     type: claude-oauth
@@ -276,13 +293,12 @@ func TestAccountsRmTakesTheTypedEntryWithTheAccount(t *testing.T) {
 // Nothing is written.
 func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
 	before, err := os.ReadFile(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a", "--profile", "standard")
+	_, _, rmErr := executeStdin(t, "", "accounts", "rm", "team-a")
 
 	after, err := os.ReadFile(r.cfg)
 	if err != nil {
@@ -319,9 +335,8 @@ func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 // left is one this config's own loader reads.
 func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedCraftLocal)
-	r.add(t, "team-a", "--repos", "owner/repo-a")
 
-	out := r.rm(t, "team-a", "--profile", "standard")
+	out := r.rm(t, "team-a")
 
 	lc := r.addLocal(t)
 	if got := lc.Credentials; len(got) != 0 {
@@ -2275,5 +2290,218 @@ func accountsRmRefuseSecrets(t *testing.T, cfg string) {
 	swapped := strings.Replace(string(data), url, srv.URL, 1)
 	if err := os.WriteFile(cfg, []byte(swapped), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAccountsRmDoesNotWriteAJobForAHeldDefaultProfile: the hold applies to this
+// door too (the owner's ruling of 2026-11-16 on S5), so a removal is not refused
+// by a config that cannot compose the default profile's job — and the door
+// writes no job for that profile: the jobs the record holds are kept whole.
+//
+// The account's own job is one of them, and it is the half of this command the
+// hold defers: the job set of a held profile is the installation's and not this
+// run's, so the job the removal takes away is the one a run composes after the
+// config can compose the profile again — the same deferral the add half has for
+// a job the account it declares would have got. What the command owns is done
+// either way: the secret is deleted, the declaration is gone from the config,
+// and the node every run is admitted by no longer names the account.
+//
+// Mutation (run, restore): compose with installOptions instead of installSpec
+// (accounts_add_converge.go's door), and this door and the addition's own above
+// both fail on the refusal installOptions raises for a config that records two
+// GitHub App IDs.
+func TestAccountsRmDoesNotWriteAJobForAHeldDefaultProfile(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	deployed := r.projectJobs(t)
+	job := gcp.ProjectJobName("standard", "github", "team-a")
+	if _, ok := deployed[job]; !ok {
+		t.Fatalf("the fixture deployed no %s, so this test has no record to hold: %v", job, slices.Sorted(maps.Keys(deployed)))
+	}
+
+	secondAppRepoInConfig(t, r.cfg)
+	out := r.rm(t, "team-a", "--profile", "standard")
+
+	kept := r.projectJobs(t)
+	if !reflect.DeepEqual(kept, deployed) {
+		t.Errorf("the door wrote a job set of its own for a profile it cannot compose:\n--- written %v\n--- held %v\n%s",
+			slices.Sorted(maps.Keys(kept)), slices.Sorted(maps.Keys(deployed)), out)
+	}
+	if _, ok := kept[job]; !ok {
+		t.Errorf("the hold dropped %s: the profile's jobs are the installation's while the config composes none", job)
+	}
+	// The command's own work, which the hold does not touch.
+	id := gcp.ProjectSecretID("aurora", config.ClaudeAccountSecret("team-a"))
+	if v := r.sm.Latest(id); v != nil {
+		t.Errorf("the secret %s still holds a value after the removal: %q", id, v)
+	}
+	if _, ok := r.addLocal(t).ClaudeAccounts["team-a"]; ok {
+		t.Errorf("the door left the team-a declaration in the local config: %v", slices.Sorted(maps.Keys(r.addLocal(t).ClaudeAccounts)))
+	}
+	if p := r.policy(t); len(p.Accounts) != 0 {
+		t.Errorf("the published node still carries accounts = %v, want the account gone", slices.Sorted(maps.Keys(p.Accounts)))
+	}
+}
+
+// ------------------------------------------------- the key credentials (MC24)
+
+// The three tests below are `accounts rm`'s half of the key credentials' pair:
+// the declaration `accounts add --type` writes is two entries and a container —
+// claude_accounts.NAME.allow_data_to, credentials.NAME and the credential's own
+// derived secret — and a removal that took any one of them alone would leave
+// the config or the installation in a state its own reader refuses, or a live
+// provider key in a project with no command able to take it away. The fixtures
+// are key types rather than the claude-oauth entries above, because the type is
+// what decides which container the value is in (config.CredentialValueSecret)
+// and which pool path may list the name.
+//
+// All three pass before this task as well: the pool guard, the craft clearing
+// and the value's own removal already answer for a typed entry (MC4, MC5,
+// MC22), which is what MC24's plan line calls the accounts' own guard. They are
+// kept here as the key types' regression coverage, not as the driving examples.
+//
+// Their own adds are addTyped and not add: a key credential's declaration puts
+// craft_credentials and crafts.NAME.access on the published node, so the
+// publish that carries it is the one a typed confirmation covers and --yes does
+// not (D846), and addTyped is the helper that stands at that terminal. Through
+// add, the step stops at policy with "the typed confirmation of this step needs
+// a real terminal" and the three tests never reach the removal they are about.
+
+// accountsRmKeyPoolLocal is a key credential a pool lists: the state an entry's
+// own removal may not proceed from, by this config's own rule (ValidatePools).
+const accountsRmKeyPoolLocal = addRigLocal + `credentials:
+  - { name: team-a, type: openrouter }
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+pools:
+  - name: paid
+    members:
+      - team-a
+`
+
+// accountsRmKeyCraftLocal is the same entry a craft's access names and no pool
+// does: the half that is cleared with the entry instead of refusing it.
+const accountsRmKeyCraftLocal = addRigLocal + `credentials:
+  - { name: team-a, type: anthropic }
+claude_accounts:
+  team-a:
+    allow_data_to:
+      - owner/repo-a
+crafts:
+  coder:
+    model: deepseek-v4-1
+    access: team-a
+`
+
+// TestAccountsRmRefusesAPoolMember is the guard on the typed half, for a key
+// credential: the entry goes with the account (accountsRmTyped), and a pool
+// left listing a member no block defines is the file this config's own loader
+// rejects — the state `accounts add --type`'s guard exists to keep out of the
+// file and `accounts pool rm` is the one command that ends. Nothing is written
+// and nothing is deleted: the value of a refused removal stays where it is,
+// which is the half of the refusal a session could otherwise take for a
+// removal.
+func TestAccountsRmRefusesAPoolMember(t *testing.T) {
+	r := newAddRigWith(t, accountsRmKeyPoolLocal)
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
+	if v := r.sm.Latest(credentialSecretID("team-a")); v == nil {
+		t.Fatalf("the fixture's %s holds no value, so the refused delete would prove nothing", credentialSecretID("team-a"))
+	}
+	before := readFileString(t, r.cfg)
+
+	_, _, err := executeStdin(t, "", "accounts", "rm", "team-a")
+	if err == nil {
+		t.Fatal("the key credential was removed while its entry was still a member of pools.paid.members")
+	}
+	for _, want := range []string{"credentials.team-a", "pools.paid.members", "accounts pool rm", "nothing was written"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if got := readFileString(t, r.cfg); got != before {
+		t.Errorf("the refused removal changed %s:\n%s", r.cfg, got)
+	}
+	if got := r.sm.Deleted(); len(got) != 0 {
+		t.Errorf("the refusal deleted %v, want nothing: a removal that never happened may not take the value", got)
+	}
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config the refusal left is one its own next load refuses: %v", err)
+	}
+}
+
+// TestAccountsRmClearsACraftAccess is the same entry named by a craft: the
+// access is the one key that names a credential and that no command of this
+// release writes (accountsRmPoolMember's own note), so refusing would leave the
+// owner a hand edit as the only way through. It goes with the entry it named,
+// the sentence names the key it cleared, and the rest of the craft — its model
+// — is left where it was.
+func TestAccountsRmClearsACraftAccess(t *testing.T) {
+	r := newAddRigWith(t, accountsRmKeyCraftLocal)
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
+
+	out := r.rm(t, "team-a")
+
+	lc := r.addLocal(t)
+	if got := lc.Credentials; len(got) != 0 {
+		t.Errorf("credentials.team-a is still declared after the removal: %v", got)
+	}
+	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
+		t.Errorf("claude_accounts.team-a is still declared: %v", slices.Sorted(maps.Keys(lc.ClaudeAccounts)))
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Access; got != "" {
+		t.Errorf("crafts.coder.access = %q, want the key cleared with the entry it named", got)
+	}
+	if got := lc.Crafts.Of(config.CraftCoder).Model; got != "deepseek-v4-1" {
+		t.Errorf("crafts.coder.model = %q, want the model half left alone", got)
+	}
+	if !strings.Contains(out, "clear crafts.coder.access, which named that entry") {
+		t.Errorf("the sentence does not name the craft key it cleared:\n%s", out)
+	}
+	if _, err := localcfg.Load(r.cfg); err != nil {
+		t.Fatalf("the config this command wrote does not load: %v", err)
+	}
+}
+
+// TestAccountsRmRemovesTheValueToo is the container, for a key credential: its
+// value is the key its provider issued, under the credential's own derived
+// secret name (config.CredentialSecret), so the account's own
+// claude-oauth-token-NAME is another credential's container and holds nothing
+// of this one's. Asking the store for that one would leave a live provider key
+// in the project with no command able to remove it while this command reported
+// the account gone — the one end state its own contract may not leave.
+// TestAccountsRmTakesAKeyCredentialsOwnContainer is the same rule read from the
+// add half's side; this is the removal's, and it asserts the pair the removal
+// is: the entry, the declaration and the value all gone in one run, from the
+// container the type decides.
+func TestAccountsRmRemovesTheValueToo(t *testing.T) {
+	r := newAddRigWith(t, accountsRmKeyCraftLocal)
+	r.addTyped(t, "team-a", "--repos", "owner/repo-a")
+	id := credentialSecretID("team-a")
+	if r.sm.Latest(id) == nil {
+		t.Fatalf("the fixture's %s holds no value, so the delete has nothing to take away", id)
+	}
+
+	out := r.rm(t, "team-a")
+
+	if got, want := r.sm.Deleted(), []string{id}; !slices.Equal(got, want) {
+		t.Errorf("the secret deletes were %v, want only %v, the container a key credential's value is really in", got, want)
+	}
+	if v := r.sm.Latest(id); v != nil {
+		t.Errorf("the secret %s still holds a value after the removal: %q", id, v)
+	}
+	if got := accountsAddRow(t, out, "secret"); !strings.Contains(got, config.CredentialSecret("team-a")) {
+		t.Errorf("the block's secret line reads %q, want the container this run deleted named", got)
+	}
+	if strings.Contains(out, config.ClaudeAccountSecret("team-a")) {
+		t.Errorf("the report names %s, the container a key credential's value is never stored in:\n%s", config.ClaudeAccountSecret("team-a"), out)
+	}
+	lc := r.addLocal(t)
+	if _, ok := lc.ClaudeAccounts["team-a"]; ok {
+		t.Errorf("claude_accounts.team-a is still declared: the declaration and the value its allow_data_to bounds go together")
+	}
+	if slices.ContainsFunc(lc.Credentials, func(c config.Credential) bool { return c.Name == "team-a" }) {
+		t.Errorf("the credentials block still declares team-a: %v", lc.Credentials)
 	}
 }

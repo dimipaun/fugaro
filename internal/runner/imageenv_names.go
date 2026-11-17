@@ -54,7 +54,10 @@ func SecretEnvNames(jobEnv map[string]string) []string {
 //   - the names the job's FUGARO_SECRET_ENVS declares that declared does not
 //     hold (F8). A job mounts every secret of its workflow, so a name the run
 //     did not declare must not arrive through an image's variable: it reaches
-//     the agent through the declared-secret path alone, or not at all.
+//     the agent through the declared-secret path alone, or not at all. A job of
+//     a switched repository mounts none of them, which is why a reader with a
+//     run in hand uses imageEnvDroppedNamesForRun below: it applies this same
+//     rule to the names the run fetched in their place.
 //
 // declared is therefore the names whose secret this reader's run may read:
 // the run's own secretEnvs (internal/runner's bootstrap, built from the task's
@@ -73,6 +76,36 @@ func ImageEnvDroppedNames(jobEnv map[string]string, declared []string) []string 
 	var dropped []string
 	for name := range jobEnv {
 		if imageEnvDropped(name, jobSecrets, declared) {
+			dropped = append(dropped, name)
+		}
+	}
+	slices.Sort(dropped)
+	return dropped
+}
+
+// imageEnvDroppedNamesForRun is ImageEnvDroppedNames plus the names held: the
+// names this run's own workflow declares a secret for, whether its job mounts
+// the value or the run fetched it (workflowsecrets.go, B3.4).
+//
+// A job's FUGARO_SECRET_ENVS is not that set once a repository is switched onto
+// the credentials service: the flip leaves the workflow's secrets unmounted, so
+// the job stops naming them and the fetch puts their values in the run's
+// environment instead. A name held that way that declared does not carry is
+// dropped on exactly the terms source 5 of ImageEnvDroppedNames states for a
+// mounted one -- otherwise a value the flip moved would reach a review run's
+// agent through the image arm, which is the one thing that arm may not do (G12,
+// F8).
+//
+// Only a name the job's own environment holds is added: the arm this feeds
+// iterates that environment, so a name outside it cannot travel this way.
+//
+// The report a job's line is printed from keeps calling ImageEnvDroppedNames:
+// it measures a job's own environment, where no run and so no fetch is in hand.
+func imageEnvDroppedNamesForRun(jobEnv map[string]string, declared, held []string) []string {
+	dropped := ImageEnvDroppedNames(jobEnv, declared)
+	for _, name := range held {
+		_, inJob := jobEnv[name]
+		if inJob && !slices.Contains(declared, name) && !slices.Contains(dropped, name) {
 			dropped = append(dropped, name)
 		}
 	}

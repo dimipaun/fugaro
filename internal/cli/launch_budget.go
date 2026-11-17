@@ -292,6 +292,50 @@ func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projec
 	return p.p, p.found, p.err
 }
 
+// policyMode is the budget mode the published node carries, "" where no node
+// was published, none could be read, or there is no local config to read one
+// over. It is the switch's fourth condition, read by the launch and handed to
+// credentialsServiceLaunchEnv (D2071): the credentials service is reached
+// through the gateway, and the gateway exists only in `observe` and `enforce`,
+// so a repository on a project whose mode is `off` is handed no address and
+// keeps the mounts it has.
+//
+// It is the NODE's mode and not the local config's (lc.BudgetMode), and the
+// two differ exactly where it matters: a run's mode is the node's (the
+// runner's policyCeiling writes the node's mode over the deploy-time one), so
+// a project that lowered it after the last apply would be handed an address
+// its own runner refuses to use. A read that failed or found nothing answers
+// "" deliberately rather than falling back to the local mode: every published
+// node carries a mode (buildProjectPolicy refuses one without it), so a
+// missing node is a project that has not published, and its runs are the ones
+// the launch already refuses or runs on the environment ceiling. The
+// fail-closed direction costs a switched `api-key` repository its address and
+// nothing else — its mounts are all still there (config.ServiceServedAuths is
+// empty until B2.7) — and `fugaro doctor` is where an operator reads why.
+func (e *cloudEnv) policyMode(ctx context.Context) string {
+	if e.lc == nil {
+		return ""
+	}
+	p, found, err := e.policy.read(ctx, e.lc)
+	if err != nil || !found || p == nil {
+		return ""
+	}
+	return policyBudgetMode(p)
+}
+
+// policyBudgetMode is the mode a node carries, "" for the nil policy that
+// stands for a node nobody read — the same reading internal/infra makes of its
+// Inputs.Policy (D2071). It is here rather than beside each caller because the
+// switch's fourth condition is read in two places of the same run: the launch
+// (policyMode) and the repository door's record (recordCredentialsServiceReady,
+// init.go), which must answer as the spec below them does.
+func policyBudgetMode(p *projectpolicy.Policy) string {
+	if p == nil {
+		return ""
+	}
+	return p.Budget.Mode
+}
+
 // exists is read in the CLI's wording, for the callers that only ask whether
 // the project has published a policy (Readiness's D11 gate). A node written in
 // an older version is one of those: it is there, and the policy stage of the
@@ -791,18 +835,21 @@ func (e *cloudEnv) proxyGate(ctx context.Context, slug string, spec *task.Spec, 
 	return checkImageSince(ctx, e, slug, spec, kind, proxySince, subject, knows, "", warn)
 }
 
-// proxiedRepo is whether the run this launch starts is a proxied one: the
-// installation's local config carries the credentials service, the repository
-// is a Bitbucket one, the published node admits it with proxy: true, and the
-// launch hands the service's address to the job it starts. The kind is
-// derived from the pair the run itself trusts (the slug it is stored under and
-// the repository the task names), never from the local config's own provider,
-// as launchPolicyGates does for the allow-list.
+// nodeBrokersBitbucket is the published node's own answer to whether this
+// repository's Bitbucket access is brokered: the installation carries the
+// credentials service, the repository is a Bitbucket one, and the node admits
+// it with proxy: true (G15's one source — the document the credentials service
+// itself reads when a job asks it for the token).
 //
-// Every unreadable or absent answer is a "no": a read that failed, or a node
-// nothing published, leaves the launch to the gates that own those refusals
-// (launchPolicyGates words them, and cascadeLaunchRefusal the read's own).
-func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec) bool {
+// It is the half of proxiedRepo that reads documents, named for the second
+// caller that needs exactly it and no more: a review launched onto the
+// installation's implicit review-only job, which mounts no Bitbucket token and
+// cannot mount one, is servable only where the service will forward the token
+// for this repository (internal/cli's implicitReviewJobFor). Asking the
+// launch's own question there instead would refuse a repository whose
+// per-repository job is not handed the service's address while the implicit
+// review job always is, which is a launch that would have worked.
+func (e *cloudEnv) nodeBrokersBitbucket(ctx context.Context, slug string, spec *task.Spec) bool {
 	if e.lc == nil || e.lc.CredentialsService == nil || e.lc.CredentialsService.URL == "" {
 		return false
 	}
@@ -818,7 +865,21 @@ func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec
 	if err != nil {
 		return false
 	}
-	if !projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical) {
+	return projectpolicy.AdmitRepo(p.BitbucketToken.AllowRepos, canonical)
+}
+
+// proxiedRepo is whether the run this launch starts is a proxied one: the
+// published node brokers this repository (nodeBrokersBitbucket), and the launch
+// hands the service's address to the job it starts. The kind is derived from
+// the pair the run itself trusts (the slug it is stored under and the
+// repository the task names), never from the local config's own provider, as
+// launchPolicyGates does for the allow-list.
+//
+// Every unreadable or absent answer is a "no": a read that failed, or a node
+// nothing published, leaves the launch to the gates that own those refusals
+// (launchPolicyGates words them, and cascadeLaunchRefusal the read's own).
+func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec) bool {
+	if !e.nodeBrokersBitbucket(ctx, slug, spec) {
 		return false
 	}
 	// The last question is asked of the function that answers it for the
@@ -828,7 +889,7 @@ func (e *cloudEnv) proxiedRepo(ctx context.Context, slug string, spec *task.Spec
 	// io.Discard because the launch reads the same two documents and words the
 	// one warning this read can report (repoServiceAuth).
 	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
-	return len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, deployed)) > 0
+	return len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, e.policyMode(ctx), deployed, false)) > 0
 }
 
 // proxiedOnBatchMessage is the Batch arm of G14's launch check, built with the
@@ -970,7 +1031,18 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	// RB is the launcher's own, self-asserted name (config user or git
 	// email): attribution only, nothing in the rules trusts it.
 	claims := token.Claims{Slug: budget.Key(slug), Run: budget.Key(run), FX: token.ExpiryFX(time.Now(), jobTimeout), FP: e.lc.Name, RB: me,
-		Branch: branch, PRs: budgetPRs(spec)}
+		Branch: branch, PRs: budgetPRs(spec), ContextRepos: spec.ContextRepos}
+	// The identity's claims are bounded by the identity provider, and the
+	// refusal it makes is at the exchange — inside the run, long after this
+	// launcher was told the launch succeeded. So the set is measured here, in
+	// the person's own words, before a key is drawn and before a signature is
+	// asked for: a launch whose claims would be refused there is refused here,
+	// with nothing written (token.MintAt measures the same figure again, as the
+	// backstop for every other caller).
+	if n := token.ClaimsSize(claims); n > token.MaxClaimsBytes {
+		return nil, userErr("this run's identity would carry %d bytes of claims, over the %d a custom token may carry: the identity provider refuses such a token at the exchange, inside the run, after this launcher was told the launch had succeeded. Drop the read-only context repositories this launch names (--context, at most %d of them), or shorten the run id and the repository slug the identity carries",
+			n, token.MaxClaimsBytes, token.MaxContextRepos)
+	}
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
 	case errors.Is(err, token.ErrNotMinter):

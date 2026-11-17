@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -173,6 +174,12 @@ type closedStdinFixture struct {
 // because there the sentence is the proof the run got to the ask; elsewhere the
 // proof is the body having run at all, which the harness checks for every leaf.
 var closedStdinFixtures = map[string]closedStdinFixture{
+	// The backend name is the argument the command takes, and cloud-run is the
+	// one that reaches the body without a gate: the selection this world's
+	// config already makes (no backend: key reads as cloud-run) is answered
+	// with the "already runs on" line rather than a write, which is the whole
+	// of what the leaf does with a closed stdin.
+	"fugaro backends use": {args: []string{"cloud-run"}, reaches: "already runs on cloud-run"},
 	// The caps are unset in the fixture's database, so the run sets one from
 	// nothing — the loosening T3's owner-session fence is about. It asks nothing
 	// now, so the sentence is the write itself rather than a banner.
@@ -260,6 +267,19 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "reviewer: team-a",
 		seed:    closedStdinAccountAliasSeed,
 	},
+	// The switch rewrites every key naming an account, and the sentence its
+	// fixture reads is the first line of its own list — the key as the file
+	// spells it and the move it takes, printed before the write. The seed
+	// declares the two accounts and points the default at the first, so the run
+	// rewrites a key rather than answering "no change: no key of this config
+	// names team-a"; and no repository's own list and no profile names either
+	// account, which is what keeps the run off the subset rule the write is
+	// judged by.
+	"fugaro accounts switch": {
+		args:    []string{"team-a", "team-b"},
+		reaches: "default_claude_account: team-a -> team-b",
+		seed:    closedStdinAccountSwitchSeed,
+	},
 	// The settings write used to ask for the project's name over the document it
 	// edits, and what it edits here is the world's own project config. It asks
 	// nothing now (D1540), and the sentence naming the change is the proof this
@@ -303,6 +323,16 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
 	"fugaro watch": {args: []string{"--once"}, reaches: "counted"},
+	// The mailbox consumer is the same shape — it serves the pairing until it is
+	// interrupted — and --once is its own one pass. The seed is what makes that
+	// pass a pass rather than the startup refusal a project with no mailbox
+	// block gets: the world's config names one pairing and a fake keychain holds
+	// its key, so the run takes the lease and reports the empty inbox it read.
+	"fugaro mailbox": {
+		args:    []string{"--once"},
+		reaches: "read 0, delivered 0, duplicates 0, refused 0, replied 0",
+		seed:    closedStdinMailboxSeed,
+	},
 	// The daemon is the same shape and answers it the same way: it drives the
 	// project until it is stopped, and --once is its own one cycle — the lease
 	// taken for it and released with it. In this world the node holds no work
@@ -320,6 +350,7 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro artifacts ls":         {args: []string{"run-1"}},
 	"fugaro budget preview":       {args: []string{"--recipe", "r", "--runs", "1"}},
 	"fugaro budget history":       {args: []string{"--sweep"}},
+	"fugaro budget reconcile":     {args: []string{"--from", "2026-10-12", "--to", "2026-11-16", "--all"}},
 	"fugaro cancel":               {args: []string{"run-1"}},
 	"fugaro creds set":            {args: []string{"NAME"}},
 	"fugaro diagnose":             {args: []string{"run-1"}},
@@ -349,26 +380,45 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	"fugaro models rm":      {args: []string{"claude-x"}},
 	"fugaro models search":  {args: []string{"x"}},
 	"fugaro models use":     {args: []string{"a", "b", "c"}},
-	"fugaro pair revoke":    {args: []string{"--uid", "uid-1"}},
+	// The two writers D2613 adds reach the write itself, in the world's own
+	// project config: the sentence naming what the entry carries now is the
+	// proof the run got past the selection and the splice, which is the part of
+	// a write a closed stdin could ever have stopped. Both work on an entry the
+	// file already carries — a provider is not one without the model IDs it
+	// serves, and no flag here writes that list — so both are seeded, and the
+	// set changes a leaf the seed leaves out.
+	"fugaro models provider set": {
+		args:    []string{"acme", "--price-policy", "highest"},
+		reaches: "set providers.acme in",
+		seed:    closedStdinSetProvider,
+	},
+	"fugaro models provider rm": {args: []string{"acme"}, reaches: "remove the provider acme from", seed: closedStdinSetProvider},
+	"fugaro models price set": {
+		args:    []string{"claude-sonnet-5-5", "--input-per-m", "3", "--output-per-m", "15"},
+		reaches: "set model_prices.claude-sonnet-5-5 in",
+	},
+	"fugaro pair revoke": {args: []string{"--uid", "uid-1"}},
 	"fugaro project profile add": {args: []string{"standard", "--provider", "github", "--cpu", "2",
 		"--memory", "4Gi", "--timeout-class", "6h"}},
 	"fugaro project profile rm": {args: []string{"standard"}},
 	// The world's config defines no profiles, so this fixture stops at the
 	// command's own refusal — which is still its body, and the whole of what a
 	// bare run cannot reach.
-	"fugaro project profile set": {args: []string{"standard", "cpu", "4"}},
-	"fugaro project repos add":   {args: []string{"acme/app"}},
-	"fugaro project repos rm":    {args: []string{"acme/app"}},
-	"fugaro project routing set": {args: []string{"claude", "--via", "direct"}},
-	"fugaro recipes publish":     {args: []string{"slug"}},
-	"fugaro recipes show":        {args: []string{"slug"}},
-	"fugaro recipes validate":    {args: []string{"slug"}},
-	"fugaro restore":             {args: []string{"proj-2", "root"}},
-	"fugaro review show":         {args: []string{"run-1"}},
-	"fugaro run":                 {args: []string{"do something"}},
-	"fugaro runs show":           {args: []string{"run-1"}},
-	"fugaro secrets rm":          {args: []string{"NAME"}},
-	"fugaro secrets set":         {args: []string{"NAME"}},
+	"fugaro project profile set":  {args: []string{"standard", "cpu", "4"}},
+	"fugaro project repos add":    {args: []string{"acme/app"}},
+	"fugaro project repos rm":     {args: []string{"acme/app"}},
+	"fugaro project repos status": {args: []string{"github/acme/app"}},
+	"fugaro project routing set":  {args: []string{"claude", "--via", "direct"}},
+	"fugaro recipes publish":      {args: []string{"slug"}},
+	"fugaro recipes show":         {args: []string{"slug"}},
+	"fugaro recipes validate":     {args: []string{"slug"}},
+	"fugaro restore":              {args: []string{"proj-2", "root"}},
+	"fugaro review show":          {args: []string{"run-1"}},
+	"fugaro run":                  {args: []string{"do something"}},
+	"fugaro escalation show":      {args: []string{"wi-1"}},
+	"fugaro runs show":            {args: []string{"run-1"}},
+	"fugaro secrets rm":           {args: []string{"NAME"}},
+	"fugaro secrets set":          {args: []string{"NAME"}},
 	// The intake's two families take the same NAME as the pair above, and their
 	// bodies are reached the same way: the name is the whole of what stands
 	// between a bare run and the command's own body, which is where the
@@ -444,7 +494,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
-	"fugaro backends":          "is a name for its one subcommand: a bare run prints its own usage and returns",
+	"fugaro backends":          "is a name for ls and use: a bare run prints its own usage and returns",
 	"fugaro backends ls":       "lists every backend a project may name, which needs no project",
 	"fugaro backlog add":       "stops at its own D27 field checks, which this world has no values for",
 	"fugaro backlog index":     "reads docs/backlog, which this world has no checkout to hold",
@@ -458,7 +508,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro config publish":    "refuses with no fugaro.yaml to publish",
 	"fugaro config show":       "refuses outside a git checkout, which is what the world is",
 	"fugaro coordinator":       "refuses: the edition is not in this build",
-	"fugaro craft ls":          "prints the four crafts with no project selected, on the default credential",
+	"fugaro craft ls":          "prints the five crafts with no project selected, on the default credential",
 	"fugaro credentials serve": "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro creds":             "is a name for set and ls: a bare run prints its own usage and returns",
 	"fugaro creds ls":          "prints the no-project-config refusal",
@@ -492,6 +542,13 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro orchestrator events": "reads project aurora's audit node out of the fixture's database, which holds none yet: there are no events to print",
 	"fugaro orchestrator patch":  "refuses its missing -f: a patch document is what it applies, and the closed stdin is no document",
 	"fugaro orchestrator import": "refuses its missing -f: a dump is one patch document, and the closed stdin is no document",
+	// The escalation family reads that same node for the ladder's ledger (E13).
+	// ls takes no argument, and its bare run is the whole command: the fixture's
+	// database holds no work item, so what it says is that no pull request has
+	// entered the ladder. show needs the item it is about, so it is fixtured
+	// below with one this world does not hold — the read's own refusal rather
+	// than cobra's usage error — and the closed stdin asks it nothing either way.
+	"fugaro escalation ls": "reads project aurora's state node out of the fixture's database, which holds no work item, and says no pull request has entered the ladder",
 	// The login unit's three commands read this machine's own home and nothing
 	// else, and this world's home has no unit: install is refused before its
 	// typed confirmation (a unit runs code at every login, and the word install
@@ -522,6 +579,7 @@ var closedStdinNoFixture = map[string]string{
 	"fugaro rigor floor show":       "reads the selected project's own config and prints the floor it carries, which is the whole of what a bare run does",
 	"fugaro runs digest":            "prints the no-project-config refusal",
 	"fugaro runs ls":                "prints the no-project-config refusal",
+	"fugaro runs reports":           "refuses from inside its body: it writes the project's stored reports only as the project's reports job, and a bare run says so and names fugaro runs digest",
 	"fugaro runs stats":             "prints the no-project-config refusal",
 	"fugaro runs summary":           "prints the no-project-config refusal",
 	"fugaro runs watch":             "prints the no-project-config refusal",
@@ -765,6 +823,15 @@ func closedStdinSetBaseBranch(t *testing.T, f *budgetFixture) {
 	f.appendConfig(t, "base_branch: main\n")
 }
 
+// closedStdinSetProvider gives the world's project config the provider route
+// the removal takes away. Without it the leaf stops at "this project has no
+// provider named acme" and the fixture's sentence would never be reached — a
+// removal of an entry that is not there is a refusal, not a write.
+func closedStdinSetProvider(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "providers:\n  acme:\n    kind: anthropic-compat\n    base_url: https://api.example.com\n    auth: bearer\n    secret: acme-key\n    models: [acme/model]\n")
+}
+
 // closedStdinCloneURLSeed gives the world's own project config the entry the
 // clone_urls removal takes away, beside one it leaves. Without the first the
 // leaf would stop at "this project gives no clone URL for it" and would say
@@ -802,6 +869,17 @@ func closedStdinAccountAllowListSeed(t *testing.T, f *budgetFixture) {
 func closedStdinAccountAliasSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\nclaude_account_aliases:\n  reviewer: team-a\n")
+}
+
+// closedStdinAccountSwitchSeed gives the world the two things a switch needs
+// before it has a key to rewrite: the account it moves onto has to be declared
+// (the resolve's own refusal, which would leave the fixture's list unproven),
+// and a key has to name the account it moves off — here the default, which is
+// the shortest of the five keys and names no repository, so the subset rule the
+// write is judged by has nothing to ask about it.
+func closedStdinAccountSwitchSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n  team-b: {}\ndefault_claude_account: team-a\n")
 }
 
 // closedStdinProjectSecretAllowListSeed is the same for the project secret's
@@ -861,6 +939,25 @@ func closedStdinWorkflowSeed(extra string) func(*testing.T, *budgetFixture) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// closedStdinMailboxSeed gives the world the two things the mailbox fixture's
+// pass reads before it acts: a pairing in the world's own project config, and
+// that pairing's key in a keychain of the test's own. A pass over a project
+// whose config names no mailbox refuses at startup without taking a lease or
+// reading an inbox, which would leave the fixture proving nothing about the
+// loop it exists for. The state directory is the ledger's — one project's own,
+// under a directory of the test's — so the pass records what it consumed
+// somewhere this machine does not keep its own state.
+func closedStdinMailboxSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	item := "fugaro-mailbox-aurora-harness"
+	f.appendConfig(t, "mailbox:\n  keychain_item:\n    \""+mailboxUID+"\": "+item+"\n")
+	store := &keychain.Fake{Keys: map[string]string{item: mailboxKeyMaterial}}
+	prev := mailboxKeychain
+	mailboxKeychain = func() keychain.Store { return store }
+	t.Cleanup(func() { mailboxKeychain = prev })
 }
 
 // closedStdinWorld is the state every leaf is run in: one hermetic

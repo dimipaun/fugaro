@@ -23,11 +23,11 @@ Neither is the agent's: `fugaro secrets set` reads a value only from stdin or a 
 never from an argument, a flag or the environment.
 
 **§12 to §14 are the vocabulary built on top of this page.** An account is one type of a
-**credential** (§12), credentials group into ordered **pools** (§13), and the four **crafts** of a
-run — coder, first-line review, senior review, security review — choose the model and the credential
-or pool their calls go out on (§14). §1 to §11 describe the account itself, and every rule in them
+**credential** (§12), credentials group into ordered **pools** (§13), and the five **crafts** of a
+run — coder, first-line review, senior review, security review and the escalation ladder's merge
+judge — choose the model and the credential or pool their calls go out on (§14). §1 to §11 describe the account itself, and every rule in them
 still holds; §15 adds one further indirection over the account-choice keys of §8, without changing any
-of them.
+of them, and §16 is the one command that moves those keys off one account and onto another.
 
 ## 1. What a named account is
 
@@ -465,7 +465,16 @@ fugaro accounts ls
 ```
 
 It prints `default` first, then every `claude_accounts` name whose `allow_data_to` lists this
-repository, sorted — that is the list `--token` accepts. `fugaro runs ls` grows an `ACCOUNT` column
+repository, sorted — that is the list `--token` accepts. A name the `credentials` block declares a
+key credential is not in that list: it is no Claude account's token, so `--token` may not name it.
+
+After the names it prints the `credentials` block, one line per entry, as
+`NAME (TYPE, served by HALF)` — the half that carries a credential of that type to a call, which is
+`the credentials service` for `claude-oauth` and `anthropic` and `a run's own gateway` for
+`openrouter`. Those entries are what a pool's members may list and a craft's access may name, so
+which of a project's two halves serves a credential is readable offline, without opening the file.
+
+`fugaro runs ls` grows an `ACCOUNT` column
 once one of the runs it lists has an account, and `fugaro diagnose` prints an `Account:` line when
 that account is not `default`.
 
@@ -727,12 +736,18 @@ and no host — and the two writes are the **owner's**: a pool decides where a p
 spent, so a coding agent's session is refused, whatever it passes (§7's rule, and the same one
 `fugaro accounts add` states for the token).
 
-**A pool's members are served by two halves, and one pool cannot cross them.** An `openrouter` or
-`vertex` member is served by the run's own gateway; a `claude-oauth` or `anthropic` member is served
-by the credentials service, which **selects by tier within a run — a subscription before an API
-key** (D154). A pool that mixes the two is therefore one that can fail over only where the
-credential is chosen again, which is a **stage boundary** and not mid-call, and `fugaro accounts
-pool ls` says which half serves each member for exactly that reading.
+**A pool's members are all served by one half of a run, and a pool may not name members of both.**
+An `openrouter` or `vertex` member is served by the run's own gateway; a `claude-oauth` or
+`anthropic` member is served by the credentials service, which **selects by tier within a run — a
+subscription before an API key** (D154). Neither half can walk an order that spans them — the
+service serves by tier, with the listed order only breaking a tie, and a gateway holds one upstream
+per stage — so a pool that names a member of each is **refused where it is declared**: `fugaro
+accounts pool add`, the one door a new member list comes through, turns it down in one sentence that
+names the two members and the half each is served by. The fix the sentence names is two pools, one
+per half, with each craft's access naming the one its stages need; `fugaro accounts pool ls` says
+which half serves a pool's members. A pool an earlier release wrote is read as it stands — an
+installation's own config keeps loading, `fugaro update`'s own load included — and the step that
+splits such a pool into one pool per half ships in the same release as this rule.
 
 **A pool of two or more Claude OAuth credentials serves nothing until the owner says otherwise.**
 Fugaro spreads one run across subscriptions only once the project's `subscription_spread` switch is
@@ -744,15 +759,17 @@ about, kept explicit for the reason the accounts' own agreement gives.
 
 ## 14. Crafts: which model, and whose credential
 
-A run has four **crafts**: `coder`, `review` (the first-line review), `senior-review` and
-`security-review`. Each craft has **two halves** — the model it runs, and the **access**: the
-credential or pool its calls go out on — and the two halves **inherit separately**, so a craft that
-sets one half keeps the other half it follows:
+There are five **crafts**: `coder`, `review` (the first-line review), `senior-review`,
+`security-review` and the escalation ladder's `merge-judge`, which a judge run's single stage is
+charged to. Each craft has **two halves** — the model it runs, and the **access**: the credential or
+pool its calls go out on — and the two halves **inherit separately**, so a craft that sets one half
+keeps the other half it follows:
 
 | Craft | Follows |
 | --- | --- |
 | `review` | `coder` |
 | `security-review` | `senior-review` |
+| `merge-judge` | `coder` |
 
 A craft no layer sets an access for resolves to the project's **default credential**, which is the
 built-in `vertex` at the floor of the layers.
@@ -879,6 +896,57 @@ later release, after the stage keys move into it (D2100). Nothing about this add
 be an account you already defined, every name is checked against that account's own `allow_data_to`
 after resolution, and the block lives only where you alone write — so a repoint moves which admitted
 account a stage uses, and cannot make an account usable by a repository that account does not admit.
+
+## 16. Moving every key from one account to another: one command
+
+Retiring an account is one command rather than an edit per key, and the keys it moves are the whole of
+what names an account as a choice, in **your local project config**:
+
+- `default_claude_account`;
+- each `stages.<stage>.claude_account`;
+- each `crafts.<craft>.access` (§14);
+- each `repos.<repo>.claude_accounts` entry (§3);
+- each `profiles.<profile>.claude_accounts` entry (§3).
+
+```bash
+# per installation, in your own terminal
+fugaro accounts switch <from> <to>
+fugaro accounts switch <from> <to> --dry-run
+```
+
+`switch` prints one line per key it rewrites — the key as the file spells it and the move it takes, as
+in `default_claude_account: belong -> bmb` — and writes them in one edit. Then it converges, in the
+same command and after the write, exactly as `fugaro accounts alias set` does (§15): the policy node,
+the job set and this checkout's repository root, through the stages `fugaro update` runs, so its last
+line is what is left, which is nothing. It asks nothing, and a coding agent's session is refused
+before it reads anything, as every command that decides which credential this project's stages spend
+is. `--dry-run` prints the keys and the diff and writes nothing.
+
+**The two blocks that are not the choice are left alone.** `claude_accounts` keeps both names and
+`credentials` keeps both credentials — the account moved off stays declared, with its token and its
+job — so a switch is reversible by running it the other way, and nothing this command does deletes a
+secret, a job or an execution.
+
+**`<to>` must already be declared here**, as an account of `claude_accounts` — never an alias standing
+for one, and never `default`, which is the unsuffixed secret rather than a declaration. Its own
+`allow_data_to` must cover every repository the keys it takes over serve: each repository whose own
+`claude_accounts` list names it, and every `allow_repos` entry of a profile that lists it (§4's
+intersection rule, asked of the account the keys would now name). A repository a switch would move
+onto an account whose token may not reach it is refused before anything is written, naming the one
+command that widens the list — `fugaro accounts allow <to> <owner/name>`.
+
+**`<from>` may be a declared account, `default`, or a craft's own credential.** It may not be an
+**alias**: the keys naming one are meant to keep naming it, and what moves is the block's single entry
+— which is what `fugaro accounts alias set <alias> <account>` does, in one edit, for every key (§15).
+It may not be a **pool** or one of a pool's **members** either (§13): a pool's members are chosen
+inside a run, at the stage boundary, so pointing a craft that names a pool at one account would change
+what this project spends without changing the pool's own answer. Both refusals name the command that
+settles them.
+
+**A switch changes new launches only.** A run already in flight keeps the account its launch resolved:
+its job mounts that account's token and the runner read the account choice once, at bootstrap, so
+nothing here rewrites a record, a ledger or a counter
+([design/update-in-flight.md](design/update-in-flight.md)).
 
 ## See also
 

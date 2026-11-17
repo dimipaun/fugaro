@@ -1,12 +1,14 @@
 // The state store: the compare-and-swap the single-writer rule rests on (O3,
 // F5, G9).
 //
-// `orchestrator/<id>` carries three siblings — `state`, `lease` and `audit` —
-// and every write in this package goes to one of them and never to the parent:
-// a PUT of the parent wipes its children, and one shared ETag would make every
-// heartbeat a write to the state node (TestHeartbeatDoesNotMoveTheStateETag).
-// The id is escaped with budget.Key, the tree's one escaper, so the node a
-// writer names and the node O2's rules grant are the same key.
+// `orchestrator/<id>` carries the three siblings a daemon has always kept —
+// `state`, `lease` and `audit` — and, since D2735, one node per imported plan
+// (`plans/<plan>`) and one for the standing backlog (`backlog`). Every write in
+// this package goes to one of them and never to the parent: a PUT of the parent
+// wipes its children, and one shared ETag would make every heartbeat a write to
+// the state node (TestHeartbeatDoesNotMoveTheStateETag). The id is escaped with
+// budget.Key, the tree's one escaper, so the node a writer names and the node
+// O2's rules grant are the same key.
 //
 // Nothing here reads a clock, and nothing here calls a model or a network of
 // its own: a Node is an ETag, a path and a decision about whether a write may
@@ -41,6 +43,12 @@ const (
 	StateNode = "state"
 	LeaseNode = "lease"
 	AuditNode = "audit"
+	// PlansNode is the parent of one node per imported plan, and BacklogNode
+	// is the standing backlog's own node: the two D2735 adds beside the three
+	// above, so that a plan of a hundred tasks and every open issue do not have
+	// to share the state node's caps (F34, shard.go).
+	PlansNode   = "plans"
+	BacklogNode = "backlog"
 )
 
 // The refusals this node's three siblings share. They wrap like the patch's
@@ -92,7 +100,8 @@ type Reader interface {
 // turned into an unconditional write.
 type ETag string
 
-// Store is the state node as the CLI (O5), the planner (O6) and the daemon
+// Store is one node of the orchestrator subtree — the state node, a plan's or
+// the backlog's (D2735) — as the CLI (O5), the planner (O6) and the daemon
 // (O8) use it.
 type Store interface {
 	Load(ctx context.Context) (State, ETag, error)
@@ -131,9 +140,16 @@ type NodeOptions struct {
 	// none — a person's own patch (D1241), which is why the fence is checked
 	// only when there is one: see Save.
 	Lease LeaseGuard
+	// Shard is which node of the subtree this store is for: the zero Shard is
+	// the state node, PlanShard(plan) is one imported plan's and ShardBacklog
+	// is the standing backlog's (D2735). Each holds a State with today's caps
+	// and is read and saved by its own ETag under the one project lease, so
+	// which node a store writes is the only thing a shard decides.
+	Shard Shard
 }
 
-// Node is one orchestrator's state node.
+// Node is one orchestrator's state node, or — with a shard — one of the nodes
+// beside it: a plan's or the backlog's.
 type Node struct {
 	db      CAS
 	agentID string
@@ -150,14 +166,15 @@ var (
 	_ CAS   = (*rtdb.Client)(nil)
 )
 
-// NewNode builds the state node of one orchestrator id. The id, the role and
-// the lease's holder are checked here rather than at the first write, so a
-// daemon is refused its own construction rather than a tick.
+// NewNode builds one node of an orchestrator id: its state node, or the node
+// of a shard. The id, the role, the shard and the lease's holder are checked
+// here rather than at the first write, so a daemon is refused its own
+// construction rather than a tick.
 func NewNode(opts NodeOptions) (*Node, error) {
 	if opts.DB == nil {
 		return nil, errors.New("orchestrator: a state node needs a store to be read and written through")
 	}
-	path, err := PathState(opts.AgentID)
+	path, err := shardPath(opts.AgentID, opts.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -167,10 +184,11 @@ func NewNode(opts NodeOptions) (*Node, error) {
 	return &Node{db: opts.DB, agentID: opts.AgentID, role: opts.Role, lease: opts.Lease, path: path}, nil
 }
 
-// Path returns the node's path, `orchestrator/<id>/state`.
+// Path returns the node's path: `orchestrator/<id>/state` for a state node,
+// and the shard's own path for a plan's or the backlog's.
 func (n *Node) Path() string { return n.path }
 
-// Load reads the state node and returns it with the ETag the next save must
+// Load reads the node and returns it with the ETag the next save must
 // carry.
 //
 // A node that does not exist yet loads as this orchestrator's empty state at
@@ -248,7 +266,7 @@ func notThisNode(agentID, role, wantAgentID, wantRole string) error {
 		safetext.OneLine(wantAgentID), safetext.OneLine(wantRole))
 }
 
-// Save writes s at the state node, under etag.
+// Save writes s at the node, under etag.
 //
 // The write is conditional, always: an empty ETag is refused rather than turned
 // into a PUT, so no path through this method forces a write past the node's
@@ -290,7 +308,7 @@ func (n *Node) Save(ctx context.Context, s State, etag ETag) error {
 	if !errors.Is(err, rtdb.ErrPrecondition) {
 		return err
 	}
-	return fmt.Errorf("%w: the state node moved since it was read: %w", ErrStateMoved, err)
+	return fmt.Errorf("%w: the node moved since it was read: %w", ErrStateMoved, err)
 }
 
 // checkLease is the fence on the one write. An unreadable lease is a refusal
