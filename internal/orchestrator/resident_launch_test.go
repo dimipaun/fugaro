@@ -285,9 +285,11 @@ func TestResidentLaunchCarriesOutANodesOwnReissue(t *testing.T) {
 
 // TestResidentRequestsAreTheNodesOwnLaunchRequests is the split a resident pass
 // acts on: the launch requests the node's own record already carries are the
-// re-issue's, everything else a plan derives is a write's — and a re-issue is
-// the one kind the ZERO Caps do not bound, because it starts the attempt that
-// was already committed and counted.
+// re-issue's, everything else a plan derives is a write's — and the ceilings a
+// pass cannot read do not bound a re-issue, because it starts the attempt that
+// was already committed and counted. The budget switch is the exception, and it
+// is not a ceiling: it stops the re-issues too, which is the one thing a pass
+// has to read rather than assume.
 func TestResidentRequestsAreTheNodesOwnLaunchRequests(t *testing.T) {
 	now := o6Now()
 	approvedAt := now.Add(-time.Hour)
@@ -301,17 +303,30 @@ func TestResidentRequestsAreTheNodesOwnLaunchRequests(t *testing.T) {
 		t.Fatalf("the pass read %+v / %+v inside the attempt's claim window", requests, others)
 	}
 
-	// Past the window the request is the re-issue, and it is a request under
-	// caps this pass cannot read as much as under the wide ones: what recovery
-	// re-issues was committed and counted already.
+	// Past the window the request is the re-issue, and the ceilings a pass
+	// cannot read as anything but zero do not bound it: what recovery re-issues
+	// was committed and counted already. The SWITCH is not one of those zeros —
+	// the field's zero value reads as OFF, which is the permissive direction and
+	// the reason Caps' doc states the rule the other way round ("a switch it
+	// could not read is on") — so every call below writes it: a pass hands in
+	// what it read, and a switch it could not read is handed in as true.
 	later := now.Add(orchestrator.ClaimTTL)
-	requests, others := orchestrator.ResidentRequests(s, orchestrator.RunView{}, orchestrator.Caps{}, later)
+	requests, others := orchestrator.ResidentRequests(s, orchestrator.RunView{}, orchestrator.Caps{KillSwitch: false}, later)
 	a := onlyAction(t, requests)
 	if a.Kind != orchestrator.ActionReissue || a.RunID != residentRun || a.IntentID != it.ID {
-		t.Fatalf("the pass read %+v under the zero caps, not the re-issue of %q", a, it.ID)
+		t.Fatalf("the pass read %+v under the zero ceilings, not the re-issue of %q", a, it.ID)
 	}
 	if len(others) != 0 {
 		t.Fatalf("the pass left %+v beside the node's own re-issue", others)
+	}
+
+	// And the switch DOES bound it, which is the one rung no ceiling reaches:
+	// planNode's first line turns the whole node off, recovery included, so what
+	// a pass carries out under a switch that is on is nothing at all — and that
+	// is the value a pass whose read FAILED hands in, which is why a `fugaro
+	// budget kill` stops the re-issues and not only the first launches.
+	if requests, others := orchestrator.ResidentRequests(s, orchestrator.RunView{}, orchestrator.Caps{KillSwitch: true}, later); len(requests)+len(others) != 0 {
+		t.Fatalf("the pass planned %+v / %+v under a switch that is on, and the switch stops every request a pass carries out", requests, others)
 	}
 
 	// A run that started is in flight however long it takes, and no window
@@ -321,9 +336,9 @@ func TestResidentRequestsAreTheNodesOwnLaunchRequests(t *testing.T) {
 	}
 
 	// An item a person approved and nothing has started yet is a WRITE: the
-	// first launch is the attempt's own recording, and the zero Caps — what a
-	// pass that cannot read the installation's guardrails hands in — plan none
-	// of it.
+	// first launch is the attempt's own recording, and the ceilings a pass
+	// cannot read — every one of them zero, with the switch read as off — plan
+	// none of it.
 	fresh := o6Node(t, now, o6Item("wi-2", orchestrator.PhaseQueued, approvedAt))
 	requests, others = orchestrator.ResidentRequests(fresh, orchestrator.RunView{}, o6Caps(), now)
 	if a := onlyAction(t, others); a.Kind != orchestrator.ActionLaunch {
@@ -332,8 +347,8 @@ func TestResidentRequestsAreTheNodesOwnLaunchRequests(t *testing.T) {
 	if len(requests) != 0 {
 		t.Fatalf("the pass read %+v as a launch request of the node, and nothing committed that attempt", requests)
 	}
-	if requests, others := orchestrator.ResidentRequests(fresh, orchestrator.RunView{}, orchestrator.Caps{}, now); len(requests)+len(others) != 0 {
-		t.Fatalf("the zero caps planned %+v / %+v, and the zero Caps starts nothing", requests, others)
+	if requests, others := orchestrator.ResidentRequests(fresh, orchestrator.RunView{}, orchestrator.Caps{KillSwitch: false}, now); len(requests)+len(others) != 0 {
+		t.Fatalf("the zero ceilings planned %+v / %+v, and a zero cap is no room at all", requests, others)
 	}
 
 	// An attempt whose spec a person edited after the intent was committed is

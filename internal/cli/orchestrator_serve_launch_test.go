@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"golang.org/x/oauth2"
@@ -209,6 +210,57 @@ func TestOrchestratorTickReportsALaunchRequestItCannotCarryOut(t *testing.T) {
 			}
 			if strings.Contains(logged, "started the launch requests it holds") {
 				t.Errorf("the pass logged %q, and it started nothing", logged)
+			}
+		})
+	}
+}
+
+// TestOrchestratorTickStartsNothingUnderTheBudgetSwitch is the guardrail this
+// pass has to READ rather than assume. The switch is a node of the same
+// database as the state node, so `fugaro budget kill` stops this pass exactly
+// as it stops a run — the re-issues included, which is the rung no ceiling
+// reaches — and the field's zero value is the PERMISSIVE one, so a pass that
+// planned without reading would start runs under a switch nobody looked at.
+// The second case is the decode's own fail-closed rule, which the pass inherits
+// by reading through internal/budget: a node that is not a switch at all counts
+// as on, because the intent to stop is not lost with the reason it was written.
+func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
+	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		node string
+	}{
+		{name: "the owner turned it on", node: `{"on": true, "by": "owner"}`},
+		{name: "the node is not a switch", node: `"stop"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, _ := residentNodeDoc(t, at)
+			statePath, err := orchestrator.PathState("aurora")
+			if err != nil {
+				t.Fatal(err)
+			}
+			store := &fakeOrchestratorStore{
+				docs: map[string]string{statePath: doc, budget.PathKillGlobal: tc.node},
+				at:   at,
+			}
+			launcher := &fakeOrchestratorLauncher{}
+
+			rec, logged := tickWithLauncher(t, store, launcher)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("the tick answered %d (%s), and a stopped pass is still a pass", rec.Code, logged)
+			}
+			var pass orchestratorPass
+			if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
+				t.Fatal(err)
+			}
+			if pass.Requests != 0 || pass.Carried != 0 || pass.Left != 0 {
+				t.Errorf("the pass reads requests %d, carried %d, left %d under the switch, and a switch that is on stops every request a pass carries out", pass.Requests, pass.Carried, pass.Left)
+			}
+			if len(launcher.asked) != 0 {
+				t.Errorf("the launcher was asked for %v under the budget switch", launcher.asked)
+			}
+			if !strings.Contains(logged, "the budget switch is on") {
+				t.Errorf("the pass logged %q, and the line has to say why: \"nothing was committed\" and \"the switch is on\" are the same numbers otherwise", logged)
 			}
 		})
 	}

@@ -92,6 +92,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -519,11 +520,15 @@ func (p orchestratorPass) line() string {
 // THE LAUNCHER HALF (P5.1d) is the step after them: the requests the record
 // holds, through internal/orchestrator's own Plan and Starter — ResidentRequests
 // is the split, and the re-issues are what a pass holding a launcher and no
-// commit can carry out. The plan is read under the ZERO Caps, and that is the
-// fail-closed direction rather than an omission: the guardrails live in the
-// installation's published policy, which this revision does not read (the
-// header's three names are not where it lives), and a pass that cannot read a
-// cap plans no first launch — while the re-issues still come back, an attempt
+// commit can carry out. The plan is read under caps whose ONE field this process
+// reads and whose others are zero: the budget switch is read out of the same
+// database the node is in (carry), so `fugaro budget kill` stops this pass as it
+// stops a run and a switch that could not be read is ON — Caps' own rule, and
+// the half of the zero Caps that is a reading. The ceilings stay zero, which is
+// the fail-closed direction for them rather than an omission: the guardrails
+// live in the installation's published policy, which this revision does not read
+// (the header's three names are not where it lives), and a pass that cannot read
+// a cap plans no first launch — while the re-issues still come back, an attempt
 // that was committed and counted spending nothing a cap is there to bound.
 //
 // WHAT IT DOES NOT DO is the rest of section 6's list as this step can hold it:
@@ -577,11 +582,11 @@ func (s *residentOrchestrator) tick(ctx context.Context) (orchestratorPass, erro
 // whose claim another launcher holds must not hide the three beside it — and
 // nothing this process holds changes between them.
 //
-// The RunView is empty for the same reason the Caps are zero: the runs bucket
-// is not one of the three names this revision is given, so a run id reads as
-// one that never started, and what makes that safe is the re-issue's own shape
-// — the same run id, never a second one, with the ten-minute window and the
-// launcher's start seam in front of it (internal/orchestrator's
+// The RunView is empty for the same reason the ceilings are zero: the runs
+// bucket is not one of the three names this revision is given, so a run id reads
+// as one that never started, and what makes that safe is the re-issue's own
+// shape — the same run id, never a second one, with the ten-minute window and
+// the launcher's start seam in front of it (internal/orchestrator's
 // resident_launch.go says where each fence stands).
 func (s *residentOrchestrator) carry(ctx context.Context, state orchestrator.State, pass *orchestratorPass) {
 	now, ok := s.db.ServerNow()
@@ -590,7 +595,38 @@ func (s *residentOrchestrator) carry(ctx context.Context, state orchestrator.Sta
 			"process", orchestratorProcessName, "orchestrator", s.id)
 		return
 	}
-	requests, others := orchestrator.ResidentRequests(state, orchestrator.RunView{}, orchestrator.Caps{}, now)
+	// The budget switch is read, not assumed, and it is the one guardrail this
+	// process can reach: `config/kill/global` is a node of the same database the
+	// state node is in, so `fugaro budget kill` stops this pass exactly as it
+	// stops a run. A read that FAILED is ON and carries out nothing, which is
+	// Caps' own rule — "a switch it could not read is on" — and the daemon's own
+	// reading of the same node (orchestrator_run.go's caps) answers the same way.
+	// The zero value of the field is the permissive one, so it is never what a
+	// pass hands in unwatched.
+	kills, err := budget.ReadGlobalKill(ctx, s.db)
+	if err != nil {
+		s.log.Warn("the budget switch could not be read, and a switch this process cannot read is on, so this tick carried out no launch request",
+			"process", orchestratorProcessName, "orchestrator", s.id)
+		return
+	}
+	on, which := kills.On()
+	if on {
+		// One line, because "there was nothing to carry out" and "the switch is
+		// on" are the same numbers in the pass and an operator reading the log
+		// has to be able to tell them apart.
+		s.log.Warn("the budget switch is on, so this tick carried out no launch request",
+			"process", orchestratorProcessName, "orchestrator", s.id, "switch", which)
+		return
+	}
+	// The caps the plan is read under: the switch as it was READ — which is the
+	// only field with a reading behind it, and the reason it is written from the
+	// variable rather than left to the zero value, which is the permissive one —
+	// and every ceiling at its zero, which is the fail-closed half: a zero cap is
+	// no room at all, so a first launch and a retry plan nothing while the
+	// re-issues still come back, because a re-issue spends nothing a cap bounds
+	// (planNode's own reason).
+	caps := orchestrator.Caps{KillSwitch: on}
+	requests, others := orchestrator.ResidentRequests(state, orchestrator.RunView{}, caps, now)
 	pass.Requests, pass.Left = len(requests), len(others)
 	// A resident pass's starter carries a launcher and nothing else: the attempt
 	// it starts was committed by somebody's patch, and an action that wanted a
