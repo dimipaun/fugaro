@@ -400,7 +400,7 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	case len(res.Left) > 0:
 		return userErr("%v", res.Left[0].Text)
 	case len(kept) > 0:
-		return userErr("%s still owed; run `fugaro apply` again to finish the job", strings.Join(kept, ", "))
+		return userErr("%s still owed; run `fugaro apply` again to finish the steps it can answer", strings.Join(kept, ", "))
 	}
 	return nil
 }
@@ -455,6 +455,16 @@ func applyRecordNote(w io.Writer, recorded, current bool) {
 // no stage for is kept, and a name can carry an escape sequence that would
 // redraw the very line saying the change is not live yet. Each one is escaped
 // where it is joined, the way the status table escapes the same names.
+//
+// That same reading is why the sentence every other kept step gets promises the
+// steps this command can answer rather than the job: the entries above are the
+// two that have a better command to name, and the rest of them are not all steps
+// a second run finishes. A name this door registers no stage under — the
+// workspace's own project, its services slot, the Batch backend's compute — is
+// kept however often the command runs, and a stage that skipped without doing its
+// work stays owed until what it wanted is there. "Finish the job" is a sentence
+// those entries cannot keep, and the machine it sends the reader back to answers
+// with the same line and no more work done.
 func applyKeptLine(w io.Writer, kept []string) {
 	names := make([]string, 0, len(kept))
 	for _, n := range kept {
@@ -475,7 +485,7 @@ func applyKeptLine(w io.Writer, kept []string) {
 		fmt.Fprintln(w, "Run `fugaro update` in your own terminal window, not through a coding agent or a pipe: the workspace's own project confirms this step by the name typed at its terminal, and no flag and no run of this command can give that word.")
 		return
 	}
-	fmt.Fprintln(w, "Run `fugaro apply` again to finish the job: every step checks the state first, so the ones that already ran cost nothing.")
+	fmt.Fprintln(w, "Run `fugaro apply` again to finish the steps it can answer: every step checks the state first, so the ones that already ran cost nothing.")
 }
 
 // applyAnswered reports whether a stage's own answer means the step it was run
