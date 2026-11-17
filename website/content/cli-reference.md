@@ -6273,7 +6273,7 @@ Subcommands:
 
 - `fugaro project repos add` -- Enroll a repository: one confirmation for the whole enrolment
 - `fugaro project repos ls` -- List the allow-list and the repositories that have run here
-- `fugaro project repos rm` -- Un-enroll a repository: remove its enrolment, its jobs and its state
+- `fugaro project repos rm` -- Un-enroll a repository: remove its enrolment and its jobs
 - `fugaro project repos set` -- Write a repository's workflow selection or a job profile, in this machine's project config
 
 ## `fugaro project repos add`
@@ -6355,25 +6355,27 @@ This command has no subcommands.
 
 ## `fugaro project repos rm`
 
-Un-enroll a repository: remove its enrolment, its jobs and its state
+Un-enroll a repository: remove its enrolment and its jobs
 
 Remove a repository's enrolment in one step, the way `fugaro project repos add`
 writes it: the published allow-list entry, this machine's repos: entry, this
 machine's image mapping, the published per-repository admission
 (config/policy/repos/<slug>), the repository's Cloud Run jobs (its workflow job
-and its check job), its Cloud Scheduler job and its state under the
-installation's state bucket. Every step is the writer the enrolment used, one
-confirmation covers them all, and a store that holds nothing says so rather
-than failing. The allow-list entry is written last, because it is the store
-this command reads to know the repository is enrolled at all — so a removal
-left half done by an earlier failure is finished by running it again.
+and its check job) and its Cloud Scheduler job. Every step is the writer the
+enrolment used, one confirmation covers them all, and a store that holds
+nothing says so rather than failing. The allow-list entry is written last,
+because it is the store this command reads to know the repository is enrolled
+at all — so a removal left half done by an earlier failure is finished by
+running it again.
 
-The grants of the repository's job accounts and of its build account are the
-one thing it cannot take away: they are the repository root's own IAM
-members, only an apply of that root deletes them, and that apply reads the
-state this command removes. There is no command that does it: the root goes
-by hand, docs/how-to/offboarding.md lays the sequence out, and its last step
-is the state removal this command performs. It says so before the
+It keeps the repository's Terraform state and the repository root's own IAM
+members — the grants of the repository's job accounts and of its build
+account, on the project, on the runs bucket, on its secrets and on its image
+registry. Neither is this command's to take away: the state is what an apply
+of that root plans from, and the grants are members only such an apply
+deletes. There is no command that does it: the root goes by hand,
+docs/how-to/offboarding.md lays the sequence out, and the state goes in its
+last step, `fugaro update --repo --forget`. It says so before the
 confirmation and after the write.
 
 Removing an allowed repository stops its runs — a run of a repository the list

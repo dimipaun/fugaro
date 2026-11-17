@@ -158,24 +158,26 @@ func newProjectReposRmCmd() *cobra.Command {
 	var o projectReposOptions
 	cmd := &cobra.Command{
 		Use:   "rm <provider/owner/name | owner/name | pattern>",
-		Short: "Un-enroll a repository: remove its enrolment, its jobs and its state",
+		Short: "Un-enroll a repository: remove its enrolment and its jobs",
 		Long: "Remove a repository's enrolment in one step, the way `fugaro project repos add`\n" +
 			"writes it: the published allow-list entry, this machine's repos: entry, this\n" +
 			"machine's image mapping, the published per-repository admission\n" +
 			"(config/policy/repos/<slug>), the repository's Cloud Run jobs (its workflow job\n" +
-			"and its check job), its Cloud Scheduler job and its state under the\n" +
-			"installation's state bucket. Every step is the writer the enrolment used, one\n" +
-			"confirmation covers them all, and a store that holds nothing says so rather\n" +
-			"than failing. The allow-list entry is written last, because it is the store\n" +
-			"this command reads to know the repository is enrolled at all — so a removal\n" +
-			"left half done by an earlier failure is finished by running it again.\n" +
+			"and its check job) and its Cloud Scheduler job. Every step is the writer the\n" +
+			"enrolment used, one confirmation covers them all, and a store that holds\n" +
+			"nothing says so rather than failing. The allow-list entry is written last,\n" +
+			"because it is the store this command reads to know the repository is enrolled\n" +
+			"at all — so a removal left half done by an earlier failure is finished by\n" +
+			"running it again.\n" +
 			"\n" +
-			"The grants of the repository's job accounts and of its build account are the\n" +
-			"one thing it cannot take away: they are the repository root's own IAM\n" +
-			"members, only an apply of that root deletes them, and that apply reads the\n" +
-			"state this command removes. There is no command that does it: the root goes\n" +
-			"by hand, docs/how-to/offboarding.md lays the sequence out, and its last step\n" +
-			"is the state removal this command performs. It says so before the\n" +
+			"It keeps the repository's Terraform state and the repository root's own IAM\n" +
+			"members — the grants of the repository's job accounts and of its build\n" +
+			"account, on the project, on the runs bucket, on its secrets and on its image\n" +
+			"registry. Neither is this command's to take away: the state is what an apply\n" +
+			"of that root plans from, and the grants are members only such an apply\n" +
+			"deletes. There is no command that does it: the root goes by hand,\n" +
+			"docs/how-to/offboarding.md lays the sequence out, and the state goes in its\n" +
+			"last step, `fugaro update --repo --forget`. It says so before the\n" +
 			"confirmation and after the write.\n" +
 			"\n" +
 			"Removing an allowed repository stops its runs — a run of a repository the list\n" +

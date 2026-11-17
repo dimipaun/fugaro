@@ -16,10 +16,13 @@ package cli
 //
 // Hermetic, as the plan requires: every cloud answer is internal/gcpfake's, the
 // files are t.TempDir()'s, and nothing here reaches the network, a home
-// directory or a real project. The state bucket is the installation's own fake,
-// with object versioning on — the removal refuses to delete a repository's
-// state out of a bucket whose versioning is off, and
-// TestReposRmRefusesAnUnversionedStateBucket is the one test that turns it off.
+// directory or a real project. The state bucket is the installation's own fake
+// and the repository's state objects are seeded into it, because the removal
+// keeps them: the owner's ruling of 2026-11-17 (amending D2405) leaves the state
+// where it is, for the offboarding's own steps to plan from, and
+// TestReposRmKeepsTheStateAndReadsNothingInTheBucket is the test that holds it —
+// versioning on or off, which is a property of the bucket this command no
+// longer has an opinion about.
 //
 // The confirmation is the owner's own: nothing on the command line answers it
 // (F5, D2403 — `--yes` is gone), so every run below stands at both streams and
@@ -124,10 +127,14 @@ image_map:
 // rmGone names the stores an earlier, half-done removal already emptied, so one
 // fixture can stand for the state that failure leaves without a test deleting
 // anything from the fakes by hand.
+//
+// The state is not one of them: a failure of this removal cannot empty it,
+// because the removal does not delete it at all (the owner's ruling of
+// 2026-11-17), so a fixture with no state would stand for nothing an operator
+// can meet.
 type rmGone struct {
 	admission bool
 	jobs      bool
-	state     bool
 }
 
 // rmRig is the fixture: the converge's world with the six stores seeded.
@@ -208,14 +215,14 @@ func (r *rmRig) seed(t *testing.T, gone rmGone) {
 	r.db.Set(projectpolicy.PathRepo(r.slugB), map[string]any{
 		"credentials": map[string]any{"accounts": []string{"acme-work"}},
 	})
-	// The state bucket, versioned, and the repository's state objects: the
-	// `.tfstate` is what the removal deletes, and the lock beside it is not a
-	// state object (isState), so it is what the removal must leave.
+	// The state bucket and the repository's state objects, which the removal
+	// keeps: the bucket is what this machine's config records and what gates the
+	// cloud step, and the objects under the repository's prefix are what the
+	// offboarding's own apply and destroy plan from (the owner's ruling of
+	// 2026-11-17).
 	r.stateBucket()
 	r.gcs.SetVersioning(initStateBucket, true)
-	if !gone.state {
-		r.gcs.Put(initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tfstate", []byte(`{"version":4}`))
-	}
+	r.gcs.Put(initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tfstate", []byte(`{"version":4}`))
 	r.gcs.Put(initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tflock", []byte("lock"))
 	r.gcs.Put(initStateBucket, infra.RepoStatePrefix(r.slugB)+"/default.tfstate", []byte(`{"version":4}`))
 	// The repository's two Cloud Run jobs, labelled as the repository root
@@ -308,11 +315,11 @@ var rmKeptPhrases = []string{
 //
 // Every removal is asserted on the fixture and not on the output: the published
 // node's allow_repos, this machine's `repos:` entry and its `image_map:` entry,
-// the published admission of repo-a, the repository's two Cloud Run jobs and
-// the `.tfstate` under its state prefix. Every one of them has a second half
-// that must survive — repo-b's entry, admission, job and state, and the lock
-// object beside the state — because a removal that took the whole document
-// would pass a one-sided test.
+// the published admission of repo-a and the repository's two Cloud Run jobs.
+// Every one of them has a second half that must survive — repo-b's entry,
+// admission and job — because a removal that took the whole document would pass
+// a one-sided test, and the state, which the removal keeps outright, is
+// asserted as a kept store in the same sweep.
 func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	r := rmRigFor(t, "", rmGone{})
 	out, errOut := r.rmOut(t, rmEntryA)
@@ -378,9 +385,13 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 	if !r.run.HasJob(gcp.JobName(r.slugB, "web")) {
 		t.Errorf("the removal deleted %s's job", rmRepoB)
 	}
-	// 6. the state, and not the lock beside it.
-	if rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tfstate") {
-		t.Errorf("the state object of %s survived", rmRepoA)
+	// 6. the state, which the removal does not touch at all: it is the one store
+	// of the six that D2405's list no longer names, because the owner's ruling of
+	// 2026-11-17 keeps it — the offboarding's own apply and destroy plan from it
+	// — and repo-b's state and the lock beside the repository's are the second
+	// half, as they are for every other assertion here.
+	if !rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tfstate") {
+		t.Errorf("the state object of %s was deleted: this removal keeps it (the owner's ruling of 2026-11-17)", rmRepoA)
 	}
 	if !rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tflock") {
 		t.Errorf("the lock object of %s was deleted with the state", rmRepoA)
@@ -416,10 +427,12 @@ func TestReposRmRemovesTheSixAndNamesTheSixItLeaves(t *testing.T) {
 		t.Errorf("the allow-list write is not last (allow_repos at %d, the last delete at %d):\n%s", i, last, out)
 	}
 
-	// The one part of the repository this door cannot reach at all, named rather
-	// than left to be discovered: the grants, which are the repository root's own
-	// IAM members, before the question and again after the write.
-	want := "it does not remove the repository root's own IAM members — the grants of " + rmRepoA + "'s job accounts and of its build account"
+	// The two things this door does not reach at all, named rather than left to
+	// be discovered, before the question and again after the write: the state,
+	// which the offboarding's own apply plans from, and the grants, which are the
+	// repository root's own IAM members and which only such an apply deletes
+	// (the owner's ruling of 2026-11-17, amending D2405).
+	want := "it keeps the repository's Terraform state under gs://" + initStateBucket + "/" + infra.RepoStatePrefix(r.slugA) + "/ and the repository root's own IAM members — the grants of " + rmRepoA + "'s job accounts and of its build account"
 	if !strings.Contains(warning, want) {
 		t.Errorf("the warning does not name what the repository root's own apply removes:\n%s", warning)
 	}
@@ -464,47 +477,46 @@ func TestReposRmLeavesASchedulerJobThatTargetsSomethingElse(t *testing.T) {
 	if !strings.Contains(line, "does not target the check job of "+rmRepoA) {
 		t.Errorf("the sentence does not say why it was left alone:\n%s", line)
 	}
-	// The rest of the removal is not skipped: the allow-list entry, the Cloud
-	// Run jobs and the state all went, so a mutation that dropped the check
-	// would fail on the three assertions above rather than on a removal that
-	// never happened.
+	// The rest of the removal is not skipped: the allow-list entry and the Cloud
+	// Run jobs went, so a mutation that dropped the check would fail on the
+	// assertions above rather than on a removal that never happened.
 	if allow := allowReposOf(t, r.db); len(allow) != 1 || allow[0] != rmEntryB {
 		t.Errorf("allow_repos = %v, want [%s]", allow, rmEntryB)
 	}
 	if r.run.HasJob(gcp.JobName(r.slugA, "web")) || r.run.HasJob(gcp.CheckJobName(r.slugA)) {
 		t.Errorf("a Cloud Run job of %s survived", rmRepoA)
 	}
-	if rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugA)+"/default.tfstate") {
-		t.Errorf("the state object of %s survived", rmRepoA)
-	}
 }
 
-// TestReposRmNamesTheDocumentedOffboardingForTheGrants is the second half of that
-// sentence's claim, and it is the half a reader at the confirmation can act on.
+// TestReposRmNamesTheDocumentedOffboardingForWhatItKeeps is the second half of
+// that sentence's claim, and it is the half a reader at the confirmation can
+// act on.
 //
-// Saying "the grants stay" is not enough if the sentence also says how to take
-// them away and that door does not exist: the previous wording named
+// Saying "the state and the grants stay" is not enough if the sentence also says
+// how to take them away and that door does not exist: the previous wording named
 // `fugaro update --repo . --retire`, and `--retire` retires the addresses the
 // configuration no longer produces (Retirements is a set difference against the
 // spec), so over a repository whose `fugaro.yaml` still declares its workflows
 // it answers "Nothing to retire" and the grants stay exactly where they were.
-// The sentence therefore names the sequence that does reach them — the hand-run
-// offboarding the repository documents — and this test holds it to the two
-// things that make the naming honest: the document is there, and it carries the
-// step the sentence attributes to it.
-func TestReposRmNamesTheDocumentedOffboardingForTheGrants(t *testing.T) {
+// Deleting the state was the other half of the same mistake: it is what the
+// sequence the sentence now names plans from (the owner's ruling of
+// 2026-11-17). The sentence therefore names the sequence that does reach both —
+// the hand-run offboarding the repository documents — and this test holds it to
+// the two things that make the naming honest: the document is there, and it
+// carries the step the sentence attributes to it.
+func TestReposRmNamesTheDocumentedOffboardingForWhatItKeeps(t *testing.T) {
 	r := rmRigFor(t, "", rmGone{})
 	out, _ := r.rmOut(t, rmEntryA)
-	sentence := rmLineWith(out, "it does not remove the repository root's own IAM members")
+	sentence := rmLineWith(out, "it keeps the repository's Terraform state under gs://")
 	if sentence == "" {
-		t.Fatalf("the removal does not name what it leaves of the repository root:\n%s", out)
+		t.Fatalf("the removal does not name what it leaves of the repository root and the state:\n%s", out)
 	}
 	if !strings.Contains(sentence, "docs/how-to/offboarding.md") {
-		t.Errorf("the sentence names no document for the flow that takes the grants away:\n%s", sentence)
+		t.Errorf("the sentence names no document for the flow that takes the state and the grants away:\n%s", sentence)
 	}
-	// The one command the sentence names is the state removal this command
-	// performs, and it is a command the tree has: a `fugaro …` a person cannot
-	// type is a dead end at the one moment they are cleaning up.
+	// The commands the sentence names are the offboarding's own, and they are
+	// commands the tree has: a `fugaro …` a person cannot type is a dead end at
+	// the one moment they are cleaning up.
 	cmds := rmFugaroCommands(sentence)
 	if len(cmds) == 0 {
 		t.Fatalf("the sentence names no command:\n%s", sentence)
@@ -686,40 +698,105 @@ func TestReposRmIsStrictWhileARunIsGoing(t *testing.T) {
 	}
 }
 
-// TestReposRmRefusesAnUnversionedStateBucket is the guard between this removal
-// and an unrecoverable delete: the state objects go outright, and only the
-// bucket's own object versioning keeps a copy of what a rollback would need, so
-// a bucket whose versioning is off is refused — forgetRepo's own check
-// (init.go), for its own reason.
+// TestReposRmKeepsTheStateAndReadsNothingInTheBucket is the store the owner's
+// ruling of 2026-11-17 keeps, in the one direction that used to refuse: the
+// removal once deleted the repository's state objects and read the bucket's
+// object versioning first, refusing a bucket without it, because only versioning
+// keeps a copy of what a rollback would need. It deletes nothing there now, so
+// it has no versioning to check and no reason to refuse one.
 //
-// The refusal is asserted where it has to be, before anything at all is
-// written: the allow-list entry, both local entries, the admission, both Cloud
-// Run jobs, the Scheduler job and the state are all still there afterwards, and
-// no confirmation was asked. That is what makes running the command again the
-// whole of the recovery — the help says a half-done removal is finished by
-// running it again, and this is the state that claim depends on — and it is the
-// property a mutation that dropped the guard would break, because the same run
-// would then delete the repository's state out of a bucket that cannot give it
-// back.
-func TestReposRmRefusesAnUnversionedStateBucket(t *testing.T) {
+// Both halves are the point. The removal has to complete over a bucket whose
+// versioning is off — a machine that is cleaning a repository up is not owed a
+// second problem by this command, and forgetRepo's own check (init.go) is the
+// step that does delete the state, with the reason that check exists — and the
+// repository's state objects have to be exactly where they were afterwards,
+// because the offboarding's own apply and destroy plan from them. The other
+// repository's state is the second half of the same assertion, as everywhere
+// else in this file.
+func TestReposRmKeepsTheStateAndReadsNothingInTheBucket(t *testing.T) {
 	r := rmRigFor(t, "", rmGone{})
 	r.gcs.SetVersioning(initStateBucket, false)
+
+	out, _ := r.rmOut(t, rmEntryA)
+	if strings.Contains(out, "object versioning") {
+		t.Errorf("the removal still has an opinion about the bucket's versioning:\n%s", out)
+	}
+	// The removal happened: this is not a test that the command refused, and a
+	// refusal here would pass the state assertions below for the wrong reason.
+	if allow := allowReposOf(t, r.db); len(allow) != 1 || allow[0] != rmEntryB {
+		t.Errorf("allow_repos = %v, want [%s]", allow, rmEntryB)
+	}
+	if r.run.HasJob(gcp.JobName(r.slugA, "web")) || r.run.HasJob(gcp.CheckJobName(r.slugA)) {
+		t.Errorf("a Cloud Run job of %s survived", rmRepoA)
+	}
+	for _, want := range []string{
+		infra.RepoStatePrefix(r.slugA) + "/default.tfstate",
+		infra.RepoStatePrefix(r.slugA) + "/default.tflock",
+	} {
+		if !rmHasObject(t, r.gcs, initStateBucket, want) {
+			t.Errorf("gs://%s/%s is gone: this removal keeps the repository's state objects", initStateBucket, want)
+		}
+	}
+	if !rmHasObject(t, r.gcs, initStateBucket, infra.RepoStatePrefix(r.slugB)+"/default.tfstate") {
+		t.Errorf("the state of %s was deleted", rmRepoB)
+	}
+	// And it says so, which is the half the operator reads: the kept sentence is
+	// the same one the whole-removal test pins the wording of.
+	if line := rmLineWith(out, "it keeps the repository's Terraform state under gs://"); line == "" {
+		t.Errorf("the removal does not say the state was kept:\n%s", out)
+	}
+}
+
+// TestReposRmRefusesAProviderTheEntryDoesNotHave is the one source in front of
+// the entry that reposRemovalProvider does not let win quietly: an argument that
+// names a provider different from this machine's `repos:` entry for the same
+// owner/name.
+//
+// The config is keyed by owner/name alone (configRepoKey), so both providers'
+// entries of one name live under one key and only one of them can be the
+// machine's. Removing `bitbucket/owner/repo-a` over a machine whose entry says
+// github would resolve to github/owner/repo-a — the Data loss the review found:
+// the wrong repository's enrolment and jobs go, and the argument the operator
+// typed is not what was removed. The refusal has to land before anything is
+// read or written, so this test asserts the whole fixture afterwards: both
+// allow-list entries, both local entries, the admission, both Cloud Run jobs,
+// the Scheduler job and the state, and no confirmation asked.
+func TestReposRmRefusesAProviderTheEntryDoesNotHave(t *testing.T) {
+	// One repository in the fixture, two entries of it on the allow-list: the
+	// github one this machine's config holds and the bitbucket one whose name is
+	// what the operator typed. The other vendor's entry is what makes the bug a
+	// removal of the wrong repository rather than a plain "not on the list".
+	r := rmRigFor(t, "", rmGone{})
+	r.db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     projectpolicy.Version,
+		"budget":      map[string]any{"mode": "enforce", "per_run_usd": 5},
+		"allow_repos": []string{rmEntryA, rmEntryB, "bitbucket/" + rmRepoA},
+	})
+
 	ownerAtTheTerminal(t)
-	out, _, err := executeOwnerStdin(t, initProjectName+"\n", "project", "repos", "rm", rmEntryA)
-	if err == nil || !strings.Contains(err.Error(), "has no object versioning") {
-		t.Fatalf("err = %v, want the versioning refusal\nstdout:\n%s", err, out)
+	out, _, err := executeOwnerStdin(t, initProjectName+"\n", "project", "repos", "rm", "bitbucket/"+rmRepoA)
+	if err == nil {
+		t.Fatalf("the removal accepted a provider this machine's entry does not have:\n%s", out)
 	}
-	if !strings.Contains(err.Error(), "nothing was removed") {
-		t.Errorf("the refusal does not say nothing was removed: %v", err)
+	for _, want := range []string{
+		"bitbucket/" + rmRepoA,
+		"github/" + rmRepoA,
+		"repos: entry",
+		"fugaro project repos rm github/" + rmRepoA,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: %v", want, err)
+		}
 	}
-	// Read before the warning and before the question, so the operator is not
-	// asked to confirm a removal that will not happen.
+	// Before anything is read: no warning, no confirm, nothing asked.
 	if strings.Contains(out, "⚠ CONFIRM") {
 		t.Errorf("the removal asked for confirmation before refusing:\n%s", out)
 	}
-	// Nothing was removed, in any of the seven stores.
-	if allow := allowReposOf(t, r.db); len(allow) != 2 {
-		t.Errorf("allow_repos = %v after the refusal", allow)
+	// And nothing was removed, in any of the stores: the wrong repository's
+	// enrolment and jobs would be the failure this refusal exists to prevent, and
+	// the argument's own repository is still enrolled too.
+	if allow := allowReposOf(t, r.db); len(allow) != 3 {
+		t.Errorf("allow_repos = %v after the refusal, want the three entries", allow)
 	}
 	if lc := r.rmLocal(t); len(lc.Repos) != 2 || len(lc.ImageMap) != 2 {
 		t.Errorf("the local config changed after the refusal: %d repos, %d image_map entries", len(lc.Repos), len(lc.ImageMap))
@@ -916,14 +993,15 @@ func rmPutRunInFlight(t *testing.T, r *rmRig) {
 //
 // This fixture is the state that failure leaves: this machine's `repos:` entry
 // is gone, its image map names no entry for the repository, the admission is
-// gone, the jobs are gone and the state is gone — and the allow-list entry is
-// still there, because that is the store the removal reaches last and the one
-// it therefore has to be able to finish.
+// gone and the jobs are gone — and the allow-list entry is still there, because
+// that is the store the removal reaches last and the one it therefore has to be
+// able to finish. The state is not in the list: nothing this command does can
+// empty it (the owner's ruling of 2026-11-17), so the fixture keeps it.
 func TestReposRmConvergesAHalfDoneRemoval(t *testing.T) {
 	half := strings.Replace(rmRigLocal,
 		"  owner/repo-a: { provider: github, github_app_id: \"12345\", workflows: [web], claude_accounts: [acme-personal] }\n", "", 1)
 	half = strings.Replace(half, "  owner/repo-a: base\n", "", 1)
-	r := rmRigFor(t, half, rmGone{admission: true, jobs: true, state: true})
+	r := rmRigFor(t, half, rmGone{admission: true, jobs: true})
 
 	out, errOut := r.rmOut(t, rmEntryA)
 	if strings.Contains(errOut, "warning:") {
@@ -935,7 +1013,6 @@ func TestReposRmConvergesAHalfDoneRemoval(t *testing.T) {
 		projectpolicy.PathRepo(r.slugA) + ": already absent",
 		"already absent: " + rmRepoA + " has no Cloud Run job in " + initProject,
 		"already absent: " + rmRepoA + " has no Scheduler job in " + rmSchedulerRegion,
-		"already absent: gs://" + initStateBucket + "/" + infra.RepoStatePrefix(r.slugA) + "/ holds nothing",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the half-done removal does not say %q:\n%s", want, out)

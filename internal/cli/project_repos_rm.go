@@ -20,6 +20,12 @@ package cli
 // Fugaro never deletes (D2406): a secret or a secret version, a built image, a
 // run's history. Those are named, twice — before the confirmation and after the
 // write — and never reached.
+//
+// So is what the owner's ruling of 2026-11-17 keeps (amending D2405, D2406
+// standing): the repository's Terraform state and the repository root's own IAM
+// members, both of which the hand-run offboarding in docs/how-to/offboarding.md
+// takes away and neither of which is this command's to take away — the state is
+// what that sequence's apply and destroy plan from.
 
 import (
 	"context"
@@ -95,9 +101,12 @@ type reposRemoval struct {
 	// asks the strict confirmation and names the run.
 	inflight int
 	runs     []reposRemovalRun
-	// stateBucket is the state bucket this machine's project config records,
-	// which is where the repository's state lives and the one condition under
-	// which this command looks at the project's own cloud resources at all.
+	// stateBucket is the state bucket this machine's project config records:
+	// the sign that this machine has converged the installation and knows where
+	// the repository's jobs live, and the one condition under which this command
+	// looks at the project's own cloud resources at all. The state it holds is
+	// kept by this removal (the owner's ruling of 2026-11-17) — the bucket is
+	// read for its name, never to delete anything in it.
 	stateBucket string
 }
 
@@ -149,7 +158,7 @@ func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) e
 	// commands that write the list — with the removal's own verb beside it and
 	// the list of what would have gone.
 	if m := agentMarker(os.Getenv, stdinIsTerminal(cmd.InOrStdin())); m != "" {
-		return userErr("nothing was written or removed: fugaro project repos rm removes the published allow-list entry, this machine's config entry, the repository's published admission, its Cloud Run jobs and its Terraform state, which are what admit a repository to the project and what run it: %s", initflow.AgentRefusal(m))
+		return userErr("nothing was written or removed: fugaro project repos rm removes the published allow-list entry, this machine's config entry, the repository's published admission and its Cloud Run jobs, which are what admit a repository to the project and what run it: %s", initflow.AgentRefusal(m))
 	}
 	// openProjectBudget, not openBudget: this writes the published policy node
 	// and is a writer like `policy publish`, so it takes the same two refusals
@@ -176,12 +185,12 @@ func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) e
 	if err != nil {
 		return err
 	}
-	// The removal's one precondition, read before the warning and before the
-	// question: the state bucket's versioning, which is what keeps a copy of
-	// the state this command deletes. Every refusal here changes nothing —
-	// that is the whole reason it is read here rather than inside the writes
-	// — and it is the only refusal that needs the cloud.
-	c, err := reposRemovalGuard(ctx, lc, plan)
+	// The cloud clients the cloud step uses, built before the warning and
+	// before the question: a machine whose credentials cannot be minted is
+	// refused with nothing written rather than halfway through the removal.
+	// Nothing is read with them here — the step deletes the repository's jobs
+	// and nothing else in the project.
+	c, err := reposRemovalClients(ctx, lc, plan)
 	if err != nil {
 		return err
 	}
@@ -202,44 +211,24 @@ func runProjectReposRm(cmd *cobra.Command, o *projectReposOptions, arg string) e
 	return reposRemovalApply(ctx, cmd, o, lc, db, configPath, c, plan)
 }
 
-// reposRemovalGuard reads the one cloud fact this removal refuses on, before it
-// writes anything: the versioning of the bucket the repository's state lives
-// in. The state objects are deleted and only the bucket's own versioning keeps
-// a copy of what a rollback would need, so a bucket without it is a refusal —
-// forgetRepo's own check (init.go), for its own reason.
+// reposRemovalClients builds the clients the cloud step uses, before the
+// warning and before the question, so a machine whose credentials cannot be
+// minted is refused with nothing written rather than halfway through a
+// removal — the property that makes this command resumable is that everything
+// it writes is written after this returns, and one `rm` reads its credentials
+// once.
 //
-// It is read here, and only here, for the property that makes this command
-// resumable: everything the removal writes is written after this returns, so a
-// refusal that changes nothing is not one the operator has already typed their
-// project's name at. It also builds the clients the cloud step uses, so one
-// `rm` reads its credentials once.
-//
-// A machine whose config records no state bucket has nothing to read and
-// nothing to refuse: the cloud step says so and skips itself.
-func reposRemovalGuard(ctx context.Context, lc *localcfg.Config, plan reposRemoval) (*infra.Clients, error) {
+// Nothing is read with them: the removal deletes the repository's Cloud Run
+// jobs and its Scheduler job, and it keeps the repository's Terraform state
+// (the owner's ruling of 2026-11-17, amending D2405), so there is no state to
+// read, no versioning to check and no refusal here. A machine whose config
+// records no state bucket has nothing for the cloud step to look at and gets
+// no clients: the step says so and skips itself.
+func reposRemovalClients(ctx context.Context, lc *localcfg.Config, plan reposRemoval) (*infra.Clients, error) {
 	if plan.stateBucket == "" {
 		return nil, nil
 	}
-	c, err := newInitClients(ctx, lc)
-	if err != nil {
-		return nil, err
-	}
-	objects, err := infra.RepoStateObjects(ctx, c, plan.stateBucket, plan.slug)
-	if err != nil {
-		return nil, remote(err)
-	}
-	if len(objects) == 0 {
-		return c, nil
-	}
-	versioned, err := infra.StateBucketVersioned(ctx, c, plan.stateBucket)
-	if err != nil {
-		return nil, remote(err)
-	}
-	if !versioned {
-		return nil, userErr("gs://%s has no object versioning, so the state objects of %s could not be restored once deleted; turn versioning on (gcloud storage buckets update gs://%s --versioning) and run this again; nothing was removed",
-			plan.stateBucket, pluginwire.Printable(plan.ownerName), plan.stateBucket)
-	}
-	return c, nil
+	return newInitClients(ctx, lc)
 }
 
 // reposRemovalRead reads everything the warning is built from. It writes
@@ -332,12 +321,30 @@ func reposRemovalRead(ctx context.Context, o *projectReposOptions, lc *localcfg.
 // the allow-list entry is the repository's own spelling, and a checkout that
 // disagrees with an entry this machine holds is a disagreement this command is
 // not the place to settle.
+//
+// One argument is not left to that order: one that names a provider DIFFERENT
+// from the entry's. This machine's config is keyed by owner/name alone
+// (configRepoKey — the key carries no provider), so `rm bitbucket/acme/app`
+// over a machine whose repos.acme/app is github would resolve to
+// github/acme/app and take that repository's enrolment and its jobs away, while
+// the operator read the argument as naming the Bitbucket repository — a
+// different repository, and a different entry of the allow-list. It is refused
+// here, before the allow-list and the project are read, with the entry's own
+// spelling in the sentence.
 func reposRemovalProvider(ctx context.Context, arg, ownerName string, entry localcfg.Repo, known bool) (string, error) {
+	named, hasNamed := reposRemovalProviderNamed(arg)
+	entryProvider := task.ASCIILower(entry.Provider)
+	if hasNamed && known && entry.Provider != "" && named != entryProvider {
+		canonical := entryProvider + "/" + ownerName
+		return "", userErr("%q names the %s provider, and this machine's project config holds %s as %s — a repos: entry keyed by owner/name, whoever its provider is — so that argument would take away %s's enrolment and its jobs, not the repository it names. Type `fugaro project repos rm %s` to remove the repository this machine holds",
+			arg, named, pluginwire.Printable(ownerName), pluginwire.Printable(canonical),
+			pluginwire.Printable(canonical), pluginwire.Printable(canonical))
+	}
 	if known && entry.Provider != "" {
 		return entry.Provider, nil
 	}
-	if p, ok := reposRemovalProviderNamed(arg); ok {
-		return p, nil
+	if hasNamed {
+		return named, nil
 	}
 	return reposEnrolmentProvider(ctx, ownerName, entry, known)
 }
@@ -461,12 +468,14 @@ func reposRemovalInflight(plan reposRemoval) string {
 // what the removal stops — which depends on whether another entry of the list
 // still admits the repository — and then the six things it deliberately leaves.
 //
-// The third part is what the removal cannot reach at all, and it is printed
-// here, before the question, for the same reason the six are: the operator is
-// deciding about a removal whose leftovers they should know before they type
-// their project's name, not after.
+// The third part is what the removal keeps by the owner's ruling of
+// 2026-11-17 — the repository's Terraform state and the repository root's own
+// IAM members — with the hand-run sequence that does remove them, and it is
+// printed here, before the question, for the same reason the six are: the
+// operator is deciding about a removal whose leftovers they should know before
+// they type their project's name, not after.
 func reposRemovalWarning(plan reposRemoval) string {
-	return removalWarning(plan.allow, plan.canonical) + "\n" + reposRemovalKept(plan) + "\n" + reposRemovalRootOwned(plan)
+	return removalWarning(plan.allow, plan.canonical) + "\n" + reposRemovalKept(plan) + "\n" + reposRemovalOffboarding(plan)
 }
 
 // reposRemovalKept is the kept half on its own, so the sentence after the write
@@ -475,29 +484,35 @@ func reposRemovalKept(plan reposRemoval) string {
 	return "it leaves, and nothing here touches: " + strings.Join(reposRemovalLeaves, "; ") + "."
 }
 
-// reposRemovalRootOwned is the one part of the repository this command cannot
-// remove at all: the repository root's own Terraform IAM members — the grants of
-// its job accounts and of its build account, on the project, on the runs bucket,
-// on the repository's secrets and on its image registry. Only an apply (a
-// destroy) of that root removes them, this command runs no Terraform, and the
-// state it deletes is what such an apply reads, so they are removed before this
-// command or not at all. Saying nothing would make this removal read as one that
-// took everything the enrolment created, which is the one thing the list above
-// exists to prevent.
+// reposRemovalOffboarding is the part of the repository this command keeps on
+// purpose, and the one the owner ruled on (2026-11-17, amending D2405 with
+// D2406 standing): the repository's Terraform state, and the repository root's
+// own IAM members — the grants of its job accounts and of its build account, on
+// the project, on the runs bucket, on the repository's secrets and on its image
+// registry.
+//
+// The state stays for the reason the ruling gives: it is what the offboarding's
+// own steps read. The apply that lowers the jobs' protection and the destroy
+// that takes the job accounts, the build account and their grants plan from it,
+// so a removal that deleted it would leave those resources untracked and steps
+// 1 and 3 of docs/how-to/offboarding.md unrunnable — the ground the earlier
+// behaviour stood on was that `--forget` is the last step and this command is
+// not it.
 //
 // It names the sequence rather than a verb because there is no verb: the retire
 // path's API-delete half (RetireSplit's api group, JobDeleteLabels) covers Cloud
 // Run jobs and nothing else, and its apply half is `fugaro update`'s own flow,
-// which this command does not run. The door that does exist is
-// docs/how-to/offboarding.md — whose first line is "There is no offboarding
-// command" — and its last step, `fugaro update --repo --forget`, is the state
-// removal this command performs. Naming `--retire` here would send the operator
-// to a command that answers "Nothing to retire" over a repository whose
-// `fugaro.yaml` still declares every address, at the one moment they are
+// which this command does not run. Naming `--retire` here would send the
+// operator to a command that answers "Nothing to retire" over a repository
+// whose `fugaro.yaml` still declares every address, at the one moment they are
 // cleaning up.
-func reposRemovalRootOwned(plan reposRemoval) string {
-	return fmt.Sprintf("it does not remove the repository root's own IAM members — the grants of %s's job accounts and of its build account, on the project, on the runs bucket, on its secrets and on its image registry. Nothing here removes them: this command runs no Terraform, and it deletes the state an apply of that root reads, so they are taken away before this command, by hand, or not at all — there is no command that does it, and docs/how-to/offboarding.md lays the sequence out, whose last step is the state removal this command performs (`fugaro update --repo --forget`)",
-		pluginwire.Printable(plan.ownerName))
+func reposRemovalOffboarding(plan reposRemoval) string {
+	state := "the repository's Terraform state"
+	if plan.stateBucket != "" {
+		state = "the repository's Terraform state under gs://" + plan.stateBucket + "/" + infra.RepoStatePrefix(plan.slug) + "/"
+	}
+	return fmt.Sprintf("it keeps %s and the repository root's own IAM members — the grants of %s's job accounts and of its build account, on the project, on the runs bucket, on its secrets and on its image registry. Neither is this command's to take away: the state is what an apply of that root plans from, and the grants are members only such an apply deletes, so both go with the sequence docs/how-to/offboarding.md lays out — step 1 `fugaro update --repo --allow-job-delete` lowers the jobs' deletion protection, step 3's destroy takes the job accounts, the build account and their grants, and step 4 `fugaro update --repo --forget` removes the state itself",
+		state, pluginwire.Printable(plan.ownerName))
 }
 
 // reposRemovalApply runs the removals the warning named, in an order that
@@ -506,8 +521,8 @@ func reposRemovalRootOwned(plan reposRemoval) string {
 // The two local removals land in one document and go first, because the
 // admission below is derived from that document: the publish narrows the
 // per-repository node from the config it is handed, and a config still holding
-// the `repos:` entry still admits the repository. The jobs and the state go
-// next, and the allow-list entry is written last — it is the store the READ
+// the `repos:` entry still admits the repository. The jobs go next, and the
+// allow-list entry is written last — it is the store the READ
 // above gates on, so a failure anywhere before it leaves a machine on which
 // this command still reads the repository and finishes the removal. A failure
 // in that last write leaves the same state, and its own sentence says so.
@@ -532,12 +547,12 @@ func reposRemovalApply(ctx context.Context, cmd *cobra.Command, o *projectReposO
 		// its first act — `add`'s, and the group's edit — and this one's is its
 		// last, so "nothing was written" would read as a removal that never
 		// happened. What is true is that one store is left.
-		return userErr("%v; the removal's other stores are already gone — this machine's config entry, the published admission, the Cloud Run jobs and the state — and %s is the one store left, so running this command again finishes it",
+		return userErr("%v; the removal's other stores are already gone — this machine's config entry, the published admission and the Cloud Run jobs — and %s is the one store left, so running this command again finishes it",
 			err, plan.canonical)
 	}
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, reposRemovalKept(plan))
-	fmt.Fprintln(out, reposRemovalRootOwned(plan))
+	fmt.Fprintln(out, reposRemovalOffboarding(plan))
 	return nil
 }
 
@@ -662,8 +677,10 @@ func reposRemovalAdmission(ctx context.Context, out io.Writer, db *rtdb.Client, 
 	return nil
 }
 
-// reposRemovalCloud removes the repository's cloud resources and its state,
-// through the retirement machinery's own pieces and nothing else: Orphans reads
+// reposRemovalCloud removes the repository's Cloud Run jobs and its Scheduler
+// job — its cloud resources, and the state is not one of them (the owner's
+// ruling of 2026-11-17) — through the retirement machinery's own pieces and
+// nothing else: Orphans reads
 // the project by the repository's label — one jobs.list and one secrets.list,
 // both read-only — JobDeleteLabels names the pairs the delete must find, and
 // deleteOrphanedJob (F16) checks them before it deletes, treats a 404 as the
@@ -691,7 +708,7 @@ func reposRemovalAdmission(ctx context.Context, out io.Writer, db *rtdb.Client, 
 // place a run could be disturbed at all, and it says so instead.
 func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, c *infra.Clients, lc *localcfg.Config, plan reposRemoval) error {
 	if plan.stateBucket == "" {
-		fmt.Fprintf(out, "left alone: this machine's project config records no terraform state bucket, so nothing here knows where %s's state and its jobs are — `fugaro update` records it; run that and run this again\n", pluginwire.Printable(plan.ownerName))
+		fmt.Fprintf(out, "left alone: this machine's project config records no terraform state bucket, so nothing here knows where %s's Cloud Run jobs are — `fugaro update` records it; run that and run this again\n", pluginwire.Printable(plan.ownerName))
 		return nil
 	}
 	// The spec is this one repository's and produces nothing: an empty workflow
@@ -746,26 +763,14 @@ func reposRemovalCloud(ctx context.Context, cmd *cobra.Command, out io.Writer, c
 	if err := reposRemovalScheduler(ctx, out, c, lc, plan); err != nil {
 		return err
 	}
-	objects, err := infra.RepoStateObjects(ctx, c, plan.stateBucket, plan.slug)
-	if err != nil {
-		return remote(err)
-	}
-	if len(objects) == 0 {
-		fmt.Fprintf(out, "already absent: gs://%s/%s/ holds nothing\n", plan.stateBucket, infra.RepoStatePrefix(plan.slug))
-	} else {
-		// The versioning was read by the guard above, before anything was
-		// written, and it is not read again here: a bucket whose versioning
-		// goes off between the two is a race this command cannot close from
-		// inside itself, and a second read would only narrow it by the
-		// milliseconds between the two calls.
-		gone, err := infra.ForgetRepoState(ctx, c, plan.stateBucket, plan.slug)
-		if err != nil {
-			return remote(err)
-		}
-		for _, name := range gone {
-			fmt.Fprintf(out, "deleted gs://%s/%s\n", plan.stateBucket, name)
-		}
-	}
+	// The repository's state is NOT deleted. The owner's ruling of 2026-11-17
+	// (amending D2405, D2406 standing) keeps it, because the state is what the
+	// offboarding's own steps read: the apply that lowers the jobs' protection
+	// and the destroy that takes the job accounts, the build account and their
+	// grants plan from it, so a removal that deleted it would leave those
+	// resources untracked and steps 1 and 3 of docs/how-to/offboarding.md
+	// unrunnable. It is named, with the sequence that does remove it, before
+	// the confirmation and again after the write (reposRemovalOffboarding).
 	return nil
 }
 
@@ -823,8 +828,8 @@ func reposRemovalHeld(ctx context.Context, c *infra.Clients, spec infra.RepoSpec
 // It is the one resource of D2405's list that no retire path can reach: the
 // module gives it no label (so Orphans, which reads labels, never sees it), it
 // is not a Cloud Run job (so JobDeleteLabels and the API delete never see it
-// either), and it is not protected, so the apply that would delete it is an
-// apply of a state this command has just deleted. Its name is Fugaro's own
+// either), and this command runs no apply at all — it keeps the state (the
+// owner's ruling of 2026-11-17). Its name is Fugaro's own
 // derivation from the repository's slug (gcp.SchedulerJobName), and the check
 // before the delete is the job's own target: the URI it posts to is exactly the
 // one the module writes for this repository's check job (check.tf), which is
