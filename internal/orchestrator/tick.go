@@ -430,7 +430,7 @@ func (c *cycle) commit(ctx context.Context, next State) error {
 
 // reread takes the node as it now stands after a write this cycle did not make.
 //
-// The rung 3 hook lands its moves through its own seam (MergeSeams.Node), with
+// The rung 3 hook lands its moves through its own seam (BeyondSeams.Node), with
 // the store's own conditional write, and the ETag that leaves is not the one
 // this cycle holds: the state it derived and the ETag it read are both older
 // than the document the hook left, so the next write it makes in the same Step
