@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
@@ -411,14 +412,16 @@ func TestWaitPassesOverTheSnapshotAReconnectOpensWith(t *testing.T) {
 		_ = d.wait(ctx)
 		ended <- time.Since(start)
 	}()
-	// The connection is up and its opening put has been passed over.
-	waitForStream(t, f, 1)
+	// The connections are up and their opening puts have been passed over: the
+	// wait holds two here — the state node's, and the day's outcomes node,
+	// because this state names no repository (E1).
+	waitForStream(t, f, 2)
 	time.Sleep(200 * time.Millisecond)
-	// The connection goes away without a word. The stream reconnects after its
+	// The connections go away without a word. Each stream reconnects after its
 	// own backoff and opens with the node again: that put is not news, and the
 	// wait has to sit it out.
 	f.db.DropStreams()
-	waitForStream(t, f, 1)
+	waitForStream(t, f, 2)
 	select {
 	case took := <-ended:
 		t.Fatalf("the wait ended %s in, on the put the reconnected stream opened with and not at its interval (%s): the daemon then runs a cycle per reconnect", took, d.interval)
@@ -501,6 +504,179 @@ func TestWaitEndsItsStreamAndWakesOnAChange(t *testing.T) {
 	}
 	if got := runtime.NumGoroutine(); got > baseline+2 {
 		t.Errorf("goroutines went from %d to %d over seven waits, so each wait leaves its stream connected", baseline, got)
+	}
+}
+
+// TestWaitWakesOnTheNodesARunWrites: the run-side half of the wait, at the
+// daemon's own boundary (E1, D2708). A run writes nothing under the
+// orchestrator subtree: it holds an entry under `agents/<slug>` while it is in
+// flight and leaves one under `outcomes/<day>` as it ends. So the wait holds a
+// stream on each of those for every repository the state names — without them a
+// run's end reached the daemon at its next cycle, up to the whole interval
+// later, and the interval is a person's flag and not the delay a run's end
+// deserves.
+//
+// The heartbeat is the half that must not wake it: every run in flight rewrites
+// its own registry entry every fifteen seconds, and on the wire that is the same
+// write a run's start is, so a wait that woke on every put of an entry would run
+// several cycles a second (F45).
+//
+// Mutation (run, restored): wake on every put under `agents/`, and the
+// heartbeats below end the wait long before the interval; return from wait()
+// only at the ceiling, and the outcome's own write does not end it at all.
+func TestWaitWakesOnTheNodesARunWrites(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	d.wake = nil
+	d.interval = 10 * time.Second
+	// Two seconds per burst is the production value; a test that spent it per
+	// step would spend minutes here.
+	d.debounce = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// startWait runs one wait as the loop runs it — in the background, over the
+	// three nodes — and hands back how long it took when it ends.
+	startWait := func() chan time.Duration {
+		waitForStream(t, f, 0)
+		ended := make(chan time.Duration, 1)
+		go func() {
+			start := time.Now()
+			_ = d.wait(ctx)
+			ended <- time.Since(start)
+		}()
+		// The daemon's own node, the registry of the repository the state's
+		// item names, and today's outcomes node.
+		waitForStream(t, f, 3)
+		// Long enough for every stream's opening snapshot to be read: what the
+		// snapshot holds is not news, and a wait that had not read it yet would
+		// read the writes below as part of it.
+		time.Sleep(200 * time.Millisecond)
+		return ended
+	}
+	// The entry the run in flight already holds, seeded rather than written
+	// through the client: it is what a daemon starting beside a run reads in
+	// its opening snapshot, and a write here would be a wake of its own — a
+	// run's start is one, which the last step of this test pins.
+	entry := map[string]any{"repo": "acme/app", "execution": "exec-1", "started": f.now.UnixMilli()}
+	f.db.Set(budget.PathAgent(appSlug, cs.runID), entry)
+
+	ended := startWait()
+
+	// A heartbeat: the same entry rewritten by the run in flight every fifteen
+	// seconds, which on the wire is the same put of the same entry a run's
+	// start is (budget.Session.heartbeat). A wait that woke on it would run
+	// several cycles a second (F45).
+	for i := 0; i < 3; i++ {
+		if err := d.db.Patch(ctx, "", map[string]any{budget.PathAgent(appSlug, cs.runID): entry}); err != nil {
+			t.Fatalf("rewriting the registry entry a run in flight holds: %v", err)
+		}
+	}
+	select {
+	case took := <-ended:
+		t.Fatalf("a run's heartbeat ended the wait %s in, so the daemon ticks at the heartbeat's pace (F45)", took)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// The run's end, as the registry writes it: the outcome under the day the
+	// database's own clock names (budget.Session.Finish).
+	day := budget.Day(f.serverNow(t))
+	if err := d.db.Patch(ctx, "", map[string]any{budget.PathOutcome(day, appSlug, cs.runID): map[string]any{"status": "succeeded"}}); err != nil {
+		t.Fatalf("writing the outcome a run leaves as it ends: %v", err)
+	}
+	select {
+	case took := <-ended:
+		if took > d.interval/2 {
+			t.Errorf("the wait ended %s in over an outcome written just after it began, and a run's end must wake the daemon long before its interval (%s)", took, d.interval)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("an outcome was written and the wait did not end: the daemon learns of a run's end at its next cycle, up to the interval later")
+	}
+
+	// And the other half of what `agents/` carries: an entry that appears is a
+	// wake, which is what a run a person started under this repository's node
+	// asks for.
+	ended = startWait()
+	next := "20261117-101600-beef"
+	if err := d.db.Patch(ctx, "", map[string]any{budget.PathAgent(appSlug, next): entry}); err != nil {
+		t.Fatalf("writing the registry entry a run's start leaves: %v", err)
+	}
+	select {
+	case took := <-ended:
+		if took > d.interval/2 {
+			t.Errorf("the wait ended %s in over a registry entry that appeared, and a run's start must wake the daemon long before its interval (%s)", took, d.interval)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a registry entry appeared and the wait did not end")
+	}
+}
+
+// TestWaitWakesOnAVanishedEntryAndTheCycleChecksIt: the registry entry of a run
+// that died is what something else clears — a crashed container never writes an
+// outcome, and the budget's own sweep clears the entry five minutes later — and
+// the run it named is one whose execution the cycle then has to check (D2725).
+// The wait wakes on the disappearance like any other change, and the check is
+// the one the cycle already makes for every run that has not reported: nothing
+// new is added to the view for it, because a run with no outcome has its intent
+// open, and the view asks the platform about the execution of every such run.
+func TestWaitWakesOnAVanishedEntryAndTheCycleChecksIt(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	// The platform has ended the run's execution the way a killed container
+	// does, and what the runner left behind is the record it wrote as it
+	// began: the pair executionOver exists for.
+	f.run.SetState(f.run.Executions()[0], backend.StateFailed)
+	rec := &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusRunning,
+		Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: f.now,
+	}
+	if err := f.runStore(t, cs.runID).WriteRecord(context.Background(), rec); err != nil {
+		t.Fatalf("writing the record a run in flight carries: %v", err)
+	}
+	// The entry it holds, seeded rather than written through the client: it is
+	// what a daemon that starts with runs already in flight reads in its
+	// opening snapshot, and a write here would be a wake of its own.
+	f.db.Set(budget.PathAgent(appSlug, cs.runID), map[string]any{"repo": "acme/app", "execution": "exec-1"})
+
+	d.wake = nil
+	d.interval = 10 * time.Second
+	d.debounce = 20 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ended := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		_ = d.wait(ctx)
+		ended <- time.Since(start)
+	}()
+	waitForStream(t, f, 3)
+	time.Sleep(200 * time.Millisecond)
+
+	// The container died: the entry goes with no outcome beside it.
+	if err := d.db.Patch(ctx, "", map[string]any{budget.PathAgent(appSlug, cs.runID): nil}); err != nil {
+		t.Fatalf("clearing the registry entry of a run that died: %v", err)
+	}
+	select {
+	case took := <-ended:
+		if took > d.interval/2 {
+			t.Errorf("the wait ended %s in over a registry entry that vanished, and that has to wake the daemon long before its interval (%s)", took, d.interval)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a registry entry vanished with no outcome and the wait did not end: nothing wakes the daemon for a run that died without reporting")
+	}
+	if out := f.out.String(); !strings.Contains(out, "vanished with no outcome") {
+		t.Errorf("the daemon did not name the run whose entry vanished, and a person reading its output cannot tell it from an ordinary cycle:\n%s", out)
+	}
+
+	// The cycle the wake asked for is the check: the record still says running,
+	// the platform says the execution is over, and the attempt is folded.
+	rep, err := d.tick.Step(context.Background())
+	if err != nil {
+		t.Fatalf("the cycle a vanished entry woke: %v", err)
+	}
+	if rep.Folded == 0 {
+		t.Fatalf("the woken cycle folded nothing over a run whose entry vanished and whose execution the platform had ended: %+v", rep)
+	}
+	if it := f.intent(t, orchestrator.IntentID(cs.item.ID, 1)); it.Outcome != orchestrator.OutcomeFailed {
+		t.Errorf("the attempt behind the vanished entry carries %q, and a run that ended without reporting failed", it.Outcome)
 	}
 }
 
