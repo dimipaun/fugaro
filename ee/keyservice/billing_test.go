@@ -50,6 +50,12 @@ const soldPrice = "pri_fixture_team_annual"
 // workspace is bound to one and the case is about a workspace of its own.
 const lapsedProject = "lapsed-portal"
 
+// reboundProject is the project a workspace of the caller's own organisation is
+// bound to while another organisation's subscription still names it, which is
+// the state a rebind leaves behind: the project moves, the subscription record
+// does not (it is moved by the merchant's own events alone).
+const reboundProject = "rebound-portal"
+
 // The three routes of this area, as the screen builds them.
 func subscriptionPath(workspaceID string) string {
 	return "/api/workspaces/" + workspaceID + "/subscription"
@@ -464,9 +470,13 @@ func TestOnlyOwnersAndAdminsBuy(t *testing.T) {
 // workspaces exist is a list of the portal's customers — and the merchant is
 // never reached for one, so a refusal is not a call that could have changed
 // somebody else's subscription.
+//
+// The last case is the same reach through a name rather than a path: a project
+// the caller's own workspace is bound to that another organisation's
+// subscription still names, which is what a rebind leaves behind.
 func TestAnotherOrgsSubscriptionIsRefused(t *testing.T) {
 	f := newCheckoutFixture(t)
-	f.payingWorkspace(t, 1)
+	org, _ := f.payingWorkspace(t, 1)
 	erin := f.seededOrganisation("org-erin", "Erin Ltd", orgTypeCustomer, erinUID, erinEmail, roleOwner)
 	theirs := f.paidWorkspace(t, erin.ID, "ws-erin", "erin-portal-4821", "sub-erin", 1, f.now.Add(20*24*time.Hour), false)
 
@@ -497,6 +507,34 @@ func TestAnotherOrgsSubscriptionIsRefused(t *testing.T) {
 			}
 		})
 	}
+	// And the same reach by the other spelling, which a name alone cannot catch:
+	// a project the caller's own workspace is bound to that another
+	// organisation's subscription still names. A rebind frees a project
+	// (workspaces.go) while the subscription naming it is moved by the merchant's
+	// own events alone (merchant.go), so one organisation's subscription can name
+	// a project another organisation's workspace holds now — and a read matching
+	// on the name alone answers it, with a seat change calling the merchant on
+	// somebody else's subscription and charging them for it.
+	rebound := f.boundWorkspace("ws-4", org.ID, "Dana's other portal", reboundProject)
+	f.subscription("sub-rebound", erin.ID, reboundProject, f.now.Add(20*24*time.Hour), false)
+	for _, call := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: subscriptionPath(rebound.ID)},
+		{method: http.MethodPost, path: seatsPath(rebound.ID), body: `{"seats":40}`},
+		{method: http.MethodGet, path: portalPath(rebound.ID)},
+	} {
+		rec := f.apiAsCaller(call.method, call.path, call.body)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("%s %s answered %d: %s", call.method, call.path, rec.Code, rec.Body)
+		}
+		if code := refusal(f.fixture, rec); code != "no_subscription" {
+			t.Errorf("%s %s was refused with %q, want %q: the caller's own workspace holds no subscription", call.method, call.path, code, "no_subscription")
+		}
+	}
+
 	if len(f.paddle.seats) != 0 || f.paddle.customerID != "" {
 		t.Errorf("the merchant was reached for a workspace that is not the caller's: %v seats, customer %q", f.paddle.seats, f.paddle.customerID)
 	}

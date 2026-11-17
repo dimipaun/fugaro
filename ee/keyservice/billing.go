@@ -146,6 +146,16 @@ func (s *Service) heldFor(ctx context.Context, actor Caller, workspaceID string)
 // one workspace (checkout.go's `refuseSubscribedWorkspace` reads both for the
 // same reason), so a guard reading one spelling alone would answer "no
 // subscription" for a workspace that is paying.
+//
+// **A name is not a tenant, so the organisation is read too.** A project is
+// freed by a rebind (workspaces.go) and given to another organisation's
+// workspace, while the subscription that still names it is moved by the
+// merchant's own events alone (merchant.go): one organisation's subscription can
+// therefore name a project another organisation's workspace holds now. Matching
+// on the name alone would answer that subscription — and the seat change would
+// call the merchant on it, charging the organisation that bought it for seats
+// bought by somebody else. The subscription's own organisation is what makes it
+// this workspace's.
 func (s *Service) subscriptionOf(ctx context.Context, workspace WireWorkspace, now time.Time) (Subscription, error) {
 	held, err := s.store.Subscriptions(ctx)
 	if err != nil {
@@ -157,6 +167,9 @@ func (s *Service) subscriptionOf(ctx context.Context, workspace WireWorkspace, n
 	}
 	matching := make([]Subscription, 0, 1)
 	for _, sub := range held {
+		if sub.Organisation != workspace.OrganisationID {
+			continue
+		}
 		if sub.WorkspaceID == workspace.ID || (project != "" && sub.WorkspaceID == project) {
 			matching = append(matching, sub)
 		}
