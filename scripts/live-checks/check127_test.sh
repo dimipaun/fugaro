@@ -819,7 +819,7 @@ test_a_watch_frame_with_no_mode_is_the_drop_and_warn_path() {
   expect_status "$status" 1 "watch drop: the verdict"
   expect_contains "$out" "FACT watch: FAIL" "watch drop: the row"
   expect_contains "$out" "the drop-and-warn path F40 records" "watch drop: the reading"
-  expect_contains "$out" "fugaro init --firebase-project" "watch drop: the fix is named"
+  expect_contains "$out" "fugaro update --firebase-project" "watch drop: the fix is named"
 }
 
 test_a_watch_frame_with_no_live_run_could_not_be_read() {

@@ -19760,7 +19760,7 @@ never a verdict about the modes.
    a live multi-round agent, so the row reports the moments the record carries rather than inventing one.
 9. **`fugaro watch` on a live run.** No flag: it reads a frame. **It passes when** every live run in the
    frame carries a mode and the layer it came from; a run whose mode reads `-` is a **FAIL** naming the
-   drop-and-warn path **F40** and the deploy that fixes it (`fugaro init --firebase-project` regenerates
+   drop-and-warn path **F40** and the deploy that fixes it (`fugaro update --firebase-project` regenerates
    and deploys the rules the frame is read out of). A frame with no live run at all is recorded as a step
    that **could not be read** rather than passed: start a run and run this step while it is in flight.
    This is the unnumbered check §9's D24 answer proposes, written beside the check rather than as one.

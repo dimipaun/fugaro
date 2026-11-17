@@ -844,7 +844,7 @@ step_areas() {
 
 step_watch() {
   if ! run_in "$SANDBOX" "$SCRATCH/watch.json" fugaro watch --once --json --repo "$REPO"; then
-    unmeasured watch "fugaro watch --once --json did not answer in $SANDBOX, so the frame a live run's mode is read in cannot be read. It needs the deployed rules: regenerate and deploy them first (fugaro init --firebase-project <id>), then run this again"
+    unmeasured watch "fugaro watch --once --json did not answer in $SANDBOX, so the frame a live run's mode is read in cannot be read. It needs the deployed rules: regenerate and deploy them first (fugaro update --firebase-project <id>), then run this again"
     return 0
   fi
   local answer live nomode
@@ -856,7 +856,7 @@ step_watch() {
     return 0
   fi
   if [ "${nomode:-0}" -gt 0 ]; then
-    fact watch FAIL "$nomode of $live live run(s) carry mode '-' in the watch frame: that is the drop-and-warn path F40 records — an installation whose rules are older than the registry's children reads no mode rather than failing, so what a reader sees is a run with no rigor at all. Regenerate the rules and deploy them (fugaro init --firebase-project <id>), then read the frame again"
+    fact watch FAIL "$nomode of $live live run(s) carry mode '-' in the watch frame: that is the drop-and-warn path F40 records — an installation whose rules are older than the registry's children reads no mode rather than failing, so what a reader sees is a run with no rigor at all. Regenerate the rules and deploy them (fugaro update --firebase-project <id>), then read the frame again"
     return 1
   fi
   local modes
