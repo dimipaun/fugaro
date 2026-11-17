@@ -760,6 +760,21 @@ works named above, **633 to 639 stay free** and **664 onward stays free**. Each 
 **never `belong`**, each **NOT RUN**, and each written **now** rather than promised: **660** to **663**
 below.
 
+**Checks 650 and 651 are `docs/spend-accuracy`'s, and they are that plan's own reservation written where it
+said they would be.** The paragraph above is the reading that took the block: **650 to 659** are
+`docs/spend-accuracy`'s (*"Checks 650-659 (650-651 used)"* in its README, and *"Checks 650-651 come from the
+block this plan reserved (650-659)"* in its plan), and the two numbers it uses are written now, each as a row
+in the table below and a `## Check 650:` or `## Check 651:` section at its end — **650** the one-time
+reconciliation over the dogfood project's own records, run once the release carrying **SA1.3**
+(`fugaro budget reconcile`) is installed, and **651** the ±3% acceptance a week after the release carrying
+**SA2.1** and **SA3.1**, whose second half is a run halted at a cap set below its expected cost. Both are
+**owner-run** — **no agent runs any step of either** — because 650 lays its output beside the owner's own
+OpenRouter invoice and 651 launches a run on the owner's own budget; both are on the **dogfood installation
+`fugaro`** (GCP project `fugaro-dev`, **never `belong`**), each **NOT RUN**, and **650 reads only**: the one
+billable step in either check is 651's halted run. **Nothing above was renumbered**: the two are the
+reservation's first two numbers, **652 to 659 stay unused and that plan's**, and the paragraph above's
+**664 onward stays free** is untouched.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -1046,6 +1061,8 @@ probe account carries predefined grants only).
 | 380 | `fugaro update` with its stdin closed finishes **without a prompt** ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** — no command waits on stdin — and its **Check 380**; the HARD RULE that `fugaro update` is the whole upgrade is where that rule is worth most): the check runs `fugaro update` itself with its stdin on `/dev/null` and its whole transcript in files, under a deadline, and a run that **ended by itself and asked nothing** is the reading — a step it leaves for you and refuses to apply is a PASS too, because the policy's answer to a step nobody confirmed is that refusal and not a question (T7: removing a prompt is not the same as applying a step nobody asked for). What a PASS refuses is a **question**: `[y/N]` in any casing, `(y/n)`, `(yes/no)`, a `to confirm:` left open, an enter-prompt, or a question mark followed by a blank; a run still going at the deadline is **killed** and is the failure the check exists for, because a run waiting on a terminal looks exactly like that. The `⚠ CONFIRM` banner is **not** one of those shapes: the policy keeps the banner, which is the note of a step and not a read | See "Check 380" below; `bash scripts/live-checks/check-380-no-prompt-update.sh [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-380-no-prompt-update_test.sh` drives it against a fake `fugaro` only — a fake `update` that plays each transcript shape beside the real closed stdin it records, so a case says the check really closed it — and converges nothing, and **you** run it, on the **sandbox installation**, **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | One `fugaro doctor --json` (read-only) and one real `fugaro update`, which is the command itself: it may build an image, apply Terraform and spend what a converge spends. No model call of this check's own and no run launched. It rolls nothing back — a converge is not something to undo, and the reading is only worth having on the release that is installed. **OWNER-RUN, NOT RUN.** |
 | 381 | An image build **over the cap** is refused, with the estimate, the cap, the day's figure and the one command that raises it ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T7** (the typed confirmation is gone from `fugaro image build`) and **T8**'s build lease, its **D1543** and its **Check 381**): the check lowers the repository's **own** caps to `$0.00` — a tightening, so nothing is asked (**D1542**) — reads them back, and then runs `fugaro image build --no-wait` from the checkout, which must exit **1 before the submission** with ONE sentence carrying all four parts: what the build **reserves** and where that price came from (the `N s` build timeout at the machine's rate, read from the Cloud Billing catalog), the **cap** it met, the **figure that cap compared** (the day's counted figure for the repository's daily cap, what the build holds for its per-run one) and the **one command that raises it**. A refusal that lost any part is a FAIL, and so is a build that was **not** refused — it may have been submitted, and the row carries the transcript's own last line. A budget mode that is not `enforce` is a **refusal to run** and not a measurement: in `observe` the over-cap decision comes back as an advisory and the build goes out anyway, which is money (**D1548**), and the mode is your own choice and never this check's to set | See "Check 381" below; `bash scripts/live-checks/check-381-over-cap-build.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-381-over-cap-build_test.sh` drives it against a fake `fugaro` — whose `budget set` really applies what it is handed, so the check's read-back of its own lowering and of its own putting back are readings of state that changed — beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | Four or five reads, two `budget set` (the lowering and the putting back) and one `image build --no-wait` that is refused before it is submitted: **no model call, no image and no Cloud Build** on a healthy installation, and nothing is counted for a build that was refused. It lowers ONE repository's own caps for the few seconds the build takes and puts them back from the exit trap, on every way out, reading them back to say so. **OWNER-RUN, NOT RUN.** |
 | 382 | A coding agent's `budget set` **raise** is refused, and the refusal carries the command its owner can run ([`docs/no-prompt-policy/`](no-prompt-policy/implementation-plan.md), its task **T3** (the fence on every raise form) and **D1542**, and its **Check 382**; **F8** — a cap the session it bounds can lift is not a limit — and **F20** — the fence is a courtesy, as strong as the markers and no stronger): `fugaro budget set --repo <this repository> --daily <more than it holds now>` is run with `CLAUDECODE=1` set **for the child alone**, and must exit **1** with one sentence carrying all of it — the act in its own words ("raising a cap is the owner's own step"), the marker it read, that **nothing was applied**, and the same invocation you would type at your own terminal. A command naming another repository, another value or another project, starting with another program or carrying a flag `budget set --help` does not name is a FAIL: an agent handed half that sentence has nothing to hand over. The caps read back must be exactly what was there before, and a raise that **landed** is the loudest FAIL the check has. The value is chosen so the call is always a raise: setting a cap where none existed is a raise as much as an increase is, and a no-op answers "nothing changed" instead of asking the fence | See "Check 382" below; `bash scripts/live-checks/check-382-agent-cannot-raise-a-cap.sh [--checkout <path>] [--project <name>] [--fugaro-flags '<flags>'] [--deadline <seconds>]` is the whole of it, its sibling test `scripts/live-checks/check-382-agent-cannot-raise-a-cap_test.sh` drives it against a fake `fugaro` whose fence refuses on the marker set in **its own** environment and can be told to bend the sentence each way, beside a real git checkout and its origin, and **you** run it, in a **sandbox repository checkout** whose project is **never `belong`** (refused in what you type and in what `doctor` answers, and so is a coding agent's session); **no agent runs any step of it** | **Nothing at all on a PASS**: five reads, one `budget set --help` and ONE `budget set` refused **before the write** — no model call, no build, no run and no cloud write. A FAIL where the raise landed, or a caps read-back that did not answer, leaves the teardown to put the caps back from the exit trap and read them back. **OWNER-RUN, NOT RUN.** |
+| 650 | The one-time reconciliation: a whole window's recorded, reported and table spend beside the OpenRouter invoice ([`docs/spend-accuracy/`](spend-accuracy/implementation-plan.md), its **Check 650** and task **SA0.1**, from the plan's own Checks section under the block it reserved (**650–659**, recorded by the paragraph above) — and the reconciliation's **A5** (past spend is not repriced, so this output is the note), **U1** (whether the endpoint reports a cost at all) with **O1** behind it, **U2** (whether `output_tokens` includes reasoning tokens) and **U5** (the 46% figure and its split between the three ranked causes): on the **dogfood installation**, `fugaro budget reconcile --all --from 2026-10-12 --to 2026-11-16 --json`, pasted beside the OpenRouter invoice for the key — **the share of the window's runs whose record carries `reported_usd`** (U1, O1), **per model the charge against the report**, with `unattributed` a row of its own and the totals read **with and without the route fee** (U5), and **one call's token counts and `reported_micros`** against the price of the endpoint that served it (U2) | See "Check 650" below; **you** run it, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, never `belong`), at your own terminal, with the OpenRouter invoice for that key in front of you and the `--json` pasted beside it, and **no agent runs any step of it** | **Nothing billable**: no run, no model call, no image build. One bounded read of the runs bucket's records — bounded to the window's newest runs (`UserStatsMaxRuns`, 5000), and the output says when the window held more — one read of the invoice, and, for step 3, one run's `model call` entries out of Cloud Logging. Nothing is created, changed or deleted, and the Restore is nothing. **OWNER-RUN, NOT RUN.** |
+| 651 | The acceptance: the week's recorded spend within **±3%** of the OpenRouter invoice, and a run halted at a cap below its expected cost ([`docs/spend-accuracy/`](spend-accuracy/implementation-plan.md), its **Check 651** and task **SA0.1**, from the plan's own Checks section under the block it reserved (**650–659**) — and **D2643** (the invoice's dollars against the charge **with** the fee, not the key's credit usage against the charge without it), **F11** (the catalog's `checked_at`, since from 2026-11-22 a stale catalog charges its tier's maximum whatever `price_policy` says), **D2640** with **D2651** (what a complete call settles on), **D2644** with **SA3.1** (`highest` by default) and the spec's acceptance, whose second half is the cap promise: a week after the release carrying **SA2.1** and **SA3.1**, `fugaro budget reconcile`'s totals **with the route fee** against the OpenRouter invoice **in dollars** for the same week, with the catalog's `checked_at` recorded; then one task launched with `fugaro run --max-usd` **below its expected cost**, ending `halted (run_cap)` with `cost.reported_usd` **within one call of the cap** | See "Check 651" below; **you** run it, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, never `belong`), at your own terminal, and **no agent runs any step of it** | **ONE billable run**: step 2's launch and what its task spends before the cap halts it, on the installation's own budget, plus the pull request it may open, which you decline in the Restore. Everything else is a read — the reconcile over the week's records, the invoice, one run's record and its `model call` entries. **OWNER-RUN, NOT RUN.** |
 | 660 | The service wakes on its tick, and holds nothing between wakes ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.1 and §4.9; task **P5.1c** is the service and its tick and **P5.1b** the account it runs as): on the installation's own project the always-on module is applied, the Cloud Run **service** carries `min-instances = 0` with request-based billing, the Cloud Scheduler tick wakes it **with nothing in the mailbox**, and a pass that ends takes its instance with it — the instance count at a minute you choose with no tick in flight is **0**, the revision's `minScale` is **`0`**, and the next tick starts an instance that did not exist a minute before and still finds the state the last pass left, because the lease and the ledger are the durable ones and not memory. A service that answered from a warm instance is what this row catches, and `min-instances = 1` is the shape the design priced and did not take | See "Check 660" below; **you** run it, on a **sandbox installation** with the module applied and its own project, **never `belong`**, and **no agent runs any step of it** | The service's own request time and the ticks you read: **no model call, no run and nothing billable** — nothing here sends a message, launches anything or opens a pull request, and a scale-to-zero service bills nothing between ticks (Cloud Scheduler's free allowance is **per billing account and not per installation**, the design's U8, which an owner with more than one installation has to price). Every command above is a read: nothing is created, changed or deleted, and the restore is nothing. **OWNER-RUN, NOT RUN.** |
 | 661 | A phone's message becomes a job execution **with the laptop shut** ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.2 and §3.2; tasks **P5.1c**, **P5.1d**, **P5.1f** and **P5.1g** are the half built, and **P4.1** is the consumer it reuses): from a **real phone**, paired by `fugaro pair`, one **launch** message is acted on **once** by the installation's own service — the pass verifies the tag, takes the run's claim, mints the budget token and starts a **Cloud Run job execution** — and the run it starts ends as a laptop-launched run does: a record, a PR and the phone's own outbox answer and presence. The machine that paired is **shut and no `fugaro mailbox` runs anywhere**, which is the whole of what phase 2 claims; the agent runs in the **job**, never in the resident service, and the execution's own job id is where that is read | See "Check 661" below; **you** run it, with a **real phone** on a **sandbox installation** and the **sandbox repository**, **never `belong`**, and **no agent runs any step of it** | One sandbox run: **billable**, on the installation's own budget, which a phone-launchable installation must have published, **on and enforcing** (the plan's P5.1-Q3, without which no caps sentence of the design is true) and bounded by the per-device caps and the named recipe **P5.1g** publishes. The launch itself is a claim, a mint and a job start; the model spend is the run's own, and it is what a laptop-launched run of the same task costs. Restore: the run's own cleanup — decline its PR, delete its branch and the run's objects — and `fugaro pair revoke --uid <uid>` if you paired for this check alone. **OWNER-RUN, NOT RUN.** |
 | 662 | `pair revoke` deletes the pairing key's cloud copy, and the pairing's messages **stop verifying in the cloud** ([`docs/mobile/`](mobile/implementation-plan.md), Task **P5.1h**, the number taken on 2026-11-16, and the design of record [design/always-on-orchestrator.md](mobile/design/always-on-orchestrator.md) §4.7, its step **2b**; task **P5.1e** is the copy and the deletion, and **D111** and **Global Constraint 4** are the custody the copy widens): with the copy in place the pass acts on a message from the phone **once** — the positive half, without which "messages stop verifying" measures nothing — and after `fugaro pair revoke --uid <uid>` the Secret Manager version the service reads is **destroyed** (not merely disabled, and not merely rotated: a disabled version is still readable by a principal granted `versions.access` on the parent, which is the design's own sentence) and the phone's next message is **refused in the cloud, with no action taken and no execution started**. What it does not settle is said in its own section: deleting the copy un-reads nothing, so what it ends is the **service's** ability to verify and to forge, not a reader's | See "Check 662" below; **you** run it, with a **real phone** on a **sandbox installation** whose module is applied, **never `belong`**, and **no agent runs any step of it** | The positive half is **one message the pass acts on** — the launch Check 661 runs is the cheapest, and this check may be run directly after it — so at most **one run is billable**; every other step is a read or the revoke itself, and **no value is read on any path and no line of the check prints one**. The revoke is steps 1, 2, 2b and 3: the device node, the Auth user, **the Secret Manager version** and the laptop's keychain item. Restore is **re-pairing**: `fugaro pair` issues a new device uid and a new key, and the old pairing stays revoked. A launch already claimed continues — the caps, not the revocation, bound it. **OWNER-RUN, NOT RUN.** |
@@ -18653,3 +18670,184 @@ check and is unset at the end; the value read that is refused never reaches stdo
 produced; §4.3's table, §6's rules 1, 2, 5 and 11, and E4's "never `var.launchers`" sentence are the claims it
 grounds. A `roles/firebasedatabase.viewer` binding found here is not a number to record: it is the widening
 rule 11 exists to prevent, and it is raised as a finding.
+
+## Check 650: the one-time reconciliation — a whole window's recorded, reported and table spend beside the OpenRouter invoice (the dogfood installation `fugaro`, GCP project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **SA0.1** of
+[spend-accuracy/implementation-plan.md](spend-accuracy/implementation-plan.md), from the plan's own Checks
+section, under the block that plan reserved (**650–659**; the paragraph above the table is the reading that
+took it). It runs **once the release carrying SA1.3 is installed** — `fugaro budget reconcile` is that task's
+command, and until it ships there is nothing to type — and what it reads are records written **before** the
+settle rule changed, which is the point of it: SA2.1 and SA3.1 need not be in the release that carries it.
+**No agent runs any step of it**: the figure this output is laid beside is the owner's own OpenRouter invoice
+for their own key, and the window is real spend on the owner's installation.
+
+**What it settles.** The spec's opening figure: on the dogfood project, from 2026-10-12 to 2026-11-16,
+`fugaro report --by model`'s billed spend for the DeepSeek models was **about 46% of what OpenRouter billed**
+on the one API key only Fugaro runs use. Three of the reconciliation's unknowns close on this one output:
+
+- **U1, does the endpoint report a cost at all — with O1 behind it.** OpenRouter's Anthropic-compatible
+  `/messages` may return `usage.cost` only when the request asks for it, and Fugaro's routed request asks for
+  nothing (`routedKeys`; **D2642** declined a body rewrite). The share of the window's runs whose record
+  carries `reported_usd` is that answer, and **O1** is what turns on it: if most DeepSeek answers carry none,
+  D2640 settles few calls and D2642 — the rewrite — comes back to the owner as its own decision.
+- **U5, the 46% and how it splits.** The three causes the spec ranks separate here: the `cheapest` policy
+  charging the minimum of each dimension, from endpoints that need not be the same one (cause 1); the dogfood
+  config's `cache_read: 0.0042`, read as a **multiplier** of the input price and so pricing cache reads at
+  about $0.0006 per million against an ~89% cache hit rate (cause 2; **OR1** deletes that override, and the
+  check reads the records whether or not it has been deleted); and `splitModel` moving billed DeepSeek
+  dollars into the notional column on a day that mixes tiers (cause 3).
+- **U2, do the endpoint's `output_tokens` include reasoning tokens.** One call's token counts and its
+  `reported_micros`, multiplied out at the endpoint's own price, either reproduce the reported cost or do not,
+  and the difference is what OpenRouter billed outside `output_tokens`.
+
+It is also **A5**, the one-time reconciliation note: past spend is not repriced (spec, out of scope), so this
+output is the record of what the gap was, and no later command reprints it.
+
+**What has to exist before it runs.** A release carrying **SA1.3** installed on the **dogfood installation** —
+**A4**'s installation `fugaro`, whose local config is the owner's own
+`~/.config/fugaro/projects/fugaro.yaml`, with route `openrouter` and `route_fee_pct: 5.5` — its runs bucket
+holding the window's records, which are the records the 46% came from, and the **OpenRouter invoice for that
+key** for the same window. **Never `belong`**: nothing here writes, but the read is the owner's own spend and
+the check is the dogfood project's. `fugaro budget reconcile` reads only and asks nothing.
+
+**The command.**
+
+```sh
+fugaro budget reconcile --all --from 2026-10-12 --to 2026-11-16 --json
+```
+
+The window is the spec's own and is **typed** rather than defaulted, so the reading is the one the 46% was
+taken over: 2026-10-12 is the first day the records hold a DeepSeek run and 2026-11-16 the day of the
+reconciliation. `--all` reads every repository's slug in the runs bucket (`--repo owner/name` would read one),
+and the read is bounded to the window's newest runs — `UserStatsMaxRuns`, 5000, the bound `fugaro report`'s own
+by-mode read uses — so **the output says when the window held more than that**, and that sentence is part of
+what is pasted.
+
+**What is pasted, and what passes.** Paste the whole `--json` document and, beside it, the **OpenRouter
+invoice's dollar figure for the key over the same window**, with the note of whether the read truncated. Then
+these three readings, each with its own pass:
+
+1. **The share of runs carrying a report (U1, O1).** The document's own count of the window's runs whose
+   record carries `reported_usd`, out of the runs it read. **It passes when** the count is stated over a window
+   the bound did **not** truncate — a truncated window's share describes its newest runs and not the window —
+   and the share is recorded as the fact. What follows from the number is O1's and is not this step's: present
+   on most runs, D2640 settles most calls; mostly absent, D2642 goes back to the owner.
+2. **Per model, the charge against the report (U5).** The output's rows — the charge (`model_by`) beside the
+   report (`reported_by`), the table's band over the same calls (`table_lo_usd` and `table_hi_usd`), the
+   tokens and the share of runs carrying a report — with `unattributed` a row of its own, because a call
+   settled after its stage's wait lands there and it is not a model's (F19's open question), and the totals
+   read **with and without the route fee**. **It passes when** the totals carry both figures, the two differ
+   by the route fee, and every model row is read: a charge under the report is the gap this work exists for,
+   and which of the three causes it decomposes into is recorded per model rather than assumed. **Not a failure
+   here:** a report outside the band by more than 10% — that is SA5.3's alarm over the day counters, and this
+   output is where its first real figures come from.
+3. **One call, multiplied out (U2).** One call's `model call` entry — `in`, `out`, `cache_read`,
+   `cache_write_5m`, `cache_write_1h` and `reported_micros` (`reported_micros` is written only when the cost
+   is above zero, so its absence is itself a "no report" answer to U1) — against the price of the endpoint
+   that served it, which is the model's row in `fugaro budget prices` (the catalog's own row, whose
+   `checked_at` is recorded with the reading: past `catalog.StaleAfter` — 30 days, so from 2026-11-22 — every
+   catalog-priced row charges its tier's maximum, F11). The entries are read where they are, in Cloud Logging,
+   with the filter the CLI's own reader builds (`jsonPayload.message="model call"`; **Check 139**'s section
+   carries the recipe, the view and the reason `fugaro logs` will not answer), and the price is the
+   **endpoint's**, not the charge's. **It passes when** the arithmetic is done and recorded: the tokens at
+   that price reproducing `reported_micros` answers U2 "the reported `output_tokens` include reasoning
+   tokens"; a report above it answers "they do not", and **O2** says what that leaves — every call carrying a
+   report is already settled on it by D2640, so only the estimated calls would under-charge.
+
+**What a run costs.** **Nothing billable.** No run is launched, no model call is made and no image is built:
+one bounded read of the runs bucket's records, one read of the owner's own invoice, and one read of one run's
+log entries. Nothing is created, changed or deleted, and the Restore is nothing — which is also why the owner
+can re-run it as often as they like while the window's records are still in the bucket.
+
+**What waits on it.** **SA1.3**'s release is what makes it runnable, and nothing downstream is blocked on the
+reading — no task consumes it. It is the note **A5** names, and Check 651 is read against it: 651 is a
+different window under a different settle rule, so a 651 that fails is not this check's number repeated, and a
+share near zero here is what would have explained it. A window the bound truncated, or a per-model gap that
+does not decompose into the three ranked causes, is a finding to raise with the owner rather than a number to
+file.
+
+## Check 651: the acceptance — the week's recorded spend within ±3% of the OpenRouter invoice, and a run halted at a cap below its expected cost (the dogfood installation `fugaro`, GCP project `fugaro-dev`, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **SA0.1** of
+[spend-accuracy/implementation-plan.md](spend-accuracy/implementation-plan.md), from the plan's own Checks
+section, under the block that plan reserved (**650–659**). It runs **a week after the release that carries
+SA2.1 and SA3.1** — SA2.1 settles a complete call on the provider's own report (D2640, floored at the tier's
+cheapest end by D2651) and SA3.1 makes `highest` the default `price_policy` (D2644) — because what it compares
+is a week of records written under those rules against a bill. **No agent runs any step of it**: step 2
+launches a real run on the owner's own budget, and the invoice is the owner's.
+
+**What it settles.** The spec's acceptance for the whole change — on the dogfood project, over a week after
+release, recorded billed spend for OpenRouter models is **within ±3%** of the OpenRouter invoice for the key
+the project uses — and the second half of that sentence, the cap promise ("halts the run at its dollar cap"),
+which no hermetic test can settle because it is about money.
+
+- **D2643, which OpenRouter figure.** The comparison is the **invoice's dollars** against the charge **with**
+  the fee. The recommendation the owner did not take was the key's usage in credits against the charge without
+  the fee; the daily noise of credit purchases is the cost that answer accepted, and it is the figure this
+  check does **not** read.
+- **F11, the catalog's date.** The row is recorded beside the totals: the catalog was checked on 2026-10-23 and
+  `catalog.StaleAfter` is 30 days, so from **2026-11-22** every catalog-priced row charges its tier's maximum
+  whatever `price_policy` says. Once `highest` is the default (SA3.1) staleness changes only which prices are
+  read and never the end, so this is the comparison's condition and **not** a failure: a week that ran on a
+  stale catalog is accepted, with its `checked_at` in the row.
+- **The cap.** The spec's other half is that a run's cap halts it "measured against what the provider billed".
+  With D2640 the settled charge is the provider's own figure plus the fee, so the cap counts what the provider
+  bills rather than the table's guess, and one run stopped at a cap set below its expected cost is the reading
+  that says so.
+
+**What has to exist before it runs.** The release carrying **SA2.1** and **SA3.1** installed on the **dogfood
+installation `fugaro`** (**A4**: route `openrouter`, `route_fee_pct: 5.5`), with **a week of runs on that
+route recorded under those rules** — a window holding no OpenRouter run compares two figures that are not
+about each other, and the row records that rather than passing — and **OR1 done**: the dogfood
+`cache_read: 0.0042` override deleted by hand and the policy node republished by `fugaro update` (D2645),
+since a config that still prices cache reads at about $0.0006 per million is the undercharge this acceptance is
+about. The **OpenRouter invoice for the key** over the same week, and a **sandbox repository** for step 2's
+run, so what the halt costs is a sandbox task's own spend. **Never `belong`.**
+
+**The commands.**
+
+```sh
+fugaro budget prices                                  # the row and its checked_at, recorded with the totals
+fugaro budget reconcile --all --from <the week's first UTC day> --to <its last> --json
+fugaro run --repo <a sandbox repository> --max-usd <below the task's expected cost> "<a small task>"
+fugaro runs show <the halted run>                     # the chain's limits: the figure, what is used, what is left
+fugaro diagnose <the halted run> --json               # the halt, and reported_usd
+```
+
+The week is typed: it runs from the release's install day, and the invoice's own week is the same seven UTC
+days. **Set `--max-usd` below the task's expected cost and at or below the chain's dollar limit** — a figure
+above the limit is refused before any call (`--max-usd 4.5 is above the chain dollar limit this launch
+resolves`) — and the plan's own rule stands here too: **do not pass `--total-timeout`**, because a shorter one
+ends the run with the time budget exhausted instead of the dollar cap, which is the other reading this step
+wants.
+
+**What is pasted, and what passes.**
+
+1. **The week against the invoice (±3%; D2643).** Paste the reconcile's totals **with the route fee** — the
+   output prints both sides, and the fee-bearing one is the figure D2643 names — beside the invoice's own
+   dollar figure for the key over the same week, with the catalog's `checked_at` (F11) and the window's
+   truncated-or-not note beside them. **It passes when** the two figures differ by **at most 3%** of the
+   invoice's. A window the read truncated is recorded as truncated and does not pass this row: the bound's
+   window is not the invoice's window.
+2. **The halted run (the cap promise).** Paste `fugaro diagnose <run> --json`'s `halt` and `reported_usd`,
+   `fugaro runs show`'s chain block — the dimension's limit, what the chain has used and what is left, which
+   is the first question a halt raises (D1055) — and, from the run's `model call` entries in Cloud Logging
+   (Check 139's recipe), the largest single call's `reported_micros` beside the run's total. **It passes
+   when** the run ends **`halted` with `run_cap`**, and **`cost.reported_usd` is within one call of the cap**:
+   the cap minus `reported_usd` is smaller than the largest single call's `reported_micros`, so the run stopped
+   on the call that would have crossed it rather than with room to spare — part of that gap is the route fee,
+   which the cap counts and `reported_usd` does not, and the row records both figures. **Record, and do not
+   grade:** whether the run opened a pull request and whether it is a draft (a halt before the first push opens
+   none, and that is a pass), and `model_usd`, the reported-plus-fee figure, which the cap bounds.
+
+**What a run costs.** **ONE billable run** — step 2's launch, on the installation's own budget, with whatever
+the task spends before the cap halts it — plus the pull request it may open. Every other step is a read: the
+reconcile over the week's records, the price table, the invoice, the run's record and its log entries.
+Restore: decline that pull request if it opened one and delete its branch, and record the cap you set so the
+next week's comparison is not read against it.
+
+**What waits on it.** Nothing is blocked on the reading — no task consumes it — and it is the last word on
+this spec: a 651 that holds is the change's acceptance, and a 651 that does not is the owner's decision about
+which of the three causes is still open, read against Check 650's per-model figures, rather than a task this
+plan adds.
