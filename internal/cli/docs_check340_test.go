@@ -12,8 +12,9 @@ import (
 // writes it.
 //
 // The number is the periodic-reviews work's
-// (docs/periodic-reviews/implementation-plan.md §P8 claims 340–342 and leaves
-// 343–349 reserved), and the register is another work stream's file: this is
+// (docs/periodic-reviews/implementation-plan.md §P8 claims 340–342 and
+// reserves 344–349; 343 is the same plan's R9, claimed by the designation
+// design of 2026-11-17), and the register is another work stream's file: this is
 // the task that implements the check writing its own row and section, which is
 // the register's rule for a work that reserved none.
 //
@@ -494,7 +495,7 @@ func TestDocsCheck340IsThePlansNumber(t *testing.T) {
 	for _, want := range []string{
 		"**Check 340 — the prefix-limited listing grant (R12's, and it gates R12).**",
 		"Owner-run, **NOT RUN**.",
-		"Check 340, Check 341 and Check 342 are this round's; 343–349 are reserved and unused.",
+		"Check 340, Check 341 and Check 342 are this round's; Check 343 is R9's, claimed by the designation design of 2026-11-17, and 344–349 are reserved and unused.",
 	} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("docs/periodic-reviews/implementation-plan.md no longer says %q: the register's row and section are this work's number, and the plan is what claims it", want)

@@ -1212,15 +1212,16 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 	// A service tier is the tier the provider itself served the call from:
 	// the agent's request said nothing about it, and a provider can answer
 	// with one at any time. It is charged the dearest multiple the table
-	// knows -- an assumed ceiling rather than a published price, so a
-	// provider route that reported what the call cost floors it at that
-	// figure (below) -- and recorded on the stage, in the call log and in a
-	// warning, and the stage goes on: failing the stage is what turns one
-	// provider's field into a dead run. Pricing it at the table's maximum
-	// rates instead of its own would charge a cheap model a dearer model's
-	// money -- a DeepSeek call at Claude's rates -- which inflates the record
-	// and the shared day counters and, on a tight cap, halts a run that the
-	// model's own rates would not have.
+	// knows -- an assumed ceiling rather than a published price -- and
+	// recorded on the stage, in the call log and in a warning, and the stage
+	// goes on: failing the stage is what turns one provider's field into a
+	// dead run. A provider route that reported what the call cost is not
+	// charged the multiple at all: a complete call settles on that figure
+	// (D2640), and a partial one is floored by it (below). Pricing the tier
+	// at the table's maximum rates instead of the call's own would charge a
+	// cheap model a dearer model's money -- a DeepSeek call at Claude's
+	// rates -- which inflates the record and the shared day counters and, on
+	// a tight cap, halts a run that the model's own rates would not have.
 	//
 	// A speed or an inference geography the request chose stays a violation,
 	// and is the dearer case of the two: the table's maximum rates times
@@ -1241,10 +1242,18 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, w pricing.Micros, p
 			o.charge.serviceTier = d.value
 			chargedAs := fmt.Sprintf("%dx the rates the call is priced at", mult)
 			if pr != nil && t.acc.hasReported {
-				// The provider's own report floors this charge (below), so
-				// the line the reader uses to explain the figure says the
-				// figure may be the report and not the multiple.
-				chargedAs += ", or the provider's reported cost with the route fee if dearer"
+				if partial {
+					// A partial call is charged the multiple, and the
+					// provider's own report only floors it (below), so the
+					// line the reader uses to explain the figure says the
+					// figure may be the dearer of the two.
+					chargedAs += ", or the provider's reported cost with the route fee if dearer"
+				} else {
+					// A complete call settles on the report itself (D2640),
+					// so the multiple is not the figure to expect: the line
+					// says what the call settled on.
+					chargedAs += ", or the provider's reported cost with the route fee, which is what the call settled on, floored at the row's cheapest end"
+				}
 			}
 			s.log.Warn("budget: service tier not priced", "model", logValue(serving), "service_tier", d.value,
 				"charged_as", chargedAs)

@@ -399,7 +399,11 @@ func runAccountsAdd(cmd *cobra.Command, name string, o accountsAddOptions) error
 	}
 	if profile == "" {
 		if config.KeyCredentialType(typ) {
-			fmt.Fprintf(cmd.OutOrStdout(), "no job is deployed for %s: a key credential is not a run's Claude account token, so no profile lists it — what carries its key to a call is the serving half of its type, which is not installed by this release yet\n", pluginwire.Printable(name))
+			serves := "the credentials service, which reads the value from the bundle `fugaro creds set` writes"
+			if config.CredentialServingPath(typ) == config.CredentialPathRunner {
+				serves = "the run's own gateway, whose job of the provider of that name mounts the key once that provider entry exists"
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "no job is deployed for %s: a key credential is not a run's Claude account token, so no profile lists it — what carries its key to a call is the half its type is served by: %s\n", pluginwire.Printable(name), serves)
 		} else {
 			fmt.Fprintf(cmd.OutOrStdout(), "no profile serves %s yet: this project's jobs do not select it until one does\n", name)
 		}

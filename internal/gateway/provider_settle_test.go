@@ -644,12 +644,14 @@ func TestUnpricedTierSettlesOnTheReport(t *testing.T) {
 			if rep.Unreconciled != 0 {
 				t.Errorf("stage unreconciled %d, want 0: the charge is priced from usage either way", rep.Unreconciled)
 			}
-			// The warning names the multiple, and the report only where the
-			// record carries one: a call that reported no cost has no figure
-			// to name, and the line stops at the multiple.
+			// The warning names the multiple, and the report where the record
+			// carries one: a call that reported no cost has no figure to
+			// name and the line stops at the multiple, and a complete call
+			// that did settles on the report rather than on the multiple
+			// (D2640), so the line says that.
 			wantChargedAs := "2x the rates the call is priced at"
 			if c.cost != "" {
-				wantChargedAs += ", or the provider's reported cost with the route fee if dearer"
+				wantChargedAs += ", or the provider's reported cost with the route fee, which is what the call settled on, floored at the row's cheapest end"
 			}
 			if got := r.logs.tierWarnChargedAs(t); got != wantChargedAs {
 				t.Errorf("charged_as %q, want %q", got, wantChargedAs)
@@ -772,6 +774,12 @@ func TestUnpricedTierFloorOnAPartialCall(t *testing.T) {
 	}
 	if rep.ReportedBy[dsModel] != 4_000 {
 		t.Errorf("reported by model %v, want the report 4000 the floor was made of", rep.ReportedBy)
+	}
+	// The warning's words are the partial call's: the multiple is the charge
+	// here and the report only floors it, which is the one case left of the
+	// "if dearer" sentence a complete call no longer gets (D2640).
+	if got, want := r.logs.tierWarnChargedAs(t), "2x the rates the call is priced at, or the provider's reported cost with the route fee if dearer"; got != want {
+		t.Errorf("charged_as %q, want %q", got, want)
 	}
 }
 

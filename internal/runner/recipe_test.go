@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -199,22 +201,23 @@ func TestRecipeDigestStepFailsBeforeImplement(t *testing.T) {
 	}
 }
 
-// TestRecipeDiagnoseStepFailsBeforeRender: the diagnose step is a model stage
-// this build's runner does not execute yet (T-TC4 lands it), so a run of a
-// recipe holding one is refused at bootstrap, before anything runs — the
-// shape the digest step had until T3.2 dispatched it. Without the refusal
-// artifactMode would run the repository's commands.render in the step's place
-// and end succeeded/artifacts with no diagnosis in it, which is what this
-// test pins against: it launches the catalog's own troubleshoot, whose
-// outputs name out/diagnosis.md and out/diagnosis.json — files no render
-// writes — so the run it prevents is exactly the "a step Parse accepts and
-// the run drops" outcome recipe.RegisterStepKind's own comment (recipe.go)
-// says may never happen.
+// TestRecipeDiagnoseStepReachesTheDiagnoseStage: the embedded-task resolution
+// path reaches the stage the step names, which stands in commands.render's
+// place rather than beside it (T-TC4, D2402) — the mirror of
+// TestRecipeCheckStepReachesTheGate above for the other step whose work has no
+// commands entry of its own. Without the dispatch artifactMode would run the
+// repository's commands.render in the step's place and end
+// succeeded/artifacts with no diagnosis in it: the catalog's troubleshoot
+// names out/diagnosis.md and out/diagnosis.json, files no render writes, so
+// the run it prevents is exactly the "a step Parse accepts and the run drops"
+// outcome recipe.RegisterStepKind's own comment (recipe.go) says may never
+// happen.
 //
-// Mutation (drop the recipe.UsesDiagnose arm from runner.go's bootstrap):
-// this test fails, finding the run succeeded with outcome artifacts, a render
+// Mutation (drop the r.diagnose dispatch in artifactMode, or the recipe.UsesDiagnose
+// arm that sets it): this test fails, finding the run succeeded with outcome
+// artifacts, the render script's own file in the outputs root, a render
 // recorded and no diagnosis anywhere in it.
-func TestRecipeDiagnoseStepFailsBeforeRender(t *testing.T) {
+func TestRecipeDiagnoseStepReachesTheDiagnoseStage(t *testing.T) {
 	data, ok := recipe.CatalogText(recipe.TroubleshootRecipe)
 	if !ok {
 		t.Fatalf("%s is not in the catalog", recipe.TroubleshootRecipe)
@@ -222,15 +225,33 @@ func TestRecipeDiagnoseStepFailsBeforeRender(t *testing.T) {
 	spec := recipeSpec(embeddedTask(recipe.TroubleshootRecipe, string(data)))
 	spec.Mode = recipe.ModeArtifact
 	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
-	rec, err := h.run(t)
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "holds a diagnose step, which this job image's runner does not execute yet") {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
+	seedDiagnoseBundle(t, h, map[string]string{"evidence/log.txt": "fugaro update failed\n"})
+	diagnoseTree(t, h)
+	rec, err := h.run(t, diagnoseAnswer(diagnoseagent.OutcomeBug, "update missing configuration",
+		"Fugaro's own update path is wrong."))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if rec.Render != nil || rec.Outcome == runstore.OutcomeArtifacts {
-		t.Fatalf("render = %+v, outcome = %q: commands.render ran and the run ended as an artifact run", rec.Render, rec.Outcome)
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeArtifacts {
+		t.Fatalf("rec = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
 	}
-	if len(h.agent.calls) != 0 {
-		t.Fatalf("%d agent calls, want none (no stage runs)", len(h.agent.calls))
+	// The render script never ran: what it writes is not in the outputs root and
+	// the record carries no render block, while the diagnosis's own two files
+	// are recorded in its place.
+	if _, err := os.Stat(filepath.Join(h.deps.WorkDir, "out", "sizzle.mp4")); err == nil {
+		t.Error("commands.render ran in the diagnose step's place")
+	}
+	if rec.Render != nil {
+		t.Errorf("a diagnose run recorded a render: %+v", rec.Render)
+	}
+	got := artifactNames(rec.Artifacts)
+	for _, want := range []string{diagnoseMDName, diagnoseJSONName} {
+		if !slices.Contains(got, want) {
+			t.Errorf("the record's artifacts are %v, want %s among them", got, want)
+		}
+	}
+	if len(h.agent.calls) != 1 {
+		t.Fatalf("%d agent calls, want the diagnosis's one", len(h.agent.calls))
 	}
 }
 

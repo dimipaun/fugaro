@@ -1709,11 +1709,12 @@ func TestDiagnosePutsTheComputeSourceOnItsOwnLine(t *testing.T) {
 // service tier the price table has no multiplier for charged them
 // conservatively (design §6.1), so diagnose names the tier and the multiple
 // over the Cost line: without it a reader has a figure nothing explains --
-// on a provider route the charge is the dearer of that multiple and the
-// provider's own reported cost, so the tier's name is what explains the
-// figure. That second figure is named only for a run that recorded one: a
-// Claude run has no route and no report. A run whose calls were all priced
-// normally prints no such line at all.
+// on a provider route a complete call settled on the provider's own reported
+// cost, and only a call the stream cut short kept the multiple with the report
+// as a floor under it, so the tier's name is what explains the figure. That
+// second figure is named only for a run that recorded one: a Claude run has no
+// route and no report. A run whose calls were all priced normally prints no
+// such line at all.
 func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 	f := newCloudFixture(t)
 	ctx := context.Background()
@@ -1726,8 +1727,8 @@ func TestDiagnoseNamesChargedServiceTiers(t *testing.T) {
 	}{
 		{nil, 0, ""},
 		{[]string{`usage.service_tier "priority"`}, 0, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at (no published price for the tier)`},
-		{[]string{`usage.service_tier "priority"`}, 1.5, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
-		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, 1.5, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`}, 1.5, `Tier:     usage.service_tier "priority" charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure (no published price for the tier)`},
+		{[]string{`usage.service_tier "priority"`, `usage.service_tier 12`}, 1.5, `Tier:     usage.service_tier "priority", usage.service_tier 12 charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure (no published price for the tier)`},
 	} {
 		id := fmt.Sprintf("20260927-19000%d-aaaa", i)
 		exec := seedRun(t, f, id, "", "someone@example.com", true)
@@ -1854,7 +1855,7 @@ func TestDiagnoseRendersTheServiceTierCounter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee if dearer (no published price for the tier)"
+	want := "Tier:     " + strings.Join(tiers, ", ") + " charged at 2x the rates the call was priced at, or the provider's reported cost with the route fee: a complete call settled on that figure, floored at the row's cheapest end, and a call the stream cut short was charged the dearer of the multiple and that figure (no published price for the tier)"
 	if !strings.Contains(human, want+"\n") {
 		t.Fatalf("want %q:\n%s", want, human)
 	}

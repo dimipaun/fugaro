@@ -205,6 +205,13 @@ type run struct {
 	// model call and no implement stage (digest.go, T3.2). Set once at
 	// bootstrap, from the recipe the run resolved.
 	digest bool
+	// diagnose is whether the resolved recipe's one step is the diagnose
+	// step (recipe.UsesDiagnose, T-TC3): a cloud diagnosis, whose one model
+	// stage the runner runs in commands.render's place — the bundle it reads
+	// and the answer it writes are its own work, and no command of the
+	// repository's runs at all (diagnose.go, T-TC4, D2402). Set once at
+	// bootstrap, from the recipe the run resolved.
+	diagnose bool
 	// rebase is whether the resolved recipe's one step is the rebase step
 	// (recipe.UsesRebase, E5): the run puts its branch on its base, resolves
 	// the conflicts, runs the workflow's tests again and pushes — with no
@@ -329,7 +336,14 @@ type run struct {
 	// governance block it ignores has been written: the line is about the
 	// build, so a run says it once however many stages it has (guarded by mu).
 	ignoredGovernanceSaid bool
-	stageExtra            func(stage string) (violations []string, tokens int64)
+	// checkpointCall is whether the halt this run ended on left a checkpoint
+	// report for the stopping agent to answer, which is what the checkpoint
+	// stage runs for (governance_hook.go, checkpoint_stage.go, T7.3). It is
+	// set only by a stage hook's own decision, so a stop no checkpoint call
+	// may follow — a stage's own timeout, a cap, the review-scope stop —
+	// leaves it false (guarded by mu).
+	checkpointCall bool
+	stageExtra     func(stage string) (violations []string, tokens int64)
 	// sess is the run's session with the budget backend; nil when the run
 	// has none. frozen is set when the agent loop is over, after which a
 	// halt from the backend changes nothing. Both guarded by mu.
@@ -841,6 +855,14 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	default:
 		r.runAgentLoop(runCtx)
 	}
+	// The stop's own last call, before anything that cannot make one: a
+	// governance halt asks the stopping agent for the three fields of its
+	// checkpoint report, from a fresh session, and the answers go into the
+	// report the halt left (checkpoint_stage.go, T7.3). It runs after the mode
+	// loop, which is the moment the stopped stage's agent process is gone, and
+	// before freezeHalts and closeGateway, which it needs a live gateway to
+	// make its call through.
+	r.checkpointStage(runCtx)
 	// From here nothing the backend says can stop a stage.
 	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
@@ -2804,26 +2826,22 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// gate refuses a digest launch against a release image that predates the
 	// step (digestSince, internal/cli/recipes_skew.go).
 	r.digest = recipe.UsesDigest(rcp)
-	// The diagnose step is a model stage this build's runner does not execute
-	// yet (T-TC4 lands it), and artifactMode runs the recipe's plan stage, if
-	// it has one, and then always commands.render (artifact.go) — so a run of
-	// a recipe holding the step would run the repository's render command in
-	// the step's place and end succeeded/artifacts having diagnosed nothing:
-	// no error, and no answer either. The catalog's troubleshoot names
+	// The diagnose step is a model stage, and it stands in commands.render's
+	// place rather than beside it (D2402): a recipe holding the step is
+	// mode: artifact like the digest recipes, but what it delivers is the
+	// answer the model wrote into out/, not the output of a command the
+	// repository wrote. Marked here, right after the recipe is resolved and
+	// before any stage, and dispatched in artifactMode in place of the render
+	// (artifact.go): a run that rendered instead would run the repository's
+	// render command in the step's place and end succeeded/artifacts having
+	// diagnosed nothing — the catalog's troubleshoot names
 	// out/diagnosis.md and out/diagnosis.json, which no repository's render
-	// writes, so its own run would even end with an empty artifact set.
-	// Refused here, right after the recipe is resolved and before any stage,
-	// the way the digest step was refused until T3.2 dispatched it, and for
-	// the reason internal/recipe's RegisterStepKind gives: a step the parser
-	// accepts and the run drops may never happen. The launcher's image gate
-	// cannot make this refusal yet — the *Since constant for the step is
-	// T-TC6's — so this is the one a launch of a diagnosis meets. It names no
-	// way out: no release's runner runs the stage yet, so a refreshed job image
-	// would refuse the recipe again, and the release that runs it is T-TC4's to
-	// carry — not a step a person is sent to take here.
-	if recipe.UsesDiagnose(rcp) {
-		return fmt.Errorf("recipe %s holds a diagnose step, which this job image's runner does not execute yet: the run would run the repository's commands.render in the step's place and end succeeded with no diagnosis in it. No Fugaro release runs the diagnose step yet, so there is no job image to move to", rrec.Name)
-	}
+	// writes, so its run would even end with an empty artifact set. The
+	// launcher's image gate refuses a diagnosis launch against a release
+	// image that predates the step (T-TC6's *Since constant,
+	// internal/cli/recipes_skew.go); this is the arm the resolved recipe
+	// decides.
+	r.diagnose = recipe.UsesDiagnose(rcp)
 	// The rebase step is the runner's own work plus one model stage for the
 	// conflicts (rebase.go, E5): its run's step is the whole plan, it reviews
 	// nothing and it opens no pull request — what it delivers is a branch put
@@ -3009,8 +3027,13 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// configuration into the file layer it merges, so a bound written after it
 	// would move the pin without the record or the policy ever seeing it.
 	if applyRecipeOutputLimit(&cfg.Agent, rcp) {
-		r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
-			"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+		if r.diagnose {
+			r.d.Log.Info("agent.max_output_tokens.coder capped: the diagnose stage reserves at the recipe's bound",
+				"coder", cfg.Agent.MaxOutputTokens.Coder)
+		} else {
+			r.d.Log.Info("agent.max_output_tokens.reviewer capped: the run-digest review reserves at the recipe's bound",
+				"reviewer", cfg.Agent.MaxOutputTokens.Reviewer)
+		}
 	}
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	// The arm's coder model, after the recipe's own role mapping and before
@@ -3986,6 +4009,12 @@ func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, s
 			r.timeStop()
 			return false
 		}
+		// The review-scope stop is asked before the round's call and never
+		// after it (T7.3): a reviewer about to be handed a range covering files
+		// this run never changed is a round the run must not buy at all.
+		if !r.beforeReview(ctx, "review") {
+			return false
+		}
 		// The loop counts the review rounds it starts, across every enabled
 		// level: it is what the time half of the stop rule asks before it
 		// fires (stopNow), so a run whose first stage ate its budget still
@@ -4134,6 +4163,11 @@ func (r *run) adversarialLoop(ctx context.Context, st planStep, reviewPrompt, sy
 	for round := 1; ; round++ {
 		if r.stopNow() {
 			r.timeStop()
+			return false
+		}
+		// Asked exactly as seniorLoop asks it, and for the same reason: level
+		// 3's round reads the same range, so a moved one stops it here (T7.3).
+		if !r.beforeReview(ctx, stageAdversarial) {
 			return false
 		}
 		// Counted exactly as seniorLoop counts it, and never per level: the
@@ -4463,6 +4497,12 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 			// stop is the run's, not one level's).
 			return r.firstLineStop(sessionID)
 		}
+		// The review-scope stop, asked before the round's call like the two
+		// outer loops' (T7.3). It is not the stop rule's time half, so it is
+		// not firstLineStop: a governance stop has already recorded itself.
+		if !r.beforeReview(ctx, "review_first") {
+			return sessionID, false
+		}
 		// Counted as seniorLoop counts its rounds: the stop's guard and its
 		// time half read the run's review rounds, never one level's.
 		r.reviewRoundsRun++
@@ -4725,11 +4765,14 @@ type stageOpts struct {
 	// sets per attempt and not a decision stageOnce makes on its own.
 	RetryTransient bool
 	// Dir is the working directory the stage's agent runs in, "" for the
-	// run's own checkout — which is every stage but one. The triage judge
+	// run's own checkout — which is every stage but three. The triage judge
 	// runs in a directory of its own that holds nothing of the run
 	// (triage_stage.go): the brief is text, and a stage with the artifact
 	// under review in reach is what the empty tool list and the empty
-	// setting sources are there to prevent (F25).
+	// setting sources are there to prevent (F25). The diagnose stage runs in
+	// the source tree the job fetched for it (diagnose.go): that tree is what
+	// it reads, and the run's own checkout holds the repository the failed
+	// command ran in, which is not what a diagnosis of Fugaro reads.
 	Dir string
 	// Ordinal is which of the run's triage rounds this stage's call serves: the
 	// triage stage is the one today, and it reaches the record on each of the
@@ -5172,7 +5215,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.beginGatewayStage(name)
 		done := make(chan struct{})
 		watching.Add(1)
-		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		go func() { defer watching.Done(); r.watchHalt(stageCtx, done, name) }()
 		if p := r.sidecarProc(); p != nil {
 			// The sidecar is watched with the same shape and for the same
 			// reason, and it can only be here with the gateway: a sidecar
@@ -5251,7 +5294,7 @@ func (r *run) stageOnce(ctx context.Context, name string, req agent.Request, opt
 		r.mu.Unlock()
 	}
 	if r.gw != nil && !direct {
-		r.recordGatewayStageCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
+		r.recordGatewayStageCost(ctx, name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 	} else if direct {
 		r.recordAccountStageCost(name, res.CostUSD)
 	} else {
