@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -134,7 +135,7 @@ func (e *initEngine) bitbucketProxyFlip() (repos []string, turn bool) {
 func bitbucketProxyRepos(lc *localcfg.Config) []string {
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(lc.Repos)) {
-		if lc.Repos[name].Provider != "bitbucket" {
+		if lc.Repos[name].Provider != gitprov.KindBitbucket {
 			continue
 		}
 		slug, err := task.CanonicalRepo(name)
