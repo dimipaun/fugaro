@@ -27,16 +27,19 @@
 // never `belong` (rule 6, F31), and the database URL and the Firebase project
 // must name one installation (rule 10).
 //
-// WHAT A PASS DOES TODAY, WHICH IS DELIBERATELY LITTLE. The tick's pass reads
-// the node the previous pass left — the state document, and the lease node
-// beside it — from the store and never from memory, and writes one line. It
-// starts no execution, writes no message and writes no node: the launcher half
-// is P5.1d and the consumer half is P5.1f, and a pass that started an execution
-// today would be a run nobody asked for on a service that has no mailbox to
-// read it from. What the tick buys at this step is exactly what the owner-run
+// WHAT A PASS DOES. The tick's pass reads the node the previous pass left — the
+// state document, and the lease node beside it — from the store and never from
+// memory, and then carries out the launch requests that record already holds:
+// the attempts whose run never started, which the launcher half starts through
+// internal/orchestrator's own starter (P5.1d, ResidentRequests). It writes no
+// node, reads no message and starts no run the record does not already carry:
+// a node's writes stay with `fugaro orchestrator patch` and the owner's own
+// credential (D1223, D1241) — which is exactly why a re-issue is the one action
+// it carries out, the attempt having been committed before this process woke —
+// and the consumer half is P5.1f. What the tick buys is what the owner-run
 // Check 660 measures: the service exists, its autoscaling floor is 0, the
-// scheduler job that wakes it is enabled, and a forced tick over an empty
-// mailbox reads the store and starts nothing.
+// scheduler job that wakes it is enabled, and a forced tick reads the store and
+// starts nothing it was not already told to start.
 //
 // THE CALLER IS FENCED BY CLOUD RUN'S OWN IAM AND NOT BY A CHECK HERE. The
 // service is deployed with invoker_iam_disabled = false and one binding —
@@ -58,6 +61,21 @@
 // FUGARO_RTDB_URL. An installation whose deployment names one of them twice, or
 // names a fourth, is the module's business (orchestrator.tf): nothing here
 // reads a variable it does not need, and nothing here prints one.
+//
+// THE LAUNCHER HALF NEEDS THREE FACTS THIS DEPLOYMENT DOES NOT CARRY, and they
+// are named here because a reader of this file will look for them: the runs
+// bucket the run's claim and its sealed budget token live in, and the GCP
+// project and the region of the job an execution is started on. Those are the
+// names the run's own container already carries (FUGARO_BUCKET,
+// FUGARO_GCP_PROJECT and FUGARO_REGION, which internal/cli/exec.go and
+// imagecheck.go read inside a run), while orchestrator.tf sets the three above
+// and none of them. Nothing is invented to close that: this deployment's
+// launcher is built with no seam at all and refuses a launch by naming the step
+// it has no seam for (orchestratorResidentLauncher), and the module's list is
+// held to this process's reads in both directions by
+// TestOrchestratorServiceEnvIsTheDeploymentsOwn. The wiring closes when
+// orchestrator.tf sets those three names on this service's container — P5.1b's
+// file, and reported in this change rather than widened into it.
 
 package cli
 
@@ -156,11 +174,31 @@ var orchestratorTest *orchestratorWiring
 
 // orchestratorConfig is one deployment's facts, as the builder below reads
 // them: the orchestrator id this revision serves, the store it reads the node
-// through, and the log its lines go to.
+// through, the launcher half a pass carries the node's launch requests out
+// with, and the log its lines go to.
 type orchestratorConfig struct {
-	id  string
-	db  orchestratorStore
-	log *slog.Logger
+	id     string
+	db     orchestratorStore
+	launch orchestrator.Launcher
+	log    *slog.Logger
+}
+
+// orchestratorResidentLauncher is the launcher half this deployment can build
+// (P5.1d), and it carries no seam at all: see this file's header for the three
+// facts orchestrator.tf does not set — the runs bucket, the GCP project and the
+// region — which are what the claim, the mint and the job start each need. The
+// launcher is built and served anyway rather than left nil, and the service is
+// not refused for it: its refusal names the step a launch is missing, which is
+// the fail-closed direction (internal/orchestrator's never.go states the same
+// rule for a path nobody has written yet), while a service that refused to
+// start over a launch it cannot make would take the read-only pass down with
+// it.
+//
+// It is a function rather than a literal at the field so that the day the
+// module carries those names, the seams are built in one place and this file's
+// header stops being the answer.
+func orchestratorResidentLauncher() *orchestrator.ResidentLaunch {
+	return &orchestrator.ResidentLaunch{}
 }
 
 // orchestratorServiceConfig builds the resident orchestrator's configuration
@@ -186,8 +224,11 @@ type orchestratorConfig struct {
 // WHAT IT DOES NOT READ is as much of the design as what it does. No region, no
 // GCP project, no bucket: the credentials service needs all three because it
 // serves runs and reads the installation's containers, and this process reads
-// one node of one database as its own service account. No URL of its own
-// either, which is the one place it differs from the other two processes: they
+// one node of one database as its own service account — and the launcher half,
+// which does need them, is built without a seam rather than out of names
+// nothing sets (orchestratorResidentLauncher, and this file's header). No URL
+// of its own either, which is the one place it differs from the other two
+// processes: they
 // verify their callers' Google ID tokens against their own URL as the audience,
 // and this one is fenced by Cloud Run's IAM rather than by a check here
 // (above), so the URL it is served on is the module's business and not this
@@ -250,7 +291,7 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 		// client's own error: that one quotes the URL.
 		return orchestratorConfig{}, userErr("%s: the database client could not be built (it must be https, and reachable as this revision's own service account)", envRTDBURL)
 	}
-	return orchestratorConfig{id: id, db: db, log: runner.NewLogger(errw)}, nil
+	return orchestratorConfig{id: id, db: db, launch: orchestratorResidentLauncher(), log: runner.NewLogger(errw)}, nil
 }
 
 // orchestratorProductionTokens is the one thing the builder needs that reaches
@@ -311,23 +352,36 @@ const orchestratorTickPath = "/tick"
 // test serve the pass from a store of its own, and it is why the fake beside
 // this file has a PutIfMatch that fails the test: the pass must not reach the
 // write half of the pair it holds.
+//
+// ServerNow is the third of the store's methods a pass reads, and it is the
+// database's own clock (rtdb.Client.ServerNow): the launcher half asks
+// internal/orchestrator's Plan whether an attempt's claim window has passed,
+// and D1230's rule is that no judgment under this subtree is made against this
+// machine's clock. ok is false before the store has answered anything, which
+// after the two reads above it never is.
 type orchestratorStore interface {
 	orchestrator.CAS
 	orchestrator.Reader
+	ServerNow() (time.Time, bool)
 }
 
 // residentOrchestrator is the resident orchestrator as the host serves it: the
-// node it serves and the one line a pass writes.
+// node it serves, the launcher half it carries the node's launch requests out
+// with, and the lines a pass writes.
 type residentOrchestrator struct {
-	id  string
-	db  orchestratorStore
-	log *slog.Logger
+	id     string
+	db     orchestratorStore
+	launch orchestrator.Launcher
+	log    *slog.Logger
 }
 
 // newResidentOrchestrator is the service the host serves with. It refuses a
 // configuration that is missing a piece rather than serving one that reads
 // nothing: the builder above is the only caller, and a nil store here would be
-// a deployment whose every tick answered with a panic.
+// a deployment whose every tick answered with a panic. A nil launcher is
+// refused for that same reason — a deployment that carries no launcher half
+// carries one that refuses, and nil is the absence this file would answer
+// about a launch request with.
 func newResidentOrchestrator(cfg orchestratorConfig) (*residentOrchestrator, error) {
 	if cfg.id == "" {
 		return nil, fmt.Errorf("no orchestrator id")
@@ -335,10 +389,13 @@ func newResidentOrchestrator(cfg orchestratorConfig) (*residentOrchestrator, err
 	if cfg.db == nil {
 		return nil, fmt.Errorf("no store to read %s's node through", orchestrator.SubtreeRoot)
 	}
+	if cfg.launch == nil {
+		return nil, fmt.Errorf("no launcher half: %s's launch requests would be read and neither started nor refused", orchestrator.SubtreeRoot)
+	}
 	if cfg.log == nil {
 		return nil, fmt.Errorf("no log for this process's one line per pass")
 	}
-	return &residentOrchestrator{id: cfg.id, db: cfg.db, log: cfg.log}, nil
+	return &residentOrchestrator{id: cfg.id, db: cfg.db, launch: cfg.launch, log: cfg.log}, nil
 }
 
 // ServeHTTP is the whole of what this service answers.
@@ -371,10 +428,11 @@ func (s *residentOrchestrator) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "the tick could not read this installation's node; see the service's log", http.StatusServiceUnavailable)
 		return
 	}
-	s.log.Info("tick read the node and ran no step",
+	s.log.Info(pass.line(),
 		"process", orchestratorProcessName, "orchestrator", pass.Orchestrator,
 		"rev", pass.Rev, "items", pass.Items, "intents", pass.Intents,
-		"lease_holder", pass.LeaseHolder, "lease_at", pass.LeaseAt)
+		"lease_holder", pass.LeaseHolder, "lease_at", pass.LeaseAt,
+		"requests", pass.Requests, "carried", pass.Carried, "refused", pass.Refused, "left", pass.Left)
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(pass); err != nil {
 		// The body is a convenience for whoever forced the tick by hand; the
@@ -417,10 +475,35 @@ type orchestratorPass struct {
 	// themselves rather than a fact this line remembered.
 	LeaseHolder string `json:"lease_holder"`
 	LeaseAt     string `json:"lease_at,omitempty"`
+	// Requests is how many launch requests the node's own record held — the
+	// attempts whose run never started — and Carried is how many of them this
+	// pass started. Refused is the requests it could not carry out, each one
+	// logged with its own line, and Left is the actions the plan derived that
+	// ARE a write's: a first launch, a retry, an abandon. Requests is
+	// Carried + Refused, and Left is none of them: what the record does not
+	// hold an attempt for is a node write, and this process writes no node
+	// (D1223, D1241) — the numbers are here so that a person forcing a tick can
+	// see the difference without reading the state.
+	Requests int `json:"requests"`
+	Carried  int `json:"carried"`
+	Refused  int `json:"refused"`
+	Left     int `json:"left"`
+}
+
+// line is the one line an operator reads to see what a tick came to. It is the
+// same sentence for every pass that started nothing — which includes a pass
+// whose requests were all refused, because a refusal is a fact about the
+// deployment and has a line of its own — and a different one for a pass that
+// started a run, where "ran no step" would be the wrong thing to say.
+func (p orchestratorPass) line() string {
+	if p.Carried > 0 {
+		return "tick read the node and started the launch requests it holds"
+	}
+	return "tick read the node and ran no step"
 }
 
 // tick is one pass: read the node the previous pass left, read the lease beside
-// it, and run no step.
+// it, and carry out the launch requests that record already holds.
 //
 // Everything it reads comes from the store. There is no state in this process
 // between passes — Cloud Run keeps an instance alive between ticks and gives it
@@ -433,12 +516,22 @@ type orchestratorPass struct {
 // is a listing's read of the lease, taken without a claim and without a clock
 // of this process's own.
 //
+// THE LAUNCHER HALF (P5.1d) is the step after them: the requests the record
+// holds, through internal/orchestrator's own Plan and Starter — ResidentRequests
+// is the split, and the re-issues are what a pass holding a launcher and no
+// commit can carry out. The plan is read under the ZERO Caps, and that is the
+// fail-closed direction rather than an omission: the guardrails live in the
+// installation's published policy, which this revision does not read (the
+// header's three names are not where it lives), and a pass that cannot read a
+// cap plans no first launch — while the re-issues still come back, an attempt
+// that was committed and counted spending nothing a cap is there to bound.
+//
 // WHAT IT DOES NOT DO is the rest of section 6's list as this step can hold it:
 // no write to any node (there is no PutIfMatch on this path), no message read or
-// written (P5.1f), no execution started (P5.1d), no secret, no IAM, no deploy.
-// The test beside this file holds the first of those the only way it can be
-// held: the store it serves with refuses a write, so a pass that reached for
-// one fails rather than passes.
+// written (P5.1f), no secret, no IAM, no deploy, and no execution besides the
+// ones a person's patch already committed. The test beside this file holds the
+// first of those the only way it can be held: the store it serves with refuses
+// a write, so a pass that reached for one fails rather than passes.
 func (s *residentOrchestrator) tick(ctx context.Context) (orchestratorPass, error) {
 	state, err := orchestrator.ReadState(ctx, s.db, s.id, orchestrator.RoleOrchestrator)
 	if err != nil {
@@ -462,5 +555,56 @@ func (s *residentOrchestrator) tick(ctx context.Context) (orchestratorPass, erro
 		// (D1230), and neither is a revision's.
 		pass.LeaseAt = claim.At.UTC().Format(time.RFC3339)
 	}
+	s.carry(ctx, state, &pass)
 	return pass, nil
+}
+
+// carry takes the launch requests the node's own record holds and starts them
+// through the launcher half, and it is the whole of what this process does
+// besides reading.
+//
+// The clock it judges the ten-minute claim window with is the STORE's, not this
+// machine's (D1230): ok is false only before the store has answered anything,
+// and the two reads above are what made it answer — a pass that could not read
+// it carries out nothing rather than deciding against a container's clock,
+// which is the direction every refusal in this file takes.
+//
+// The requests are carried out in the plan's order and a refusal does not stop
+// the ones after it, which is where this differs from the daemon's own cycle
+// (tick.go's carry ends the cycle at the first action that cannot be carried
+// out): a daemon's cycle has a state it is writing and a refusal there means
+// the node moved under it, while each request here is an independent run — one
+// whose claim another launcher holds must not hide the three beside it — and
+// nothing this process holds changes between them.
+//
+// The RunView is empty for the same reason the Caps are zero: the runs bucket
+// is not one of the three names this revision is given, so a run id reads as
+// one that never started, and what makes that safe is the re-issue's own shape
+// — the same run id, never a second one, with the ten-minute window and the
+// launcher's start seam in front of it (internal/orchestrator's
+// resident_launch.go says where each fence stands).
+func (s *residentOrchestrator) carry(ctx context.Context, state orchestrator.State, pass *orchestratorPass) {
+	now, ok := s.db.ServerNow()
+	if !ok {
+		s.log.Warn("the database's clock could not be read, so this tick carried out no launch request",
+			"process", orchestratorProcessName, "orchestrator", s.id)
+		return
+	}
+	requests, others := orchestrator.ResidentRequests(state, orchestrator.RunView{}, orchestrator.Caps{}, now)
+	pass.Requests, pass.Left = len(requests), len(others)
+	// A resident pass's starter carries a launcher and nothing else: the attempt
+	// it starts was committed by somebody's patch, and an action that wanted a
+	// write would meet Starter.begin's own refusal rather than a run nothing
+	// recorded.
+	starter := orchestrator.Starter{Launcher: s.launch}
+	for _, a := range requests {
+		if _, err := starter.Start(ctx, state, a, now); err != nil {
+			pass.Refused++
+			s.log.Warn("a launch request the node holds was not carried out",
+				"process", orchestratorProcessName, "orchestrator", s.id,
+				"item", a.ItemID, "run", a.RunID, "error", oneLine(err.Error()))
+			continue
+		}
+		pass.Carried++
+	}
 }
