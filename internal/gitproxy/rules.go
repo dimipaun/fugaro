@@ -207,7 +207,7 @@ type Request struct {
 	// of the caller's path (G13), and the revision is the one segment of the
 	// commit route that is not a name this file can derive: the adapter's own
 	// resolveFullHash asks for it (bitbucket.resolveFullHash) and the
-	// classification has already held it to a hex hash (validRev) before it is
+	// classification has already held it to a hex hash (validHash) before it is
 	// put here.
 	Rev string
 	// LFS names the git-lfs call this request is (LFSBatch or LFSObject), and
@@ -217,7 +217,7 @@ type Request struct {
 	// and never from a segment of the caller's path (G13).
 	LFS LFSKind
 	// OID is the object a git-lfs object call names (LFSObject only), held to
-	// the shape an object id has (validOID) before it is put here. It is the
+	// the shape an object id has (validHash) before it is put here. It is the
 	// one segment of git-lfs's route that is a value rather than a name this
 	// file can derive, exactly as Rev is for the commit route, and it is here
 	// for the same reason: the upstream URL is rebuilt from what this file
@@ -548,7 +548,7 @@ func classifyLFS(method string, segs []string, query url.Values) (Request, error
 	switch {
 	case method == http.MethodPost && what == "batch":
 		return finishLFS(LFSBatch, segs[0], segs[1], "")
-	case method == http.MethodGet && what != "batch" && validOID(what):
+	case method == http.MethodGet && what != "batch" && validHash(what):
 		return finishLFS(LFSObject, segs[0], segs[1], what)
 	}
 	return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
@@ -563,26 +563,6 @@ func finishLFS(kind LFSKind, workspace, repo, oid string) (Request, error) {
 		return Request{}, &Refusal{Reason: ReasonCallNotAllowed}
 	}
 	return Request{Kind: KindFetch, Repo: canonical, LFS: kind, OID: oid}, nil
-}
-
-// validOID holds a git-lfs object id to the shape one has: lower-case hex, in
-// the widths the protocol's two hashes have. It is validRev's rule for the
-// same kind of value - an object id is a hash and not a name - and the widths
-// are bounded the same way: git-lfs writes the id the server's batch answer
-// gave it, and a value that is not a hash is one this proxy would be deciding
-// on without knowing what it names. Upper case is not accepted, and never
-// needs to be: git-lfs writes what it read, and Bitbucket answers lower case.
-func validOID(oid string) bool {
-	if len(oid) < 7 || len(oid) > 64 {
-		return false
-	}
-	for i := 0; i < len(oid); i++ {
-		c := oid[i]
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 // classifyREST reads the REST paths the Bitbucket adapter calls, given the
@@ -604,7 +584,7 @@ func classifyREST(method string, segs []string, query url.Values) (Request, erro
 	switch {
 	case len(tail) == 0 && method == http.MethodGet:
 		return restCall(CallRepoRead, repo, 0, query)
-	case len(tail) == 2 && tail[0] == "commit" && method == http.MethodGet && validRev(tail[1]):
+	case len(tail) == 2 && tail[0] == "commit" && method == http.MethodGet && validHash(tail[1]):
 		req, err := restCall(CallCommitRead, repo, 0, query)
 		if err != nil {
 			return Request{}, err
@@ -736,16 +716,22 @@ func validParam(name, value string) error {
 
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
-// validRev holds a commit route's revision to a hash: the adapter resolves an
-// abbreviated pull-request head hash to its full one (bitbucket.resolveFullHash)
-// and asks for nothing else. A revision that is not a hash would be a name
-// this proxy decided on without knowing what it names.
-func validRev(rev string) bool {
-	if len(rev) < 7 || len(rev) > 64 {
+// validHash holds a value this file carries out of the caller's path as a
+// name-less hash to the shape one has: lower-case hex, in the widths git's
+// hashes have (7, git's shortest abbreviation, through 64, a SHA-256). The two
+// values taken that way are the commit route's revision - the adapter resolves
+// an abbreviated pull-request head hash to its full one
+// (bitbucket.resolveFullHash) and asks for nothing else - and git-lfs's object
+// id, which a client writes exactly as the server's batch answer gave it. A
+// value that is not a hash would be a name this proxy decided on without
+// knowing what it names. Upper case is not accepted, and never needs to be:
+// both callers write what they read, and Bitbucket answers lower case.
+func validHash(v string) bool {
+	if len(v) < 7 || len(v) > 64 {
 		return false
 	}
-	for i := 0; i < len(rev); i++ {
-		c := rev[i]
+	for i := 0; i < len(v); i++ {
+		c := v[i]
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return false
 		}
