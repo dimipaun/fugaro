@@ -478,8 +478,10 @@ func TestDocsMobileOrchestratorChecksAreRegistered(t *testing.T) {
 // section 4.3 reader table says, because the key is a symmetric HMAC's: WHERE the
 // copy is (a Secret Manager container of the installation's own project), WHO
 // reads it (the orchestrator's account by `secretAccessor` on that one secret,
-// **and every project Owner or Editor**, whose basic roles carry
-// `secretmanager.versions.access` past any secret-level policy), and WHAT ends it
+// **and every project Owner**, whose basic role carries
+// `secretmanager.versions.access` past any secret-level policy — and not an
+// Editor, which carries no `versions.access`: the owner's ruling of 2026-10-29,
+// the later word over the design's own wider table), and WHAT ends it
 // (`fugaro pair revoke`, destroying the version — not rotating or disabling it,
 // which a holder of `versions.access` on the parent can still read).
 //
@@ -496,7 +498,9 @@ func TestDocsMobileOrchestratorPairingKeyNoteIsWritten(t *testing.T) {
 		"Secret Manager container",
 		"one container per installation and one version per pairing",
 		"secretAccessor",
-		"Owner or Editor",
+		"reads any secret's value past its own policy",
+		"roles/owner",
+		"An Editor is not one of them",
 		"secretmanager.versions.access",
 		"fugaro pair revoke",
 	}
@@ -539,9 +543,13 @@ func TestDocsMobileOrchestratorPairingKeyNoteIsWritten(t *testing.T) {
 	}
 
 	// The two halves the note is easy to write and still get wrong. The reader
-	// set is not "the orchestrator's account": a project Owner or Editor reads
-	// the value past the container's own policy, and the note exists because
-	// that is the sentence a reader does not expect.
+	// set is not "the orchestrator's account": a project Owner reads the value
+	// past the container's own policy, and the note exists because that is the
+	// sentence a reader does not expect. The second half is the correction the
+	// wider sentence needs — an Editor carries no `versions.access` (the owner's
+	// ruling of 2026-10-29), so a note that lumps the two basic roles together
+	// states a false reader and hides the Editor's own grant, which is exactly
+	// what `doctor`'s reader check refuses to do.
 	for _, doc := range []struct {
 		path string
 		body string
@@ -551,7 +559,10 @@ func TestDocsMobileOrchestratorPairingKeyNoteIsWritten(t *testing.T) {
 		{"SECURITY.md", security},
 	} {
 		if !strings.Contains(doc.body, "reads any secret's value past its own policy") {
-			t.Errorf("%s does not state that a project Owner or Editor reads any secret's value past its own policy: `secretAccessor` on the orchestrator's account is not the only reader (the credentials-service reconciliation's F3), and a note that names only the grant overstates the fence", doc.path)
+			t.Errorf("%s does not state that a project Owner reads any secret's value past its own policy: `secretAccessor` on the orchestrator's account is not the only reader (the credentials-service reconciliation's F3), and a note that names only the grant overstates the fence", doc.path)
+		}
+		if !strings.Contains(doc.body, "An Editor is not one of them") {
+			t.Errorf("%s does not say an Editor is not a reader of every secret: `roles/editor` carries no `secretmanager.versions.access` (the owner's ruling of 2026-10-29, `doctor`'s reader check), so the design's wider table cannot be repeated as it stands", doc.path)
 		}
 	}
 	// And the deletion is a destroy rather than a disable, which is the one
