@@ -89,8 +89,9 @@ claude_accounts:
 credentials:
   - { name: openrouter-main, type: openrouter }
   - { name: claude-one, type: claude-oauth }
+  - { name: anthropic-one, type: anthropic }
 pools:
-  - { name: claude-pool, strategy: round-robin, members: [claude-one, vertex] }
+  - { name: claude-pool, strategy: round-robin, members: [claude-one, anthropic-one] }
 crafts:
   coder: { model: deepseek-v4-1, access: openrouter-main }
   senior-review: { model: claude-opus-5-5, access: claude-pool }
@@ -157,7 +158,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	// operator's own and stays in their config after it has been published to
 	// the node (nothing here reads it again, but Shared must not be the thing
 	// that clears it).
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil || lc.CommitName == "" || lc.CommitEmail == "" || len(lc.Credentials) != 2 || len(lc.Pools) != 1 || lc.Crafts.Coder.Access != "openrouter-main" {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || len(lc.ClaudeAccounts) != 1 || lc.Routing == nil || lc.Routing.Claude == nil || lc.Repos["acme/web"].BaseBranch != "main" || lc.BaseBranch != "trunk" || lc.Build.ServiceAccount == "" || lc.UpdateCheck == nil || lc.CredentialsService == nil || lc.CommitName == "" || lc.CommitEmail == "" || len(lc.Credentials) != 3 || len(lc.Pools) != 1 || lc.Crafts.Coder.Access != "openrouter-main" {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -642,7 +643,7 @@ func TestSharedDropsCredentialsPoolsAndCrafts(t *testing.T) {
 	if s.Credentials != nil || s.Pools != nil || s.Crafts != (config.Crafts{}) {
 		t.Errorf("shared = %+v %+v %+v", s.Credentials, s.Pools, s.Crafts)
 	}
-	if len(lc.Credentials) != 2 || len(lc.Pools) != 1 || lc.Crafts.Coder.Access == "" {
+	if len(lc.Credentials) != 3 || len(lc.Pools) != 1 || lc.Crafts.Coder.Access == "" {
 		t.Errorf("the receiver changed: %+v %+v %+v", lc.Credentials, lc.Pools, lc.Crafts)
 	}
 	// A published object that carries them is not merged back in either: what

@@ -512,7 +512,7 @@ func TestAccountsAddDeployLineOnlyClaimsADeploymentForChanged(t *testing.T) {
 	lc := &localcfg.Config{Profiles: map[string]config.JobProfile{"standard": {Provider: "github"}}}
 	job := gcp.ProjectJobName("standard", "github", "team-a")
 	line := func(state initflow.State, detail string) string {
-		return accountsAddDeployLine(lc, "standard", "team-a", initflow.StageResult{Name: initflow.Installation, State: state, Detail: detail})
+		return accountsAddDeployLine(lc, "", "standard", "team-a", initflow.StageResult{Name: initflow.Installation, State: state, Detail: detail})
 	}
 
 	got := line(initflow.Changed, "deployed the job set")
@@ -541,5 +541,78 @@ func TestAccountsAddDeployLineOnlyClaimsADeploymentForChanged(t *testing.T) {
 				t.Errorf("%s: %q does not carry the stage's reason %q", tc.state, got, tc.detail)
 			}
 		})
+	}
+}
+
+// secondAppRepoInConfig adds a repository on a second GitHub App to the local
+// config a rig selected: the profile's job is composed from the one App ID a
+// project's github repositories record, and two of them are a job that cannot be
+// composed at all, so this is the act that leaves a default profile with no job.
+func secondAppRepoInConfig(t *testing.T, path string) {
+	t.Helper()
+	lc, err := localcfg.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.Repos["owner/repo-b"] = localcfg.Repo{Provider: "github", BaseBranch: "main", Workflows: []string{"web"}, GitHubAppID: "987654321"}
+	data, err := lc.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAccountsAddDoesNotWriteAJobForAHeldDefaultProfile: the hold `fugaro
+// update` applies to a default profile it can no longer compose applies to this
+// door too (the owner's ruling of 2026-11-16 on S5), so no door refuses an
+// installation another door converges, and no door writes a default profile
+// another holds back.
+//
+// The installation is the one the first half of the test converges, whose record
+// holds the standard profile's job; the act is a repository added on a second
+// GitHub App, after which the spec composes no job for that profile at all. What
+// this door writes for the held profile is nothing: the jobs the record holds
+// are kept whole (infra.CarriedProjectJobs), the profile stays stated by the
+// config and named by the node, and the account this command adds is declared
+// and stored as it always was. Its own job on that profile is the one thing the
+// hold defers — a job is composed from the profile, and this config composes
+// none — so it arrives with the first run after the config can compose the
+// profile again, which is what the carry's own line says.
+//
+// Mutation (run, restore): compose with installOptions instead of installSpec
+// (accounts_add_converge.go's door), and this door and the removal's own below
+// both fail on the refusal installOptions raises for a config that records two
+// GitHub App IDs.
+func TestAccountsAddDoesNotWriteAJobForAHeldDefaultProfile(t *testing.T) {
+	r := newAddRig(t)
+	r.add(t, "team-a", "--repos", "owner/repo-a")
+	deployed := r.projectJobs(t)
+	if len(deployed) == 0 {
+		t.Fatalf("the first run deployed no job at all, so this test has no record to hold")
+	}
+
+	secondAppRepoInConfig(t, r.cfg)
+	out, _ := r.add(t, "team-b", "--repos", "owner/repo-a")
+
+	kept, want := maps.Clone(r.projectJobs(t)), maps.Clone(deployed)
+	if !reflect.DeepEqual(kept, want) {
+		t.Errorf("the door wrote a job set of its own for a profile it cannot compose:\n--- written\n%v\n--- the record the installation holds\n%v\n%s",
+			slices.Sorted(maps.Keys(kept)), slices.Sorted(maps.Keys(want)), out)
+	}
+	// The hold is not the profile's removal: the config still states it and the
+	// node this run published still names it, so a run of the project still
+	// resolves the profile it names.
+	if _, ok := r.addLocal(t).Profiles[projectpolicy.DefaultProfileName]; !ok {
+		t.Errorf("the door dropped profiles.%s from the local config: %v",
+			projectpolicy.DefaultProfileName, slices.Sorted(maps.Keys(r.addLocal(t).Profiles)))
+	}
+	if pr, ok := r.policy(t).Profiles[projectpolicy.DefaultProfileName]; !ok || !slices.Contains(pr.ClaudeAccounts, "team-b") {
+		t.Errorf("the published profiles.%s is %+v, want the profile this run serves team-b on", projectpolicy.DefaultProfileName, pr)
+	}
+	// The command's own work, which the hold does not touch.
+	if _, ok := r.addLocal(t).ClaudeAccounts["team-b"]; !ok {
+		t.Errorf("the door added no team-b declaration to the local config: %v", slices.Sorted(maps.Keys(r.addLocal(t).ClaudeAccounts)))
 	}
 }

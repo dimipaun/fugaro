@@ -155,6 +155,16 @@ const (
 	// grantRules are written with, and a shift would rewrite all of them.
 	// ReportsAccountID says why the account is its own kind.
 	toReports
+	// The resident orchestrator's own kind (mobile plan task P5.1b;
+	// docs/mobile/design/always-on-orchestrator.md §4.3), appended rather than
+	// inserted like the reports job's bit above and for the same reason.
+	// OrchestratorAccountID says why the account is its own kind and not one of
+	// FugaroAccounts.
+	toOrchestrator
+	// The build identity's own kind (B5, D2301), appended for the reports
+	// job's reason. It is not a job account of a repository and not a person:
+	// BuildIdentityAccountID says why it is a kind of its own.
+	toBuildIdentity
 )
 
 // customKey is how grantRules names a custom role of the installation (by its
@@ -172,7 +182,15 @@ const customKey = "custom:"
 // differ.
 var grantRules = map[string]map[string]who{
 	"google_project_iam_member": {
-		customKey + "fugaroLauncher":       toPeople,
+		// toOrchestrator is the resident orchestrator's bit (mobile plan task
+		// P5.1b, docs/mobile/design/always-on-orchestrator.md §4.3): the row is
+		// the launcher's own, and the design's table says the resident
+		// orchestrator holds "the launcher's grants assembled from resources
+		// that already exist" — so the same role is granted to the account one
+		// binding at a time rather than by adding it to var.launchers, which is
+		// what the eleventh never-rule forbids and what would widen this row's
+		// meaning to "a list" instead of "a role".
+		customKey + "fugaroLauncher":       toPeople | toOrchestrator,
 		customKey + ViewerRole:             toPeople,
 		customKey + "fugaroBuildSubmitter": toPeople | toAccounts,
 		customKey + "fugaroHistory":        toAccounts,
@@ -247,7 +265,15 @@ var grantRules = map[string]map[string]who{
 		"roles/serviceusage.serviceUsageConsumer": toPeople | toAccounts,
 	},
 	"google_service_account_iam_member": {
-		customKey + "fugaroTokenMinter": toPeople,
+		// toOrchestrator is the design's token-minter row (§4.3): "may mint is
+		// exactly may launch", and the resident orchestrator launches runs, so
+		// it holds the same role on the same signer the people on var.launchers
+		// and var.operators hold. It is the widest grant in that table and the
+		// design says so rather than pretending otherwise (E4), which is why
+		// the bit is here on purpose: an account that may mint any claim set
+		// for any uid is one the review has to see classified, not one a
+		// widened toAccounts row would quietly accept.
+		customKey + "fugaroTokenMinter": toPeople | toOrchestrator,
 		"roles/iam.serviceAccountUser":  toPeople | toAccounts,
 		// D75's one-time impersonation setup: the operators, and nobody else,
 		// may assume the deployer account. On an account, for people — the
@@ -298,7 +324,7 @@ var grantRules = map[string]map[string]who{
 		// built from that account (reportsWriteGrant). Without that check the
 		// bit would let a plan hand this account objectUser on runs/ — the
 		// launchers' own write area — or on another bucket.
-		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports,
+		"roles/storage.objectUser": toPeople | toAccounts | toCatalogCheck | toReports | toOrchestrator,
 		// The intake's bit is on the reader row and not on the writer's: what
 		// the class reads is the derived admin list, one object of the runs
 		// bucket (intakeAdminListGrant checks the bucket AND the object), and
@@ -310,7 +336,7 @@ var grantRules = map[string]map[string]who{
 		// are on the two rows and not one: the read is objectViewer, and a
 		// grant of the write role under the read condition (or the reverse) is
 		// refused rather than read as either.
-		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports,
+		"roles/storage.objectViewer": toPeople | toAccounts | toCoordinator | toIntake | toReports | toOrchestrator,
 	},
 	"google_artifact_registry_repository_iam_member": {
 		customKey + "fugaroTagMover":    toAccounts,
@@ -318,25 +344,35 @@ var grantRules = map[string]map[string]who{
 		"roles/artifactregistry.writer": toPeople | toAccounts,
 	},
 	"google_secret_manager_secret_iam_member": {
-		// The credentials service's bundle is read by its own account
-		// (credentials.tf, the Q6 ruling), so this one row accepts the service
-		// account beside the jobs: it is the account's only Secret Manager
-		// reach. The coordinator's writer is here for the same shape
-		// (coordinator plan P5): the GitHub App's key, on the one secret its
-		// job mounts, is the reader credential P2 defines and nothing more.
+		// The credentials service's own account reads Secret Manager in two
+		// places, and this one row accepts both: its bundle, in credentials.tf
+		// (the Q6 ruling), and — D2074 — one secretAccessor per workflow secret
+		// a repository's job mounts, in modules/workflow/sa.tf, which is how
+		// the service reads the container a run asks it for (B3.4). So this
+		// row accepts the service account beside the jobs. The coordinator's
+		// writer is here for the same shape (coordinator plan P5): the GitHub
+		// App's key, on the one secret its job mounts, is the reader credential
+		// P2 defines and nothing more.
 		//
 		// What this row decides is the principal KIND and the role, and not
 		// which container: the cover reads no secret_id for this type, so a
 		// hand-edited plan that pointed one of these principals at another of
 		// the run's containers would be covered. The container is the module's
 		// own to get right and its own plan tests to hold (the installation
-		// root asserts the coordinator's one grant names the App key's secret).
+		// root asserts the coordinator's one grant names the App key's secret,
+		// and deploy/terraform's TestServiceWorkflowSecretGrantsMatchTheJobsMounts
+		// holds D2074's set to the containers the job's own env mounts).
 		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},
 	"google_cloud_run_v2_job_iam_member": {
-		customKey + "fugaroJobRunner": toPeople | toAccounts,
+		// toOrchestrator is the design's run.jobs.run / run.jobs.runWithOverrides
+		// row (§4.3): the resident orchestrator starts this installation's jobs,
+		// which is what a launch is. It is the one row of that table whose grant
+		// the installation root writes rather than the module, because the jobs
+		// are the root's project jobs.
+		customKey + "fugaroJobRunner": toPeople | toAccounts | toOrchestrator,
 		"roles/run.invoker":           toAccounts,
 	},
 	// The credentials service (C1.18): each job account may invoke it, and —
@@ -367,8 +403,19 @@ var grantRules = map[string]map[string]who{
 	// without the invoker bit the front end refuses it before the container
 	// runs. It is Fugaro's own account, on the same switch as the service, and
 	// it comes with nothing wider.
+	//
+	// toBuildIdentity is B5's (D2301), the verifier's fact one class over: the
+	// project's build identity (google_service_account.build_identity, whose
+	// address the module hands the service as FUGARO_BUILD_ACCOUNTS) is the
+	// build route's one caller class, and the class is asked for the credential
+	// a catalog build runs on, so without the invoker bit the front end refuses
+	// the build before the container can decide its class. It is Fugaro's own
+	// account, created by the same apply that turns the service on, and it
+	// comes with nothing wider — no actAs, no project role, and no second
+	// resource type: the registry roles a catalog build needs to push are added
+	// to this table deliberately, in the task that grants them.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -494,6 +541,31 @@ const CoordinatorAccountID = "fugaro-coordinator"
 // create the account and write its address into the owner's published policy.
 const VerifierAccountID = "fugaro-verifier"
 
+// BuildIdentityAccountID is the project's build identity (internal/infra's
+// BuildIdentityAccountID; B5, D2301): the ONE account a project's catalog
+// builds run as, created in the installation's project by the same apply that
+// turns the credentials service on, and the ONE caller class of its build
+// route (toBuildIdentity). It is NOT among FugaroAccounts, for the verifier
+// account's reason: a catalog build may invoke that one service and do nothing
+// else of this installation's, so a grant this table does not carry for a
+// build identity is a widening nobody announced.
+//
+// It is a build identity and not a repository's build account
+// (gcp.BuildServiceAccountID, derived per repository): the per-repository one
+// dies with the repository's root while a catalog entry may name repositories
+// whose root is gone (M2), which is the whole of why this account exists.
+// The two are different names on purpose — `fugaro-build-identity` against the
+// derived `fugaro-b-<slug>-<hash>` — so a plan can never confuse one for the
+// other, and this constant is pinned to internal/infra's by
+// TestCoverNamesAreTheCodes.
+//
+// The ID is a LITERAL in the module (build_identity.tf's account_id) and a
+// constant here, which is the verifier's own arrangement: the address is a fact
+// of the configuration and can be named before the apply, so a later task can
+// hand it to CatalogBuildSpec and the module can render it into the service's
+// account sets (FUGARO_BUILD_ACCOUNTS) as one value read twice.
+const BuildIdentityAccountID = "fugaro-build-identity"
+
 // CatalogCheckAccountID is the project's catalog check job account (D1148
 // task (ii)), the one modules/installation/catalogcheck.tf creates in the
 // installation's project; the module's variable validation pins the account ID
@@ -618,6 +690,32 @@ const MCPServerStorePrefix = "fugaro-mcpauth-"
 // today, and the pin lands with that stage's tfvars.
 const IntakeAccountID = "fugaro-intake"
 
+// OrchestratorAccountID is the resident orchestrator's own service account
+// (mobile plan task P5.1b; docs/mobile/design/always-on-orchestrator.md §4.3),
+// the one modules/installation/orchestrator.tf creates in the installation's
+// project and the resident service runs as. It is NOT among FugaroAccounts, for
+// the front door's and the intake's reason: as one of them every toAccounts row
+// would have accepted it, and this is the account that holds
+// iam.serviceAccounts.signJwt on the budget signer — "may mint is exactly may
+// launch", and signJwt signs any claim set for any uid, so as a job account it
+// could be handed every reach a job has on top of it.
+//
+// It is a kind of its own (toOrchestrator) whose rows are the design's table
+// and nothing else: the launcher's project role, the fugaroJobRunner role on
+// the installation's jobs, the two runs-bucket grants the launchers hold, and
+// the token-minter role on the signer account. The design's eleventh
+// never-rule — never a member of var.launchers — is what the bit makes
+// checkable: the list is a member set, and a plan that put this account on it
+// would grant it roles/firebasedatabase.viewer, roles/datastore.viewer and
+// roles/serviceusage.serviceUsageConsumer, none of which any toOrchestrator row
+// carries.
+//
+// The literal is pinned to internal/infra's OrchestratorAccountID by
+// internal/infra's own test (TestCoverNamesAreTheCodes), the way
+// tf.CoordinatorAccountID is pinned to infra.CoordinatorAccountID, because this
+// package cannot import internal/infra.
+const OrchestratorAccountID = "fugaro-orch"
+
 // IntakeSecretsRole and SecretListerRole are the dynamic class's two custom
 // roles (intake.tf, D1931, DS2.2). They are two and not one because an IAM
 // binding's condition cannot be lifted for a single permission of its role:
@@ -645,7 +743,10 @@ const (
 // own account (MCPServerAccountID), for the same reason (toCoordinator,
 // toCatalogCheck, toMCP). The reports job's account (ReportsAccountID) is not
 // among them either: its read of runs/ and its write of reports/ are a reach
-// no job holds, so it is a kind of its own too (toReports).
+// no job holds, so it is a kind of its own too (toReports). The project's
+// build identity (BuildIdentityAccountID) is not among them for the same
+// reason (toBuildIdentity): its reach is the credentials service's invoker bit
+// and nothing a job of any repository holds.
 var (
 	FugaroRoles    = []string{"fugaroLauncher", ViewerRole, "fugaroJobRunner", "fugaroBuildSubmitter", "fugaroTagMover", "fugaroTokenMinter", "fugaroHistory", "fugaroReaper", "fugaroPreloadBuilder", CloudAssetRole, CredentialsDatabaseRole, CatalogLeaseRole, WorkspaceReadRole, IntakeSecretsRole, SecretListerRole, DeployerRole, DeployerStorageRole, DeployerSecretRole, DeployerAccountRole, DeployerAPIKeyRole, DeployerRepositoryRole, DeployerRunJobRole, DeployerSchedulerRole, MCPStateReadRole}
 	FugaroAccounts = []string{"fugaro-scheduler", "fugaro-history", "fugaro-token-signer", "fugaro-reaper", "fugaro-preload"}
@@ -999,6 +1100,14 @@ func (c Cover) isReportsMember(m string) bool {
 	return p != "" && m == "serviceAccount:"+ReportsAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
+// isBuildIdentityMember is whether m is exactly the project's build identity as
+// an IAM member, in the installation's project: the account build_identity.tf
+// creates (var.project, BuildIdentityAccountID).
+func (c Cover) isBuildIdentityMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+BuildIdentityAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
 // isMCPMember is whether m is exactly the front door's own account as an IAM
 // member, in the installation's project: the account coordinator.tf creates
 // and the service runs as (MCPServerAccountID).
@@ -1013,6 +1122,20 @@ func (c Cover) isMCPMember(m string) bool {
 func (c Cover) isIntakeMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+IntakeAccountID+"@"+p+".iam.gserviceaccount.com"
+}
+
+// isOrchestratorMember is whether m is the resident orchestrator's own account
+// as an IAM member, in the installation's project: the account
+// orchestrator.tf creates and the resident service runs as
+// (OrchestratorAccountID).
+//
+// It is the installation's project and not the Firebase one, although one of
+// the account's rows is bound on the Firebase root's signer: the account itself
+// is this module's (var.project), and the grant's own project is what the
+// binding names, not what the principal is.
+func (c Cover) isOrchestratorMember(m string) bool {
+	p := c.installationProject()
+	return p != "" && m == "serviceAccount:"+OrchestratorAccountID+"@"+p+".iam.gserviceaccount.com"
 }
 
 // mcpauthStoreBucket is the name of D935's store in this cover's installation
@@ -1299,9 +1422,12 @@ var knownCommands = [][2][]string{
 // coordinator's own account, which is the read mint's second class (BB5), and
 // — only on one that deploys review-only jobs — those jobs' {profile,
 // provider, account} triples, which are the class the service admits a review
-// caller as (C3.9a), and — only on one whose roster names a launcher — the
+// caller as (C3.9a), — only on one whose roster names a launcher — the
 // addresses the launcher class admits (D1938, F25), which is the class the
-// grant route and the intake answer to. No secret ID and no secret value,
+// grant route and the intake answer to, and — only on an installation that
+// runs the service at all — the address of the project's build identity (B5,
+// D2301), which is the class the build route admits and the only list that
+// class is on. No secret ID and no secret value,
 // because the loader
 // derives the container from the project name and reads it as the service's own
 // account, and both job sets are derived from their triples rather than
@@ -1319,6 +1445,7 @@ var credentialsServiceEnv = []string{
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
 	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
 	"FUGARO_LAUNCHER_ACCOUNTS", "FUGARO_SHARED_JOB_ACCOUNTS",
+	"FUGARO_BUILD_ACCOUNTS",
 }
 
 // intakeServiceArgs and intakeServiceEnv are the argv and the environment
@@ -1803,6 +1930,15 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
 		why = c.jobsCondition(rc.Change)
 	}
+	// The resident orchestrator's token-minter row is the one row of its table
+	// whose TARGET is part of what makes it section 4.3's: the bit opens the
+	// cell by member and by role, and this closes it again to the signer
+	// account of this run. A plan that moved the role to another account would
+	// otherwise hand the account that may mint a token for any uid the reach of
+	// every job account of the installation.
+	if why == "" && t == "google_service_account_iam_member" && c.isOrchestratorMember(str(rc.Change.After["member"])) {
+		why = c.orchestratorMinterGrant(rc.Change)
+	}
 	if why == "" {
 		why = c.deployerGrant(t, rc.Change, dep.accounts[modulePrefix(rc)])
 	}
@@ -2046,6 +2182,30 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 			// a plan that listed the intake's address would otherwise be able
 			// to grant it a launcher's or an operator's role.
 			kind = toIntake
+		case c.isOrchestratorMember(m):
+			// ... and the resident orchestrator's own account (mobile plan task
+			// P5.1b): its own kind, whose four rows are the design's §4.3 table
+			// and nothing else — the launcher's project role, the job runner's
+			// role on the installation's jobs, the runs bucket's conditional
+			// write and its unconditional read, and the token-minter role on
+			// the signer account — so every other grant it is given is refused
+			// and the update that carries one asks its owner. Read here, before
+			// the review screen's list, for the deployer's reason: a plan that
+			// listed this account's address would otherwise be able to grant it
+			// any toAccounts row's role, and the design's eleventh never-rule
+			// is precisely that it is never a launcher.
+			kind = toOrchestrator
+		case c.isBuildIdentityMember(m):
+			// ... and the project's build identity (B5, D2301): its own kind,
+			// which ONE row accepts — the invoker bit on the credentials
+			// service — so every other grant it is given, and every other role
+			// a plan might reach for, is refused and the update that carries
+			// them asks its owner. Read here, before the review screen's list,
+			// for the deployer's reason: a plan that listed its address would
+			// otherwise be able to grant it a launcher's or an operator's role,
+			// and the whole point of the account is that a catalog build
+			// reaches the one service and nothing else of this installation's.
+			kind = toBuildIdentity
 		case slices.Contains(c.Listed, m):
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
@@ -2077,6 +2237,20 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole, creates
 		}
 		if kind == toCredentials {
 			return "a computed role to the credentials service's account: it holds the bundle's accessor, the dynamic class's prefix accessor and the shared lister, named, and the prefix condition is what narrows the second (D1931, Q6)"
+		}
+		// The resident orchestrator is refused a computed role as flatly as
+		// those two, and for their reason: the row below this one would accept
+		// a computed role whenever the plan creates ANY custom role of this
+		// module — a plan that created the intake's secret role beside the
+		// grant would then hand the orchestrator a project role nobody can
+		// name, and a project role of this tree is a project-wide reach (the
+		// intake's is create, delete and version-add for every container of the
+		// project, with the name-prefix condition this write has no room to
+		// check). The account's every row is written as a literal in
+		// orchestrator.tf for this reason, and a plan that computes one asks
+		// its owner.
+		if kind == toOrchestrator {
+			return "a computed role to the resident orchestrator's account: section 4.3's table is the whole of what it may hold, every row of it is written as a literal in orchestrator.tf, and a role nobody can name is one no reader of this plan can hold to that table"
 		}
 		if createsDeployerRole && typ == "google_project_iam_member" {
 			// The plan is creating one of the deployer's roles, so a computed
@@ -2366,6 +2540,49 @@ func (c Cover) deployerTokenCreator(ch Change) string {
 	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those two accounts alone", DeployerTokenCreatorRole, id, want)
 }
 
+// orchestratorMinterGrant says why a token-minter grant to the resident
+// orchestrator is not section 4.3's row, "" when it is or when the grant is not
+// this row at all. It exists for the deployer's reason one role over:
+// grantRules decides a grant by its MEMBER and its ROLE, and on
+// google_service_account_iam_member neither of them says WHICH account the role
+// is on — so without this rule a plan granting the resident orchestrator
+// fugaroTokenMinter on a job account, or on any other account of this run,
+// rides the ordinary confirmation, and iam.serviceAccounts.signJwt on an
+// account IS that account: the self-signed JWT it signs is an access token for
+// the issuer, so the resident orchestrator could be the job whose secrets are
+// the model credentials (section 6 rule 5) or any other identity of the
+// installation. The row is the budget signer account of this run and nothing
+// else, in the project the role itself is declared in.
+//
+// Which of this run's projects the signer lives in is not the cover's to
+// derive — the design's Firebase backend may be the installation's own project
+// or one of its own, and the module takes the project from
+// var.orchestrator.firebase_project — so the row is held to that ACCOUNT of
+// this run, in one of this run's projects. The account has to be named: the
+// module writes it out (orchestrator.tf), and a plan that leaves it unknown is
+// a plan whose account nobody can check.
+func (c Cover) orchestratorMinterGrant(ch Change) string {
+	key, ok := c.roleKey(str(ch.After["role"]))
+	if !ok || key != customKey+"fugaroTokenMinter" {
+		return ""
+	}
+	// The account ID the Firebase root's signer carries (modules/firebase/iam.tf,
+	// FugaroAccounts' own spelling of it).
+	const signerID = "fugaro-token-signer"
+	if unknown(ch, "service_account_id") {
+		return "a fugaroTokenMinter grant to the resident orchestrator whose account is not known: section 4.3's row is the budget signer account of this run, written out, and a plan that computes the account is one whose signer nobody can name"
+	}
+	id := str(ch.After["service_account_id"])
+	if m := saName.FindStringSubmatch(id); m != nil {
+		for _, p := range c.Projects {
+			if m[1] == p && m[3] == p && m[2] == signerID {
+				return ""
+			}
+		}
+	}
+	return fmt.Sprintf("grants fugaroTokenMinter on %s to the resident orchestrator: the design's row is the budget signer account of this run (%s), and signJwt on any other account makes the resident orchestrator that account — the job accounts holding the model credentials among them (section 4.3, section 6 rule 5)", id, signerID+"@<one of this run's projects>.iam.gserviceaccount.com")
+}
+
 // accountClause is one clause of a job or build account's bucket condition,
 // as gcp.BucketCondition writes it.
 var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/(runs|cache|locks|builds)/([a-z0-9][a-z0-9_-]*)/"\)$`)
@@ -2653,6 +2870,25 @@ func (c Cover) bucketCondition(rc ResourceChange, createdSAIDs, heldSAIDs map[st
 			}
 		}
 		return "grants objectUser on the bucket to a person under a condition that is not the launchers' runs/, tokens/ and issues/ condition"
+	case role == "roles/storage.objectUser" && c.isOrchestratorMember(str(ch.After["member"])):
+		// The resident orchestrator's write (mobile plan task P5.1b) is the
+		// launchers' own, byte for byte: runs/, tokens/ and issues/ of this
+		// run's bucket, under the same title and the same expression, so the
+		// account's reach is the list's rather than a second spelling of it that
+		// happens to look similar. It is a case of its own because the `person`
+		// case above is keyed on the review screen's list, and this account is
+		// deliberately not on it (the design's eleventh never-rule): falling
+		// through to the account case below would refuse the grant, which is
+		// the right answer for every other condition and the wrong one here.
+		for _, b := range c.Buckets {
+			if !gcp.ValidBucketName(b) {
+				continue
+			}
+			if (bucket == "" || bucket == b) && title == gcp.LauncherBucketConditionTitle && expr == gcp.LauncherBucketCondition(b) {
+				return ""
+			}
+		}
+		return "grants objectUser on the bucket to the resident orchestrator under a condition that is not the launchers' runs/, tokens/ and issues/ condition: the account's write area is the launchers' and the bucket root stays out of it, because the managed marker is written there (docs/mobile/design/always-on-orchestrator.md §4.3, §6 rule 2)"
 	case role == "roles/storage.objectUser":
 		if len(conds) == 0 {
 			return "grants objectUser on the bucket to an account with no condition"

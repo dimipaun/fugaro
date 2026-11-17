@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
@@ -454,13 +455,13 @@ func TestReposAddRefusesAnotherInstallationsDatabase(t *testing.T) {
 	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := execute(t, "project", "repos", "add", "github/acme/new"); err != nil {
+	if _, _, err := execute(t, "project", "repos", "add", "github/acme/new", "--allow-list-only"); err != nil {
 		t.Fatalf("repos add on the installation's own marked database was refused: %v", err)
 	}
 	own := f.db.Value(projectpolicy.PathShared())
 
 	f.db.Set(budget.PathMark, birchMark())
-	_, _, err := execute(t, "project", "repos", "add", "github/acme/second")
+	_, _, err := execute(t, "project", "repos", "add", "github/acme/second", "--allow-list-only")
 	refusedByTheOwnershipCheck(t, "project repos add", err, "nothing was added to the allow-list")
 	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
 		t.Errorf("the refusal is not the shared one: %v", err)
@@ -473,7 +474,7 @@ func TestReposAddRefusesAnotherInstallationsDatabase(t *testing.T) {
 
 	// Data and no mark at all: the same answer, from the other half.
 	f.db.Set(budget.PathMark, nil)
-	_, _, err = execute(t, "project", "repos", "add", "github/acme/third")
+	_, _, err = execute(t, "project", "repos", "add", "github/acme/third", "--allow-list-only")
 	refusedByTheOwnershipCheck(t, "project repos add", err, "nothing was added to the allow-list")
 	if !reflect.DeepEqual(f.db.Value(projectpolicy.PathShared()), own) {
 		t.Error("the refused edit rewrote the policy node with the mark removed")
@@ -816,5 +817,81 @@ func TestImageBuildRefusesADatabaseNamingAnotherProject(t *testing.T) {
 	}
 	if !reflect.DeepEqual(f.db.Value(budget.PathSpendGlobal(today())), spend) {
 		t.Error("the refused build moved the day's counters in the database naming another project")
+	}
+}
+
+// TestBitbucketTokenStatusRefusesAnotherInstallationsDatabase: a typed Bitbucket
+// token's write records the add-time check's answer in the project's credential
+// state (T11, R12) — the identity a run's own pull requests and comments are
+// signed with — so `fugaro creds set bitbucket-token--<name>` is a writer into
+// the budget database and asks the one ownership question before it writes
+// anything: the record, the bundle entry and the status are all three of them
+// this write's.
+//
+// It asks it before the VALUE is read, which is the part worth pinning here: a
+// token typed at a terminal for a database that turns out not to be this
+// installation's is a secret spent for nothing.
+func TestBitbucketTokenStatusRefusesAnotherInstallationsDatabase(t *testing.T) {
+	const name = "bitbucket-token--ci"
+	f := newBitbucketFixture(t, "", repoTokenAnswers())
+	f.seed(t, []byte(config.ClaudeOAuthToken+": "+credsValue(t, "existing")+"\n"))
+	args := setArgs(name, repoTokenFlags(name)...)
+
+	// The installation's own marked database: the write goes through, and what
+	// it leaves is the baseline the refusals below are read against — an
+	// assertion that nothing was written says nothing at all if this write wrote
+	// nothing in the first place.
+	if _, errOut, err := executeStdin(t, bitbucketTokenValue+"\n", args...); err != nil {
+		t.Fatalf("creds set %s against the installation's own marked database was refused: %v (stderr %q)", name, err, errOut)
+	}
+	if n := f.writes(); n != 1 {
+		t.Fatalf("%d version(s) written, want the first one to have gone through", n)
+	}
+	before := struct {
+		doc    string
+		cfg    string
+		status any
+		calls  int
+	}{f.value(t), f.configBytes(t), f.status(t, name), len(f.site.paths())}
+	if before.status == nil {
+		t.Fatal("the write recorded no status, so the refusals below are asserted against nothing")
+	}
+
+	// Another installation's mark.
+	f.db.Set(budget.PathMark, birchMark())
+	_, _, err := executeStdin(t, bitbucketTokenValue+"\n", args...)
+	refusedByTheOwnershipCheck(t, "creds set "+name, err, "nothing was written")
+	if err != nil && !strings.Contains(err.Error(), "one Firebase project serves one installation") {
+		t.Errorf("the refusal is not the shared one (the mark it found): %v", err)
+	}
+	refusedAWrite(t, f, name, before.doc, before.cfg, before.status, before.calls)
+
+	// Data and no mark at all: the other half of the same answer.
+	f.db.Set(budget.PathMark, nil)
+	_, _, err = executeStdin(t, bitbucketTokenValue+"\n", args...)
+	refusedByTheOwnershipCheck(t, "creds set "+name, err, "nothing was written")
+	refusedAWrite(t, f, name, before.doc, before.cfg, before.status, before.calls)
+}
+
+// refusedAWrite holds one refused typed token's write to having written nothing
+// at all: no bundle version, no record in the config, no status in the database
+// and not one call to Bitbucket — the last of which is what says the refusal came
+// before the value was read.
+func refusedAWrite(t *testing.T, f *bitbucketFixture, name, doc, cfg string, status any, calls int) {
+	t.Helper()
+	if n := f.writes(); n != 1 {
+		t.Errorf("%d bundle version(s) written, want the one the first write made", n)
+	}
+	if got := f.value(t); got != doc {
+		t.Errorf("the refused write changed the bundle document:\n%s", got)
+	}
+	if got := f.configBytes(t); got != cfg {
+		t.Errorf("the refused write changed the project config:\n%s", got)
+	}
+	if got := f.status(t, name); !reflect.DeepEqual(got, status) {
+		t.Errorf("the refused write changed the status of %s: %v", name, got)
+	}
+	if got := len(f.site.paths()); got != calls {
+		t.Errorf("the refused write asked Bitbucket %d more time(s): %v", got-calls, f.site.paths()[calls:])
 	}
 }

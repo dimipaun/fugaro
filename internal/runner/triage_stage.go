@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/rigor"
@@ -94,6 +95,63 @@ func (r *run) triageOn() bool {
 		return false
 	}
 	return r.baseCfg.Agent.TriageOn(r.reachedRigor())
+}
+
+// triageUnserved reports whether the call this round would make is one the run
+// already knows it cannot serve, so the round is skipped rather than asked
+// (runstore.TriageRound.Skipped). Every fact it reads is one the call path
+// itself reads, and none of them is a guess:
+//
+//   - The stage resolved to no Claude account (stageAccount), which for this
+//     run's shape means the published policy names none for it — its own
+//     claude_account_stages key, spelled and held back
+//     (config.AccountStageHeldBack), or the project's default_claude_account
+//     (resolveMixedStages).
+//   - The run's model path is the gateway's own api-key credential
+//     (servedAuth, gatewayOn): a switched or cascade run's upstream is the
+//     credentials service, which holds a key this run does not.
+//   - The stage's model is a Claude one (config.IsClaudeModel) that no
+//     provider route claims (config.ProviderFor over the same providers
+//     gatewayRoutes builds the gateway's routes from). Such a call is the one
+//     the gateway sends to the Anthropic upstream.
+//   - This run's environment holds no Anthropic key: envLookup of the very
+//     variable gatewayUpstream reads the upstream's APIKey out of, which is
+//     the condition internal/gateway refuses such a call on
+//     (forward.go's missingAnthropicKey).
+//
+// All four together are the shape of a keyless api-key run whose triage model
+// nothing routes: the gateway refuses the call itself, before it reaches any
+// service, and a refused call is a failed stage. So the round this clause stops
+// was never a round with a verdict in it — asking buys no verdict and loses the
+// rest of the loop, which is why the run does not ask.
+//
+// The clause covers that one shape and no other, and it errs toward asking:
+// a run that holds a key, a stage an account serves, a model a route claims and
+// a model that is no Claude one all return false here and make the call as
+// before, whatever answers. The rounds whose cause is a service's `Invalid API
+// key` reached a service, so they are failures and not skips.
+//
+// The two cases deliberately outside the clause are outside for their own
+// reasons: with the gateway off every call goes straight to Anthropic on the
+// run's own key, which agent.BuildEnv refuses the run over when it is missing
+// rather than handing the agent a call it cannot make; and a stage the run's
+// own account serves goes to Anthropic on that account's token, where the run's
+// key is nothing.
+func (r *run) triageUnserved() bool {
+	if r.stageAccount(stageTriage) != "" {
+		return false
+	}
+	if !r.gatewayOn() || r.servedAuth() != "api-key" {
+		return false
+	}
+	model := r.stageModel(stageTriage)
+	if !config.IsClaudeModel(model) {
+		return false
+	}
+	if _, _, onRoute := config.ProviderFor(r.modelProviders(), model); onRoute {
+		return false
+	}
+	return envLookup(r.d.Env, "ANTHROPIC_API_KEY") == ""
 }
 
 // triageOutcome is what one triage round settled, as the loops read it: the
@@ -186,14 +244,37 @@ func triageOutcomeOf(v Verdict, out triage.Outcome) triageOutcome {
 // numbered it (ReviewSummary.Round), and level is the review level that ran it
 // (D1847): a level 1 round and a level 2 round of the same run are two triage
 // rounds, and which level's question the judge answered is what the record
-// says beside each.
+// says beside each. Neither names the triage round: the pair repeats where a
+// bounce runs a level's numbering again from 1 (D727), and the ordinal this
+// function hands the stage is the round's own place in the record
+// (r.triageRounds), which is what the report's row marks are keyed on.
 func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v Verdict) (triageOutcome, bool) {
 	if !r.triageOn() {
 		r.forgetRoundDeferred(ctx, v)
 		return triageOutcome{}, true
 	}
 	mode := r.reachedRigor()
+	// The ordinal is read before anything is recorded: recordTriage appends this
+	// round to r.triageRounds, so the round's place in that list is one past
+	// what the run has recorded so far, and every path below — the recorded
+	// failure with no call behind it included — knows it before it writes.
+	ordinal := len(r.triageRounds) + 1
 	in, findings := triageInputs(v.Findings)
+	// A round whose call the run knows it cannot serve is skipped instead of
+	// asked (triageUnserved): the gateway would refuse the call for the key the
+	// run does not hold, and a refused call is a failed stage — so asking buys
+	// no verdict and loses the rest of the loop. The round is recorded instead,
+	// says so with the one cause that names the fix, and the fail-safe settles
+	// it exactly as it settles a failure: every finding the mode's table blocks
+	// blocks, so the fixer and the next review are handed what they would have
+	// been handed (D1846).
+	if r.triageUnserved() {
+		r.d.Log.Error("the triage round was skipped: no account serves the stage and the run's gateway holds no Anthropic key for its model, so every finding the mode's table blocks blocks",
+			"round", round, "cause", runstore.TriageCauseNoAccount)
+		out := triage.Apply(mode, in, triage.Verdict{}, false)
+		r.recordTriage(ctx, ordinal, round, level, v, out, triageSkipped, runstore.TriageCauseNoAccount)
+		return triageOutcomeOf(v, out), true
+	}
 	// The judge is asked from a directory that holds nothing of the run: the
 	// brief carries the round's findings and the task's goal as text, and a
 	// stage whose working directory were the checkout would be a stage with the
@@ -207,7 +288,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		r.d.Log.Error("the triage stage's own working directory could not be made; the round is recorded as failed and every finding the mode's table blocks blocks",
 			"round", round, "cause", cause)
 		out := triage.Apply(mode, in, triage.Verdict{}, false)
-		r.recordTriage(ctx, round, level, v, out, false, cause)
+		r.recordTriage(ctx, ordinal, round, level, v, out, triageFailed, cause)
 		return triageOutcomeOf(v, out), true
 	}
 	defer os.RemoveAll(dir)
@@ -231,7 +312,7 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 		Tools:           []string{},
 		StrictMCPConfig: true,
 	}
-	res, ok, err := r.stage(ctx, stageTriage, req, stageOpts{Skippable: true, Dir: dir})
+	res, ok, err := r.stage(ctx, stageTriage, req, stageOpts{Skippable: true, Dir: dir, Ordinal: ordinal, Round: round, Level: level})
 	r.countTokens(res)
 	var skipped skippedError
 	if !ok && !errors.As(err, &skipped) {
@@ -246,17 +327,41 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 	}
 	if !parsed {
 		// An ERROR and not a WARNING, because the round did not merely answer
-		// badly: the judge did not run, and every finding the mode's table
+		// badly: it bought no verdict at all, and every finding the mode's table
 		// blocks blocks (D1846). It is the line a reader of the run's log
-		// finds the failure by, and the cause is what tells an expired
-		// credential from an answer the reader refused.
+		// finds the failure by, and the cause is what tells a call that never
+		// got through from an answer the reader refused.
 		r.d.Log.Error("the triage round produced no readable verdict; every finding the mode's table blocks blocks",
 			"round", round, "cause", cause)
 	}
 	out := triage.Apply(mode, in, verdict, parsed)
-	r.recordTriage(ctx, round, level, v, out, parsed, cause)
+	call := triageAnswered
+	if !parsed {
+		call = triageFailed
+	}
+	r.recordTriage(ctx, ordinal, round, level, v, out, call, cause)
 	return triageOutcomeOf(v, out), true
 }
+
+// triageCall is how one round's call went, and it is what the record's round is
+// written from: a round the reader took a verdict from carries neither flag,
+// one whose call went out and failed or was unreadable carries Failed, and one
+// the run refused to make carries Skipped (triageUnserved). The two are told
+// apart because they are different facts a reader acts on differently — a call
+// a service answered badly, against a call this run knew it could not serve at
+// all — and only the record's own members can carry that difference
+// (runstore.TriageRound).
+type triageCall int
+
+const (
+	// triageAnswered is a round the reader took a verdict from.
+	triageAnswered triageCall = iota
+	// triageFailed is a round whose call failed or whose answer the reader
+	// refused.
+	triageFailed
+	// triageSkipped is a round no call was made for (triageUnserved).
+	triageSkipped
+)
 
 // recordTriage writes one round to the record's triage block and folds its
 // deferrals into the run's own. The two are the record's two halves of the same
@@ -271,13 +376,31 @@ func (r *run) triageRound(ctx context.Context, round int, level policy.Level, v 
 // the same index the brief numbered and Apply placed on (D1850).
 //
 // A round is recorded whether or not the call answered, which is what makes a
-// failed one visible rather than absent (runstore.TriageRound.Failed): the
-// outcome it carries is Apply's fail-safe one, every finding the table blocks
-// blocking, and cause is the one line saying why it has no verdict — the call's
-// own words, or the reader's own `unreadable verdict` (TriageRound.Cause). read
-// and cause are one fact and are passed together: a round that was read carries
-// no cause, and NewTriage drops a cause from a round that is not failed.
-func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v Verdict, out triage.Outcome, read bool, cause string) {
+// failed or a skipped one visible rather than absent (runstore.TriageRound):
+// the outcome it carries is Apply's fail-safe one, every finding the table
+// blocks blocking, and cause is the one line saying why it has no verdict — the
+// call's own words, or the reader's own `unreadable verdict` (TriageRound.Cause).
+// call and cause are one fact and are passed together: a round that was
+// answered carries no cause, and NewTriage drops a cause from a round that
+// neither failed nor was skipped.
+//
+// A skipped round is given the stage row it would have had (no duration and no
+// call count — the run spent nothing on it), because the record's rows and its
+// rounds are read as a pair: the pull request's table marks a row from the round
+// behind it, keyed on the round's own ordinal (report.go's triageRowStates), and
+// a round with no row would leave that round's mark nowhere to land.
+func (r *run) recordTriage(ctx context.Context, ordinal int, round int, level policy.Level, v Verdict, out triage.Outcome, call triageCall, cause string) {
+	if call == triageSkipped {
+		r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{
+			Name:      stageTriage,
+			StartedAt: r.d.Now().UTC(),
+			Model:     r.stageModel(stageTriage),
+			ServedBy:  runstore.CredentialForAuth(r.servedAuth()),
+			Ordinal:   ordinal,
+			Round:     round,
+			Level:     level,
+		})
+	}
 	placed := make(map[int]triage.Placed, len(out.Blocking)+len(out.Deferred))
 	for _, p := range out.Blocking {
 		placed[p.Index] = p
@@ -304,16 +427,18 @@ func (r *run) recordTriage(ctx context.Context, round int, level policy.Level, v
 		})
 	}
 	r.triageRounds = append(r.triageRounds, runstore.TriageRound{
+		Ordinal: ordinal,
 		Round:   round,
 		Mode:    r.reachedRigor(),
 		Level:   level,
 		Account: r.rec.StageAccounts[stageTriage],
 		Model:   r.stageModel(stageTriage),
-		Failed:  !read,
-		// The cause belongs to the failure and to nothing else, and a round
-		// that was read carries the empty string the reader answered with:
-		// NewTriage drops a cause from a round whose flag is off, so the two
-		// cannot disagree in the record either.
+		Failed:  call == triageFailed,
+		Skipped: call == triageSkipped,
+		// The cause belongs to a failed or a skipped round and to nothing
+		// else, and a round that was answered carries the empty string the
+		// reader answered with: NewTriage drops a cause from a round whose
+		// flags are both off, so the two cannot disagree in the record either.
 		Cause:   cause,
 		Entries: entries,
 	})

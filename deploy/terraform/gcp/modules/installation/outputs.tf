@@ -116,11 +116,16 @@ output "catalog_check_service_account" {
 }
 
 output "credentials_service" {
-  description = "The credentials service's Cloud Run service name and region, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, and drops the job's model-secret accessors with it. url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
+  description = "The credentials service's Cloud Run service name, its region and the email of its own account, or null while the installation has not opted in (D147). A repository root grants each job account roles/run.invoker on it from these, drops the job's model-secret accessors with it, and grants the service's account itself a secretAccessor on each secret that repository's jobs mount (D2074, account). url is the service's own URL as Cloud Run assigned it (the resource's uri), which is the audience a caller's Google ID token is minted for: it is what C1.20's stage writes back into var.credentials_service.url, because nothing inside the service resource can read its own uri (credentials.tf)."
   value = var.credentials_service == null ? null : {
     name   = google_cloud_run_v2_service.credentials[0].name
     region = var.region
     url    = google_cloud_run_v2_service.credentials[0].uri
+    # The account the repository roots grant D2074's reads to. It is this
+    # module's own resource rather than an input, so it is known on the same
+    # apply that created the service — unlike url, which only the apply after
+    # it can read.
+    account = google_service_account.credentials[0].email
   }
 }
 
@@ -136,4 +141,9 @@ output "intake" {
 output "project_secrets" {
   description = "The project-wide secret containers by logical name (their secret IDs), so a consumer waits for the container: the project job module grants each job the ones its profile mounts."
   value       = { for name, s in google_secret_manager_secret.project : name => s.secret_id }
+}
+
+output "orchestrator" {
+  description = "The resident orchestrator's own account email, or null on an installation the owner has not turned it on for (mobile plan task P5.1b; the design's section 4.3). P5.1c's service runs as it, and it is the account internal/infra/tf's cover reads as its own principal kind rather than as a launcher — the design's eleventh never-rule is that it is never a member of var.launchers. The variable this reads has no CLI writer yet — fugaro update carries no --orchestrator flag on this branch — so nothing here is reachable until the release that turns the resident orchestrator on writes one; orchestrator.tf states the ordering that release also has to get right."
+  value       = local.orchestrator_on ? google_service_account.orchestrator[0].email : null
 }

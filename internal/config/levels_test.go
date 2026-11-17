@@ -240,6 +240,78 @@ func TestResolveLevelsFloorRefusesNone(t *testing.T) {
 	}
 }
 
+// TestResolveLevelsFloorHoldsForAHotfixRequest pins what a request may not do
+// to the owner's floor. `review_floor` is a mode→levels map, and a run reads
+// the row of the mode it is at (policy.Effective.ReviewFloorFor) — but a
+// request may raise a mode and never lower a floor (D8, LF5), so a request
+// that takes a run off the axis to hotfix (rigor.Mode.PerRun) is held to
+// hotfix's row *and* to the row of the mode the layers resolved beside it
+// (rigor.LayersMode): a floor of l2,l3 on pro still turns l3 on for that run.
+// Reading hotfix's row alone would let one flag drop a floor the owner set,
+// silently, which is the lowering no request may take.
+//
+// The owner's lever for a floored hotfix run stays the floor written for
+// hotfix, which `fugaro rigor floor set hotfix l2,l3` accepts
+// (TestRigorFloorSetAcceptsHotfix, internal/cli).
+func TestResolveLevelsFloorHoldsForAHotfixRequest(t *testing.T) {
+	owner := policy.Layer{ReviewFloor: map[rigor.Mode][]policy.Level{
+		rigor.Pro: {policy.LevelL2, policy.LevelL3},
+	}}
+	effective := policy.Merge(owner)
+	// The two steps both readers of a floor take: resolve the run, then read
+	// the mode it is at beside the mode the layers resolved for it.
+	floorFor := func(req rigor.Request) (rigor.Mode, []policy.Level) {
+		cfg := rigor.Config{Repo: rigor.Pro}
+		mode := rigor.Resolve(cfg, req).Mode
+		return mode, effective.ReviewFloorFor(mode, rigor.LayersMode(cfg, req, ""))
+	}
+	levels := func(mode rigor.Mode, floor []policy.Level) Levels {
+		t.Helper()
+		got, _, err := ResolveLevels(LevelInputs{
+			Config: &Config{Agent: levelAgent()}, Mode: mode, Floor: floor,
+			Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		})
+		if err != nil {
+			t.Fatalf("ResolveLevels at %s under floor %v: %v", mode, floor, err)
+		}
+		return got
+	}
+
+	mode, floor := floorFor(rigor.Request{})
+	if mode != rigor.Pro {
+		t.Fatalf("the run resolved to %s; want pro, the repository layer's mode", mode)
+	}
+	if !levels(mode, floor).L3.On {
+		t.Error("l3 is off for a pro run under a floor of l2,l3 on pro; want it on: the floor turns on a level the mode's own row leaves off")
+	}
+
+	// The same repository and the same owner, with the run's own request for
+	// hotfix: hotfix's row is empty, and pro's still holds beside it.
+	mode, floor = floorFor(rigor.Request{Mode: rigor.Hotfix})
+	if mode != rigor.Hotfix {
+		t.Fatalf("the run resolved to %s; want hotfix from the request", mode)
+	}
+	if len(floor) != 2 {
+		t.Fatalf("the hotfix run's floor = %v; want the two levels the owner set for pro: the request took the run off the axis and left the floor of the mode the layers resolved in force", floor)
+	}
+	if !levels(mode, floor).L3.On {
+		t.Error("l3 is off for a hotfix run the owner floored on pro; want it on: a request raises a mode and never lowers a floor (D8, LF5)")
+	}
+
+	// The owner's lever for a floored hotfix run: the same request, with the
+	// floor written for hotfix. The command accepts the mode, so this row is
+	// one an owner reaches.
+	hotfixFloor := policy.Merge(policy.Layer{ReviewFloor: map[rigor.Mode][]policy.Level{
+		rigor.Hotfix: {policy.LevelL2, policy.LevelL3},
+	}}).ReviewFloor(rigor.Hotfix)
+	if len(hotfixFloor) != 2 {
+		t.Fatalf("ReviewFloor(hotfix) = %v; want the owner's two levels", hotfixFloor)
+	}
+	if !levels(rigor.Hotfix, hotfixFloor).L3.On {
+		t.Error("l3 is off for a hotfix run under a floor on hotfix; want it on: the floor is per mode and this mode has one")
+	}
+}
+
 // TestResolveLevelsRefusesSameModel is D721: a run never launches with level
 // 1 and level 2 on the same exact model ID, and the refusal names both
 // levels and the model they share.
@@ -312,6 +384,89 @@ func TestResolveLevelsRefusesSameModel(t *testing.T) {
 	mustWarn(t, warns, policy.LevelL2, "not independent")
 	if len(warns) != 1 {
 		t.Errorf("warnings = %v; want exactly one: the pair is warned about once", warns)
+	}
+}
+
+// TestResolveLevelsRefusesSameModelThroughCrafts is D721 on the models the
+// crafts resolve to (D1664, MC13): a run whose crafts make level 1 and level 2
+// one ID is refused exactly as a run whose levels name it, because the two
+// reviews then run one model whatever the documents say. The craft models are
+// the caller's own craft.ModelFor answers, inheritance included, so the review
+// craft that follows the coder and the senior-review craft that names the
+// coder's model are one ID with no level writing anything.
+func TestResolveLevelsRefusesSameModelThroughCrafts(t *testing.T) {
+	const deepseek, opus = "deepseek/deepseek-v4-flash", "claude-opus-5-5"
+	in := LevelInputs{
+		Config: &Config{Agent: levelAgent()},
+		Mode:   rigor.Pro,
+		Recipe: levelRecipe(t, "standard"),
+		CraftModels: map[string]string{
+			CraftCoder:        deepseek,
+			CraftReview:       deepseek,
+			CraftSeniorReview: deepseek,
+		},
+	}
+	_, _, err := ResolveLevels(in)
+	if err == nil {
+		t.Fatal("both crafts resolved to deepseek/deepseek-v4-flash and ResolveLevels refused nothing; want D721's refusal (D1664)")
+	}
+	for _, want := range []string{"agent.crafts.review.model", "agent.crafts.senior-review.model", deepseek, "level 2", "level 1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+
+	// A senior-review craft on another model is the ordinary case and is not
+	// refused.
+	other := in
+	other.CraftModels = map[string]string{
+		CraftCoder: deepseek, CraftReview: deepseek, CraftSeniorReview: opus,
+	}
+	if _, _, err := ResolveLevels(other); err != nil {
+		t.Errorf("ResolveLevels with the two crafts on different models: %v; want no refusal", err)
+	}
+
+	// Rung 2 is above rung 3: a level that names a model of its own keeps it,
+	// whatever its craft resolved to (D1660), so the pair the crafts alone make
+	// one ID is not refused while l2 names another model.
+	own := in
+	own.Config = &Config{Agent: levelAgent()}
+	own.Config.Agent.Levels.L2 = &LevelSetting{Model: opus}
+	if _, _, err := ResolveLevels(own); err != nil {
+		t.Errorf("ResolveLevels with l2 naming its own model over the crafts: %v; want no refusal", err)
+	}
+
+	// One level on its own ID and the other on its craft's is the same
+	// collision, and the refusal names each one's own key: l1.model for the
+	// level that wrote it and the craft's key for the one that did not.
+	mixed := other
+	mixed.Config = &Config{Agent: levelAgent()}
+	mixed.Config.Agent.Levels.L1 = &LevelSetting{Model: opus}
+	mixed.CraftModels = map[string]string{CraftCoder: deepseek, CraftReview: deepseek, CraftSeniorReview: opus}
+	_, _, err = ResolveLevels(mixed)
+	if err == nil {
+		t.Fatal("l1 named claude-opus-5-5 and the senior-review craft resolved to it; want D721's refusal")
+	}
+	for _, want := range []string{"l1.model", "agent.crafts.senior-review.model", opus} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+
+	// And two levels that name one ID are still refused, whatever their crafts
+	// resolved to.
+	same := other
+	same.Config = &Config{Agent: levelAgent()}
+	same.Config.Agent.Levels.L1 = &LevelSetting{Model: opus}
+	same.Config.Agent.Levels.L2 = &LevelSetting{Model: opus}
+	_, _, err = ResolveLevels(same)
+	if err == nil {
+		t.Fatal("l1 and l2 both named claude-opus-5-5 and ResolveLevels refused nothing")
+	}
+	for _, want := range []string{"l1.model", "l2.model", opus} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
 	}
 }
 
@@ -433,6 +588,74 @@ func TestResolveLevelsWarnsCoderAndFamily(t *testing.T) {
 	}
 }
 
+// TestResolveLevelsWarnsCoderAndFamilyThroughCrafts is the other half of
+// D1664: the two warnings about level 2 read the models the crafts resolved
+// to, so a senior-review craft on the coder's own model and one in level 1's
+// family are warned about although no level names a model, and each message
+// names the craft key the model came from.
+func TestResolveLevelsWarnsCoderAndFamilyThroughCrafts(t *testing.T) {
+	const deepseek = "deepseek/deepseek-v4-flash"
+
+	// Level 1 is off — the catalog default follows first_line_review — so a
+	// senior-review craft on the coder's own model is a warning rather than
+	// D721's refusal.
+	_, warns, err := ResolveLevels(LevelInputs{
+		Config: &Config{Agent: Agent{
+			Models:          ModelRoles{Coder: deepseek, Reviewer: "claude-opus-5-5"},
+			FirstLineReview: FirstLineOff,
+		}},
+		Mode: rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		CraftModels: map[string]string{
+			CraftCoder: deepseek, CraftReview: deepseek, CraftSeniorReview: deepseek,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ResolveLevels with the coder's model at l2 through the crafts: %v", err)
+	}
+	mustWarn(t, warns, policy.LevelL2, "coder's own model")
+	mustWarn(t, warns, policy.LevelL2, "agent.crafts.senior-review.model")
+
+	// Two Claude IDs, one through each craft, are one family.
+	_, warns, err = ResolveLevels(LevelInputs{
+		Config: &Config{Agent: levelAgent()},
+		Mode:   rigor.Pro, Recipe: levelRecipe(t, "standard"),
+		CraftModels: map[string]string{
+			CraftCoder: "claude-sonnet-5-5", CraftReview: "claude-sonnet-5-5",
+			CraftSeniorReview: "claude-opus-5-5",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ResolveLevels with two Claude models through the crafts: %v", err)
+	}
+	mustWarn(t, warns, policy.LevelL2, "anthropic")
+
+	// Two vendors share no family, and nothing is warned.
+	_, warns, err = ResolveLevels(LevelInputs{
+		Config: &Config{Agent: levelAgent()},
+		Mode:   rigor.Pro, Recipe: levelRecipe(t, "standard"),
+		CraftModels: map[string]string{
+			CraftCoder: deepseek, CraftReview: deepseek, CraftSeniorReview: "openai/gpt-4o",
+		},
+	})
+	if err != nil {
+		t.Fatalf("ResolveLevels with two vendors through the crafts: %v", err)
+	}
+	if len(warns) != 0 {
+		t.Errorf("warnings = %v; want none: two vendors share no family", warns)
+	}
+
+	// A caller that resolved no crafts reads the levels' own models, exactly
+	// as it did before the crafts reached the resolver.
+	if _, warns, err := ResolveLevels(LevelInputs{
+		Config: &Config{Agent: levelAgent()},
+		Mode:   rigor.Pro, Recipe: levelRecipe(t, "standard"),
+	}); err != nil {
+		t.Fatalf("ResolveLevels with no craft models: %v", err)
+	} else {
+		mustWarn(t, warns, policy.LevelL2, "anthropic")
+	}
+}
+
 // TestResolveLevelsRefusesProviderEffort is D725: an effort set for a model a
 // provider serves is refused, because those stages run with thinking off
 // (MAX_THINKING_TOKENS=0) and the setting would look applied and do nothing.
@@ -519,6 +742,39 @@ func TestResolveLevelsRefusesModelOutsideAllowList(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "empty") {
 		t.Errorf("the refusal %q does not say the list is empty", err)
+	}
+}
+
+// TestResolveLevelsRefusesCraftModelOutsideAllowList: the model a level runs
+// is judged by the run's allow-list, and a level whose craft resolved to a
+// model outside it is refused by the same check the level's own model meets —
+// at the craft's key, which is the line the reader has to change.
+func TestResolveLevelsRefusesCraftModelOutsideAllowList(t *testing.T) {
+	const sonnet, opus = "claude-sonnet-5-5", "claude-opus-5-5"
+	// The role slots are on the list: what is outside it is the senior-review
+	// craft's own model alone, which no level wrote anywhere.
+	in := LevelInputs{
+		Config: &Config{Agent: Agent{Models: ModelRoles{Coder: sonnet, Reviewer: sonnet}}},
+		Mode:   rigor.Pro, Recipe: levelRecipe(t, "default"), CatalogDefault: true,
+		AllowedModels: []string{sonnet},
+		CraftModels: map[string]string{
+			CraftCoder: sonnet, CraftReview: sonnet, CraftSeniorReview: opus,
+		},
+	}
+	_, _, err := ResolveLevels(in)
+	if err == nil {
+		t.Fatal("the senior-review craft resolved to a model outside allowed_models and ResolveLevels refused nothing")
+	}
+	for _, want := range []string{"agent.crafts.senior-review.model", opus, "allowed_models"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+
+	// nil is no list: the craft's model is admitted like any other.
+	in.AllowedModels = nil
+	if _, _, err := ResolveLevels(in); err != nil {
+		t.Errorf("ResolveLevels with no allow-list: %v", err)
 	}
 }
 

@@ -14,14 +14,20 @@ import (
 )
 
 // The login unit's step in `fugaro setup` (O9, the owner's Q2 answer of
-// 2026-11-04).
+// 2026-11-04) and the read `fugaro update`'s step shares with it (D2700 of
+// docs/orchestrator-graph-estimates, the owner's answer of 2026-11-16 as
+// corrected).
 //
 // `fugaro setup` is where the first unit belongs: the daemon the unit starts
 // drives the project this run is installing, and the machine that has just been
-// set up is the machine that wants one. The step renders the plan line every
-// stage renders — the unit it writes and the path it writes it at — and calls
-// the very same installer `fugaro orchestrator install` calls, so there is one
-// renderer, one writer and one reload (orchestrator_install.go).
+// set up is the machine that wants one. `fugaro update` installs the unit a
+// machine is missing too — a machine that skipped `setup`, a teammate's machine,
+// or one whose unit was removed — so that one command turns the daemon on
+// everywhere the project's people work, and the per-project lease keeps exactly
+// one of those daemons live (F2). The step renders the plan line every stage
+// renders — the unit it writes and the path it writes it at — and calls the very
+// same installer `fugaro orchestrator install` calls, so there is one renderer,
+// one writer and one reload (orchestrator_install.go).
 //
 // It has no confirmation of its own, and that is the whole of the ruling: the
 // plan line is a line of the plan the person read and confirmed at their own
@@ -46,16 +52,21 @@ func (*orchestratorUnitStage) Left() initflow.Left {
 }
 
 // unitStepNoPerson is the line a run with nobody at it leaves in the plan: the
-// step ends there, and the command that does it by hand is named so a reader who
-// wants the daemon started —
-// or a unit already installed re-rendered — knows where to type.
-func unitStepNoPerson() string {
-	return "the login unit is written by a run you are watching at your own terminal: this one has nobody at it, so nothing is written (" +
-		selfCommand() + " orchestrator install writes one by hand)"
+// step ends there, and the command that writes the unit by hand is named so a
+// reader who wants the daemon started — or a unit already installed re-rendered —
+// knows where to type. The update door names the person's own next update
+// instead, because on that door it is the command that installs a missing unit
+// (D2700's own words: the owner's next terminal `update` installs it).
+func unitStepNoPerson(door unitDoor) string {
+	by := selfCommand() + " orchestrator install writes one by hand"
+	if door == unitDoorUpdate {
+		by = "your next " + selfCommand() + " update at your own terminal installs it"
+	}
+	return "the login unit is written by a run you are watching at your own terminal: this one has nobody at it, so nothing is written (" + by + ")"
 }
 
 func (s *orchestratorUnitStage) Check(context.Context) (initflow.Status, error) {
-	_, st, err := unitStepRead(s.e, unitStepInstalls)
+	_, st, err := unitStepRead(s.e, unitDoorSetup)
 	return st, err
 }
 
@@ -63,7 +74,7 @@ func (s *orchestratorUnitStage) Check(context.Context) (initflow.Status, error) 
 // unit, whether it is this release's, and where it goes — and the loop prints
 // the check's line as the stage's detail.
 func (s *orchestratorUnitStage) Plan(context.Context, initflow.Env) (initflow.Plan, error) {
-	_, st, err := unitStepRead(s.e, unitStepInstalls)
+	_, st, err := unitStepRead(s.e, unitDoorSetup)
 	if err != nil {
 		return initflow.Plan{}, err
 	}
@@ -71,7 +82,7 @@ func (s *orchestratorUnitStage) Plan(context.Context, initflow.Env) (initflow.Pl
 }
 
 func (s *orchestratorUnitStage) Apply(ctx context.Context, _ initflow.Env) (initflow.Outcome, error) {
-	u, st, err := unitStepRead(s.e, unitStepInstalls)
+	u, st, err := unitStepRead(s.e, unitDoorSetup)
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
@@ -94,12 +105,22 @@ func (s *orchestratorUnitStage) Apply(ctx context.Context, _ initflow.Env) (init
 
 func (s *orchestratorUnitStage) Verify(ctx context.Context) error { return verifyUnitOnDisk() }
 
-// unitStepInstalls and unitStepRerendersOnly are the two doors' answers to a
-// machine with no unit on it: `setup` writes the first one, and `fugaro update`
-// never installs one.
+// unitDoor is which door's step is reading this machine: `fugaro setup`, which
+// writes the machine's first unit (Q2, the owner's answer of 2026-11-04), and
+// `fugaro update`, which installs a missing one and re-renders an installed one
+// (D2700 of docs/orchestrator-graph-estimates, the owner's answer of 2026-11-16
+// as corrected, which supersedes the stateless-orchestrator plan's T7 ruling
+// that this door "never installs" one; R2 of that plan amends T7's text).
+//
+// The door decides two things and nothing else: the command a run with nobody at
+// it leaves the person (unitStepNoPerson), and whether a write may name the
+// program this run is (unitMayNameThisBinary, which only matters as a difference
+// on the update door). Everything else about the read is the same on both.
+type unitDoor uint8
+
 const (
-	unitStepInstalls      = true
-	unitStepRerendersOnly = false
+	unitDoorSetup unitDoor = iota
+	unitDoorUpdate
 )
 
 // unitStepRead is the read both doors' stage makes: the unit this release would
@@ -110,28 +131,33 @@ const (
 // session ends it with its own sentence (AgentRefusal) — the drift stays visible
 // through `fugaro doctor` and never through a write.
 //
-// The two doors differ in what a write is there: `setup` writes the first unit
-// and `fugaro update` never installs one, so a machine with no file ends the
-// step either way and only one of them has anything to do. They differ again in
-// what a run with nobody at it does, which is the one asymmetry here and it is
-// the rulings': the first install is a real terminal only (a `setup` a pipe
-// started writes no unit, and says so), while a re-render the run cannot make is
-// left for the user by the loop — a step --yes never covers, in the shape every
-// other such step has — so an unattended `fugaro update` reports the drift
-// instead of quietly skipping it (unitStepTodo).
+// A machine with no file is what both doors install: `setup` writes the first
+// unit, and `fugaro update` installs the one a machine is missing (D2700) — a
+// machine that skipped `setup`, a teammate's machine, one whose unit was
+// removed. Neither asks anything, and both are fenced by a person at the
+// terminal: a run with nobody at it writes no unit and says so in one line
+// (unitStepTodo, unitStepNoPerson).
 //
-// The third difference is the program the write names. A unit's text is its
+// A re-render the run cannot make is the one asymmetry left, and it is the
+// rulings': the loop leaves it for the user — a step --yes never covers, in the
+// shape every other such step has — so an unattended `fugaro update` reports the
+// drift instead of quietly skipping it (unitStepTodo).
+//
+// The other difference is the program the write names. A unit's text is its
 // template plus one binary path, so a file that differs from what this release
 // renders differs by the template, by that path, or by both — and the path is
 // the one this process is running, which is not always a fugaro a release
-// installed. The update door re-points an installed unit only at a program
-// unitMayNameThisBinary accepts; a run from a development build, or from a
-// binary in a temporary directory, writes nothing and says so, because a unit
-// that restarts its program forever (the template's keep-alive) must not be
-// pointed at a program that will not be there tomorrow. The `setup` door keeps
-// the re-point: the person is at a terminal, the plan line names both paths, and
-// the run they confirmed is the run that asked for the unit.
-func unitStepRead(e *initEngine, installs bool) (service.Unit, initflow.Status, error) {
+// installed. A unit that restarts its program forever (the template's
+// keep-alive) must not be pointed at a program that will not be there tomorrow,
+// so the update door writes a unit only when unitMayNameThisBinary accepts the
+// program: that covers the re-point of an installed unit AND the first unit on a
+// machine that has none, since an update run from a checkout's `go build`, from
+// `go run`'s temporary binary or from a copy in a scratch directory would
+// otherwise leave a login unit restarting a program that is already gone. The
+// `setup` door keeps both writes whatever build it is: the person is at a
+// terminal, the plan line names the path, and the run they confirmed is the run
+// that asked for the unit.
+func unitStepRead(e *initEngine, door unitDoor) (service.Unit, initflow.Status, error) {
 	u, err := orchestratorUnit()
 	if err != nil {
 		var un *service.UnsupportedError
@@ -148,13 +174,17 @@ func unitStepRead(e *initEngine, installs bool) (service.Unit, initflow.Status, 
 		return service.Unit{}, initflow.Status{}, err
 	}
 	switch {
-	case !ok && !installs:
-		return u, initflow.Status{State: initflow.Skipped, Detail: "no login unit is installed at " + safetext.Field(u.Path) +
-			": " + selfCommand() + " update re-renders the daemon's unit on a machine that chose it and never installs one (" +
-			selfCommand() + " orchestrator install writes the first one)"}, nil
 	case !ok:
-		return u, unitStepTodo(e, installs, "installs the login unit at "+safetext.Field(u.Path)+" ("+u.Platform+
-			"): it starts the daemon at every login, restarts it when it stops, and the daemon drives this project's orchestrator until you uninstall it"), nil
+		if door == unitDoorUpdate {
+			binary, err := orchestratorBinaryPath()
+			if err != nil {
+				return service.Unit{}, initflow.Status{}, err
+			}
+			if !unitMayNameThisBinary(binary) {
+				return u, initflow.Status{State: initflow.Skipped, Detail: unitStepLeavesNoUnit(u, binary)}, nil
+			}
+		}
+		return u, unitStepTodo(e, door, true, unitStepInstallDetail(u)), nil
 	case was == u.Text:
 		return u, initflow.Status{State: initflow.Done, Detail: "No changes: the login unit at " + safetext.Field(u.Path) +
 			" is this release's template"}, nil
@@ -163,10 +193,17 @@ func unitStepRead(e *initEngine, installs bool) (service.Unit, initflow.Status, 
 	if err != nil {
 		return service.Unit{}, initflow.Status{}, err
 	}
-	if !installs && unitRepointsTheProgram(u, binary, was) && !unitMayNameThisBinary(binary) {
+	if door == unitDoorUpdate && unitRepointsTheProgram(u, binary, was) && !unitMayNameThisBinary(binary) {
 		return u, initflow.Status{State: initflow.Skipped, Detail: unitStepLeavesAnotherProgram(u, binary, was)}, nil
 	}
-	return u, unitStepTodo(e, installs, unitStepRerenderDetail(u, binary, was)), nil
+	return u, unitStepTodo(e, door, false, unitStepRerenderDetail(u, binary, was)), nil
+}
+
+// unitStepInstallDetail is the plan line of the first unit on a machine that has
+// none: what is written, where it goes, and what it does from then on.
+func unitStepInstallDetail(u service.Unit) string {
+	return "installs the login unit at " + safetext.Field(u.Path) + " (" + u.Platform +
+		"): it starts the daemon at every login, restarts it when it stops, and the daemon drives this project's orchestrator until you uninstall it"
 }
 
 // unitRepointsTheProgram is whether writing this release's unit over the file on
@@ -239,6 +276,19 @@ func unitStepLeavesAnotherProgram(u service.Unit, binary, was string) string {
 		"nothing was re-rendered here, and `" + selfCommand() + " orchestrator install` is the command that points the unit at another program"
 }
 
+// unitStepLeavesNoUnit is the plan line of a machine with NO unit, when the run
+// is not a fugaro a release installed: the write the update door would make is
+// the same one unitStepLeavesAnotherProgram refuses, one step earlier — the unit
+// it would write would restart this program forever. Nothing is written, the
+// binary this run is and the command that writes the first unit deliberately are
+// both named, and the machine is left exactly as it was for a released fugaro's
+// own update to install from.
+func unitStepLeavesNoUnit(u service.Unit, binary string) string {
+	return "leaves this machine without the login unit at " + safetext.Field(u.Path) + ": this run is " + safetext.Field(binary) +
+		" — a development build or a binary in a temporary directory, not a fugaro a release installed, and a login unit restarts its program at every login: " +
+		"nothing was written here, and `" + selfCommand() + " orchestrator install` writes the first one deliberately"
+}
+
 // unitMayNameThisBinary is whether a login unit may be pointed at the binary
 // this process is running: a fugaro a release installed, in a place that is not
 // the system's temporary directory. A unit runs its program at every login and
@@ -254,13 +304,14 @@ func unitMayNameThisBinary(binary string) bool {
 
 // unitStepTodo is the read's answer when the step has something to do, under the
 // one rule that keeps a unit out of a login nobody asked for: the write happens
-// only in a run a person is at. `setup`'s first install ends there when nobody
-// is (Skipped, with the sentence that says so), and a re-render the loop can
-// leave for the user is a Todo — the loop turns it into needs-you, which is what
-// a stage --yes does not cover looks like in every other run.
-func unitStepTodo(e *initEngine, installs bool, detail string) initflow.Status {
-	if installs && !initflow.PersonAtTheTerminal(e.r.conditions()) {
-		return initflow.Status{State: initflow.Skipped, Detail: unitStepNoPerson()}
+// only in a run a person is at. The first unit on a machine — `setup`'s and
+// `fugaro update`'s alike — ends there when nobody is (Skipped, in one line
+// naming the command that writes it where a person is), and a re-render the loop
+// can leave for the user is a Todo — the loop turns it into needs-you, which is
+// what a stage --yes does not cover looks like in every other run.
+func unitStepTodo(e *initEngine, door unitDoor, needsPerson bool, detail string) initflow.Status {
+	if needsPerson && !initflow.PersonAtTheTerminal(e.r.conditions()) {
+		return initflow.Status{State: initflow.Skipped, Detail: unitStepNoPerson(door)}
 	}
 	return initflow.Status{State: initflow.Todo, Detail: detail}
 }

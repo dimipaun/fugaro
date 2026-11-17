@@ -183,15 +183,17 @@ func isPlanPath(p string) bool {
 // checked like any other cited path) left it the same way. T2a also filled in
 // the signing half of `mac.go`, which was already in the tree as T2's file: the
 // entry that leaves this map is the test file, and the file it sits beside is
-// checked like every other cited path. The remaining entries are the tasks still
-// unbuilt — T5's command, T6's runner, T7's sweeper and T8's corpus — and each of
-// them must stay absent until its own task lands.
+// checked like every other cited path. T5's two left it the same way — the
+// command and its tests are in the tree — and T6's runner left with them:
+// `internal/mailbox/action.go` is P6.7's port of `shared/confirm`'s rules, in
+// the tree and checked like every other cited path, while T6's remaining half
+// and T7's sweeper add to files that are already there rather than leaving an
+// entry behind. The remaining entries are the tasks still unbuilt — T7's
+// sweeper and T8's corpus — and each of them must stay absent until its own
+// task lands.
 var planWillCreate = map[string]string{
-	"internal/cli/mailbox.go":                 "T5's command surface",
-	"internal/cli/mailbox_test.go":            "T5, T6",
 	"internal/cli/mailbox_sweep_test.go":      "T7",
 	"internal/mailbox/expiry.go":              "T7 (the hidden sweeper; the plan names it there, not under T3 or T4)",
-	"internal/mailbox/action.go":              "T6",
 	"internal/mailbox/parity_test.go":         "T8 (replays shared/mailbox/parity.test.js's corpus)",
 	"internal/mailbox/testdata/parity.json":   "T8 generates it; the Go side only reads it",
 	"docs/mobile/mailbox-review-checklist.md": "T8",
@@ -906,6 +908,7 @@ var planPhaseSixMerged = map[string]string{
 	"P6.4": "internal/budget/rules/rules.json.tmpl",
 	"P6.5": "shared/prompts/index.js",
 	"P6.6": "internal/budget/sweep.go",
+	"P6.7": "internal/mailbox/action.go",
 }
 
 // planPhaseSixUnbuilt is the other direction: the tasks the bullet calls
@@ -916,22 +919,25 @@ var planPhaseSixMerged = map[string]string{
 // confirmation) has no path here: its deliverable is app code this plan names
 // nowhere, so only its listing is asserted.
 var planPhaseSixUnbuilt = map[string][]string{
-	"P6.7":  {"internal/cli/mailbox.go"},
 	"P6.12": nil,
-	"P6.13": {"internal/cli/mailbox.go"},
 }
 
 // planPhaseSixPartial is the third state a task needs once half of it has
-// landed. It is empty on this branch: P6.6 was its one entry — the bullet could
-// not call it merged while its sweep rule's test was not in the tree, and it
-// could not call it unbuilt while its command's surface was — and the pairing
-// plan's T4 landed the half that was missing, so P6.6 is in the merged list
-// above. The state recurs, so the map stays, and both halves of an entry are
-// still held to the tree here: the sentence a reader plans against is a fact
+// landed. P6.6 was its first entry — the bullet could not call it merged while
+// its sweep rule's test was not in the tree, and it could not call it unbuilt
+// while its command's surface was — and the pairing plan's T4 landed the half
+// that was missing, so P6.6 is in the merged list above. This plan's T5 put two
+// more here for the same reason — `internal/cli/mailbox.go` runs the consumer's
+// inbound gate, its ledger and its refusal at the action seam, while neither
+// task's own file was in the tree — and T6 then landed P6.7's, so P6.7 moved up
+// to the merged list and only P6.13 is left half-built. Both halves of an entry
+// are held to the tree here: the sentence a reader plans against is a fact
 // about this branch rather than a memory of one.
 var planPhaseSixPartial = map[string]struct {
 	built, unbuilt []string
-}{}
+}{
+	"P6.13": {built: []string{"internal/cli/mailbox.go"}, unbuilt: []string{"internal/mailbox/expiry.go"}},
+}
 
 // TestMailboxPlanPhaseSixStatusIsTrue holds the premise bullet — the one that
 // says which of Phase 6 is merged, which is half-built and which is not — to

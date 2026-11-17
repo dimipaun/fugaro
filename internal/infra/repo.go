@@ -367,6 +367,40 @@ func SecretFix(spec RepoSpec, logical, bin, door string, quote func(string) stri
 	return bin + " secrets set " + quote(logical) + " --repo " + quote(spec.Name)
 }
 
+// ignoredRepoSecret reports whether D2313 ignores this name for this
+// repository: the ruling's door is on (config.RepoSecretsOff), the name is a
+// repository-level secret (config.RepoLevelSecret) and this repository may
+// mount no project-wide copy of it (spec.ProjectSecretCandidates), which is the
+// only copy a shared job would ever read.
+//
+// Such a name is a fact about a file and not a step, and every reader of the
+// ruling asks here for that reason: no store can be named for it — both
+// repository-scope forms of `fugaro secrets set` answer the notice and write
+// nothing (config.RepoSecretsDisabledNotice) — so Readiness neither holds a job
+// back for it nor prints it a fix, and SecretCommands lists no step for it.
+//
+// A container is not what this decides. Readiness drops the mount (dropMount,
+// the shape the optional Anthropic key's branch uses for the same reason: a
+// secret_key_ref without a version is a job Cloud Run refuses to create), while
+// the spec's own Secrets map was built before Readiness ran — so var.repo.secrets
+// still carries the container, nothing plans the destruction of a
+// prevent_destroy container, and the value the feature will want on its return is
+// still there (D2313).
+//
+// A name that IS a project-wide candidate is not one of these, whatever the
+// file wrote under `secrets:`: the shared copy is mounted, and its absence is a
+// step that works — the bare `secrets set` stores it, or the run's own door does
+// for a name only the node admits (SecretFix). The init secrets stage asks the
+// same predicate's local-config answer (projectScope), so the stage and the plan
+// cannot disagree about which names these are.
+func ignoredRepoSecret(spec RepoSpec, logical string) bool {
+	if !config.RepoSecretsOff || !config.RepoLevelSecret(logical) {
+		return false
+	}
+	_, candidate := spec.ProjectSecretCandidates[logical]
+	return !candidate
+}
+
 // SecretCommands are the fugaro secrets set steps of the repository's
 // secrets that have no version anywhere, sorted by name: the value comes
 // from stdin or a hidden prompt, never argv, and the Claude token is made
@@ -392,6 +426,16 @@ func SecretCommands(spec RepoSpec, versions map[string]bool, bin, door string, q
 	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
 		if versions[logical] {
+			continue
+		}
+		// D2313: a name the ruling ignores is no step. Its container is still
+		// in spec.Secrets -- the ruling leaves every container where it is --
+		// but a step for it would print a store that stores nothing (the
+		// repository-scope command answers the notice, and the bare one is
+		// ignoredRepoSecret's other half: this repository may mount no
+		// project-wide copy), so the whole of what a person is told about the
+		// name is Readiness's one note about it.
+		if ignoredRepoSecret(spec, logical) {
 			continue
 		}
 		st := SecretStep{Name: logical, What: spec.Secrets[logical], Optional: OptionalSecret(logical)}

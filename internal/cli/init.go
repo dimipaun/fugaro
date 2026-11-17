@@ -164,6 +164,17 @@ type initOptions struct {
 	// creates; with one, it must be that config's name.
 	name string
 
+	// --rigor answers the wizard's rigor question without a terminal (task W
+	// of docs/rigor-command/implementation-plan.md; D900): the project's
+	// default mode, as `defaults.rigor.default` of the project layer. It is
+	// the flag of a FIRST RUN of `fugaro setup` and of nothing else: a run
+	// with a project config refuses it by name, because the one command that
+	// changes a project's default is `fugaro rigor set` (setupRigorRefusal,
+	// setup.go). The answer is recorded here and written by the Layer stage,
+	// which is the one stage that edits the one local layer file — the
+	// question phase applies nothing.
+	rigor string
+
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	// retire is --retire: run the retirement a config change needs, behind
@@ -479,6 +490,12 @@ func newInitCmdWith(o *initOptions, d convergeDoor) *cobra.Command {
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
 	f.StringVar(&o.name, "name", "", "the project's name: for a project config "+d.name+" creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; on a machine with no config for an installation that exists, it defaults to the installation's)")
+	// The rigor question (task W of docs/rigor-command/implementation-plan.md;
+	// D900). It names no door: the question is a first run's, and what says so
+	// is the run's own state (a project config, or not) rather than the verb
+	// the reader typed. `fugaro run --mode hotfix` is named here because it is
+	// the one door hotfix has, and it is not a layer's to set (D834).
+	f.StringVar(&o.rigor, "rigor", "", "answer the wizard's rigor question without a terminal: the project's default rigor mode, written as defaults.rigor.default of the project layer this run writes and publishes. One of poc, startup, pro or critical; pro keeps what a project that says nothing runs today, and it is not taken for you where nobody can be asked — a scripted run without this flag is refused. hotfix is not a mode a layer sets: it is an operator's own per-run mode, `fugaro run --mode hotfix`. It is a first run's flag: on a project that already has a config it is refused by name, and the one command that changes a project's default is fugaro rigor set")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -611,6 +628,12 @@ type initRun struct {
 	// providers every repository may use: the converge's repository stage
 	// runs the repo engine too, and the note belongs once.
 	notedOpenProviders bool
+	// notedCatalogSecrets is the once-per-run guard on the warning about a
+	// published catalog entry that asks for a secret of its own (D2311): the
+	// fact is the entry's and not a repository's, and a converge that reaches
+	// several repositories that run one entry says it once
+	// (doctor_catalog.go's warnCatalogSecrets).
+	notedCatalogSecrets map[string]bool
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -720,25 +743,31 @@ type initRun struct {
 	// their confirmation is the ruling of 2026-11-01 rather than a verdict.
 	refresh *refreshManaged
 
-	// credsRead, credsReady and credsRecord are the credentials service's
-	// bundle as this run read it (credentialsBundleReady, init_credentials.go):
-	// whether it holds a model credential, read once and recorded on the
-	// repository entry the run writes. Read once because it is one
-	// installation's bundle and one secret read; a read that FAILED answers
-	// nothing at all — the entry keeps the record the last reading left on it,
-	// and credsRecord is what carries that answer to this run's second door —
-	// and the warning it prints is why. credsBitbucket is the same reading's
-	// other answer, whether the bundle holds the upstream Bitbucket token,
-	// which the gate on the flip's drop reads before it applies a proxied
-	// repository's root (bundleBitbucketToken, update_proxied.go).
+	// credsRead, credsNames and credsRecord are the credentials service's
+	// bundle as this run read it (readCredentialsBundle, init_credentials.go):
+	// the model credentials it holds, by the name each is served under, read
+	// once and judged for the repository entry the run writes. Names rather
+	// than one yes/no answer because the question is per repository — an
+	// `api-key` repository needs the Anthropic key and an `oauth` one every
+	// account its runs may go out on (credentialsBundleServes) — while the
+	// READING is one, and the run's two doors (the installation's backfill
+	// and the repository stage) must answer from it rather than read it twice.
+	// A read that FAILED answers nothing at all — the entry keeps the record
+	// the last reading left on it, and credsRecord is what carries that answer
+	// to this run's second door — and the warning it prints is why.
+	// credsBitbucket is the same reading's other answer, whether the bundle
+	// holds the upstream Bitbucket token, which the gate on the flip's drop
+	// reads before it applies a proxied repository's root
+	// (bundleBitbucketToken, update_proxied.go).
 	credsRead      bool
-	credsReady     bool
+	credsNames     map[string]bool
+	credsAppKey    bool
 	credsRecord    bool
 	credsBitbucket bool
 
 	// credsUnreadMarker is the marker of a session whose own rule kept the
 	// bundle unopened — a coding agent's session or a Fugaro run's own process
-	// (credentialsBundleReady's two refusals before the read) — and it is empty
+	// (readCredentialsBundle's two refusals before the read) — and it is empty
 	// wherever a read was attempted, whether it answered or failed. The two are
 	// not the same fact to a caller: no reading may be JUDGED on, so the gate on
 	// the flip's drop goes on with a warning under a marker and refuses where the
@@ -1020,7 +1049,7 @@ func runInit(r *initRun) error {
 		fmt.Fprintf(r.stageDetail(), "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 		return r.printResult()
 	}
-	spec, err := installOptions(o, lc)
+	spec, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}
@@ -1057,6 +1086,24 @@ func runInit(r *initRun) error {
 				// be a reading the owner cannot trust.
 				if data, err = infra.CarriedProjectReviewJobs(data, prev); err != nil {
 					return err
+				}
+				// And the shared jobs of the default profiles this config can
+				// no longer compose, which installSpec decided from this same
+				// record and for the same reason.
+				if len(spec.CarriedProjectJobs) > 0 {
+					if data, err = infra.CarriedProjectJobs(data, prev, spec.CarriedProjectJobs); err != nil {
+						return err
+					}
+				}
+				// And the jobs of the accounts this config declares a KEY
+				// credential under, which this release composes none for: it is
+				// the same record and the same reason, and a print that left
+				// out the job the next plan keeps would be a reading the owner
+				// cannot trust.
+				if len(spec.CarriedProjectJobAccounts) > 0 {
+					if data, err = infra.CarriedProjectJobAccounts(data, prev, spec.CarriedProjectJobAccounts); err != nil {
+						return err
+					}
 				}
 			}
 		}
@@ -1711,6 +1758,28 @@ func (o *initOptions) check() error {
 	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
+	if o.rigor != "" && (o.forget || o.configOnly || o.printVars || o.publishConfig) {
+		// These four stop before the converge's stages — forgetting, writing
+		// this machine's config, printing the variables, publishing the shared
+		// config — and the Layer stage, the flag's only reader, is one of
+		// them: accepted, the mode would be dropped with exit 0, and the
+		// user's explicit answer to the wizard's question would be lost with
+		// no error. Refused by name here, as the two flags above are.
+		return userErr("--rigor is the mode of the project a first run creates, written by that run's Layer stage; it has no use with --forget, --config-only, --print-vars and --publish-config")
+	}
+	if o.rigor != "" && o.door == updateDoor.name {
+		// The question belongs to the run that creates the installation, and
+		// this door never does (setupCreates): its Layer stage asks nothing and
+		// writes nothing, so a value here has no reader at all. Left alone it
+		// rides the run's options into that stage, which would splice it into
+		// defaults.rigor.default and publish it — the hole the wizard's own
+		// refusal does not cover, because the walk that settles the name from
+		// the installation returns before the question, and the walk with
+		// --name never enters that branch. Refused by name here, before
+		// anything is read, and after the one-shot refusal above so the flag
+		// that stops before the stages keeps the sentence that names it.
+		return updateRigorRefusal(o.rigor)
+	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
 		if b {
@@ -1935,11 +2004,21 @@ func newProjectConfig(name, gcpProject, region string) (*localcfg.Config, error)
 // installOptions is the installation's spec from the local config and the
 // flags. Discovery sets whether the legacy registry is adopted.
 func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec, error) {
+	return installOptionsCarrying(o, lc, nil)
+}
+
+// installOptionsCarrying is installOptions with the named profiles' shared jobs
+// left to the installation's own document: the spec composes no job for them
+// (infra.InstallOptions.CarriedJobProfiles), and the carry puts the deployed job
+// back into the document the plan is made from. installSpec is the one caller
+// that passes any.
+func installOptionsCarrying(o *initOptions, lc *localcfg.Config, carried []string) (infra.InstallationSpec, error) {
 	opts := infra.InstallOptions{
-		StateBucket:     o.stateBucket,
-		AlertEmail:      o.alertEmail,
-		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
-		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
+		CarriedJobProfiles: carried,
+		StateBucket:        o.stateBucket,
+		AlertEmail:         o.alertEmail,
+		RegistryCleanup:    cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
+		NoLogIsolation:     o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
 	if o.operatorsChanged {
 		opts.Launchers = append([]string{}, o.operators...)
@@ -2040,7 +2119,10 @@ func (r *initRun) publishedJobsPaused(ctx context.Context, lc *localcfg.Config, 
 	if spec.CatalogCheck == nil && spec.Reports == nil {
 		return spec
 	}
-	p, err := layerPlanFor(ctx, lc)
+	// No rigor answer is passed: what this reads is the PUBLISHED layer's own
+	// catalog check, and the wizard's answer is a mode this run is about to
+	// write into the local file, which no published object carries (task W).
+	p, err := layerPlanFor(ctx, lc, "")
 	if err != nil || p.skip != "" || (p.stale == nil && !p.seed) {
 		return spec
 	}
@@ -2771,6 +2853,42 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
+	// And the shared job of a default profile this run could not compose,
+	// which is the same case one step further on: the profile is one the
+	// update itself wrote into the local config (createDefaultProfiles, S5 of
+	// docs/shared-jobs-default), and the fact that composed its job — the one
+	// GitHub App ID the github repositories record — is one that config can
+	// lose afterwards. CarriedProjectJobs keeps the job, whole, from the
+	// record the run that deployed it left, so that a project whose last
+	// github repository moves to Bitbucket, or that adds a repository on a
+	// second App, keeps converging instead of stopping on a job's deletion it
+	// cannot undo ("retiring a project job is not supported yet",
+	// RefuseProjectJobDeletes). The names are the ones heldDefaultProfiles
+	// decided from the same documents, and they are empty on every run that
+	// composes its jobs itself.
+	if len(spec.CarriedProjectJobs) > 0 {
+		for _, prev := range documents {
+			if vars, err = infra.CarriedProjectJobs(vars, prev, spec.CarriedProjectJobs); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
+		}
+	}
+	// And the jobs of the accounts the config declares a KEY credential under,
+	// on the same records: a name such a credential is declared for gets no job
+	// at all from this release's composer (D1670, the filter ProjectJobs
+	// applies), so a document without the job the state holds is the plan of
+	// that job's destruction — and RefuseProjectJobDeletes stops the whole
+	// update on it, with "restore the profile as it was" as its remedy, which
+	// here is putting back the very name the filter drops the job for.
+	// CarriedProjectJobAccounts keeps each of them, whole, from the record the
+	// release behind deployed them in.
+	if len(spec.CarriedProjectJobAccounts) > 0 {
+		for _, prev := range documents {
+			if vars, err = infra.CarriedProjectJobAccounts(vars, prev, spec.CarriedProjectJobAccounts); err != nil {
+				return nil, userErr("reading the installation's tfvars: %v", err)
+			}
+		}
+	}
 	// The other key this spec never carries, and for a sharper reason than the
 	// opt-in above: it is the deployer's scope, which is what creates the seven
 	// scoped roles and their seven conditioned bindings, and a document that
@@ -2789,6 +2907,24 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports, v
 	// every run that rewrites the root's settings and is allowed to run.
 	for _, prev := range documents {
 		if vars, err = infra.CarriedManagedDeployerScoped(vars, prev); err != nil {
+			return nil, userErr("reading the installation's tfvars: %v", err)
+		}
+	}
+	// And the resident orchestrator's block, the fifth key this spec never
+	// carries: the account and the bindings of the mobile orchestrator design's
+	// section 4.3, which are the whole of what that account may hold (mobile plan
+	// task P5.1b). No writer in this tree composes the key yet — the variable has
+	// no CLI writer, so the one installation that has the block is one whose
+	// owner put it in terraform.tfvars.json by hand — and every document this
+	// function writes is rebuilt from a spec that does not carry it. Without the
+	// carry the next `fugaro update` of an installation that opted in hands
+	// Terraform a document with no orchestrator block: the plan is the account's
+	// and its bindings' removal, and the removal of a google_service_account is
+	// data-bearing under D1551, so the run is refused and the installation stops
+	// converging — the same shape as the four above, and the same one missed
+	// update.
+	for _, prev := range documents {
+		if vars, err = infra.CarriedOrchestrator(vars, prev); err != nil {
 			return nil, userErr("reading the installation's tfvars: %v", err)
 		}
 	}
@@ -2911,6 +3047,19 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			spec.Launchers, spec.Operators = operators, admins
 		}
 	}
+	// The shared project jobs' switch, derived again here for the same reason
+	// the lists above are read again: the records it is read from move inside a
+	// run that applies this root — the upgrade backfill writes them after this
+	// run's first apply (install), and the repository stage writes the entry of
+	// the checkout it converges — and the plan below is what makes the
+	// roles/run.invoker grant those records are a statement about. The launcher
+	// reads the same records live, so it hands a shared job the service's
+	// address the moment its profile's record says so; an apply left behind the
+	// records would leave that job's account refused at the service's front
+	// door, with nothing for the run to fall back to (D143). It touches one
+	// field and no other (RefreshProjectJobCredentialsService, G17), and it is
+	// a no-op for every run whose records have not moved.
+	spec.ProjectJobs = infra.RefreshProjectJobCredentialsService(spec.ProjectJobs, lc)
 	backend, err := prepare(wd, spec, im, verifiers, false)
 	if err != nil {
 		return outs, false, err
@@ -3356,6 +3505,27 @@ func (r *initRun) carryBakeAnswer(next *localcfg.Config) bool {
 	return true
 }
 
+// carryRigorAnswer writes the wizard's rigor answer into the local config the
+// run is about to write (task W of docs/rigor-command/implementation-plan.md;
+// D900) — the question's answer, or --rigor.
+//
+// It is written because the answer is a person's, given once, and the two
+// writes are stages apart: this file is written by the Installation stage, and
+// the Layer stage that writes the mode into the project layer comes after the
+// Repository stage. A run that fails or stops in between would otherwise lose
+// the answer for good — the config it left means the next converge is not a
+// first run, so the wizard asks nothing and --rigor is refused by name
+// (setupRigorRefusal), and the project runs the built-in pro until the person
+// finds `fugaro rigor set`. The Layer stage reads the key and clears it once
+// the layer file carries the mode (init_layer_stage.go), so what a later run
+// writes is the owner's `fugaro rigor set` and never this answer again.
+func (r *initRun) carryRigorAnswer(next *localcfg.Config) {
+	if r.o.rigor == "" {
+		return
+	}
+	next.RigorPending = r.o.rigor
+}
+
 // writeConfig writes the local config from the installation's outputs and
 // the flags, keeping everything else (repos, the legacy registry, the
 // endpoints) and dropping build.service_account. It shows the diff first,
@@ -3368,6 +3538,7 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 	r.res.Outputs = &outs
 	next := *lc
 	carried := r.carryBakeAnswer(&next)
+	r.carryRigorAnswer(&next)
 	if outs.RunsBucket != "" {
 		next.RunsBucket = outs.RunsBucket
 	}
@@ -4113,6 +4284,12 @@ func (o *initOptions) installationFlags() []string {
 		// writes no local config of its own shape — would drop a value it was
 		// handed. It is refused by name instead, like the flags above it.
 		"--bake-repos": o.bakeReposChanged,
+		// --rigor is the project's mode, written by the Layer stage of the run
+		// that creates the installation: --anchor returns before that stage,
+		// and a --repo run has none of the installation's stages at all, so
+		// both would drop the answer. Refused by name instead, in the sentence
+		// each of those two walks already has for a flag it cannot act on.
+		"--rigor": o.rigor != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
@@ -4335,7 +4512,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			return err
 		}
 	}
-	inst, err := installOptions(o, lc)
+	// The run's own reading of the installation's spec, not installOptions: a
+	// config that can no longer compose the job of the default profile this
+	// update wrote — its last GitHub repository moved to Bitbucket, or one
+	// added on a second App — is refused by that function, and the repository
+	// stage is where every later update of such an installation would stop
+	// (installSpec).
+	inst, err := installSpec(o, lc, r.warn)
 	if err != nil {
 		return err
 	}
@@ -4453,11 +4636,16 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// held-off root and only the NEXT run's plan switched on (the review of
 	// 2026-11-07's fourth round). On main one run sufficed, and one run still
 	// does.
-	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth)
+	// The accounts are infra.WorkflowAccounts' own answer for this repository
+	// and not the document's agent.oauth_token alone: they are the accounts its
+	// jobs go out on and the ones the record below names, so a launch on any of
+	// them (`--token`, D2070 (a)) is a run this bundle reading has to cover.
+	r.recordCredentialsServiceReady(ctx, lc, outs, repo, cfg.Git.Provider, cfg.Agent.Auth, infra.WorkflowAccounts(cfg, lc, repo), policyBudgetMode(in.Policy))
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
 	printWorkflowWarnings(r, spec)
+	r.warnCatalogSecrets(ctx, lc, spec)
 	// The flip's drop, refused here rather than left to the plan: this is the
 	// apply that gives a proxied repository's jobs up their Bitbucket token,
 	// and it runs only while the credentials service's bundle holds one to
@@ -4502,6 +4690,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// workflow secrets is read from is the one THIS plan mounts, and `ready`
 	// is the decision MountSecretID reads back (update_workflowsecrets.go).
 	r.writeWorkflowSecrets(ctx, lc, ready, cfg)
+	// The repository auth record is written from the same spec, and for the
+	// same reason, one step later (D2070 (a), R7): it is what narrows this
+	// repository's calls at the service to the auth and the accounts its own
+	// configuration names, and `cfg` is the document a run of this repository
+	// checks out rather than this working tree (update_repoauth.go).
+	r.writeRepoAuth(ctx, lc, ready, cfg)
 	versions, err := infra.SecretVersions(ctx, c, ready)
 	if err != nil {
 		return r.retireLeftover(spec, initErr(err))

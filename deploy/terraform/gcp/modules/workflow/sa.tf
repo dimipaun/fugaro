@@ -135,10 +135,41 @@ locals {
     env => var.bitbucket_proxied && contains(local.proxied_git_secret_names, logical)
   }
 
+  # One entry per mount: this mount is a MODEL credential the credentials
+  # service serves — the first of the three families above — exactly when the
+  # input says so. The input is Go's answer for this repository
+  # (infra.ModelSecretsServed, written into the repository root's tfvars as
+  # model_secrets_served) and it has three arms, because the two halves of the
+  # family are served at different times (D2072, G17):
+  #
+  #   * `all` — the cascade: the service holds the account's token AND every
+  #     provider key, which is the state every switched repository was in
+  #     before B2.3, and the arms a tfvars written then means by saying
+  #     nothing (the variable's own default).
+  #   * `anthropic` — an `api-key` or `oauth` repository the switch admits
+  #     (B2.3): the service serves its runs the Anthropic key or the account's
+  #     token, and it serves them NOTHING else — the run may still reach a
+  #     provider of its own on a FUGARO_PROVIDER_KEY_ the job mounts, so that
+  #     accessor stays with the job. It is the arm B2.7's flip turns on, and
+  #     config.ServiceServedAuths is the list that decides which auths get it;
+  #     the input is empty of it until that flip, so every mount stays.
+  #   * `none` — an `api-key` or `oauth` repository whose credential the
+  #     service does NOT hold yet: every mount stays, and with it every
+  #     accessor, which is what makes this release inert for the repositories
+  #     it switches on.
+  #
+  # A repository the switch does not admit is `none` by the same input, and so
+  # the model clauses of the drop below never fire for it — its job keeps the
+  # mounts an earlier release gave it (D147's "with it off nothing changes").
+  is_served_model_secret = {
+    for env, logical in var.workflow.secret_env :
+    env => var.model_secrets_served != "none" && (contains(local.model_secret_env_names, env) || (var.model_secrets_served == "all" && startswith(env, local.model_secret_env_prefix)))
+  }
+
   # One entry per mount, so the drop below is per mount and never per name.
   is_service_held = {
     for env, logical in var.workflow.secret_env :
-    env => contains(local.model_secret_env_names, env) || startswith(env, local.model_secret_env_prefix) || contains(local.service_held_secret_names, logical) || local.is_proxied_git[env]
+    env => local.is_served_model_secret[env] || contains(local.service_held_secret_names, logical) || local.is_proxied_git[env]
   }
 
   # The secrets the job's own account may read, by logical name: every secret
@@ -193,6 +224,43 @@ locals {
     for env, logical in var.workflow.secret_env :
     env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env]
   }
+
+  # The secrets the CREDENTIALS SERVICE's own account may read, by logical name:
+  # one per container the job mounts, which is the set job_mounts above decides
+  # (D2074). The service is what a run asks for a workflow secret at fetch time
+  # (B3.4), so it has to be able to read the container it is asked for — and the
+  # job's own accessor is neither moved nor widened by it: two accounts, two
+  # grants, one container.
+  #
+  # EVERY mount, and not only the secrets the repository declares under its own
+  # `secrets:` — this job's git credential and, while their mounts last, its
+  # model credentials are in the set too. That breadth is D2074's own wording
+  # ("one for each secret the job mounts, beside the job's own; a guard test
+  # holds the two sets equal"), and the set is derived rather than filtered for
+  # that reason: a narrower one would be a second, hand-kept list beside the
+  # mounts, which is the drift the guard exists to refuse. What narrows it is
+  # the FLIP: the plan that takes a mount away (C2.2's App key, C1.20's model
+  # mounts, B1.13's proxied token) empties that entry here in the same apply.
+  #
+  # toset, not the list of mounts: two variables may mount the same logical
+  # name, and a repeated name in a for_each is an error rather than a second
+  # binding.
+  #
+  # Empty while the installation has no service (D147), and empty while the
+  # service has no account to grant it to — an installation's outputs carry one
+  # only from the release that added it, and a repository root planned against
+  # an older installation must plan exactly what it planned (the same
+  # inertness CatalogCheckServiceAccount's empty value buys). An empty for_each
+  # creates no resource at all, so nothing reads var.credentials_service there.
+  #
+  # try, and not `var.credentials_service == null || var.credentials_service.account == ""`:
+  # Terraform's `||` does not short-circuit before 1.12, and these modules
+  # require 1.9 (versions.tf), so the `||` form reads an attribute of a null
+  # value and fails the plan of every repository root whose switch is off. try
+  # answers "" for a null object and for one that carries no account at all —
+  # the second is how deploy/terraform's proxied_git_test evaluates this file
+  # with a stub of only name and region.
+  service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))
 }
 
 # Each secret the job mounts and may read, at the secret level, never the
@@ -204,6 +272,39 @@ resource "google_secret_manager_secret_iam_member" "job" {
   secret_id = var.secrets[each.value]
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.job.member
+}
+
+# Each secret the job mounts, for the credentials service's own account
+# (D2074). It is the value a run will be handed through the service, so the
+# service reads the container the JOB's mount names — the whole reason the two
+# sets are held equal by TestServiceWorkflowSecretGrantsMatchTheJobsMounts:
+# a grant here on a container no job mounts is a credential the service may
+# read and no run asked for, and a mount with no grant here is a fetch that
+# fails for a run the release meant to serve.
+#
+# The reach of each grant is the container the job's own env names, and that is
+# every mount of that job: the git credential, and its model credentials until
+# C1.20 drops their mounts, are in the set with the repository's own secrets.
+# D2074 rules the set to be the mounts — "one for each secret the job mounts,
+# beside the job's own; a guard test holds the two sets equal" — so this is the
+# decision and not an accident, and no run uses the reach while the mount is
+# still on (a mounted value always wins, B3.8). A narrower set would be a second
+# list beside the mounts, and nothing in a plan could keep the two in step.
+#
+# It is not a widening of the job's own accessor above into the service's, and
+# not a grant the service needs to broker anything else: the bundle's own
+# container is modules/installation/credentials.tf's one grant, and this
+# principal holds no project-level accessor (a project-level one cannot tell a
+# workflow secret's container from the git token's or the model secrets' — the
+# names are the same shape, dynamic-delivery F6 — which is D2074's rejected
+# alternative (b)).
+resource "google_secret_manager_secret_iam_member" "service" {
+  for_each = local.service_secret_names
+
+  project   = var.project
+  secret_id = var.secrets[each.value]
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${var.credentials_service.account}"
 }
 
 # The credentials service, once the installation has one (D135): the job's

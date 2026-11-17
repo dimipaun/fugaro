@@ -42,7 +42,8 @@
         "model_from",
         "access",
         "access_from",
-        "inert"
+        "inert",
+        "model_servable"
       ],
       "properties": {
         "craft": {
@@ -51,7 +52,8 @@
             "coder",
             "review",
             "senior-review",
-            "security-review"
+            "security-review",
+            "merge-judge"
           ],
           "description": "The craft this row is about (config.CraftNames)."
         },
@@ -78,6 +80,15 @@
         "inert": {
           "type": "boolean",
           "description": "Whether `access` names a pool that serves nothing yet: a pool holding two or more Claude OAuth subscription credentials while the project's subscription-spread switch is off (D1622). A credential, an undefined name and a pool of another shape are never inert."
+        },
+        "model_servable": {
+          "type": "boolean",
+          "description": "Whether a run can serve `model`: the project's allow-list admits it, a route claims it and a price row covers it -- the verdict `fugaro validate` and a launch report (MC15, D1665), asked of the three checks that read the model's own facts. It is true for a craft that names no model, which adds no problem and changes no verdict (F17): the role slot below it serves the craft, and no model of its own is missing. A craft's access is a separate question, and the row's `access`, `access_from` and `inert` are its answer."
+        },
+        "model_problem": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the model cannot be served, in one sentence: the first problem the checks report about it, in their own order -- the allow-list, then the route, then the price. It names the fix where one applies. Absent when `model_servable` is true."
         }
       }
     }

@@ -494,6 +494,13 @@ type LeaseOptions struct {
 	Attempts int
 	// Sign signs the heartbeat. It is required: no signer, no write, no lease.
 	Sign LeaseSigner
+	// Agents is the list the heartbeat advertises (D161, P6.7): the agents this
+	// consumer runs, which the phone reads out to answer "list agents" and to
+	// default a bare "talk to <agent>" to (D163). It is signed with the rest of
+	// the heartbeat — `agents` is in the covered set whenever it is written — and
+	// an empty list writes no `agents` field at all, because the schema refuses
+	// an empty list and the node's field set is what a reader expects to find.
+	Agents []Agent
 	// NoHeartbeat is `--no-heartbeat`: take no lease, write nothing, act on
 	// nothing. It exists for diagnosis, and it is what keeps a consumer with no
 	// writable heartbeat from acting at all.
@@ -615,6 +622,80 @@ func Take(ctx context.Context, store HeartbeatStore, opts LeaseOptions) (LeaseRu
 	return LeaseRun{}, ErrLeaseContention
 }
 
+// Renew rewrites the heartbeat while this consumer already holds the claim on
+// it, which is what keeps both halves of M1's node true for a long-lived
+// consumer: the phone reads this value for presence (M1(c), §4.2 — a consumer
+// that stopped writing it looks offline), and the claim it carries stops being
+// fresh `ttl` after the instant it was written, at which point the holder's own
+// re-read stops honouring it (ActionBound) and any other consumer may take the
+// mailbox.
+//
+// It is deliberately not Take. The module refuses a take of a fresh claim to
+// everyone, **its holder included** — "a lease is renewed by releasing it, not
+// by re-taking it" — and this store admits no released value to release it to:
+// the heartbeat node is either absent or a heartbeat of exactly `{at, boot,
+// mac}`, so releasing would mean deleting the node, which the consumer neither
+// holds a grant for nor is allowed (D113b fences it to the outbox and the
+// heartbeat). What is left is the write M1 already rests on: read the node with
+// its ETag, check that the claim it carries is this consumer's own, sign
+// `{at, boot, mac}` at the caller's instant and write it back **conditional on
+// that ETag**. The store's if-match is the fence here exactly as it is for a
+// take, so a claim another consumer took over in the meantime is never
+// overwritten by a stale reader; a renewal that finds a heartbeat holding no
+// claim, or someone else's, writes nothing and answers lost.
+func Renew(ctx context.Context, store HeartbeatStore, opts LeaseOptions) (LeaseRun, error) {
+	if opts.NoHeartbeat {
+		return LeaseRun{Verdict: LeaseNone}, nil
+	}
+	path, err := HeartbeatPath(opts.Mailbox)
+	if err != nil {
+		return LeaseRun{}, err
+	}
+	if err := opts.check(); err != nil {
+		return LeaseRun{}, err
+	}
+	ttl := opts.ttl()
+
+	for attempt := 1; attempt <= opts.attempts(); attempt++ {
+		_, etag, claim, err := readHeartbeat(ctx, store, path, ttl)
+		if err != nil {
+			return LeaseRun{}, err
+		}
+		if claim == nil {
+			// Nobody holds the mailbox: taking one is Take's decision, and this
+			// function holds one rule rather than two.
+			return LeaseRun{Verdict: LeaseLost, Attempts: attempt}, nil
+		}
+		if claim.Holder != opts.Holder {
+			return lostRun(*claim, ttl, attempt), nil
+		}
+
+		value, err := signedHeartbeat(opts)
+		if err != nil {
+			return LeaseRun{}, err
+		}
+		err = store.PutIfMatch(ctx, path, etag, value)
+		switch {
+		case err == nil:
+			mine := Lease{Holder: opts.Holder, At: opts.At}
+			return LeaseRun{
+				Verdict:   LeaseHeld,
+				Lease:     &mine,
+				Holder:    opts.Holder,
+				ExpiresAt: opts.At + ttl,
+				Attempts:  attempt,
+			}, nil
+		case errors.Is(err, rtdb.ErrPrecondition):
+			// The heartbeat moved under this renewal, so what was read is not
+			// what would be replaced: re-read and decide again, never force.
+			continue
+		default:
+			return LeaseRun{}, err
+		}
+	}
+	return LeaseRun{}, ErrLeaseContention
+}
+
 // Confirm re-reads the lease before this consumer acts on it.
 //
 // The module's caller obligation is the reason it exists: **a holder stops
@@ -713,16 +794,22 @@ func readHeartbeat(ctx context.Context, store HeartbeatStore, path string, ttl i
 }
 
 // signedHeartbeat is the value a take writes: `{at, boot, mac}`, the three
-// fields the merged rules allow on the heartbeat and no fourth. It is signed
-// **before** it is written (M4b) and validated against the schema after signing
-// (M10: every value this consumer writes is validated first), so a value that
-// cannot be signed, or that the schema would refuse, is never written — and
-// therefore never becomes a lease.
+// fields the merged rules allow on the heartbeat and no fourth, plus `agents`
+// when this consumer advertises a list (D161). It is signed **before** it is
+// written (M4b) and validated against the schema after signing (M10: every value
+// this consumer writes is validated first), so a value that cannot be signed, or
+// that the schema would refuse, is never written — and therefore never becomes a
+// lease.
+//
+// The signature covers the list, so the list cannot be changed in the store
+// without the phone noticing: `agents` is in the covered set whenever it is
+// present, which is why the signer is handed the list rather than the list being
+// added to the record afterwards.
 func signedHeartbeat(opts LeaseOptions) (Record, error) {
 	if opts.Sign == nil {
 		return nil, ErrLeaseNoSigner
 	}
-	mac, err := opts.Sign(Heartbeat{At: opts.At, Boot: opts.Holder})
+	mac, err := opts.Sign(Heartbeat{At: opts.At, Boot: opts.Holder, Agents: opts.Agents})
 	if err != nil {
 		// M4's third row in ErrUnsignable's shape (T2a): the key is loaded and
 		// it is **this value** the signer errored on, so nothing is written and
@@ -734,6 +821,9 @@ func signedHeartbeat(opts LeaseOptions) (Record, error) {
 		return nil, fmt.Errorf("%w: the heartbeat could not be signed, so nothing is written and no lease is taken: %w", ErrUnsignable, err)
 	}
 	value := Record{"at": opts.At, "boot": opts.Holder, "mac": mac}
+	if len(opts.Agents) > 0 {
+		value["agents"] = AgentList(opts.Agents)
+	}
 	if _, refusal := ValidateHeartbeat(value); refusal != nil {
 		return nil, fmt.Errorf("mailbox: the signed heartbeat is not a heartbeat this schema accepts (%s), so nothing is written", refusal.Code)
 	}

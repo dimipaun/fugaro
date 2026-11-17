@@ -12,10 +12,13 @@ import (
 )
 
 // The update door's half of the login unit's step (O9, T7's ruling of
-// 2026-11-05). It is what makes `fugaro update` the whole upgrade: a release
-// that changes the unit's template re-renders the unit this machine already has,
-// with no second command and no question — and a machine that never installed
-// one gets none from here.
+// 2026-11-05, D2700's install of a missing unit). It is what makes `fugaro
+// update` the whole upgrade: a release that changes the unit's template
+// re-renders the unit this machine already has, with no second command and no
+// question, and a machine that has none gets one here — at a person's own
+// terminal, in one line of the plan and with nothing asked — so that the one
+// command a person runs turns the daemon on everywhere their project's people
+// work.
 
 // updateUnitEngine is the engine an update's own run has: the door is what makes
 // initStages hand this stage over, and the stage itself reads nothing else of it.
@@ -93,29 +96,174 @@ func TestUpdateRerendersAnInstalledUnitWhenTheTemplateChanged(t *testing.T) {
 	}
 }
 
-// TestUpdateNeverInstallsAUnit: no unit on this machine is a project that did
-// not choose the daemon or a person who skipped setup. `update` writes none, and
-// the plan line says so — that boundary is the ruling's, not an oversight.
-func TestUpdateNeverInstallsAUnit(t *testing.T) {
+// TestUpdateInstallsMissingUnit: a machine with no unit gets one from `fugaro
+// update` (D2700). It is setup's own write — the same renderer, the same
+// installer, the same reload — because a machine that skipped `setup`, a
+// teammate's machine or one whose unit was removed is exactly what "install
+// everywhere" is for: the person's next terminal update turns the daemon on, and
+// the per-project lease keeps one of those daemons live. Nothing is asked: the
+// plan line is the whole of what the person is shown.
+func TestUpdateInstallsMissingUnit(t *testing.T) {
 	unitHome(t)
 	f := fakeUnitService(t)
 	typed(t)
+	releaseUpdate(t)
+	e, _ := updateUnitEngine(t, &initOptions{})
+	res, out := runUnitStage(t, e, newUpdateUnitStage(e))
+	u := currentUnit(t)
+	if got := stateOf(res, initflow.Unit); got != initflow.Changed {
+		t.Fatalf("the step is %s, want changed: there is no unit on this machine and this run may write one\n%+v", got, res.Stages)
+	}
+	data, err := os.ReadFile(u.Path)
+	if err != nil {
+		t.Fatalf("the unit was not written: %v", err)
+	}
+	if string(data) != u.Text {
+		t.Errorf("%s is not what this release renders:\n--- on disk\n%s\n--- rendered\n%s", u.Path, data, u.Text)
+	}
+	if !strings.Contains(out, "installs the login unit at "+u.Path) {
+		t.Errorf("the run's plan does not name the unit and the path it is written at:\n%s", out)
+	}
+	if d := res.Stages[0].Detail; !strings.Contains(d, "installed "+u.Path) || !strings.Contains(d, "loaded it with") {
+		t.Errorf("the stage's own line after the write is %q, want the file and the manager it was loaded with", d)
+	}
+	if len(f.reloads) != 1 || f.reloads[0].Path != u.Path {
+		t.Errorf("the service manager was reloaded with %v, want one call for %s", f.reloads, u.Path)
+	}
+	if len(res.Left) != 0 {
+		t.Errorf("the step left something for the user: %v", res.Left)
+	}
+	if askedSomething(out) {
+		t.Errorf("the step asked a question, and D2700's install asks nothing:\n%s", out)
+	}
+}
+
+// TestUpdateWithoutTerminalWritesNoUnit: the install is fenced by a person at
+// the terminal, the same fence setup's unit stage uses. A pipe, --json or
+// --non-interactive writes no unit and the step says so in one line — the unit
+// is code that runs at every login, and the machine is left exactly as it was
+// for the person's own next update to install from.
+func TestUpdateWithoutTerminalWritesNoUnit(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	noTerminal(t)
+	releaseUpdate(t)
 	e, _ := updateUnitEngine(t, &initOptions{})
 	res, out := runUnitStage(t, e, newUpdateUnitStage(e))
 	if got := stateOf(res, initflow.Unit); got != initflow.Skipped {
-		t.Fatalf("the step is %s, want skipped: there is nothing installed to re-render\n%+v", got, res.Stages)
+		t.Fatalf("the step is %s with no terminal, want skipped: nobody can read the line a unit is written on\n%+v", got, res.Stages)
 	}
-	if d := res.Stages[0].Detail; !strings.Contains(d, "never installs one") || !strings.Contains(d, "orchestrator install") {
-		t.Errorf("the plan line does not say why nothing was installed: %q", d)
+	d := res.Stages[0].Detail
+	if !strings.Contains(d, "nobody at it") || !strings.Contains(d, "update") {
+		t.Errorf("the plan line does not say why nothing was written and where the command that does it is: %q", d)
 	}
-	if !strings.Contains(out, "no login unit is installed") {
-		t.Errorf("the run's plan does not say there is no unit:\n%s", out)
+	if len(res.Left) != 0 {
+		t.Errorf("the step left something for the user: %v", res.Left)
+	}
+	if !strings.Contains(out, "nobody at it") {
+		t.Errorf("the run's plan does not carry the one line about the unit:\n%s", out)
 	}
 	if _, err := os.Stat(currentUnit(t).Path); !os.IsNotExist(err) {
-		t.Errorf("update wrote a unit (stat: %v)", err)
+		t.Errorf("a run nobody was at wrote a unit (stat: %v)", err)
 	}
 	if len(f.reloads) != 0 {
-		t.Errorf("update reloaded a service that is not there: %v", f.reloads)
+		t.Errorf("a run nobody was at reached the service manager: %v", f.reloads)
+	}
+}
+
+// TestUpdateInAgentSessionWritesNoUnit: a coding agent's session writes no unit
+// either, and the skip is the marker's own sentence — the one an agent reads and
+// passes on to the person, whose next terminal `fugaro update` installs it
+// (D2700, and T8's rule for the re-render read the same way).
+func TestUpdateInAgentSessionWritesNoUnit(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	releaseUpdate(t)
+	e, _ := updateUnitEngine(t, &initOptions{})
+	// After the engine: stageEngine clears every marker for the test process, so
+	// the session this test means is set once the run's own environment is.
+	t.Setenv("CLAUDECODE", "1")
+	res, out := runUnitStage(t, e, newUpdateUnitStage(e))
+	if got := stateOf(res, initflow.Unit); got != initflow.Skipped {
+		t.Fatalf("the step is %s in an agent's session, want skipped:\n%+v", got, res.Stages)
+	}
+	if d := res.Stages[0].Detail; !strings.Contains(d, "CLAUDECODE") {
+		t.Errorf("the skip does not carry the marker's own sentence: %q", d)
+	}
+	if askedSomething(out) {
+		t.Errorf("an agent's run asked a question:\n%s", out)
+	}
+	if _, err := os.Stat(currentUnit(t).Path); !os.IsNotExist(err) {
+		t.Errorf("an agent's session wrote a unit (stat: %v)", err)
+	}
+	if len(f.reloads) != 0 {
+		t.Errorf("an agent's session reached the service manager: %v", f.reloads)
+	}
+}
+
+// TestUpdateDryRunWritesNoUnit: the dry run `fugaro update` has is --plan-only,
+// and it writes no unit either — the plan names the unit it would install, and
+// the file, the manager and the login are all untouched. The plan is the whole
+// of what such a run produces, which is what makes it safe to run anywhere.
+func TestUpdateDryRunWritesNoUnit(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	releaseUpdate(t)
+	e, _ := updateUnitEngine(t, &initOptions{planOnly: true})
+	res, out := runUnitStage(t, e, newUpdateUnitStage(e))
+	u := currentUnit(t)
+	if got := stateOf(res, initflow.Unit); got == initflow.Changed {
+		t.Fatalf("--plan-only wrote the unit:\n%+v\n%s", res.Stages, out)
+	}
+	if !strings.Contains(out, "installs the login unit at "+u.Path) {
+		t.Errorf("the plan does not name the unit a real run would install:\n%s", out)
+	}
+	if _, err := os.Stat(u.Path); !os.IsNotExist(err) {
+		t.Errorf("--plan-only wrote a unit (stat: %v)", err)
+	}
+	if len(f.reloads) != 0 {
+		t.Errorf("--plan-only reached the service manager: %v", f.reloads)
+	}
+}
+
+// TestUpdateWithoutServiceManagerStillSucceeds: a machine with neither launchd
+// nor a systemd user unit — no login unit to write and no manager to load one
+// with — is one line and a run that goes on (D2700 as corrected). Nothing is
+// written, nothing is left for the user, and the update is not a failure: the
+// daemon is a feature of the platforms that carry it, and `fugaro orchestrator
+// run` in the foreground is the answer everywhere else.
+func TestUpdateWithoutServiceManagerStillSucceeds(t *testing.T) {
+	unitHome(t)
+	f := fakeUnitService(t)
+	typed(t)
+	releaseUpdate(t)
+	old := orchestratorGOOS
+	orchestratorGOOS = "windows"
+	t.Cleanup(func() { orchestratorGOOS = old })
+	e, _ := updateUnitEngine(t, &initOptions{})
+	res, out := runUnitStage(t, e, newUpdateUnitStage(e))
+	if got := stateOf(res, initflow.Unit); got != initflow.Skipped {
+		t.Fatalf("the step is %s on a machine with no service manager, want skipped:\n%+v", got, res.Stages)
+	}
+	d := res.Stages[0].Detail
+	for _, want := range []string{"windows", "not supported"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("the one line does not say %q, so the reader cannot tell why the machine has no unit: %q", want, d)
+		}
+	}
+	if len(res.Left) != 0 {
+		t.Errorf("the step left something for the user: %v", res.Left)
+	}
+	if askedSomething(out) {
+		t.Errorf("the step asked a question:\n%s", out)
+	}
+	if _, err := os.Stat(currentUnit(t).Path); !os.IsNotExist(err) {
+		t.Errorf("a platform with no service manager got a unit (stat: %v)", err)
+	}
+	if len(f.reloads) != 0 {
+		t.Errorf("a platform with no service manager reached one: %v", f.reloads)
 	}
 }
 

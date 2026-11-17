@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
+	"github.com/dimipaun/fugaro/internal/access"
 )
 
 // The accounts these cases are about. None of them is a real address and none is
@@ -183,9 +184,17 @@ func (d *burstCountDocs) waitForTheBurst() {
 }
 
 // actsAs makes the fixture's verifier answer this account, signed in the way
-// named: what a case changes to make the next request somebody else's.
+// named: what a case changes to make the next request somebody else's. The
+// member is built from the address AS GIVEN, which is what the seam does with
+// the address the token CLAIMED (api.go's Caller, P1.3's Verify): a caller
+// without one is a caller no invitation can be compared against.
 func (f *fixture) actsAs(uid, email, provider string) {
-	f.signIn.caller = Caller{UID: uid, Email: email, Provider: provider, AuthTime: f.now}
+	f.t.Helper()
+	member, err := access.Member(email)
+	if err != nil {
+		f.t.Fatalf("building the member of the address %q: %v", email, err)
+	}
+	f.signIn.caller = Caller{UID: uid, Email: email, Member: member, Provider: provider, AuthTime: f.now}
 }
 
 // apiAsCaller sends one request to the portal's API behind the sign-in the
@@ -216,15 +225,18 @@ func (f *fixture) signedUp(uid, email, name string) WireOrganisation {
 	return readAnswer[WireOrganisation](f, rec)
 }
 
-// seed writes one record into the fixture's store, which is how a case stands up
-// an organisation no route of this area creates.
+// seed writes one record into the store the service is reached over, which is
+// how a case stands up an organisation no route of this area creates. It is
+// Deps.Docs and not the spy behind it: a case that wires its own store behind
+// that seam (workspaces_test.go's one-store case) seeds into the store its
+// service will read.
 func (f *fixture) seed(collection, id string, record any) {
 	f.t.Helper()
 	doc, err := storedDoc(record)
 	if err != nil {
 		f.t.Fatalf("building the record %s/%s: %v", collection, id, err)
 	}
-	if err := f.docs.Put(context.Background(), collection, id, doc); err != nil {
+	if err := f.deps.Docs.Put(context.Background(), collection, id, doc); err != nil {
 		f.t.Fatalf("writing the record %s/%s: %v", collection, id, err)
 	}
 }
@@ -966,13 +978,15 @@ func TestOrgCreationIsRateLimited(t *testing.T) {
 
 // TestConcurrentSignUpsRespectTheDailyLimit: F35's limit under the one thing that
 // can break it — one account signing up from many places at once. The day's count
-// is a read of the account's memberships and a write of one more, and api.go's Tx
-// reads by id alone, so the count is taken outside the transaction and signUpMu is
-// what makes the two atomic; without it every sign-up of a burst counts the
-// records written before the burst and each writes one more, which is an account
-// holding as many organisations as it sent requests. The burst is widened at the
-// count itself (burstCountDocs), so the window this closes is the one the case
-// reads rather than the one the scheduler happened to leave open.
+// is a read of the account's memberships and a write of one more, and a query
+// inside the sign-up's transaction would make every other sign-up of the day a
+// conflict with it (orgs.go's recordReader), so the count is taken outside the
+// transaction and signUpMu is what makes the two atomic; without it every sign-up
+// of a burst counts the records written before the burst and each writes one
+// more, which is an account holding as many organisations as it sent requests.
+// The burst is widened at the count itself (burstCountDocs), so the window this
+// closes is the one the case reads rather than the one the scheduler happened to
+// leave open.
 func TestConcurrentSignUpsRespectTheDailyLimit(t *testing.T) {
 	const burst = 8
 	f := newFixture(t)

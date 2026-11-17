@@ -234,7 +234,7 @@ type InstallationOutputs struct {
 // Cloud Run service that alone holds the model credentials. One type serves
 // both ends of the contract — the installation root's output of that name and
 // the repository root's installation.credentials_service — because both carry
-// the same two values.
+// the same values.
 //
 // Null means the installation has not opted in (D147), and null is what every
 // reader gates on: with it off, every job keeps its model-secret accessors,
@@ -247,10 +247,21 @@ type CredentialsService struct {
 	// tokens are minted for (C1.14) — and it is the INSTALLATION root's: the
 	// module's output carries it (outputs.tf, the service resource's uri) and
 	// the init stage writes it into var.credentials_service on the apply
-	// after the one that created the service. A repository root reads the
-	// first two fields and nothing else, so the object it writes into its own
-	// tfvars is built without it (repoCredentialsService).
+	// after the one that created the service. A repository root reads it not
+	// at all, so the object it writes into its own tfvars is built without it
+	// (repoCredentialsService).
 	URL string `json:"url,omitempty"`
+	// Account is the email of the service's own account (D2074), which a
+	// repository root grants roles/secretmanager.secretAccessor per mounted
+	// workflow secret to — the service reads the container a run asks it for
+	// (B3.4). It is written into the repository root's tfvars and never read
+	// by this binary: the module turns it into the IAM member.
+	//
+	// Empty in the outputs of an installation applied before the field
+	// existed, and empty is inert there: modules/workflow plans the grant for
+	// no account, so a repository root against such an installation plans
+	// exactly what it planned, and the next `fugaro update` fills it in.
+	Account string `json:"account,omitempty"`
 }
 
 // IntakeService is the installation root's `intake` output (DS2.2, D1931): the
@@ -278,11 +289,15 @@ type IntakeService struct {
 //     nothing to switch to — and each caller asks the source it has: the
 //     installation root's outputs where a repository root's spec is built,
 //     the local config's own record of them where a launch decides.
-//   - ready: the bundle holds at least one MODEL credential, which is the
-//     condition that makes the switch safe: the mount it removes is exactly
-//     the credential the service must then hand back, and a `cascade` run
-//     has no credential of its own to fall back to (D143). It is read from
-//     localcfg.Repo.CredentialsServiceReady, the per-repository record
+//
+//   - ready: the bundle holds what THIS repository's runs need the service to
+//     hand back — a model credential for the cascade, and, for an `api-key` or
+//     `oauth` repository, the credential its auth calls for under EVERY account
+//     those runs may go out on, beside the git credential its provider needs
+//     (internal/cli's credentialsBundleServes judges it). That is the condition
+//     that makes the switch safe: the mount it removes is exactly the credential
+//     the service must then hand back, and a `cascade` run has no credential of
+//     its own to fall back to (D143). It is read from the per-repository record
 //     `fugaro update` writes from the bundle AND the auth its plan was built
 //     with — a record of an apply, so it carries the auth that apply was made
 //     for, and an owner who applies a root before committing the cascade
@@ -293,30 +308,113 @@ type IntakeService struct {
 //     differ only where the config is published (internal/localcfg's
 //     MergeShared, which must not let a machine that holds no record erase
 //     one another machine wrote).
-//   - auth: the repository's agent.auth is one the service serves, which is
-//     config.AuthCascade alone. It is READ LIVE from the repository's
-//     fugaro.yaml at every build of its spec and never stored: a stored copy
-//     could outlive an edit to the file, and an `oauth` repository whose
-//     mounts were dropped would have no App key to open its git provider
-//     with while the service refuses to serve it.
+//
+//   - auth: the repository's agent.auth is one the service serves:
+//     config.AuthCascade, always, and `api-key` or `oauth` under the mode
+//     below (B2.3, D498). It is READ LIVE from the repository's fugaro.yaml
+//     at every build of its spec and never stored: a stored copy could outlive
+//     an edit to the file, and an `oauth` repository whose mounts were dropped
+//     would have no App key to open its git provider with while the service
+//     refuses to serve it. `vertex` is served by nothing: its calls go to
+//     Vertex AI on the job's own service account.
+//
+//   - mode: the budget mode the published node carries, and it is a condition
+//     for `api-key` and `oauth` alone (D2071): the gateway is what reaches the
+//     service, and it exists only in `observe` and `enforce`. A repository on
+//     a project whose mode is `off` is held off the switch — mounts kept, no
+//     invoker grant — because its run would be handed an address its own
+//     runner refuses to use, and its job would be left with a mount gone and
+//     nothing to read instead. It is read from Inputs.Policy, the node the
+//     caller read: nil means this caller read no node (fugaro image, fugaro
+//     doctor, --print-vars), and "" is then the answer — held off, the
+//     fail-closed direction — while an empty Policy is the different answer
+//     "read, and the project has published no block". Neither is a repository
+//     left broken: nothing is dropped for an auth this release does not serve
+//     (config.ServiceServedAuths is empty until B2.7), so a held-off
+//     `api-key` repository keeps exactly the mounts it had.
+//
+//     The cascade is deliberately not held to this condition, and that is what
+//     keeps the mode's own rule whole: a `cascade` workflow is REFUSED outright
+//     when its effective mode is off (config.CheckCascadeGateway, judged at
+//     validate and at launch), because the cascade has no in-job path at all.
+//     So a cascade repository whose node says off is one whose runs the launch
+//     stops before a job is started, whatever this switch answers, and
+//     answering off here would put its model mounts back on a job whose next
+//     launch is refused — the mounts and the refusal disagreeing over a state
+//     neither of them produced.
 //
 // It is one function on purpose. The plan a repository root writes and the
 // address a launcher puts on its job's execution have to come from the same
 // answer: a second implementation would be a second answer, and the state
 // where the two disagree is a job whose credential was dropped and whose
 // launch was told about no service to get it from.
-func CredentialsServiceServes(installed, ready bool, auth string) bool {
-	return installed && ready && auth == config.AuthCascade
+func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
+	if !installed || !ready {
+		return false
+	}
+	if auth == config.AuthCascade {
+		return true
+	}
+	if auth != config.AuthAPIKey && auth != config.AuthOAuth {
+		return false
+	}
+	return mode == config.BudgetObserve || mode == config.BudgetEnforce
+}
+
+// ModelSecretsServed answers which model secrets the credentials service
+// serves to a job — the value of the repository root's model_secrets_served
+// input, and the one thing modules/workflow/sa.tf keys the model mount and
+// accessor drop on (config.ModelSecretServedAll, ...Anthropic, ...None).
+//
+// It is a SECOND answer rather than a clause of the switch because the two
+// come apart on this branch, and that is D2072's first step: a switched
+// `api-key` or `oauth` repository's runs reach the service from the release
+// that hands out the address, while its job goes on MOUNTING the credential —
+// config.ServiceServedAuths is empty, the flip is B2.7 — so an older launcher
+// or an older job image, which reads the mount and knows nothing of the
+// service, still works (G17, D2072). Only the cascade, which has no in-job
+// credential to read at all, takes its mounts away with the URL.
+//
+// `serves` is CredentialsServiceServes' answer for this repository, and the
+// three cases are:
+//
+//   - `none`: the switch is off for this repository. Nothing is served, so
+//     every mount stays and the module drops no accessor.
+//   - `all`: the cascade's job, whose runner reads every model credential from
+//     the service. That is the answer this branch shipped before, and the
+//     module's own default for a root applied with an older tfvars.
+//   - `anthropic`: an auth in config.ServiceServedAuths — the service hands
+//     back the Claude OAuth token and the Anthropic key, and only those two:
+//     a provider's key is forwarded, not attached, by the route that spends it
+//     (R6, D1634), so its mount is the run's own and stays.
+func ModelSecretsServed(serves bool, auth string) string {
+	if !serves {
+		return config.ModelSecretServedNone
+	}
+	if auth == config.AuthCascade {
+		return config.ModelSecretServedAll
+	}
+	if slices.Contains(config.ServiceServedAuths, auth) {
+		return config.ModelSecretServedAnthropic
+	}
+	return config.ModelSecretServedNone
 }
 
 // repoCredentialsService is the installation's credentials service as a
-// REPOSITORY root reads it: the name and the region the workflow module turns
-// into each job account's roles/run.invoker grant, or nil when the switch is
-// held off for this repository (CredentialsServiceServes). The URL is left
-// behind because the module's variable carries no such attribute — an object
-// conversion in Terraform silently DROPS an extra attribute rather than
-// refusing it, so passing it would read as a value the repository root agreed
-// on while nothing used it.
+// REPOSITORY root reads it: the name, the region and the account the workflow
+// module turns into each job account's roles/run.invoker grant, the
+// per-container secretAccessor the service's own account gets (D2074), or nil
+// when the switch is held off for this repository
+// (CredentialsServiceServes). The URL is left behind because the module's
+// variable carries no such attribute — an object conversion in Terraform
+// silently DROPS an extra attribute rather than refusing it, so passing it
+// would read as a value the repository root agreed on while nothing used it.
+//
+// The account travels with an empty value when the installation's outputs
+// predate it, and that is deliberate: the module plans no grant for an empty
+// account, so the release that added the field changes no repository root's
+// plan until the installation itself is applied (outputs.tf carries it from
+// the service's own resource, so the next apply of that root does).
 //
 // nil is the whole of the switch's first flip, and it needs no Terraform
 // change: modules/workflow/sa.tf gates the mount drop on the variable being
@@ -327,7 +425,7 @@ func repoCredentialsService(s *CredentialsService, on bool) *CredentialsService 
 	if s == nil || !on {
 		return nil
 	}
-	return &CredentialsService{Name: s.Name, Region: s.Region}
+	return &CredentialsService{Name: s.Name, Region: s.Region, Account: s.Account}
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
@@ -529,6 +627,32 @@ type RepoSpec struct {
 	// plan moves for a repository nobody proxied.
 	BitbucketProxied bool `json:"bitbucket_proxied,omitempty"`
 
+	// ModelSecretsServed is which model secrets the credentials service serves
+	// to this repository's jobs (config.ModelSecretServedAll, ...Anthropic,
+	// ...None), written into the tfvars' repo object as the workflow module's
+	// model_secrets_served input. It is ModelSecretsServed's answer for this
+	// repository — the switch's verdict for it and its agent.auth — and the
+	// module drops a model mount's ACCESSOR on exactly the secrets the value
+	// names, which is the other half of the drop Go makes here
+	// (dropModelMounts): a job account without an accessor on a secret its
+	// container still mounts is a job Cloud Run refuses to create.
+	//
+	// It is the flip's value rather than the switch's (D2072): `none` for a
+	// repository the switch holds off, `all` for the cascade's job, and
+	// `anthropic` — the two named model credentials and no provider key — for
+	// an auth config.ServiceServedAuths holds, which is empty until B2.7. So a
+	// switched `api-key` or `oauth` repository plans every mount and every
+	// accessor exactly as it did before the service existed, while its runs
+	// reach the service: the URL first, the mounts dropped behind the flip
+	// (G17).
+	//
+	// It is omitted when empty, and the module's default is then `all`: the
+	// value this branch shipped before the input existed, which is what a root
+	// applied with an older tfvars means, and what a spec built without going
+	// through Repo plans. Every spec Repo builds carries one of the three
+	// values, so no plan of this release leaves the question to the default.
+	ModelSecretsServed string `json:"model_secrets_served,omitempty"`
+
 	// ProjectSecretCandidates are the logical names this repository may use
 	// project-wide, mapped to the secret ID they would resolve to
 	// (gcp.ProjectSecretID). Candidate data only: being here says nothing
@@ -607,10 +731,16 @@ type repoCtx struct {
 	// is this, and nothing else reads it.
 	bitbucketProxied bool
 	// credentialsServiceOn is the per-repository fact of the credentials
-	// service's switch, decided once for the repository by resolve: the
-	// repository's job mounts no model credential and its root hands the
-	// workflow module the service to grant an invoker on, or neither.
+	// service's switch, decided once for the repository by resolve: its root
+	// hands the workflow module the service to grant an invoker on and its
+	// launch is handed the service's address, or neither. Which model mounts
+	// the switch takes away is a SECOND answer (ModelSecretsServed), read
+	// beside it wherever a mount is dropped.
 	credentialsServiceOn bool
+	// budgetMode is the mode the published node carries, read once by resolve
+	// from Inputs.Policy: the switch's fourth condition for an `api-key` or
+	// `oauth` repository (D2071). It is "" where the caller read no node.
+	budgetMode string
 }
 
 var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -696,7 +826,10 @@ func resolve(in Inputs) (*repoCtx, error) {
 	if err := c.resolveBitbucketProxied(); err != nil {
 		return nil, err
 	}
-	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth)
+	if in.Policy != nil {
+		c.budgetMode = in.Policy.Budget.Mode
+	}
+	c.credentialsServiceOn = CredentialsServiceServes(c.inst.CredentialsService != nil, local.CredentialsServiceOn(), in.Cfg.Agent.Auth, c.budgetMode)
 	return c, nil
 }
 
@@ -1077,8 +1210,10 @@ type SecretMount struct{ Logical, Env string }
 // secret (config.ClaudeAccountSecret) for oauth, and for an api-key job the
 // stage account's token when a stage key named one — the keys of the model
 // providers the owner's local config allows repo to send code to (only with
-// api-key), and the workflow's own secrets. It is the one place that decides
-// it, for the job's spec and for the secrets init asks for.
+// api-key, and under the credential's own container where the installation
+// declares a runner-path key credential of that provider's name,
+// runnerKeyCredential), and the workflow's own secrets. It is the one place
+// that decides it, for the job's spec and for the secrets init asks for.
 //
 // A provider's key is the runner's, for its gateway, and only a repository
 // the owner allowed to send code there gets it, as a variable the agent's
@@ -1109,9 +1244,22 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 	case "api-key":
 		out = append(out, SecretMount{"anthropic-api-key", config.ReservedSecrets["anthropic-api-key"]})
 		for _, pn := range slices.Sorted(maps.Keys(lc.Providers)) {
-			if p := lc.Providers[pn]; p.AllowsData(repo) {
-				out = append(out, SecretMount{p.Secret, p.SecretEnv()})
+			p := lc.Providers[pn]
+			if !p.AllowsData(repo) {
+				continue
 			}
+			// A runner-path key credential of the provider's own name is that
+			// provider's key (D1670, MC23): the value the credential's own
+			// declaration bounds is stored under the credential's derived secret
+			// name, and this mount is the half of the run that carries it to the
+			// call. The provider's own .secret is superseded and not mounted
+			// beside it: one variable carries one key, and a second container for
+			// it would be a copy no run reads.
+			logical := p.Secret
+			if s, ok := runnerKeyCredential(lc, pn, repo); ok {
+				logical = s
+			}
+			out = append(out, SecretMount{logical, p.SecretEnv()})
 		}
 		// The one mix the owner's B0 ruling admits: the stage account's own
 		// job mounts its token (mixedStageAccounts).
@@ -1144,16 +1292,86 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 	return out, nil
 }
 
+// runnerKeyCredential is the container holding the key of the runner-path key
+// credential that serves provider pn for repo, when this installation declares
+// one (D1670, MC23). The provider of that name is the one a pool member of the
+// name is served by (config.PoolMemberServesModel, whose openrouter member
+// indexes providers by its own name), so the credential's declaration and the
+// provider's entry are the two halves of one wiring, and this function is where
+// they meet.
+//
+// The container is the credential's OWN derived secret name, which is what
+// `fugaro accounts add <name> --type openrouter` writes the value into: a
+// provider's .secret may not name it (config.ValidateModelProviders refuses the
+// name there, because the name is derived from a credential and never chosen),
+// so the mount is built from the credential's declaration rather than from the
+// provider entry's own field.
+//
+// It is bounded the way the credential is: claude_accounts.<name>.allow_data_to
+// names the repositories its key may be sent to, and a repository the list does
+// not name gets the provider's own .secret mounted as before. A credential of
+// the service's path (anthropic) is not one of these — the credentials service
+// serves it out of the bundle and this job mounts nothing for it — and a name
+// this config declares no key credential for is the ordinary provider key.
+func runnerKeyCredential(lc *localcfg.Config, provider, repo string) (string, bool) {
+	secret := config.CredentialSecret(provider)
+	if _, ok := runnerKeyCredentialName(lc, secret); !ok || !lc.ClaudeAccounts[provider].AllowsData(repo) {
+		return "", false
+	}
+	return secret, true
+}
+
+// runnerKeyCredentialName is the credential a logical secret is the derived
+// container of, when this installation declares it as a RUNNER-path key
+// credential (D1670, MC23). It is the one place that reads the half off a
+// container name, so the two rules that meet on it cannot disagree: the mount
+// SecretMounts builds for a provider of that name, and the project-secret
+// candidate ProjectSecretCandidateFromNode answers for -- a name the first
+// mounts and the second refuses is a mount Readiness can never resolve, which
+// is a job it refuses to deploy (or, for a job that exists, one whose mount is
+// dropped) over a key the operator did store.
+//
+// The serving path is the clause that keeps the other half out: a
+// service-served credential (anthropic) is read from the credentials service's
+// bundle and mounted nowhere, so its container is no job's secret and no
+// candidate; and a name in the namespace with no such credential declared
+// belongs to no mount either.
+func runnerKeyCredentialName(lc *localcfg.Config, secret string) (string, bool) {
+	name, ok := config.CredentialBySecret(secret)
+	if !ok {
+		return "", false
+	}
+	cred, declared := config.CredentialNamed(lc.Credentials, name)
+	if !declared || !config.KeyCredentialType(cred.Type) || config.CredentialServingPath(cred.Type) != config.CredentialPathRunner {
+		return "", false
+	}
+	return name, true
+}
+
 // WorkflowAccounts are the Claude accounts each of repo's workflows gets a
 // job for: under oauth every account config.AllowedClaudeAccounts allows repo
 // (the default first), and mixedStageAccounts' accounts beside the default
 // under api-key, and the default alone under every other auth. RepoSpec
 // deploys one job per (workflow, account) from it, and RequiredSecrets reads
 // the same list, so the two cannot disagree about which tokens are mounted.
+//
+// A name the local config declares a KEY credential is not one of them
+// (config.ClaudeAccountTokenNames), and the reason is the mount rather than the
+// name: every job of this set exists to carry an account's Claude token,
+// config.ClaudeAccountSecret(name) as CLAUDE_CODE_OAUTH_TOKEN
+// (SecretMounts), and a key credential's value is stored under its own derived
+// name instead (config.CredentialSecret, D1670) — no run ever writes a version
+// to the account's token container for such a name, so a job built for it
+// would mount an empty token, `fugaro secrets ls` would flag a MISSING secret
+// no `claude setup-token` step could fill (SecretCommands), and a run launched
+// on the variant would fail in the credential. The name's claude_accounts
+// entry keeps the meaning it has for a key credential — the bound on where the
+// key may be sent — and what carries the key to a call is the serving half of
+// its type, never a Claude account job of its own (D1670, MC23).
 func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []string {
 	switch cfg.Agent.Auth {
 	case "oauth":
-		return config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo)
+		return config.ClaudeAccountTokenNames(lc.Credentials, config.AllowedClaudeAccounts(lc.ClaudeAccounts, repo))
 	case "api-key":
 		out := []string{config.DefaultClaudeAccount}
 		for _, name := range mixedStageAccounts(cfg, lc, repo) {
@@ -1161,7 +1379,7 @@ func WorkflowAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []st
 				out = append(out, name)
 			}
 		}
-		return out
+		return config.ClaudeAccountTokenNames(lc.Credentials, out)
 	}
 	return []string{config.DefaultClaudeAccount}
 }
@@ -1359,14 +1577,23 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// declared — see dropModelMounts — so nothing here plans a secret's
 	// destruction.
 	//
+	// Which model mounts go is ModelSecretsServed's answer and not the
+	// switch's alone (D2072): the cascade's job gives up every one of them,
+	// while an `api-key` or `oauth` repository whose runs reach the service
+	// gives up none of them until the flip — config.ServiceServedAuths is
+	// empty — because an older launcher or an older job image reads the mount
+	// and knows nothing of the service (G17). The value is the same one the
+	// tfvars carry (RepoSpec.ModelSecretsServed), so the mount this drops and
+	// the accessor the module takes away are one answer.
+	//
 	// c.credentialsServiceOn and not the block's presence: the installation
 	// having a service says nothing about THIS repository. A repository
 	// whose agent.auth the service does not serve, or one whose bundle
 	// cannot hand its credential back, would be left with no model
 	// credential at all — which is the whole of what this gate is for
 	// (CredentialsServiceServes).
-	if c.credentialsServiceOn {
-		dropModelMounts(&ws)
+	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
+		dropModelMounts(&ws, served)
 	}
 	ws.BuildSecrets = []string{c.gitSecret}
 	for _, s := range w.Secrets {
@@ -1506,6 +1733,12 @@ func Repo(in Inputs) (RepoSpec, error) {
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
+		// The same answer workflow() dropped the mounts with, read from the
+		// same two facts, so the module's accessor drop and this spec's mount
+		// drop cannot disagree: a job whose account lost an accessor on a
+		// secret its container still mounts is a job Cloud Run refuses to
+		// create.
+		ModelSecretsServed: ModelSecretsServed(c.credentialsServiceOn, in.Cfg.Agent.Auth),
 
 		GitHubAppID:              c.appID,
 		RepoURL:                  c.repoURL,
@@ -1721,7 +1954,26 @@ func ProjectSecretCandidateFromNode(lc *localcfg.Config, logical, repo, provider
 	if !eligible && namedProvider {
 		eligible = lc.Providers[modelProvider].AllowsData(repo)
 	}
-	claimed := listed || swept || namedAccount || namedProvider
+	// A runner-path key credential's own container is the fifth source, with a
+	// named account's shape: the credential is a declaration of this
+	// installation's config, its key is what the job mounts for the provider of
+	// its name (SecretMounts), and claude_accounts.<name>.allow_data_to is the
+	// reach the key may be sent to -- the field `fugaro accounts add --type
+	// openrouter` writes before the value is stored under that container
+	// (D1670, MC23). The branch is what makes the mount resolvable at all: the
+	// container is neither project_secrets nor an account's token nor a
+	// provider's .secret, so without it Readiness finds no copy of a name a job
+	// mounts, and the command it names for that state is not one the CLI accepts
+	// for this namespace.
+	//
+	// The serving path is what keeps the other half out: a service-served
+	// credential's container is read from the credentials service's bundle and
+	// mounted nowhere, so it is no job's secret and no candidate here.
+	keyCredential, namedKeyCredential := runnerKeyCredentialName(lc, logical)
+	if !eligible && namedKeyCredential {
+		eligible = lc.ClaudeAccounts[keyCredential].AllowsData(repo)
+	}
+	claimed := listed || swept || namedAccount || namedProvider || namedKeyCredential
 	if !eligible && !claimed {
 		// workflow_secrets is the fourth and last source, asked only for a
 		// name none of the others claims -- the order is the gate, so a
@@ -2025,6 +2277,16 @@ func (rs RepoSpec) Addresses() []string {
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
 		}
+		// And the service's own accessor, one per container this workflow's
+		// job MOUNTS (D2074) — a set of its own, and not the job's grants
+		// read backwards: a mount the job keeps an accessor on is one the
+		// service may still be asked for (the module's set is the mounts), and
+		// a mount the job has given up is one the service is not granted.
+		for _, logical := range uniqueSecrets(ws) {
+			if serviceReadsSecret(rs.Installation.CredentialsService, logical, rs.BitbucketProxied) {
+				add(p + "google_secret_manager_secret_iam_member.service[" + q(logical) + "]")
+			}
+		}
 		if rs.Installation.CredentialsService != nil {
 			// The job account's roles/run.invoker on the service (D135).
 			add(p + "google_cloud_run_v2_service_iam_member.credentials[0]")
@@ -2111,6 +2373,38 @@ func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
 func (rs RepoSpec) DropsBitbucketToken() bool {
 	return rs.Installation.CredentialsService != nil && rs.BitbucketProxied &&
 		slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
+}
+
+// serviceReadsSecret reports whether the credentials service's own account is
+// granted this logical secret's container in this repository's root (D2074,
+// B3.3): the module's service_secret_names is the values of its job_mounts, so
+// the test is "does this job still MOUNT the secret" — every mounted secret
+// except the two whose mount the module's own drop takes away once the service
+// is on, by logical name (the GitHub App's private key, C2.3) or for this
+// repository alone (a proxied repository's git credential, B1.13, G9/G15).
+// config.ServiceHeldSecretNames is the same list the module's literal is held
+// to (deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService).
+//
+// It is a different question from mountsServiceHeldSecret, and deliberately:
+// that one answers "may the JOB still read it", which the served model
+// credentials also say no to (their accessor goes at C1.18, their mount at
+// C1.20), while their MOUNT is still on the container this release, and a
+// container the job mounts is one the service may be asked for. So a model
+// credential of a repository the service serves is a grant here until Go's
+// own dropModelMounts takes the mount out of the spec — which is exactly the
+// tfvars the module reads.
+//
+// svc nil, or with no account in it, is the switch off and the installation
+// applied before the account existed: no grant at all, which is what makes
+// this release plan nothing new on such an installation.
+func serviceReadsSecret(svc *CredentialsService, name string, proxied bool) bool {
+	if svc == nil || svc.Account == "" {
+		return false
+	}
+	if slices.Contains(config.ServiceHeldSecretNames, name) {
+		return false
+	}
+	return !proxied || !slices.Contains(config.ProxiedGitSecretNames, name)
 }
 
 // Schedule is the check's daily cron schedule: a minute between 05:00 and

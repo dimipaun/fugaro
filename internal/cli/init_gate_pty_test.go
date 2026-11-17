@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -49,7 +50,10 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	typeAt("Type the GCP project's ID", 1, "my-proj-42\n")
 	typeAt("Type the region the installation's jobs and the scheduler run in", 1, "\n")
 	typeAt("Type the Fugaro project's name", 1, "\n") // its default can come from an installation in that project
-	typeAt("Bake your repos", 1, "\n")                // the wizard's last question (IS7), and Enter is its suggestion
+	// The rigor mode is the one question here Enter is not an answer to (task
+	// W), so the mode is typed rather than taken.
+	typeAt("Type the project's rigor mode", 1, string(rigor.Pro)+"\n")
+	typeAt("Bake your repos", 1, "\n") // the wizard's last question (IS7), and Enter is its suggestion
 	select {
 	case err := <-done:
 		if err != nil {

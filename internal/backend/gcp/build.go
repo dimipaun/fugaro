@@ -55,9 +55,28 @@ func embeddedBuild() (*cloudbuild.Build, error) {
 	return &b, nil
 }
 
+// BuildSecret is one workflow secret a derived-image build reads: the
+// environment variable the build step sees it as, and the Secret Manager
+// container to read it from.
+//
+// The container travels with the entry instead of being derived from
+// (slug, name) the way the git credential's is, because the repository's own
+// container of that name is not necessarily the one a job mounts: Readiness
+// resolves a name the project covers to the project's copy, and under D2313 a
+// repository-level name is mounted nowhere at all — its container is kept
+// (var.repo.secrets, prevent_destroy) with no version in it, because no store
+// may fill one. A request that named that container asks Cloud Build for a
+// version that does not exist, which it refuses, so the build is one that can
+// only fail.
+type BuildSecret struct {
+	Name string // the logical name, for the refusals below
+	Env  string // the variable the build step reads it as
+	ID   string // the mounted container: SecretID or ProjectSecretID built it
+}
+
 // BuildSpec is one derived-image build of (repository, workflow).
 type BuildSpec struct {
-	Slug        string // the repository's storage slug, for its workflow secrets' IDs
+	Slug        string // the repository's storage slug
 	GitProvider string // gitprov.KindBitbucket or KindGitHub; RepoURL must be on its host
 	RepoURL     string // https clone URL without credentials, on GitProvider's host
 	BaseBranch  string
@@ -75,8 +94,10 @@ type BuildSpec struct {
 	// (BuildServiceAccountID), which the build runs as.
 	ServiceAccount string
 	MachineType    string
-	// WorkflowSecrets become env BuildKit secrets of the build step.
-	WorkflowSecrets []config.Secret
+	// WorkflowSecrets become env BuildKit secrets of the build step. Every
+	// entry names the container a job of this repository mounts for it:
+	// one that names none is not a request this package builds (check).
+	WorkflowSecrets []BuildSecret
 	// Bucket is the runs bucket as gs://<name>, where the build's record
 	// step writes builds/<Slug>/<Workflow>/image.json.
 	Bucket string
@@ -208,7 +229,7 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	envs := make([]string, 0, len(s.WorkflowSecrets))
 	for _, ws := range s.WorkflowSecrets {
 		b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager,
-			&cloudbuild.SecretManagerSecret{Env: ws.Env, VersionName: version(SecretID(s.Slug, ws.Name))})
+			&cloudbuild.SecretManagerSecret{Env: ws.Env, VersionName: version(ws.ID)})
 		build.SecretEnv = append(build.SecretEnv, ws.Env)
 		envs = append(envs, ws.Env)
 	}
@@ -392,6 +413,16 @@ func (s BuildSpec) check(project string, reserved map[string]bool) error {
 	}
 	seen := map[string]bool{}
 	for _, ws := range s.WorkflowSecrets {
+		// A build reads a secret through the version this request names, so
+		// an entry with no container would be a request for
+		// projects/<p>/secrets//versions/latest: a malformed one Cloud Build
+		// answers with nothing a reader can act on, instead of the spec's own
+		// answer. The caller drops such an entry (internal/cli's buildSecrets);
+		// reaching here with one is a bug in the caller, and the request is
+		// the last place it can be caught.
+		if ws.ID == "" {
+			return fmt.Errorf("workflow secret %s: no container to read it from", ws.Name)
+		}
 		if !secretEnvRE.MatchString(ws.Env) {
 			return fmt.Errorf("workflow secret %s: variable %q is not [A-Z_][A-Z0-9_]*", ws.Name, ws.Env)
 		}

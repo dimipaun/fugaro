@@ -89,6 +89,7 @@ func proxiedModulePlan(t *testing.T, proxied, service bool) (accessors []string,
 	main := `variable "workflow" { type = any }
 variable "credentials_service" { default = null }
 variable "bitbucket_proxied" { type = bool }
+variable "model_secrets_served" { type = string }
 
 ` + filled + `
 output "job_secret_names" { value = local.job_secret_names }
@@ -104,6 +105,11 @@ output "job_mounts" { value = local.job_mounts }
 			"SANDBOX_PROBE":           "sandbox-probe",
 		}},
 		"bitbucket_proxied": proxied,
+		// The arms these tests evaluate are the cascade's, which is what every
+		// switched repository was planned with before B2.3 and what a tfvars
+		// saying nothing still means: the model credential gives up its
+		// accessor and keeps its mount (C1.18, C1.20).
+		"model_secrets_served": "all",
 	}
 	if service {
 		tfvars["credentials_service"] = map[string]string{"name": "fugaro-credentials", "region": "us-east5"}

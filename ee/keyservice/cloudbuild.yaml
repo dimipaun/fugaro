@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: LicenseRef-Fugaro-Subscription
+# See ee/LICENSE for the terms.
+#
+# The Cloud Build of the portal's two images (portal plan P1.7): the API and the
+# minter, each from its own Dockerfile under ee/keyservice/cmd, pushed to the
+# project's own Artifact Registry repository. P9.2's deploy runs this and then
+# deploys both revisions from what it pushed; nothing else builds them.
+#
+# **Owner-run, always.** An agent never runs this and never deploys the service
+# (.claude/rules/ee.md R5 as amended by D440): the run that writes this file
+# cannot reach a build account, and the account that runs it holds the
+# repository's writer role and nothing that can sign.
+#
+# The context is the repository root, because each Dockerfile copies go.mod,
+# ee/, internal/ and images/ from it — the two programs reach most of the
+# repository through the coordinator's packages — and the file is named with -f
+# rather than by a directory build. Both builds are one Cloud Build so the two
+# images a release deploys are the two this build pushed, and the `images:` list
+# at the end is what pushes and what a deploy reads the digests from.
+#
+# **The image names and the tag are the submitter's, and this file reads them
+# rather than deciding them.** scripts/deploy-portal.sh submits
+# `--substitutions=_REPOSITORY=<registry prefix>,_TAG=<commit>` and then deploys
+# `$_REPOSITORY/fugaro-portal-api:$_TAG` and `$_REPOSITORY/fugaro-key-minter:$_TAG`
+# — the two images below, and nothing else under those tags — so what is running
+# is what this build pushed and a reader can go from a revision back to the
+# commit the tag names. A build that named its own images would leave that deploy
+# naming an image nobody pushed, or, worse, a tag that already exists, which is
+# the previous image serving under the new revision's name; and an automatic
+# `$SHORT_SHA` is empty on a manual submit, which is the same fault one step
+# later. TestCloudBuildPushesWhatTheDeployNames holds this file and that script
+# together.
+#
+# The defaults are empty for that reason and not as an omission: a submit that
+# passes neither fails at its first `docker build`, because `:<empty>` is not a
+# tag the registry takes, and a build that guessed `latest` instead is the image
+# the deploy did not deploy. images/derived/cloudbuild.yaml's own substitutions
+# are declared the same way, for the same reason.
+substitutions:
+  _REPOSITORY: "" # the registry prefix, e.g. europe-west1-docker.pkg.dev/<project>/fugaro-portal
+  _TAG: "" # the commit both images are, which the deploy then deploys
+options:
+  logging: CLOUD_LOGGING_ONLY
+images:
+  - "${_REPOSITORY}/fugaro-portal-api:${_TAG}"
+  - "${_REPOSITORY}/fugaro-key-minter:${_TAG}"
+steps:
+  - id: portal-api
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - ee/keyservice/cmd/portal-api/Dockerfile
+      - --tag
+      - "${_REPOSITORY}/fugaro-portal-api:${_TAG}"
+      - .
+  - id: minter
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file
+      - ee/keyservice/cmd/minter/Dockerfile
+      - --tag
+      - "${_REPOSITORY}/fugaro-key-minter:${_TAG}"
+      - .

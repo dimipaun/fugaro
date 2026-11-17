@@ -11,6 +11,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/craft"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // `fugaro craft ls` is the effective-craft read of the model-crafts plan's
@@ -46,14 +49,14 @@ func newCraftCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "craft",
 		Short: "Show the model and the credential or pool each craft runs on",
-		Long: `Show the four crafts: the coder, the first-line review, the senior review
-and the security review.
+		Long: `Show the crafts: the coder, the first-line review, the senior review,
+the security review and the merge judge.
 
 Each craft runs a model and sends its calls out on a credential or a pool, and
-the two halves inherit separately: the first-line review follows the coder and
-the security review follows the senior review, so a craft that sets only one
-half keeps the other half it follows. A craft that sets no access anywhere
-resolves to the project's default credential.
+the two halves inherit separately: the first-line review and the merge judge
+follow the coder, and the security review follows the senior review, so a craft
+that sets only one half keeps the other half it follows. A craft that sets no
+access anywhere resolves to the project's default credential.
 
 Every half names where it came from: the layer that wrote it (repo, local or
 project), the craft it was inherited from, or default when nothing set it. A
@@ -134,6 +137,17 @@ type craftLsRow struct {
 	// two or more Claude OAuth credentials while the project's
 	// subscription-spread switch is off (D1622).
 	Inert bool `json:"inert"`
+	// Servable is whether a run can serve Model: the project's allow-list
+	// admits it, a route claims it and a price row covers it -- MC15's verdict
+	// (D1665), asked here so a reader sees the refusal before a run pays for
+	// it at the gateway. A craft that names no model is servable by this
+	// answer and changes no verdict (F17): it is served by the role slot below
+	// it, and no model of its own is missing.
+	Servable bool `json:"model_servable"`
+	// ModelProblem is why not, in one sentence: the first problem the checks
+	// report about this craft's model, in their own order. Absent when
+	// Servable is true.
+	ModelProblem string `json:"model_problem,omitempty"`
 }
 
 // runCraftLs is the read: it assembles the layers, asks the resolver and
@@ -147,13 +161,27 @@ func runCraftLs(cmd *cobra.Command, o *craftLsOptions) error {
 	if lc != nil {
 		project = lc.Name
 	}
-	eff, ps := craft.Resolve(craftLsLayers(cmd, lc, project), craftLsSpread(lc))
+	files := craftLsFiles{lc: lc}
+	if data, ok := checkoutFugaroYAML(cmd); ok {
+		files.repo = true
+		files.data = data
+		if agent, ok := config.AgentOf(data); ok {
+			files.agent = agent
+		} else {
+			files.repo = false
+		}
+	}
+	files.layer = modelsLayer(project)
+	eff, ps := craft.Resolve(craftLsLayers(files), craftLsSpread(lc))
+	serves := craftLsServes(cmd, files)
 	doc := craftLsDoc{Version: craftLsDocVersion, Project: project}
 	for _, name := range config.CraftNames {
 		e := eff[name]
+		why := serves.modelProblem(name, e.Model)
 		doc.Crafts = append(doc.Crafts, craftLsRow{
 			Craft: name, Model: e.Model, ModelFrom: e.ModelFrom,
 			Access: e.Access, AccessFrom: e.AccessFrom, Inert: e.Inert,
+			Servable: why == "", ModelProblem: why,
 		})
 	}
 	for _, p := range ps {
@@ -163,6 +191,25 @@ func runCraftLs(cmd *cobra.Command, o *craftLsOptions) error {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
 	return writeCraftLs(cmd, doc)
+}
+
+// craftLsFiles are the three documents the read resolves, read once for the
+// whole command: the installation's own config, the checkout the command runs
+// in, and the project layer file the last cloud read cached. The checks below
+// and the resolver read the same three, which is why they are read here and
+// handed down rather than each read where it is used.
+type craftLsFiles struct {
+	lc *localcfg.Config
+	// data is the checkout's own fugaro.yaml and agent its agent block, both
+	// empty when this directory is no checkout or its file is one this build
+	// cannot read: the two commands that judge a model need the file's bytes
+	// and the resolver needs the block.
+	data  []byte
+	agent config.Agent
+	repo  bool
+	// layer is the cached project layer file, nil when none applies or the
+	// copy this machine holds is not one this build can parse.
+	layer *config.ProjectLayer
 }
 
 // craftLsConfig is the selected project config, nil when none is selected: the
@@ -213,24 +260,24 @@ func craftLsSpread(lc *localcfg.Config) bool {
 // may create either (F12, D1628). The project layer file carries crafts alone,
 // and only their models: config.Scopes refuses a craft access there, since
 // anyone who can write the runs bucket can write that file.
-func craftLsLayers(cmd *cobra.Command, lc *localcfg.Config, project string) []craft.Layer {
+func craftLsLayers(f craftLsFiles) []craft.Layer {
 	var layers []craft.Layer
-	if crafts, ok := checkoutCrafts(cmd); ok {
-		layers = append(layers, craft.Layer{Name: craft.SourceRepo, Crafts: crafts})
+	if f.repo {
+		layers = append(layers, craft.Layer{Name: craft.SourceRepo, Crafts: f.agent.Crafts})
 	}
-	if lc != nil {
+	if f.lc != nil {
 		layers = append(layers, craft.Layer{
 			Name:        craft.SourceLocal,
-			Crafts:      lc.Crafts,
-			Credentials: lc.Credentials,
-			Pools:       lc.Pools,
+			Crafts:      f.lc.Crafts,
+			Credentials: f.lc.Credentials,
+			Pools:       f.lc.Pools,
 			KeyPrefix:   craftLocalKeyPrefix,
 		})
 	}
-	if l := modelsLayer(project); l != nil {
+	if f.layer != nil {
 		layers = append(layers, craft.Layer{
 			Name:      craft.SourceProject,
-			Crafts:    l.Defaults.Agent.Crafts,
+			Crafts:    f.layer.Defaults.Agent.Crafts,
 			KeyPrefix: craftProjectKeyPrefix,
 		})
 	}
@@ -245,31 +292,143 @@ func craftLsLayers(cmd *cobra.Command, lc *localcfg.Config, project string) []cr
 const (
 	craftLocalKeyPrefix   = "crafts"
 	craftProjectKeyPrefix = "defaults.agent.crafts"
+	// craftNodeKeyPrefix is where the published policy node writes the crafts.
+	// It is the installation config's own path because the node is that config
+	// published (a launch resolves the node, a `fugaro craft ls` the config),
+	// so a problem about a model the node wrote names the key the operator
+	// edits in the document they have.
+	craftNodeKeyPrefix = craftLocalKeyPrefix
 )
 
-// checkoutCrafts is the working directory's checkout's agent block, and
-// whether the directory is a checkout whose file this machine can read at all.
+// checkoutFugaroYAML is the working directory's checkout's fugaro.yaml, and
+// whether this directory is a checkout whose file this machine can read at all.
 //
-// The block is read with config.AgentOf rather than by resolving the whole
-// file, so a fugaro.yaml this build refuses for something else still says
-// which crafts it selects -- and a file it cannot read, a directory that is no
-// checkout and a checkout with no fugaro.yaml each contribute no layer rather
-// than a guess.
-func checkoutCrafts(cmd *cobra.Command) (config.Crafts, bool) {
+// The bytes are read whole rather than only as far as the agent block, because
+// the model checks below judge the file as a run would (config.Resolve over the
+// project layer), and a file it cannot read, a directory that is no checkout
+// and a checkout with no fugaro.yaml each contribute no layer rather than a
+// guess.
+func checkoutFugaroYAML(cmd *cobra.Command) ([]byte, bool) {
 	co, err := resolveCheckout(cmd.Context(), "")
 	if err != nil || co == nil {
-		return config.Crafts{}, false
+		return nil, false
 	}
 	data, err := readFugaroYAML(filepath.Join(co.Root, "fugaro.yaml"))
 	if err != nil {
-		return config.Crafts{}, false
+		return nil, false
 	}
-	agent, ok := config.AgentOf(data)
-	if !ok {
-		return config.Crafts{}, false
-	}
-	return agent.Crafts, true
+	return data, true
 }
+
+// craftLsServe is the facts MC15's checks answer a craft's model with, read
+// once for the whole command: the pins the checkout writes, the allow-list a
+// run of it is under, the routes its runs carry and the price table its model
+// calls are charged from.
+//
+// None of them is a rule of this file's. The allow-list is validate's own merge
+// (policy.Merge of the project's ceiling and the file in hand), the routes are
+// the run's own table (layerRoutes then runner.ProvidersFor, the entries
+// FUGARO_MODEL_PROVIDERS is written from) and the prices are priceTableFor's --
+// the one table `validate`, `diagnose` and `budget prices` price with, so this
+// row cannot disagree with the refusal a launch would report (MC15, D1665).
+type craftLsServe struct {
+	agent   config.Agent
+	e       policy.Effective
+	ceiling []string
+	routing *config.Routing
+	routes  map[string]config.ModelProvider
+	prices  *pricing.Table
+	// priced is whether a price row is required of a craft's model at all: a
+	// run prices its calls only with the gateway on, which is the mode being
+	// observe or enforce, and never under agent.auth oauth, where there is no
+	// gateway. It is validate's own gate (cfg.Agent.Auth beside the mode,
+	// budgetProblems' caller), and the auth it reads is the resolved one: a
+	// run's auth is what the project answers with, not what one document of
+	// the two says. Asking it of a craft under a mode that never prices would
+	// refuse a model the run serves.
+	priced bool
+}
+
+// craftLsServes assembles them from the documents the read already resolved.
+// A fact this machine does not hold -- no project config, no checkout file, a
+// price table the rules refuse -- is not asked, and the row then states the
+// verdict the remaining checks give rather than a guess at the missing one.
+func craftLsServes(cmd *cobra.Command, f craftLsFiles) craftLsServe {
+	s := craftLsServe{agent: f.agent}
+	if s.agent.Auth == "" {
+		s.agent.Auth = config.DefaultAgentAuth
+	}
+	if f.lc == nil {
+		return s
+	}
+	ceiling := ceilingLayer(f.lc)
+	var file policy.Layer
+	if f.repo {
+		// The file as a run resolves it: over the project layer file, whose
+		// defaults this checkout's own config is judged with (config.Resolve,
+		// the runner's own read). A file the rules refuse leaves the ceiling
+		// alone and judges no craft by a config no run would start on.
+		if cfg, _, ps := config.Resolve(f.data, f.layer); len(ps) == 0 {
+			ceiling, file = runCeiling(f.lc, cfg), runner.FileLayer(cfg)
+			// And the agent a run reads with it: the resolved one, never the
+			// checkout's own block. The project layer's defaults.agent.auth is
+			// the project's answer, and it is what the price gate below turns
+			// on — a file naming api-key under a project whose auth is oauth
+			// would otherwise price a craft no run charges for.
+			s.agent = cfg.Agent
+		}
+	}
+	s.e = policy.Merge(ceiling, file)
+	s.ceiling = ceiling.AllowedModels
+	s.routing = f.lc.Routing
+	// The routes are the repository's own: an entry whose allow_data_to does
+	// not name it is not one this repository's runs carry, which is the table
+	// the run judges a model against. An unknown repository (a checkout with
+	// no origin) is the reading the run's own rules give it, "".
+	repo, err := originRepo(cmd.Context())
+	if err != nil {
+		repo = ""
+	}
+	_, claimed, _ := layerRoutes(f.lc, f.layer, repo)
+	s.routes = runner.ProvidersFor(claimed, repo)
+	if ov, err := f.lc.Overrides(); err == nil {
+		if t, err := priceTableFor(f.lc.Providers, ov, budgetNow()); err == nil {
+			s.prices = t
+			s.priced = s.agent.Auth != "oauth" && s.e.Mode != "" && s.e.Mode != policy.ModeOff
+		}
+	}
+	return s
+}
+
+// modelProblem is the row's answer: MC15's verdict for one craft's model, as
+// the one sentence naming what is missing, and "" when a run can serve it.
+//
+// One sentence and not all of them, because a row is a summary and a reader who
+// mends the first is given the next on the next read -- and the first is the
+// checks' own order: the allow-list, then the route (both config.CheckAllowed's),
+// then the price (config.CheckPins'). The checks judge every pin of the run as
+// well as the craft, so the answer is the problem reported at this craft's own
+// key.
+func (s craftLsServe) modelProblem(craft, model string) string {
+	m := config.CraftModel{Craft: craft, Model: model, Path: craftLsModelKey(craft)}
+	ps := config.CheckAllowed(s.agent, s.e, s.ceiling, s.routing, s.routes, m)
+	if s.priced {
+		ps = append(ps, config.CheckPins(s.agent, s.prices, m)...)
+	}
+	for _, p := range ps {
+		if p.Path == m.Path {
+			return p.Message
+		}
+	}
+	return ""
+}
+
+// craftLsModelKey is the key the checks above are asked about: the
+// repository's own agent.crafts.<craft>.model. The row carries the sentence and
+// not the path -- which document wrote the model is what model_from says -- so
+// one key serves for all three documents, and it is also what makes the answer
+// this row's to find among the pins' own problems.
+func craftLsModelKey(craft string) string { return "agent.crafts." + craft + ".model" }
 
 // writeCraftLs is the read's text form: one row per craft, and the problems
 // after the table, on stderr, where every other warning of this package goes.

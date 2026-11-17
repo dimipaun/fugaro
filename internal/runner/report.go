@@ -90,7 +90,7 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	for _, n := range notes {
 		fmt.Fprintf(&b, "**Note:** %s\n\n", n)
 	}
-	b.WriteString(triageFailureLine(rec))
+	b.WriteString(triageStatusLine(rec))
 	b.WriteString(stageTable(rec))
 	if rec.Outcome == runstore.OutcomeArtifacts {
 		b.WriteString(artifactsSection(rec))
@@ -140,97 +140,159 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 // naming the stage and the time it took. "" for a record that recorded none,
 // which is every run that ended before its first stage.
 //
-// A triage row whose round failed carries the mark triageRowMarks answers
-// instead of a bare name (D1846): the row said "triage 1s" for a call that
-// bought no verdict, which is exactly the shape a reader took for a judge that
-// ran. It is the table row the report's own failure line above it is read with,
-// and the two are written from one record.
+// A triage row whose round failed or was skipped carries the mark
+// triageRowStates answers instead of a bare name (D1846): the row said
+// "triage 1s" for a call that bought no verdict, which is exactly the shape a
+// reader took for a judge that ran. A skipped round's row shows no duration
+// either — the cell reads "—" where every other row reads a time — because a
+// duration cell over a round no call was made for is the same false reading in
+// a different column (docs/triage.md). It is the table row the report's own
+// line above it is read with, and the two are written from one record.
 func stageTable(rec *runstore.Record) string {
 	if len(rec.Stages) == 0 {
 		return ""
 	}
-	marks := triageRowMarks(rec)
+	rows := triageRowStates(rec)
 	var b strings.Builder
 	b.WriteString("| Stage | Duration |\n|---|---|\n")
 	for i, s := range rec.Stages {
 		d := time.Duration(s.DurationS * float64(time.Second)).Round(time.Second)
-		fmt.Fprintf(&b, "| %s%s | %s |\n", s.Name, marks[i], d)
+		cell := d.String()
+		if rows[i].skipped {
+			// No call ran for this round, so there is no time to show: a "0s"
+			// cell would read as a judge that answered instantly, which is the
+			// claim the mark beside it exists to refuse.
+			cell = "—"
+		}
+		fmt.Fprintf(&b, "| %s%s | %s |\n", s.Name, rows[i].mark, cell)
 	}
 	b.WriteString("\n")
 	return b.String()
 }
 
-// triageFailureLine is the one line the report carries above its stage table
-// when a triage round failed (D1846): which review rounds' calls failed and the
-// one-line cause the record kept for each, and what the fail-safe did — the
-// judge did not run for those rounds, so every finding the mode's table blocks
-// blocked and the fixer was handed them as the round's own work. A pull request
-// under it therefore carries a fix commit for findings no judge ever weighed,
-// which is the fact a reader of the body cannot get from the table alone.
+// triageStatusLine is the one line the report carries above its stage table
+// when a triage round bought no verdict (D1846): which review rounds bought
+// none and what became of each call, and what the fail-safe did — every finding
+// the mode's table blocks blocked, and the fixer was handed them as the round's
+// own work. A pull request under it therefore carries a fix commit for findings
+// no judge ever weighed, which is the fact a reader of the body cannot get from
+// the table alone.
 //
-// "" for a record carrying no failed round, which is every ordinary run and
-// every record written before the cause existed: a round that answered has
-// nothing to say here, and a line over no failure would read as one.
-func triageFailureLine(rec *runstore.Record) string {
+// A failed round and a skipped one are one sentence and not two, because they
+// are one reading of one record's triage block and one statement of what the
+// fail-safe did with it: each round's own clause says which of the two it was
+// (runstore.TriageFailureClause, runstore.TriageSkipClause), and the clauses
+// stand in the record's order, so a run that skipped a round and failed a later
+// one reads in the order it happened.
+//
+// What each round's clause says is runstore's, which `fugaro diagnose` writes
+// its own line with: a judge that answered nothing, a judge whose answer could
+// not be read and a judge that was never asked are three different facts, and
+// the two readers of the record must not tell them apart differently. The cause
+// is escaped here and not there, because this line reaches a pull request's
+// markdown body and that one a terminal (inlineText).
+//
+// "" for a record carrying no failed and no skipped round, which is every
+// ordinary run and every record written before the cause existed: a round that
+// answered has nothing to say here, and a line over no such round would read as
+// one.
+func triageStatusLine(rec *runstore.Record) string {
 	if rec.Triage == nil {
 		return ""
 	}
 	var parts []string
 	for _, rnd := range rec.Triage.Rounds {
-		if !rnd.Failed {
-			continue
+		switch {
+		case rnd.Skipped:
+			parts = append(parts, runstore.TriageSkipClause(rnd.Level, rnd.Round, inlineText(rnd.Cause)))
+		case rnd.Failed:
+			parts = append(parts, runstore.TriageFailureClause(rnd.Level, rnd.Round, inlineText(rnd.Cause)))
 		}
-		part := fmt.Sprintf("round %d", rnd.Round)
-		if rnd.Cause != "" {
-			part += ": " + inlineText(rnd.Cause)
-		}
-		parts = append(parts, part)
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("**Triage:** the judge did not run for %s, so the fail-safe blocked every finding the mode's table blocks.\n\n", strings.Join(parts, "; "))
+	return fmt.Sprintf("**Triage:** %s, so the fail-safe blocked every finding the mode's table blocks.\n\n", strings.Join(parts, "; "))
 }
 
-// triageRowMarks answers, for each row of rec.Stages, the mark that row carries
-// where its triage round failed: " (failed: <cause>)", or " (failed)" for a
-// round whose record kept no cause — one written before the field existed, and
-// the shape a hand-edited record has. "" for every other row, and for the rows
-// of a record that triaged nothing.
+// triageRowState is what a stage row of the report's table carries beyond its
+// name: the mark a triage round's failure or skip puts after it, and whether
+// that round was skipped — a skipped round made no call, so the row shows no
+// duration for it either (stageTable, docs/triage.md).
+type triageRowState struct {
+	// mark is " (failed: <cause>)", " (failed)" for a round whose record kept
+	// no cause — one written before the field existed, and the shape a
+	// hand-edited record has — or triageSkippedMark. "" for every other row,
+	// and for the rows of a record that triaged nothing.
+	mark string
+	// skipped is true for the row of a round the run did not ask at all.
+	skipped bool
+}
+
+// triageSkippedMark is how a stage row says its triage round was not run: the
+// short form of the one skip cause the runner writes
+// (runstore.TriageCauseNoAccount), with the cause in full on the line above the
+// table. A row is a table cell and the cause is a sentence naming two steps.
+const triageSkippedMark = " (skipped: no account)"
+
+// triageRowStates answers, for each row of rec.Stages, the mark that row
+// carries where its triage round failed or was skipped, and whether that round
+// was skipped.
 //
-// The rows and the rounds are paired from the end of both lists, which is the
-// direction the record's own order makes right: both are in the order the calls
-// were made, a stage's retried attempt appends a row of its own *before* the
-// row of the round it served (stage's retry loop re-enters stageOnce, which is
-// what records the timing), and a round that bought no call at all — the
-// working directory that could not be made — is recorded with no row. So the
-// last triage row is the last round's, and whatever a round's row does not have
-// is behind it. The mark is the record's own cause through inlineText, because
-// it reaches a markdown table cell: a cause carrying a `|` or a newline would
-// end the row it sits in.
-func triageRowMarks(rec *runstore.Record) []string {
-	marks := make([]string, len(rec.Stages))
+// A row and a round are paired by the key the row carries -- the ordinal of the
+// triage round it served (runstore.StageTiming.Ordinal, which is the round's own
+// TriageRound.Ordinal) -- and never by position: the table has
+// a row per *attempt*, and a stage whose model stream closed is run once more
+// (stage's own retry), so counting rows and rounds back from the end marks a row
+// with a failure that belongs to the round before or after it as soon as an extra
+// attempt falls on the wrong side of a failed one. Both rows of a round that was
+// retried carry its mark, because both are that round's own call.
+//
+// Nothing narrower is a key. The round number alone names two rounds as soon as
+// a run reviews at two levels, since a level numbers its own rounds from 1
+// (D1847); adding the level to it still names two rounds as soon as the run
+// bounces, because a bounce runs the cheap loop again from its round 1 (D727),
+// and keying on that pair marks a bounced level-1 round-1 row whose judge
+// answered with the failure of the level-1 round 1 that bought no verdict before
+// it. The ordinal is the run's own count of triage rounds, which nothing repeats.
+//
+// A record written before the rows carried the ordinal has rows no round can be
+// paired with, and reads the failures and the skips from the line above the
+// table, which is written from the rounds alone.
+//
+// The mark is the record's own cause through inlineText, because it reaches a
+// markdown table cell: a cause carrying a `|` or a newline would end the row it
+// sits in.
+func triageRowStates(rec *runstore.Record) []triageRowState {
+	states := make([]triageRowState, len(rec.Stages))
 	if rec.Triage == nil {
-		return marks
+		return states
 	}
-	var rows []int
+	byOrdinal := make(map[int]triageRowState, len(rec.Triage.Rounds))
+	for _, rnd := range rec.Triage.Rounds {
+		// The round's own ordinal, which is what its row carries, and not its
+		// place in this list: NewTriage drops a round it cannot read and cuts
+		// the block at its bound, so the two are the same only while the block
+		// is whole — and a pairing read off the place would then hand a row the
+		// failure of the round beside it.
+		switch {
+		case rnd.Skipped:
+			byOrdinal[rnd.Ordinal] = triageRowState{mark: triageSkippedMark, skipped: true}
+		case rnd.Failed && rnd.Cause == "":
+			byOrdinal[rnd.Ordinal] = triageRowState{mark: " (failed)"}
+		case rnd.Failed:
+			byOrdinal[rnd.Ordinal] = triageRowState{mark: " (failed: " + inlineText(rnd.Cause) + ")"}
+		}
+	}
 	for i, s := range rec.Stages {
-		if s.Name == stageTriage {
-			rows = append(rows, i)
-		}
-	}
-	for k := 0; k < len(rows) && k < len(rec.Triage.Rounds); k++ {
-		row, rnd := rows[len(rows)-1-k], rec.Triage.Rounds[len(rec.Triage.Rounds)-1-k]
-		if !rnd.Failed {
+		if s.Name != stageTriage {
 			continue
 		}
-		if rnd.Cause == "" {
-			marks[row] = " (failed)"
-			continue
+		if st, ok := byOrdinal[s.Ordinal]; ok {
+			states[i] = st
 		}
-		marks[row] = " (failed: " + inlineText(rnd.Cause) + ")"
 	}
-	return marks
+	return states
 }
 
 // artifactsSection is the report's Artifacts section (design §9) for a
