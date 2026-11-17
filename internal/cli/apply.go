@@ -1,14 +1,18 @@
 package cli
 
-// apply.go is `fugaro apply` (docs/composite-commands, AP3): the one command
-// that runs the follow-up steps the management commands saved for later.
+// apply.go is `fugaro apply` (docs/composite-commands, AP3) and the run every
+// management command's chain is made of (AP4): the follow-up steps a change
+// owes, run in process by the command that wrote the change, or later by the
+// one command that reads what was saved.
 //
 // A management command writes its change and then runs the steps that make the
 // change live — publishing the project policy, redeploying the checkout's
 // repository, building a catalog image — and `--no-apply` is the one word that
 // saves the change and stops (D1565). What the flag leaves behind is a local
-// record of the steps owed (internal/apply, AP1) and this command is what reads
-// it and runs it (D1560, D1562).
+// record of the steps owed (internal/apply, AP1): this command is what reads it
+// and runs it later (D1560, D1562), and runChangeChain is what a management
+// command runs in process, so a person who typed none of this has nothing left
+// to run.
 //
 // The steps are the initflow stages, run as a named subset through the same
 // loop every door uses (stagesNamed, AP2), plus the one step that is not a
@@ -34,6 +38,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -219,8 +224,47 @@ func applyConfigStamp(path string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// applyRunSteps is the command's run: the owed steps, each once, in the order
-// the record gives them.
+// owedRun is one run of the owed steps as its two doors read it: what the run
+// was asked, what it answered, and what it left owed. The doors print their own
+// answer from it — `fugaro apply` its document, its kept line or its `applied`
+// line, a management command the sentence that says its change is not live yet
+// — so the run itself decides nothing about what a person reads (spec rule 4).
+type owedRun struct {
+	// started is whether the run reached the loop at all: false means it
+	// stopped before any step, and the error beside it is the run's own — the
+	// workdirs lock, the record, the managed gate's read — rather than a
+	// step's. A door prints nothing of its own about the steps then.
+	started bool
+	// buildFailed is the catalog build's own arm, which returns ahead of the
+	// loop: nothing ran, and the record is the one the run read.
+	buildFailed bool
+	// pending and recorded are the record as the run read it, and whether a
+	// document was on disk at all; after is the record as it stands at the end
+	// of the run, with wrote saying whether this run wrote it and current
+	// whether it is stamped against the project config as it stands now (D1575).
+	pending  *apply.Pending
+	recorded bool
+	after    *apply.Pending
+	wrote    bool
+	current  bool
+	// ran is the steps this run answered and kept the steps it could not, in
+	// the order the record gave them.
+	ran  []string
+	kept []string
+}
+
+// nothing is a run that owed nothing at all (D1568): it reached the record, ran
+// no step and kept none, so it has no answer about a step to print. A run that
+// owed steps answers every one of them one way or the other, which is what
+// makes "ran none and kept none" the empty record and nothing else.
+func (run owedRun) nothing() bool {
+	return run.started && !run.buildFailed && len(run.ran) == 0 && len(run.kept) == 0
+}
+
+// runOwedSteps is one run of the steps this machine owes, from the workdirs lock
+// to the settled record: the whole of what a management command's chain does,
+// and the same run `fugaro apply` makes of the record a person left for later
+// (spec rule 1, D1561, D1571).
 //
 // The record is read once the workdirs lock is held and settled against the one
 // on disk when the run ends, never against a copy read before either. A run is
@@ -230,8 +274,22 @@ func applyConfigStamp(path string) string {
 // apart: the first says what to run, and the second, after the run, holds
 // whatever was queued meanwhile, of which only the entries still identical to
 // the ones read are cleared (apply.ClearUnchanged).
-func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o applyOptions) error {
-	io := &initOptions{door: applyName, yes: true, nonInteractive: true, asJSON: o.asJSON}
+//
+// The door is `apply` whichever command opened the run, and deliberately so:
+// the door is what enrolling, the managed gate and the account are keyed on
+// (gateable, initOptions.enrolling), a chain must behave as this command does —
+// it converges the installation as it is, it never enrols a repository by
+// asking (D1574), and it runs under the gate this command's own steps run under
+// (D1571) — and `fugaro apply` is the command D1563 names for whatever is left
+// owed. What a command that runs its own chain adds is its own sentences (spec
+// rule 4).
+//
+// What comes back is the run as a door prints it and the error of what failed:
+// the run's own error before the first step, a stage's own failure, the line
+// the loop left for the person, or the catalog build's. A step left owed is not
+// an error here — it is in the run — because the two doors say it differently.
+func runOwedSteps(cmd *cobra.Command, lc *localcfg.Config, path string, asJSON bool) (owedRun, error) {
+	io := &initOptions{door: applyName, yes: true, nonInteractive: true, asJSON: asJSON}
 	r := newInitRun(cmd, io)
 	r.setProject(lc)
 	// The workdirs are the converge's, whichever door converged them, and the
@@ -239,7 +297,7 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	// too, where the project is known and before the loop prepares anything.
 	unlock, err := r.lockWorkdirs(lc.GCPProject)
 	if err != nil {
-		return err
+		return owedRun{}, err
 	}
 	defer unlock()
 	// Read here and not before the lock: what this run settles is the record as
@@ -248,16 +306,20 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	// and it is a read, not a run — one that files no log (ReportBorrowed).
 	pending, recorded, err := applyRecordRead(lc)
 	if err != nil {
-		return err
+		return owedRun{}, err
 	}
 	if len(pending.Names()) == 0 {
-		return applyNothing(cmd, lc, path, pending, recorded, o)
+		// Nothing owed (D1568): the door that ran answers it, and a chain
+		// never reads an empty record here — the command that opened it
+		// queued its change's steps before this run started.
+		return owedRun{started: true, pending: pending, recorded: recorded}, nil
 	}
-	// The run's account is the reporter's, filed under this command's name
-	// (D1351, D1354): the steps it runs are the loop's, and a command that ran
-	// a converge without a reporter of its own would print a second account of
-	// the same run beside the one the census expects.
-	run := stepRunFor(cmd, "apply", cmd.ErrOrStderr())
+	// The run's account is the reporter's, filed under the name of the command
+	// a person ran (D1351, D1354) — `apply` for this door, `image-add` for a
+	// chain — and never under the door's: the steps it runs are the loop's, and
+	// a command that ran a converge without a reporter of its own would print a
+	// second account of the same run beside the one the census expects.
+	run := stepRunFor(cmd, runLogName(cmd), cmd.ErrOrStderr())
 	defer run.close()
 	// The reporter is this command's: the steps print one line each through it,
 	// and the closing line is printed where this command's own run ends
@@ -266,7 +328,7 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	r.rep, r.repLog = run.rep, run.log
 	spec, err := installOptions(io, lc)
 	if err != nil {
-		return err
+		return owedRun{}, err
 	}
 	old, _ := os.ReadFile(path)
 	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
@@ -282,7 +344,7 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	// recorded (D1014, D1545). A project that is not managed keeps every
 	// refusal it has, which is what the steps below answer with.
 	if err := e.gateRun(cmd.Context()); err != nil {
-		return err
+		return owedRun{}, err
 	}
 
 	names := pending.Names()
@@ -303,16 +365,13 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	// this command again finishes the whole job.
 	if slices.Contains(names, apply.CatalogBuild) {
 		if err := applyCatalogBuild(cmd, lc, run); err != nil {
-			// --json answers one document on every outcome (G2), and this arm
-			// returns ahead of the answer below: nothing ran, so the document
-			// is the record as it was read, with every step still owed. It goes
-			// on the answer, which the redirect above is not pointed at.
-			if o.asJSON {
-				fmt.Fprintln(answer, string(applyDocJSON(lc, pending, recorded, applyCurrent(pending, recorded, path), nil)))
-			} else {
-				applyKeptLine(answer, []string{apply.CatalogBuild})
-			}
-			return err
+			// This arm returns ahead of the loop, so nothing ran and the
+			// answer a door prints is the record as it was read, with every
+			// step still owed — the build's own error goes back beside it. The
+			// redirect above is undone first: what the door prints is the
+			// answer, and the answer is what the command's own output is.
+			cmd.SetOut(answer)
+			return owedRun{buildFailed: true, started: true, pending: pending, recorded: recorded, kept: names}, err
 		}
 		ran = append(ran, apply.CatalogBuild)
 	}
@@ -367,7 +426,7 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	// and a write would be this command inventing state.
 	after, afterRecorded, err := applyRecordRead(lc)
 	if err != nil {
-		return userErr("%v", err)
+		return owedRun{started: true, pending: pending, recorded: recorded, ran: ran, kept: kept}, userErr("%v", err)
 	}
 	after.ClearUnchanged(pending, ran...)
 	if len(kept) == 0 && runErr == nil && len(after.Steps) == 0 {
@@ -376,33 +435,77 @@ func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o apply
 	wrote := afterRecorded || len(ran) > 0
 	if wrote {
 		if err := apply.SavePending(os.Getenv, lc.Name, after); err != nil {
-			return userErr("%v", err)
+			return owedRun{started: true, pending: pending, recorded: recorded, ran: ran, kept: kept}, userErr("%v", err)
 		}
 	}
-	current := applyCurrent(after, wrote, path)
-
-	switch {
-	case o.asJSON:
-		fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, after, wrote, current, ran)))
-	case len(kept) > 0:
-		applyKeptLine(cmd.OutOrStdout(), kept)
-	default:
-		fmt.Fprintf(cmd.OutOrStdout(), "applied %s\n", strings.Join(ran, ", "))
+	answered := owedRun{
+		started: true, pending: pending, recorded: recorded,
+		after: after, wrote: wrote, current: applyCurrent(after, wrote, path),
+		ran: ran, kept: kept,
 	}
 
 	switch {
 	case runErr != nil:
-		return userErr("%v", runErr)
+		return answered, userErr("%v", runErr)
 	case res.Failed != nil:
 		// The stage's own error, which is a user error or a remote one already:
 		// the fix line names the step, and this command adds nothing to it.
-		return res.Cause
+		return answered, res.Cause
 	case len(res.Left) > 0:
-		return userErr("%v", res.Left[0].Text)
-	case len(kept) > 0:
-		return userErr("%s still owed; run `fugaro apply` again to finish the job", strings.Join(kept, ", "))
+		return answered, userErr("%v", res.Left[0].Text)
+	}
+	return answered, nil
+}
+
+// applyRunSteps is `fugaro apply`'s own run: the owed steps through
+// runOwedSteps, and then this command's answer — its document under --json, the
+// kept line, or the line naming what it applied.
+func applyRunSteps(cmd *cobra.Command, lc *localcfg.Config, path string, o applyOptions) error {
+	run, err := runOwedSteps(cmd, lc, path, o.asJSON)
+	switch {
+	case !run.started:
+		// The run stopped before a step: the refusal or the failure is the
+		// whole of what this command says.
+		return err
+	case run.nothing():
+		return applyNothing(cmd, lc, path, run.pending, run.recorded, o)
+	case run.buildFailed:
+		// --json answers one document on every outcome (G2), and this arm has
+		// nothing applied to report: the document is the record as the run read
+		// it, with every step still owed.
+		if o.asJSON {
+			fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, run.pending, run.recorded, applyCurrent(run.pending, run.recorded, path), nil)))
+		} else {
+			applyKeptLine(cmd.OutOrStdout(), run.kept)
+		}
+		return err
+	}
+
+	switch {
+	case o.asJSON:
+		fmt.Fprintln(cmd.OutOrStdout(), string(applyDocJSON(lc, run.after, run.wrote, run.current, run.ran)))
+	case len(run.kept) > 0:
+		applyKeptLine(cmd.OutOrStdout(), run.kept)
+	default:
+		fmt.Fprintf(cmd.OutOrStdout(), "applied %s\n", strings.Join(run.ran, ", "))
+	}
+
+	switch {
+	case err != nil:
+		return err
+	case len(run.kept) > 0:
+		return userErr("%s still owed; run `fugaro apply` again to finish the job", strings.Join(run.kept, ", "))
 	}
 	return nil
+}
+
+// runLogName is the name the run's log is filed under (D1351): the command a
+// person ran, spelled the way the other commands' logs are (`accounts add`
+// files accounts-add) and never the door this run borrowed — `fugaro apply`
+// files `apply`, and a management command's chain files its own path. What the
+// log keeps is the record of one command line somebody ran.
+func runLogName(cmd *cobra.Command) string {
+	return strings.Join(strings.Fields(cmd.CommandPath())[1:], "-")
 }
 
 // applyNothing is the answer of a run that owes nothing (D1568): exit 0, the
@@ -436,9 +539,9 @@ func applyRecordNote(w io.Writer, recorded, current bool) {
 	}
 }
 
-// applyKeptLine is D1563's sentence: the change is saved, it is not live yet,
-// and `fugaro apply` is the command that finishes it. The steps it names are
-// the ones this run could not answer, and the run's own account above says why.
+// keptLine is D1563's sentence: the change is saved, it is not live yet, and
+// `fugaro apply` is the command that finishes it. The steps it names are the
+// ones a run could not answer, and that run's own account above says why.
 //
 // A kept redeploy says where to run it: the repository stage's Terraform root
 // is per repository (D1574), so a machine with no checkout of the repository
@@ -449,13 +552,18 @@ func applyRecordNote(w io.Writer, recorded, current bool) {
 // its step is a grant confirmed by a typed name, and no run of `fugaro apply`
 // can give that word, so the command it names is `fugaro update`.
 //
-// The names are the record's and not this command's: it is a file in the
+// The names are the record's and not the command's: it is a file in the
 // machine's own config directory, nothing fences it, and the reader checks the
 // entry's binding and never its name (D1575) — so a name this build registers
 // no stage for is kept, and a name can carry an escape sequence that would
 // redraw the very line saying the change is not live yet. Each one is escaped
 // where it is joined, the way the status table escapes the same names.
-func applyKeptLine(w io.Writer, kept []string) {
+//
+// tail is the closing line, and it is the one thing the two doors say
+// differently: the command that finishes the job, named by the door that ran
+// (a chain runs `fugaro apply` in process and has not left the person a second
+// command to run for this change).
+func keptLine(w io.Writer, kept []string, tail string) {
 	names := make([]string, 0, len(kept))
 	for _, n := range kept {
 		names = append(names, safetext.Field(n))
@@ -475,7 +583,101 @@ func applyKeptLine(w io.Writer, kept []string) {
 		fmt.Fprintln(w, "Run `fugaro update` in your own terminal window, not through a coding agent or a pipe: the workspace's own project confirms this step by the name typed at its terminal, and no flag and no run of this command can give that word.")
 		return
 	}
-	fmt.Fprintln(w, "Run `fugaro apply` again to finish the job: every step checks the state first, so the ones that already ran cost nothing.")
+	fmt.Fprintln(w, tail)
+}
+
+// applyKeptLine is keptLine for `fugaro apply`'s own run, whose steps the
+// person may have run through this command already: the same command is named
+// as one to run again.
+func applyKeptLine(w io.Writer, kept []string) {
+	keptLine(w, kept, "Run `fugaro apply` again to finish the job: every step checks the state first, so the ones that already ran cost nothing.")
+}
+
+// chainKeptLine is keptLine for a management command's own chain (D1563): the
+// command is still `fugaro apply`, and one it has not run for this change yet,
+// so the sentence names it without "again" (spec rule 4 keeps the internal
+// words out: what a person reads is the command that finishes the job).
+func chainKeptLine(w io.Writer, kept []string) {
+	keptLine(w, kept, "Run `fugaro apply` to finish the job: every step checks the state first, so the ones that already ran cost nothing.")
+}
+
+// queueChange records the steps a change owes in this machine's record, for the
+// project and the GCP project the command acted on, and answers them in the
+// order a run takes them (D1562, D1570).
+//
+// A change the table does not declare is refused rather than queued with none:
+// the table is the one place a change's steps are declared (spec rule 2), so a
+// resource type with no row is a gap in it, and a command that wrote its change
+// and queued nothing would leave it looking live with nothing owed.
+func queueChange(cmd *cobra.Command, lc *localcfg.Config, change apply.Change) ([]string, error) {
+	steps, declared := apply.Steps(change)
+	if !declared {
+		return nil, userErr("fugaro has no follow-up steps declared for a %s change (%s), so this command cannot say what makes it live: this is a gap in fugaro's own table and not something to work around",
+			change.Kind, pluginwire.Printable(change.Key))
+	}
+	p, err := apply.LoadPending(os.Getenv, lc.Name, lc.GCPProject)
+	if err != nil {
+		// What the read refused — a document this build cannot parse, or one
+		// bound to another project or installation — is dropped, and said,
+		// rather than left where it is: the change is written already, and
+		// leaving the file alone would refuse every later write of the record
+		// until somebody repaired it by hand (SavePending's own direction,
+		// D1575).
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: what this machine had recorded as owed was not read, so the record starts fresh here: %v\n", err)
+		p = &apply.Pending{Version: apply.PendingVersion}
+	}
+	for _, s := range steps {
+		p.Add(apply.PendingStep{Step: s, Project: lc.Name, GCPProject: lc.GCPProject, Change: change})
+	}
+	if err := apply.SavePending(os.Getenv, lc.Name, p); err != nil {
+		return nil, userErr("%v", err)
+	}
+	return steps, nil
+}
+
+// runChangeChain is what a management command does once its change is written:
+// it records the steps the change owes and runs them, in process and under
+// `fugaro apply`'s own door (spec rules 1 and 3, D1561, D1565, D1571).
+//
+// In process rather than as a child `fugaro apply`: a child would re-read the
+// record and run it behind its own answer, and this command's sentence would
+// then be printed over another command's run — the reason the after-write hook
+// runs its stages here too (write_publish.go). The steps are the apply run's in
+// every other way: the same order, the same gate, the same closure of the
+// record (runOwedSteps).
+//
+// noApply is D1565: the change is saved, its steps are recorded, and nothing is
+// run — so the answer is the same sentence saying what is owed, and the exit is
+// the plain one, because the command did exactly what it was asked for.
+func runChangeChain(cmd *cobra.Command, lc *localcfg.Config, path string, change apply.Change, noApply bool) error {
+	steps, err := queueChange(cmd, lc, change)
+	if err != nil {
+		return err
+	}
+	if noApply {
+		chainKeptLine(cmd.OutOrStdout(), steps)
+		return nil
+	}
+	run, err := runOwedSteps(cmd, lc, path, false)
+	kept := run.kept
+	if !run.started {
+		// The run stopped before it read a step — the record, the workdirs
+		// lock, the managed gate's read — so every step this command queued is
+		// what is owed.
+		kept = steps
+	}
+	if len(kept) > 0 {
+		chainKeptLine(cmd.OutOrStdout(), kept)
+	}
+	switch {
+	case err != nil:
+		// The run's own failure, which already says what stopped it: the
+		// sentence above is this command's, and this is the run's.
+		return err
+	case len(kept) > 0:
+		return userErr("%s still owed; run `fugaro apply` to finish the job", strings.Join(kept, ", "))
+	}
+	return nil
 }
 
 // applyAnswered reports whether a stage's own answer means the step it was run
