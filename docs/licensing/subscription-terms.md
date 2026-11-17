@@ -12,6 +12,17 @@ and [`mobile/LICENSE.md`](../../mobile/LICENSE.md) refers to as published "at ht
 the text is published at that address (live on 2026-11-11)
 ([implementation plan, L4.3](implementation-plan.md#l43--publish-the-subscription-terms-owner-run-after-counsel)).
 
+**Revised 2026-11-17 (subscriptions plan task S0.4).** The owner recorded that day that counsel had
+closed its review round (task S8.4), so the plan's one revision of the Terms, held back until
+counsel answers, is made here. It applies what the round leaves settled: an individual acting other
+than as a consumer is an organisation of one (section 1.3, ruling T15); the Licensor issues License
+Keys by hand until the Key Service is live, and issues the next License Key for a Paid Plan 30 days
+before the current one expires (section 6.3, rulings T13 and T26); and a License Key cannot be
+revoked, so it keeps working until it expires after a refund (sections 6.3 and 6.4, ruling T25).
+Section 7.1 already carries the coordinator as part of the Software, the owner's ruling D531 of
+2026-10-29. The items of the plan's S0.4 list that no answer on file states are not applied, and
+item 9 of the list at the end of this file names them.
+
 **How to read it.** Parts A to G are the agreement text, as counsel wrote it, with Markdown for
 counsel's formatting. The two figures first held back are in the text: the late-payment interest
 rate (section 12.2) and the liability cap for the Community Plan, Free Plans and Beta Features
@@ -36,7 +47,10 @@ are authorised to bind the Customer.
 
 1.3 **Businesses only.** The Licensor offers the Software only to businesses and other
 organisations, for use in their trade, business or profession, and not to consumers. The Customer
-represents that it is not acquiring the Subscription as a consumer for personal use.
+represents that it is not acquiring the Subscription as a consumer for personal use. An individual
+who acquires or uses the Software in a trade, business or profession, and not as a consumer, is an
+organisation of one for these Terms, and this section does not exclude that individual from a Free
+Plan under section 10.2 (Free Plans).
 
 ## 2. Definitions
 
@@ -246,7 +260,9 @@ License Key expires, a grace period of 30 days applies, after which section 9 (A
 Subscription ends) applies.
 
 6.3 **Issue of License Keys.** The Licensor issues License Keys through the Key Service, a
-self-serve website, as follows:
+self-serve website, as follows. Until the Key Service is live, the Licensor issues License Keys
+directly, by hand, on the same terms, and this section applies to a License Key issued that way as
+it does to one the Key Service issues:
 
 - **Open-source teams** (section 10.2(b) (Free Plans)): the applicant provides the URLs of its
   repositories and an email address. The Key Service verifies that every repository is public under
@@ -257,7 +273,9 @@ self-serve website, as follows:
   issues a renewable License Key valid for three months, and issues no more than one free seat per
   legal person, determined by email domain and, where it is known, by the legal person's identity.
 - **Paid Subscriptions**: the Licensor issues the Customer a License Key stating the User Seats
-  purchased, following purchase.
+  purchased, following purchase, and issues the next License Key 30 days before the current one
+  expires, so that the Customer may hold two valid License Keys at once. The Software uses the
+  latest valid License Key.
 - **Other requests** (for example, from an individual without an email address on their
   organisation's domain, or for a multi-seat trial or an academic or nonprofit application): the
   applicant may submit the manual request form. The Licensor may approve or decline any such
@@ -267,7 +285,10 @@ self-serve website, as follows:
 Confidential Information. The Customer shall not share a License Key with anyone other than its
 Users, alter it, or circumvent its verification. The Customer acknowledges that, because
 verification is offline, the Licensor relies on these Terms, and not on technical controls, to
-enforce User Seat limits.
+enforce User Seat limits, and that a License Key cannot be revoked: it keeps working until it
+expires, including after the Licensor refunds the Fees under section 15 (Refunds). Where a
+Customer's Subscription ends before its License Key expires, section 9 (After the Subscription
+ends) governs the Customer's use of that License Key.
 
 ## 7. Customer Data and Privacy
 
@@ -366,7 +387,8 @@ section 8.1 (Support).
 
 10.2 **Free Plans.** The Licensor grants each Free Plan through a License Key or an Order Form. If
 the Customer no longer meets the conditions of a Free Plan, the Licensor may end that Free Plan at
-the end of the term of its License Key. The Free Plans are:
+the end of the term of its License Key. An individual acting other than as a consumer is an
+organisation of one for both Free Plans (section 1.3 (Businesses only)). The Free Plans are:
 
 - **(a) One free seat per legal person.** A legal person that has no Paid Plan may hold one free
   User Seat, and a legal person and its Affiliates together hold no more than one, intended for
@@ -797,3 +819,13 @@ Quebec language clause, the late-payment rate, resellers and the merchant of rec
 8. **The licence's wording**: counsel's text no longer cites the licence's clauses (the "Licence"
    definition is gone, and the Subscription is not described in the licence's words); whether the
    licence files need a matching revision is counsel's.
+9. **The revision of 2026-11-17** (subscriptions plan task S0.4, after the owner recorded that
+   counsel closed its review round): applied to sections 1.3, 6.3, 6.4 and 10.2 on rulings T15,
+   T13, T26 and T25, as the note above the agreement states. Items of that task's list that no
+   answer on file states, and which are therefore **not applied**: whether section 6.1 puts the key
+   requirement as the Software's behaviour or as the Customer's obligation; whether the
+   mixed-licence binary needs a note, and whether a command that initiates no Job needs a seat in
+   it (the draft's section 3.3 note, rulings T10, T11 and T21); a definition of "consumer" in
+   section 2; whether section 15 or section 6.4 states a refund's effect on an issued License Key
+   in counsel's own words; and the shape of the transition sentence and the paid path in
+   section 6.3.
