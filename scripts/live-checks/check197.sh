@@ -832,7 +832,6 @@ run_id() {
   bitbucket) printf '%s-0198' "$RUN_BASE" ;;
   outside) printf '%s-0199' "$RUN_BASE" ;;
   flip-one) printf '%s-019a' "$RUN_BASE" ;;
-  flip-two) printf '%s-019b' "$RUN_BASE" ;;
   *) die "Check 197 has no run id for the label '$1'" ;;
   esac
 }
