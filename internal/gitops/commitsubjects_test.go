@@ -71,16 +71,32 @@ func TestCommitSubjectsListsTheRunsOwnSubjects(t *testing.T) {
 	}
 
 	// A refs/replace/<sha> planted in the checkout the agent writes would
-	// otherwise change what the range holds: the base would read as the commit
-	// the planted ref names, and the list would be that traversal's rather than
-	// the run's own commits.
+	// otherwise change what the range holds: the traversal reads the replaced
+	// commit's own history, so a branch the run never had is listed as its own
+	// work and pasted into the checkpoint prompt.
 	//
-	// Mutation (drop --no-replace-objects): this read answers with a traversal
-	// of the replaced graph, three subjects where the run made two.
-	first := testutil.Git(t, repo.Dir, "rev-parse", "HEAD~1")
-	testutil.Git(t, repo.Dir, "replace", base, first)
+	// The ref is planted on one of the run's own commits and not on the range's
+	// base: a replacement on the base leaves what base..HEAD lists unchanged, so
+	// a test planting one there pins nothing.
+	//
+	// Mutation (drop --no-replace-objects): this read answers with the decoy's
+	// subjects, three where the run made two.
+	own := testutil.Git(t, repo.Dir, "rev-parse", "HEAD~1")
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "-b", "decoy", base)
+	for _, c := range []struct{ file, subject string }{
+		{"decoy.txt", "A commit the run never made"},
+		{"decoy2.txt", "and another it never made"},
+	} {
+		testutil.WriteFiles(t, repo.Dir, map[string]string{c.file: "decoy\n"})
+		if _, err := repo.CommitAll(ctx, c.subject); err != nil {
+			t.Fatal(err)
+		}
+	}
+	decoy := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "fugaro/x")
+	testutil.Git(t, repo.Dir, "replace", own, decoy)
 	if got, err := repo.CommitSubjects(ctx, base); err != nil || !slices.Equal(got, want) {
-		t.Fatalf("with a replacement ref on the base: %v, %v; want %v", got, err, want)
+		t.Fatalf("with a replacement ref on the run's own commit: %v, %v; want %v", got, err, want)
 	}
 }
 
