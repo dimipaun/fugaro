@@ -567,6 +567,7 @@ var closedStdinNoFixture = map[string]string{
 	// is not something a closed pipe can type), and uninstall and status answer
 	// about a machine that has none.
 	"fugaro orchestrator install":   "refuses before its ask: the typed confirmation of a unit that runs code at every login needs a real terminal",
+	"fugaro orchestrator serve":     "refuses without FUGARO_PROJECT in its own environment",
 	"fugaro orchestrator status":    "reports this machine's login unit, and this world's home has none: it says so and returns",
 	"fugaro orchestrator uninstall": "says there is nothing to remove: this world's home has no login unit",
 	"fugaro pair":                   "refuses from inside its body: the world's project has no budget.firebase_api_key for the phone to exchange the token with",

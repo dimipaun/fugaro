@@ -193,7 +193,7 @@ func NeverCommand(name string) error {
 			return nil
 		}
 	}
-	return refuse(3, "running `fugaro "+name+"`, which is not one of the commands the resident orchestrator runs ("+strings.Join(neverCommands, ", ")+"): allow-delete, budget's writes, secrets set/rm, init --firebase and restore are destructive, and the D128 three are the spoken confirmation's")
+	return refuse(3, "running `fugaro "+name+"`, which is not one of the commands the resident orchestrator runs ("+strings.Join(neverCommands, ", ")+"): allow-delete, budget's writes, secrets set/rm, the rules deploy and restore are destructive, and the D128 three are the spoken confirmation's")
 }
 
 // NeverModelCredential is rule 4: no model credential of its own, ever.
