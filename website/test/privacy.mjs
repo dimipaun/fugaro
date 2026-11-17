@@ -10,7 +10,7 @@
 //
 // **Every sentence in "The software" is held to the thing that makes it true, never to a copy of
 // itself.** That is the whole rule of this file: a sentence and a fact, so that the fact moving
-// is the sentence failing. Eight rules, one function each, each with a case below that plants a
+// is the sentence failing. Nine rules, one function each, each with a case below that plants a
 // defect and watches the named refusal come back:
 //
 //   1. **The two parts.** The page carries "The website" and "The software" as its two `h2`s, in
@@ -54,11 +54,13 @@
 //      the repository the endpoint points at is held equal to `site.yaml`'s own — the page says
 //      "this repository's public release list", and a tool checking somebody else's releases
 //      would make that sentence false (`updateCheckFailures`).
-//   5. **The project operates no host the software talks to.** Every production source under
-//      `cmd/`, `internal/`, `console/src/`, `mobile/src/` and `shared/` is scanned for the
-//      site's canonical host: the one host this project operates is the site's own, so a
-//      software source that names it is a source that has found a service to report to, and the
-//      page's "and to nothing the Fugaro project operates" is what fails (`reachFailures`).
+//   5. **The project operates no host the software talks to, the licence service excepted.**
+//      Every production source under `cmd/`, `internal/`, `console/src/`, `mobile/src/`,
+//      `shared/` and — since S7.3, the task that restated the sentence — `ee/` is scanned for
+//      the site's canonical host: the hosts this project operates are the site's and the licence
+//      service's, so a software source that names one is a source that has found a service to
+//      reach, and the page's "and to nothing the Fugaro project operates except the licence
+//      service" is what fails (`reachFailures`).
 //      Tests are not scanned — a Go test that spells the host in a fixture is testing a rule
 //      rather than reaching anywhere — and the files in the tree that name it today are recorded
 //      below, one by one, so that every exception is written down rather than inferred: the Go
@@ -68,7 +70,11 @@
 //      `mobile/src/telemetry/notice.js`, which holds the privacy page's URL — none of them a
 //      service the software reports to (the note below `HOST_NAMING_LINKS` gives each reason and
 //      the ruling, and the case that plants another file proves the rule still holds for every
-//      other source).
+//      other source). What the `ee/` half adds is recorded in the same way, and in three kinds
+//      rather than one: the two directories that are a service's own code rather than a client
+//      of one (`SERVICE_SOURCES`, below), and the one source in the tree that really does reach
+//      the licence service (`REACHED_SOURCES`) — which is the exception the page's own sentence
+//      names, so the sentence and the source are held to each other.
 //      The selector carries `.go`, because the CLI and the server are mostly Go: a scan that reads
 //      the tree's scripts and manifests but not its Go source reads everything except the software
 //      this page is about, and it reads enough files to look busy while doing it. The case below
@@ -91,6 +97,19 @@
 //      held is the shape of the look, not its
 //      rendering: a gate cannot see a page, and the match to the owner's boards is the owner's
 //      check at the preview.
+//   9. **The key sign-up, and the notice's own text for it.** S3.3 built the page a person asks
+//      for a licence key on and held it out of the deploy, because the statement said the site
+//      had no form; S7.3 is the notice that accounts for it, and the statement now carries the
+//      key sign-up card and a restated sentence about the licence service. Each of the card's
+//      facts is held to the thing that makes it true rather than to a copy of itself: the fields
+//      the three forms collect, read off the built page, counsel's list of what the Key Service
+//      collects (the Subscription Terms, section 7.5(b)), the merchant of record as a recipient
+//      of a buyer's data (the design's section 7.3), and "for how long", which is the service's
+//      own code — the address, the domain and the repository URLs are dropped once the link can
+//      no longer be followed, and a request a person decides on is kept whole and mailed to the
+//      owner (`keySignupFailures`, which reads the Application record and the queue's own
+//      notification for the second half). A field the forms grow and the statement does not state
+//      is refused, and so is a sentence about a field they have dropped.
 //
 // It reads the built artifact and the repository's sources, standard library only, no network
 // (Global Constraint 4). The built half comes from `dist/`; `FUGARO_GATES_DIST` points it
@@ -784,19 +803,55 @@ export function consoleReportingFailures(page, design) {
   return out
 }
 
-/** The roots of the production sources the reach scan reads, as the repository's own directories. */
-export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', 'mobile/src', 'shared'].map((dir) => path.join(REPO, dir)))
+/** The roots of the production sources the reach scan reads, as the repository's own directories.
+ * `ee/` is the sixth since S7.3: the sentence the page states is about the software a reader
+ * installs, and the Subscription Edition — the CLI's own licence client — is part of it. */
+export const SOFTWARE_ROOTS = Object.freeze(['cmd', 'internal', 'console/src', 'mobile/src', 'shared', 'ee'].map((dir) => path.join(REPO, dir)))
 
-/** The production sources the reach scan reads: the tool, the console and the phone, in every
- * language the tree carries. `roots` and `base` are the repository's unless a case below points
- * the selector at a tree it built — the selector is half of what this rule asserts (a source it
- * does not select is a source that can name the host unseen), so the case goes through it rather
- * than around it. */
+/** The two directories of `ee/` the reach scan does not read, because what names the hosts there
+ * is a service's OWN code rather than a client of one. They are directories and not files, which
+ * is the one place this file's exemptions are not a path each, and each is recorded with the
+ * reason the design's section 7.3 gives for the first of them:
+ *
+ *   - `ee/keyservice/` is the key service itself (the design's section 7.3: "the service's own
+ *     code names its host and the site's, which is what the exclusion is for"), so the host it
+ *     names is the host it IS, and the site's host is the privacy page it serves a link to;
+ *   - `ee/portal/` is the licence site's own web app: its host is `app.` plus the same domain,
+ *     and the site's canonical origin appears there as the privacy notice and the Subscription
+ *     Terms it points a buyer at. A portal that could not name the notice it is bound by would be
+ *     the same contradiction in the other direction.
+ *
+ * Neither is the CLI, the console or the app this page's second part is about, and neither can be
+ * reached by a reader's own installation: they are what the project OPERATES, which is why they
+ * are exempt from a rule about what the software reaches rather than a hole in it. The gate below
+ * refuses an entry here that exempts nothing.
+ */
+export const SERVICE_SOURCES = Object.freeze(['ee/keyservice/', 'ee/portal/'])
+
+/** The one production source in the tree that really does reach a host this project operates, and
+ * therefore the source the page's restated sentence is held to. `ee/register/licence.go` carries
+ * `licenceServerURL` — the keys subdomain of the host `website/data/site.yaml` is the one source
+ * of (D92), which is the key-signing service the design's section 1 names — and the CLI uses it in
+ * `fugaro licence`'s own commands and in the installation's
+ * renewal job (`ee/register/licence_renew.go`, `ee/register/licence_login.go`), so the software
+ * does ask the licence service about a key. That is the fact S7.3 restated the page's sentence
+ * for: "and to nothing the Fugaro project operates except the licence service" is true only while
+ * this is the whole of it, and the gate below reads this file, the page's sentence and the
+ * sentence's own claim about when the service is asked, each against the other two. */
+export const REACHED_SOURCES = Object.freeze(['ee/register/licence.go'])
+
+/** The production sources the reach scan reads: the tool, the console, the phone and the
+ * Subscription Edition, in every language the tree carries. `roots` and `base` are the
+ * repository's unless a case below points the selector at a tree it built — the selector is half
+ * of what this rule asserts (a source it does not select is a source that can name the host
+ * unseen), so the case goes through it rather than around it. */
 export function softwareSources(roots = SOFTWARE_ROOTS, base = REPO) {
   return roots
     .flatMap((dir) => sourcesUnder(dir, REACH_BEARING, base))
     .filter((file) => !NOT_PRODUCTION.test(file.rel))
     .filter((file) => !HOST_NAMING_LINKS.includes(file.rel))
+    .filter((file) => !REACHED_SOURCES.includes(file.rel))
+    .filter((file) => !SERVICE_SOURCES.some((dir) => file.rel.startsWith(dir)))
 }
 
 /** Every way an allow-listed file (`HOST_NAMING_LINKS`) carries a call that reaches a
@@ -824,7 +879,7 @@ export function reachFailures(files, host) {
     .filter((file) => file.text.includes(host))
     .map(
       (file) =>
-        `${file.rel} names ${host}: that is the host this project operates, and the privacy page states that the CLI and the console talk "to nothing the Fugaro project operates" — a source that names it is a source that has found a service to report to, and the sentence moves with it`,
+        `${file.rel} names ${host}: that is a host this project operates, and the privacy page states that the CLI and the console talk "to nothing the Fugaro project operates" except the licence service — a source that names it is a source that has found a service to reach, and either the sentence moves with it or the source is one of the two kinds recorded above (a service's own code, or the licence client the sentence names)`,
     )
 }
 
@@ -1078,6 +1133,185 @@ export function shapeFailures(html, shared, own = '') {
     )
 }
 
+// ---- 9. the key sign-up, and the notice's own text for it ---------------------------------
+
+// S3.3 built the page a person asks for a licence key on, and held it out of the deploy because
+// the statement said the site had no form (`website/test/consent.mjs` is where that hold lived,
+// and S7.3 is the task that took it off in the same commit as this section's copy). The statement
+// now accounts for the page, and this rule is what holds the statement's words to the things that
+// make them true: the forms' own fields, counsel's list in the Subscription Terms, the design's
+// sentence about the merchant of record, and the service's own code — which is the only place
+// "and for how long" is a fact rather than a promise. That last half is two rules and not one: a
+// verification's personal data is dropped (`dropPersonal`), and a request a person decides on is
+// NOT — the queue keeps the whole Application and mails its facts to the owner, which is the
+// record and the call the card's own two sentences about it are held to.
+
+/** The page the three forms are on, as the statement links it and the build serves it. */
+export const KEYS_PAGE_URL = '/keys/'
+
+/** What each field of the key request page asks for, and the phrase the statement owes a reader
+ * for it. The names are the page's own form fields (`website/src/pages/keys.astro`), read off the
+ * BUILT page by the gate below: a field the forms carry that this map does not is a thing the
+ * site asks a reader for and never states, and an entry here whose field the forms have dropped
+ * is a sentence the statement may not keep. */
+export const KEY_SIGNUP_FIELDS = Object.freeze({
+  email: 'email address',
+  repositories: 'repository URLs',
+  request: 'what you are asking for',
+})
+
+/** The merchant of record, and the sentence the design states it as a recipient in. D442 named
+ * the merchant on 2026-10-27 (`docs/subscriptions/reconciliation.md` §"Rulings") and the design's
+ * section 7.3 obliges the notice to state it, so the page's sentence is held to both. */
+export const MERCHANT_OF_RECORD = 'Paddle'
+export const MERCHANT_RECIPIENT_SENTENCE = 'The merchant of record appears as a recipient of buyers'
+
+/** The documents and the sources the key sign-up card is written from, each the thing that makes
+ * one of its sentences true: counsel's list of what the Key Service collects (the Subscription
+ * Terms, section 7.5(b)), the design's section 7.3, and the service's own code, where the drop
+ * of a dead application's personal data is written and where the record's own fields are. */
+export const SIGNUP_TERMS = 'docs/licensing/subscription-terms.md'
+export const SIGNUP_TERMS_CLAUSE = 'collects to issue a License Key, namely the email address of the individual signing up'
+export const SIGNUP_DESIGN = 'docs/design/key-signing-service.md'
+export const SIGNUP_STORE = 'ee/keyservice/store.go'
+export const SIGNUP_SERVICE = 'ee/keyservice/service.go'
+/** The service's own statement of the retention, in its own words, and the function that carries
+ * it out: the two are read together, because the sentence the page carries is the one the store's
+ * comment makes true rather than one the page chose. */
+export const SIGNUP_DROP_COMMENT = 'Email, Domain, Organisation and Repositories are **personal data and they go**'
+export const SIGNUP_DROP_FUNCTION = 'func (s *Service) dropPersonal(ctx context.Context, v Verification) {'
+
+/** The other half of the retention, and the half the drop above does NOT reach: a request a person
+ * decides on (§4.5's queue) is a different record from the verification a link is about, and
+ * nothing clears it — `decide` writes the answer and keeps the request whole, and `enqueue` mails
+ * the owner the applicant's own facts so the request is read at all. `SIGNUP_APPLICATION` is that
+ * record, `SIGNUP_QUEUE_ALERT` the mail it is announced by and `SIGNUP_QUEUE_NOTIFY` the call that
+ * sends it, so the card's two sentences about the queue are held to the three of them. */
+export const SIGNUP_QUEUE = 'ee/keyservice/queue.go'
+export const SIGNUP_APPLICATION = 'type Application struct {'
+export const SIGNUP_APPLICATION_FIELDS = Object.freeze(['Email', 'Detail', 'Repositories'])
+export const SIGNUP_QUEUE_ALERT = 'func queueAlert(intakeURL string, a Application) Alert {'
+export const SIGNUP_QUEUE_NOTIFY = 'return s.alerts.Notify(ctx, queueAlert(s.cfg.URL, a))'
+/** The card's own words for it, each held in both directions: the page may say a decided request
+ * is kept while the store holds one, and may say the owner is mailed it while the queue sends it. */
+export const SIGNUP_KEPT_PHRASE = 'kept with what they carried'
+export const SIGNUP_ALERT_PHRASE = 'mailed a notification carrying them'
+
+/** Every way the statement and the key sign-up disagree, or []. `page` is the built privacy
+ * page's markup and the rest are the repository's own files, each as text. The fields are read
+ * off the built keys page rather than typed here twice, because the form is the artifact a reader
+ * fills in and the statement is a claim about it. */
+export function keySignupFailures({ page, keysPage, terms, design, store, service, queue }) {
+  const out = []
+  const text = page.replace(/\s+/g, ' ')
+  const fields = new Set(
+    walk(parse(keysPage))
+      .filter((el) => el.name === 'input' || el.name === 'textarea')
+      .map((el) => el.attrs?.get('name'))
+      .filter(Boolean),
+  )
+  if (fields.size === 0) {
+    out.push(
+      `${KEYS_PAGE_URL} carries no named field: the statement's key sign-up card is what accounts for the page a person asks for a key on, so a page whose fields have gone leaves the card stating something nothing does`,
+    )
+  }
+  for (const name of fields) {
+    const phrase = KEY_SIGNUP_FIELDS[name]
+    if (!phrase) {
+      out.push(
+        `${KEYS_PAGE_URL}'s forms carry a field named ${JSON.stringify(name)} and the statement does not state it: every field the site asks a reader for is a thing the statement owes them, so a new field is a sentence to write rather than one to leave out`,
+      )
+      continue
+    }
+    if (!text.includes(phrase)) {
+      out.push(
+        `the privacy page's key sign-up card does not say ${JSON.stringify(phrase)}, which ${KEYS_PAGE_URL}'s ${JSON.stringify(name)} field collects: the statement says what the forms take`,
+      )
+    }
+  }
+  for (const [name, phrase] of Object.entries(KEY_SIGNUP_FIELDS)) {
+    if (!fields.has(name)) {
+      out.push(
+        `${KEYS_PAGE_URL} no longer carries a field named ${JSON.stringify(name)} and the statement still says ${JSON.stringify(phrase)}: a sentence about a field the forms have dropped is a page describing a form it does not have`,
+      )
+    }
+  }
+  // The page the reader acts on: the card's own link to the forms, so the statement is read where
+  // the data is given rather than somewhere a reader has to guess.
+  if (!new RegExp(`href="${KEYS_PAGE_URL}"`).test(page)) {
+    out.push(
+      `the privacy page's key sign-up card carries no link to ${KEYS_PAGE_URL}: the statement is what a reader filling one of those forms has to be able to read, and the route to it is the page the forms are on`,
+    )
+  }
+  // The merchant of record, in both directions: the design still obliges the notice to name a
+  // recipient, and the page is what names it — a page that dropped the sentence discloses less
+  // than section 7.5 of the Terms says is collected, and a design that dropped the obligation
+  // would leave the page's sentence with nothing holding it.
+  if (!design.replace(/\s+/g, ' ').includes(MERCHANT_RECIPIENT_SENTENCE)) {
+    out.push(
+      `${SIGNUP_DESIGN}'s section 7.3 no longer states ${JSON.stringify(MERCHANT_RECIPIENT_SENTENCE)}: that sentence is what obliges the notice to name the merchant of record as a recipient, so a page stating it is held by this line`,
+    )
+  }
+  if (!terms.replace(/\s+/g, ' ').includes(SIGNUP_TERMS_CLAUSE)) {
+    out.push(
+      `${SIGNUP_TERMS}'s section 7.5(b) no longer says ${JSON.stringify(SIGNUP_TERMS_CLAUSE)}: the statement's list of what the sign-up collects is counsel's list, and a Terms that stopped stating it leaves the page's account of the data standing on its own`,
+    )
+  }
+  if (!text.includes(MERCHANT_OF_RECORD)) {
+    out.push(
+      `the privacy page's key sign-up card does not name ${MERCHANT_OF_RECORD}, the merchant of record (D442): a Team purchase is sold by it as the seller of record, so the money and the billing details are a recipient's, and a statement that named the plan and not the merchant would leave a buyer's data unexplained`,
+    )
+  }
+  // The retention, held to the code that carries it out: the page may state the drop only while
+  // the store's own rule and the function that applies it are both in the tree, and the two
+  // sources may state it only while the page does.
+  const saysDrop = /once the link can no longer be followed/.test(text)
+  if (!store.includes(SIGNUP_DROP_COMMENT) || !service.includes(SIGNUP_DROP_FUNCTION)) {
+    out.push(
+      `${SIGNUP_STORE} or ${SIGNUP_SERVICE} no longer states and applies the drop of a spent or expired application's personal data: the privacy page's sentence about how long the sign-up data is kept is that rule, so a service that stopped dropping it is a statement nothing holds`,
+    )
+  }
+  if (!saysDrop) {
+    out.push(
+      `the privacy page's key sign-up card does not say what happens to an application's own data "once the link can no longer be followed": ${SIGNUP_STORE} says the address, the domain and the repository URLs go then, and a page that stated what the forms collect and never what becomes of it is the half of the notice a reader asks for second`,
+    )
+  }
+  // The queue's half, which the drop above does not reach: a request a person decides on is kept
+  // with what it carried, and the owner is mailed it. The page may say either only while the
+  // record and the mail are the tree's, and the tree may hold them only while the page says so.
+  const at = store.indexOf(SIGNUP_APPLICATION)
+  if (at < 0) {
+    out.push(
+      `${SIGNUP_STORE} no longer declares an Application: the card says a request a person decides on is kept with the address, the text and the repository URLs it carried, and this record is what keeps it — a store that stopped holding one leaves the sentence describing a request nothing has`,
+    )
+  } else {
+    const declared = store.slice(at).split('\n}')[0]
+    for (const field of SIGNUP_APPLICATION_FIELDS) {
+      if (!declared.includes(field)) {
+        out.push(
+          `${SIGNUP_STORE}'s Application no longer holds ${JSON.stringify(field)}: the card says a request a person decides on is kept with the address, the text and the repository URLs it carried, and each of the three is a field of this record`,
+        )
+      }
+    }
+  }
+  if (!queue.includes(SIGNUP_QUEUE_ALERT) || !queue.includes(SIGNUP_QUEUE_NOTIFY)) {
+    out.push(
+      `${SIGNUP_QUEUE} no longer builds and sends the owner's notification for a queued request: the card says the owner is mailed a notification carrying the request's own facts, and a queue that stopped mailing one leaves that sentence standing on nothing — an unannounced request is one nobody reads`,
+    )
+  }
+  if (!text.includes(SIGNUP_KEPT_PHRASE)) {
+    out.push(
+      `the privacy page's key sign-up card does not say a request a person decides on is ${JSON.stringify(SIGNUP_KEPT_PHRASE)}: ${SIGNUP_STORE}'s Application holds the address, the text and the repository URLs after the decision, and a card that stated only the drop would tell a reader that everything a form takes goes`,
+    )
+  }
+  if (!text.includes(SIGNUP_ALERT_PHRASE)) {
+    out.push(
+      `the privacy page's key sign-up card does not say the owner is ${JSON.stringify(SIGNUP_ALERT_PHRASE)} when a request reaches the queue: ${SIGNUP_QUEUE}'s queueAlert mails the applicant's own facts to the owner, who is a recipient of them — and a request the Terms promise will be looked at is one a reader is owed the route of`,
+    )
+  }
+  return out
+}
+
 // ---- the gate ----------------------------------------------------------------------------
 
 const FACTS = siteFacts()
@@ -1169,6 +1403,35 @@ test('no production source names the host this project operates', () => {
       `${rel} is one of the recorded exceptions and was scanned as an ordinary production source: a link to the project's own website is not a host the software reports to, so the scan must skip it`,
     )
   }
+  // The two service directories `ee/` brings in, held the same way: each is a directory rather
+  // than a file, so the check is that the selector really reads it — an entry for a directory
+  // that held nothing the rule would refuse would exempt nothing and read as a live exception.
+  for (const dir of SERVICE_SOURCES) {
+    assert.ok(existsSync(path.join(REPO, dir)), `the recorded exemption ${dir} is gone: delete it from SERVICE_SOURCES and its note in website/test/privacy.mjs, so the list names only trees that exist`)
+    const refused = [...selected].filter((rel) => rel.startsWith(dir))
+    assert.ok(
+      refused.length > 0,
+      `${dir} is exempt from the reach scan and holds no source the scan would otherwise read: the exemption is for a service's own code that names the hosts it runs on, and a directory with none in it exempts nothing`,
+    )
+  }
+  // And the one source that really does reach the service: the page's restated sentence is what
+  // names the licence service, so the two are read against each other in both directions.
+  for (const rel of REACHED_SOURCES) {
+    assert.ok(existsSync(path.join(REPO, rel)), `the recorded reach ${rel} is gone: the page's sentence about the licence service is held to the source that reaches it, so delete the entry and the sentence's claim together`)
+    assert.ok(
+      selected.has(rel) && !files.some((file) => file.rel === rel),
+      `${rel} is not read by the reach scan and then taken out of it: it is the source the page's licence-service sentence is held to, so it has to be a production source the selector reads and the recorded list removes`,
+    )
+    assert.ok(
+      repoFile(rel).includes(FACTS.canonicalHost),
+      `${rel} no longer names ${FACTS.canonicalHost}: it is recorded as the source that reaches the licence service, and a file that has stopped naming a host this project operates is an entry that hides nothing — and a page sentence with nothing under it`,
+    )
+  }
+  assert.match(
+    privacyPage().html,
+    /nothing the Fugaro project operates except the licence service/,
+    `the privacy page no longer says "nothing the Fugaro project operates except the licence service": ${REACHED_SOURCES.join(', ')} reaches ${FACTS.canonicalHost} (the licence service, ee/register/licence.go's licenceServerURL), so a page claiming the software reaches nothing of the project's is a page the tree contradicts`,
+  )
   // The exemption is the file's own link and not a licence to reach: the scan cannot see the
   // host inside an allow-listed file, so a request grown there would be invisible to the rule
   // this file exists for. All three are read for the ways a source reaches a service.
@@ -1176,6 +1439,21 @@ test('no production source names the host this project operates', () => {
   assert.deepEqual(reaching, [], reaching.join('\n'))
   const failures = reachFailures(files, FACTS.canonicalHost)
   assert.deepEqual(failures, [], `a source of the software names the host the project operates:\n  ${failures.join('\n  ')}`)
+})
+
+test('the statement accounts for the key sign-up, and the sign-up is the one the sources describe', () => {
+  const keys = builtPages(DIST).find((p) => p.url === KEYS_PAGE_URL)
+  assert.ok(keys, `the build carries no ${KEYS_PAGE_URL} page: the statement's key sign-up card is a claim about that page, so \`npm run check\` has to build it first`)
+  const failures = keySignupFailures({
+    page: privacyPage().html,
+    keysPage: keys.html,
+    terms: repoFile(SIGNUP_TERMS),
+    design: repoFile(SIGNUP_DESIGN),
+    store: repoFile(SIGNUP_STORE),
+    service: repoFile(SIGNUP_SERVICE),
+    queue: repoFile(SIGNUP_QUEUE),
+  })
+  assert.deepEqual(failures, [], `the key sign-up and the statement disagree:\n  ${failures.join('\n  ')}`)
 })
 
 test("the page's contact section is the owner's two routes, and the page carries no address", () => {
@@ -1764,5 +2042,159 @@ test("the console's crash reporting is the design's sentence, the switch and all
   assert.ok(
     withEndpoint.some((line) => line.includes('ingest endpoint')),
     'a privacy page carrying an ingest endpoint was not refused: the constant lives in one file of the console and the page states facts, not the value',
+  )
+})
+
+test('a source of the Subscription Edition that names a host the project operates is refused, and the two service trees are exempt', () => {
+  const host = FACTS.canonicalHost
+
+  // The `ee/` half of the rule, read through the selector rather than around it (S7.3 extended
+  // it): a Go file beside the licence client that names the host is selected and refused, which
+  // is what keeps REACHED_SOURCES a recorded reach rather than a hole over `ee/register/`.
+  const tree = mkdtempSync(path.join(tmpdir(), 'privacy-reach-ee-'))
+  try {
+    const root = path.join(tree, 'ee', 'register')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(path.join(root, 'telemetry.go'), `package register\n\nconst report = "https://${host}/v1/telemetry"\n`)
+    const scanned = softwareSources([root], tree).map((file) => file.rel)
+    assert.deepEqual(
+      scanned,
+      ['ee/register/telemetry.go'],
+      `the reach scan selected ${JSON.stringify(scanned)}: a Subscription Edition source that is not the recorded licence client must be selected, so that naming the host there is a finding`,
+    )
+    const planted = reachFailures(softwareSources([root], tree), host)
+    assert.equal(planted.length, 1, planted.join('\n'))
+    assert.match(planted[0], /^ee\/register\/telemetry\.go names /)
+    assert.match(planted[0], /nothing the Fugaro project operates/)
+
+    // And the recorded reach itself is taken out by the same selector: the file the page's
+    // sentence is held to is read from the repository, never from a tree a case built.
+    writeFileSync(path.join(root, 'licence.go'), `package register\n\nvar licenceServerURL = "https://keys.${host}"\n`)
+    assert.deepEqual(
+      softwareSources([root], tree).map((file) => file.rel),
+      ['ee/register/telemetry.go'],
+      'the reach scan read a file recorded in REACHED_SOURCES as an ordinary source: the entry is what takes the licence client out of the scan, and the page names the service it reaches',
+    )
+
+    // The two service trees are the one exemption that is a directory, so the case plants a file
+    // in each: a service's own code names the hosts it runs on, and the scan does not read it.
+    for (const dir of SERVICE_SOURCES) {
+      const service = path.join(tree, dir)
+      mkdirSync(service, { recursive: true })
+      writeFileSync(path.join(service, 'service.go'), `package keyservice\n\nconst url = "https://keys.${host}"\n`)
+      assert.deepEqual(
+        softwareSources([service], tree).map((file) => file.rel),
+        [],
+        `the reach scan read a source under ${dir}: that tree is exempt as a service's own code, and a scan that read it would refuse the host a service runs on`,
+      )
+    }
+  } finally {
+    rmSync(tree, { recursive: true, force: true })
+  }
+
+  // In the real tree the exemption is those two trees and not `ee/`: the rest of the Subscription
+  // Edition is read, and the recorded reach is the only source that names a host of ours.
+  const scanned = softwareSources()
+  const ee = scanned.filter((file) => file.rel.startsWith('ee/'))
+  assert.ok(ee.length > 100, `only ${ee.length} sources under ee/ were scanned: the extension reaches the Subscription Edition, and a selector that read a handful of files would leave the sentence unenforced where the licence client lives`)
+  assert.deepEqual(
+    ee.filter((file) => file.text.includes(host)).map((file) => file.rel),
+    [],
+    `a source under ee/ other than the two service trees and the recorded licence client names ${host}: the exemptions are those trees and that file, and nothing about the directory they sit in`,
+  )
+})
+
+test('a statement without the key sign-up card, or one of its facts, is refused, as is a sign-up the sources stopped describing', () => {
+  const keys = builtPages(DIST).find((p) => p.url === KEYS_PAGE_URL)
+  const sources = {
+    keysPage: keys.html,
+    terms: repoFile(SIGNUP_TERMS),
+    design: repoFile(SIGNUP_DESIGN),
+    store: repoFile(SIGNUP_STORE),
+    service: repoFile(SIGNUP_SERVICE),
+    queue: repoFile(SIGNUP_QUEUE),
+  }
+  const page = privacyPage().html
+  assert.deepEqual(keySignupFailures({ page, ...sources }), [], 'the real page and the real sources disagree before any defect is planted')
+
+  // The red step this task was written from: the statement as it stood had no key sign-up card
+  // at all, and the card's every fact is named as the missing sentence.
+  const bare = keySignupFailures({ page: SHELL('<h2>The website</h2><h2>The software</h2>'), ...sources })
+  for (const phrase of Object.values(KEY_SIGNUP_FIELDS)) {
+    assert.ok(
+      bare.some((line) => line.includes(JSON.stringify(phrase)) && line.includes('key sign-up card does not say')),
+      `a statement with no key sign-up card was not refused for ${JSON.stringify(phrase)}: the card is what accounts for the page the forms are on`,
+    )
+  }
+  assert.ok(bare.some((line) => line.includes(MERCHANT_OF_RECORD)), 'a statement that never names the merchant of record was not refused')
+  assert.ok(
+    bare.some((line) => line.includes('once the link can no longer be followed')),
+    'a statement that never says what happens to an application\'s data was not refused',
+  )
+  assert.ok(bare.some((line) => line.includes(`no link to ${KEYS_PAGE_URL}`)), 'a statement with no route to the page the forms are on was not refused')
+  assert.ok(
+    bare.some((line) => line.includes(JSON.stringify(SIGNUP_KEPT_PHRASE))) && bare.some((line) => line.includes(JSON.stringify(SIGNUP_ALERT_PHRASE))),
+    'a statement with no key sign-up card was not refused for the queue: a request a person decides on is kept whole, and a card that stated only the drop tells a reader that everything a form takes goes',
+  )
+
+  // Each fact alone, in the direction the page owns: dropping one sentence of the card is the
+  // refusal that sentence's rule names.
+  for (const gone of [
+    MERCHANT_OF_RECORD,
+    ...Object.values(KEY_SIGNUP_FIELDS),
+    'once the link can no longer be followed',
+    SIGNUP_KEPT_PHRASE,
+    SIGNUP_ALERT_PHRASE,
+  ]) {
+    const without = keySignupFailures({ page: page.split(gone).join(''), ...sources })
+    assert.ok(without.length > 0, `a statement that dropped ${JSON.stringify(gone)} was not refused`)
+  }
+
+  // And the other direction, on the sources the card is written from: a design that stopped
+  // obliging the notice to name the recipient, a Terms that stopped listing the sign-up data, a
+  // service that stopped dropping a dead application's personal data, and a store or a queue that
+  // stopped keeping and announcing the request a person decides on each leave a sentence of the
+  // page standing on nothing.
+  for (const [field, phrase, why] of [
+    ['design', MERCHANT_RECIPIENT_SENTENCE, 'the design no longer obliges the notice to name a recipient'],
+    ['terms', SIGNUP_TERMS_CLAUSE, 'the Terms no longer list what the Key Service collects'],
+    ['store', SIGNUP_DROP_COMMENT, 'the store no longer states the drop'],
+    ['service', SIGNUP_DROP_FUNCTION, 'the service no longer applies the drop'],
+    ['store', SIGNUP_APPLICATION, 'the store no longer declares the request the queue keeps'],
+    ['queue', SIGNUP_QUEUE_ALERT, 'the queue no longer builds the owner\'s notification'],
+    ['queue', SIGNUP_QUEUE_NOTIFY, 'the queue no longer sends the owner\'s notification'],
+  ]) {
+    const without = keySignupFailures({ page, ...sources, [field]: sources[field].replace(phrase, '') })
+    assert.ok(without.length > 0, `a ${field} that dropped ${JSON.stringify(phrase)} (${why}) was not refused`)
+  }
+
+  // A field of the kept request gone: the record is what the card's sentence about it is, so a
+  // record that stopped holding the address, the text or the repositories is the sentence's own
+  // half missing rather than a page that overstates. The edit is made inside the Application
+  // declaration, because three other records of this store carry a field of the same name.
+  const withoutApplicationField = (text, field) => {
+    const at = text.indexOf(SIGNUP_APPLICATION)
+    const end = text.indexOf('\n}', at)
+    return text.slice(0, at) + text.slice(at, end).replace(`\t${field}`, '\tGone') + text.slice(end)
+  }
+  for (const field of SIGNUP_APPLICATION_FIELDS) {
+    const without = keySignupFailures({ page, ...sources, store: withoutApplicationField(sources.store, field) })
+    assert.ok(
+      without.some((line) => line.includes(JSON.stringify(field))),
+      `an Application that dropped its ${field} field was not refused: the card says a decided request is kept with the address, the text and the repository URLs it carried`,
+    )
+  }
+
+  // The forms themselves: a field the page gained and the statement does not state, and a field
+  // the forms lost while the sentence about it stays, are the two ways the two can drift.
+  const grown = keySignupFailures({ page, ...sources, keysPage: `${keys.html}<form><input name="phone" /></form>` })
+  assert.ok(
+    grown.some((line) => line.includes('"phone"')),
+    'a key request page with a field the statement does not state was not refused: every field the site asks a reader for is a sentence the statement owes',
+  )
+  const lost = keySignupFailures({ page, ...sources, keysPage: keys.html.replace(/name="repositories"/, 'name="repos"') })
+  assert.ok(
+    lost.some((line) => line.includes('repository URLs')),
+    'a key request page that lost the open-source field while the statement still described it was not refused',
   )
 })
