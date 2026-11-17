@@ -111,10 +111,11 @@ func catalogScanValueName(substitution string, i int) string {
 	return fmt.Sprintf("%s_%d", substitution, i+1)
 }
 
-// catalogContextRoot is where the clone step clones the entry's repository:
-// the path the derived build's own source step clones into, and the path a
-// catalog build drops. It is not /workspace/context, which holds the copied
-// Dockerfile the build reads and the pin step verifies (D1404).
+// catalogContextRoot is where the clone step puts the entry's repository for an
+// entry that names a build context: the path the derived build's own source
+// step clones into, and the path a catalog build unpacks its checkout into. It
+// is not /workspace/context, which holds the copied Dockerfile the build reads
+// and the pin step verifies (D1404).
 const catalogContextRoot = "/workspace/src"
 
 // catalogBuildSteps are a catalog build's steps, in order. The derived
@@ -377,9 +378,9 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 	}
 	// The entry's own build step stops being handed the git credential before
 	// the spec is checked, so the variables the request reserves are the ones
-	// that step really carries: the checkout reaches it as a named build
-	// context instead, and the secret and the volume that held it stay in the
-	// clone step's build (B8, F19).
+	// that step really carries: the checkout reaches it as an image of the
+	// worker's own instead, and the secret and the volume that held it stay in
+	// the clone step's build (B8, F19).
 	if err := catalogEntryBuildStep(build); err != nil {
 		return nil, err
 	}
