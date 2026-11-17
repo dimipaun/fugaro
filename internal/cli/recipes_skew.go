@@ -3014,7 +3014,7 @@ func refuseClonesNotShipped(repo, cmd, verb string, names []string) error {
 // price_policy — at any value — and may receive repo's code. "Set" is the
 // test, not "different from the default": the omitempty tags write the key
 // whenever the owner wrote it (require_zdr: true and price_policy:
-// cheapest are written too), and ProvidersEnv (internal/runner/providers.go)
+// highest are written too), and ProvidersEnv (internal/runner/providers.go)
 // writes exactly this distinction, so an explicit default breaks an older
 // runner just like the other value does. A provider whose allow_data_to
 // does not cover repo is not in the job's value at all, so it cannot break
