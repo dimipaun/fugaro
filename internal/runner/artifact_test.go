@@ -580,6 +580,39 @@ func TestAModeArtifactRecipeWithAnImplementSpecModeIsRefused(t *testing.T) {
 	}
 }
 
+// TestAReviewClassSpecWithARenderRecipeIsRefused (docs/troubleshoot-cloud
+// T-TC12): the review-class marker belongs to the diagnosis, and the diagnose
+// step is what makes a run one. task.Spec.ReviewClass is admitted by
+// task.Validate on mode: artifact alone (the recipe is not resolved yet) and
+// is what the class doors and the model path read, so a mode: artifact spec
+// naming a recipe that renders would be admitted to the review-only variant
+// and have its stages' model calls served by the credentials service's review
+// class — the account's own credential and its allow_repos are not what bounds
+// them then. This is the arm that ties the marker to the step, on the RESOLVED
+// recipe, before any stage.
+//
+// Mutation (drop the review-class case from resolveRecipe's cross-check): this
+// test fails, and the run renders under the class the field claimed.
+func TestAReviewClassSpecWithARenderRecipeIsRefused(t *testing.T) {
+	spec := artifactSpec(sizzleRenderOnlyYAML)
+	spec.ReviewClass = true
+	h := newHarnessFiles(t, renderCfg(t, "", ""), spec, renderScript(sizzleScript))
+	pushes := countPushes(t, h)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(rec.Reason, "holds no diagnose step") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+	if n := len(h.agent.calls); n != 0 {
+		t.Fatalf("%d agent calls, want none", n)
+	}
+	if n := pushes(); n != 0 {
+		t.Fatalf("%d pushes, want none", n)
+	}
+}
+
 // TestReportSaysArtifactsNotDraft: report.go's outcome switch has an arm for
 // the new outcome, so an artifact run never reads as a draft pull request
 // with an empty reason (its `default:` arm) — the one thing it is not.
