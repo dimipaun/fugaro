@@ -455,8 +455,17 @@ func TestBitbucketGetRefusesAnAppID(t *testing.T) {
 	if n := f.count(); n != 0 {
 		t.Errorf("a call carrying an App ID reached Bitbucket %d times, want none: %+v", n, f.calls())
 	}
-	if n := len(s.auditLines(t)); n != 1 {
-		t.Errorf("the refused call wrote %d audit lines, want exactly one", n)
+	lines := s.auditLines(t)
+	if len(lines) != 1 {
+		t.Fatalf("the refused call wrote %d audit lines, want exactly one", len(lines))
+	}
+	// The line names the host's own credential and not the App key the field
+	// beside it belongs to: the host IS resolved by the time this rule is asked,
+	// so the act this line records is a Bitbucket one, performed with the read
+	// consumer — which is also the only credential of the two an installation
+	// with Bitbucket alone holds.
+	if got := auditField(lines[0], "credential"); got != BitbucketReadConsumerSecret {
+		t.Errorf("the line for an App ID refused on a Bitbucket call names %q as its credential, want %q", got, BitbucketReadConsumerSecret)
 	}
 
 	// The GitHub repository of the same fixture takes an App ID and is refused

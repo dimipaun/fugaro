@@ -124,7 +124,12 @@ func labelHostOf(repos map[string]string, repo string) (labelHost, error) {
 	case bbErr == nil:
 		// The repository segment comes from the inventory's own canonical value
 		// and not from the caller's text: the row is what this service resolved,
-		// and the text is only what it was asked about.
+		// and the text is only what it was asked about. It is a second read of
+		// the same row rather than a parser of this file's own, and it cannot
+		// fail where workspaceOf above has succeeded — the two refuse the same
+		// shapes — so the branch below is unreachable by construction. It is
+		// answered rather than ignored because the alternative to refusing is a
+		// host carrying an empty repository name.
 		_, name, err := splitCanonicalRepo(repos[bbSlug])
 		if err != nil {
 			return labelHost{}, ErrLabelUnknownRepository
@@ -145,9 +150,13 @@ func labelHostOf(repos map[string]string, repo string) (labelHost, error) {
 // is here rather than a field quietly dropped.
 //
 // The presence rule lives after the host is known (labelHostOf) and the SHAPE
-// rule before it (readLabelCall): an empty field is a field this code cannot
-// read as a malformed ID until it knows whether the host wants one, so a call
-// whose App ID is absent is refused for the absence and not for its shape.
+// rule before it, in readLabelCall — which is the only place that rule is
+// spelled, and which has already refused a malformed ID for every call by the
+// time one reaches here: what is left at this point is presence alone, so a
+// second shape check here would be a branch nothing can take. An empty field is
+// a field this code cannot read as a malformed ID until it knows whether the
+// host wants one, so a call whose App ID is absent is refused for the absence
+// and not for its shape.
 func (h labelHost) checkAppID(appID string) error {
 	switch {
 	case h.bitbucket && appID != "":
@@ -157,8 +166,6 @@ func (h labelHost) checkAppID(appID string) error {
 		return errors.New("the call names an App ID, and a Bitbucket call names none: that host has no GitHub App, and this route reads its pull requests with the installation's Bitbucket read consumer")
 	case !h.bitbucket && appID == "":
 		return errors.New("the call names no GitHub App ID, which every act on a GitHub repository takes")
-	case !h.bitbucket && !appIDRE.MatchString(appID):
-		return errors.New("the call's App ID is not a GitHub App ID (1 to 20 digits)")
 	}
 	return nil
 }

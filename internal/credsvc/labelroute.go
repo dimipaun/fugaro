@@ -594,13 +594,18 @@ func (s *Server) labelRoute(ctx context.Context, w http.ResponseWriter, r *http.
 			readRefusalMessage(err, call.req.Repository))
 		return
 	}
+	// The host is known from here on, and so is the credential the act is
+	// performed with: every line below — the App ID's own refusal included,
+	// which is a refusal of this host's rule and not of the route's — names the
+	// one this host's acts use. A line written for a refused Bitbucket call
+	// therefore names the read consumer, which is the credential a Bitbucket
+	// act is performed with; the App key it names above is the route's own
+	// answer, and it is the right one only while the host is still unknown.
+	credential = labelCredential(host.bitbucket)
 	if err := host.checkAppID(call.req.AppID); err != nil {
 		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusRequestRefused, ErrorRequestRefused, err.Error())
 		return
 	}
-	// The host is known from here on, and so is the credential the act is
-	// performed with: every line below names the one this host's acts use.
-	credential = labelCredential(host.bitbucket)
 	if host.bitbucket && call.req.Action != creds.LabelActionGet {
 		s.refuseLabel(ctx, w, caller, host.slug, credential, StatusUnavailable, ErrorStateUnavailable, ErrLabelUnsupported.Error())
 		return
