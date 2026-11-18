@@ -82,9 +82,10 @@ const (
 	// names — a state the validator reads as malformed, which is a bug worth a
 	// line rather than a tick that stops.
 	codeGraphRefused = "refused"
-	// codeGraphRoom is an entry no op of the patch was left for: the fold of the
-	// outcomes is what must land, and this release's MaxIntents is what makes
-	// the case all but unreachable.
+	// codeGraphRoom is an entry no op of the patch was left for, or an edge the
+	// patch has no room for the fact beside (D2740): the fold of the outcomes is
+	// what must land, and this release's MaxIntents is what makes the case all
+	// but unreachable.
 	codeGraphRoom = "no-room"
 )
 
@@ -304,6 +305,14 @@ func (f *folder) addEdge(targetID, source, runID string) {
 		code = codeGraphDeps
 	}
 	deps := append(slices.Clone(t.DependsOn), source)
+	if code == "" && f.room < 2 {
+		// An edge and the fact beside it are one change (D2740), and a patch
+		// with room for only one of them adds neither: an item left un-approved
+		// with no note on the node saying why is the thing that decision exists
+		// to prevent, and the entry the cycle could not record is one the next
+		// tick derives again from the same report.
+		code = codeGraphRoom
+	}
 	if !f.ask(Op{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{ID: targetID, DependsOn: &deps}}, targetID, what, code) {
 		return
 	}
