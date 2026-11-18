@@ -289,11 +289,16 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			// is the one this row is the mutation check of: the policy stage
 			// writes it at the operator's own machine and publishes the block
 			// it implies, and this row's project has a Bitbucket repository and
-			// a deployed service, so the flip turns.
+			// a deployed service, so the flip turns. What the line says is the
+			// state this run leaves: the address the repository's jobs are
+			// admitted by, and the mount still on the job until the next
+			// update's repository stage takes it off (S6's fix, 2026-11-18 —
+			// the line used to say the next launch fetches its credential from
+			// the service, which is the launch after that update).
 			name: "the Bitbucket proxy switch this update turns on", mode: budget.ModeEnforce,
 			extra:   "credentials_service: { url: " + credentialsServiceURL + " }\n",
 			release: proxySince,
-			want:    []string{"1 run in flight", "bitbucket proxy switch", "next launch"},
+			want:    []string{"1 run in flight", "bitbucket proxy switch", "the address is set", "mount drops next update"},
 			notWant: []string{"budget mode", "policy:", "retirement"},
 		},
 	} {
