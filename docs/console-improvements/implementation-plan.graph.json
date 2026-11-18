@@ -115,7 +115,8 @@
           "console/src/main/settingsedit.ts",
           "console/src/main/settingsview.ts",
           "console/src/renderer/confirm.ts",
-          "console/test/unit/settingsview.test.ts"
+          "console/src/preload/confirm.ts",
+          "console/test/unit/confirm.test.ts"
         ]
       }
     },
@@ -409,7 +410,7 @@
     },
     {
       "id": "MW1",
-      "title": "models use and add from the Manage list",
+      "title": "models add from the Manage list",
       "run": null,
       "version": null,
       "size": 4,
@@ -476,7 +477,8 @@
           "console/test/unit/ipc.test.ts",
           "docs/design/desktop-console.md",
           "console/docs/json-contract.md",
-          "internal/cli/docs_desktop_console_test.go"
+          "internal/cli/docs_desktop_console_test.go",
+          "console/test/unit/version.test.ts"
         ]
       }
     },
@@ -585,6 +587,8 @@
           "console/src/renderer/wizard/wizard.ts",
           "console/src/renderer/installations.ts",
           "console/src/main/picker.ts",
+          "console/src/main/installations.ts",
+          "console/src/preload/installations.ts",
           "console/test/unit/wizard.test.ts"
         ]
       }
@@ -638,12 +642,29 @@
         "paths": [
           "console/src/renderer/stubs/bridge-stub.ts",
           "console/src/main/handlers.ts",
-          "console/src/main/window.ts",
+          "console/src/main/index.ts",
           "console/test/unit/ops-contract.test.ts",
           "console/test/e2e/ops.spec.ts"
         ]
       },
       "kind": "integration"
+    },
+    {
+      "id": "SRC",
+      "title": "the main-side handlers and fixtures for the four new reads",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/source/source.ts",
+          "console/src/source/cli.ts",
+          "console/src/source/fixture.ts",
+          "console/test/unit/source-new-reads.test.ts"
+        ]
+      }
     },
     {
       "id": "R-OPS",
@@ -691,6 +712,11 @@
       "reason": "the groups and search read the emitted members"
     },
     {
+      "task": "SU2a",
+      "needs": "LP2",
+      "reason": "both write `theme/screens.css`"
+    },
+    {
       "task": "SU2b",
       "needs": "SU1",
       "reason": "the inline editor is deleted together with the window that replaces it"
@@ -704,6 +730,11 @@
       "task": "SU2b",
       "needs": "I-MG",
       "reason": "both write `projects.ts`"
+    },
+    {
+      "task": "SU2b",
+      "needs": "RS2",
+      "reason": "both write `entry.ts`"
     },
     {
       "task": "RS2",
@@ -734,6 +765,11 @@
       "task": "RB4",
       "needs": "C-OPS",
       "reason": "built against the operations' names and types and the stub bridge"
+    },
+    {
+      "task": "RB4",
+      "needs": "RB1",
+      "reason": "both write `entry.ts`"
     },
     {
       "task": "ST2",
@@ -861,6 +897,11 @@
       "reason": "same"
     },
     {
+      "task": "AL",
+      "needs": "SM-E",
+      "reason": "both write `console/docs/json-contract.md`"
+    },
+    {
       "task": "SM1",
       "needs": "SM0",
       "reason": "the entries are built against `Meta` and `Register`"
@@ -953,7 +994,7 @@
     {
       "task": "I-OPS",
       "needs": "AL",
-      "reason": "needs the real operations and the registry"
+      "reason": "needs the real operations"
     },
     {
       "task": "I-OPS",
@@ -979,6 +1020,16 @@
       "task": "I-OPS",
       "needs": "SW3a",
       "reason": "needs the real consumer"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "SRC",
+      "reason": "needs the real consumer"
+    },
+    {
+      "task": "SRC",
+      "needs": "C-OPS",
+      "reason": "built against the payloads and handler signatures"
     }
   ],
   "decoupling": [
@@ -1026,6 +1077,15 @@
       },
       "integration": "I-OPS",
       "reason": "SW3a needed the operations' names and types, not the allow-list's rows"
+    },
+    {
+      "contract": "C-OPS",
+      "was": {
+        "task": "SRC",
+        "needs": "AL"
+      },
+      "integration": "I-OPS",
+      "reason": "SRC needed the operations' names and types, not the allow-list's rows"
     }
   ],
   "contract_changes": [
@@ -1040,6 +1100,7 @@
         "RS2",
         "MO-C",
         "SW3a",
+        "SRC",
         "AL"
       ]
     }
