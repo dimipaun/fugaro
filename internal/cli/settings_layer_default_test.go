@@ -236,12 +236,13 @@ func TestSettingsWrongLayerRefusesNamingTheRight(t *testing.T) {
 //
 // What is filtered out is the value: the probe writes one word into every row's
 // path and most rows do not hold a word, so the loader's complaints about the
-// value it found are not complaints about where the key is. The two messages
+// value it found are not complaints about where the key is. The three messages
 // left are the loader's own answers about the key's PLACE — a top-level name the
-// layer file does not know, and a `defaults:` member that is not a fugaro.yaml
-// key — and they are the failure W1's mapping is written against.
+// layer file does not know, a `defaults:` member that is not a fugaro.yaml key,
+// and a path that lands on a block of keys rather than one of them — and they
+// are the failure W1's mapping is written against.
 //
-// The third answer about a key's place is the scope table's ("may only be set
+// The fourth answer about a key's place is the scope table's ("may only be set
 // in: ..."), and it is compared against the list below rather than refused
 // outright. The five rows on it are a drift W1 neither caused nor may repair:
 // the registry lists `layer.defaults.agent.crafts.*.access` as writable at the
@@ -272,6 +273,10 @@ func TestSettingsRowsNeverWriteWhereTheLayerRefusesAtReread(t *testing.T) {
 	refuses := []string{
 		"is not a project layer key (",
 		"is not a fugaro.yaml key the project layer knows",
+		// A path that lands where a fugaro.yaml block belongs, in a file that
+		// states a scalar there: a row whose key is the block rather than a key
+		// inside it writes what the layer refuses, exactly as the other two do.
+		"is a block of fugaro.yaml keys, so it must be a mapping of them",
 	}
 	const scopeRefusal = "may only be set in:"
 	checked, mapped := 0, 0

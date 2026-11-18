@@ -452,9 +452,11 @@ file, or a repository's fugaro.yaml.
 
 The layers are ` + "`local`" + ` (the local project config), ` + "`project`" + ` (the local
 project layer file) and ` + "`repo`" + ` (a checkout's fugaro.yaml); ` + "`default`" + ` is never
-a target. With no --layer the narrowest layer the key may be set in is the
-target. --layer repo without --repo uses the current directory's checkout and
-refuses when the directory is not one.
+a target. With no --layer a ceiling — a key whose layers tighten each other,
+so the smaller value wins — lands in the project layer when the key may be set
+there and in the local project config when it may not, and every other key
+lands in the narrowest layer it may be set in. --layer repo without --repo uses
+the current directory's checkout and refuses when the directory is not one.
 
 A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries
@@ -854,9 +856,12 @@ func settingsWriteHintRows(list bool) []settings.Row {
 // file can lower and no one else can, which is the opposite of what a ceiling
 // is for: the project layer is where a project says what its repositories may
 // not exceed, so a ceiling with no --layer lands there, and in this machine's
-// own config when the project layer is not a layer the key may be set in. The
-// write still refuses rather than inventing a layer when neither is one the key
-// has (settingsResolveTarget's own check).
+// own config when the project layer is not a layer the key may be set in. A
+// ceiling the project layer may not hold at all — `agent.max_run_tokens` is a
+// repository's own key — keeps the repo default, because the layers it does
+// have decide and the rule above only reorders those. What the rule never does
+// is invent a layer: it answers from the row's own layers or answers nothing,
+// and settingsResolveTarget refuses the nothing.
 //
 // Every other merge rule keeps the narrowest layer the key may be set in, so an
 // edit lands as close to the repository as the key allows — a Replace key
