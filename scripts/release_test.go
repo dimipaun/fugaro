@@ -28,6 +28,12 @@ import (
 type releaseRepo struct {
 	bare  string
 	local string
+	// recordDir is where scripts/release-rehearsal.sh writes its record
+	// (RELEASE_REHEARSAL_DIR), and fugaroState the directory the fake fugaro
+	// logs its calls to (FAKE_FUGARO_DIR): the pre-tag rehearsal runs on the
+	// path to every tag these tests cut, so every run gets both.
+	recordDir   string
+	fugaroState string
 }
 
 func newReleaseRepo(t *testing.T) *releaseRepo {
@@ -88,7 +94,7 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 
 	local := filepath.Join(root, "work")
 	testutil.Git(t, root, "clone", "--quiet", bare, local)
-	return &releaseRepo{bare: bare, local: local}
+	return &releaseRepo{bare: bare, local: local, recordDir: t.TempDir(), fugaroState: t.TempDir()}
 }
 
 func writeHighlights(t *testing.T, dir, version, body string) {
@@ -363,13 +369,14 @@ func releaseProcs(pgid int) string {
 }
 
 // fakeBinDir returns a directory on PATH ahead of the real one, holding the
-// fakes for gh and docker (and nothing else: git, bash, sed, awk, sort, date
-// stay real). The fake docker answers images/verify-public.sh's three calls,
-// which scripts/verify-release.sh makes for every image a release published.
+// fakes for gh, docker and fugaro (and nothing else: git, bash, sed, awk, sort,
+// date stay real). The fake docker answers images/verify-public.sh's three
+// calls, which scripts/verify-release.sh makes for every image a release
+// published; the fake fugaro is the CLI the pre-tag rehearsal runs.
 func fakeBinDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"gh", "docker"} {
+	for _, name := range []string{"gh", "docker", "fugaro"} {
 		src, err := os.ReadFile(filepath.Join(testutil.ModuleRoot(), "scripts", "testdata", "fake-"+name+".sh"))
 		if err != nil {
 			t.Fatal(err)
@@ -418,6 +425,27 @@ func streamsHelper(t *testing.T) string {
 		t.Fatalf("every release.sh run reads the catalogue through this helper, and it did not build: %v", streamsBin.err)
 	}
 	return streamsBin.path
+}
+
+// rehearsalSandbox is the sandbox project name every release.sh run in this
+// package is handed: the pre-tag rehearsal builds in it and nowhere else, so a
+// run without it refuses before the branch (scripts/release.sh).
+const rehearsalSandbox = "fake-sandbox"
+
+// rehearsalEnv is what a release.sh run needs for the pre-tag rehearsal
+// (scripts/release-rehearsal.sh): the sandbox project's name, the directory its
+// record goes in, and the fake fugaro -- the CLI the rehearsal would otherwise
+// build from the commit, which the fixture checkout cannot (it holds no go
+// module, the same reason RELEASE_SH_STREAMS_CMD exists). A test that wants a
+// red, missing or other-commit record overrides these with g.with(...) or by
+// writing the record file itself.
+func rehearsalEnv(r *releaseRepo, bin string) []string {
+	return []string{
+		"FUGARO_LIVE_GCP_PROJECT=" + rehearsalSandbox,
+		"RELEASE_REHEARSAL_DIR=" + r.recordDir,
+		"RELEASE_REHEARSAL_FUGARO=" + filepath.Join(bin, "fugaro"),
+		"FAKE_FUGARO_DIR=" + r.fugaroState,
+	}
 }
 
 // releaseEnv is what a release.sh run needs on top of the process environment:
@@ -480,6 +508,7 @@ func runRelease(t *testing.T, r *releaseRepo, g *ghState, stdin string, args ...
 	// The helper first and the test's own environment after it, so a test can
 	// unset RELEASE_SH_STREAMS_CMD (an empty value is the default `go run`).
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
+	cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 	cmd.Env = append(cmd.Env, g.env...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var out bytes.Buffer
