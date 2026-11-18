@@ -424,10 +424,10 @@ jobs    argv: the installation's job list and the name prefix of the implicit
         review-only job. Reads every `fugaro-p-*` job — how many there are, how many
         are review variants (credsvc.ReviewVariantSuffix, the `-review-` segment
         before gcp.derive's hash: a coding job's name carries no account segment and
-        no suffix) and their names — and, for the prefix, the implicit job's own
-        environment: whether it carries the credentials service's URL, whether it
-        carries FUGARO_SECRET_ENVS or a secret volume (a review variant mounts
-        nothing) and its container image.
+        no suffix) and their names — and, for the prefix, how many jobs carry it and
+        the implicit job's own environment: whether it carries the credentials
+        service's URL, whether it carries FUGARO_SECRET_ENVS or a secret volume (a
+        review variant mounts nothing) and its container image.
 launch  argv: the `fugaro review --json` document. Prints the run it launched, the
         job the execution landed on and the account it runs as.
 run     argv: the listing's file, a run id. Prints that run's row field by field,
@@ -690,9 +690,8 @@ elif cmd == "policy":
     print("mode=%s" % word(budget.get("mode"), 20))
 elif cmd == "jobs":
     prefix = sys.argv[3]
-    proj = coding = review = 0
+    proj = coding = review = implicit_jobs = 0
     proj_names = coding_names = review_names = ""
-    implicit = ""
     for doc in load(sys.argv[2]) or []:
         if not isinstance(doc, dict):
             continue
@@ -712,8 +711,8 @@ elif cmd == "jobs":
             coding += 1
             coding_names = "%s%s " % (coding_names, name)
         if name.startswith(prefix):
-            if not implicit:
-                implicit = name
+            implicit_jobs += 1
+            if implicit_jobs == 1:
                 print("pjob=%s url=%s secrets=%s secretvolumes=%d image=%s" % (
                     word(name, 120),
                     "present" if carries(containers_of(doc), "FUGARO_CREDENTIALS_SERVICE_URL") else "absent",
@@ -728,7 +727,7 @@ elif cmd == "jobs":
     print("proj_names=%s" % text(proj_names.strip(), 400))
     print("coding_names=%s" % text(coding_names.strip(), 400))
     print("review_names=%s" % text(review_names.strip(), 400))
-    print("implicit_jobs=%d" % (1 if implicit else 0))
+    print("implicit_jobs=%d" % implicit_jobs)
 elif cmd == "launch":
     doc = load(sys.argv[2]) or {}
     print("run=%s" % word(doc.get("run"), 160))

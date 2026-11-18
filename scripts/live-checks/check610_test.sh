@@ -59,6 +59,17 @@ expect_absent() {
 expect_status() { # status want what
   [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
 }
+# expect_row: assert on the ONE row's own text. Every row is a sentence the
+# register quotes, so a case reads the row it is about rather than the block.
+expect_row() { # key needle what
+  local row
+  row=$(printf '%s\n' "$out" | grep -m1 "^FACT $1: " || true)
+  if [ -z "$row" ]; then
+    fail "$3: the block carries no FACT $1 row"
+    return 0
+  fi
+  expect_contains "$row" "$2" "$3"
+}
 
 # One installation the cases read and bend: the names are what the rows quote.
 install=chk610-test
@@ -737,9 +748,9 @@ test_dry_run() {
   run_check "$dir" CHECK610_DRY_RUN=1
   expect_status "$status" 0 "dry run"
   expect_contains "$out" "CHECK 610 RESULT" "dry run: the block"
-  expect_contains "$out" "FACT dry-run: PASS" "dry run: the row that says nothing was run"
-  expect_contains "$out" "FACT sandbox: INFO — planned" "dry run: the rows are planned, not measured"
-  expect_contains "$out" "FACT u4: INFO — planned" "dry run: all four UNVERIFIED rows are planned"
+  expect_row dry-run "PASS" "dry run: the row that says nothing was run"
+  expect_row sandbox "INFO — planned" "dry run: the rows are planned, not measured"
+  expect_row u4 "INFO — planned" "dry run: all four UNVERIFIED rows are planned"
   expect_contains "$out" "CHECK 610 RESULT END (exit 0)" "dry run: the end line"
   expect_absent "$out" "FAIL" "dry run: nothing is measured, so nothing fails"
   # A dry run touches nothing at all: not the cloud, not the repository, not even
@@ -755,23 +766,23 @@ test_happy_path() {
   prepare "$dir"
   run_check "$dir"
   expect_status "$status" 0 "the happy path"
-  expect_contains "$out" "FACT sandbox: PASS — $dir/sandbox is a Fugaro repository's checkout of the GITHUB repository $repo with a clean working tree, and it belongs to the $install installation ($gcp_project, region $region)" "the happy path: the sandbox row"
-  expect_contains "$out" "FACT config: PASS — $repo's own fugaro.yaml carries no \`profiles:\` key and every one of its 1 workflow(s) resolves checkout 'baked' (chk=baked)" "the happy path: the config row"
-  expect_contains "$out" "resolves 'vertex' (U3's first reading)" "the happy path: the auth it read"
-  expect_contains "$out" "FACT policy: PASS — $install's published policy carries NO profiles block and admits $repo to the project (its budget mode is 'observe'), and its accounts block names 1 account(s) (default), the one(s) admitting this repository reading 'default'" "the happy path: the policy row"
-  expect_contains "$out" "FACT job: PASS — the installation's implicit review-only job '$job' is deployed and carries FUGARO_CREDENTIALS_SERVICE_URL" "the happy path: the job row"
-  expect_contains "$out" "FACT pull: PASS — a throwaway pull request of $repo was opened by this check: #$pr, branch $branch (base $base_branch, one file, CHK610.md), and the checkout $dir/sandbox is back on $base_branch" "the happy path: the pull request row"
-  expect_contains "$out" "FACT launch: PASS — fugaro review --pr $pr launched ONE review run of $repo ($run_id, status 'launched') on '$job'" "the happy path: the launch row"
-  expect_contains "$out" "FACT run: PASS — the review run ($run_id) of $repo ended 'succeeded' with outcome 'reviewed' on the pull request this check opened (#$pr, recipe 'review')" "the happy path: the run row"
-  expect_contains "$out" "FACT review: PASS — the review recorded its artifact for the run $run_id and the pull request #$pr" "the happy path: the review row"
-  expect_contains "$out" "the head commit $head_sha and the verdict 'comment'" "the happy path: what the artifact states"
-  expect_contains "$out" "FACT u1: PASS — U1: $repo's workflow is BAKED" "the happy path: U1"
-  expect_contains "$out" "whose container image is the installation's own base image '$base_image'" "the happy path: U1 compares the two images"
-  expect_contains "$out" "FACT u2: PASS — U2: $install's published policy carries no profiles block and its accounts block admits the DEFAULT account" "the happy path: U2"
-  expect_contains "$out" "FACT u3: PASS — U3: the checkout resolves agent.auth 'vertex' and the review's model calls were served by the installation's credentials service as the credential 'default'" "the happy path: U3"
-  expect_contains "$out" "FACT u4: PASS — U4: $install ($gcp_project, region $region) deploys 1 project job(s) and EVERY one of them is a review variant — $job — with no coding project job at all" "the happy path: U4"
-  expect_contains "$out" "FACT restore: PASS — pull request #$pr of $repo was opened by this check" "the happy path: the restore row"
-  expect_contains "$out" "FACT scratch-removed: PASS" "the happy path: the scratch row"
+  expect_row sandbox "PASS — $dir/sandbox is a Fugaro repository's checkout of the GITHUB repository $repo with a clean working tree, and it belongs to the $install installation ($gcp_project, region $region)" "the happy path: the sandbox row"
+  expect_row config "PASS — $repo's own fugaro.yaml carries no \`profiles:\` key and every one of its 1 workflow(s) resolves checkout 'baked' (chk=baked)" "the happy path: the config row"
+  expect_row config "resolves 'vertex' (U3's first reading)" "the happy path: the auth it read"
+  expect_row policy "PASS — $install's published policy carries NO profiles block and admits $repo to the project (its budget mode is 'observe'), and its accounts block names 1 account(s) (default), the one(s) admitting this repository reading 'default'" "the happy path: the policy row"
+  expect_row job "PASS — the installation's implicit review-only job '$job' is deployed and carries FUGARO_CREDENTIALS_SERVICE_URL" "the happy path: the job row"
+  expect_row pull "PASS — a throwaway pull request of $repo was opened by this check: #$pr, branch $branch (base $base_branch, one file, CHK610.md), and the checkout $dir/sandbox is back on $base_branch" "the happy path: the pull request row"
+  expect_row launch "PASS — fugaro review --pr $pr launched ONE review run of $repo ($run_id, status 'launched') on '$job'" "the happy path: the launch row"
+  expect_row run "PASS — the review run ($run_id) of $repo ended 'succeeded' with outcome 'reviewed' on the pull request this check opened (#$pr, recipe 'review')" "the happy path: the run row"
+  expect_row review "PASS — the review recorded its artifact for the run $run_id and the pull request #$pr" "the happy path: the review row"
+  expect_row review "the head commit $head_sha and the verdict 'comment'" "the happy path: what the artifact states"
+  expect_row u1 "PASS — U1: $repo's workflow is BAKED" "the happy path: U1"
+  expect_row u1 "whose container image is the installation's own base image '$base_image'" "the happy path: U1 compares the two images"
+  expect_row u2 "PASS — U2: $install's published policy carries no profiles block and its accounts block admits the DEFAULT account" "the happy path: U2"
+  expect_row u3 "PASS — U3: the checkout resolves agent.auth 'vertex' and the review's model calls were served by the installation's credentials service as the credential 'default'" "the happy path: U3"
+  expect_row u4 "PASS — U4: $install ($gcp_project, region $region) deploys 1 project job(s) and EVERY one of them is a review variant — $job — with no coding project job at all" "the happy path: U4"
+  expect_row restore "PASS — pull request #$pr of $repo was opened by this check" "the happy path: the restore row"
+  expect_row scratch-removed "PASS" "the happy path: the scratch row"
   expect_contains "$out" "CHECK 610 RESULT END (exit 0)" "the happy path: the end line"
   expect_absent "$out" "FAIL" "the happy path: no row fails"
   assert_scratch_removed "$dir" "the happy path"
@@ -864,7 +875,7 @@ test_xtrace_is_refused() {
   prepare "$dir"
   run_check "$dir" -- --xtrace
   expect_status "$status" 1 "a traced shell"
-  expect_contains "$out" "FACT xtrace: FAIL" "a traced shell: the row"
+  expect_row xtrace "FAIL" "a traced shell: the row"
   expect_contains "$out" "this shell is tracing" "a traced shell: the reason"
   assert_no_launch "$dir" "a traced shell"
   assert_scratch_removed "$dir" "a traced shell"
@@ -875,7 +886,7 @@ test_a_coding_agents_session_is_refused() {
   prepare "$dir"
   run_check "$dir" CLAUDECODE=1
   expect_status "$status" 1 "a coding agent's session"
-  expect_contains "$out" "FACT agent-session: FAIL" "a coding agent's session: the row"
+  expect_row agent-session "FAIL" "a coding agent's session: the row"
   expect_contains "$out" "is set, so this is a coding agent's session" "a coding agent's session: the marker is named"
   assert_no_launch "$dir" "a coding agent's session"
   assert_scratch_removed "$dir" "a coding agent's session"
@@ -887,8 +898,8 @@ test_belong_is_refused_by_name() {
   run_check "$dir" CHECK610_SANDBOX="$dir/belong-checkout"
   expect_status "$status" 1 "a sandbox path naming belong"
   expect_contains "$err" "a value this check was given or read names belong" "a sandbox path naming belong: the reason"
-  expect_contains "$out" "FACT belong: FAIL" "a sandbox path naming belong: the row"
-  expect_contains "$out" "FACT sandbox: FAIL — not reached" "a sandbox path naming belong: nothing is read"
+  expect_row belong "FAIL" "a sandbox path naming belong: the row"
+  expect_row sandbox "FAIL — not reached" "a sandbox path naming belong: nothing is read"
   assert_no_launch "$dir" "a sandbox path naming belong"
 }
 
@@ -898,7 +909,7 @@ test_a_value_that_names_belong_is_refused_by_the_repository_guard() {
   run_check "$dir" FAKE_DOCTOR_FILE=doctor-belong.json
   expect_status "$status" 1 "an installation named belong"
   expect_contains "$err" "belongs to belong ($gcp_project, region $region) and $repo" "an installation named belong: the refusal says what it read"
-  expect_contains "$out" "FACT sandbox: FAIL" "an installation named belong: the row"
+  expect_row sandbox "FAIL" "an installation named belong: the row"
   assert_no_launch "$dir" "an installation named belong"
   assert_scratch_removed "$dir" "an installation named belong"
 }
@@ -929,7 +940,7 @@ test_an_origin_that_is_not_github_is_refused() {
   expect_status "$status" 1 "a Bitbucket checkout"
   expect_contains "$err" "is not a GitHub repository (its host is 'bitbucket.org')" "a Bitbucket checkout: the refusal says which host it read"
   expect_contains "$err" "the Bitbucket half is Check 611" "a Bitbucket checkout: the refusal names the other half"
-  expect_contains "$out" "FACT aborted: FAIL" "a Bitbucket checkout: the reason is in the block"
+  expect_row aborted "FAIL" "a Bitbucket checkout: the reason is in the block"
   assert_no_launch "$dir" "a Bitbucket checkout"
 }
 
@@ -948,7 +959,7 @@ test_a_credential_in_the_origin_is_never_printed() {
   done
   # The URL is kept, minus its userinfo: the refusal still says what it refused.
   expect_contains "$err" "is 'https://github.com/', which names no repository" "a credentialled origin: the URL is kept without its credential"
-  expect_contains "$out" "FACT aborted: FAIL" "a credentialled origin: the reason is in the block"
+  expect_row aborted "FAIL" "a credentialled origin: the reason is in the block"
   assert_no_launch "$dir" "a credentialled origin"
 }
 
@@ -967,7 +978,7 @@ test_a_doctor_whose_checks_are_not_all_ok_is_an_answer() {
   prepare "$dir"
   run_check "$dir" FAKE_DOCTOR_STATUS=1
   expect_status "$status" 0 "a doctor that exited 1"
-  expect_contains "$out" "FACT sandbox: PASS" "a doctor that exited 1: the sandbox row is measured"
+  expect_row sandbox "PASS" "a doctor that exited 1: the sandbox row is measured"
   assert_one_launch "$dir" "a doctor that exited 1"
 }
 
@@ -976,9 +987,9 @@ test_a_doctor_that_never_answers_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_MODE=doctor-hangs CHECK610_DOCTOR_TIMEOUT_SECONDS=1
   expect_status "$status" 2 "a doctor that never answered"
-  expect_contains "$out" "FACT sandbox: FAIL — fugaro doctor --json did not answer" "a doctor that never answered: the sandbox row"
-  expect_contains "$out" "FACT config: FAIL — there is no checkout to read a workflow of" "a doctor that never answered: the config row"
-  expect_contains "$out" "FACT u2: FAIL — the checkout could not be read far enough" "a doctor that never answered: U2"
+  expect_row sandbox "FAIL — fugaro doctor --json did not answer" "a doctor that never answered: the sandbox row"
+  expect_row config "FAIL — there is no checkout to read a workflow of" "a doctor that never answered: the config row"
+  expect_row u2 "FAIL — the checkout could not be read far enough" "a doctor that never answered: U2"
   assert_no_launch "$dir" "a doctor that never answered"
   assert_scratch_removed "$dir" "a doctor that never answered"
 }
@@ -988,7 +999,7 @@ test_a_doctor_that_carries_no_project_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_DOCTOR_FILE=doctor-noproject.json
   expect_status "$status" 2 "a doctor with no project block"
-  expect_contains "$out" "FACT sandbox: FAIL — fugaro doctor --json answered without a project block" "a doctor with no project block: the row"
+  expect_row sandbox "FAIL — fugaro doctor --json answered without a project block" "a doctor with no project block: the row"
   assert_no_launch "$dir" "a doctor with no project block"
 }
 
@@ -997,7 +1008,7 @@ test_a_doctor_that_is_not_a_document_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_DOCTOR_FILE=doctor-no-document.json
   expect_status "$status" 2 "a doctor that is not a document"
-  expect_contains "$out" "FACT sandbox: FAIL — fugaro doctor --json answered without a project block" "a doctor that is not a document: the row says what it could not read"
+  expect_row sandbox "FAIL — fugaro doctor --json answered without a project block" "a doctor that is not a document: the row says what it could not read"
   assert_no_launch "$dir" "a doctor that is not a document"
 }
 
@@ -1007,8 +1018,8 @@ test_a_checkout_whose_fugaro_yaml_carries_profiles_is_not_measured() {
   write_checkout_with_profiles "$dir/sandbox"
   run_check "$dir"
   expect_status "$status" 2 "a checkout whose own file carries profiles"
-  expect_contains "$out" "FACT config: FAIL — the checkout's own fugaro.yaml carries a \`profiles:\` key" "a checkout whose own file carries profiles: the row"
-  expect_contains "$out" "FACT pull: FAIL — the checkout is not the baked, profile-less repository this check is for; the config row says why, so no pull request is opened" "a checkout whose own file carries profiles: nothing is launched on it"
+  expect_row config "FAIL — the checkout's own fugaro.yaml carries a \`profiles:\` key" "a checkout whose own file carries profiles: the row"
+  expect_row pull "FAIL — the checkout is not the baked, profile-less repository this check is for; the config row says why, so no pull request is opened" "a checkout whose own file carries profiles: nothing is launched on it"
   assert_no_launch "$dir" "a checkout whose own file carries profiles"
 }
 
@@ -1017,7 +1028,7 @@ test_a_checkout_with_no_workflow_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_CONFIG_FILE=config-no-workflow.json
   expect_status "$status" 2 "a checkout with no workflow"
-  expect_contains "$out" "FACT config: FAIL — the checkout's resolved config carries no workflow at all" "a checkout with no workflow: the row"
+  expect_row config "FAIL — the checkout's resolved config carries no workflow at all" "a checkout with no workflow: the row"
   assert_no_launch "$dir" "a checkout with no workflow"
 }
 
@@ -1026,7 +1037,7 @@ test_a_workflow_that_is_not_baked_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_CONFIG_FILE=config-clone.json
   expect_status "$status" 2 "a cloned workflow"
-  expect_contains "$out" "FACT config: FAIL — the checkout resolves 1 workflow(s) and chk is not baked (chk=clone)" "a cloned workflow: the row names the workflow and its kind"
+  expect_row config "FAIL — the checkout resolves 1 workflow(s) and chk is not baked (chk=clone)" "a cloned workflow: the row names the workflow and its kind"
   expect_contains "$out" "which is a different review path from the one D2388 and U1 are about" "a cloned workflow: why it is not measured"
   assert_no_launch "$dir" "a cloned workflow"
 }
@@ -1036,7 +1047,7 @@ test_a_second_workflow_that_is_not_baked_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_CONFIG_FILE=config-nonbaked-two.json
   expect_status "$status" 2 "a second, non-baked workflow"
-  expect_contains "$out" "FACT config: FAIL — the checkout resolves 2 workflow(s) and other is not baked (chk=baked,other=shared)" "a second, non-baked workflow: the row names every workflow"
+  expect_row config "FAIL — the checkout resolves 2 workflow(s) and other is not baked (chk=baked,other=shared)" "a second, non-baked workflow: the row names every workflow"
   assert_no_launch "$dir" "a second, non-baked workflow"
 }
 
@@ -1045,9 +1056,126 @@ test_a_config_that_could_not_be_read_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_MODE=config-fails
   expect_status "$status" 2 "a config that could not be read"
-  expect_contains "$out" "FACT config: FAIL — fugaro config show --json did not answer in $dir/sandbox (exit 1)" "a config that could not be read: the row says what answered"
+  expect_row config "FAIL — fugaro config show --json did not answer in $dir/sandbox (exit 1)" "a config that could not be read: the row says what answered"
   expect_contains "$out" "a config nobody read is not a baked workflow" "a config that could not be read: why it is not measured"
   assert_no_launch "$dir" "a config that could not be read"
+}
+
+test_a_policy_that_could_not_be_read_is_not_measured() {
+  local dir=$work/policy-refused
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=policy-fails
+  expect_status "$status" 2 "a policy that could not be read"
+  expect_row policy "FAIL — fugaro project policy show --project $install --json did not answer (exit 1)" "a policy that could not be read: the row says what answered"
+  expect_row u2 "FAIL — the project's own policy is not one this check can measure a review in" "a policy that could not be read: U2 is not measured"
+  assert_no_launch "$dir" "a policy that could not be read"
+}
+
+test_a_repository_the_project_does_not_admit_is_not_measured() {
+  local dir=$work/not-admitted
+  prepare "$dir"
+  run_check "$dir" FAKE_POLICY_FILE=policy-not-admitted.json
+  expect_status "$status" 2 "a repository the project does not admit"
+  expect_row policy "FAIL — the published policy of $install does not admit $repo to the PROJECT" "a repository the project does not admit: the row"
+  expect_contains "$out" "add it with 'fugaro project repos add <the repository's canonical name>'" "a repository the project does not admit: the fix is named"
+  assert_no_launch "$dir" "a repository the project does not admit"
+}
+
+test_a_policy_with_profiles_is_not_measured() {
+  local dir=$work/policy-profiles
+  prepare "$dir"
+  run_check "$dir" FAKE_POLICY_FILE=policy-profiles.json
+  expect_status "$status" 2 "a project that publishes profiles"
+  expect_row policy "FAIL — $install's published policy carries a profiles block (1: shared)" "a project that publishes profiles: the row names the profile"
+  expect_contains "$out" "so this project is not the profile-less one the plan's RJ9 names" "a project that publishes profiles: why it is not measured"
+  assert_no_launch "$dir" "a project that publishes profiles"
+}
+
+test_a_budget_mode_of_off_is_a_finding() {
+  local dir=$work/mode-off
+  prepare "$dir"
+  run_check "$dir" FAKE_POLICY_FILE=policy-mode-off.json
+  expect_status "$status" 1 "a budget mode of off"
+  expect_row policy "FAIL — the published policy of $install admits $repo with no profiles block and the budget mode is 'off'" "a budget mode of off: the row"
+  expect_contains "$out" "the gateway is what reaches the credentials service and it exists only in observe and enforce" "a budget mode of off: why nothing is launched"
+  assert_no_launch "$dir" "a budget mode of off"
+}
+
+test_a_policy_with_no_budget_mode_is_not_measured() {
+  local dir=$work/no-mode
+  prepare "$dir"
+  run_check "$dir" FAKE_POLICY_FILE=policy-no-mode.json
+  expect_status "$status" 2 "a policy with no budget mode"
+  expect_row policy "FAIL — $repo is admitted with no profiles block and the policy document carries no budget mode (it reads '-')" "a policy with no budget mode: the row says what it read"
+  assert_no_launch "$dir" "a policy with no budget mode"
+}
+
+test_no_implicit_review_job_is_not_measured() {
+  local dir=$work/no-implicit-job
+  prepare "$dir"
+  run_check "$dir" FAKE_JOBS_FILE=jobs-no-implicit.json
+  expect_status "$status" 2 "an installation with no implicit review-only job"
+  expect_row job "FAIL — no job of the installation is named 'fugaro-p-standard-github-default-review-<hash>…' in 'gcloud run jobs list', so the implicit review-only job is NOT deployed" "no implicit job: the row"
+  expect_contains "$out" "Run 'fugaro update' (it deploys the job without a profile)" "no implicit job: the fix is named"
+  expect_row pull "FAIL — the installation's review-only job was not read" "no implicit job: nothing is launched on it"
+  assert_no_launch "$dir" "an installation with no implicit review-only job"
+}
+
+test_two_implicit_review_jobs_is_a_finding() {
+  local dir=$work/two-implicit-jobs
+  prepare "$dir"
+  run_check "$dir" FAKE_JOBS_FILE=jobs-two-implicit.json
+  expect_status "$status" 1 "two implicit review-only jobs"
+  expect_row job "FAIL — 2 jobs of the installation start with 'fugaro-p-standard-github-default-review-'" "two implicit jobs: the row counts them"
+  expect_contains "$out" "the implicit review-only job's name is one (profile, provider, account) triple plus a hash" "two implicit jobs: why it is a finding"
+  assert_no_launch "$dir" "two implicit review-only jobs"
+}
+
+test_an_implicit_job_without_the_service_url_is_a_finding() {
+  local dir=$work/job-no-url
+  prepare "$dir"
+  run_check "$dir" FAKE_JOBS_FILE=jobs-no-url.json
+  expect_status "$status" 1 "an implicit job with no service URL"
+  expect_row job "FAIL — the implicit review-only job '$job' carries no FUGARO_CREDENTIALS_SERVICE_URL, and a review job mounts NOTHING" "an implicit job with no service URL: the row"
+  assert_no_launch "$dir" "an implicit job with no service URL"
+}
+
+test_an_implicit_job_that_names_the_secret_env_is_a_finding() {
+  local dir=$work/job-secrets
+  prepare "$dir"
+  run_check "$dir" FAKE_JOBS_FILE=jobs-secrets.json
+  expect_status "$status" 1 "an implicit job that names a secret environment"
+  expect_row job "FAIL — the implicit review-only job '$job' names FUGARO_SECRET_ENVS (present) and mounts 0 secret volume(s)" "an implicit job that names a secret environment: the row"
+  expect_contains "$out" "a review variant holds NO secret and NO secret volume" "an implicit job that names a secret environment: why it is a finding"
+  assert_no_launch "$dir" "an implicit job that names a secret environment"
+}
+
+test_an_implicit_job_that_mounts_a_secret_volume_is_a_finding() {
+  local dir=$work/job-secret-volume
+  prepare "$dir"
+  run_check "$dir" FAKE_JOBS_FILE=jobs-secretvolume.json
+  expect_status "$status" 1 "an implicit job that mounts a secret volume"
+  expect_row job "FAIL — the implicit review-only job '$job' names FUGARO_SECRET_ENVS (absent) and mounts 1 secret volume(s)" "an implicit job that mounts a secret volume: the row counts the volume"
+  assert_no_launch "$dir" "an implicit job that mounts a secret volume"
+}
+
+test_a_jobs_list_that_could_not_be_read_is_not_measured() {
+  local dir=$work/jobs-refused
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=jobs-fails
+  expect_status "$status" 2 "a job list that could not be read"
+  expect_row job "FAIL — gcloud run jobs list did not answer (exit 1)" "a job list that could not be read: the row says what answered"
+  expect_contains "$out" "a read that did not answer is not an installation without one" "a job list that could not be read: why it is not a finding"
+  assert_no_launch "$dir" "a job list that could not be read"
+}
+
+test_a_jobs_list_that_is_not_a_document_is_not_measured() {
+  local dir=$work/jobs-garbage
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=jobs-garbage
+  expect_status "$status" 2 "a job list that is not a document"
+  expect_row job "FAIL — no job of the installation is named 'fugaro-p-standard-github-default-review-<hash>…'" "a job list that is not a document: nothing is read out of it"
+  assert_no_launch "$dir" "a job list that is not a document"
 }
 
 # ------------------------------------------------------------------- the run
@@ -1092,6 +1220,18 @@ t test_a_checkout_with_no_workflow_is_not_measured
 t test_a_workflow_that_is_not_baked_is_not_measured
 t test_a_second_workflow_that_is_not_baked_is_not_measured
 t test_a_config_that_could_not_be_read_is_not_measured
+t test_a_policy_that_could_not_be_read_is_not_measured
+t test_a_repository_the_project_does_not_admit_is_not_measured
+t test_a_policy_with_profiles_is_not_measured
+t test_a_budget_mode_of_off_is_a_finding
+t test_a_policy_with_no_budget_mode_is_not_measured
+t test_no_implicit_review_job_is_not_measured
+t test_two_implicit_review_jobs_is_a_finding
+t test_an_implicit_job_without_the_service_url_is_a_finding
+t test_an_implicit_job_that_names_the_secret_env_is_a_finding
+t test_an_implicit_job_that_mounts_a_secret_volume_is_a_finding
+t test_a_jobs_list_that_could_not_be_read_is_not_measured
+t test_a_jobs_list_that_is_not_a_document_is_not_measured
 
 if [ "$failures" -ne 0 ]; then
   echo "check610_test.sh: $failures failure(s)" >&2
