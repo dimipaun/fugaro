@@ -827,6 +827,9 @@ func TestCatalogRefusesAnEntryThatMountsASecret(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.line) || !strings.Contains(err.Error(), "the clone step supplies the checkout") {
 			t.Errorf("the fetched refusal of %q is not the entry's own: %v", tc.def, err)
 		}
+		if !strings.Contains(err.Error(), "(read from acme/app at its default branch)") {
+			t.Errorf("the fetched refusal of %q does not say which repository and ref it read, which is what tells a stale pinned branch from a bad file: %v", tc.def, err)
+		}
 	}
 	for _, def := range []string{
 		"FROM example.invalid/base\nRUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise true\n",
