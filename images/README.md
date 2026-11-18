@@ -17,7 +17,7 @@ scripts with the `docker` build tag.
   digest. `--secrets` is the leak route a catalog build runs before it
   promotes: every layer and the config for secrets, plus the checks Trivy's own
   rules cannot state (images/trivy-secret.yaml, and `leaks` inside the script).
-- `size-budget.sh IMAGE MB [WARN]` bounds a published image's size and
+- `size-budget.sh IMAGE [MAX_MB [WARN_MB]]` bounds a published image's size and
   `verify-public.sh [--arm64] REF...` checks a pushed one.
 
 ## The tests
@@ -40,14 +40,22 @@ a tiny pinned base, the two paths `trivy-secret.yaml` allows a build's false
 positives at holding throwaway placeholders, two RUNs that change nothing, and
 a private key in the checkout. It is the assertion a fixture cannot make -- a
 daemon really does hand the image over with a repeated empty layer, and the
-pinned Trivy really does flag and clear what the config says. Run it alone
-with
+pinned Trivy really does flag the two placeholders and clear them once the
+allowances are in the config. Run it alone with
 
 ```sh
 go test -tags docker -count=1 -run TestScanSecretsOnACatalogShapedImage ./images/
 ```
 
-A test skips itself where no daemon answers (`testutil.RequireDocker`), and the
-undecodable-layer case skips where the daemon's image store hands over no layer
-the worker cannot read. CI runs the docker-tagged set in
+Its subtests are the four things a catalog build's scan has to get right: the
+clean image passes; the two placeholders are findings of their own, so they are
+what the allowances clear; a key left in the checkout is refused by name; and a
+layer no decompressor can read is refused.
+
+Two of those are built only where the environment allows it, and say so when
+they skip: the clean scan skips on a worker with no `zstd` beside a daemon that
+re-exports layers zstd-compressed (no image is clearable there), and the
+undecodable-layer case skips where the daemon's save hands over nothing this
+worker cannot read. A test skips itself where no daemon answers
+(`testutil.RequireDocker`). CI runs the docker-tagged set in
 `.github/workflows/images.yml`'s `docker-tests` job, on every event but a push.

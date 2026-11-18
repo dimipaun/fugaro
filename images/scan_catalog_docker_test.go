@@ -11,22 +11,25 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"gopkg.in/yaml.v3"
 )
 
-// scanCatalogBase is the base the fixture image builds FROM: busybox, a few
-// megabytes with a shell, so a build of the fixture costs seconds. Pinned by
-// digest, as every other image this repository builds from is: the read is the
-// registry's manifest API on 2026-11-18, the same one
-// `docker inspect busybox:1.37 --format '{{index .RepoDigests 0}}'` makes, and
-// the pin is bumped by hand.
+// scanCatalogBase is what the fixture image builds FROM: busybox, a few
+// megabytes with a shell, so a build of the fixture costs seconds. It is pinned
+// by the multi-arch index digest the registry's manifest API served for
+// busybox:1.37 on 2026-11-18 -- the same digest
+// `docker inspect busybox:1.37 --format '{{index .RepoDigests 0}}'` reports --
+// so a bump is by hand, and the tag beside it is for a reader only.
 const scanCatalogBase = "busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
 
-// The three paths the fixture image puts files at. The first two are the
-// allowance paths images/trivy-secret.yaml excuses a catalog build's own false
-// positives at, spelled here exactly as images/scan_test.go's
-// TestTrivyConfigAllowsTheGoToolchainFalsePositives spells them -- that test
-// holds the spellings to the config, this one holds a real image to them. The
-// third is a credential no allowance covers, in the checkout a build bakes.
+// The three paths the fixture image puts files at. The first two are the paths
+// the allow-rules in images/trivy-secret.yaml excuse a catalog build's own
+// false positives at, written here as the image's own filesystem paths (the
+// config matches Trivy's layer-relative path, which is the same path without
+// the leading slash; images/scan_test.go's
+// TestTrivyConfigAllowsTheGoToolchainFalsePositives holds that spelling to the
+// config, this test holds a real image to it). The third is a credential no
+// allowance covers, in the checkout a build bakes.
 const (
 	scanModuleCachePath = "/home/fugaro/go/pkg/mod/gocloud.dev@v0.46.0/blob/gcsblob/gcsblob.go"
 	scanToolchainPath   = "/home/fugaro/.local/share/mise/installs/go/1.27.1/src/crypto/x509/platform_root_key.pem"
@@ -89,7 +92,7 @@ func TestScanSecretsOnACatalogShapedImage(t *testing.T) {
 	// The assertion the whole test is for: the scan clears an image whose only
 	// findings are the two its own config allows, and the layer it lists twice
 	// costs it nothing.
-	clean, err := scanSecrets(t, image, nil)
+	clean, err := scanSecrets(t, "scan.sh", image, nil)
 	switch {
 	case err == nil:
 	case !testutil.HasZstd() && strings.Contains(clean, "holds a layer this cannot decode"):
@@ -101,9 +104,26 @@ func TestScanSecretsOnACatalogShapedImage(t *testing.T) {
 		t.Fatalf("the scan refused an image whose only findings are the two its config allows: %v\n%s", err, clean)
 	}
 
+	t.Run("the findings the allowances clear are really there", func(t *testing.T) {
+		// The same script and the same pinned Trivy, with the allow-rules left
+		// out of the config: the two placeholders have to be findings of their
+		// own, or the pass above means nothing and an allowance could be
+		// dropped without a test noticing. Removing one for real is this
+		// subtest run against the config as it stands.
+		out, err := scanSecrets(t, stripAllowances(t), image, nil)
+		if err == nil {
+			t.Fatalf("an image holding both placeholders scanned clean with no allowance in the config: Trivy's rules no longer flag them, so the allowances clear nothing\n%s", out)
+		}
+		for _, path := range []string{scanModuleCachePath, scanToolchainPath} {
+			if !strings.Contains(out, strings.TrimPrefix(path, "/")) {
+				t.Errorf("the refusal does not name %s:\n%s", path, out)
+			}
+		}
+	})
+
 	t.Run("a key in the checkout is still refused", func(t *testing.T) {
 		leak := buildScanLeak(t, image, files["key.pem"])
-		out, err := scanSecrets(t, leak, nil)
+		out, err := scanSecrets(t, "scan.sh", leak, nil)
 		if err == nil {
 			t.Fatalf("the scan cleared an image holding a private key at %s:\n%s", scanLeakPath, out)
 		}
@@ -114,11 +134,13 @@ func TestScanSecretsOnACatalogShapedImage(t *testing.T) {
 
 	t.Run("a layer with no decompressor is still refused", func(t *testing.T) {
 		// A daemon that keeps a layer as it was pushed hands it over in a codec
-		// the scan reads only through a program -- the containerd image store's
-		// zstd (images/scan.sh's own comment). Running the scan with a PATH
-		// that offers no such program is that worker, and the fence has to
-		// refuse an image it read only in part rather than promote it.
-		out, err := scanSecrets(t, image, envWithPath(pathWithoutZstd(t)))
+		// the scan reads only through a program -- an image pushed with zstd is
+		// the one seen in practice -- and tar is that program's caller: GNU tar
+		// 1.35 with no zstd on its PATH exits 2 on such a layer rather than
+		// reading it (checked on this machine, 2026-11-18). A PATH with every
+		// other program is therefore the worker that cannot read it, and the
+		// fence has to refuse an image it read only in part.
+		out, err := scanSecrets(t, "scan.sh", image, envWithPath(pathWithoutZstd(t)))
 		if err == nil {
 			t.Skipf("this daemon's save hands over no layer this worker cannot read (a store that re-exports plain tars), so the fence's undecodable case is not built here: images/scan_test.go's TestScanRefusesALayerItCannotDecode pins it hermetically")
 		}
@@ -239,18 +261,56 @@ func scanImageLayers(t *testing.T, image string) []string {
 	return layers
 }
 
-// scanSecrets runs images/scan.sh --secrets on image from this package's
-// directory, the way the images workflow and the catalog build run it, and
-// returns its combined output and error. env, where given, replaces the
-// process environment.
-func scanSecrets(t *testing.T, image string, env []string) (string, error) {
+// scanSecrets runs script -- images/scan.sh, or the copy stripAllowances
+// writes -- with --secrets on image, from this package's directory, the way
+// the images workflow and the catalog build run it, and returns its combined
+// output and error. env, where given, replaces the process environment.
+func scanSecrets(t *testing.T, script, image string, env []string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("sh", "scan.sh", "--secrets", image)
+	cmd := exec.Command("sh", script, "--secrets", image)
 	if env != nil {
 		cmd.Env = env
 	}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// stripAllowances writes a copy of images/scan.sh beside a copy of its config
+// with every allow-rule left out, and returns the script's path: the scan the
+// two allowances are the difference to. The rules are carried over as they are
+// parsed from the file, so the copy clears exactly what the real config clears
+// minus the allowances -- Trivy adds these to its own rules either way.
+func stripAllowances(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	script, err := os.ReadFile("scan.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "scan.sh"), script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("trivy-secret.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Rules []map[string]any `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Rules) == 0 {
+		t.Fatal("images/trivy-secret.yaml parsed as no rules at all")
+	}
+	stripped, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "trivy-secret.yaml"), stripped, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(dir, "scan.sh")
 }
 
 // envWithPath is this process's environment with PATH set to path.
