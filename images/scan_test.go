@@ -191,6 +191,9 @@ func writeSave(path string, layers []map[string]string, undecodable int) error {
 			return err
 		}
 	}
+	if err := add("0123abcd/VERSION", []byte("1.0\n")); err != nil {
+		return err
+	}
 	for _, json := range []string{"index.json", "manifest.json", "oci-layout"} {
 		if err := add(json, []byte(`{"schemaVersion":2}`)); err != nil {
 			return err
