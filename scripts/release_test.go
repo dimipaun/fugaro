@@ -1413,7 +1413,7 @@ func TestResumeAfterMerge(t *testing.T) {
 	// A fresh checkout, as if the user re-ran release.sh after pulling.
 	local2 := filepath.Join(t.TempDir(), "work2")
 	testutil.Git(t, filepath.Dir(local2), "clone", "--quiet", r.bare, local2)
-	r2 := &releaseRepo{bare: r.bare, local: local2}
+	r2 := &releaseRepo{bare: r.bare, local: local2, recordDir: t.TempDir(), fugaroState: t.TempDir()}
 
 	g := newGHState(t, r2, greenChecks())
 	g.write(t, "pr_number", "1")
@@ -1529,6 +1529,7 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 	cmd.Env = append(cmd.Env, g.env...)
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
+	cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 	var out lockedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.WaitDelay = 5 * time.Second
@@ -2116,6 +2117,7 @@ func TestSignalsLeaveMain(t *testing.T) {
 			cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0")
 			cmd.Dir = r.local
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
+			cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 			cmd.Env = append(cmd.Env, g.env...)
 			cmd.Env = append(cmd.Env, releaseEnv(t)...)
 			var out bytes.Buffer
