@@ -360,9 +360,9 @@ func startForgeStandIn(t *testing.T, head string) *forgeStandIn {
 	t.Cleanup(srv.Close)
 	// The root is the package's own variable and no environment variable: a
 	// stand-in for the forge replaces it for this test alone.
-	prev := reviewGitHubAPIURL
-	reviewGitHubAPIURL = srv.URL
-	t.Cleanup(func() { reviewGitHubAPIURL = prev })
+	prev := serviceReadGitHubAPIURL
+	serviceReadGitHubAPIURL = srv.URL
+	t.Cleanup(func() { serviceReadGitHubAPIURL = prev })
 	s.url = srv.URL
 	return s
 }
@@ -392,9 +392,11 @@ func reviewHeadEnv(t *testing.T, url string) *cloudEnv {
 // gcloud.
 func setReviewReadIdentity(t *testing.T) {
 	t.Helper()
-	prev := reviewReadIdentity
-	reviewReadIdentity = func(context.Context, string) (string, error) { return reviewHeadPersonToken, nil }
-	t.Cleanup(func() { reviewReadIdentity = prev })
+	prev := serviceReadIdentity
+	serviceReadIdentity = func(context.Context, string, string) (string, error) {
+		return reviewHeadPersonToken, nil
+	}
+	t.Cleanup(func() { serviceReadIdentity = prev })
 }
 
 // TestReviewHeadReadsThroughTheReadMint is the head read's whole path: the
@@ -664,7 +666,7 @@ func TestReviewHeadIgnoresTheEnvironmentsForgeRoot(t *testing.T) {
 	other := startForgeStandIn(t, reviewHeadSHA)
 	// startForgeStandIn pointed the package's root at `other`; put it back at
 	// the first stand-in and name the second one in the environment.
-	reviewGitHubAPIURL = forge.url
+	serviceReadGitHubAPIURL = forge.url
 	t.Setenv(providers.EnvGitHubAPIURL, other.url)
 	setReviewReadIdentity(t)
 	env := reviewHeadEnv(t, mint.url)

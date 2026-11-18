@@ -529,6 +529,21 @@ var grantRules = map[string]map[string]who{
 	// pull, are in the artifact registry row below, added there deliberately
 	// by the task that granted them (B6), and they are the whole of what this
 	// principal holds outside this bit.
+	//
+	// B4.4 puts one more account on this row: a repository's build account,
+	// which B4.3's build route serves and which without the invoker bit has no
+	// way to reach the credential the service mints for a build. It is the one
+	// paragraph of this row that names no kind of its own, and it is admitted
+	// as toAccounts, because no kind could name it: a build account's ID is
+	// fugaro-b-<readable>-<8 hex>, the shape a job account's is under the same
+	// regex (fugaroAccount accepts both through jobAccountID), so a plan's
+	// member string does not say which of the two it is. A toBuildAccount kind
+	// would have to be carried by every row the build account's own grants use
+	// — the secret accessor, the registry roles, the two bucket reaches — and
+	// it would then accept exactly what toAccounts accepts: a second name for
+	// a membership and not a classification. The build account's cell here is
+	// pinned in TestGrantRulesPinnedCells; the grant itself is inert until
+	// B4.5 reads from the service.
 	"google_cloud_run_v2_service_iam_member": {
 		// toOrchestrator is Q13's cell, reversed on the owner's approval of
 		// 2026-11-17 (F19 and O2 of docs/forge-labels; E16 of

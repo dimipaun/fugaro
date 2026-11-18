@@ -80,6 +80,15 @@ var settingsFamilyCommands = map[string]string{
 	// same two files entry by entry, so the family is the answer now, and the
 	// refusal for one of the five names it rather than the publish door.
 	"rigor security": "fugaro rigor security",
+	// The binaries block is a family of one command for the same reason: both
+	// its members are the owner's grant over the bytes a run may add, and each
+	// is held to a rule no scalar write can apply — a pattern to the node's own
+	// glob rule (projectpolicy.ValidBinariesAllow) and the cap to a ceiling a
+	// project may only lower (ValidBinariesMaxBytes) — so the two are checked
+	// against each other and against the file there. `fugaro project binaries`
+	// is that command, and the refusal names it rather than `fugaro project`,
+	// which writes the project's other policy keys and not this block.
+	"project binaries": "fugaro project binaries",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings
@@ -627,7 +636,7 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 		return settings.Row{}, userErr("%s is a sensitive setting, and the generic path never writes one: its value would be printed in the diff this command shows (spec §2.3)", key)
 	}
 	if family, ok := settingsFamilyCommands[row.Owner]; ok {
-		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL, image map or workspace key", key, family)
+		return settings.Row{}, userErr("%s is written by %s, not by the generic path: settings set writes no route, price, rigor mode, floor, account, job profile, credential, clone URL, image map, binary admission or workspace key", key, family)
 	}
 	if strings.Contains(key, "*") {
 		return settings.Row{}, userErr("%s varies with a name this command does not take: a key with a * is a map entry, and a map has no generic form", key)

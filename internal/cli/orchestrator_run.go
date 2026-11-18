@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/orchestrator/decide"
 	"github.com/dimipaun/fugaro/internal/orchestrator/endpoint"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -183,8 +184,16 @@ type orchestratorDaemon struct {
 	tick     *orchestrator.Tick
 	cache    *orchestrator.BriefCacheWriter
 	launched *launchInFlight
-	out      io.Writer
-	warn     io.Writer
+	// orchestratorOff is the project's own switch as this daemon last read it
+	// (orchestrator_enabled, D2701, D2739): true while the project has turned
+	// its orchestrator off. It is kept across a caps read that failed — the caps
+	// themselves are the caller's to keep (refreshCaps), and a reading that
+	// survived the failure is what makes a failed read keep the last value read
+	// instead of turning the project's orchestrator back on — and it is what the
+	// once-per-off line is said from (noteOrchestratorSwitch).
+	orchestratorOff bool
+	out             io.Writer
+	warn            io.Writer
 	// outputLock is what keeps the two a single stream once the local endpoint
 	// is up: see sealOutput.
 	outputLock *sync.Mutex
@@ -746,6 +755,18 @@ func (d *orchestratorDaemon) orchestratorBlock(ctx context.Context) (policy.Orch
 	if err != nil {
 		return policy.Orchestrator{}, err
 	}
+	return d.orchestratorBlockOf(published), nil
+}
+
+// orchestratorBlockOf is that merge over a policy node the caller has already
+// read, so that a caller which wants something else out of the same document —
+// the caps, which read the project's own switch beside the block (D2701,
+// D2739) — makes one read of the node rather than two.
+//
+// A machine with no published policy has the block its own config states and
+// no more: localcfg.OrchestratorEffective merges nothing over nil, and the
+// floors below are what a project that never published one runs on.
+func (d *orchestratorDaemon) orchestratorBlockOf(published *projectpolicy.Policy) policy.Orchestrator {
 	var pub *policy.Orchestrator
 	if published != nil {
 		pub = published.Orchestrator
@@ -754,31 +775,57 @@ func (d *orchestratorDaemon) orchestratorBlock(ctx context.Context) (policy.Orch
 	if eff := d.lc.OrchestratorEffective(pub); eff != nil {
 		blk = *eff
 	}
-	return blk.WithDefaults(int64(d.lc.MaxParallel)), nil
+	return blk.WithDefaults(int64(d.lc.MaxParallel))
 }
 
 // caps are the daemon's guardrails: the project's orchestrator block with the
-// values Fugaro ships filled in, and the kill switch. A switch that cannot be
-// read is ON: a daemon that cannot tell is a daemon that starts nothing.
+// values Fugaro ships filled in, and the two switches that stop every start at
+// once — the budget's global kill switch and the project's own orchestrator
+// switch (D2701, D2739), which the caps carry as one flag (orchestrator.CapsOf).
+//
+// A switch that cannot be read is ON: a budget node that cannot be read, or one
+// that carries no switch, hands true, and a daemon that cannot tell is a daemon
+// that starts nothing. The project's switch is read in the same read as the
+// block it sits beside, so a policy node that cannot be read fails this whole
+// reading, and what the caller does with that is the caller's (refreshCaps
+// keeps the caps it had and turns the switch on).
 func (d *orchestratorDaemon) caps(ctx context.Context) (orchestrator.Caps, error) {
-	blk, err := d.orchestratorBlock(ctx)
+	published, _, err := projectPolicyRead(ctx, d.lc)
 	if err != nil {
 		return orchestrator.Caps{}, err
 	}
-	on := true
+	killOn := true
 	var kg budget.Kill
-	found, err := d.db.Get(ctx, budget.PathKillGlobal, &kg)
-	if err == nil {
-		on = found && kg.On
+	if found, err := d.db.Get(ctx, budget.PathKillGlobal, &kg); err == nil {
+		killOn = found && kg.On
 	}
-	return orchestrator.Caps{
-		MaxRunning:     int(blk.MaxRunning),
-		MaxPerCycle:    int(blk.BatchSize),
-		SpawnPerMinute: int(blk.SpawnPerMinute),
-		SpawnPerHour:   int(blk.SpawnPerHour),
-		SpawnPerDay:    int(blk.SpawnPerDay),
-		KillSwitch:     on,
-	}, nil
+	on := published.OrchestratorOn()
+	d.noteOrchestratorSwitch(on)
+	return orchestrator.CapsOf(d.orchestratorBlockOf(published), killOn, on), nil
+}
+
+// noteOrchestratorSwitch keeps the project's own switch as this daemon last
+// read it, and says so the once it goes off.
+//
+// It is kept and not only folded into the caps because the caps a failed read
+// leaves behind have the switch on whatever the project wrote: this reading is
+// what survives that, so a failed read never turns the project's orchestrator
+// back on — the daemon goes on holding the answer it last got.
+//
+// The line is said on the transition and not every cycle. A daemon under the
+// login unit writes to a log nobody watches, and one sentence repeated every
+// interval is a log of one sentence; a daemon a person started reads it as the
+// reason its cycles report nothing launched. Coming back on is not announced —
+// the cycles' own reports are what say the daemon is launching again — and the
+// switch is read every cycle either way.
+func (d *orchestratorDaemon) noteOrchestratorSwitch(on bool) {
+	off := !on
+	was := d.orchestratorOff
+	d.orchestratorOff = off
+	if !off || was {
+		return
+	}
+	fmt.Fprintf(d.out, "orchestrator %s: the project turned its orchestrator off (orchestrator_enabled: false), so this daemon launches nothing while it is off and goes on folding the runs already going\n", safetext.Field(d.id))
 }
 
 // refreshCaps re-reads the daemon's guardrails before every cycle.
@@ -1249,6 +1296,18 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 			rec = nil
 		case err != nil:
 			return nil, err
+		}
+		if rec != nil {
+			// What the run reported about the graph travels whole and unjudged:
+			// the blocks its own agent discovered and the conflict paths it met
+			// are what the fold acts on (E3), and the fold bounds both again on
+			// the way in (runstore.Discovered.Bounded, BoundedConflictPaths) —
+			// a view that trimmed or filtered them here would be the second
+			// place that rule lives, and a view that dropped them leaves the
+			// fold with nothing to fold in an installation whose tests all
+			// pass.
+			rep.Discovered = rec.Discovered
+			rep.ConflictPaths = rec.ConflictPaths
 		}
 		if rec != nil && rec.Halt != nil {
 			// The halt travels whole, and the marker with it: the fold asks the

@@ -26,8 +26,10 @@ from the checkout in the working directory alone:
    job and the runner's own `checkJobProfile` refuses it at run start.
 4. `provider := e.repoProvider(spec.Repo, co)`, and `provider != pr.Provider ||
    !infra.SharedJobProvider(pr.Provider)` keeps the per-repository job — a profile serves exactly
-   its own provider, and no shared job serves Bitbucket (`internal/infra/projectjobs.go`, the one
-   place both the deployer and the launcher read that fact).
+   its own provider, and the list it reads admits both of them since docs/shared-jobs-default's I1
+   (`internal/infra`'s `SharedJobProvider`), so this arm now turns on the provider alone
+   (`internal/infra/projectjobs.go`, the one place both the deployer and the launcher read that
+   fact).
 5. `profileAdmissionRefusal`, `projectJobAgentAuth` (which reads the ref's `fugaro.yaml` **out of
    the checkout's own object database**, `checkoutFugaroYAMLAtRef`, `git cat-file`, never the
    network and never the working tree) and `projectJobAccountFor` — three gates, then
@@ -55,7 +57,7 @@ not its job, not its messages, not its cost.
 | --- | --- | --- | --- |
 | 1 | The checkout's **object database** at the ref: `git cat-file blob <at>:fugaro.yaml`, the reader `checkoutFugaroYAMLAtRef` already is, promoted from the auth axis to the whole document | A checkout of the repository exists in the working directory (so `checkoutRoot` names one), and the ref's commit carries the file — even when the working tree has another branch checked out, or the file is not in the tree at all | One local `git` call, no network, no credential |
 | 2 | The **job the run being continued recorded**: `runstore.Launch.Job` from the run's own `launch.json`, backfilled from `result.json`'s execution when the CLI died before writing one — `existingLaunch` (`internal/cli/run.go`) already does exactly this backfill | `--retry`, and a follow-up (`--pr`) whose previous run has a launch record | One object read in the runs bucket, which the command already makes |
-| 3 | The **forge**: `fugaro.yaml` at `spec.Ref` of `spec.Repo`, read with a read-only installation token the installation's **credentials service** mints for the operator as a person (§5) | A human session, no checkout of the repository anywhere, the installation has opted into the credentials service, and the repository's provider is one a shared job serves (`infra.SharedJobProvider`, today `github`) | One credentials-service call — audited, and answered only for a repository the installation holds — and one API call |
+| 3 | The **forge**: `fugaro.yaml` at `spec.Ref` of `spec.Repo`, read with a read-only installation token the installation's **credentials service** mints for the operator as a person (§5) | A human session, no checkout of the repository anywhere, the installation has opted into the credentials service, and the repository's provider is one a shared job serves (`infra.SharedJobProvider`, which admits both providers since docs/shared-jobs-default's I1) | One credentials-service call — audited, and answered only for a repository the installation holds — and one API call |
 | — | **The refusal**, in the shape #1477 gives it, naming the cause and the way out (§7) | None of the three answers | — |
 
 Two rules hold the order together.
@@ -68,13 +70,22 @@ has nothing to do with the console: `checkoutParse` returns `nil` both when ther
 leaves the result zero). An operator in a checkout of `X`, on a branch whose tree predates the file,
 is told today (by the merged refusal) to "run it from `X`'s checkout" — which is where they are.
 
-**Source 3 is the last resort and only where a shared job is possible at all.** For a repository
-whose provider no shared job serves, there is nothing to learn: step 4 above keeps the
-per-repository job for every Bitbucket repository whatever its `fugaro.yaml` says, and the
-repository's provider is known without a checkout — `repoSlug` has already refused the launch if the
-local config does not name it. So the launch without a checkout proceeds on the per-repository job
-with **no read and no credential**, and that is not a guess: it is the same answer the checkout path
-gives for the same repository. (Narrowing, D901.)
+**Source 3 is the last resort, and Bitbucket has left it.** For a repository whose provider no shared
+job serves there is nothing to learn: step 4 above keeps the per-repository job whatever the
+repository's `fugaro.yaml` says, and the provider is known without a checkout — `repoSlug` has already
+refused the launch if the local config does not name it — so such a launch proceeds on the
+per-repository job with **no read and no credential**, which is the same answer the checkout path gives
+for the same repository. **No provider that predicate separates is left to reach it**:
+`infra.SharedJobProvider` admits `bitbucket` beside `github` since docs/shared-jobs-default's I1, so a
+Bitbucket launch is no longer the case this paragraph describes — and the read does not take it either,
+because **the read is GitHub's**: the mint is signed as the repository's App, the launcher takes that
+ID from `repos.<repo>.github_app_id` (§5, and reconciliation O1 is the field's absence), and a
+Bitbucket repository's local entry records none. `serviceReadTarget` refuses such a launch before
+anything is read, so **a Bitbucket launch from outside its checkout is refused today**, in
+`errNoGitHubAppID`'s own words — the missing value named, and the repository's checkout as the way out
+— which is neither a read deciding it nor the per-repository job this arm gave such a launch before I1.
+That fallback being gone is a behaviour change of its own, not a reading of this design. (Narrowing,
+D901.)
 
 **Source 3 is also bounded by the installation's own opt-in, and that is the cost of the owner's answer
 to D902.** The credentials service ships dormant — an installation opts in with `fugaro update
@@ -343,7 +354,7 @@ own identity can make through the installation's credentials service, or with th
 | --- | --- | --- |
 | From `X`'s checkout, `fugaro.yaml` in the tree | decided from the tree | same |
 | From `X`'s checkout, tree has no file, ref does | refused, one way out and it is where the operator is | decided from the checkout's objects at the ref |
-| Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | per-repository job — no shared Bitbucket job exists |
+| Anywhere, no checkout of `X`, Bitbucket, profiles published | refused | **refused, and the §5 read cannot be made for it**: the provider narrowing this row recorded is empty since docs/shared-jobs-default's I1 admitted `bitbucket` to the list a shared job serves, and the mint is signed as the repository's App — a Bitbucket entry records no `repos.<repo>.github_app_id` — so the launcher refuses before reading anything, naming the missing value and `X`'s checkout. Falling back to the per-repository job this launch ran on before I1 is a behaviour change, not a reading of this design |
 | Anywhere, no checkout of `X`, GitHub, profiles published, human session, installation has a credentials service | refused | decided by the read through the service, at the ref |
 | The same, installation has **no** credentials service | refused | refused, unchanged, naming the checkout |
 | The same, the service is there but its mint cannot read a file (not redeployed after A0) | refused | refused, naming the service and the redeploy |
@@ -351,7 +362,7 @@ own identity can make through the installation's credentials service, or with th
 | Anywhere, no checkout, **no profiles published** | launch proceeds | unchanged |
 | The console's launch of the repository it is showing | refused (broken GUI) | decided by the read at the ref, where the installation has a service |
 | `--retry` / `--pr` outside the checkout | refused | the run's recorded job |
-| The read cannot be made (no service, network, not a person, repository not held) | refused | refused, the cause and the way out named |
+| The read cannot be made (no service, network, not a person, repository not held, no App recorded for it) | refused | refused, the cause and the way out named |
 
 ## 12. Threat model
 
