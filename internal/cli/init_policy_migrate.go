@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -1926,22 +1927,33 @@ func defaultProfileNameList(names []string) string {
 // the profiles this run wrote (the same reason syncAccess is where it is), and
 // it runs after makeOnboardingRepoEntry so that the repository this run onboards
 // counts among the providers in use.
-func (e *initEngine) createDefaultProfiles() {
+//
+// The project's default catalog entry is written in the same step and after the
+// profiles above, because the entry is written only when every repository this
+// config lists is admitted by one of them (writeDefaultCatalogEntry).
+func (e *initEngine) createDefaultProfiles(ctx context.Context) {
 	r, o := e.r, e.r.o
 	if e.lc == nil || o.doorName() != updateDoor.name || o.planOnly {
 		return
 	}
 	providers, repos := usedProviders(e.lc)
 	created := writtenDefaultProfiles(e.lc, defaultProfileProviders(providers, servedProviders(e.lc)), repos)
+	hadBlock := e.lc.Profiles != nil
+	if len(created) > 0 {
+		if !hadBlock {
+			e.lc.Profiles = map[string]config.JobProfile{}
+		}
+		for _, d := range created {
+			e.lc.Profiles[d.Name] = d.jobProfile()
+		}
+	}
+	// The entry joins the config before the spec below is composed, so the
+	// installation stage deploys the shared jobs with the image this run just
+	// gave the project (projectJobImage reads the default entry), and so that
+	// the spec this run holds is the one its own config yields.
+	e.writeDefaultCatalogEntry(ctx)
 	if len(created) == 0 {
 		return
-	}
-	hadBlock := e.lc.Profiles != nil
-	if !hadBlock {
-		e.lc.Profiles = map[string]config.JobProfile{}
-	}
-	for _, d := range created {
-		e.lc.Profiles[d.Name] = d.jobProfile()
 	}
 	// The written config is held to the deployer's own reading before it is
 	// kept, and withdrawn whole when the deployer would refuse it: `fugaro
@@ -1973,4 +1985,281 @@ func (e *initEngine) createDefaultProfiles() {
 		fmt.Fprintf(r.w, "%swrote the default profile %s (%s) to the local config: it is the job a %s workflow that names no profile runs on, and it admits %s\n",
 			o.programPrefix(), d.Name, d.Provider, d.Provider, strings.Join(d.Repos, ", "))
 	}
+}
+
+// defaultCatalogEntryName is the name of the entry `fugaro update` writes into
+// a project's image catalog: the installation's pinned base image, as a
+// prebuilt entry marked default (D2305, S10). The name is the base image kind's
+// because that is what the entry holds, and `fugaro image ls` reads the two
+// side by side.
+const defaultCatalogEntryName = "base"
+
+// writeDefaultCatalogEntry writes the project's default catalog entry into the
+// local config, so that the shared project jobs of every profile have an image
+// the project's own catalog names (internal/infra's projectJobImage resolves
+// exactly this entry for them, F21) and so that the project has a default an
+// operator can curate a baked image into.
+//
+// The entry is a reference to the base image this config pins, and nothing
+// builds it (D2305): the write says which image the project's jobs run today
+// and gives the catalog a place to grow, and it needs no build, no bucket and
+// no cloud call of its own.
+//
+// It writes nothing, and says why, in every state where the entry would make
+// this run refuse something it converges today. The entry is the image of every
+// job whose repository names no image, so a project that keeps a per-repository
+// job for any reason would meet the deployer's refusal for a bare `checkout:
+// baked` workflow (internal/infra's unbuiltOnBaked, D1191) — the state the
+// repository's own workflows are read for here, because a repository admitted
+// to a profile still deploys its own root until the shared job's image is the
+// one its workflows declare. The other states are the project's own: a catalog
+// this machine's config does not hold is not one to write into, and an entry
+// the config already has under this name is the operator's.
+//
+// Every line it prints is a reason and a remedy, and it is silent in the one
+// state where there is nothing to say: a project that already marks a default
+// has the entry this write is for, whether an earlier update or the operator
+// put it there.
+func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
+	r := e.r
+	// The published node, once per run and through the run's own memo
+	// (policyReadOnce), because it is where the project's catalog is when this
+	// machine's config names none (the keep rule, D1140): an entry written over
+	// a published catalog would replace it rather than be added to it, which is
+	// the note `fugaro image add` prints for the same write.
+	//
+	// An older node is tolerated rather than reported, as it is everywhere else
+	// this run reads one (init.go's effectiveVerifiers): it is the node this
+	// same run migrates in place, so it is a state `fugaro update` has to
+	// converge through and not a fact about the project's catalog.
+	p, _, err := r.policy.read(ctx, e.lc)
+	if err != nil && !olderPolicyNode(err) {
+		e.withholdDefaultCatalogEntry(fmt.Sprintf("the project's published policy could not be read (%s)", oneLineCLI(policyReadErr(err).Error())))
+		return
+	}
+	var published *config.Catalog
+	var publishedMap map[string]string
+	if p != nil {
+		published, publishedMap = p.ImageCatalog, p.ImageMap
+	}
+	cat := e.lc.ImageCatalogEffective(published)
+	if cat != nil {
+		if _, ok := catalog.Default(*cat); ok {
+			// The project has a default entry, so there is nothing to write and
+			// nothing to say: this write is for the project that has none.
+			return
+		}
+	}
+	if e.lc.ImageCatalog == nil && published != nil && len(published.Entries) > 0 {
+		e.withholdDefaultCatalogEntry("this machine's project config names no image catalog, and the project has one published, so an entry written here would replace that catalog rather than be added to it")
+		return
+	}
+	base := e.lc.BaseImage(config.BaseKind)
+	if base == "" {
+		e.withholdDefaultCatalogEntry("this config records no base image for the base kind, so there is no reference to write the entry on")
+		return
+	}
+	entry := config.Entry{
+		Name:    defaultCatalogEntryName,
+		Default: true,
+		Source:  config.Source{Kind: config.SourceImage, Image: base},
+	}
+	if slices.ContainsFunc(catalogEntries(cat), func(x config.Entry) bool { return x.Name == entry.Name }) {
+		e.withholdDefaultCatalogEntry(fmt.Sprintf("this project's catalog already has an entry named %s, and an entry of the operator's is never written over: mark the entry you want as the default in the project config, or rename that one, and a later %s writes this entry",
+			entry.Name, selfCommand()+" update"))
+		return
+	}
+	if why := e.defaultCatalogEntryRefusal(cat, e.lc.ImageMapEffective(publishedMap), entry); why != "" {
+		e.withholdDefaultCatalogEntry(why)
+		return
+	}
+	next := config.Catalog{Entries: append(catalogEntries(cat), entry)}
+	if problems := config.ValidateCatalog("image_catalog", next); len(problems) > 0 {
+		e.withholdDefaultCatalogEntry(fmt.Sprintf("the entry is not one this project's catalog can carry (%s: %s)", problems[0].Path, problems[0].Message))
+		return
+	}
+	e.lc.ImageCatalog = &next
+	fmt.Fprintf(r.w, "%swrote the default catalog entry %s (%s) to the local config: it is the image every shared job of this project runs, and a %s that gives it a baked image moves every job of the project onto it\n",
+		r.o.programPrefix(), entry.Name, base, selfCommand()+" image add")
+}
+
+// repinDefaultCatalogEntry moves the project's default catalog entry onto the
+// base image this run pinned, in the config the images stage is about to write.
+//
+// The entry write above runs before the loop, where the base image this config
+// records is still the release behind — the pin moves in the images stage, which
+// is the only step that resolves it — so an entry written there and never moved
+// would name the runner image of the release behind, for every shared job of the
+// project, and the early return above would keep it there: the entry is the
+// image the jobs run, and this is the step that knows where the base moved to.
+//
+// It moves only what this tool put in place, by the rule the same stage applies
+// to base_images (isManaged, and never downgraded): an entry an operator gave a
+// baked image, or one whose image is not a base pin of this kind, is theirs and
+// is left alone.
+func (e *initEngine) repinDefaultCatalogEntry(next *localcfg.Config, host, owner, kind, pin, version string) {
+	if kind != config.BaseKind || next.ImageCatalog == nil || len(next.ImageCatalog.Entries) == 0 {
+		return
+	}
+	entries := slices.Clone(next.ImageCatalog.Entries)
+	moved := false
+	for i, entry := range entries {
+		if !entry.Default || entry.Source.Kind != config.SourceImage {
+			continue
+		}
+		cur := entry.Source.Image
+		if !isManaged(cur, host, kind, owner) || newer(curVersion(cur, host, kind, owner), version) || cur == pin {
+			continue
+		}
+		entries[i].Source.Image = pin
+		moved = true
+		fmt.Fprintf(e.r.w, "  the default catalog entry %s = %s (the base image this run pinned)\n", entry.Name, pin)
+	}
+	if !moved {
+		return
+	}
+	next.ImageCatalog = &config.Catalog{Entries: entries}
+}
+
+// withholdDefaultCatalogEntry is the one sentence this write says when it does
+// not write: the reason, and what the project keeps in the meantime. It names
+// no command but `fugaro update`, because every reason is a fact about the
+// project's own configuration that the operator edits.
+func (e *initEngine) withholdDefaultCatalogEntry(why string) {
+	e.r.warn(fmt.Sprintf("no default catalog entry was written: %s; the shared jobs of this project keep the image they run today, and a later %s writes the entry once that is fixed",
+		why, selfCommand()+" update"))
+}
+
+// catalogEntries is the entries of a catalog a config may not have at all, as a
+// list a caller appends to: the copy is what keeps the config's own slice out
+// of the write below.
+func catalogEntries(cat *config.Catalog) []config.Entry {
+	if cat == nil {
+		return nil
+	}
+	return slices.Clone(cat.Entries)
+}
+
+// defaultCatalogEntryRefusal is why the entry must not be written, "" when
+// nothing holds it back: the two states in which the entry would be the image
+// of a job this run has to deploy and the deployer would refuse that job.
+//
+// The first is a repository no profile admits. Such a repository runs on the
+// per-repository job its own root deploys, and that job's image is the
+// catalog's default — so a bare `checkout: baked` workflow of it, which carries
+// no image of its own to keep instead, meets unbuiltOnBaked. The write waits
+// for the whole list: the entry is the project's, and half a project on it is a
+// project whose next update refuses.
+//
+// The second is the checkout's own workflows, which are the ones this run
+// really builds (the repository stage and the images stage run for this
+// checkout alone): the entry is asked of the one resolver here, so that a
+// workflow that pins an entry, needs tags, or writes an image of its own — the
+// three ways a job keeps an image that is not the default — is not read as one
+// that would take it. What is left is the workflow the entry would be handed to
+// and the deployer would refuse, and the workflow whose own resolution the
+// entry would break: a project with no catalog has one the moment this entry is
+// written, and a workflow's image_name, its needs and the project's image_map
+// are read only against a catalog, so a job that runs the base image today can
+// be refused the moment the entry lands.
+func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry) string {
+	if repos := unadmittedRepos(e.lc); len(repos) > 0 {
+		return fmt.Sprintf("no profile admits %s, so %s runs on the per-repository job its own root deploys, and the entry would be the image of that job — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191)",
+			strings.Join(repos, ", "), them(repos))
+	}
+	cfg, slug := e.checkoutWorkflows()
+	if cfg == nil {
+		return ""
+	}
+	asked := config.Catalog{Entries: append(catalogEntries(cat), entry)}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		req := catalog.ImageRequest{ImageMap: imageMap, Canonical: slug, Workflow: cfg.Workflows[name], Backend: catalog.Backend(e.lc.Backend())}
+		// The workflow's image is asked of the resolver twice, with the catalog
+		// this project has (nil for a project with none) and with the one the
+		// entry would give it, because the entry is what makes a catalog exist at
+		// all and the resolver reads a workflow's image_name, its needs and the
+		// project's image_map only against one: a pin naming an entry this project
+		// does not have is inert today and a refusal the moment the entry is
+		// written, so the write is held back by it rather than turning a job that
+		// runs the base image into one the deployer refuses.
+		req.Catalog = cat
+		if _, err := catalog.JobImage(req); err != nil {
+			// A workflow whose image is already unresolvable is not what holds the
+			// write back: the entry did not break it, and a project refused for it
+			// would never get a default entry at all.
+			continue
+		}
+		req.Catalog = &asked
+		sel, err := catalog.JobImage(req)
+		if err != nil {
+			return fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the project's image_map are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
+				name, slug, err)
+		}
+		if sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry.Name {
+			continue
+		}
+		return fmt.Sprintf("workflow %s of %s writes no image of its own, so the entry would be the image of a job that cannot run it and the deployer would refuse it (unbuiltOnBaked, D1191)",
+			name, slug)
+	}
+	return ""
+}
+
+// checkoutWorkflows is the checkout's own fugaro.yaml and the repository it is
+// about, nil when this run holds no checkout (a converge from a machine that
+// does not hold the repository, which has no workflow to read).
+func (e *initEngine) checkoutWorkflows() (*config.Config, string) {
+	if e.repo == nil || e.repo.tg == nil {
+		return nil, ""
+	}
+	return e.repo.tg.cfg, e.repo.tg.repo
+}
+
+// unadmittedRepos is the repositories this project's config lists that no
+// profile of it admits, in the order the config names them: the repositories
+// whose runs are per-repository ones.
+//
+// A repository is admitted when a profile serves its provider and admits it —
+// the profile's own allow_repos when it names one, and the project's enrolment
+// otherwise, which is the list the config's own repositories are the seed of
+// (projectpolicy.Admits' rule, read here on the config this run is about to
+// publish rather than on the node).
+func unadmittedRepos(lc *localcfg.Config) []string {
+	_, used := usedProviders(lc)
+	var out []string
+	for _, name := range config.Providers {
+		for _, canonical := range used[name] {
+			if !admittedByAProfile(lc, name, canonical) {
+				out = append(out, canonical)
+			}
+		}
+	}
+	return out
+}
+
+// admittedByAProfile reports whether some profile of this provider admits the
+// repository. A profile that names no allow_repos admits what the project's own
+// enrolment admits, and this repository is one of those: the enrolment is
+// derived from the repositories this config lists (allowSourcesOf), which is
+// the list the caller walked to ask.
+func admittedByAProfile(lc *localcfg.Config, provider, canonical string) bool {
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		pr := lc.Profiles[name]
+		if pr.Provider != provider {
+			continue
+		}
+		if len(pr.AllowRepos) == 0 || projectpolicy.AdmitRepo(pr.AllowRepos, canonical) {
+			return true
+		}
+	}
+	return false
+}
+
+// them is a repository list as the sentence about it reads: "it" for one and
+// "they" for more, so the line names the repositories without a verb that does
+// not agree with them.
+func them(repos []string) string {
+	if len(repos) == 1 {
+		return "it"
+	}
+	return "they"
 }
