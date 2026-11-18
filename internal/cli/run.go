@@ -2378,6 +2378,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// The model credential's gate (B2.7, G17): a run of a repository whose
+	// model calls the credentials service serves holds no Anthropic key and
+	// no Claude OAuth token of its own, so the job image has to be one whose
+	// runner knows to call the service for them. Judged from the same build
+	// record and the same local config as the gate above, and like it not at
+	// all for a launch the service does not serve.
+	if err := env.serviceAuthGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}

@@ -183,9 +183,10 @@ func credentialsServiceDeploys(lc *localcfg.Config, repo string) map[string]bool
 // repository rather than presenting a run that can break workflows as the
 // routine step a doctor line reads as. What it costs is not the same sentence
 // for every auth: the switch admits api-key and oauth repositories too (B2.3),
-// so the credential stays mounted in their jobs until the flip (B2.7), and a
-// GitHub run of such a repository refuses to mint until the bundle holds the
-// App's key. The two states whose fix is a re-apply
+// the flip (B2.7) is what drops their two Claude mounts — a provider key
+// staying with the job (R6, D1634) — and a GitHub run of such a repository
+// refuses to mint until the bundle holds the App's key. The two states whose
+// fix is a re-apply
 // name the same ordinary command: NOT_FOUND, where the installation root is
 // re-applied and the service created, and the empty verify route, whose list is
 // written into the service by that apply and not by a publish.
@@ -222,7 +223,7 @@ func doctorCredentialsServiceDeployed(ctx context.Context, lc *localcfg.Config) 
 	if lc.CredentialsService == nil {
 		return []doctorCheck{{ID: id, OK: true, Severity: "info",
 			Problem: fmt.Sprintf("the installation has no credentials service (%s): an ordinary %s deploys one on every installation that can hold it — it needs the installation's Firebase backend and at least one repository job — and writes the block this check reads, so this installation has either not run an update of this release or cannot carry one: either way its runs fetch their model credential the way they did before the service existed, and nothing here is broken or behind", infra.CredentialsServiceName, selfCommand()+" update"),
-			Fix:     "nothing to run for this: where " + selfCommand() + " update does deploy one, the deploy alone switches nothing on — a run reaches it only where the bundle holds the credential its auth needs and that repository's own root has been re-applied with the switch, which a cascade repository of any installation that has a service is on, and an api-key or oauth one only where its budget mode is observe or enforce and the bundle holds that credential (the credential is dropped from the job's mounts at the flip, which has not landed: until then a switched job keeps it mounted), and a GitHub run of such a repository refuses to mint until the bundle holds the App's key (" + selfCommand() + " creds set github-app-key)"}}
+			Fix:     "nothing to run for this: where " + selfCommand() + " update does deploy one, the deploy alone switches nothing on — a run reaches it only where the bundle holds the credential its auth needs and that repository's own root has been re-applied with the switch, which a cascade repository of any installation that has a service is on, and an api-key or oauth one only where its budget mode is observe or enforce and the bundle holds that credential (the credential is dropped from the job's mounts by the apply that turns the switch on: from the flip a switched api-key or oauth repository's job mounts neither the Anthropic key nor the Claude OAuth token, its provider keys staying its own), and a GitHub run of such a repository refuses to mint until the bundle holds the App's key (" + selfCommand() + " creds set github-app-key)"}}
 	}
 	unreadable := func(what string) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning",
@@ -1469,7 +1470,8 @@ func flipNotServed(lc *localcfg.Config, repo, auth string) string {
 // on — which is what a bundle holding the credential its auth needs leaves
 // behind. A switched run's agent environment is built as the cascade's
 // (runner's servedAuth), so no credential of the job's reaches the agent, and
-// that holds although the job's own MOUNT stays until the flip (B2.7, G17).
+// no mount of the two Claude credentials is left for it to read either once the
+// root carrying the switch has been applied since the flip (B2.7, G17).
 // A repository off the switch keeps both, and the line names what the switch
 // is missing: the mode, or the bundle entry the auth's runs are served under.
 //

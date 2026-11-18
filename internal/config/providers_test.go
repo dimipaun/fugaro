@@ -431,7 +431,7 @@ func TestModelSecretEnvsAreTheReservedOnes(t *testing.T) {
 // namespace, and nothing else. Both git credentials are deliberately out —
 // this predicate is about model credentials, and it says nothing about which
 // of the two the service holds: Bitbucket's token stays with the job (D145),
-// the GitHub App key does not (C2.3), and IsServiceHeldSecretEnv is where that
+// the GitHub App key does not (C2.3), and IsServiceHeldSecretName is where that
 // difference lives.
 //
 // The mutation is IsProviderKeyEnv's prefix read case-sensitively, or a third
@@ -490,68 +490,117 @@ func TestServiceHeldSecretNamesAreEmptyUntilTheJobGivesTheAppKeyUp(t *testing.T)
 	}
 }
 
-// TestIsServiceHeldSecretEnv is the whole predicate the credentials service's
-// accessor rule is written from (C1.18, C2.3): a model credential by its
-// variable, a name in ServiceHeldSecretNames by its name, and nothing else. It
-// is the question modules/workflow/sa.tf's job_secret_names asks and
-// internal/infra's mirror repeats, so a clause lost here is an accessor a job
-// keeps on a credential the service was to hold.
+// TestIsServiceHeldModelEnv is the model half of the credentials service's
+// accessor rule (C1.18, C2.3), read one variable at a time for the arm a
+// repository's root plans: `all` is every model credential, `anthropic` the
+// two named Claude credentials with no provider key (R6, D1634), `none`
+// nothing. It is the question modules/workflow/sa.tf's job_secret_names asks
+// and internal/infra asks twice — the drop (dropModelMounts) and the address
+// mirror (mountsServiceHeldSecret) — so a clause lost here is an accessor a
+// job keeps on a credential the service was to hold, or a mount it loses
+// while the service serves it nothing.
 //
-// The GitHub App's private key is in the second half and the list is empty on
-// this branch (review finding F1), so its rows are false here and true in the
-// subtest that fills the list — the state C2.2's release puts the tree in. Both
-// are asserted: the shipped value is what an opted-in installation lives with
-// today, and the filled one is what the flip must produce.
+// The mixed stage account's rows are the `anthropic` arm's one exception (B0's
+// ruling of 2026-11-04, docs/design/mixed-credentials.md §11): the account's
+// own variant job mounts its Claude OAuth token for the stages that go
+// straight to Anthropic through the RUNNER, so the service serves no call of
+// theirs and that mount — and only that one — stays. The Boolean is the fact
+// Go writes into the tfvars, so the two sides read one answer.
 //
-// The mutations are the two clauses: dropping the name clause leaves a filled
-// list's names with the job (C2.3's whole point), and dropping the model clause
-// leaves the model credentials with it (C1.18's). The Bitbucket token and a
-// workflow's own secret must stay false either way (D145).
-func TestIsServiceHeldSecretEnv(t *testing.T) {
+// The mutations are the arms themselves: a provider key answered true in the
+// `anthropic` arm takes a mount away from a run whose own route spends it, and
+// a stage account's token answered true leaves the `review`, `adversarial` and
+// `triage` stages of an api-key repository with a variable nothing mounted.
+func TestIsServiceHeldModelEnv(t *testing.T) {
 	for _, tc := range []struct {
-		env, name string
-		want      bool
+		env, served string
+		stage       bool
+		want        bool
 	}{
-		// The model credentials, by variable, whatever the name is.
-		{"CLAUDE_CODE_OAUTH_TOKEN", ClaudeOAuthToken, true},
-		{"ANTHROPIC_API_KEY", AnthropicSecret, true},
-		{ProviderKeyEnv("openrouter-api-key"), "openrouter-api-key", true},
-		{ProviderKeyEnvPrefix + "OPENROUTER_API_KEY", "some-provider-key", true},
-		// The GitHub App's private key, by name: not until C2.2's release fills
-		// the list — the job keeps the accessor it needs to read the key.
-		{"FUGARO_GITHUB_APP_PRIVATE_KEY", GitHubAppKeySecret, false},
-		// D145's exceptions: Bitbucket's token and a workflow's own secret
-		// keep the job's accessor, whatever they are mounted as.
-		{"FUGARO_BITBUCKET_TOKEN", BitbucketSecret, false},
-		{"NPM_TOKEN", "npm-token", false},
-		{"SANDBOX_PROBE", "sandbox-probe", false},
-		// And neither half matches an unrelated pair.
-		{"", "", false},
+		// The cascade: every model credential, by its variable.
+		{"CLAUDE_CODE_OAUTH_TOKEN", ModelSecretServedAll, false, true},
+		{"ANTHROPIC_API_KEY", ModelSecretServedAll, false, true},
+		{ProviderKeyEnv("openrouter-api-key"), ModelSecretServedAll, false, true},
+		{ProviderKeyEnvPrefix + "OPENROUTER_API_KEY", ModelSecretServedAll, false, true},
+		// The flip's arm: the two Claude credentials, and never a provider key.
+		{"CLAUDE_CODE_OAUTH_TOKEN", ModelSecretServedAnthropic, false, true},
+		{"ANTHROPIC_API_KEY", ModelSecretServedAnthropic, false, true},
+		{ProviderKeyEnv("openrouter-api-key"), ModelSecretServedAnthropic, false, false},
+		{ProviderKeyEnvPrefix + "OPENROUTER_API_KEY", ModelSecretServedAnthropic, false, false},
+		// And its one exception: the stage account's own job keeps the token
+		// the stages read, while giving up the Anthropic key like every other.
+		{"CLAUDE_CODE_OAUTH_TOKEN", ModelSecretServedAnthropic, true, false},
+		{"ANTHROPIC_API_KEY", ModelSecretServedAnthropic, true, true},
+		{ProviderKeyEnv("openrouter-api-key"), ModelSecretServedAnthropic, true, false},
+		// A repository the switch holds off keeps everything, and so does a
+		// value this release does not know: both fail closed toward the mount.
+		{"CLAUDE_CODE_OAUTH_TOKEN", ModelSecretServedNone, false, false},
+		{"ANTHROPIC_API_KEY", ModelSecretServedNone, false, false},
+		{ProviderKeyEnv("openrouter-api-key"), ModelSecretServedNone, false, false},
+		{"CLAUDE_CODE_OAUTH_TOKEN", "", false, false},
+		{"ANTHROPIC_API_KEY", "something-else", true, false},
+		// D145's exceptions: neither git credential is a model credential, and
+		// neither is a workflow's own secret.
+		{"FUGARO_GITHUB_APP_PRIVATE_KEY", ModelSecretServedAll, false, false},
+		{"FUGARO_BITBUCKET_TOKEN", ModelSecretServedAll, false, false},
+		{"NPM_TOKEN", ModelSecretServedAll, false, false},
+		{"SANDBOX_PROBE", ModelSecretServedAll, false, false},
+		{"", ModelSecretServedAll, false, false},
 	} {
-		if got := IsServiceHeldSecretEnv(tc.env, tc.name); got != tc.want {
-			t.Errorf("IsServiceHeldSecretEnv(%q, %q) = %v, want %v", tc.env, tc.name, got, tc.want)
+		if got := IsServiceHeldModelEnv(tc.env, tc.served, tc.stage); got != tc.want {
+			t.Errorf("IsServiceHeldModelEnv(%q, %q, stage account %t) = %v, want %v", tc.env, tc.served, tc.stage, got, tc.want)
+		}
+	}
+}
+
+// TestIsServiceHeldSecretName is the rule's other family (C2.3): a LOGICAL
+// name the service holds for every job of an installation that opted in,
+// whatever variable the job mounts it as — the GitHub App's private key.
+//
+// The list is empty on this branch (review finding F1), so its rows are false
+// here and true in the subtest that fills it — the state C2.2's release puts
+// the tree in. Both are asserted: the shipped value is what an opted-in
+// installation lives with today, and the filled one is what the flip must
+// produce. The mutation is dropping the clause: a filled list's names would
+// keep the accessor C2.3 exists to take away.
+//
+// D145's exceptions must stay false either way: Bitbucket's token and a
+// workflow's own secret are not the service's to hold.
+func TestIsServiceHeldSecretName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		// Not until C2.2's release fills the list — the job keeps the accessor
+		// it needs to read the key.
+		{GitHubAppKeySecret, false},
+		{BitbucketSecret, false},
+		{"npm-token", false},
+		{"some-provider-key", false},
+		{ClaudeOAuthToken, false},
+		{"", false},
+	} {
+		if got := IsServiceHeldSecretName(tc.name); got != tc.want {
+			t.Errorf("IsServiceHeldSecretName(%q) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 
 	// C2.2's release, simulated: the App key joins the list and the name clause
-	// decides on its own, whatever variable the entry carries (no workflow can
-	// mount a reserved name under a variable of its own — config.ReservedEnv
-	// refuses every FUGARO_ variable — so the two always agree in a real spec,
-	// and the mirror's rule is the name's).
+	// decides on its own, whatever variable the entry carries.
 	ServiceHeldSecretNames = []string{GitHubAppKeySecret}
 	t.Cleanup(func() { ServiceHeldSecretNames = []string{} })
 	for _, tc := range []struct {
-		env, name string
-		want      bool
+		name string
+		want bool
 	}{
-		{"FUGARO_GITHUB_APP_PRIVATE_KEY", GitHubAppKeySecret, true},
-		{"NPM_TOKEN", GitHubAppKeySecret, true},
+		{GitHubAppKeySecret, true},
 		// A filled list still says nothing about the other credentials.
-		{"NPM_TOKEN", "npm-token", false},
-		{"FUGARO_BITBUCKET_TOKEN", BitbucketSecret, false},
+		{BitbucketSecret, false},
+		{"npm-token", false},
+		{ClaudeOAuthToken, false},
 	} {
-		if got := IsServiceHeldSecretEnv(tc.env, tc.name); got != tc.want {
-			t.Errorf("with the App key in ServiceHeldSecretNames: IsServiceHeldSecretEnv(%q, %q) = %v, want %v", tc.env, tc.name, got, tc.want)
+		if got := IsServiceHeldSecretName(tc.name); got != tc.want {
+			t.Errorf("with the App key in ServiceHeldSecretNames: IsServiceHeldSecretName(%q) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }
