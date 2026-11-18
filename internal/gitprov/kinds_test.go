@@ -50,6 +50,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/doctor.go":                   "doctor's GitHub App checks and its slug",
 	"internal/cli/doctor_brokering.go":         "the repositories the brokering report reads",
 	"internal/cli/exec.go":                     "--provider's admission of the two kinds beside fake",
+	"internal/cli/followups.go":                "the credential the parent pull request is read with, per provider: the shared seam's config-and-key read at a person's terminal, the credentials service's read mint in a coding agent's session",
 	"internal/cli/gitcred.go":                  "`fugaro image git-credential`'s credential per provider, and the provider the entry mode asks the credentials service for",
 	"internal/cli/gitcred_build.go":            "the provider a build's entry-credential request is made for, and the GitHub half's App ID, which the request carries and the service's bundle does not",
 	"internal/cli/image_build_catalog.go":      "the GitHub App ID a catalog build hands to infra",
