@@ -4,24 +4,35 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/credsvc"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpfixture"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // gitCredentialEnv clears every variable git-credential reads, so the
-// developer's environment can't leak into a test.
+// developer's environment can't leak into a test. The four in the second list
+// are the fetch's own (B4.5): the credential step of a switched repository is
+// handed them by Cloud Build, and a test that left the developer's environment
+// standing could switch a case that means to build from a mounted secret.
 func gitCredentialEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"GIT_TOKEN", "GIT_USER", "GITHUB_APP_KEY", "GITHUB_APP_ID", "FUGARO_GITHUB_API_URL"} {
+	for _, k := range []string{"GIT_TOKEN", "GIT_USER", "GITHUB_APP_KEY", "GITHUB_APP_ID", "FUGARO_GITHUB_API_URL",
+		envCredentialsServiceURL, gitCredWorkflowEnv, gitCredSecretEnvsEnv, gitCredSecretDirEnv} {
 		t.Setenv(k, "")
 	}
 }
@@ -194,5 +205,306 @@ func TestGitCredentialIgnoresAPIOverride(t *testing.T) {
 	}
 	if hit {
 		t.Error("the App JWT went to FUGARO_GITHUB_API_URL")
+	}
+}
+
+// buildCredentialsService is a stand-in for the installation's credentials
+// service on B4.3's build route: it serves one answer the test names, records
+// what each call asked for and what identity token it presented, and refuses
+// every other method and path — so a step that asked the wrong route, asked
+// with no token or asked twice is caught rather than assumed.
+//
+// It is the shape of the route and not a model of the service: what the service
+// decides (which repository a build account is bound to, which containers the
+// record holds) is internal/credsvc's own, and this stands in for its answer
+// alone.
+type buildCredentialsService struct {
+	mu       sync.Mutex
+	requests []credsvc.BuildCredentialsRequest
+	bearers  []string
+	answer   credsvc.BuildCredentialsResponse
+	// status and body are the refusal this service answers instead of the
+	// answer above; status 0 is a 200.
+	status int
+	body   string
+}
+
+func (s *buildCredentialsService) start(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != credsvc.BuildCredentialsPath {
+			http.Error(w, "not a route of this service", http.StatusNotFound)
+			return
+		}
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "unreadable", http.StatusBadRequest)
+			return
+		}
+		var req credsvc.BuildCredentialsRequest
+		if err := json.Unmarshal(raw, &req); err != nil {
+			http.Error(w, "not this contract's body", http.StatusBadRequest)
+			return
+		}
+		s.mu.Lock()
+		s.requests = append(s.requests, req)
+		s.bearers = append(s.bearers, r.Header.Get("Authorization"))
+		status, failure, answer := s.status, s.body, s.answer
+		s.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, failure)
+			return
+		}
+		out, err := json.Marshal(answer)
+		if err != nil {
+			http.Error(w, "unbuildable", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func (s *buildCredentialsService) asked() []credsvc.BuildCredentialsRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.requests)
+}
+
+func (s *buildCredentialsService) presented() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.bearers)
+}
+
+// buildFetchEnv is the environment the credential step of a build that fetches
+// from the service is handed: the service's address, the workflow whose secrets
+// the build mounts, the variables it mounts them under and the volume the
+// fetched values are left in. Every one reaches the step as a variable of the
+// build's own environment and never as a flag. It answers the volume's path.
+func buildFetchEnv(t *testing.T, serviceURL, workflow, secretEnvs string) string {
+	t.Helper()
+	t.Setenv(envCredentialsServiceURL, serviceURL)
+	t.Setenv(gitCredWorkflowEnv, workflow)
+	t.Setenv(gitCredSecretEnvsEnv, secretEnvs)
+	dir := t.TempDir()
+	t.Setenv(gitCredSecretDirEnv, dir)
+	return dir
+}
+
+// TestGitCredentialFetchesFromTheServiceWhenSet: with
+// FUGARO_CREDENTIALS_SERVICE_URL set, the credential step fetches the build's
+// git credential AND the workflow secrets the build mounts from B4.3's build
+// route, presenting the build's own identity token minted at the metadata
+// server, and reads neither GIT_TOKEN nor GITHUB_APP_KEY: the mounted secret is
+// a decoy the answer has to beat, which is what a step that fell back to its
+// environment fails on.
+//
+// The token it presents is the build account's Google identity token, the one
+// Cloud Run IAM admits the call with and the route verifies its caller by, and
+// it is minted per call. The App ID is the one thing this step holds and the
+// service does not, so a GitHub build sends it and a Bitbucket one signs
+// nothing.
+//
+// Mutation (verified, run and restored): drop the branch of runGitCredential
+// that reads envCredentialsServiceURL and this fails on every case — the file
+// holds the mounted decoy and the service is never asked.
+func TestGitCredentialFetchesFromTheServiceWhenSet(t *testing.T) {
+	const (
+		token  = "service-token-not-a-real-credential"
+		secret = "service-secret-not-a-real-credential"
+		mount  = "mounted-token-not-a-real-credential"
+	)
+	for _, c := range []struct{ provider, host, user, repoURL, appID string }{
+		{gitprov.KindBitbucket, "bitbucket.org", "x-token-auth", "https://bitbucket.org/acme/app.git", ""},
+		{gitprov.KindGitHub, "github.com", github.GitUsername, "https://github.com/acme/webapp.git", "12345"},
+	} {
+		t.Run(c.provider, func(t *testing.T) {
+			testutil.IsolateGit(t)
+			gitCredentialEnv(t)
+			meta := buildCallMetadata(t)
+			svc := &buildCredentialsService{answer: credsvc.BuildCredentialsResponse{
+				Git: credsvc.BuildGitCredential{Provider: c.provider, Username: c.user, Token: token, Host: c.host},
+				Secrets: []credsvc.BuildSecretValue{
+					{Env: "NPM_TOKEN", Value: secret},
+					{Env: "PUBLISH_TOKEN", Value: secret},
+				},
+			}}
+			srv := svc.start(t)
+			dir := buildFetchEnv(t, srv.URL, "web", "NPM_TOKEN PUBLISH_TOKEN")
+			// The step's environment still carries the mounted provider secret,
+			// as it does until B4.9 drops the mount: a build that reads it is a
+			// build that did not fetch.
+			t.Setenv(gitCredTokenEnv, mount)
+			t.Setenv(gitCredUserEnv, "x-token-auth")
+			t.Setenv(gitCredAppIDEnv, c.appID)
+			out := filepath.Join(t.TempDir(), "git-credentials")
+			stdout, stderr, err := execute(t, "image", "git-credential", "--provider", c.provider, "--repo-url", c.repoURL, "--out", out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stdout != "" || stderr != "" {
+				t.Errorf("git-credential printed %q / %q", stdout, stderr)
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := "https://" + credEscape(c.user) + ":" + credEscape(token) + "@" + c.host + "\n"; string(data) != want {
+				t.Errorf("line = %q, want the served credential %q and not the mounted one", data, want)
+			}
+			if fi, err := os.Stat(out); err != nil || fi.Mode().Perm() != 0o600 {
+				t.Errorf("mode = %v, %v", fi.Mode(), err)
+			}
+			for _, env := range []string{"NPM_TOKEN", "PUBLISH_TOKEN"} {
+				path := filepath.Join(dir, env)
+				got, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("%s: %v: the build step mounts this file and refuses a build without it", env, err)
+				}
+				if string(got) != secret {
+					t.Errorf("%s = %q, want the served value", env, got)
+				}
+				if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+					t.Errorf("%s mode = %v, %v", env, fi.Mode(), err)
+				}
+			}
+			asked := svc.asked()
+			if len(asked) != 1 {
+				t.Fatalf("the step asked the service %d times, want the one call a build makes", len(asked))
+			}
+			if asked[0].Workflow != "web" || !slices.Equal(asked[0].Secrets, []string{"NPM_TOKEN", "PUBLISH_TOKEN"}) || asked[0].AppID != c.appID {
+				t.Errorf("the step asked %+v, want the workflow %q, the variables the build mounts and the App ID %q", asked[0], "web", c.appID)
+			}
+			if bears := svc.presented(); len(bears) != 1 || bears[0] != "Bearer "+buildE2EIdentityToken {
+				t.Errorf("the step presented %q, want the build account's own identity token under Bearer", bears)
+			}
+			if got := meta.count(); got != 1 {
+				t.Errorf("the metadata server was read %d times, want the one mint a call makes", got)
+			}
+		})
+	}
+}
+
+// TestGitCredentialUnchangedWithoutTheService: an installation that has not
+// switched a repository sets no address — the template substitutes the empty
+// value, and a base image whose fugaro predates the service ignores the
+// fetch's variables entirely — so the step reads the secret it was mounted,
+// exactly as it did before, and asks the service nothing: no call, no identity
+// token, and no secret file written into the volume the build step reads.
+//
+// This is the previous-version installation pinned: a build on an installation
+// whose service is not deployed, or whose repository has not been switched,
+// still builds.
+func TestGitCredentialUnchangedWithoutTheService(t *testing.T) {
+	const (
+		mount = "mounted-token-not-a-real-credential"
+		other = "service-token-not-a-real-credential"
+	)
+	testutil.IsolateGit(t)
+	gitCredentialEnv(t)
+	meta := buildCallMetadata(t)
+	svc := &buildCredentialsService{answer: credsvc.BuildCredentialsResponse{
+		Git: credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: other, Host: "bitbucket.org"},
+	}}
+	srv := svc.start(t)
+	dir := buildFetchEnv(t, "", "web", "NPM_TOKEN")
+	t.Setenv(gitCredTokenEnv, mount)
+	t.Setenv(gitCredUserEnv, "x-token-auth")
+	out := filepath.Join(t.TempDir(), "git-credentials")
+	stdout, stderr, err := execute(t, "image", "git-credential", "--provider", gitprov.KindBitbucket, "--repo-url", "https://bitbucket.org/acme/app.git", "--out", out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout != "" || stderr != "" {
+		t.Errorf("git-credential printed %q / %q", stdout, stderr)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://x-token-auth:" + credEscape(mount) + "@bitbucket.org\n"; string(data) != want {
+		t.Errorf("line = %q, want the mounted credential %q", data, want)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Errorf("the step left %d entries in %s (%v), want none: nothing was fetched", len(entries), gitCredSecretDirEnv, err)
+	}
+	if got := len(svc.asked()); got != 0 {
+		t.Errorf("the step asked the service %d times with no address set, want none", got)
+	}
+	if got := meta.count(); got != 0 {
+		t.Errorf("the step minted its identity %d times with no address set, want none", got)
+	}
+	_ = srv
+}
+
+// TestGitCredentialNeverPrintsTheValue: the credential and the workflow secrets
+// the step fetches reach their files and nowhere else — not the command's
+// output, and not a refusal. Every refusal that comes after the answer was read
+// is this file's own sentence and names the field it refused, because a build's
+// log is the one place a credential a build holds becomes everyone's.
+func TestGitCredentialNeverPrintsTheValue(t *testing.T) {
+	const (
+		token  = "service-token-not-a-real-credential"
+		secret = "service-secret-not-a-real-credential"
+	)
+	served := func() credsvc.BuildGitCredential {
+		return credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token, Host: "bitbucket.org"}
+	}
+	testutil.IsolateGit(t)
+	gitCredentialEnv(t)
+	for _, c := range []struct {
+		name   string
+		answer credsvc.BuildCredentialsResponse
+	}{
+		{"a credential for another host", credsvc.BuildCredentialsResponse{
+			Git: credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token, Host: "evil.example"},
+		}},
+		{"a credential holding a control character", credsvc.BuildCredentialsResponse{
+			Git: credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token + "\n", Host: "bitbucket.org"},
+		}},
+		{"a secret the build does not mount", credsvc.BuildCredentialsResponse{
+			Git:     served(),
+			Secrets: []credsvc.BuildSecretValue{{Env: "NOT_MOUNTED", Value: secret}},
+		}},
+		{"a secret answered twice", credsvc.BuildCredentialsResponse{
+			Git:     served(),
+			Secrets: []credsvc.BuildSecretValue{{Env: "NPM_TOKEN", Value: secret}, {Env: "NPM_TOKEN", Value: secret}},
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			svc := &buildCredentialsService{answer: c.answer}
+			srv := svc.start(t)
+			dir := buildFetchEnv(t, srv.URL, "web", "NPM_TOKEN")
+			// The mounted secret is a decoy, so a step that never asked the
+			// service cannot pass by refusing on its empty environment instead.
+			t.Setenv(gitCredTokenEnv, "mounted-token-not-a-real-credential")
+			t.Setenv(gitCredUserEnv, "x-token-auth")
+			out := filepath.Join(t.TempDir(), "git-credentials")
+			stdout, stderr, err := execute(t, "image", "git-credential", "--provider", gitprov.KindBitbucket, "--repo-url", "https://bitbucket.org/acme/app.git", "--out", out)
+			if err == nil {
+				t.Fatalf("the step wrote a credential out of %s", c.name)
+			}
+			if got := len(svc.asked()); got != 1 {
+				t.Fatalf("the step asked the service %d times, want the one call whose answer it refused", got)
+			}
+			for _, value := range []string{token, secret} {
+				if strings.Contains(err.Error(), value) {
+					t.Errorf("the refusal repeats what the service answered: %v", err)
+				}
+				if strings.Contains(stdout+stderr, value) {
+					t.Errorf("the step printed %q / %q", stdout, stderr)
+				}
+			}
+			if _, err := os.Stat(out); !os.IsNotExist(err) {
+				t.Errorf("a refused call wrote a credential file")
+			}
+			if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+				t.Errorf("a refused call left %d entries in %s (%v), want none", len(entries), gitCredSecretDirEnv, err)
+			}
+		})
 	}
 }

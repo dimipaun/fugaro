@@ -28,6 +28,18 @@ const (
 	gitCredUserEnv   = "GIT_USER"       // Bitbucket: the token's https username
 	gitCredAppKeyEnv = "GITHUB_APP_KEY" // GitHub: the App's private key, PEM
 	gitCredAppIDEnv  = "GITHUB_APP_ID"  // GitHub: the App's ID
+
+	// The three a build that fetches its credentials from the installation's
+	// credentials service is handed instead (B4.5, envCredentialsServiceURL for
+	// the address): the workflow whose secrets the build mounts, the variables
+	// it mounts them under, and the volume the fetched values are left in for
+	// the build step. They are variables and not flags for the reason above,
+	// and because the credential step has to go on running on a base image
+	// whose fugaro predates this: an older binary ignores what it does not
+	// read, while an unknown flag would be refused before it ran at all.
+	gitCredWorkflowEnv   = "WORKFLOW"
+	gitCredSecretEnvsEnv = "SECRET_ENVS"
+	gitCredSecretDirEnv  = "SECRET_DIR"
 )
 
 // gitCredGitHubAPI is the GitHub API the credential step mints its token
