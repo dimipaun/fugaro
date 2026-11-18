@@ -182,6 +182,20 @@ func TestRepoClaudeAccountsAdd(t *testing.T) {
 	if got := readFileString(t, path); got != before {
 		t.Errorf("the second run rewrote the file:\n%s", got)
 	}
+	// The axis's own non-account values are admitted without a declaration, the
+	// way config.ValidClaudeAccountRef treats them: a project's Anthropic key and
+	// its provider key name no account this config could declare, so the refusal
+	// for an undeclared name — which sends the owner to `fugaro accounts add` —
+	// would name a declaration no command of this release can write for them.
+	for _, account := range []string{config.AnthropicKeyAccount, config.ProviderKeyAccount} {
+		out, _, err := execute(t, "accounts", "repo", "add", "owner/repo-a", account)
+		if err != nil {
+			t.Fatalf("accounts repo add %s: %v\n%s", account, err, out)
+		}
+		if got := accountsCraftLocal(t, path).Repos["owner/repo-a"].ClaudeAccounts; !slices.Contains(got, account) {
+			t.Errorf("repos.owner/repo-a.claude_accounts = %v, want %s added: the axis's own values are not accounts the config declares", got, account)
+		}
+	}
 }
 
 // TestCraftAccessRefusesAnUnknownCredentialNamingTheKnown is the refusal the
@@ -421,10 +435,15 @@ func TestAccountsCraftReadsNoStdin(t *testing.T) {
 // fence these writes carry that no gate can lift: an access decides whose token
 // a stage or a repository's runs may spend, so a coding agent's session writes
 // none of the three. Each command is run in a session a marker names and inside a
-// repository — where the local and layer documents are refused whatever the
-// edit's own marker says and a repository's own file is refused by the Typed flag
-// alone, which is what makes this the mutation check for it: drop Typed from any
-// of the three edits and the write lands.
+// repository, which is the shape the fence is read in: a local or a layer
+// document is refused there on the marker alone, whatever the edit says, while
+// the repository's own file is refused by the edit's own Typed flag — the grade's
+// run is the repository document and is therefore this file's mutation check
+// (settings_write.go's `!e.insideRepo() || e.Typed`): drop Typed from that edit
+// and the write lands. For the craft and the repository's list, whose documents
+// are the local config, dropping Typed would change only the sentence printed,
+// not the refusal — the flag is pinned for them by the two sentences
+// TypedWhy puts on their output instead (the widening line each run prints).
 func TestAccessWideningRefusedInAnAgentSession(t *testing.T) {
 	for _, marker := range agentenv.Markers {
 		t.Run(marker, func(t *testing.T) {
@@ -548,7 +567,7 @@ func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 		{"node_removals.craft_credentials", "fugaro accounts rm", settings.StoreLocal, true, "accounts rm <value>"},
 		{"model_grades.strong.access", "fugaro accounts grade set", settings.StoreRepo, false, "accounts grade set strong --access <value> --layer repo"},
 		{"layer.defaults.model_grades.strongest.access", "fugaro accounts grade set", settings.StoreProject, false, "accounts grade set strongest --access <value> --layer project"},
-		{"repos.owner/repo-a.claude_accounts", "fugaro accounts repo add", settings.StoreLocal, false, "accounts repo add owner/repo-a <value>"},
+		{"repos.owner/repo-a.claude_accounts", "fugaro accounts repo add", settings.StoreLocal, true, "accounts repo add owner/repo-a <value>"},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			w, ok := settings.WriterOf(tc.key)
@@ -570,24 +589,24 @@ func TestAccountsCraftWritersRegisterTheirKeys(t *testing.T) {
 		})
 	}
 
-	// A craft's access and the two removal records are served from the node: the
-	// hooks reading them are the ones that resolve a craft's credential and the
-	// ones that reconcile a removal, and the node carries the crafts block and
-	// the records that change it — a hook reading the store alone would run no
-	// stage for either.
-	for _, key := range []string{"crafts.coder.access", "node_removals.crafts", "node_removals.craft_credentials"} {
+	// A craft's access, a repository's own list and the two removal records are
+	// served from the node, and each row states it: the crafts block and the
+	// records that change it are what the node carries, and a repository's
+	// admission is served out of the `accounts` block the publish derives from
+	// that list — so a hook reading the store alone, which is `local` for all of
+	// them, would run no stage and the write would reach no run (D2615).
+	for _, key := range []string{"crafts.coder.access", "repos.owner/repo-a.claude_accounts", "node_removals.crafts", "node_removals.craft_credentials"} {
 		w, ok := settings.WriterOf(key)
 		if !ok || !w.Node {
 			t.Errorf("%s: %+v (found %v), want a writer that states the node serves it (D2615)", key, w, ok)
 		}
 	}
-	// A grade and a repository's own list are not, and the reasons differ: the
-	// node's model_grades block is built from the local config's own
-	// model_grades (init_policy_publish.go), so neither the repository's file nor
-	// the layer file is what a run reads; and what the node carries for a
-	// repository is the derived accounts block, which the publish builds from
-	// this list with the key itself stripped out of the published copy.
-	for _, key := range []string{"repos.owner/repo-a.claude_accounts", "model_grades.strong.access", "layer.defaults.model_grades.strong.access"} {
+	// The two grade rows state none, and not for the crafts' reason: the node's
+	// model_grades block is published from the local config's own model_grades
+	// carrier, which no command of this release writes, while these two write the
+	// project layer file and a checkout's own file — and each of those reaches
+	// runs by the stage its own store names (the layer stage, or the merge).
+	for _, key := range []string{"model_grades.strong.access", "layer.defaults.model_grades.strong.access"} {
 		w, ok := settings.WriterOf(key)
 		if !ok || w.Node {
 			t.Errorf("%s: %+v (found %v), want no node stated beside that store", key, w, ok)

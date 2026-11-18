@@ -511,7 +511,14 @@ func runAccountsRepoAdd(cmd *cobra.Command, repo, account string, o accountsAcce
 	if err := accessGateProject(cmd.Context(), lc, nil, "nothing was written", "admitting a repository to an account"); err != nil {
 		return err
 	}
-	if _, defined := lc.ClaudeAccounts[account]; !defined && account != config.DefaultClaudeAccount {
+	// The axis's three non-account values are admitted without a declaration,
+	// exactly as config.ValidClaudeAccountRef treats them: `default` names the
+	// installation's own account of that name, and the project's Anthropic key
+	// and the project's provider key name no account this config could declare
+	// (config.AxisNonAccountValue), so a refusal would demand a declaration the
+	// owner has no command to write. Only a name the config does not declare and
+	// the axis does not own is the refusal below.
+	if _, defined := lc.ClaudeAccounts[account]; !defined && account != config.DefaultClaudeAccount && !config.AxisNonAccountValue(account) {
 		return userErr("repos.%s.claude_accounts: the account %s is not declared in %s, which declares %s; declare it with `fugaro accounts add %s` first",
 			repo, pluginwire.Printable(account), sel.Path, accountsRepoKnownAccounts(lc), pluginwire.Printable(account))
 	}

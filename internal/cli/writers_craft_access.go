@@ -18,21 +18,29 @@ import (
 // carries, because the hook hands the store the write landed in and not the
 // row's (contract §4).
 //
-// The three access rows state Node as well, for the pools' reason one block
-// over: a craft's access and a grade's access are served from the published
-// node — the credentials service admits a call by the credential the craft
-// names (D2607) — so a hook reading the store alone would run no stage and the
-// write would never reach a run. The node carries the crafts block and the
-// model_grades block verbatim, which is that fact stated where the registry
-// keeps it. The repository's own list states no Node: the key itself is
-// stripped from the published copy, and what the node carries is the derived
-// `accounts` block, which the publish builds from this list — a stage it owes
-// through the same local store the write lands in.
+// Three of the six rows state Node, for the pools' reason one block over: a
+// write whose store is local and whose value a run reads out of the published
+// node reaches no run at all unless the hook runs the policy stage, because a
+// store of local names no stage of its own (contract §3). A craft's access is
+// the first — the node carries the crafts block, and the credentials service
+// admits a call by the credential the craft names (D2607) — and a repository's
+// own list is the second: the key is stripped from the published copy, but what
+// the node carries for it is the `accounts` block the publish derives from
+// exactly this list (projectpolicy.DeriveAccounts, localcfg.PolicyRepoAccounts),
+// so a repository's runs are admitted to the account only once the publish has
+// run. The two removal records are the third (F22, D2607): with "silence keeps
+// the node's value", a craft or a credential taken away without the record
+// would go on being served by the node, and the credential it named would go on
+// being spent.
 //
-// The removal record beside the crafts block is the pools record's rule
-// (F22, D2607): with "silence keeps the node's value", a craft taken away
-// without the record would go on being served by the node, and the credential
-// it named would go on being spent.
+// The grade rows state no Node, and the reason is not the crafts': the node's
+// model_grades block is published from the local config's own model_grades
+// carrier and from nothing else (init_policy_publish.go, `lc.ModelGrades`), and
+// no command of this release writes that carrier. What a grade write touches is
+// the project layer file or a checkout's own file, and each reaches runs by the
+// road its own store names: `--layer project` owes the layer stage, whose copy
+// the job carries, and the repository's file owes nothing, because the merge of
+// the branch holding it is what makes it live (D1564).
 var accountsCraftAccessWriters = []struct {
 	pattern string
 	writer  settings.Writer
@@ -76,11 +84,14 @@ var accountsCraftAccessWriters = []struct {
 	}},
 	// A repository's own list of the accounts its runs may be served by
 	// (docs/project-claude-accounts.md §3). `<1>` is the repository, which the
-	// key's own segment holds and the command line repeats.
+	// key's own segment holds and the command line repeats, and the row states
+	// Node because the admission is served out of the node's derived `accounts`
+	// block and from nowhere else.
 	{"repos.*.claude_accounts", settings.Writer{
 		Command: "fugaro accounts repo add",
 		Argv:    []string{"accounts", "repo", "add", "<1>", settings.ValuePlaceholder},
 		Store:   settings.StoreLocal,
+		Node:    true,
 	}},
 }
 

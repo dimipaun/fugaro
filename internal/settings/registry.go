@@ -1397,11 +1397,10 @@ var localRows = []Row{
 	// (docs/project-claude-accounts.md §3), so it is local-only, and it is
 	// stripped from the published copy of this map besides
 	// (localcfg.withoutRepoLocalKeys, internal/cli/sharedcfg.go's refusal on
-	// the key). The owner is the accounts family, whose `accounts rm` is what
-	// edits the list: it clears a name with the declaration it names, and this
-	// release gives no command a write that ADDS one — the list is written by
-	// hand, and `repos.*.claude_accounts` is not a `settings set` path, which
-	// is what the read's owner column may say rather than a bare command.
+	// the key). The owner is the accounts family: `fugaro accounts repo add`
+	// adds to the list and `accounts rm` clears a name with the declaration it
+	// names, and neither is a `settings set` path — which is what the read's
+	// owner column may say rather than a bare command.
 	locLocal("repos.*.claude_accounts", "nobody: the repository's runs are served by the accounts the profiles of its jobs name", "accounts", docAccounts),
 	loc("repos.*.provider", "none", "settings set", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),
