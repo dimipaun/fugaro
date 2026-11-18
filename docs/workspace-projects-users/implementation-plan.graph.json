@@ -14,6 +14,9 @@
         "paths": [
           "docs/workspace-projects-users/threat-model.md",
           "SECURITY.md",
+          "website/content/security.md",
+          "docs/design/v1.md",
+          "internal/cli/docs_workspaces_security_test.go",
           "docs/workspaces/README.md"
         ]
       }
@@ -61,7 +64,7 @@
     },
     {
       "id": "WU1",
-      "title": "the roster store and the audit sink",
+      "title": "the roster node and the workspace audit writer",
       "run": null,
       "version": null,
       "size": 2,
@@ -69,16 +72,16 @@
         "prediction": true,
         "paths": [
           "internal/workspace/roster_rtdb.go",
+          "internal/workspace/roster_rtdb_test.go",
           "internal/workspace/audit_firestore.go",
           "internal/budget/rules/workspace.json.tmpl",
-          "internal/budget/rules/workspace_test.go",
-          "internal/workspace/roster_rtdb_test.go"
+          "internal/budget/rules/testdata/workspace.golden.json"
         ]
       }
     },
     {
       "id": "WU2",
-      "title": "both authorities and `workspace init`",
+      "title": "the folder authority and `workspace init`",
       "run": null,
       "version": null,
       "size": 3,
@@ -88,7 +91,7 @@
           "internal/infra/folder.go",
           "internal/gcpfake/crm.go",
           "internal/workspace/authority_folder.go",
-          "internal/workspace/authority_sa.go",
+          "internal/workspace/authority_folder_test.go",
           "internal/cli/workspace_init.go"
         ]
       }
@@ -103,9 +106,24 @@
         "prediction": true,
         "paths": [
           "deploy/terraform/gcp/roots/workspace/main.tf",
-          "deploy/terraform/gcp/roots/workspace/variables.tf",
           "deploy/terraform/gcp/roots/workspace/outputs.tf",
-          "deploy/terraform/gcp/roots/workspace/tests/workspace.tftest.hcl"
+          "deploy/terraform/gcp/roots/workspace/tests/workspace.tftest.hcl",
+          "deploy/terraform/terraform_test.go",
+          "internal/infra/tf/workspace.go"
+        ]
+      }
+    },
+    {
+      "id": "WU20",
+      "title": "the SA authority",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/authority_sa.go",
+          "internal/workspace/authority_sa_test.go"
         ]
       }
     },
@@ -114,30 +132,41 @@
       "title": "member operations",
       "run": null,
       "version": null,
-      "size": 3,
+      "size": 2.5,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/cli/workspace_memberops.go",
           "internal/cli/workspace_memberops_test.go",
-          "internal/cli/init_new_machine.go",
-          "internal/budget/rules/rules.json.tmpl"
+          "internal/cli/workspace_member_audit.go"
         ]
       }
     },
     {
       "id": "WU5",
-      "title": "`workspace project add` and the rename",
+      "title": "`workspace project add`",
       "run": null,
       "version": null,
-      "size": 3,
+      "size": 2.5,
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/workspace.go",
           "internal/cli/workspace_project.go",
-          "internal/cli/workspace_project_test.go",
-          "internal/cli/workspace_test.go"
+          "internal/cli/workspace_project_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU18",
+      "title": "`workspace project link|unlink`",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_project_link.go",
+          "internal/cli/workspace_project_link_test.go"
         ]
       }
     },
@@ -166,7 +195,8 @@
         "paths": [
           "internal/cli/workspace_user.go",
           "internal/cli/workspace_domains.go",
-          "internal/cli/workspace_user_test.go"
+          "internal/cli/workspace_user_test.go",
+          "schemas/workspace-users.schema.json"
         ]
       }
     },
@@ -200,21 +230,6 @@
       }
     },
     {
-      "id": "WU10",
-      "title": "installation-level refusals on a member",
-      "run": null,
-      "version": null,
-      "size": 1,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/cli/user.go",
-          "internal/cli/user_grant.go",
-          "internal/cli/user_test.go"
-        ]
-      }
-    },
-    {
       "id": "WU11",
       "title": "`workspace project ls` and `status`",
       "run": null,
@@ -234,15 +249,14 @@
       "title": "drift and the Cloud Audit Logs cross-check",
       "run": null,
       "version": null,
-      "size": 3,
+      "size": 2.5,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/workspace/drift.go",
           "internal/workspace/drift_test.go",
           "internal/infra/auditlogs.go",
-          "internal/gcpfake/logging.go",
-          "internal/cli/workspace_project_drift.go"
+          "internal/gcpfake/logging.go"
         ]
       }
     },
@@ -251,27 +265,12 @@
       "title": "`workspace project reconcile`",
       "run": null,
       "version": null,
-      "size": 2,
+      "size": 1.5,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/cli/workspace_project_reconcile.go",
           "internal/cli/workspace_project_reconcile_test.go"
-        ]
-      }
-    },
-    {
-      "id": "WU14",
-      "title": "`fugaro update` seeds the roster",
-      "run": null,
-      "version": null,
-      "size": 2,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/cli/update_workspace_roster.go",
-          "internal/cli/update_workspace_roster_test.go",
-          "internal/cli/update.go"
         ]
       }
     },
@@ -291,34 +290,67 @@
     },
     {
       "id": "I1",
-      "title": "wire the workspace commands and prove them end to end",
-      "run": null,
-      "version": null,
-      "size": 3,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/workspace/roster_stub.go",
-          "internal/workspace/memberops_stub.go",
-          "internal/cli/workspace.go",
-          "internal/cli/workspace_e2e_test.go"
-        ]
-      },
-      "kind": "integration"
-    },
-    {
-      "id": "WU16",
-      "title": "docs, skills and the release note",
+      "title": "wire the workspace commands",
       "run": null,
       "version": null,
       "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/workspace/roster_stub.go",
+          "internal/workspace/memberops_stub.go",
+          "internal/cli/workspace_wiring.go",
+          "internal/cli/workspace.go",
+          "internal/cli/workspace_test.go",
+          "internal/cli/report_exempt.go",
+          "internal/cli/noprompt_harness_test.go",
+          "internal/cli/update_workspace.go",
+          "website/content/cli-reference.md"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "WU21",
+      "title": "the end-to-end test",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_e2e_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU10",
+      "title": "installation-level refusals on a member",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/user.go",
+          "internal/cli/user_grant.go",
+          "internal/cli/offboard.go",
+          "internal/cli/user_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU16",
+      "title": "docs and skills",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "plugin/skills/working/SKILL.md",
           "docs/workspaces/README.md",
-          "docs/releases/*.md",
-          "website/data/release-summaries.yaml"
+          "internal/cli/docs_workspace_projects_users_test.go"
         ]
       }
     },
@@ -342,7 +374,7 @@
     },
     {
       "id": "R-member-firebase",
-      "title": "amend the member-operations contract: Converge takes the Firebase project",
+      "title": "amend the member-operations contract: every method takes the Firebase project",
       "run": null,
       "version": null,
       "size": 0.5,
@@ -376,197 +408,197 @@
     {
       "task": "C1",
       "needs": "WU0",
-      "reason": "D2800's mandatory security review may reshape the contract"
+      "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
     },
     {
       "task": "C2",
       "needs": "WU0",
-      "reason": "D2800's mandatory security review may reshape the contract"
-    },
-    {
-      "task": "WU10",
-      "needs": "WU0",
-      "reason": "D2800's mandatory security review gates every task"
-    },
-    {
-      "task": "WU2",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU2",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU4",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU5",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU5",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU6",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU7",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU7",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU8",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU8",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU9",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU11",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU11",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU12",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU12",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU13",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU13",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU14",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
-    },
-    {
-      "task": "WU14",
-      "needs": "C2",
-      "reason": "builds against C2's shapes"
-    },
-    {
-      "task": "WU15",
-      "needs": "C1",
-      "reason": "builds against C1's shapes"
+      "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
     },
     {
       "task": "WU1",
       "needs": "WU0",
-      "reason": "D2800's mandatory security review gates every task"
+      "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
     },
     {
       "task": "WU3",
       "needs": "WU0",
-      "reason": "D2800's mandatory security review gates every task"
+      "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
+    },
+    {
+      "task": "WU11",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU11",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU12",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU13",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU13",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU15",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU18",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU2",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU20",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU4",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU5",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU5",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU6",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU6",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU7",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU7",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU8",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU8",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU9",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
     },
     {
       "task": "I1",
       "needs": "WU1",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU3",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU2",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU4",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU5",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU6",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU7",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU8",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU9",
-      "reason": "I1 joins it to the commands"
+      "reason": "I1 adapts and wires it"
     },
     {
       "task": "I1",
       "needs": "WU11",
-      "reason": "I1 joins it to the commands"
+      "reason": "I1 adapts and wires it"
     },
     {
       "task": "I1",
       "needs": "WU12",
-      "reason": "I1 joins it to the commands"
+      "reason": "I1 adapts and wires it"
     },
     {
       "task": "I1",
       "needs": "WU13",
-      "reason": "I1 joins it to the commands"
-    },
-    {
-      "task": "I1",
-      "needs": "WU14",
-      "reason": "I1 joins it to the commands"
+      "reason": "I1 adapts and wires it"
     },
     {
       "task": "I1",
       "needs": "WU15",
-      "reason": "I1 joins it to the commands"
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU18",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU2",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU20",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU3",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU4",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU5",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU6",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU7",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU8",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU9",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "WU10",
+      "needs": "I1",
+      "reason": "the refusals name commands I1 registers"
     },
     {
       "task": "WU16",
@@ -577,6 +609,21 @@
       "task": "WU17",
       "needs": "I1",
       "reason": "the live checks drive the real commands"
+    },
+    {
+      "task": "WU21",
+      "needs": "I1",
+      "reason": "the end-to-end test drives the real commands"
+    },
+    {
+      "task": "R-member-firebase",
+      "needs": "C2",
+      "reason": "amends a file C2 creates"
+    },
+    {
+      "task": "R-roster-sa",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
     }
   ],
   "decoupling": [
@@ -587,7 +634,16 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "WU5 reads and writes the roster through Store; the RTDB write is WU1's"
+      "reason": "WU5 reads and writes the roster through Store, not how the node is stored"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU6",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "WU6 reads and writes the roster through Store, not how the node is stored"
     },
     {
       "contract": "C1",
@@ -596,7 +652,7 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "WU7 reads and writes the roster through Store; the RTDB write is WU1's"
+      "reason": "WU7 reads and writes the roster through Store, not how the node is stored"
     },
     {
       "contract": "C1",
@@ -605,88 +661,7 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "WU11 reads and writes the roster through Store; the RTDB write is WU1's"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "WU14",
-        "needs": "WU1"
-      },
-      "integration": "I1",
-      "reason": "WU14 reads and writes the roster through Store; the RTDB write is WU1's"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU5",
-        "needs": "WU4"
-      },
-      "integration": "I1",
-      "reason": "WU5 calls MemberOps; how a member is written and converged is WU4's"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU7",
-        "needs": "WU4"
-      },
-      "integration": "I1",
-      "reason": "WU7 calls MemberOps; how a member is written and converged is WU4's"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU8",
-        "needs": "WU4"
-      },
-      "integration": "I1",
-      "reason": "WU8 calls MemberOps; how a member is written and converged is WU4's"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU13",
-        "needs": "WU4"
-      },
-      "integration": "I1",
-      "reason": "WU13 calls MemberOps; how a member is written and converged is WU4's"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU14",
-        "needs": "WU4"
-      },
-      "integration": "I1",
-      "reason": "WU14 calls MemberOps; how a member is written and converged is WU4's"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU5",
-        "needs": "WU2"
-      },
-      "integration": "I1",
-      "reason": "WU5 calls Authority.Link/Unlink, not the folder move itself"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU6",
-        "needs": "WU2"
-      },
-      "integration": "I1",
-      "reason": "WU6 calls Authority.Link/Unlink, not the folder move itself"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU2",
-        "needs": "WU3"
-      },
-      "integration": "I1",
-      "reason": "the SA authority reads the workspace root's IAM-account output by the name C2 fixes"
+      "reason": "WU11 reads and writes the roster through Store, not how the node is stored"
     },
     {
       "contract": "C1",
@@ -695,7 +670,7 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "grant writes an AuditEvent, not how the sink stores it"
+      "reason": "WU8 writes an AuditEvent, not how the sink stores it"
     },
     {
       "contract": "C1",
@@ -704,7 +679,7 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "reconcile writes an AuditEvent, not how the sink stores it"
+      "reason": "WU13 writes an AuditEvent, not how the sink stores it"
     },
     {
       "contract": "C1",
@@ -713,7 +688,7 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "the folder link records the member's original parent on its roster entry"
+      "reason": "the folder link records the original parent on the roster entry"
     },
     {
       "contract": "C1",
@@ -722,25 +697,7 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "the mirror is the roster's MirrorEntry, not how the roster is stored"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU9",
-        "needs": "WU4"
-      },
-      "integration": "I1",
-      "reason": "Offboard joins the MemberOps interface WU4 would have defined"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WU12",
-        "needs": "WU4"
-      },
-      "integration": "I1",
-      "reason": "drift reads MemberOps.Bindings, not how bindings are read"
+      "reason": "the mirror is the roster's MirrorEntry"
     },
     {
       "contract": "C1",
@@ -749,7 +706,7 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "drift reads the roster's members and kinds, not the store"
+      "reason": "drift reads people and kinds, not the store"
     },
     {
       "contract": "C1",
@@ -758,7 +715,133 @@
         "needs": "WU1"
       },
       "integration": "I1",
-      "reason": "the audit export reads AuditEvent's shape, not the sink"
+      "reason": "the audit export reads AuditEvent's shape"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU5",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU5 calls MemberOps, not how a member is read or written"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU6",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU6 calls MemberOps, not how a member is read or written"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU7",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU7 calls MemberOps, not how a member is read or written"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU8",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU8 calls MemberOps, not how a member is read or written"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU11",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU11 calls MemberOps, not how a member is read or written"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU13",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU13 calls MemberOps, not how a member is read or written"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU18",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU18 calls MemberOps, not how a member is read or written"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU9",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "offboarding writes through MemberOps.Audit"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU5",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU5 calls Authority, not the folder move itself"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU6",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU6 calls Authority, not the folder move itself"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU7",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU7 calls Authority, not the folder move itself"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU11",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU11 calls Authority, not the folder move itself"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU18",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU18 calls Authority, not the folder move itself"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU20",
+        "needs": "WU3"
+      },
+      "integration": "I1",
+      "reason": "the SA authority reads the IAM account's output by the name C2 fixes"
     },
     {
       "contract": "C2",
@@ -772,11 +855,20 @@
     {
       "contract": "C2",
       "was": {
+        "task": "WU11",
+        "needs": "WU12"
+      },
+      "integration": "I1",
+      "reason": "WU11 consumes DriftReport, not how drift is computed"
+    },
+    {
+      "contract": "C2",
+      "was": {
         "task": "WU13",
         "needs": "WU12"
       },
       "integration": "I1",
-      "reason": "reconcile consumes DriftReport, not how drift is computed"
+      "reason": "WU13 consumes DriftReport, not how drift is computed"
     },
     {
       "contract": "C2",
@@ -802,24 +894,21 @@
       "change": "R-member-firebase",
       "contract": "C2",
       "raised_by": "WU4",
-      "reason": "if U2 shows the member's Firebase project is not in its outputs, Converge takes it as an argument",
+      "reason": "if a member's Firebase project is not in its outputs, every MemberOps method takes it",
       "affects": [
-        "WU4",
         "WU5",
-        "WU7",
         "WU8",
-        "WU14"
+        "WU11",
+        "WU18"
       ]
     },
     {
       "change": "R-roster-sa",
       "contract": "C1",
-      "raised_by": "WU0",
-      "reason": "if the security review asks for a machine member's owner or expiry",
+      "raised_by": "WU7",
+      "reason": "if a machine member needs an owner or an expiry",
       "affects": [
-        "WU1",
         "WU5",
-        "WU7",
         "WU12"
       ]
     }
