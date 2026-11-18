@@ -440,7 +440,7 @@ rigor:
 	if rg == nil || rg.Mode != rigor.Critical || rg.From != rigor.FromArea || rg.At != runstore.RigorAtBootstrap {
 		t.Fatalf("the block = %+v, want critical from the area the declared path matched", rg)
 	}
-	want := []runstore.RigorArea{{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap}}
+	want := []runstore.RigorArea{{Name: "payments", Mode: rigor.Critical, Level: rigor.Critical, At: runstore.RigorAtBootstrap}}
 	if !reflect.DeepEqual(rg.Areas, want) {
 		t.Errorf("the areas = %+v, want %+v", rg.Areas, want)
 	}
@@ -626,8 +626,8 @@ workflows:
 	// Both rules matched; the strictest is first (D23) and each carries its
 	// own mode and the moment it was applied at.
 	want := []runstore.RigorArea{
-		{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtFinalize},
-		{Name: "docs", Level: rigor.POC, At: runstore.RigorAtFinalize},
+		{Name: "payments", Mode: rigor.Critical, Level: rigor.Critical, At: runstore.RigorAtFinalize},
+		{Name: "docs", Mode: rigor.POC, Level: rigor.POC, At: runstore.RigorAtFinalize},
 	}
 	if !reflect.DeepEqual(rg.Areas, want) {
 		t.Errorf("the areas = %+v, want %+v", rg.Areas, want)

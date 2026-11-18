@@ -257,8 +257,8 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		// per-run choice the mode is (rigor.Rigor.PerRun). A follow-up that
 		// wants it says so: --mode hotfix is accepted on one. The record still
 		// says hotfix; that is what the run it describes resolved.
-		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.Mode != rigor.Hotfix {
-			c.Rigor = bounded.Mode
+		if bounded := rec.Rigor.Bounded(); bounded != nil && bounded.LevelOf() != rigor.Hotfix {
+			c.Rigor = bounded.LevelOf()
 		}
 		// The tier this run recorded, bounded the same way: the record is an
 		// object the job's service account can write, so a block naming a tier

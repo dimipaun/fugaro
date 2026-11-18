@@ -135,7 +135,7 @@ func TestPlanReviewRoundsFollowTheReachedMode(t *testing.T) {
 	if got := r.reviewRounds(unset); got != 1 {
 		t.Fatalf("rounds = %d at POC; want the mode's one", got)
 	}
-	r.rec.Rigor.Mode = rigor.Critical
+	r.rec.Rigor.Level = rigor.Critical
 	if got := r.reviewRounds(unset); got != 5 {
 		t.Fatalf("rounds = %d after the mode rose to critical; want the five that remain", got)
 	}

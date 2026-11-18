@@ -497,7 +497,7 @@ func TestRunRecordGainsTheFieldAdditively(t *testing.T) {
 	rec := runstore.Record{
 		Version: 1, RunID: "20261108-000000-abcd", Repo: "acme/app",
 		Status: runstore.StatusSucceeded, Stage: "finalize", Outcome: runstore.OutcomeDraft,
-		Rigor:        &runstore.RigorRecord{Level: rigor.Pro, From: rigor.FromDefault, At: runstore.RigorAtBootstrap},
+		Rigor:        &runstore.RigorRecord{Mode: rigor.Pro, Level: rigor.Pro, From: rigor.FromDefault, At: runstore.RigorAtBootstrap},
 		ChangedFiles: &runstore.ChangedFiles{Paths: []string{listedPath}, Total: 1},
 		Security: runstore.NewSecurityEscalation(runstore.SecurityAtImplement,
 			sensitivity.Pattern{Name: "credentials", Match: "internal/creds/**", Category: sensitivity.Credentials}),

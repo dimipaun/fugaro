@@ -583,10 +583,10 @@ func followUpsFiledBy(filed map[string]string, g followUpGroup) (string, bool) {
 // recorded mode resolves them again for this run and a lower mode never wins.
 func followUpsParentMode(r *runstore.RigorRecord) rigor.Rigor {
 	b := r.Bounded()
-	if b == nil || b.Mode == rigor.Hotfix {
+	if b == nil || b.LevelOf() == rigor.Hotfix {
 		return ""
 	}
-	return b.Mode
+	return b.LevelOf()
 }
 
 // followUpsTaskSpec builds one group's task: a first run of its own (it
