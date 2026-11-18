@@ -419,6 +419,19 @@ func (s *Service) paddleCustomer(ctx context.Context, organisationID string) (st
 	return "", errNoPaddleCustomer
 }
 
+// ErrSubscriptionAlreadyCancelled is the merchant's own answer that the
+// subscription a cancellation asked for is ended already: the `Cancel` of the
+// Paddle seam (api.go) answers it where the merchant's refusal carries Paddle's
+// own code for that state (paddleclient.go), and a deployment's own
+// implementation of the seam answers it the same way.
+//
+// It is an answer and not a failure because it is the state the caller wanted,
+// reached by an earlier attempt whose cancellation event the merchant has not
+// delivered yet: a retried deletion that read it as a refusal would be refused
+// for as long as that delivery took, and finishing the job is the whole of what
+// the retry is.
+var ErrSubscriptionAlreadyCancelled = errors.New("keyservice: the merchant of record says that subscription is cancelled already")
+
 // cancelSubscriptionsOf ends every subscription one organisation holds, which is
 // the cancellation P2.4's deletion reaches: the plan's own line for this task
 // puts it here because this area is where a subscription is acted on, and
@@ -427,7 +440,11 @@ func (s *Service) paddleCustomer(ctx context.Context, organisationID string) (st
 // The record is left alone and the merchant's own cancellation event is what
 // moves it, the way a seat purchase leaves the seats to the event that carries
 // them (P4.2): a store marked cancelled here would be a subscription this
-// service had ended without Paddle having said so.
+// service had ended without Paddle having said so. What that leaves is the window
+// between a cancellation that landed and the event that records it, and it is
+// the merchant's own answer to a second attempt at a subscription it has already
+// ended — ErrSubscriptionAlreadyCancelled — that keeps a retried deletion
+// finishing the job inside it.
 //
 // Every subscription is attempted and the failures are joined. A deletion that
 // stopped at the first merchant failure would leave the rest of an
@@ -444,6 +461,9 @@ func (s *Service) cancelSubscriptionsOf(ctx context.Context, organisationID stri
 			continue
 		}
 		if err := s.paddle.Cancel(ctx, sub.ID); err != nil {
+			if errors.Is(err, ErrSubscriptionAlreadyCancelled) {
+				continue
+			}
 			failed = append(failed, fmt.Errorf("the merchant of record did not cancel the subscription %s: %w", sub.ID, err))
 		}
 	}

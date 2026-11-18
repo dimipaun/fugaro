@@ -507,7 +507,10 @@ type SignInVerifier interface {
 // browser never holds the key and never names custom_data (P4.1, F15); the
 // customer portal's session the billing screens link out to, and the
 // subscription's own seat count (P4.3); and the cancellation an organisation's
-// deletion makes (P2.4).
+// deletion makes (P2.4), where a subscription the merchant holds as cancelled
+// already is answered as ErrSubscriptionAlreadyCancelled (billing.go) and not as
+// a failure — a retried deletion meets it, and a refusal there is a deletion
+// that cannot be finished.
 type Paddle interface {
 	CreateTransaction(ctx context.Context, checkout Checkout) (Transaction, error)
 	PortalSession(ctx context.Context, customerID string) (string, error)
