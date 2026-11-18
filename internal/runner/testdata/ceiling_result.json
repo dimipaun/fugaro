@@ -64,6 +64,7 @@
   "rigor": {
     "at": "bootstrap",
     "from": "default",
+    "level": "pro",
     "mode": "pro",
     "revision": "origin/main"
   },
