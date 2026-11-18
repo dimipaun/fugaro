@@ -76,21 +76,6 @@ func MirrorPath(dir, slug string, dim Dim, key string) string {
 	return strings.TrimSuffix(dir, "/") + "/" + name
 }
 
-// MirrorObjectKey is where a launch puts one object it hands the commit step,
-// under the run's own prefix in the runs bucket: the mirror-relative name under
-// the reports prefix, so the object's key is the name the step checks and the
-// path it commits, and the two cannot drift.
-//
-// prefix is the run's own prefix (internal/runstore's Store.Prefix, "runs/
-// <slug>/<run>/"), which is the one prefix the run's account reads; the object
-// is written there by the launcher's own credential (D2754) and read back here.
-// It is the sibling of runstore.InputKey, and it lives here rather than there
-// because the name is the mirror's: what a launch hands in is addressed by a
-// report's own name, and this package owns that shape.
-func MirrorObjectKey(prefix, name string) string {
-	return prefix + ReportsPrefix + "/" + name
-}
-
 // ParseMirrorPath reads a mirror-relative name -- the shape above and nothing
 // else -- and answers the repository it belongs to ("" for the project's
 // aggregate), the period and the key.

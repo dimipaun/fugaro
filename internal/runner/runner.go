@@ -3083,12 +3083,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// internal/cli/recipes_skew.go).
 	r.commitReports = recipe.UsesCommitReports(rcp)
 	if r.commitReports {
-		dir, err := r.reportsCommitDesignation(ctx)
+		dir, err := r.reportsCommitDesignation(ctx, rrec.Name)
 		if err != nil {
 			// The refusal is the launch that was wrong, not the machinery: it
 			// carries the designation's own class, the way an unregistered
 			// step's or an --attach recipe's refusal does.
-			return &endClass{failure.ConfigInvalid, err}
+			return endClass{failure.ConfigInvalid, err}
 		}
 		r.reportsDir = dir
 	}

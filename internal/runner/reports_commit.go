@@ -80,10 +80,18 @@ const reportsCommitMessage = "fugaro: commit the stored run reports"
 // tree's one reading of what a repository is, so the designation and the run
 // cannot disagree about it the way two spellings of "owner/name" could.
 //
+// The folder's check is the second reading of that rule and not its only home:
+// projectpolicy refuses a bad dir when the node is decoded (ValidReportsCommit,
+// which the publish door applies too), so what reaches here has already passed
+// it once. It is repeated because the folder is joined into a checkout path a
+// few lines below, where the cost of being wrong is a commit outside the
+// repository the owner designated, and a rule read once at the far end of a
+// decode is not a rule this file can see.
+//
 // It is called once, from bootstrap, before any stage: a run that reached its
 // model stage with no designation would spend a stage and then fail to commit,
 // which is the failure this refusal exists to prevent.
-func (r *run) reportsCommitDesignation(ctx context.Context) (string, error) {
+func (r *run) reportsCommitDesignation(ctx context.Context, name string) (string, error) {
 	const unpublishable = "no report may be committed into any repository until it is set"
 	p, found, err := r.projectPolicy(ctx)
 	if err != nil {
@@ -91,12 +99,12 @@ func (r *run) reportsCommitDesignation(ctx context.Context) (string, error) {
 	}
 	if !found || p == nil {
 		return "", fmt.Errorf("recipe %s commits this project's stored run reports, and this project designates no repository for them: %s. Set reports_commit.repo (and reports_commit.dir for the folder, %s unless you name another) in %s, then publish it with `fugaro project policy publish`",
-			r.rcp.Name, unpublishable, projectpolicy.DefaultReportsCommitDir, "the owner's local project config")
+			name, unpublishable, projectpolicy.DefaultReportsCommitDir, "the owner's local project config")
 	}
 	repo := p.ReportsCommitRepo()
 	if repo == "" {
 		return "", fmt.Errorf("recipe %s commits this project's stored run reports, and this project designates no repository for them: %s. Set reports_commit.repo (and reports_commit.dir for the folder, %s unless you name another) in %s, then publish it with `fugaro project policy publish`",
-			r.rcp.Name, unpublishable, projectpolicy.DefaultReportsCommitDir, "the owner's local project config")
+			name, unpublishable, projectpolicy.DefaultReportsCommitDir, "the owner's local project config")
 	}
 	kind, ok := providerForSlug(r.d.Store.Slug(), r.spec.Repo)
 	if !ok {
@@ -105,7 +113,7 @@ func (r *run) reportsCommitDesignation(ctx context.Context) (string, error) {
 		// here rather than comparing a designation against a slug that names
 		// no repository (the binding check of project.go says the same thing).
 		return "", fmt.Errorf("recipe %s commits reports into the project's designated repository %s, and this run's slug %s is not one this tree computes for %s, so the two cannot be compared",
-			r.rcp.Name, safetext.OneLine(safetext.Strip(repo)), r.d.Store.Slug(), safetext.OneLine(safetext.Strip(r.spec.Repo)))
+			name, safetext.OneLine(safetext.Strip(repo)), r.d.Store.Slug(), safetext.OneLine(safetext.Strip(r.spec.Repo)))
 	}
 	want, err := task.Slug(kind, repo)
 	if err != nil {
@@ -113,7 +121,7 @@ func (r *run) reportsCommitDesignation(ctx context.Context) (string, error) {
 	}
 	if want != r.d.Store.Slug() {
 		return "", fmt.Errorf("recipe %s commits this project's stored run reports, and this project designates %s for them: this run stands in %s, and a report may be committed into the designated repository alone. Run it on the designated repository's own checkout, or change reports_commit.repo and publish it with `fugaro project policy publish`",
-			r.rcp.Name, safetext.OneLine(safetext.Strip(repo)), r.d.Store.Slug())
+			name, safetext.OneLine(safetext.Strip(repo)), r.d.Store.Slug())
 	}
 	dir := p.ReportsCommitDir()
 	if err := projectpolicy.ValidReportsCommitDir(dir); err != nil {
@@ -194,7 +202,13 @@ func (r *run) writeCommitReports(ctx context.Context) ([]string, error) {
 				safetext.OneLine(safetext.Strip(rf.Name)), dir, dir)
 		}
 	}
-	prefix := r.d.Store.Prefix()
+	// Where the launcher put each object: the run's own prefix -- the one
+	// prefix the run's account reads, written there by the launcher's own
+	// credential (D2754) -- and the report's name under the reports prefix.
+	// That name is the one this step just checked against the mirror's shape,
+	// so the object a launch hands in is addressed by the very name the step
+	// writes into the folder, and there is no second path to keep in step.
+	prefix := r.d.Store.Prefix() + digest.ReportsPrefix + "/"
 	var written []string
 	handed := make(map[string]bool, len(r.spec.Reports))
 	for _, rf := range r.spec.Reports {
@@ -217,9 +231,10 @@ func (r *run) writeCommitReports(ctx context.Context) ([]string, error) {
 		// replaces the folder's copy -- and the path was just checked for a link
 		// at every component, so the rename cannot be pointed anywhere else by
 		// one (reportTreePath).
-		if _, _, err := r.d.Bucket.GetFileExactly(ctx, digest.MirrorObjectKey(prefix, rf.Name), path, rf.SHA256, rf.Bytes, false, true); err != nil {
+		key := prefix + rf.Name
+		if _, _, err := r.d.Bucket.GetFileExactly(ctx, key, path, rf.SHA256, rf.Bytes, false, true); err != nil {
 			if errors.Is(err, blobx.ErrNotExist) {
-				return nil, fmt.Errorf("the task hands in a report %q that is not in this run's bucket (%s), so the step has no bytes to commit", rf.Name, digest.MirrorObjectKey(prefix, rf.Name))
+				return nil, fmt.Errorf("the task hands in a report %q that is not in this run's bucket (%s), so the step has no bytes to commit", rf.Name, key)
 			}
 			return nil, fmt.Errorf("downloading the report %q: %w", rf.Name, err)
 		}
