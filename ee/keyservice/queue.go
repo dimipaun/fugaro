@@ -81,16 +81,20 @@ func (s *Service) enqueue(ctx context.Context, a Application) error {
 	if a.At.IsZero() {
 		a.At = s.now()
 	}
-	if err := s.store.SaveApplication(ctx, a); err != nil {
-		return err
-	}
 	// The link is the portal's, built from the deployment's own origin and never
 	// from the request's Host header (§7.2's rule, as invitationURL's link is): a
 	// deployment that states no portal origin is one whose owner is told nothing,
 	// because a notification leading to a page that is not there is worse than a
-	// request that failed.
+	// request that failed. It is read before the entry is written, the way
+	// createInvitation reads it before its own write: an entry written and then
+	// left unnotified is one nobody reads, and it is one per retry, so the
+	// deployment that cannot read its own origin would grow a queue nobody was
+	// ever told about instead of refusing the request.
 	origin, err := portalOrigin(s.cfg.URL)
 	if err != nil {
+		return err
+	}
+	if err := s.store.SaveApplication(ctx, a); err != nil {
 		return err
 	}
 	return s.alerts.Notify(ctx, queueAlert(origin, a))

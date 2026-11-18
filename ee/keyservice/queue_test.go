@@ -68,3 +68,40 @@ func TestQueueNotifiesTheOwner(t *testing.T) {
 		t.Errorf("the queued request mailed the applicant %d message(s), want none", got)
 	}
 }
+
+// TestAnUnreadablePortalOriginLeavesNoQueueEntry: the notification is what makes
+// a queued request a request — an entry written and never mentioned is one
+// nobody will look at (§4.5) — so a deployment whose portal origin cannot be
+// read from its intake's refuses the ask rather than writing the entry. The
+// applicant's own answer is the uniform failure; what is held here is that
+// nothing was left behind for a person to find, and that a second attempt leaves
+// nothing either: an entry per retry is a queue that grows unannounced.
+func TestAnUnreadablePortalOriginLeavesNoQueueEntry(t *testing.T) {
+	// A deployment whose configured origin is not `keys.` plus the site's host,
+	// which is the one shape portalOrigin reads the portal's origin from: its
+	// owner cannot be sent a link to the portal's own page for the queue (P5.1).
+	f := newFixtureWith(t, Production, func(b *fixture) { b.cfg.URL = "https://intake.fugaro.dev" })
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		rec := f.askOpenSource(openSourceAsk(t, repositoryURL))
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("ask %d from a deployment whose portal origin cannot be read answered %d (%s), want 500",
+				attempt, rec.Code, rec.Body)
+		}
+		if held := f.queued(); len(held) != 0 {
+			t.Fatalf("ask %d was written into the queue anyway: the owner is told nothing about it, so it is a request nobody reads (§4.5): %+v",
+				attempt, held)
+		}
+	}
+
+	if len(f.notifier.alerts) != 0 {
+		t.Errorf("the refused ask notified the owner %d time(s), want none", len(f.notifier.alerts))
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the refused ask mailed the applicant")
+	}
+	if len(f.records()) != 0 {
+		t.Errorf("the refused ask recorded %d issuance(s), want none", len(f.records()))
+	}
+}
