@@ -28,10 +28,12 @@ import (
 // shipped: the same run's apply reaches the repository roots, and a root whose
 // `installation.credentials_service` is set is one whose job account is granted
 // roles/run.invoker on the service; the model-secret accessor the module drops
-// for such a root keys on the answer `model_secrets_served` carries, which is
-// `none` for every non-cascade repository until the flip (modules/workflow/sa.tf,
-// D2072, G17). The service's bundle is empty on a fresh
-// installation — `fugaro creds set` is its only writer — so a switch gated on
+// for such a root keys on the answer `model_secrets_served` carries — `all` for
+// a cascade job, `anthropic` for a switched `api-key` or `oauth` one since the
+// flip (the two Claude mounts and no provider key), and `none` for a repository
+// the switch holds off (modules/workflow/sa.tf, D2072, G17). The service's
+// bundle is empty on a fresh installation — `fugaro creds set` is its only
+// writer — so a switch gated on
 // the block alone would hand every repository's runs an address the service can
 // answer nothing to, and that address is what opens the git provider keyless
 // (internal/gitprov/providers/providers.go returns before it reads appKey), for
@@ -74,9 +76,10 @@ func TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle(t *testing.T) {
 // present, the record set and the bundle ready, the mode is the whole of what
 // holds it off.
 //
-// Nothing is lost by that: every one of these repositories' mounts is still
-// there (D2072, G17, config.ServiceServedAuths is empty until the flip), so a
-// run held off the service runs on exactly the credential it has always run on.
+// Nothing is lost by that: the mounts follow the same answer, so a repository
+// the mode holds off plans `model_secrets_served = none` and keeps every mount
+// it had (D2072, G17), and a run held off the service runs on exactly the
+// credential it has always run on.
 // The positive — the same two auths, on a node that is `observe` or `enforce` —
 // is TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository.
 func TestTheSwitchStaysOffForANonCascadeRepositoryWhereTheBudgetIsOff(t *testing.T) {

@@ -149,11 +149,13 @@ func dropMount(ws WorkflowSpec, logical string) {
 // make Retirements report a live container as retired. Only the mount goes;
 // the container is left exactly where it is.
 // `none` is answered here rather than left to the caller: it is the value a
-// switched `api-key` or `oauth` repository carries on this branch, so a caller
-// that lost its guard would take away the credential a run of exactly the
-// repository this release must not touch still reads (D2072, G17). The arm is
-// the empty answer, and a value this release does not know is answered the same
-// way: fail closed toward keeping the mount, never toward dropping it.
+// repository the switch holds off carries — a `vertex` one, or an `api-key` or
+// `oauth` one whose root was applied with the switch off or whose project's
+// mode is off — so a caller that lost its guard would take away the credential
+// a run of exactly the repository this drop must not touch still reads (D2072,
+// G17). The arm is the empty answer, and a value this release does not know is
+// answered the same way: fail closed toward keeping the mount, never toward
+// dropping it.
 func dropModelMounts(ws *WorkflowSpec, served string) {
 	var held func(string) bool
 	switch served {

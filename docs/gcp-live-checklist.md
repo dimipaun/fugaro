@@ -14042,8 +14042,10 @@ half that only the flip can show:
 - **The switch is really on**, for both repositories: `gcloud run jobs list` holds a job of each (matched
   by the job's own `FUGARO_REMOTE`) and that job's container carries
   `FUGARO_CREDENTIALS_SERVICE_URL`. And the published budget mode is not `off`: the mode is what
-  `fugaro update` reads and a switched repository whose mode is `off` is one whose jobs hold no mount and
-  whose runs have nothing to be served from (**D2071**). A repository off the switch **stops the run
+  `fugaro update` reads, and a repository whose root was applied while the mode was live and whose mode
+  is then `off` is one whose jobs hold no mount — the flip, B2.7 — and whose runs have nothing to be
+  served from, because the address follows the same answer (**D2071**, and the state `fugaro project
+  policy publish` refuses to create). A repository off the switch **stops the run
   before anything is launched** — a FAIL that costs no run is worth more than one that costs two.
 - **The record each run is served against**: the check **reads** `creds/repoauth/<slug>` for each
   repository out of the installation's own Realtime Database (the node `fugaro update --repo` writes,

@@ -352,9 +352,12 @@ type VoiceService struct {
 //     doctor, --print-vars), and "" is then the answer — held off, the
 //     fail-closed direction — while an empty Policy is the different answer
 //     "read, and the project has published no block". Neither is a repository
-//     left broken: nothing is dropped for an auth this release does not serve
-//     (config.ServiceServedAuths is empty until B2.7), so a held-off
-//     `api-key` repository keeps exactly the mounts it had.
+//     left broken: nothing is dropped for an auth the flip list does not carry
+//     (config.ServiceServedAuths), and an auth it does carry is held off here
+//     only where this answer is false — a mode off, a root applied with the
+//     switch off, no install — and then nothing is dropped either, so a
+//     held-off `api-key` repository keeps exactly the mounts it had and its
+//     run reads its own key, no service being reached (D2071).
 //
 //     The cascade is deliberately not held to this condition, and that is what
 //     keeps the mode's own rule whole: a `cascade` workflow is REFUSED outright
@@ -390,13 +393,18 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 // accessor drop on (config.ModelSecretServedAll, ...Anthropic, ...None).
 //
 // It is a SECOND answer rather than a clause of the switch because the two
-// come apart on this branch, and that is D2072's first step: a switched
-// `api-key` or `oauth` repository's runs reach the service from the release
-// that hands out the address, while its job goes on MOUNTING the credential —
-// config.ServiceServedAuths is empty, the flip is B2.7 — so an older launcher
-// or an older job image, which reads the mount and knows nothing of the
-// service, still works (G17, D2072). Only the cascade, which has no in-job
-// credential to read at all, takes its mounts away with the URL.
+// come apart across releases, and that was D2072's first step: from the
+// release that hands out the address (B2.3) a switched `api-key` or `oauth`
+// repository's runs reached the service while its job went on MOUNTING the
+// credential — config.ServiceServedAuths was empty then — so an older
+// launcher or an older job image, which reads the mount and knows nothing of
+// the service, still worked (G17, D2072). The flip (B2.7) filled the list,
+// which is what makes this answer `anthropic` for those two: only the two
+// named model credentials go, and a provider's key stays with the job. The
+// two answers stay apart because they decide different things — the switch is
+// the address and the accessor, this is the mount — and because the cascade,
+// which has no in-job credential to read at all, takes every mount away with
+// the URL.
 //
 // `serves` is CredentialsServiceServes' answer for this repository, and the
 // three cases are:
@@ -663,11 +671,10 @@ type RepoSpec struct {
 	// It is the flip's value rather than the switch's (D2072): `none` for a
 	// repository the switch holds off, `all` for the cascade's job, and
 	// `anthropic` — the two named model credentials and no provider key — for
-	// an auth config.ServiceServedAuths holds, which is empty until B2.7. So a
-	// switched `api-key` or `oauth` repository plans every mount and every
-	// accessor exactly as it did before the service existed, while its runs
-	// reach the service: the URL first, the mounts dropped behind the flip
-	// (G17).
+	// an auth config.ServiceServedAuths holds. So a switched `api-key` or
+	// `oauth` repository plans the two Claude mounts and their accessors away
+	// while every provider key it mounts stays, and its runs reach the service
+	// for the credential the two mounts gave up (G17, R6, D1634).
 	//
 	// It is omitted when empty, and the module's default is then `all`: the
 	// value this branch shipped before the input existed, which is what a root
@@ -1593,21 +1600,22 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		ws.SecretEnv[m.Env] = m.Logical
 		ws.SecretIDs[m.Logical] = gcp.SecretID(slug, m.Logical)
 	}
-	// A repository the credentials service serves holds its model
-	// credentials itself (D146, D147), so its jobs mount none of them:
-	// modules/workflow/sa.tf drops each job account's accessor, and a mount
-	// left behind would fail the job's own deploy. The containers stay
-	// declared — see dropModelMounts — so nothing here plans a secret's
-	// destruction.
+	// A repository the credentials service serves is handed its model
+	// credential by the service instead of by its own job (D146, D147), so the
+	// job mounts none of the mounts the service serves: modules/workflow/sa.tf
+	// drops each job account's accessor, and a mount left behind would fail the
+	// job's own deploy. The containers stay declared — see dropModelMounts —
+	// so nothing here plans a secret's destruction.
 	//
 	// Which model mounts go is ModelSecretsServed's answer and not the
 	// switch's alone (D2072): the cascade's job gives up every one of them,
 	// while an `api-key` or `oauth` repository whose runs reach the service
-	// gives up none of them until the flip — config.ServiceServedAuths is
-	// empty — because an older launcher or an older job image reads the mount
-	// and knows nothing of the service (G17). The value is the same one the
-	// tfvars carry (RepoSpec.ModelSecretsServed), so the mount this drops and
-	// the accessor the module takes away are one answer.
+	// gives up the two Claude mounts and keeps every provider key — the flip
+	// (B2.7) is what filled the list that makes that arm reachable, and the
+	// arm itself is why the two answers are apart: an `api-key` run still
+	// forwards a provider call on its own mounted key (R6, D1634). The value
+	// is the same one the tfvars carry (RepoSpec.ModelSecretsServed), so the
+	// mount this drops and the accessor the module takes away are one answer.
 	//
 	// c.credentialsServiceOn and not the block's presence: the installation
 	// having a service says nothing about THIS repository. A repository

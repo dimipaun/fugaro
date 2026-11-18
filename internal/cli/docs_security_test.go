@@ -643,9 +643,10 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// B2.4 rewrote the half that replaced it again: as of this release the
 		// switch admits `api-key` and `oauth` repositories too (B2.2, B2.3,
 		// D2071), so "the half it does not carry is the other auth modes'" and
-		// the auth-blind drop it named are both false. What has not landed is
-		// the MOUNT: a switched `api-key` or `oauth` repository's job keeps its
-		// credential and its accessor until the flip (B2.7, D2072).
+		// the auth-blind drop it named are both false. The MOUNT half has landed
+		// with the flip (B2.7, D2072), so the bullet this list carries now says
+		// what a switched one gives up and what it keeps, and the two pins below
+		// are those sentences.
 		"the service is wired as of 0.10.1",
 		// The auths the switch admits, named rather than "every `agent.auth`":
 		// `vertex` — the default — is the one it never admits, and the launcher

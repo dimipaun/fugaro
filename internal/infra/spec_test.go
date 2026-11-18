@@ -2437,9 +2437,13 @@ func serviceReady(t *testing.T, lc *localcfg.Config, repo string) {
 // and the per-repository record the update read out of the bundle). The pair
 // is the whole of what DON1's own change is, which is why every caller asserts
 // what it moves for the agent.auth it spells: the switch is installed &&
-// ready && auth == config.AuthCascade (CredentialsServiceServes), so a
-// repository of any other auth may not move at all — the finding the switch
-// was written for (docs/credentials-service/default-on.md §1.4).
+// ready && (auth == config.AuthCascade || the auth is one of
+// config.ServiceServedAuths && the published mode is observe or enforce)
+// (CredentialsServiceServes), so this pair — which publishes no policy, and so
+// carries no mode — may not move a repository of any other auth at all: the
+// finding the switch was written for (docs/credentials-service/default-on.md
+// §1.4). A mode that IS published moves the flip list's two auths, which is
+// what repoRootServed and the tests below are for.
 func converged(t *testing.T, in Inputs, lc *localcfg.Config) (off, on RepoSpec) {
 	t.Helper()
 	in.LC = lc
@@ -3041,10 +3045,10 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 // CredentialsServiceServes — is what keeps the block out of a repository the
 // service does not serve, and that is the authorization condition. This
 // fixture publishes no policy, so these two rows are repositories held off by
-// the mode as well (B2.3, D2071), and their mounts stay for the stronger reason
-// that covers every non-cascade repository this release serves: the flip that
-// takes a model mount away is B2.7's, and until it every mount is kept
-// (D2072, G17, ModelSecretsServed's `none`).
+// the mode as well (B2.3, D2071), and their mounts stay because the switch's
+// answer is `none` for a held-off repository whatever the flip list says:
+// B2.7's flip takes the two Claude mounts from a SWITCHED `api-key` or `oauth`
+// repository (ModelSecretsServed's `anthropic` arm), and this pair is not one.
 //
 // What each held-off row asserts, in the two forms the installations
 // distinguish (oauth: the shared subscription token, once per Claude account;
@@ -3092,7 +3096,7 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 				t.Fatal("the fixture mounts no model credential with no service at all: the test would be vacuous")
 			}
 			if onMounted := mounted(onWS); !slices.Equal(onMounted, offMounted) {
-				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: every one of this repository's mounts is kept until the flip (D2072, G17), so a mount the deploy alone dropped is the release blocker docs/credentials-service/default-on.md §1.4 states, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
+				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: the deploy alone changes no run — a repository the switch holds off plans model_secrets_served = none and keeps every mount (D2072, G17) — so a mount the deploy alone dropped is the release blocker docs/credentials-service/default-on.md §1.4 states, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
 			}
 			// The redaction list follows the mounts: it is built from them, and
 			// a name left out of it that the job holds is a credential the
@@ -3331,10 +3335,12 @@ func withoutClaudeMounts(mounts []string) []string {
 //
 // The spec half is what the switch's answer buys a repository root: the
 // installation's block (the job's invoker grant and the address its launches
-// are handed) and — this release's step of D2072 — a model_secrets_served of
-// `none`, so the module drops no accessor and the job keeps every mount. The
-// red step of the task was the first assertion below: with the auth half
-// removed, `api-key` answered false and this repository root carried no block.
+// are handed) and the second step of D2072, which this release carries — a
+// model_secrets_served of `anthropic`, so the module drops the two Claude
+// accessors and the job gives up those two mounts while every provider key it
+// mounts stays (B2.7). The red step of the task was the first assertion below:
+// with the auth half removed, `api-key` answered false and this repository root
+// carried no block.
 func TestServesAPIKeyAndOAuthWhenTheModeIsOn(t *testing.T) {
 	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
 		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce} {
