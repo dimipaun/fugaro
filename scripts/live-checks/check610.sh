@@ -43,9 +43,11 @@
 #     to this repository — which is U2, the row below;
 #   * the installation's jobs, read back with `gcloud run jobs list` BEFORE
 #     anything is launched: the implicit review-only job is deployed
-#     (`fugaro-p-standard-github-default-review-<hash>`, infra.ImplicitReviewJobName
-#     — the profile, provider and account are the constants, and the hash is never
-#     recomputed here), it carries `FUGARO_CREDENTIALS_SERVICE_URL` (the switch,
+#     (`fugaro-p-standard-github-default-rev-04644ca962ed`, infra.ImplicitReviewJobName
+#     — the profile, provider and account are the constants, the readable part of
+#     the name is cut to 36 characters before the twelve hex of the hash, and both
+#     are spelled below because a shell script cannot compute that derivation), and
+#     it carries `FUGARO_CREDENTIALS_SERVICE_URL` (the switch,
 #     and the ONLY route to a credential for a job that mounts none), it carries no
 #     `FUGARO_SECRET_ENVS` and no secret volume (a review variant mounts nothing:
 #     its read-only installation token and its reviewer's model calls both come
@@ -238,6 +240,9 @@ ACCOUNT=""
 REPO=""
 BASE_IMAGE=""
 AUTH=""
+# IMPLICIT_JOB and IMPLICIT_BITBUCKET_JOB are the two derived constants assigned in
+# the inputs block below (nothing here computes them); IMPLICIT_IMAGE is what the job
+# list answers for the one of them that is deployed.
 IMPLICIT_JOB=""
 IMPLICIT_IMAGE=""
 BASE_BRANCH=""
@@ -420,14 +425,17 @@ policy  argv: the `fugaro project policy show --json` document, a repository and
         policy's own profile count, whether the PROJECT's allow_repos admits it,
         whether the ACCOUNT block admits the default account to it (U2, F4), and the
         published budget mode.
-jobs    argv: the installation's job list and the name prefix of the implicit
-        review-only job. Reads every `fugaro-p-*` job — how many there are, how many
-        are review variants (credsvc.ReviewVariantSuffix, the `-review-` segment
-        before gcp.derive's hash: a coding job's name carries no account segment and
-        no suffix) and their names — and, for the prefix, how many jobs carry it and
-        the implicit job's own environment: whether it carries the credentials
-        service's URL, whether it carries FUGARO_SECRET_ENVS or a secret volume (a
-        review variant mounts nothing) and its container image.
+jobs    argv: the installation's job list, the name stem of the implicit review-only
+        job and the two names themselves (infra.ImplicitReviewJobName over the two
+        infra.ImplicitReviewProviders). Reads every `fugaro-p-*` job — how many
+        there are, how many of them ARE one of those two names (a review variant,
+        which the name cannot be read for: gcp.derive cuts the readable part to 36
+        characters, so the account segment of the github one is `default-rev`, never
+        `default-review`) and how many are not (a job of a profile), with their
+        names — and, for the stem, how many jobs carry it and the implicit job's own
+        environment: whether it carries the credentials service's URL, whether it
+        carries FUGARO_SECRET_ENVS or a secret volume (a review variant mounts
+        nothing) and its container image.
 launch  argv: the `fugaro review --json` document. Prints the run it launched, the
         job the execution landed on and the account it runs as.
 run     argv: the listing's file, a run id. Prints that run's row field by field,
@@ -690,8 +698,17 @@ elif cmd == "policy":
     print("mode=%s" % word(budget.get("mode"), 20))
 elif cmd == "jobs":
     prefix = sys.argv[3]
-    proj = coding = review = implicit_jobs = 0
-    proj_names = coding_names = review_names = ""
+    # The installation's implicit review-only jobs, by their own derived names
+    # (infra.ImplicitReviewJobName over the two ImplicitReviewProviders): a
+    # project job that IS one of them is a review variant, and one that is not
+    # is a job of a profile — its coding job or its review variant. The name
+    # cannot be read for that: gcp's derive cuts the readable part to 36
+    # characters before the hash, and that cut leaves the github job's own
+    # account segment as `default-rev`, so the `-review-` a reader of the name
+    # would look for is not in it at all.
+    review_jobs = set(sys.argv[4:])
+    proj = other = review = implicit_jobs = 0
+    proj_names = other_names = review_names = ""
     for doc in load(sys.argv[2]) or []:
         if not isinstance(doc, dict):
             continue
@@ -700,16 +717,12 @@ elif cmd == "jobs":
             continue
         proj += 1
         proj_names = "%s%s " % (proj_names, name)
-        # The review variant's name is the coding job's with the account segment
-        # spelled out and credsvc.ReviewVariantSuffix appended before the hash
-        # (credsvc.ReviewJobName), so `-review-` is the marker and a coding job's
-        # name cannot carry it.
-        if "-review-" in name:
+        if name in review_jobs:
             review += 1
             review_names = "%s%s " % (review_names, name)
         else:
-            coding += 1
-            coding_names = "%s%s " % (coding_names, name)
+            other += 1
+            other_names = "%s%s " % (other_names, name)
         if name.startswith(prefix):
             implicit_jobs += 1
             if implicit_jobs == 1:
@@ -722,10 +735,10 @@ elif cmd == "jobs":
             else:
                 print("pjob=%s (a second job of the same prefix)" % word(name, 120))
     print("proj_total=%d" % proj)
-    print("proj_coding=%d" % coding)
     print("proj_review=%d" % review)
+    print("proj_other=%d" % other)
     print("proj_names=%s" % text(proj_names.strip(), 400))
-    print("coding_names=%s" % text(coding_names.strip(), 400))
+    print("other_names=%s" % text(other_names.strip(), 400))
     print("review_names=%s" % text(review_names.strip(), 400))
     print("implicit_jobs=%d" % implicit_jobs)
 elif cmd == "launch":
@@ -1104,7 +1117,7 @@ step_jobs() {
     JOB_STOP=yes
     return 0
   fi
-  if ! reader jobs "$SCRATCH/jobs.out" "$IMPLICIT_PREFIX" >"$SCRATCH/jobs.txt" 2>"$SCRATCH/jobs.reader.err"; then
+  if ! reader jobs "$SCRATCH/jobs.out" "$IMPLICIT_PREFIX" "$IMPLICIT_JOB" "$IMPLICIT_BITBUCKET_JOB" >"$SCRATCH/jobs.txt" 2>"$SCRATCH/jobs.reader.err"; then
     unmeasured job "gcloud run jobs list printed a document this check could not read: what it printed is in $SCRATCH/jobs.out"
     JOB_STOP=yes
     return 0
@@ -1114,17 +1127,26 @@ step_jobs() {
   case "${n:-0}" in
   1) ;;
   0)
-    unmeasured job "no job of the installation is named '${IMPLICIT_PREFIX}-<hash>…' in 'gcloud run jobs list', so the implicit review-only job is NOT deployed: a review of a baked, profile-less repository resolves onto that job and nothing else (infra's implicitReviewVariant, which deploys it whenever the credentials service is on and one GitHub App ID is recorded), so a launch would refuse and every row below would be a row about nothing. Run 'fugaro update' (it deploys the job without a profile) and run this check again"
+    unmeasured job "no job of the installation is named '${IMPLICIT_PREFIX}-<hash>…' in 'gcloud run jobs list', so the implicit review-only job is NOT deployed: a review of a baked, profile-less repository resolves onto that job and nothing else (infra's implicitReviewVariant, which deploys it under the name infra.ImplicitReviewJobName derives from the triple whenever the credentials service is on and one GitHub App ID is recorded), so a launch would refuse and every row below would be a row about nothing. Run 'fugaro update' (it deploys the job without a profile) and run this check again"
     JOB_STOP=yes
     return 0
     ;;
   *)
-    fact job FAIL "${n} jobs of the installation start with '${IMPLICIT_PREFIX}-': the implicit review-only job's name is one (profile, provider, account) triple plus a hash (gcp.ProjectJobName), so two jobs of that stem are two deployments of one row, and which of them a review landed on would not be a fact of the policy. The jobs this check read: $(field "$SCRATCH/jobs.txt" proj_names). Run 'fugaro update' and read the job list yourself ('gcloud run jobs list --project=${PROJECT} --region=${REGION}')"
+    fact job FAIL "${n} jobs of the installation start with '${IMPLICIT_PREFIX}-': the implicit review-only job's name is one (profile, provider, account) triple plus a hash (gcp.ProjectJobName, whose readable part — here 'fugaro-p-standard-github-default-review', the triple sanitized into a name — is cut to 36 characters before the hash, and that cut is why the account segment reads 'default-rev' rather than 'default-review'), so two jobs of that stem are two deployments of one row, and which of them a review landed on would not be a fact of the policy. The jobs this check read: $(field "$SCRATCH/jobs.txt" proj_names). Run 'fugaro update' and read the job list yourself ('gcloud run jobs list --project=${PROJECT} --region=${REGION}')"
     JOB_STOP=yes
     return 0
     ;;
   esac
-  IMPLICIT_JOB=$(field "$SCRATCH/jobs.txt" pjob | awk '{print $1}')
+  # The job of that stem has to BE the name infra derives, not merely one that starts
+  # like it: the stem is the derived name minus its twelve hex of hash, and both the
+  # launch row and U4's classification below hold the installation to the derivation.
+  local found
+  found=$(field "$SCRATCH/jobs.txt" pjob | awk '{print $1}')
+  if [ "$found" != "$IMPLICIT_JOB" ]; then
+    unmeasured job "the installation's job of the implicit review-only stem is '${found}', and the name infra.ImplicitReviewJobName derives from the triple (profile 'standard', provider 'github', account 'default') is '${IMPLICIT_JOB}': a job whose hash is not the one the derivation gives is not the job this check's rows are about — its derivation here and the installation's may be two versions of one name — and a launch cannot be held to a job read under another name. Read 'gcloud run jobs list --project=${PROJECT} --region=${REGION}', compare the two names and run this check from the version the installation runs"
+    JOB_STOP=yes
+    return 0
+  fi
   IMPLICIT_IMAGE=$(printf '%s' "$(field "$SCRATCH/jobs.txt" pjob)" | sed -n 's/.*image=//p')
   local url secrets volumes
   url=$(printf '%s' "$(field "$SCRATCH/jobs.txt" pjob)" | sed -n 's/.*url=\([a-z]*\).*/\1/p')
@@ -1535,17 +1557,19 @@ answer_u3() {
 }
 
 # answer_u4: a live terraform apply with no project jobs. Read off the job list: the
-# installation deploys the review-only job and NO coding project job, and the review
-# above ran in it — the golden plan test's real apply.
+# installation deploys the review-only jobs and NO job of a profile — which is where a
+# coding job comes from — and the review above ran in one of them: the golden plan
+# test's real apply.
 answer_u4() {
-  local proj coding review_names
+  local proj other other_names review_names
   proj=$(field "$SCRATCH/jobs.txt" proj_total)
-  coding=$(field "$SCRATCH/jobs.txt" proj_coding)
+  other=$(field "$SCRATCH/jobs.txt" proj_other)
+  other_names=$(field "$SCRATCH/jobs.txt" other_names)
   review_names=$(field "$SCRATCH/jobs.txt" review_names)
-  if [ "${coding:-0}" -eq 0 ]; then
-    fact u4 PASS "U4: ${INSTALL} (${PROJECT}, region ${REGION}) deploys ${proj:-0} project job(s) and EVERY one of them is a review variant — $(printf '%s' "${review_names:-<none>}" | tr ' ' ',') — with no coding project job at all, and the review above ran in one of them: this is the live 'terraform apply' with no project jobs the golden plan test stands in for, and the review working on it is what U4 asks for (the plan test proves the plan, the apply is yours, and the run it produced is here)"
+  if [ "${other:-0}" -eq 0 ]; then
+    fact u4 PASS "U4: ${INSTALL} (${PROJECT}, region ${REGION}) deploys ${proj:-0} project job(s) and EVERY one of them is an implicit review-only job — $(printf '%s' "${review_names:-<none>}" | tr ' ' ',') — with no job of a profile at all, and the review above ran in one of them: this is the live 'terraform apply' with no project jobs the golden plan test stands in for, and the review working on it is what U4 asks for (the plan test proves the plan, the apply is yours, and the run it produced is here)"
   else
-    fact u4 FAIL "U4: ${INSTALL} deploys ${coding} coding project job(s) alongside the review-only job — $(field "$SCRATCH/jobs.txt" coding_names) out of ${proj:-0} job(s) named 'fugaro-p-…'. U4 is 'a live terraform apply with NO project jobs', and an installation whose plan carries coding project jobs is a different installation: the review above still ran in the review-only job, which is U1's and U2's subject, but the apply this row is about is not the one measured. Point this check at a profile-less project that deploys no coding project job, or record that U4 is answered elsewhere"
+    fact u4 FAIL "U4: ${INSTALL} deploys ${other} project job(s) which are NOT an implicit review-only job — ${other_names:-<none>} out of ${proj:-0} job(s) named 'fugaro-p-…'. U4 is 'a live terraform apply with NO project jobs', and a project job that is neither of the installation's two implicit review-only names (infra.ImplicitReviewJobName over infra.ImplicitReviewProviders) is a job of a profile: a coding job, or the profile's own review variant. The review above still ran in the review-only job, which is U1's and U2's subject, but the apply this row is about is not the one measured. Point this check at a profile-less project that deploys no job of a profile, or record that U4 is answered elsewhere"
   fi
 }
 
@@ -1711,12 +1735,24 @@ LOG_WAIT_SECONDS=${CHECK610_LOG_WAIT_SECONDS:-120}
 LOG_POLL_SECONDS=${CHECK610_LOG_POLL_SECONDS:-5}
 DOCTOR_TIMEOUT=${CHECK610_DOCTOR_TIMEOUT_SECONDS:-180}
 CLI_TIMEOUT=${CHECK610_CLI_TIMEOUT_SECONDS:-180}
-# The implicit review-only job's name stem: the profile, provider and account are the
-# constants the implicit job is built from (infra.ImplicitReviewProfile is
-# config.DefaultJobProfile, config.ReviewVariantAccount's "default" and the suffix
-# credsvc.ReviewVariantSuffix make the account segment), and the hash after it is
-# never recomputed here — the job the launcher chose is read, not derived.
-IMPLICIT_PREFIX="fugaro-p-standard-github-default-review"
+# The implicit review-only job's names, spelled rather than derived: a shell script
+# cannot compute gcp's derivation (sanitize, cut to 36 characters, then twelve hex
+# of sha256 over the profile, provider and account), and a live check that guessed
+# at it would read an installation as one that deploys no review-only job at all.
+#
+# IMPLICIT_PREFIX is infra.ImplicitReviewJobName("github") without its trailing
+# "-<twelve hex>", and is the stem this check counts the jobs of: two jobs of it
+# are two deployments of one row. IMPLICIT_JOB and IMPLICIT_BITBUCKET_JOB are the
+# two names themselves (infra.ImplicitReviewProviders, the profile-value,
+# provider-value and account-value constants the deployer builds them from), and
+# they are what tells a review-only job from a profile's job below — a project job
+# that is neither of them is a job of a profile. These three strings are pinned to
+# infra.ImplicitReviewJobName by TestLiveCheck610NamesTheImplicitReviewJobs, so a
+# naming change breaks the pin rather than this check's reading of a real
+# installation.
+IMPLICIT_PREFIX="fugaro-p-standard-github-default-rev"
+IMPLICIT_JOB="fugaro-p-standard-github-default-rev-04644ca962ed"
+IMPLICIT_BITBUCKET_JOB="fugaro-p-standard-bitbucket-default-491922f654ef"
 # Resolved before anything runs, and by absolute path: this check drives a real
 # `fugaro` that reaches the cloud, so it must be the one on PATH when the check
 # started rather than one a later step could put there.

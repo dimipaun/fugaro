@@ -20,8 +20,9 @@
 # cloned one or a second non-baked one, or no auth at all; a policy with no
 # profiles block, with one, one that does not admit the repository, or a budget
 # mode of off or none; a job list with no implicit review-only job, two of them,
-# one without the service URL or with a secret, one on another image, or one with
-# a coding project job beside it; a launch on another job, as another account or
+# another hash on its stem, one without the service URL or with a secret, one on
+# another image, or one with a coding project job, a profile's own review variant or
+# the Bitbucket implicit job beside it; a launch on another job, as another account or
 # with no run named; a row that had not finished, failed, or names another pull
 # request; an artifact about another run, another pull request, another account or
 # no verdict; and a log whose first served model call is another credential, of
@@ -79,9 +80,19 @@ repo=acme-owner/chk610-sandbox
 origin=https://github.com/acme-owner/chk610-sandbox.git
 base_image="us-east5-docker.pkg.dev/$gcp_project/fugaro/base@sha256:aa11bb22cc33dd44"
 other_image="us-east5-docker.pkg.dev/$gcp_project/fugaro/other@sha256:dd44ee55ff66aa77"
-job="fugaro-p-standard-github-default-review-6f2c1a"
-coding_job="fugaro-p-standard-github-9f8e7d"
-per_repo_job="fugaro-chk610-sandbox-chk-abc123"
+# The job names are the real derived ones, never invented: an implicit review-only
+# job is what infra.ImplicitReviewJobName derives from the triple (gcp.derive cuts
+# the readable part to 36 characters before the twelve hex of the hash, so the github
+# job's account segment reads `default-rev` and never `default-review`), a coding job
+# of a project is what gcp.ProjectJobName derives, and a per-repository job is
+# gcp.JobName's. TestLiveCheck610NamesTheImplicitReviewJobs pins the two implicit
+# names to infra, so a naming change breaks that pin rather than leaving this suite
+# passing against names no installation has.
+job="fugaro-p-standard-github-default-rev-04644ca962ed"
+bitbucket_job="fugaro-p-standard-bitbucket-default-491922f654ef"
+coding_job="fugaro-p-standard-github-0ca96e64b636"
+profile_review_job="fugaro-p-standard-github-work-review-1f24aece23df"
+per_repo_job="fugaro-acme-owner-chk610-sandbox-chk-105651dae500"
 base_branch=main
 run_base=20261118-120000
 run_id=$run_base-0610
@@ -379,9 +390,12 @@ write_json() { # dir
 import copy, json, os, sys
 
 out_dir, base_image, other_image, run_slug, head_sha = sys.argv[1:6]
-implicit = "fugaro-p-standard-github-default-review-6f2c1a"
-coding = "fugaro-p-standard-github-9f8e7d"
-per_repo = "fugaro-chk610-sandbox-chk-abc123"
+implicit = "fugaro-p-standard-github-default-rev-04644ca962ed"
+implicit_stem = "fugaro-p-standard-github-default-rev"
+bitbucket_implicit = "fugaro-p-standard-bitbucket-default-491922f654ef"
+coding = "fugaro-p-standard-github-0ca96e64b636"
+profile_review = "fugaro-p-standard-github-work-review-1f24aece23df"
+per_repo = "fugaro-acme-owner-chk610-sandbox-chk-105651dae500"
 
 
 def out(name, obj):
@@ -491,8 +505,25 @@ out("jobs.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS")), review
 out("jobs-coding.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS")), review_job, coding_job])
 out("jobs-no-implicit.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS"))])
 out("jobs-two-implicit.json", [review_job,
-                               job("fugaro-p-standard-github-default-review-111111", base_image,
+                               job("%s-111111111111" % implicit_stem, base_image,
                                    envs("FUGARO_CREDENTIALS_SERVICE_URL"))])
+# Another hash on the same stem is not the job infra derives: the check reads a job
+# of the derivation, never one that merely starts like it.
+out("jobs-other-hash.json", [job("%s-abcdefabcdef" % implicit_stem, base_image,
+                                 envs("FUGARO_CREDENTIALS_SERVICE_URL"))])
+# The credentials service on and a Bitbucket repository recorded deploys the
+# Bitbucket implicit review-only job beside the github one: two derivations of one
+# row, both review variants, and U4 counts neither as a job of a profile.
+out("jobs-bitbucket-implicit.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS")),
+                                     review_job,
+                                     job(bitbucket_implicit, base_image,
+                                         envs("FUGARO_CREDENTIALS_SERVICE_URL"))])
+# A profile's own review variant: a project job that is not one of the two implicit
+# names, however much of the word `review` its name carries.
+out("jobs-profile-review.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS")),
+                                 review_job,
+                                 job(profile_review, base_image,
+                                     envs("FUGARO_CREDENTIALS_SERVICE_URL"))])
 out("jobs-no-url.json", [job(implicit, base_image, envs("FUGARO_GITHUB_APP_ID"))])
 out("jobs-secrets.json", [job(implicit, base_image,
                               envs("FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_SECRET_ENVS"))])
@@ -786,7 +817,7 @@ test_happy_path() {
   expect_row u1 "whose container image is the installation's own base image '$base_image'" "the happy path: U1 compares the two images"
   expect_row u2 "PASS — U2: $install's published policy carries no profiles block and its accounts block admits the DEFAULT account" "the happy path: U2"
   expect_row u3 "PASS — U3: the checkout resolves agent.auth 'vertex' and the review's model calls were served by the installation's credentials service as the credential 'default'" "the happy path: U3"
-  expect_row u4 "PASS — U4: $install ($gcp_project, region $region) deploys 1 project job(s) and EVERY one of them is a review variant — $job — with no coding project job at all" "the happy path: U4"
+  expect_row u4 "PASS — U4: $install ($gcp_project, region $region) deploys 1 project job(s) and EVERY one of them is an implicit review-only job — $job — with no job of a profile at all" "the happy path: U4"
   expect_row restore "PASS — pull request #$pr of $repo was opened by this check" "the happy path: the restore row"
   expect_row scratch-removed "PASS" "the happy path: the scratch row"
   expect_contains "$out" "CHECK 610 RESULT END (exit 0)" "the happy path: the end line"
@@ -1121,7 +1152,7 @@ test_no_implicit_review_job_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_JOBS_FILE=jobs-no-implicit.json
   expect_status "$status" 2 "an installation with no implicit review-only job"
-  expect_row job "FAIL — no job of the installation is named 'fugaro-p-standard-github-default-review-<hash>…' in 'gcloud run jobs list', so the implicit review-only job is NOT deployed" "no implicit job: the row"
+  expect_row job "FAIL — no job of the installation is named 'fugaro-p-standard-github-default-rev-<hash>…' in 'gcloud run jobs list', so the implicit review-only job is NOT deployed" "no implicit job: the row"
   expect_contains "$out" "Run 'fugaro update' (it deploys the job without a profile)" "no implicit job: the fix is named"
   expect_row pull "FAIL — the installation's review-only job was not read" "no implicit job: nothing is launched on it"
   assert_no_launch "$dir" "an installation with no implicit review-only job"
@@ -1132,7 +1163,7 @@ test_two_implicit_review_jobs_is_a_finding() {
   prepare "$dir"
   run_check "$dir" FAKE_JOBS_FILE=jobs-two-implicit.json
   expect_status "$status" 1 "two implicit review-only jobs"
-  expect_row job "FAIL — 2 jobs of the installation start with 'fugaro-p-standard-github-default-review-'" "two implicit jobs: the row counts them"
+  expect_row job "FAIL — 2 jobs of the installation start with 'fugaro-p-standard-github-default-rev-'" "two implicit jobs: the row counts them"
   expect_contains "$out" "the implicit review-only job's name is one (profile, provider, account) triple plus a hash" "two implicit jobs: why it is a finding"
   assert_no_launch "$dir" "two implicit review-only jobs"
 }
@@ -1180,7 +1211,7 @@ test_a_jobs_list_that_is_not_a_document_is_not_measured() {
   prepare "$dir"
   run_check "$dir" FAKE_MODE=jobs-garbage
   expect_status "$status" 2 "a job list that is not a document"
-  expect_row job "FAIL — no job of the installation is named 'fugaro-p-standard-github-default-review-<hash>…'" "a job list that is not a document: nothing is read out of it"
+  expect_row job "FAIL — no job of the installation is named 'fugaro-p-standard-github-default-rev-<hash>…'" "a job list that is not a document: nothing is read out of it"
   assert_no_launch "$dir" "a job list that is not a document"
 }
 
@@ -1574,13 +1605,51 @@ test_an_installation_that_deploys_a_coding_project_job_fails_u4() {
   # per-repository job is not a project job at all (it is named for the repository).
   run_check "$dir" FAKE_JOBS_FILE=jobs-coding.json
   expect_status "$status" 1 "an installation with a coding project job"
-  expect_row u4 "FAIL — U4: $install deploys 1 coding project job(s) alongside the review-only job — $coding_job out of 2 job(s) named 'fugaro-p-…'" "an installation with a coding project job: the row"
+  expect_row u4 "FAIL — U4: $install deploys 1 project job(s) which are NOT an implicit review-only job — $coding_job out of 2 job(s) named 'fugaro-p-…'" "an installation with a coding project job: the row"
   expect_row u4 "U4 is 'a live terraform apply with NO project jobs'" "an installation with a coding project job: why it is a finding"
   expect_absent "$(printf '%s\n' "$out" | grep -m1 '^FACT u4: ' || true)" "$per_repo_job" "an installation with a coding project job: the per-repository job is not a project job"
   # The review itself still landed on the review-only job: U4's finding is about
   # the apply, not about where this check's review ran.
   expect_row u1 "PASS — U1" "an installation with a coding project job: U1 still holds"
   assert_one_launch "$dir" "an installation with a coding project job"
+}
+
+test_a_profiles_review_variant_is_not_an_implicit_job() {
+  local dir=$work/u4-profile-review
+  prepare "$dir"
+  # A profile's own review variant is a project job like any other, and its name
+  # carries the word `review`: a check that read the name for a `-review-` segment
+  # would count it as a review-only job and pass U4 on an installation that deploys
+  # a profile. The classification is the derivation, so it fails.
+  run_check "$dir" FAKE_JOBS_FILE=jobs-profile-review.json
+  expect_status "$status" 1 "a profile's review variant"
+  expect_row u4 "FAIL — U4: $install deploys 1 project job(s) which are NOT an implicit review-only job — $profile_review_job out of 2 job(s) named 'fugaro-p-…'" "a profile's review variant: the row counts it"
+  expect_row u4 "a job of a profile: a coding job, or the profile's own review variant" "a profile's review variant: why it is a finding"
+  assert_one_launch "$dir" "a profile's review variant"
+}
+
+test_the_bitbucket_implicit_job_is_a_review_variant_too() {
+  local dir=$work/u4-bitbucket-implicit
+  prepare "$dir"
+  # The credentials service on and a Bitbucket repository recorded deploys the
+  # Bitbucket implicit review-only job BESIDE the github one: both are derivations
+  # of the same row, and an installation that deploys both has no job of a profile.
+  run_check "$dir" FAKE_JOBS_FILE=jobs-bitbucket-implicit.json
+  expect_status "$status" 0 "an installation with the Bitbucket implicit job"
+  expect_row u4 "PASS — U4: $install ($gcp_project, region $region) deploys 2 project job(s) and EVERY one of them is an implicit review-only job — $job,$bitbucket_job — with no job of a profile at all" "an installation with the Bitbucket implicit job: both names are counted as review variants"
+}
+
+test_a_job_of_another_hash_is_not_the_implicit_job() {
+  local dir=$work/job-other-hash
+  prepare "$dir"
+  # The stem matches and the twelve hex of the hash do not: this is not the name
+  # infra.ImplicitReviewJobName derives from the triple, so the job this check's
+  # rows are about is not deployed under the name they are held to.
+  run_check "$dir" FAKE_JOBS_FILE=jobs-other-hash.json
+  expect_status "$status" 2 "a job of another hash on the implicit stem"
+  expect_row job "FAIL — the installation's job of the implicit review-only stem is '${job%-*}-abcdefabcdef', and the name infra.ImplicitReviewJobName derives from the triple" "a job of another hash on the implicit stem: the row names both"
+  expect_contains "$out" "'$job': a job whose hash is not the one the derivation gives" "a job of another hash on the implicit stem: the derived name is spelled"
+  assert_no_launch "$dir" "a job of another hash on the implicit stem"
 }
 
 test_kept_scratch_is_reported() {
@@ -1725,7 +1794,10 @@ t test_a_line_of_another_run_is_not_read
 t test_a_log_read_that_failed_leaves_u3_unmeasured
 t test_the_log_read_asks_for_the_oldest_lines
 t test_the_log_window_is_widened_by_the_time_since_the_launch
+t test_a_job_of_another_hash_is_not_the_implicit_job
 t test_an_installation_that_deploys_a_coding_project_job_fails_u4
+t test_a_profiles_review_variant_is_not_an_implicit_job
+t test_the_bitbucket_implicit_job_is_a_review_variant_too
 t test_kept_scratch_is_reported
 t test_every_row_of_the_block_is_reached
 t test_the_sandbox_can_be_named_as_an_argument

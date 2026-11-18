@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -734,6 +735,53 @@ func TestLiveCheckScripts(t *testing.T) {
 	wg.Wait()
 	for _, msg := range failures {
 		t.Error(msg)
+	}
+}
+
+// TestLiveCheck610NamesTheImplicitReviewJobs pins Check 610's spelled-out job names
+// to the derivation that produces them. check610.sh cannot compute a job name --
+// gcp's derivation sanitizes the profile, provider and account into a readable part,
+// cuts that part to thirty-six characters and appends twelve hex of a hash -- so it
+// carries the two implicit review-only names as constants, and it tells a review
+// variant from a job of a profile by the derivation rather than by a segment of the
+// name: the cut is why the github job's account segment reads `default-rev` and never
+// `default-review`, so the substring a reader would look for is not in the name at
+// all. A rename in infra has to break here instead of making the live check report
+// that a real installation deploys no review-only job.
+func TestLiveCheck610NamesTheImplicitReviewJobs(t *testing.T) {
+	dir := filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks")
+	scripts := map[string]string{}
+	for _, name := range []string{"check610.sh", "check610_test.sh"} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		scripts[name] = string(b)
+	}
+	for _, provider := range infra.ImplicitReviewProviders {
+		name := infra.ImplicitReviewJobName(provider)
+		for _, script := range []string{"check610.sh", "check610_test.sh"} {
+			if !strings.Contains(scripts[script], name) {
+				t.Errorf("%s does not carry the implicit review-only job name infra.ImplicitReviewJobName(%q) derives, %q, so the check would read a real installation as one that deploys no such job", script, provider, name)
+			}
+		}
+	}
+	// The stem is what the job-list reader counts the jobs of, and it is also what a
+	// message about two deployments names: it has to be the github name without its
+	// trailing hash, never a name of its own.
+	const assignment = `IMPLICIT_PREFIX="`
+	i := strings.Index(scripts["check610.sh"], assignment)
+	if i < 0 {
+		t.Fatalf("check610.sh carries no %s assignment", assignment)
+	}
+	rest := scripts["check610.sh"][i+len(assignment):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("check610.sh's %s assignment is not closed", assignment)
+	}
+	stem, github := rest[:j], infra.ImplicitReviewJobName("github")
+	if github == stem || !strings.HasPrefix(github, stem) {
+		t.Errorf("check610.sh counts jobs of the stem %q, which is not the github implicit review-only job's name %q with its hash taken off", stem, github)
 	}
 }
 
