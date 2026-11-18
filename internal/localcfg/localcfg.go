@@ -757,7 +757,7 @@ type Config struct {
 	// reports and the folder inside it (D2750, D2751; periodic-reviews R14):
 	// `reports_commit.repo` names the ONE repository a report run may open its
 	// pull request in, and `reports_commit.dir` the folder inside it, the
-	// layout's own folder (projectpolicy.DefaultReportsCommitDir) unless the
+	// mirror folder (projectpolicy.DefaultReportsCommitDir) unless the
 	// owner says otherwise.
 	//
 	// It travels the way Binaries does, and for a sharper reason: the member

@@ -221,6 +221,7 @@ func TestRecipesLsLayers(t *testing.T) {
 		{Name: "team", Source: "repo"},
 		{Name: "claude-solo", Source: "project"},
 		{Name: "team", Source: "project", ShadowedBy: "repo"},
+		{Name: "commit-reports", Source: "catalog"},
 		{Name: "default", Source: "catalog"},
 		{Name: "escalate", Source: "catalog"},
 		{Name: "lint-fix", Source: "catalog"},

@@ -3991,18 +3991,23 @@ func TestPolicyShowPrintsTheDesignatedReportsRepository(t *testing.T) {
 	}
 }
 
-// TestTheReportsCommitFolderIsTheLayoutsFolder pins the one thing
-// projectpolicy cannot say about its own default: that it is the report
-// layout's folder. The constant is spelled there as a literal rather than read
-// from internal/digest, because that package's own test binary reaches
-// projectpolicy through internal/orchestrator and importing it there would be
-// an import cycle — so the two are held equal here, where both are readable,
-// and a layout that moved its folder fails this test instead of quietly
-// committing a project's reports beside the folder the layout writes.
-func TestTheReportsCommitFolderIsTheLayoutsFolder(t *testing.T) {
-	if projectpolicy.DefaultReportsCommitDir != digest.Dir {
-		t.Errorf("projectpolicy.DefaultReportsCommitDir = %q, and the report layout's folder (digest.Dir) is %q: a project that designates a repository and names no folder means the place its reports already live",
-			projectpolicy.DefaultReportsCommitDir, digest.Dir)
+// TestTheReportsCommitFolderIsNotTheLayoutsFolder pins that the default mirror
+// folder is not the one run-digest writes a repository's own reports into
+// (digest.Dir): a designated repository that is itself reviewed holds both, and
+// no mirror path may be a path run-digest writes. projectpolicy spells the
+// default as a literal (internal/digest's test binary reaches it through
+// internal/orchestrator, so importing it there is a cycle), so the two are held
+// apart here, where both are readable.
+func TestTheReportsCommitFolderIsNotTheLayoutsFolder(t *testing.T) {
+	def := projectpolicy.DefaultReportsCommitDir
+	if def == digest.Dir || strings.HasPrefix(def+"/", digest.Dir+"/") || strings.HasPrefix(digest.Dir+"/", def+"/") {
+		t.Fatalf("projectpolicy.DefaultReportsCommitDir = %q and digest.Dir = %q: the mirror's default folder must be neither the layout's folder nor inside it nor around it, or a designated repository's own reports and the mirror share paths", def, digest.Dir)
+	}
+	own := digest.Dir + "/" + digest.PeriodPath("2026-10-25")
+	for _, slug := range []string{"acme-app-dc4d4e59e884fc44", ""} {
+		if got := digest.MirrorPath(def, slug, "day", "2026-10-25"); got == "" || got == own || strings.HasPrefix(got, digest.Dir+"/") {
+			t.Errorf("MirrorPath(%q, %q) = %q: it must be a path of its own, never a path run-digest writes (%q)", def, slug, got, own)
+		}
 	}
 }
 

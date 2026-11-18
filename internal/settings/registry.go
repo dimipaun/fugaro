@@ -1232,10 +1232,10 @@ var localRows = []Row{
 	// projectpolicy.ValidReportsCommitDir's, which are checks no scalar write
 	// can make. The default of `dir` is the node's own
 	// (projectpolicy.DefaultReportsCommitDir), because a block that designates
-	// a repository and names no folder commits into the folder the reports
-	// already live in (D960).
+	// a repository and names no folder commits into a folder run-digest never
+	// writes (owner ruling 2026-11-18).
 	locLocal("reports_commit.repo", "none: the project commits no report anywhere, and a written empty block is how the owner takes a designation away", "project", docPeriodicReviews),
-	locLocal("reports_commit.dir", "docs/fugaro-reviews: the report layout's own folder, which a designation that names no folder commits into (D960)", "project", docPeriodicReviews),
+	locLocal("reports_commit.dir", "docs/fugaro-reviews-mirror: a folder the report layout never writes, so a designated repository's own reports and the mirror cannot meet", "project", docPeriodicReviews),
 
 	// The node-only blocks' local carriers (config-ownership plan task N1,
 	// D2607, F22, F23): the cascade, and the record that states an explicit
