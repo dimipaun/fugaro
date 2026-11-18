@@ -6212,7 +6212,7 @@ Write the binaries block this machine's project config carries: the paths a run 
 
 The block is the owner's grant, and a run of the project is the only reader: `fugaro update` publishes it into the project's policy node, where the run's finalize holds an added file to it — one at a path no pattern admits, or one above the cap, fails the run and is held out of the commit. No branch can widen the grant: `fugaro.yaml` carries no such key, and the shared config refuses it.
 
-`allow PATTERN` admits the paths one doublestar glob matches, relative to the repository root; `deny PATTERN` takes one pattern away. Admitting is the widening write, so it is refused in a coding agent's session and written at your own terminal, where it says what it widens and asks nothing. Taking a pattern away narrows the grant, and a session may make it.
+`allow PATTERN` admits the paths one doublestar glob matches, relative to the repository root; `deny PATTERN` takes one pattern away. Admitting is the widening write, so it is refused in a coding agent's session whatever the gate says and written at your own terminal, where it says what it widens and asks nothing. Taking a pattern away narrows the grant and is not the widening step, so what it meets is the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write.
 
 `max-bytes N` writes the cap in bytes. It may only be lowered, to at most 2097152 (2 MiB, the ceiling the rule ships), and lowering it from a cap this file states is the narrowing direction a session may write; raising it back, or writing a cap into a file that states no block at all, is refused in a session — the published cap and grant cannot be read off this file, so that write is the owner's own step.
 
@@ -6266,7 +6266,7 @@ The pattern is taken away whole and compared as written, so it is the exact entr
 
 A pattern this file does not carry is not a failure and nothing is written: the list this file states is the grant a publish carries, so a file that states one admits no path but the ones in it. A file that states no `binaries:` block at all is refused instead, because there is no entry beside the node's to take away: the published list is what stands until this file states one, and the only edit a removal could make there would take the whole admission away rather than one pattern.
 
-Taking a pattern away narrows the grant, so a coding agent's session may write it; the block this file states is the whole block `fugaro update` publishes, and the change reaches a run through that publish.
+Taking a pattern away narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. The block this file states is the whole block `fugaro update` publishes, and the change reaches a run through that publish.
 
 Usage: `fugaro project binaries deny <pattern>`
 
@@ -6288,7 +6288,7 @@ Write binaries.max_bytes in this machine's project config: the largest a single 
 
 The cap may only be lowered. `projectpolicy.ValidBinariesMaxBytes` is the rule and it refuses anything above 2097152 (2 MiB), which is the ceiling the rule ships; a project that writes no cap at all is held to that ceiling, and a cap of zero is refused rather than read as the absent member, because zero is the one value that would silently raise the cap to it.
 
-Lowering the cap from the one this file states narrows the grant, and a coding agent's session may write it. Raising it back, or writing a cap into a file that states no binaries block at all, is refused in a session: the published cap is what a file that states none leaves in force and cannot be read here, so that write is the owner's own step — and the block this file states is the whole block `fugaro update` publishes, so a first write of one member beside it is a statement about the other member as well.
+Lowering the cap from the one this file states narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. Raising it back, or writing a cap into a file that states no binaries block at all, is the widening direction, refused in a session whatever the gate says: the published cap is what a file that states none leaves in force and cannot be read here, so that write is the owner's own step — and the block this file states is the whole block `fugaro update` publishes, so a first write of one member beside it is a statement about the other member as well.
 
 Usage: `fugaro project binaries max-bytes <n>`
 
