@@ -499,6 +499,18 @@ type WorkflowSpec struct {
 	TokenCondition Condition `json:"token_condition"`
 	Vertex         bool      `json:"vertex"`
 	DeployJob      bool      `json:"deploy_job"`
+	// StageAccount is whether this is a mixed stage account's own variant job
+	// (mixedStageAccountJob): the job a run's `review`, `adversarial` and
+	// `triage` stages go out on when an api-key repository mixes a Claude
+	// account with the provider key its coder's stages keep (B0's one mix,
+	// docs/design/mixed-credentials.md §11). Those stages reach Anthropic on
+	// that account's token through the RUNNER and never through the run's
+	// gateway, so the credentials service has no call of theirs to serve and
+	// B2.7's flip leaves this job's Claude OAuth mount and its accessor alone
+	// where it takes the rest away (dropModelMounts, modules/workflow/sa.tf's
+	// anthropic arm). False for every other job of the repository, the base
+	// variant included.
+	StageAccount bool `json:"stage_account"`
 
 	Name                string            `json:"-"`
 	Slug                string            `json:"-"`
@@ -1209,8 +1221,9 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // instead stores that one for the project through the allow-list (D461/D464).
 // GitHub's App key is a project's, mounted by every repository the App serves,
 // and its logical name is config.GitHubAppKeySecret — the same constant
-// config.IsServiceHeldSecretEnv and the workflow module's
-// service_held_secret_names answer "is this the App key?" with. Review finding
+// config.IsServiceHeldSecretName and the workflow module's
+// service_held_secret_names answer "is this the App key?" with (the model
+// credentials' own half of that question is config.IsServiceHeldModelEnv). Review finding
 // F3: this function wrote both the App key's name and Bitbucket's out as
 // literals, so a rename in config would have left it returning a secret no job
 // mounts; the internal/cli code that spelled the App key out — doctor.go's
@@ -1292,8 +1305,11 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 			out = append(out, SecretMount{logical, p.SecretEnv()})
 		}
 		// The one mix the owner's B0 ruling admits: the stage account's own
-		// job mounts its token (mixedStageAccounts).
-		if slices.Contains(mixedStageAccounts(cfg, lc, repo), token) {
+		// job mounts its token (mixedStageAccounts). That mount is the
+		// exception B2.7's flip has to carry: it is the STAGE's credential and
+		// not the run's, so the service never serves it and the mount stays
+		// (mixedStageAccountJob, dropModelMounts).
+		if mixedStageAccountJob(cfg, lc, repo, token) {
 			out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
 		}
 	}
@@ -1617,12 +1633,22 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// is the same one the tfvars carry (RepoSpec.ModelSecretsServed), so the
 	// mount this drops and the accessor the module takes away are one answer.
 	//
+	// And a mixed stage account's own job is the one job the `anthropic` arm
+	// does not reach whole (WorkflowSpec.StageAccount, set just below and read
+	// by the drop, the address mirror and the module alike): its Claude OAuth
+	// mount is the STAGE's credential, read by the runner for the three stages
+	// that go direct to Anthropic rather than through the run's gateway, so the
+	// service never serves it and the mount stays — with its accessor, which
+	// sa.tf exempts by the same field (B0's one mix,
+	// docs/design/mixed-credentials.md §11).
+	//
 	// c.credentialsServiceOn and not the block's presence: the installation
 	// having a service says nothing about THIS repository. A repository
 	// whose agent.auth the service does not serve, or one whose bundle
 	// cannot hand its credential back, would be left with no model
 	// credential at all — which is the whole of what this gate is for
 	// (CredentialsServiceServes).
+	ws.StageAccount = mixedStageAccountJob(c.in.Cfg, c.lc, c.in.Repo, token)
 	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
 	}
@@ -2303,7 +2329,7 @@ func (rs RepoSpec) Addresses() []string {
 			// that survives a retirement. The App key's half is inert until
 			// config.ServiceHeldSecretNames names it (C2.2's release, review
 			// finding F1).
-			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied) {
+			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied, rs.ModelSecretsServed) {
 				continue
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
@@ -2339,12 +2365,21 @@ func (rs RepoSpec) Addresses() []string {
 // mountsServiceHeldSecret reports whether the logical secret name is one
 // whose credential the credentials service holds and the job's own account has
 // given up for ws: every secret_env entry naming it carries such a credential
-// (config.IsServiceHeldSecretEnv — a model credential by its variable, a name
-// config.ServiceHeldSecretNames lists by its name), so the service holds it
-// once an installation opts in (D145, D146) and the job's account keeps no
-// accessor on it (C1.18, C2.3). The App key's half of that list is empty until
-// C2.2's release (review finding F1), so this answers false for it today and
-// the job keeps the accessor it needs to read the key.
+// (config.IsServiceHeldModelEnv — the model variable, read for the arm this
+// root plans — or a name config.IsServiceHeldSecretName holds for every job),
+// so the service holds it once an installation opts in (D145, D146) and the
+// job's account keeps no accessor on it (C1.18, C2.3). The App key's name is
+// not in that list until C2.2's release (review finding F1), so this answers
+// false for it today and the job keeps the accessor it needs to read the key.
+//
+// served is RepoSpec.ModelSecretsServed, read for the same reason it is read
+// by the drop this mirrors (dropModelMounts): the arm decides which model
+// mounts the service serves this repository, and with it which accessors the
+// plan keeps. In the `anthropic` arm a mount that survives the drop — the
+// provider keys, and a mixed stage account's own Claude OAuth token — is a
+// mount the job's account keeps a grant on, so a mirror that answered "held"
+// for every model variable would report a live accessor as one the plan
+// retires (R6, D1634; B0's mix, docs/design/mixed-credentials.md §11).
 //
 // proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
 // the second way a mount comes to be held: a name config.ProxiedGitSecretNames
@@ -2365,14 +2400,14 @@ func (rs RepoSpec) Addresses() []string {
 // way. The proxied clause is the module's is_proxied_git, folded in: it reads
 // the logical name and the repository's fact and never the variable, so it is
 // the same answer for every entry naming the name.
-func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
+func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool, served string) bool {
 	proxiedGit := proxied && slices.Contains(config.ProxiedGitSecretNames, name)
 	held := false
 	for env, logical := range ws.SecretEnv {
 		if logical != name {
 			continue
 		}
-		if !config.IsServiceHeldSecretEnv(env, name) && !proxiedGit {
+		if !config.IsServiceHeldModelEnv(env, served, ws.StageAccount) && !config.IsServiceHeldSecretName(name) && !proxiedGit {
 			return false
 		}
 		held = true
@@ -2499,6 +2534,33 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 		out = append(out, def)
 	}
 	return out
+}
+
+// mixedStageAccountJob is whether token is one of the repository's mixed stage
+// accounts: the job that account gets is its OWN variant (gcp.WorkflowVariant),
+// the one a run of this repository is launched on when the mix's stages go out
+// on it (mixedRunAccount, internal/cli), and the only job whose Claude OAuth
+// mount is a credential of the stage's rather than the run's.
+//
+// The mix is api-key's alone (resolveMixedStages, internal/runner; B0's ruling
+// of 2026-11-04, docs/design/mixed-credentials.md §11), which is why the auth
+// is read here: a name a stage key of an oauth repository names is not one of
+// these jobs — under oauth the key keeps the meaning the accounts design gives
+// it, and the account's token is the run's own, served by the service like
+// every other (B2.7).
+//
+// It is one function so that the mount and the drop reading it cannot
+// disagree: SecretMounts mounts the token on that job alone, and workflow
+// hands the same answer to dropModelMounts and to the tfvars the module reads
+// (WorkflowSpec.StageAccount), so the one mount the flip leaves and the
+// account's accessor on it go and stay together — Cloud Run refuses to create
+// a job whose account keeps an accessor a mount does not, or the reverse
+// (C1.20).
+func mixedStageAccountJob(cfg *config.Config, lc *localcfg.Config, repo, token string) bool {
+	if cfg.Agent.Auth != config.AuthAPIKey {
+		return false
+	}
+	return slices.Contains(mixedStageAccounts(cfg, lc, repo), token)
 }
 
 // mixedDefaultAccount is rung 4's account for an api-key repository: the

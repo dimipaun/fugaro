@@ -2613,6 +2613,13 @@ type repoRootFixture struct {
 	// lives there rather than in the agent block — the stage account B2's mix
 	// names is a local-config key, never a published one.
 	lc string
+	// mode publishes a project policy with this budget mode for the fixture
+	// (projectpolicy.Policy), the switch's fourth condition: the flip needs
+	// `observe` or `enforce`, so a fixture that has the block and the record
+	// and publishes no mode is a repository the service is deployed for and
+	// does not serve (D2071). Empty leaves the fixture with no policy at all,
+	// which is every other one.
+	mode string
 }
 
 // repoRootFixtures are the fixture specs, keyed by the golden's name.
@@ -2653,6 +2660,21 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// accessor beside them (docs/design/mixed-credentials.md §11). No other
 	// fixture has an api-key job at all.
 	"repo_root_mixed": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC},
+	// repo_root_mixed_served is the mixed fixture SWITCHED: the same api-key
+	// repository with its stage account, plus the credentials service in the
+	// installation's outputs, the record `fugaro update` writes and a
+	// published mode — the switch's four conditions, so
+	// ModelSecretsServed answers `anthropic` and the drop runs. It is a
+	// fixture of its own because a golden is generated from a real plan and
+	// RepoSpec carries no way to ask the generator for the ON state of
+	// another fixture: repoRootServed builds that state for the Go tests,
+	// and only a fixture in this map reaches TestRealRepoRootAddresses. What
+	// it pins is the pair of rules the flip turns into one — the coder job's
+	// two Claude mounts and their accessors go, and the stage account's own
+	// job keeps the account's token and the accessor beside it, because that
+	// token is the stage's and its stages go straight to Anthropic (B0's
+	// ruling, docs/design/mixed-credentials.md §11; C1.20).
+	"repo_root_mixed_served": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC, credentialsService: true, credentialsReady: true, mode: config.BudgetEnforce},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -2675,6 +2697,9 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	}
 	if f.credentialsReady {
 		serviceReady(t, in.LC, in.Repo)
+	}
+	if f.mode != "" {
+		in.Policy = &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: f.mode}}
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2817,6 +2842,156 @@ func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
 	for _, a := range want {
 		if strings.HasPrefix(a, coder) && strings.Contains(a, "claude-oauth-token") {
 			t.Errorf("the coder's own job reaches a Claude token: %s", a)
+		}
+	}
+}
+
+// TestRepoAddressesMatchTheMixedServedGolden pins the SWITCHED mixed
+// repository's address set against a real plan: the state
+// TestRepoAddressesMatchTheMixedGolden cannot see, because that fixture plans
+// with the credentials service off. The flip's two halves are both in the
+// addresses, and this is what holds the module's sa.tf to Go's drop: the
+// coder job keeps no accessor on either Claude credential
+// (is_run_model_secret), and the stage account's job keeps the one on the
+// account's own token (is_stage_account_token) while losing the Anthropic
+// key's — the exemption the module cannot derive from its inputs and Go
+// therefore passes down as stage_account.
+func TestRepoAddressesMatchTheMixedServedGolden(t *testing.T) {
+	const (
+		account = "bmb"
+		token   = "claude-oauth-token-" + account
+		stages  = `module.repo.module.workflow["web_` + account + `"].`
+		coder   = `module.repo.module.workflow["web"].`
+	)
+	spec := repoRootFixtureSpec(t, "repo_root_mixed_served")
+	if spec.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		t.Fatalf("the fixture plans model_secrets_served = %q, want %q: the golden would pin the unswitched state", spec.ModelSecretsServed, config.ModelSecretServedAnthropic)
+	}
+	want := addressesGolden(t, "repo_root_mixed_served")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_mixed_served_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+	if a := stages + `google_secret_manager_secret_iam_member.job["` + token + `"]`; !slices.Contains(want, a) {
+		t.Errorf("the switched plan does not hold %s: the account's own job still mounts its token, so it keeps the accessor beside it (C1.20)", a)
+	}
+	for _, a := range want {
+		if !strings.Contains(a, ".google_secret_manager_secret_iam_member.job[") {
+			continue
+		}
+		if strings.HasPrefix(a, coder) && (strings.Contains(a, "claude-oauth-token") || strings.Contains(a, "anthropic-api-key")) {
+			t.Errorf("the coder's own job keeps an accessor on a Claude credential: %s", a)
+		}
+		if strings.HasPrefix(a, stages) && strings.Contains(a, "anthropic-api-key") {
+			t.Errorf("the stage account's job keeps the accessor on the Anthropic key: %s", a)
+		}
+	}
+}
+
+// TestSwitchedMixedRepositoryKeepsItsStageAccountToken is B2.7's flip on the
+// one repository that mixes credentials (B0's ruling of 2026-11-04,
+// docs/design/mixed-credentials.md §11): switched ON, an api-key repository
+// with a stage account gives up the two Claude mounts of its CODER job, and
+// the account's own variant job gives up its Anthropic key while keeping the
+// account's OAuth token.
+//
+// That token is the STAGE's credential, not the run's: `review`,
+// `adversarial` and `triage` go out on that job and the RUNNER hands the
+// account's token straight to Anthropic, so the run's gateway never sees those
+// calls and the credentials service has no call of theirs to serve. Taking the
+// mount would leave the stage reading a variable nothing mounted and halt
+// every run of such a repository at its review stage — the failure the mixed
+// account's own job exists to avoid — which is why the exemption is Go's
+// (dropModelMounts' anthropic arm) AND the module's (sa.tf's
+// is_stage_account_token): the mount and the account's accessor are one rule,
+// because a job whose account keeps an accessor its container no longer mounts
+// is a job Cloud Run refuses to create (C1.20).
+//
+// It is the test the mixed fixture could not be: repoRootFixtures'
+// repo_root_mixed plans with the credentials service OFF, so
+// TestRepoAddressesMatchTheMixedGolden pins the token's accessor only in the
+// state where nothing drops, and nothing pinned the switched one.
+func TestSwitchedMixedRepositoryKeepsItsStageAccountToken(t *testing.T) {
+	const (
+		account = "bmb"
+		token   = "claude-oauth-token-" + account
+		agent   = `agent: { auth: api-key }`
+	)
+	stages, coder := "web_"+account, "web"
+	offIn := repoRootInputs(t, agent)
+	offIn.LC = parseLC(t, repoRootMixedLC)
+	off, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := repoRootServed(t, agent, repoRootMixedLC, config.BudgetEnforce)
+	if on.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		t.Fatalf("the switched mixed repository plans model_secrets_served = %q, want %q: the test would be vacuous", on.ModelSecretsServed, config.ModelSecretServedAnthropic)
+	}
+	for _, key := range []string{stages, coder} {
+		if _, ok := on.Workflows[key]; !ok {
+			t.Fatalf("the switched spec has no %s job: %v", key, slices.Sorted(maps.Keys(on.Workflows)))
+		}
+	}
+	if !on.Workflows[stages].StageAccount {
+		t.Errorf("the %s job's StageAccount is false: it is the mixed stage account's own variant job, and the module reads exactly that field to leave the stage's token where the flip takes the run's mounts away (sa.tf's is_stage_account_token)", stages)
+	}
+	if on.Workflows[coder].StageAccount {
+		t.Errorf("the %s job's StageAccount is true: only the stage account's own variant job is exempt from the drop", coder)
+	}
+	// The account's job: the Anthropic key is the RUN's credential and goes,
+	// the account's own token is the STAGE's and stays, and a provider key was
+	// never in any arm's reach (R6, D1634).
+	want := append(withoutClaudeMounts(modelMountsOf(off.Workflows[stages])), "CLAUDE_CODE_OAUTH_TOKEN="+token)
+	slices.Sort(want)
+	if got := modelMountsOf(on.Workflows[stages]); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's %s job mounts %v, want %v: the service serves it the Anthropic key, while the account's token is what its stages read straight from the job (B0's mix, D2072, R6)", stages, got, want)
+	}
+	// The coder's job: both Claude credentials are the run's, so both go.
+	if got, want := modelMountsOf(on.Workflows[coder]), withoutClaudeMounts(modelMountsOf(off.Workflows[coder])); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's %s job mounts %v, want %v: the service serves it both Claude credentials, so those two mounts go and every other one stays (D2072)", coder, got, want)
+	}
+	// The redaction list follows the mounts, and a mounted credential left off
+	// it is one the runner would print.
+	for _, key := range []string{stages, coder} {
+		if got, want := on.Workflows[key].Env[runner.SecretEnvsVar], redactionEnvs(on.Workflows[key].SecretEnv); got != want {
+			t.Errorf("the %s job's %s = %q, want %q: the list follows the mounts it has left", key, runner.SecretEnvsVar, got, want)
+		}
+	}
+	if got := on.Workflows[stages].Env[runner.SecretEnvsVar]; !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("the %s job's %s = %q does not name the account's token: that job still mounts it, so the runner has to redact it", stages, runner.SecretEnvsVar, got)
+	}
+	if got := on.Workflows[coder].Env[runner.SecretEnvsVar]; strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(got, "ANTHROPIC_API_KEY") {
+		t.Errorf("the %s job's %s = %q still names a Claude credential: both of its mounts are gone (D2072)", coder, runner.SecretEnvsVar, got)
+	}
+	// The containers do not move — a dropped one carries prevent_destroy and
+	// would plan a destruction — and the accessors follow the mounts: the
+	// account's job keeps its grant on the token, and no job keeps one on the
+	// Anthropic key (the module's half of the same rule, C1.20).
+	if !maps.Equal(off.Secrets, on.Secrets) {
+		t.Errorf("the secret containers moved with the switch: %v, want %v", on.Secrets, off.Secrets)
+	}
+	addrs := on.Addresses()
+	if len(addrs) == 0 {
+		t.Fatal("the switched spec produces no address at all: the test would be vacuous")
+	}
+	if a := `module.repo.module.workflow["` + stages + `"].google_secret_manager_secret_iam_member.job["` + token + `"]`; !slices.Contains(addrs, a) {
+		t.Errorf("the switched plan does not hold %s: the account's own job must keep its accessor on the token it still mounts (C1.20)", a)
+	}
+	// The job's own grant, and not the container's the root declares or the
+	// operators' pair: those are the root's for every repository and move with
+	// nothing here.
+	const jobGrant = ".google_secret_manager_secret_iam_member.job["
+	for _, a := range addrs {
+		if strings.Contains(a, jobGrant) && strings.Contains(a, "anthropic-api-key") {
+			t.Errorf("the switched plan still holds %s: the service serves the Anthropic key to every job of this repository, so no account keeps an accessor on it (D2072, C1.20)", a)
+		}
+		if strings.Contains(a, jobGrant) && strings.Contains(a, "claude-oauth-token") && !strings.Contains(a, stages) {
+			t.Errorf("the switched plan holds %s: only the stage account's own job keeps an accessor on a Claude OAuth token (B0's mix)", a)
 		}
 	}
 }
@@ -3576,7 +3751,8 @@ func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
 // (TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly) — pinned here too
 // where the drop rule lives: it drops the two Claude credentials and never a
 // provider's key, whose value the runner forwards rather than attaches (R6,
-// D1634).
+// D1634). A mixed stage account's own variant job is the arm's one exception,
+// its Claude OAuth mount being the STAGE's credential rather than the run's.
 func TestCascadeStillDropsItsMounts(t *testing.T) {
 	if got := ModelSecretsServed(true, config.AuthCascade); got != config.ModelSecretServedAll {
 		t.Errorf("ModelSecretsServed(serving, cascade) = %q, want %q: the cascade's runner reads every model credential from the service, so its job keeps none (D143)", got, config.ModelSecretServedAll)
@@ -3609,7 +3785,11 @@ func TestCascadeStillDropsItsMounts(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		served string
-		want   []string
+		// stageAccount is WorkflowSpec.StageAccount: a mixed stage account's
+		// own variant job, the one job of an api-key repository whose Claude
+		// OAuth mount is the STAGE's credential rather than the run's.
+		stageAccount bool
+		want         []string
 		// redaction is the list the drop leaves behind: the mounts that
 		// remain, or the fixture's own stale value where nothing was dropped
 		// and so nothing is rebuilt.
@@ -3617,9 +3797,18 @@ func TestCascadeStillDropsItsMounts(t *testing.T) {
 	}{
 		{served: config.ModelSecretServedAll, want: []string{"NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"NPM_TOKEN": "npm-token"})},
 		{served: config.ModelSecretServedAnthropic, want: []string{"FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"FUGARO_PROVIDER_KEY_OPENROUTER": "openrouter-api-key", "NPM_TOKEN": "npm-token"})},
+		// The mixed stage account's own job is the one job the anthropic arm
+		// does not reach whole: its Claude OAuth mount is that account's token
+		// for the three stages that go straight to Anthropic rather than
+		// through the run's gateway, so the service never serves them and the
+		// mount stays — with the account's accessor on it, which sa.tf exempts
+		// by the same field. Its Anthropic key is the run's own credential and
+		// still goes, and a provider key was never in reach (R6, D1634).
+		{served: config.ModelSecretServedAnthropic, stageAccount: true, want: []string{"CLAUDE_CODE_OAUTH_TOKEN=claude-oauth-token", "FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-token", "FUGARO_PROVIDER_KEY_OPENROUTER": "openrouter-api-key", "NPM_TOKEN": "npm-token"})},
 		{served: config.ModelSecretServedNone, want: []string{"ANTHROPIC_API_KEY=anthropic-api-key", "CLAUDE_CODE_OAUTH_TOKEN=claude-oauth-token", "FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: "stale"},
 	} {
 		s := ws()
+		s.StageAccount = tc.stageAccount
 		dropModelMounts(s, tc.served)
 		var got []string
 		for env, logical := range s.SecretEnv {
@@ -3627,10 +3816,10 @@ func TestCascadeStillDropsItsMounts(t *testing.T) {
 		}
 		slices.Sort(got)
 		if !slices.Equal(got, tc.want) {
-			t.Errorf("dropModelMounts(%q) leaves %v, want %v", tc.served, got, tc.want)
+			t.Errorf("dropModelMounts(%q, stage account %t) leaves %v, want %v", tc.served, tc.stageAccount, got, tc.want)
 		}
 		if s.Env[runner.SecretEnvsVar] != tc.redaction {
-			t.Errorf("dropModelMounts(%q) leaves %s = %q, want %q", tc.served, runner.SecretEnvsVar, s.Env[runner.SecretEnvsVar], tc.redaction)
+			t.Errorf("dropModelMounts(%q, stage account %t) leaves %s = %q, want %q", tc.served, tc.stageAccount, runner.SecretEnvsVar, s.Env[runner.SecretEnvsVar], tc.redaction)
 		}
 	}
 }

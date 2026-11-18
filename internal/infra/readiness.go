@@ -119,20 +119,23 @@ func dropMount(ws WorkflowSpec, logical string) {
 // model credentials the credentials service serves to it — served is
 // ModelSecretsServed's answer for this repository, and it is the same value
 // the tfvars carry (RepoSpec.ModelSecretsServed), so the mount this drops and
-// the accessor modules/workflow/sa.tf takes away are one answer:
+// the accessor modules/workflow/sa.tf takes away are one answer.
 //
-//   - all: every variable config.IsModelSecretEnv names — the Claude OAuth
-//     token, the Anthropic key, each provider key.
-//   - anthropic: the two named model credentials (config.ModelSecretEnvs) and
-//     never a provider key: a provider's key is FORWARDED rather than
-//     attached by the route that spends it, so the service hands back no
-//     provider credential, and a mount taken away for one would leave the
-//     run's own route with nothing to spend (R6, D1634).
-//   - none: nothing, which is also what its one caller's guard answers before
-//     the call (workflow()): the empty case is one this function refuses as
-//     well, because the state it would otherwise produce is a job of the very
-//     repository the release must leave untouched without the credential its
-//     runs read.
+// Which mounts those are is config.IsServiceHeldModelEnv's, one variable at a
+// time (the arms, the anthropic arm's mixed stage account exception and the
+// provider key it never reaches are stated there): reading the same function
+// here and in the address mirror (mountsServiceHeldSecret) is what keeps the
+// three halves — this drop, Go's address list and the module — from parting
+// company. The stage fact comes off the spec (WorkflowSpec.StageAccount), the
+// field the tfvars carry to the module, so the job whose token stays is the
+// same job on both sides.
+//
+// `none` is the empty arm rather than a case left to the caller: it is the
+// value a repository the switch holds off carries — a `vertex` one, or an
+// `api-key` or `oauth` one whose root was applied with the switch off or whose
+// project's mode is off — so a caller that lost its guard would take away the
+// credential a run of exactly the repository this drop must not touch still
+// reads (D2072, G17).
 //
 // A job whose account keeps its accessor while a mount goes, or the reverse,
 // is a job Cloud Run refuses to create: it checks the mounting account's read
@@ -148,28 +151,19 @@ func dropMount(ws WorkflowSpec, logical string) {
 // its destruction (which prevent_destroy refuses, failing the whole plan) and
 // make Retirements report a live container as retired. Only the mount goes;
 // the container is left exactly where it is.
-// `none` is answered here rather than left to the caller: it is the value a
-// repository the switch holds off carries — a `vertex` one, or an `api-key` or
-// `oauth` one whose root was applied with the switch off or whose project's
-// mode is off — so a caller that lost its guard would take away the credential
-// a run of exactly the repository this drop must not touch still reads (D2072,
-// G17). The arm is the empty answer, and a value this release does not know is
-// answered the same way: fail closed toward keeping the mount, never toward
-// dropping it.
 func dropModelMounts(ws *WorkflowSpec, served string) {
-	var held func(string) bool
-	switch served {
-	case config.ModelSecretServedAll:
-		held = config.IsModelSecretEnv
-	case config.ModelSecretServedAnthropic:
-		held = func(env string) bool { return slices.Contains(config.ModelSecretEnvs, env) }
-	default:
+	// The arms that hold nothing return before the loop rather than leaving it
+	// empty: an arm that serves the job no credential must leave the job
+	// exactly as it found it, the redaction list included, whatever the job
+	// happens to mount (D147's shape for a repository the switch holds off).
+	if served != config.ModelSecretServedAll && served != config.ModelSecretServedAnthropic {
 		return
 	}
 	for env := range ws.SecretEnv {
-		if held(env) {
-			delete(ws.SecretEnv, env)
+		if !config.IsServiceHeldModelEnv(env, served, ws.StageAccount) {
+			continue
 		}
+		delete(ws.SecretEnv, env)
 	}
 	if ws.Env != nil {
 		ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
