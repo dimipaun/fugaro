@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
@@ -58,6 +59,25 @@ type RunReport struct {
 	// Halt is the halt the run's record carries, as the record states it. A
 	// run that ended without one carries the zero Halt.
 	Halt Halt
+	// Discovered is what the run reported about the order of the work: the
+	// items its own work blocks and the ones it found it needed, each named by
+	// a plan task or by a path an item's footprint covers, with the run's own
+	// one-line why (X2, D2709). It is nil for a run that reported nothing,
+	// which is the record it always wrote.
+	//
+	// It is here because the fold is the only reader of it and the record is
+	// the only place it lives: every entry is the run's own agent's words, so
+	// the fold bounds it again on read (runstore.Discovered.Bounded) and reads
+	// every entry as a claim about a graph rather than as an order — what a run
+	// can reach is an edge in front of an item that has not launched, and the
+	// fence decides whether even that lands (fold_discovered.go).
+	Discovered *runstore.Discovered
+	// ConflictPaths are the paths a rebase or a push of this run met a conflict
+	// on, in the order it met them (X2, D2710). A run records paths and never
+	// an item: it cannot know which pull request it met, so which item of the
+	// graph each path is about is what the daemon matches them against, and
+	// nothing a run says names that item.
+	ConflictPaths []string
 }
 
 // Halt is the halt a run's record carries, as the record states it: what

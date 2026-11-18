@@ -123,6 +123,17 @@ type Tick struct {
 	// an item whose pull request is never read stays in `review`, and nothing
 	// about a merge fails a cycle.
 	Merge MergeWaitSeams
+	// Footprints is what the cycle knows of the items' expected paths, keyed by
+	// the item's own id: the plan graph's footprint for the task an item stands
+	// for, which is what a run's entry naming a path is matched against when the
+	// fold reads what that run reported about the graph (E3, D2709, D2710).
+	// Left unset the fold matches no path at all — and every daemon of this
+	// release leaves it unset, because a footprint is written into the plan's
+	// own graph in the operator's checkout and no node of the orchestrator
+	// subtree carries one (F33): the part of the fold that names an item by its
+	// plan task lands either way, and the wiring that reads a graph and hands
+	// its footprints here is the daemon's own.
+	Footprints Footprints
 	// Now is the database server's clock (rtdb.ServerNow). Every stamp a cycle
 	// writes comes from it, and a cycle that cannot read it refuses rather
 	// than stamping anything with this machine's clock (D1230).
@@ -513,6 +524,14 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 		return err
 	}
 	folded := len(ops)
+	// What the runs reported about the graph goes in the patch that ends their
+	// attempts, and in the room that patch has left: the state is what the
+	// daemon's own recovery and the caps read, and a run's entries are read
+	// once — the attempt reports here, and no later tick asks about it again
+	// (runview.go's openRunIDs) — so an entry the patch had no room for is one
+	// nobody folds.
+	graph := foldDiscovered(c.state, reports, c.tick.Footprints, MaxOps-len(ops), c.now)
+	ops = append(ops, graph.ops...)
 	for _, r := range reports {
 		if r.Finished && WorkspaceRefused(r) {
 			c.refused, c.refusedRun = r.WorkspaceRefusal, r.RunID
@@ -535,7 +554,13 @@ func (c *cycle) fold(ctx context.Context, reports []RunReport) error {
 			asked = op.Decision
 		}
 	}
-	return c.writeFold(ctx, base, folded, ops, notes, asked)
+	if err := c.writeFold(ctx, base, folded, ops, notes, asked); err != nil {
+		return err
+	}
+	// The lines the graph's refusals left go after the write that carries the
+	// rest: they are evidence of decisions that stand, and none of them is what
+	// the cycle did.
+	return c.auditFold(ctx, graph.lines)
 }
 
 // foldNode writes what one sibling node's finished runs mean into its items and
@@ -562,7 +587,16 @@ func (c *cycle) foldNode(ctx context.Context, reports []RunReport) error {
 	if err != nil {
 		return err
 	}
-	return c.writeFold(ctx, c.state, len(ops), ops, notes, nil)
+	folded := len(ops)
+	// A node beside the state node folds the graph its own runs reported the
+	// same way, into its own items and no other node's: a dependency never
+	// crosses nodes (F44), and the fold of one node's report reads that node.
+	graph := foldDiscovered(c.state, reports, c.tick.Footprints, MaxOps-len(ops), c.now)
+	ops = append(ops, graph.ops...)
+	if err := c.writeFold(ctx, c.state, folded, ops, notes, nil); err != nil {
+		return err
+	}
+	return c.auditFold(ctx, graph.lines)
 }
 
 // writeFold commits one fold: the patch its ops make and the notifications that
