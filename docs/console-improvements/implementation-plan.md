@@ -109,7 +109,7 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 
 #### C-OPS: the new operations' names and payload types (contract)
 
-- Acceptance: `new-ops.ts` exports the names and the request and response types of `runs.stream`, `whoami`, `image.catalog.ls`, `recipes.ls`, `setup.plan`, `setup.apply` and `settings.editor.open` (the last with payload `{key}` only; `setup.plan` carries an answers object and never a path, `setup.apply` carries `{}`); `bridge-stub.ts` is a bridge that answers each operation from the console fixtures; the document says what each side may rely on (an unknown role reads as `none`, a stream without an `end` is interrupted, an answers object never names a file). Fixtures are inline in the stub; I-OPS holds them to the CLI goldens.
+- Acceptance: `new-ops.ts` exports the names and the request and response types of `runs.stream`, `spend.stream`, `budget.stream`, `whoami`, `image.catalog.ls`, `recipes.ls`, `setup.plan`, `setup.apply` and `settings.editor.open` (the last with payload `{key}` only; `setup.plan` carries an answers object and never a path, `setup.apply` carries `{}`); `bridge-stub.ts` is a bridge that answers each operation from the console fixtures; the document says what each side may rely on (an unknown role reads as `none`, a stream without an `end` is interrupted, an answers object never names a file). Fixtures are inline in the stub; I-OPS holds them to the CLI goldens.
 - Files: `console/src/shared/new-ops.ts` (new); `console/src/renderer/stubs/bridge-stub.ts` (new); `console/test/unit/new-ops.test.ts` (new); `docs/console-improvements/contract-ops.md` (new)
 - Interfaces: Produces the types, the stub bridge and the document; consumers import the types and the stub, the allow-list task (AL) implements the operations beside it and does not import them.
 - Tests: `new-ops.test.ts` (new): the stub answers every operation with a fixture that decodes against its type.
@@ -121,27 +121,15 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 
 #### AL: the argv rows, IPC operations, bridge, floors, the narrowed never-table and the section 5.1 and contract text
 
-- Acceptance: `SPAWN_COMMANDS` and `CONSOLE_OPERATIONS` gain, as one change, `runs.stream` (`runs ls --stream --json --since <w>`), `whoami` (`user ls --me --json`), `image.catalog.ls` (`image catalog ls --json`), `recipes.ls` (`recipes ls --json`), `setup.plan` (`setup --plan-only --answers-file <path> --events --json`), `setup.apply` (`setup --answers-file <path> --events --json`, payload `{}`: apply carries nothing and reuses the file and digest main stored at plan time, so a renderer cannot slip in new answers at apply) and `settings.editor.open` (payload `{key}` only, validated with `SETTINGS_KEY_RE` and the closed payload schema; the layer and phase stay main-process decided), each with its sanitiser class and no flag the renderer can choose; each new operation is registered in `ipc.ts` with an explicit handler that answers 'not available in this build', so the existing startup check (`refuses to build a surface with a handler missing`) still holds and still stops the console when a handler is truly missing; the handlers sit behind the same wrappers as every other (`lapseHandlers`, `reducedModeHandlers`, and the refused-console rule that a refused console registers nothing), so a lapsed console refuses `setup.apply` and a refused console has no channel, and duplicate or unknown registrations are refused; I-OPS replaces the explicit stubs through the `gated` table in `console/src/main/index.ts`; main chooses `<path>` (a fresh `mkdtemp` directory, mode 0700, the file 0600) and the renderer sends only an answers object, which a payload schema refuses if it carries a path; `setup.apply` carries `refusedAfterLapse` as `settings.edit` does (the licence-lapse read-only gate, nothing more); **bounds:** `runs.stream` and the setup event feed are read under `MAX_FEED_LINE_LENGTH` per line, a row cap and a total byte cap, and `setup.*` have a deadline of their own (never the 90 s `READ_TIMEOUT_MS`, which would kill an apply part-way; the run ends on the CLI's exit or the user's cancel); the `setup` command row of `NEVER_REACHABLE` is replaced by argv rows that refuse every `setup` vector except those two, with `assertSpawnSurface` and the `ipc.test.ts` pin of the `setup` never-row following; the `models` never-rows are left for MW1; design §3.4 rule 3 (the renderer never names a cloud project; the existing `--gcp-project` and `--region` rows guard `run`) is amended to say that the wizard's answers, validated in main and shown in the confirmation window, are the one way a project name reaches the CLI from the console; `version.ts` gains one plain floor constant per new row, each `string | null = null` until the CLI release that carries it and each pinned by `version.test.ts`; §5.1 of `desktop-console.md` gains a row each, rule 12 describes the single modal (D2902) and the 2026-10-20 ruling is amended (D2904); `console/docs/json-contract.md` says four documents are line-delimited and states the new read documents and the two write operations, with its pinned sentences in `docs_desktop_console_test.go` updated; the old `settings.edit` operation is unchanged and stays main-confirmed.
+- Acceptance: `SPAWN_COMMANDS` and `CONSOLE_OPERATIONS` gain, as one change, `runs.stream` (`runs ls --stream --json --since <w>`), `whoami` (`user ls --me --json`), `spend.stream` (the `spend.report` argv plus `--stream`), `budget.stream` (the `budget.show` argv plus `--stream`), `image.catalog.ls` (`image catalog ls --json`), `recipes.ls` (`recipes ls --json`), `setup.plan` (`setup --plan-only --answers-file <path> --events --json`), `setup.apply` (`setup --answers-file <path> --events --json`, payload `{}`: apply carries nothing and reuses the file and digest main stored at plan time, so a renderer cannot slip in new answers at apply) and `settings.editor.open` (payload `{key}` only, validated with `SETTINGS_KEY_RE` and the closed payload schema; the layer and phase stay main-process decided), each with its sanitiser class and no flag the renderer can choose; each new operation is registered in `ipc.ts` with an explicit handler that answers 'not available in this build', so the existing startup check (`refuses to build a surface with a handler missing`) still holds and still stops the console when a handler is truly missing; the handlers sit behind the same wrappers as every other (`lapseHandlers`, `reducedModeHandlers`, and the refused-console rule that a refused console registers nothing), so a lapsed console refuses `setup.apply` and a refused console has no channel, and duplicate or unknown registrations are refused; I-OPS replaces the explicit stubs through the `gated` table in `console/src/main/index.ts`; main chooses `<path>` (a fresh `mkdtemp` directory, mode 0700, the file 0600) and the renderer sends only an answers object, which a payload schema refuses if it carries a path; `setup.apply` carries `refusedAfterLapse` as `settings.edit` does (the licence-lapse read-only gate, nothing more); **bounds:** `runs.stream` and the setup event feed are read under `MAX_FEED_LINE_LENGTH` per line, a row cap and a total byte cap, and `setup.*` have a deadline of their own (never the 90 s `READ_TIMEOUT_MS`, which would kill an apply part-way; the run ends on the CLI's exit or the user's cancel); the `setup` command row of `NEVER_REACHABLE` is replaced by argv rows that refuse every `setup` vector except those two, with `assertSpawnSurface` and the `ipc.test.ts` pin of the `setup` never-row following; the `models` never-rows are left for MW1; design §3.4 rule 3 (the renderer never names a cloud project; the existing `--gcp-project` and `--region` rows guard `run`) is amended to say that the wizard's answers, validated in main and shown in the confirmation window, are the one way a project name reaches the CLI from the console; `version.ts` gains one plain floor constant per new row, each `string | null = null` until the CLI release that carries it and each pinned by `version.test.ts`; §5.1 of `desktop-console.md` gains a row each, rule 12 describes the single modal (D2902) and the 2026-10-20 ruling is amended (D2904); `console/docs/json-contract.md` says four documents are line-delimited and states the new read documents and the two write operations, with its pinned sentences in `docs_desktop_console_test.go` updated; the old `settings.edit` operation is unchanged and stays main-confirmed.
 - Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/preload/index.ts`; `console/src/shared/version.ts`; `console/test/unit/spawn.test.ts`; `console/test/unit/ipc.test.ts`; `docs/design/desktop-console.md`; `console/docs/json-contract.md`; `internal/cli/docs_desktop_console_test.go`; `console/test/unit/version.test.ts`
-- Interfaces: Consumes RS1, WH1 and ST2 (the CLI registers the flags the allow-list names, which `TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands); produces the argv table, the operations, the handler registry, the bridge methods and the floors every console task spawns through.
+- Interfaces: Consumes RS1, RS3, RS4, WH1 and ST2 (the CLI registers the flags the allow-list names, which `TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands); produces the argv table, the operations, the handler registry, the bridge methods and the floors every console task spawns through.
 - Tests: `spawn.test.ts` (an exact-argv pin per row and a mutation per row that a widened argv is refused), `ipc.test.ts` (each operation pinned, a renderer-supplied path refused, a frame of another origin refused, the `setup` never-rows), `pinning.test.ts`, `version.test.ts`, `TestDocsDesktopConsole*` in `internal/cli/docs_desktop_console_test.go`. The `refuses to build a surface with a handler missing` test in `ipc.test.ts` stays green; new tests: a lapsed console refuses `setup.apply`, a refused console has no channel for the new operations.
 - Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/ipc.test.ts test/unit/pinning.test.ts test/unit/version.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
 - Red step: Each row's pin fails while the row is absent; adding `--yes` or a renderer-chosen `--answers-file` path to `setup.apply` must fail a test; a lapsed console must refuse `setup.apply`, a refused console must register no new channel, and a missing handler must still stop the console at startup; the docs pin fails until the contract sentences say four.
-- Depends on: **RS1** (the docs pin holds the allow-list's flags to flags the CLI registers); **WH1** (same); **ST2** (same); **SM-E** (both write `console/docs/json-contract.md`)
+- Depends on: **RS1** (the docs pin holds the allow-list's flags to flags the CLI registers); **WH1** (same); **ST2** (same); **SM-E** (both write `console/docs/json-contract.md`); **RS3** (the docs pin holds the allow-list's flags to flags the CLI registers); **RS4** (same)
 - Commit: `console(spawn): the rows, operations and floors the improvements need (F24, F25, F26)`
 - Reviewer tier: opus, independent review mandatory (the spawn and IPC allow-lists and a write operation); tier `large`, size 6
-
-#### SRC: the main-side handlers and fixtures for the four new reads
-
-- Acceptance: `handlersFor` answers `runs.stream` (a line-by-line feed under the per-line, row and byte caps), `whoami`, `image.catalog.ls` and `recipes.ls` from the CLI source, and from the fixture source for the e2e specs; every answer passes `TEXT_CLASSES`; a CLI below the floor, or a floor still `null`, answers the section's refusal and Retry rather than spawning.
-- Files: `console/src/source/source.ts`; `console/src/source/cli.ts`; `console/src/source/fixture.ts`; `console/test/unit/source-new-reads.test.ts` (new)
-- Interfaces: Consumes the operations' payloads and handler signatures (C-OPS); produces the read handlers I-OPS registers.
-- Tests: `source-new-reads.test.ts` (new): each read from a stub child, the caps, the floor refusal.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/source-new-reads.test.ts)`
-- Red step: The cap test fails while a line longer than `MAX_FEED_LINE_LENGTH` is accepted.
-- Depends on: **C-OPS** (built against the payloads and handler signatures)
-- Commit: `console(source): handlers and fixtures for runs.stream, whoami, image catalog and recipes reads (F24)`
-- Reviewer tier: standard; tier `medium`, size 3
 
 #### I-OPS: retire the stub bridge and hold the allow-list to the contract (integration)
 
@@ -358,6 +346,30 @@ A measurement, then an opt-in stream and its decoder.
 - Commit: `runs: ls --stream, one record per line (D2906)`
 - Reviewer tier: standard; tier `medium`, size 3
 
+#### RS3: report --stream
+
+- Acceptance: FIRST the task writes in its pull-request body how `report --json` is assembled and which part of it can be emitted before the whole is known (a row per group, a total last); if nothing can, it stops and reports. Then `report --stream` (with `--json`, accepted with the flags `report` takes today: `--by`, `--since`, `--until`, `--repo`) writes one NDJSON line per record in the `row`/`end`/`error` shape RS1 uses (a `row` is one element of today's document, unchanged; the `end` carries the totals and the document `version`); without `--stream` the output is byte for byte what it was; the schema and a golden recorded from the CLI's own output hold the shape.
+- Files: `internal/cli/report.go`; `internal/cli/report_stream.go` (new); `internal/cli/report_stream_test.go` (new); `schemas/report-stream.schema.json` (new); `internal/cli/testdata/report_stream.golden.ndjson` (new)
+- Interfaces: Produces the stream, the schema and the golden.
+- Tests: `TestReportStreamRows`, `TestReportStreamEndCarriesTotals`, `TestReportJSONUnchanged`, `TestReportStreamSchema`, `TestReportStreamGolden` (new).
+- Command: `go test ./internal/cli/ -count=1 -run 'TestReportStream|TestReportJSONUnchanged'`
+- Red step: `TestReportStreamEndCarriesTotals` fails while the stream has no `end` line; `TestReportJSONUnchanged` is written first and stays green.
+- Depends on: **RS1** (reuses RS1's stream writer and line shape (`runs_stream.go`))
+- Commit: `report: --stream, one record per line (O3, D2906)`
+- Reviewer tier: standard; tier `medium`, size 3
+
+#### RS4: budget show --stream
+
+- Acceptance: FIRST the task writes in its pull-request body how `budget show --json` reads its sources (config, spend, repos, agents, kill state) and which can be emitted as they arrive; if its shape is one indivisible document, it stops and reports. Then `budget show --stream` (with `--json`) writes `row` lines per repository and per kill switch as their reads complete, then an `end` line; without `--stream` the output is byte for byte what it was; the schema and a golden hold the shape.
+- Files: `internal/cli/budget.go`; `internal/cli/budget_stream.go` (new); `internal/cli/budget_stream_test.go` (new); `schemas/budget-stream.schema.json` (new); `internal/cli/testdata/budget_stream.golden.ndjson` (new)
+- Interfaces: Produces the stream, the schema and the golden.
+- Tests: `TestBudgetShowStreamRows`, `TestBudgetShowStreamEnd`, `TestBudgetShowJSONUnchanged`, `TestBudgetStreamSchema`, `TestBudgetStreamGolden` (new).
+- Command: `go test ./internal/cli/ -count=1 -run 'TestBudgetShowStream|TestBudgetShowJSONUnchanged'`
+- Red step: `TestBudgetShowStreamEnd` fails while the stream has no `end` line; `TestBudgetShowJSONUnchanged` is written first and stays green.
+- Depends on: **RS1** (both reuse RS1's stream writer and line shape (`runs_stream.go`))
+- Commit: `budget: show --stream, one record per line (O3, D2906)`
+- Reviewer tier: standard; tier `medium`, size 3
+
 #### RS2: the console draws runs as they arrive
 
 - Acceptance: A section spawning `runs.stream` appends rows as each line arrives, shows a count that updates, treats a missing `end` as an interrupted read with the Retry control (R1), and falls back to the whole-document `runs.list` when the floor is unset or the CLI is older; the section's sequence token still decides which answer stays.
@@ -368,6 +380,18 @@ A measurement, then an opt-in stream and its decoder.
 - Red step: The interrupted-read test fails while a missing `end` is treated as complete.
 - Depends on: **RS1** (decodes the fixture and the line shape the CLI task produces); **RB1** (both write `section.ts`); **RB4** (both write `entry.ts`); **C-OPS** (built against the operations' names and types and the stub bridge)
 - Commit: `console(runs): rows render as they arrive (D2906, F18)`
+- Reviewer tier: standard; tier `medium`, size 3
+
+#### SRC: the main-side handlers and fixtures for the six new reads
+
+- Acceptance: `handlersFor` answers `runs.stream`, `spend.stream` and `budget.stream` (a line-by-line feed under the per-line, row and byte caps), `whoami`, `image.catalog.ls` and `recipes.ls` from the CLI source, and from the fixture source for the e2e specs; every answer passes `TEXT_CLASSES`; a CLI below the floor, or a floor still `null`, answers the section's refusal and Retry rather than spawning.
+- Files: `console/src/source/source.ts`; `console/src/source/cli.ts`; `console/src/source/fixture.ts`; `console/test/unit/source-new-reads.test.ts` (new)
+- Interfaces: Consumes the operations' payloads and handler signatures (C-OPS); produces the read handlers I-OPS registers.
+- Tests: `source-new-reads.test.ts` (new): each read from a stub child, the caps, the floor refusal.
+- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/source-new-reads.test.ts)`
+- Red step: The cap test fails while a line longer than `MAX_FEED_LINE_LENGTH` is accepted.
+- Depends on: **C-OPS** (built against the payloads and handler signatures)
+- Commit: `console(source): handlers and fixtures for runs.stream, whoami, image catalog and recipes reads (F24)`
 - Reviewer tier: standard; tier `medium`, size 3
 
 #### PW1: prewarm the other tabs' cached views
@@ -381,6 +405,18 @@ A measurement, then an opt-in stream and its decoder.
 - Depends on: **RB1** (uses the cache API it adds); **RS2** (both write `entry.ts`); **SU2b** (both write `entry.ts`)
 - Commit: `console: prewarm the other tabs after the first paint (D2906)`
 - Reviewer tier: standard; tier `medium`, size 2
+
+#### RS5: the Spend and Project tabs draw their rows as they arrive
+
+- Acceptance: The Spend report and the Project tab's caps read through `readStream` (RS2) when the floor allows and fall back to the whole documents otherwise; rows and totals appear as lines arrive, the `end` line completes the section, a missing `end` is an interrupted read with Retry (R1), and reduced mode still withholds spend, caps and kill figures (`hidesView`).
+- Files: `console/src/renderer/screens/spend.ts`; `console/src/renderer/screens/projects.ts`; `console/src/renderer/stream.ts`; `console/test/unit/spend-stream.test.ts` (new); `console/test/unit/projects-stream.test.ts` (new)
+- Interfaces: Consumes `spend.stream` and `budget.stream` (C-OPS types, I-OPS wiring) and RS2's `readStream`.
+- Tests: `spend-stream.test.ts` and `projects-stream.test.ts` (new): in-order rows, interrupted read, old-CLI fallback, reduced mode.
+- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spend-stream.test.ts test/unit/projects-stream.test.ts test/unit/spend.test.ts)`
+- Red step: The reduced-mode test fails while the stream path ignores `hidesView`.
+- Depends on: **RS2** (uses `readStream`); **RS3** (decodes the report stream's golden); **RS4** (decodes the budget stream's golden); **SU2b** (both write `projects.ts`)
+- Commit: `console: Spend and Project draw rows as they arrive (O3, D2906)`
+- Reviewer tier: standard; tier `medium`, size 3
 
 
 ### Slice 5: Manage (`manage-objects`)
@@ -558,11 +594,11 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 | Level | Tasks |
 | --- | --- |
 | 0 | LP1, LP2, GF1, SM0, P1, RS1, RB1, WH1, ST1, MG0, C-OPS |
-| 1 | GF2, SM-E, RB4, ST2, MO-SH, MO-P, MO-K, MO-B, MO-C, SM1, SM2, SM3, SM4, SRC |
+| 1 | GF2, SM-E, RB4, ST2, MO-SH, MO-P, MO-K, MO-B, MO-C, SM1, SM2, SM3, SM4, SRC, RS3, RS4 |
 | 2 | SU1, SU2a, RS2, PL1, AL, SMC |
 | 3 | I-MG, SW3a |
 | 4 | SU2b, MW1, SW3b, I-OPS |
-| 5 | MW2, PW1 |
+| 5 | MW2, PW1, RS5 |
 
 **Edges kept, one line each, with the reason that decided it.** Every edge is a real dependency: either the dependent needs the other task's behaviour or data at the moment it runs, or both write one file.
 
@@ -610,6 +646,8 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - AL needs WH1: same.
 - AL needs ST2: same.
 - AL needs SM-E: both write `console/docs/json-contract.md`.
+- AL needs RS3: the docs pin holds the allow-list's flags to flags the CLI registers.
+- AL needs RS4: same.
 - SM1 needs SM0: the entries are built against `Meta` and `Register`.
 - SM2 needs SM0: the entries are built against `Meta` and `Register`.
 - SM3 needs SM0: the entries are built against `Meta` and `Register`.
@@ -636,10 +674,16 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - I-OPS needs SW3a: needs the real consumer.
 - I-OPS needs SRC: needs the real consumer.
 - SRC needs C-OPS: built against the payloads and handler signatures.
+- RS3 needs RS1: reuses RS1's stream writer and line shape (`runs_stream.go`).
+- RS4 needs RS1: both reuse RS1's stream writer and line shape (`runs_stream.go`).
+- RS5 needs RS2: uses `readStream`.
+- RS5 needs RS3: decodes the report stream's golden.
+- RS5 needs RS4: decodes the budget stream's golden.
+- RS5 needs SU2b: both write `projects.ts`.
 
 **Sequential by necessity:** the allow-list task `AL` waits for the three CLI tasks that register the flags it names (`RS1`, `WH1`, `ST2`) and cannot be split, because `assertSpawnSurface`, the IPC set and the docs pins each refuse a half-change (nine files, which is why it is tier large); `MW1` then `MW2` write the same allow-list and §5.1 table, so they are one after the other; `ST1` then `ST2` register flags in `init.go`; `SU2b` deletes the inline editor only after the modal and the Manage mount that share `projects.ts`.
 
-**Critical path (the graph read):** `critical path (6 tasks): SM0 -> SM-E -> SU2a -> I-MG -> MW1 -> MW2`.
+**Critical path (the graph read):** `critical path (7 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> RS5`.
 
 **Shared-files table.** A file appears here only when more than one task names it; no level holds two writers of any of them (a change to any task's Files re-checks this).
 
@@ -651,8 +695,9 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 | `console/src/renderer/entry.ts` | SU2b (4), RS2 (2), RB1 (0), RB4 (1), PW1 (5) |
 | `console/src/renderer/manage/kinds/images.ts` | MO-C (1), MW2 (5) |
 | `console/src/renderer/manage/kinds/models.ts` | MO-K (1), MW1 (4) |
-| `console/src/renderer/screens/projects.ts` | SU2a (2), SU2b (4), I-MG (3) |
+| `console/src/renderer/screens/projects.ts` | SU2a (2), SU2b (4), I-MG (3), RS5 (5) |
 | `console/src/renderer/section.ts` | RS2 (2), RB1 (0) |
+| `console/src/renderer/stream.ts` | RS2 (2), RS5 (5) |
 | `console/src/renderer/stubs/bridge-stub.ts` | C-OPS (0), I-OPS (4) |
 | `console/src/renderer/theme/flight-deck.css` | LP2 (0), GF2 (1) |
 | `console/src/renderer/theme/screens.css` | LP2 (0), SU2a (2) |
@@ -676,7 +721,7 @@ The contract-first pass is on (`fugaro settings planning.decoupling` reads `true
 
 ## The estimate the graph read printed
 
-`ready in 450–1800 min, no history yet for 40 tasks (40 tasks; seeds for 40; from the seeds: no history is cached on this machine yet)`
+`ready in 450–1800 min, no history yet for 43 tasks (43 tasks; seeds for 43; from the seeds: no history is cached on this machine yet)`
 
 This is informational and reserves no budget: it is what the tasks' tiers and this machine's history predict, not a figure the plan holds to. It moves as runs finish and as the graph changes. Proposed runs, when the owner gives a go: one run per approved task; the worst case is every task at its tier's ceiling, and no figure here is a reservation.
 

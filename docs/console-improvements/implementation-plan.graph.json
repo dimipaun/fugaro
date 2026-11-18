@@ -651,7 +651,7 @@
     },
     {
       "id": "SRC",
-      "title": "the main-side handlers and fixtures for the four new reads",
+      "title": "the main-side handlers and fixtures for the six new reads",
       "run": null,
       "version": null,
       "size": 3,
@@ -663,6 +663,60 @@
           "console/src/source/cli.ts",
           "console/src/source/fixture.ts",
           "console/test/unit/source-new-reads.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "RS3",
+      "title": "report --stream",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/report.go",
+          "internal/cli/report_stream.go",
+          "internal/cli/report_stream_test.go",
+          "schemas/report-stream.schema.json",
+          "internal/cli/testdata/report_stream.golden.ndjson"
+        ]
+      }
+    },
+    {
+      "id": "RS4",
+      "title": "budget show --stream",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/budget.go",
+          "internal/cli/budget_stream.go",
+          "internal/cli/budget_stream_test.go",
+          "schemas/budget-stream.schema.json",
+          "internal/cli/testdata/budget_stream.golden.ndjson"
+        ]
+      }
+    },
+    {
+      "id": "RS5",
+      "title": "the Spend and Project tabs draw their rows as they arrive",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/screens/spend.ts",
+          "console/src/renderer/screens/projects.ts",
+          "console/src/renderer/stream.ts",
+          "console/test/unit/spend-stream.test.ts",
+          "console/test/unit/projects-stream.test.ts"
         ]
       }
     },
@@ -902,6 +956,16 @@
       "reason": "both write `console/docs/json-contract.md`"
     },
     {
+      "task": "AL",
+      "needs": "RS3",
+      "reason": "the docs pin holds the allow-list's flags to flags the CLI registers"
+    },
+    {
+      "task": "AL",
+      "needs": "RS4",
+      "reason": "same"
+    },
+    {
       "task": "SM1",
       "needs": "SM0",
       "reason": "the entries are built against `Meta` and `Register`"
@@ -1030,6 +1094,36 @@
       "task": "SRC",
       "needs": "C-OPS",
       "reason": "built against the payloads and handler signatures"
+    },
+    {
+      "task": "RS3",
+      "needs": "RS1",
+      "reason": "reuses RS1's stream writer and line shape (`runs_stream.go`)"
+    },
+    {
+      "task": "RS4",
+      "needs": "RS1",
+      "reason": "both reuse RS1's stream writer and line shape (`runs_stream.go`)"
+    },
+    {
+      "task": "RS5",
+      "needs": "RS2",
+      "reason": "uses `readStream`"
+    },
+    {
+      "task": "RS5",
+      "needs": "RS3",
+      "reason": "decodes the report stream's golden"
+    },
+    {
+      "task": "RS5",
+      "needs": "RS4",
+      "reason": "decodes the budget stream's golden"
+    },
+    {
+      "task": "RS5",
+      "needs": "SU2b",
+      "reason": "both write `projects.ts`"
     }
   ],
   "decoupling": [
