@@ -3540,6 +3540,14 @@ A group a run already covers is skipped, found through the run list, so a
 second call files only what is left and an interrupted one can simply be run
 again.
 
+Where it runs is where fugaro run runs: your own terminal, or a coding
+agent's session, with no difference between the two. The pull request is read
+with whatever credential is there -- your terminal's own, the repository's
+configured App ID with the App's key or the project's Bitbucket token, or, in
+a session, the installation's credentials service minting one read-only token
+for that repository -- and a session reads no App key and no Secret Manager
+value.
+
 Usage: `fugaro followups RUN`
 
 Flags:

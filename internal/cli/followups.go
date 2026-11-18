@@ -149,7 +149,14 @@ func newFollowUpsCmd() *cobra.Command {
 			"reason are fenced and indented as data in the brief.\n\n" +
 			"A group a run already covers is skipped, found through the run list, so a\n" +
 			"second call files only what is left and an interrupted one can simply be run\n" +
-			"again.",
+			"again.\n\n" +
+			"Where it runs is where fugaro run runs: your own terminal, or a coding\n" +
+			"agent's session, with no difference between the two. The pull request is read\n" +
+			"with whatever credential is there -- your terminal's own, the repository's\n" +
+			"configured App ID with the App's key or the project's Bitbucket token, or, in\n" +
+			"a session, the installation's credentials service minting one read-only token\n" +
+			"for that repository -- and a session reads no App key and no Secret Manager\n" +
+			"value.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runFollowUps(cmd, o, args[0], launch, max, asJSON)
