@@ -402,3 +402,51 @@ func TestSettleNeedsAChangeSet(t *testing.T) {
 		t.Error("Settle of a set with no member did not fail")
 	}
 }
+
+// TestCoordinatorViewShowsOrder is D4's other half: the report of a settle is
+// the coordinator's view of a whole set, and it states the set's advisory merge
+// order (D4, D615) — every member's repository, in the order the launch named
+// them, contracts and shared libraries first and the consumers that need them
+// after. The coordinator is where a person reads a set whole, so the order is
+// stated here and not only in each member's own pull request body
+// (gitprov.ChangeSetOrder, pinned by TestChangeSetOrderInEveryPR).
+//
+// The order is the set's own and never a second list to keep in step: it is read
+// from the member list the settle acts on, and it is stated even for a set the
+// settle leaves untouched — which is the report a reader asks "why is this set
+// not ready" of. Nothing acts on it: this step makes a set's pull requests ready
+// together and never orders, blocks or reorders a merge (D615).
+func TestCoordinatorViewShowsOrder(t *testing.T) {
+	f := newSettleFixture()
+	rep, err := f.settler().Settle(context.Background(), settleSet())
+	if err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if want := []string{"acme/app", "acme/other"}; !slices.Equal(rep.MergeOrder, want) {
+		t.Fatalf("the report's merge order = %v, want the set's own %v", rep.MergeOrder, want)
+	}
+	// The order and the member rows are one list read twice: a report whose
+	// order named a member its rows do not, or named them in another order,
+	// would be a second list to keep in step with the first.
+	rows := make([]string, 0, len(rep.Members))
+	for _, m := range rep.Members {
+		rows = append(rows, m.Repo)
+	}
+	if !slices.Equal(rep.MergeOrder, rows) {
+		t.Errorf("the report's merge order %v is not its members' own order %v", rep.MergeOrder, rows)
+	}
+	// A set the settle leaves untouched states the order all the same: a report
+	// of a set that changed nothing is the answer to why it is not ready, and
+	// the order it is waiting for is part of that answer.
+	held := newSettleFixture()
+	other := held.records[settleRunB]
+	other.Member.Verdict = ""
+	held.records[settleRunB] = other
+	rep, err = held.settler().Settle(context.Background(), settleSet())
+	if err != nil {
+		t.Fatalf("Settle: %v", err)
+	}
+	if rep.Settled || !slices.Equal(rep.MergeOrder, []string{"acme/app", "acme/other"}) {
+		t.Errorf("the report of a set held back = %+v, want it unsettled with the set's own order", rep)
+	}
+}

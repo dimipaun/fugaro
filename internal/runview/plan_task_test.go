@@ -105,6 +105,20 @@ var planTaskReaders = map[string]string{
 	"internal/orchestrator/state.go":    "defines WorkItem.PlanTask, the node of a plan the item stands for",
 	"internal/orchestrator/validate.go": "applies task.PlanTaskProblem to the id a patch writes, the shape rule the launcher applies on write",
 	"internal/orchestrator/patch.go":    "the upsert op that carries a plan's node id into the state",
+	// Adoption (R4, D2702): a run in flight whose launch recorded a plan task
+	// is filed in that plan's own node rather than beside it, which is the one
+	// thing here the id decides -- and it decides it about a record of a run
+	// that is really in flight, not about a run. A forged id files that record
+	// under a plan node of its choosing, so what it can reach is a document in
+	// the daemon's own subtree, written under the daemon's own lease: the name
+	// is specName's fold and bound and PathPlan's check, so no id escapes
+	// `orchestrator/<id>/plans/`, and the fact it leaves is one bounded,
+	// escaped line (cleanLine) asking a session to import a plan the operator
+	// already holds -- an import that is add-only, queued and unapproved. It
+	// admits no run, budgets nothing, grants nothing and launches nothing: the
+	// item is written unapproved by construction, and the ladder will not
+	// enter the rung that merges one (D2702).
+	"internal/orchestrator/adopt.go": "files the record of a run in flight under the plan node its launch named, and names that plan in one fact (D2702, D2721, D2746)",
 	// The item's id on its way to the launch (B7): the declaration the state
 	// digests carries it into the spec the launcher is handed, and the daemon's
 	// launcher passes it through the command's own resolution, which is what
@@ -112,6 +126,15 @@ var planTaskReaders = map[string]string{
 	// a run to its node with. Neither decides anything with it.
 	"internal/orchestrator/launch.go":       "carries the item's plan task into the launch spec (Spec.PlanTask, SpecOf), where the launcher reads it",
 	"internal/cli/orchestrator_launcher.go": "passes the item's plan task into the command's own launch resolution, which records it in the task and in launch.json",
+	// The import of a plan's graph (D2704): it writes the id as an item's
+	// plan_task, and matches on it so an item the daemon adopted for the same
+	// task is linked rather than duplicated (D2746). What the match decides is
+	// which item of the plan's own node an edge names, and both sides are items
+	// already in that node -- the adopted one written by the daemon from a
+	// launch record, the one this import would write arriving unapproved -- so
+	// nothing is admitted, budgeted or granted by it, and it refuses rather
+	// than guesses when one plan task stands under two items.
+	"internal/orchestrator/planimport.go": "writes a plan's task id as an item's plan_task, and matches on it to link an adopted item rather than duplicate it (D2746)",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

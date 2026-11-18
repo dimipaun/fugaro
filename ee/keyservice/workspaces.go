@@ -286,7 +286,7 @@ func (s *Service) bindEntitlement(ctx context.Context, actor Caller, entitlement
 	// still the state the store holds.
 	var replacing []string
 	if rebinding {
-		replacing, err = s.licenceKeys(ctx, entitlement.ID)
+		replacing, err = s.bindingKeys(ctx, entitlement.ID)
 		if err != nil {
 			return WireWorkspace{}, err
 		}
@@ -545,7 +545,7 @@ func bindingSource(entitlementID string) (string, error) {
 	return bindingPrefix + entitlementID + ":" + nonce, nil
 }
 
-// licenceKeys answers the keys this licence's records name, as the store's
+// bindingKeys answers the keys this licence's records name, as the store's
 // issuance list stands at the instant it is read: the key a binding minted, the
 // successor a reveal rotated in, and the ones earlier rebinds already withdrew.
 //
@@ -566,7 +566,7 @@ func bindingSource(entitlementID string) (string, error) {
 // transaction that revokes: the list held here is one the store may have added
 // to since, and it is the guards there that decide whether anything on it is
 // revoked at all.
-func (s *Service) licenceKeys(ctx context.Context, entitlementID string) ([]string, error) {
+func (s *Service) bindingKeys(ctx context.Context, entitlementID string) ([]string, error) {
 	issued, err := s.store.Issuances(ctx)
 	if err != nil {
 		return nil, err

@@ -46,6 +46,7 @@ import {
   HIDDEN_VIEW_WORDS,
   LAUNCH_CLI_FLOOR,
   LICENCE_KEY_CLI_FLOOR,
+  NO_APPLY_CLI_FLOOR,
   NOTICE_REASONS,
   REDUCED_VIEWS,
   RUNS_LIST_PAGE_CLI_FLOOR,
@@ -58,6 +59,7 @@ import {
   hidesView,
   launchSupported,
   licenceKeySupported,
+  noApplySupported,
   parseCliVersion,
   renderVersionSkew,
   runsListPageSupported,
@@ -535,6 +537,52 @@ describe('licenceKeySupported', () => {
     expect(licenceKeySupported('0.23.0-rc.1', floor)).toBe(false)
     expect(licenceKeySupported('dev', floor)).toBe(false)
     expect(licenceKeySupported('', floor)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The settings write's `--no-apply` floor.
+// ---------------------------------------------------------------------------
+
+describe('noApplySupported', () => {
+  it('names 0.26.0, the release whose settings set and unset register the flag', () => {
+    // `settings set` and `settings unset` gain `--no-apply` with AP5 and AP6 of
+    // the composite-commands plan, which ship in 0.26.0; a CLI below it answers
+    // the word with `unknown flag: --no-apply` and fails the whole write, so
+    // every line below the floor is refused and every line at or above it is
+    // not, through the constant's own default.
+    expect(NO_APPLY_CLI_FLOOR).toBe('0.26.0')
+    for (const line of ['0.11.2', '0.22.0', '0.25.0', '0.25.9', '0.26.0-rc.1', 'dev']) {
+      expect(noApplySupported(line), line).toBe(false)
+    }
+    for (const line of ['0.26.0', '0.26.1', '0.27.0', '1.4.2']) {
+      expect(noApplySupported(line), line).toBe(true)
+    }
+  })
+
+  it('refuses every version while the floor is unset', () => {
+    for (const line of ['0.26.0', '1.4.2', '99.99.99']) {
+      expect(noApplySupported(line, null), line).toBe(false)
+    }
+  })
+
+  it('is the patch comparison the other floors are, once a release names itself', () => {
+    // The branch a release takes: the constant becomes the version whose
+    // `addNoApplyFlag` call lands, and the comparison is `meetsCliFloor`'s --
+    // below the floor is a refusal however close, the floor itself and
+    // everything above it are not, and a line that cannot be placed at all (a
+    // prerelease, a `dev` build, an unreadable line) is a refusal. The floor is
+    // driven as an argument here because the constant is unset; that parameter
+    // exists for this case (`noApplySupported`'s note).
+    const floor = '0.23.0'
+    expect(noApplySupported('0.22.9', floor)).toBe(false)
+    expect(noApplySupported('0.23.0', floor)).toBe(true)
+    expect(noApplySupported('0.23.1', floor)).toBe(true)
+    expect(noApplySupported('0.24.0', floor)).toBe(true)
+    expect(noApplySupported('0.23.0+build.7', floor)).toBe(true)
+    expect(noApplySupported('0.23.0-rc.1', floor)).toBe(false)
+    expect(noApplySupported('dev', floor)).toBe(false)
+    expect(noApplySupported('', floor)).toBe(false)
   })
 })
 

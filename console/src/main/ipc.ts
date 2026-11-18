@@ -619,7 +619,7 @@ export const LAUNCH_PAYLOAD_WIDTH =
   LAUNCH_TASK_RAW_LIMIT + LAUNCH_TITLE_RAW_LIMIT + LAUNCH_PLAN_TASK_RAW_LIMIT + 4096
 
 /**
- * CONSOLE_OPERATIONS is the whole surface. Forty-two operations, and the table
+ * CONSOLE_OPERATIONS is the whole surface. Forty-three operations, and the table
  * is the reviewable artifact: a new read is a new entry here, with its argument
  * schema, and an entry is the only way anything becomes reachable.
  *
@@ -1297,10 +1297,13 @@ export const CONSOLE_OPERATIONS = [
   //
   // **`flags` is empty, and that is the one place this row differs from every
   // read beside it.** The dry run's argv carries `--dry-run --json` and a
-  // confirmed write's carries no flag at all -- which is not a set of flags this
-  // operation *fixes*, so it is the phase the main process decides
+  // confirmed write's carries `--no-apply` (D1565, D1572) -- which is not a set
+  // of flags this operation *fixes*, so it is the phase the main process decides
   // (`SETTINGS_EDIT_PHASE_WORDS`, `src/main/spawn.ts`) rather than a column
-  // here. A screen chooses none of them: not `--dry-run`, not even `--json`.
+  // here. **The write's word is held behind a floor as well**
+  // (`NO_APPLY_CLI_FLOOR`, `src/shared/version.ts`), because no released CLI
+  // registers it yet: no child gets it today, and a renderer has no part in that
+  // either. A screen chooses none of them: not `--dry-run`, not even `--json`.
   //
   // **The schema is three keys and no more**, and the layer is not one of them:
   // it is the read's own `target_layer`, held in this process's copy of the
@@ -1969,6 +1972,48 @@ export const CONSOLE_OPERATIONS = [
         why: '`newUserLsCmd` has this flag, and it is what the view turns on: the role each person holds in one repository -- the highest role whose scope covers it, with the published policy’s `allow_repos` taken into account -- rather than the whole roster. It is optional because the command has a state of its own without it (the stored pairs, and the repositories of this machine a pattern matches), so a caller that names no repository is answered rather than refused. The grammar is this surface’s own `repository` kind, the canonical `owner/name` every other repository argument here is: a **pattern** is what a grant’s scope holds, never what this argument may hold, so the one word a caller fills here cannot widen what the read is about.',
       },
     ],
+  },
+  // The pending-steps read (the composite-commands plan's AP8, D1569): the
+  // follow-up steps a management command saved for a later `fugaro apply`, the
+  // change that asked for each of them, and whether a record is on disk and
+  // still stamped against this machine's config. It is the console's
+  // **forty-first** operation, and the read behind it is AP3's
+  // `fugaro apply --status --json` (`internal/cli/apply.go`).
+  //
+  // **`--status` is a word of the command path and not a flag this row fixes**,
+  // and that is the whole of its safety. `fugaro apply` is a **write** -- it is
+  // the chain that runs the steps a management command saved -- and the bare
+  // command is the one the console runs after such a command (D1572, the
+  // design's own row for it); `--status` is the arm that runs no step, writes no
+  // pending file, keeps no cache and remembers no checkout, which is what makes
+  // this row a read the surface may carry at all. Spelling it as the `command`
+  // rather than as a fixed flag is what keeps the two apart here: a row's
+  // `command` is the argv's leading words (`assertSpawnSurface`), so
+  // `apply --status` cannot be reached by a caller that dropped the word, and
+  // `ALLOWED_OPERATION_FLAGS` -- which is the surface's whole flag vocabulary --
+  // gains nothing for it.
+  //
+  // **It takes no argument at all**: the command is cobra's `NoArgs`, `--status`
+  // and `--json` are words of its own row, and the two project flags are the
+  // installation's (§3.4 rule 3), so there is no field a renderer could fill.
+  // Every string in the document is the project's own text carried as data --
+  // a step's name, the key or repository a change was about -- and no screen
+  // interprets one.
+  //
+  // **It carries no spend and no cap**: a pending step is a state and not a
+  // figure, so it is in none of `REDUCED_VIEW_OPERATIONS`' lists and a reduced
+  // console answers it -- which is what a reduced console's operator needs,
+  // since the steps a management command saved are precisely what a lapsed
+  // installation has not applied yet. **No lapse refuses it either**
+  // (`docs/design/lapse-read-only.md`): the read writes nothing on this machine
+  // and reaches no cloud object.
+  {
+    name: 'apply.pending',
+    method: 'readPendingSteps',
+    command: 'apply --status',
+    flags: ['--json'],
+    summary: 'the follow-up steps a management command saved for a later `fugaro apply`, the change that asked for each of them, and whether a record is on disk and still stamped against the config this machine now has',
+    args: [],
   },
 ] as const satisfies readonly ConsoleOperation[]
 

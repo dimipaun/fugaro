@@ -35,17 +35,12 @@ const stageDiagnose = "diagnose"
 const (
 	diagnoseBundleDir = "diagnose"
 	diagnoseOutDir    = "out"
-	diagnoseMDName    = "diagnosis.md"
-	diagnoseJSONName  = "diagnosis.json"
+	// The two answer files are named by diagnoseagent, which is where the
+	// launcher reads them back from: one spelling for a contract two binaries
+	// hold.
+	diagnoseMDName   = diagnoseagent.AnswerMarkdownName
+	diagnoseJSONName = diagnoseagent.AnswerName
 )
-
-// maxDiagnoseBundleBytes bounds the whole bundle the stage will hold. It is a
-// backstop and not a policy: the launcher writes the bundle out of the
-// evidence files and the changes file, which are bounded in the hundreds of
-// kilobytes, so a manifest claiming more than this is one no launcher of this
-// program wrote — and refusing it before the downloads is what keeps a bucket
-// object from being read into the job's memory on its own say-so.
-const maxDiagnoseBundleBytes int64 = 8 << 20
 
 // diagnoseSource is srctree.Ensure: the fetch of the Fugaro source at the
 // version the bundle names (D2404). It is a variable because a test may not
@@ -185,11 +180,19 @@ func (r *run) readDiagnoseBundle(ctx context.Context) (diagnoseagent.Bundle, []d
 		return none, nil, err
 	}
 	parts := make([]diagnoseagent.BundleText, 0, len(b.Parts))
+	// The bound on the whole bundle is diagnoseagent.BundleMaxBytes, the same
+	// number the launcher judges before it uploads: one spelling, because a
+	// launcher that uploaded what this stage refuses would leave the person's
+	// evidence in the run's bucket for an answer no run could give. Refusing it
+	// here, before the downloads, is what keeps a bucket object from being read
+	// into the job's memory on its own say-so — and the launcher's own refusal
+	// means a bundle of this program's does not reach this check at all, so it
+	// is the backstop for a manifest no launcher wrote.
 	var total int64
 	for _, p := range b.Parts {
 		total += p.Bytes
-		if total > maxDiagnoseBundleBytes {
-			return none, nil, fmt.Errorf("the diagnosis bundle's parts claim %d bytes together, over the %d this runner reads", total, maxDiagnoseBundleBytes)
+		if total > diagnoseagent.BundleMaxBytes {
+			return none, nil, fmt.Errorf("the diagnosis bundle's parts claim %d bytes together, over the %d this runner reads", total, diagnoseagent.BundleMaxBytes)
 		}
 		key := runstore.InputKey(prefix, diagnoseagent.PartObjectName(p.Name))
 		dest := filepath.Join(dir, filepath.FromSlash(p.Name))

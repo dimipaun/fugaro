@@ -23,9 +23,11 @@
 // it can reach is this installation's own (never a second installation's
 // nodes). The rules themselves are internal/orchestrator/never.go — section 6's
 // eleven as refusals the code answers with — and this file is where two of them
-// meet a real deployment fact at start-up: the project it is told to serve is
-// never `belong` (rule 6, F31), and the database URL and the Firebase project
-// must name one installation (rule 10).
+// meet a real deployment fact at start-up: the installation it is told to serve
+// is never `belong` (rule 6, F31), which is held to both names the deployment
+// is made of, its own project and the Firebase project its database belongs to;
+// and the database URL and that Firebase project must name one installation
+// (rule 10).
 //
 // WHAT A PASS DOES TODAY, WHICH IS DELIBERATELY LITTLE. The tick's pass reads
 // the node the previous pass left — the state document, and the lease node
@@ -151,7 +153,13 @@ type orchestratorWiring struct {
 
 // orchestratorTest is nil in production: the function above is then
 // google.DefaultTokenSource over the database scopes, as the revision's own
-// service account (the one grant section 4.3 gives it is this read).
+// service account. This is an IAM read and not a rules read (rtdb sends a
+// source as a Bearer header, and an IAM read bypasses the rules entirely), and
+// Realtime Database IAM has no path scope, so it needs
+// firebasedatabase.instances.get. Section 4.3's table has no row granting this
+// account that permission and orchestrator.tf binds it to none, so on a real
+// installation this read is refused: that is the P5.1c review's finding A, and
+// the row is the design's to add rather than a line to slip into a fix.
 var orchestratorTest *orchestratorWiring
 
 // orchestratorConfig is one deployment's facts, as the builder below reads
@@ -179,7 +187,11 @@ type orchestratorConfig struct {
 //     owner's own installation and the resident orchestrator is never it (F31).
 //   - FUGARO_FIREBASE_PROJECT is the installation's Firebase project, which is
 //     the project the realtime database belongs to. The database is named after
-//     it (<project>-default-rtdb), so the two names must be one installation's.
+//     it (<project>-default-rtdb), so the two names must be one installation's —
+//     and this one is held to rule 6 as well, because the database it names is
+//     the installation's own: a deployment whose GCP project is outside the
+//     `belong` family and whose database is inside it is still serving the
+//     owner's own installation.
 //   - FUGARO_RTDB_URL is the database itself, which is the only store this
 //     process reads, and the only reach it has beyond Google's own IAM.
 //
@@ -212,6 +224,20 @@ func orchestratorServiceConfig(ctx context.Context, getenv func(string) string, 
 	fb := getenv(envFirebaseFP)
 	if fb == "" {
 		return orchestratorConfig{}, userErr("the resident orchestrator needs %s in its environment: it is the installation's Firebase project, which the database it reads belongs to, and a process that does not know which installation it is serving acts on no node at all", envFirebaseFP)
+	}
+	// Rule 6 is about the INSTALLATION and not about one of its names, so it is
+	// held to both names this deployment is made of: the owner's own database
+	// is whatever the installation's own project is called, and the database
+	// URL below is named after the Firebase project (rule 10's check reads the
+	// two back to each other), so the one name here covers the URL as well. A
+	// deployment that named only its GCP project outside the rule and its
+	// database inside it would otherwise read and act on the owner's own node —
+	// the thing F31 fences. The names the rule is judged on are the owner's
+	// installation's own and not only the word: `fugaro-belong` is the Firebase
+	// project it reads and `edge-devel-dimi` the GCP project its resources are
+	// in, and never.go refuses both.
+	if err := orchestrator.NeverBelong(fb); err != nil {
+		return orchestratorConfig{}, userErr("the resident orchestrator will not serve this installation: %v", err)
 	}
 	rawURL := getenv(envRTDBURL)
 	if rawURL == "" {

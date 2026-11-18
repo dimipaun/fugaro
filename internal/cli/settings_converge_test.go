@@ -131,12 +131,19 @@ func settingsConvergeLayerFile(t *testing.T) string {
 	return path
 }
 
-// settingsConvergeSet runs one `settings set` and returns its output.
+// settingsConvergeSet runs one `settings set ... --no-apply` and returns its
+// output.
+//
+// The flag is the loop's own shape (composite AP5, D1565): this file observes
+// the state between a change and the step that makes it live, so the write
+// saves the change and runs none of the steps its key declares — a write that
+// ran the stage itself would leave the state before it unobservable and the
+// loop's second half a re-run of what the command already did.
 func settingsConvergeSet(t *testing.T, key, value, layer string) string {
 	t.Helper()
-	out, _, err := execute(t, "settings", "set", key, value, "--layer", layer)
+	out, _, err := execute(t, "settings", "set", key, value, "--layer", layer, "--no-apply")
 	if err != nil {
-		t.Fatalf("settings set %s %s --layer %s: %v\n%s", key, value, layer, err, out)
+		t.Fatalf("settings set %s %s --layer %s --no-apply: %v\n%s", key, value, layer, err, out)
 	}
 	return out
 }
@@ -156,9 +163,11 @@ func TestSetReadUnpublishedUpdateThenConverged(t *testing.T) {
 	c := settingsConvergeFixture(t)
 
 	// The write: the file's ceiling is the tighter one, so it is the value a run
-	// gets once the node carries it.
-	if out := settingsConvergeSet(t, "budget.per_run_usd", "3", "local"); !strings.Contains(out, "next: fugaro update") {
-		t.Fatalf("the write does not end with the one command that publishes it:\n%s", out)
+	// gets once the node carries it. --no-apply keeps the step owed, which is
+	// this file's subject: the state before the step is the one the read below
+	// answers for (composite AP5).
+	if out := settingsConvergeSet(t, "budget.per_run_usd", "3", "local"); !strings.Contains(out, "saved, not live yet: "+initflow.Policy+" still owed") {
+		t.Fatalf("the write does not say the step its key declares is still owed:\n%s", out)
 	}
 
 	waiting := rowOf(t, readSettingsJSON(t, "budget.per_run_usd"), "budget.per_run_usd", "project")
@@ -216,17 +225,19 @@ func TestSetReadUnpublishedUpdateThenConverged(t *testing.T) {
 	}
 }
 
-// TestConvergePrintsOnlyFugaroUpdateNext: the loop names one command, once, and
-// never a list of steps (spec §1). The write ends with `next: fugaro update`,
-// the read that answers `unpublished` names no command at all, and the stage
-// the update runs neither prints a step of its own nor sends the operator to a
-// second door — the publish is `fugaro update`'s step — so the loop's whole
-// output carries exactly one `next:` line.
+// TestConvergeNamesTheOneCommandThatFinishesIt: the loop names one command,
+// once, and never a list of steps (spec §1). The write that does not run its
+// own steps ends on D1563's sentence and names `fugaro apply`, the read that
+// answers `unpublished` names no command at all, and the stage the update runs
+// neither prints a step of its own nor sends the operator to a second door —
+// the publish is `fugaro update`'s stage, which the command that made the
+// change runs itself (composite AP5) — so the loop's whole output names
+// `fugaro apply` once and carries no `next:` line at all.
 //
 // The whole output is the loop of one key, which is what an operator converges
 // in one go; the first test's second half is the same loop over the layer, and
-// a loop of two edits naturally ends with the same line twice.
-func TestConvergePrintsOnlyFugaroUpdateNext(t *testing.T) {
+// a loop of two edits naturally names the same command twice.
+func TestConvergeNamesTheOneCommandThatFinishesIt(t *testing.T) {
 	c := settingsConvergeFixture(t)
 
 	whole := strings.Builder{}
@@ -243,14 +254,17 @@ func TestConvergePrintsOnlyFugaroUpdateNext(t *testing.T) {
 	c.publishPolicy(t)
 	whole.WriteString(c.out.String())
 
-	next := []string{}
+	named := []string{}
 	for _, line := range strings.Split(strings.TrimRight(whole.String(), "\n"), "\n") {
 		if strings.HasPrefix(line, "next:") {
-			next = append(next, line)
+			t.Errorf("the loop carries the hand-off line %q; the write runs the step its key declares and names `fugaro apply` when it does not:\n%s", line, whole.String())
+		}
+		if strings.Contains(line, "fugaro apply") {
+			named = append(named, line)
 		}
 	}
-	if len(next) != 1 || next[0] != "next: fugaro update" {
-		t.Errorf("next lines = %q, want exactly one `next: fugaro update`", next)
+	if len(named) != 1 {
+		t.Errorf("the loop names `fugaro apply` in %d lines, want exactly the one that finishes the change:\n%s", len(named), whole.String())
 	}
 	// The two doors this publish belongs to are not offered as a second step: a
 	// loop that sent the operator to `fugaro project policy publish` after the

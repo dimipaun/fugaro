@@ -1,11 +1,12 @@
 // What a tick tells a person (O7).
 //
-// A tick has two things to say: a run it folded has ended, and it has raised a
-// question somebody has to answer. Both are things the cycle itself wrote — the
-// other half of the notification rule, level-triggered and without a cursor
-// (D1229): the cycle that records an outcome or commits a question is the one
-// that says so, and no cycle afterwards repeats it, because the node no longer
-// has anything new to say. There is nothing on a decision or an intent that
+// A tick has three things to say: a run it folded has ended, it has raised a
+// question somebody has to answer, and it has merged a pull request under a
+// ceiling that merges and tells somebody (D2030). All three are things the cycle
+// itself wrote — the other half of the notification rule, level-triggered and
+// without a cursor (D1229): the cycle that records an outcome, commits a
+// question or lands a merge is the one that says so, and no cycle afterwards
+// repeats it, because the node no longer has anything new to say. There is nothing on a decision or an intent that
 // remembers "a person was told", and there is nothing to add to the wire
 // formats either: what was told is derived from what the cycle wrote.
 //

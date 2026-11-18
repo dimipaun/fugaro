@@ -40,8 +40,11 @@
 #             reads no verdict.
 # Needs:      bash, mktemp, sed, awk, python3, git and fugaro on PATH, and `gh`
 #             for the steps that read a pull request and the CI behind it
-#             (steps 5, 10 and 11). Nothing is installed and nothing is
-#             fetched; a missing tool stops the run with one line naming it.
+#             (steps 5, 10 and 11) — and every gh call names the sandbox's own
+#             repository, so those reads answer the same from any directory
+#             rather than about whatever checkout you happen to be in. Nothing
+#             is installed and nothing is fetched; a missing tool stops the run
+#             with one line naming it.
 #             python3 reads every JSON document: a row read with grep would
 #             report a shape the release did not write the day a document is
 #             re-wrapped.
@@ -670,7 +673,12 @@ step_postmerge() {
     unmeasured post-merge "the base branch the merge lands on could not be named: $SANDBOX's config answered no git.base_branch, so which branch's CI would carry the merge cannot be read"
     return 0
   fi
-  if ! run_capture "$SCRATCH/pr.json" gh pr view "$n" --json state,mergedAt,mergeCommit,baseRefName,url; then
+  # gh resolves a pull request and a workflow run in the CURRENT directory's
+  # repository when no --repo is given, and this check is documented to be run
+  # from the Fugaro checkout: without one, these two reads would answer about
+  # Fugaro's own pull requests and its own CI. Every gh call in this script
+  # names the sandbox's repository.
+  if ! run_capture "$SCRATCH/pr.json" gh pr view "$n" --repo "$REPO" --json state,mergedAt,mergeCommit,baseRefName,url; then
     unmeasured post-merge "gh pr view $n did not answer for $REPO, so the pull request's own state cannot be read"
     return 0
   fi
@@ -682,7 +690,7 @@ step_postmerge() {
     fact post-merge FAIL "the pull request $n is not merged ('$(field_of state "$answer")'), so there is no post-merge CI to read: step 5 is about what the provider does AFTER the merge"
     return 1
   fi
-  if ! run_capture "$SCRATCH/ci.json" gh run list --branch "$head" --limit 20 --json databaseId,headSha,event,status,conclusion; then
+  if ! run_capture "$SCRATCH/ci.json" gh run list --branch "$head" --repo "$REPO" --limit 20 --json databaseId,headSha,event,status,conclusion; then
     unmeasured post-merge "gh run list did not answer for $REPO, so whether the provider ran a workflow on the merge cannot be read"
     return 0
   fi
@@ -749,14 +757,30 @@ step_two_repos() {
     fact project-default FAIL "the key resolves from the '$sa' layer in $REPO and the '$sb' layer in $CHECKOUT2, and step 6 is about each REPOSITORY's own key: a value that comes from the project layer, the default or a request is not the repository's own"
     return 1
   fi
-  # And each repository's run obeyed its own key: the record is where "the
-  # repository's own rigor.default decides its runs" is read rather than assumed.
-  local modes=""
+  # And each repository's run obeyed its own key — for the run that named no
+  # mode. A run started with `--mode` asked for its mode, and the request is the
+  # layer that decides it (a request may only raise a mode), so such a record is
+  # where the REQUEST is read and not where the repository's own key is: step
+  # 1's run is always one that asked (it is the POC run, and Critical is the
+  # default, D19), so judging $REPO's key off it would FAIL every sandbox whose
+  # rigor.default is not poc. What that run is held to is the mode step 1 asked
+  # for; the repository's key is judged on a run that named no mode.
+  local modes="" mode_a from_a
   if run_row two-a "$RUN_REF"; then
-    modes="the run of $REPO resolved '$(field_of mode "$RUN_ANSWER")'"
-    if [ "$(field_of mode "$RUN_ANSWER")" != "$va" ]; then
-      fact project-default FAIL "the run $RUN_REF resolved '$(field_of mode "$RUN_ANSWER")' where $REPO's own rigor.default says '$va': the repository's key is not what its runs resolve"
-      return 1
+    mode_a=$(field_of mode "$RUN_ANSWER")
+    from_a=$(field_of from "$RUN_ANSWER")
+    if [ "$from_a" = request ]; then
+      modes="the run of $REPO resolved '$mode_a', the mode step 1 asks for and so the request's, not $REPO's own rigor.default '$va'"
+      if [ "$mode_a" != poc ]; then
+        fact project-default FAIL "the run $RUN_REF resolved '$mode_a' from the run's own request where step 1 asks for poc: --run is the POC run, the one a repository has to ask for, so this is not the run step 6 reads — and $REPO's own rigor.default '$va' is judged on a run that named no mode"
+        return 1
+      fi
+    else
+      modes="the run of $REPO resolved '$mode_a' from the '$from_a' layer"
+      if [ "$mode_a" != "$va" ]; then
+        fact project-default FAIL "the run $RUN_REF named no mode and resolved '$mode_a' from the '$from_a' layer, where $REPO's own rigor.default says '$va': the repository's key is not what its runs resolve"
+        return 1
+      fi
     fi
   fi
   if [ -n "$RUN2_REF" ]; then
@@ -764,10 +788,16 @@ step_two_repos() {
       unmeasured project-default "$REPO2's listing does not hold the run $RUN2_REF, so the second repository's resolution cannot be read"
       return 0
     fi
-    modes="$modes; the run of $REPO2 resolved '$(field_of mode "$RUN_ANSWER")'"
-    if [ "$(field_of mode "$RUN_ANSWER")" != "$vb" ]; then
-      fact project-default FAIL "the run $RUN2_REF resolved '$(field_of mode "$RUN_ANSWER")' where $REPO2's own rigor.default says '$vb': the repository's key is not what its runs resolve"
-      return 1
+    mode_a=$(field_of mode "$RUN_ANSWER")
+    from_a=$(field_of from "$RUN_ANSWER")
+    if [ "$from_a" = request ]; then
+      yours project-default-runs "step 6's second half: the run $RUN2_REF asked for its mode ('$mode_a'), so $REPO2's own rigor.default '$vb' is not read off it — launch that repository's run with no --mode and pass it as --run2"
+    else
+      modes="$modes; the run of $REPO2 resolved '$mode_a' from the '$from_a' layer"
+      if [ "$mode_a" != "$vb" ]; then
+        fact project-default FAIL "the run $RUN2_REF named no mode and resolved '$mode_a' from the '$from_a' layer, where $REPO2's own rigor.default says '$vb': the repository's key is not what its runs resolve"
+        return 1
+      fi
     fi
   else
     yours project-default-runs "step 6's second half: launch a run in the second repository and pass --run2 <slug>/<run-id>, so each repository's own key is read against its own run's record"
@@ -874,8 +904,25 @@ step_watch() {
 }
 
 # pull_request N NAME — gh's own document of one pull request, in the scratch.
+# It names the sandbox's repository for step 5's reason: gh would otherwise read
+# the pull request of whatever checkout the check was started in.
 pull_request() { # pull_request N OUT
-  run_capture "$2" gh pr view "$1" --json state,mergedAt,mergeCommit,headRefName,baseRefName,files,commits,url
+  run_capture "$2" gh pr view "$1" --repo "$REPO" --json state,mergedAt,mergeCommit,baseRefName,files,commits,url
+}
+
+# item_ref PR_ANSWER — the COMMIT an item's own front matter is read at. It is
+# never the pull request's head BRANCH: GitHub deletes that branch when the pull
+# request merges, so a contents read at `ref=<head branch>` is a 404 for exactly
+# the pull request step 10 is about, and the row would read as one that could
+# not be measured. The merge commit carries the flip into the base branch, and a
+# pull request read before its merge is read at its last commit.
+item_ref() { # item_ref PR_ANSWER
+  local ref
+  ref=$(field_of merge_sha "$1")
+  if [ -z "$ref" ] || [ "$ref" = "-" ]; then
+    ref=$(printf '%s\n' "$1" | sed -n 's/^commit=//p' | tail -n 1)
+  fi
+  printf '%s' "$ref"
 }
 
 # pr_items PR_ANSWER — one `path=<p>` line per item file the pull request
@@ -899,9 +946,13 @@ step_item_pr() {
     return 0
   fi
   answer=$(reader pr <"$SCRATCH/itempr.json") || stop "the answer to gh pr view --json is not the document this check reads"
-  local merged head size dir items
+  local merged ref size dir items
   merged=$(field_of merged "$answer")
-  head=$(field_of head "$answer")
+  ref=$(item_ref "$answer")
+  if [ -z "$ref" ]; then
+    unmeasured item-pr "the pull request $ITEM_PR names neither a merge commit nor a commit of its own, so there is no revision to read its item files at"
+    return 0
+  fi
   # A pull request the check is pointed at before the merge is read anyway: the
   # flip and the one-commit claim are readable off it, and the merge is what the
   # step's own text says it waits on. It is said on stderr rather than in a row:
@@ -918,13 +969,13 @@ step_item_pr() {
     fact item-pr FAIL "the pull request $ITEM_PR touches no file under $dir/, so it fixes no item: step 10 is the pull request that closes an item, and the item file is the thing it has to carry"
     return 1
   fi
-  # The flip itself: the item's own front matter at the pull request's head.
+  # The flip itself: the item's own front matter at that commit.
   local path status flipped=""
   while IFS= read -r line; do
     path=${line#path=}
     [ -n "$path" ] || continue
-    if ! run_capture "$SCRATCH/contents.json" gh api "repos/$REPO/contents/$path?ref=$head"; then
-      unmeasured item-pr "gh api could not read $path at $head"
+    if ! run_capture "$SCRATCH/contents.json" gh api "repos/$REPO/contents/$path?ref=$ref"; then
+      unmeasured item-pr "gh api could not read $path at $ref"
       return 0
     fi
     status=$(reader itemfile <"$SCRATCH/contents.json" | sed -n 's/^status=//p' | head -n 1)
@@ -934,7 +985,7 @@ step_item_pr() {
     esac
   done <<<"$items"
   if [ -z "$flipped" ]; then
-    fact item-pr FAIL "none of the $size item file(s) the pull request $ITEM_PR touches reads closed (or dropped) at its head: the flip from open to closed is what step 10 is about, and a pull request that carries the file without the flip is a fix that left the item open"
+    fact item-pr FAIL "none of the $size item file(s) the pull request $ITEM_PR touches reads closed (or dropped) at $ref, a commit of that pull request and not its head branch: the flip from open to closed is what step 10 is about, and a pull request that carries the file without the flip is a fix that left the item open"
     return 1
   fi
   if ! printf '%s\n' "$answer" | grep -q "^path=$dir/README.md$"; then
@@ -962,7 +1013,7 @@ step_item_pr() {
     fact item-pr FAIL "in $ITEM_PR no single commit carries both an item file and $dir/README.md: the flip and the regenerated index are split across commits, which is the state D31 exists to prevent — a reviewer reading one commit sees an item closed under an index that still lists it open"
     return 1
   fi
-  fact item-pr PASS "the pull request $ITEM_PR flips $flipped (status closed at its head), carries $dir/README.md, and one commit carries both: the flip and the regenerated index are in the same commit (D31)"
+  fact item-pr PASS "the pull request $ITEM_PR flips $flipped (closed at $ref), carries $dir/README.md, and one commit carries both: the flip and the regenerated index are in the same commit (D31)"
 }
 
 step_item_branches() {
@@ -972,7 +1023,7 @@ step_item_branches() {
     return 0
   fi
   need gh "step 11 reads two pull requests through gh"
-  local a b head_a head_b items_a items_b names_a names_b
+  local a b items_a items_b names_a names_b
   if ! pull_request "$ITEM_PR" "$SCRATCH/itempr-a.json" || ! pull_request "$ITEM_PR2" "$SCRATCH/itempr-b.json"; then
     unmeasured item-branches "gh pr view did not answer for one of the two pull requests, so the two branches cannot be compared"
     return 0
@@ -982,8 +1033,6 @@ step_item_branches() {
   if [ "$(field_of merged "$a")" != yes ] || [ "$(field_of merged "$b")" != yes ]; then
     stop "one of the two pull requests is not merged ($ITEM_PR: $(field_of state "$a"), $ITEM_PR2: $(field_of state "$b")): step 11 is about the order two merged branches land in, so both merges have to be in before the index can be read"
   fi
-  head_a=$(field_of head "$a")
-  head_b=$(field_of head "$b")
   items_a=$(pr_items "$a") || items_a=""
   items_b=$(pr_items "$b") || items_b=""
   names_a=$(printf '%s\n' "$items_a" | sed -n 's|^path=.*/||p' | sort | tr '\n' ' ')
@@ -1204,12 +1253,12 @@ print_plan() {
   owner "  2  ${CRITICAL_REF:+fugaro diagnose $CRITICAL_REF --json beside the POC run}${CRITICAL_REF:-this step was not given a --critical run}"
   owner "  3  ${HOTFIX_REF:+fugaro diagnose $HOTFIX_REF --json; fugaro security paths --check ${FLOOR_PATH:-<path>} --json}${HOTFIX_REF:-this step was not given a --hotfix run}"
   owner "  4  fugaro budget preview --recipe ${RECIPE:-<the recipe the run recorded>} --runs ${RUNS_N:-10} --repo <repo> [--mode critical] --json"
-  owner "  5  ${PR:+gh pr view $PR --json state,mergedAt,mergeCommit,baseRefName,url; gh run list --branch <base> --limit 20 --json headSha,status,conclusion}${PR:-this step was not given a --pr}"
+  owner "  5  ${PR:+gh pr view $PR --repo $REPO_PLAN --json state,mergedAt,mergeCommit,baseRefName,url; gh run list --branch <base> --repo $REPO_PLAN --limit 20 --json headSha,status,conclusion}${PR:-this step was not given a --pr}"
   owner "  6  ${CHECKOUT2:+fugaro doctor --json and fugaro config show --json in $CHECKOUT2, beside the sandbox}${CHECKOUT2:-this step was not given a --checkout2}"
   owner "  7  ${REF_RUN:+fugaro runs ls --json, reading the rigor.revision of $REF_RUN}${REF_RUN:-this step was not given a --ref-run}${REF:+; git show $REF:fugaro.yaml}"
   owner "  8  ${AREAS_REF:+fugaro runs ls --json, reading the areas of $AREAS_REF}${AREAS_REF:-this step was not given an --areas-run}"
   owner "  9  fugaro watch --once --json --repo <repo>"
-  owner " 10  ${ITEM_PR:+gh pr view $ITEM_PR --json files,commits; gh api repos/<owner>/<name>/commits/<oid>; gh api .../contents/<item>?ref=<head>; fugaro backlog list --json}${ITEM_PR:-this step was not given an --item-pr}"
+  owner " 10  ${ITEM_PR:+gh pr view $ITEM_PR --repo $REPO_PLAN --json files,commits; gh api repos/<owner>/<name>/commits/<oid>; gh api .../contents/<item>?ref=<the merge commit, or the last commit of the pull request>; fugaro backlog list --json}${ITEM_PR:-this step was not given an --item-pr}"
   owner " 11  ${ITEM_PR2:+the same for $ITEM_PR2, then cp -R <checkout>/docs/backlog <scratch>/backlog-copy; fugaro backlog index --dir <scratch>/backlog-copy; cmp}${ITEM_PR2:-this step was not given an --item-pr2}"
   owner "and, in every step: nothing else. No run is launched, no pull request is opened, no object is written and no model is called."
 }
@@ -1486,7 +1535,6 @@ def cmd_pr():
     commits = [c.get("oid") for c in (doc.get("commits") or []) if c.get("oid")]
     line("state", doc.get("state") or "-")
     line("merged", "yes" if (doc.get("mergedAt") or doc.get("state") == "MERGED") else "no")
-    line("head", doc.get("headRefName") or "-")
     line("base", doc.get("baseRefName") or "-")
     line("merge_sha", mc.get("oid") or "-")
     line("files", "%d" % len(files))

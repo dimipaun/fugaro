@@ -126,6 +126,11 @@ describe('the stub’s command keys', () => {
       // this table and sit on the never table instead.
       'user ls',
       'run',
+      // The composite-commands plan's AP8 (`apply.pending` / `readPendingSteps`):
+      // the pending-steps read. Its key is the command word alone, because
+      // `--status` and `--json` are the row's own words -- and `--status` is a
+      // word of the row's command path, so no scenario key ever spells it.
+      'apply',
     ])
     // The console's one spawn table, which since the owner's design ruling of
     // 2026-10-25 includes the installation rail's own read (`config list
