@@ -13,7 +13,7 @@ The plan is built for parallelism: a plan that reads as one chain is a defect. D
 - **Slices, then tasks.** A slice ships something inert or useful alone. A task is the smallest unit that carries its own test cycle and its own review gate, completable in one focused run and touching about five files or fewer; a task past that is two tasks.
 - **Parallel execution**: the edges, the levels, the critical path and the shared-files table.
 - **The dependencies the plan broke and kept** (below).
-- **The estimate the graph read printed**: the one line `fugaro plan graph` prints for the plan — ready-by and cost — quoted as it printed it, with the sentence beside it that it is informational and reserves no budget.
+- **The estimate the graph read printed**: the one line `fugaro plan graph` prints for the plan — ready-by, and the cost where the history covers every task — quoted as it printed it, with the sentence beside it that it is informational and reserves no budget.
 - **Checks the plan takes** (from its reserved block): what each measures and who runs it.
 - **After-deploy steps** (a backfill, a configuration or secret change, a rollout order), each as a release-actions entry in that part's own pull request, as the repository's convention says.
 
@@ -78,7 +78,13 @@ fugaro plan graph --plan docs/<slug>/implementation-plan.md
 
 A refusal (a cycle, a missing reason, a contract with no file of its own) is a plan to fix. The read prints the edges broken, the stubs left and the gain in tasks and weight; a break it reports as no gain is one to undo.
 
-The read prints the plan's estimate too, as one line: `ready in 40–70 min, $3–$5 (12 tasks; history for 9, seeds for 3)`. Quote that line in the plan and in the pull-request body exactly as the read printed it, and say beside it that it is informational and reserves no budget — it is what the tasks' tiers and this machine's run history predict, not a figure the plan holds to. It moves as runs finish and as the graph changes, and nothing about it waits on a person's approval.
+The read prints the plan's estimate too, as one line. On a machine that has cached no history yet — the state every repository starts in — that line is:
+
+`ready in 45–180 min, no history yet for 3 tasks (3 tasks; seeds for 3; from the seeds: no history is cached on this machine yet)`
+
+The cost reads `no history yet for N tasks` until the history covers every task in the plan: there is no cost seed, so a task no run has paid for has no dollar figure, and a range that added up only the tasks it did know would read as the plan's whole cost. A plan the history does cover prints the dollar range in that place. The line ends with where the table came from — `from the seeds: …` or `from the cached history of <when>` — because `plan graph` never reaches the network, and it never prints a figure no sample supports.
+
+Quote that line in the plan and in the pull-request body exactly as the read printed it, and say beside it that it is informational and reserves no budget — it is what the tasks' tiers and this machine's history predict, not a figure the plan holds to. It moves as runs finish and as the graph changes.
 
 ## What the plan says in its own words
 
