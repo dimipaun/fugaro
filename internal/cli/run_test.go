@@ -570,7 +570,10 @@ func TestRunRetryUnlaunched(t *testing.T) {
 func TestRunRetryRefusesAStartedRun(t *testing.T) {
 	f := newCloudFixture(t)
 	t.Chdir(t.TempDir())
-	const id = "20260927-100000-abcd"
+	// Minted from the wall clock the retry's own window is measured back from
+	// (runid_test.go's guard): a --retry of a stored task reads its window
+	// through recheckFollowUp, which reads time.Now() itself.
+	id := wallRunIDAt(1, "100000", "abcd")
 	exec := seedSpec(t, f, firstRunSpec(id), true)
 	writeRecord(t, f, id, prRecord(id, exec, 7, 1))
 
@@ -610,7 +613,7 @@ func TestRunRetryRefusesAStartedRun(t *testing.T) {
 
 	// A run that left no pull request says so, and names a new run as the only
 	// way on: nothing the CLI takes continues a run that opened nothing.
-	const plain = "20260927-110000-ffff"
+	plain := wallRunIDAt(1, "110000", "ffff")
 	seedRun(t, f, plain, "", "someone@example.com", false)
 	writeRecord(t, f, plain, &runstore.Record{Version: 1, RunID: plain, Status: runstore.StatusSucceeded, Stage: "writeback"})
 	_, _, err = execute(t, "run", "--retry", plain)
@@ -2509,11 +2512,11 @@ func TestLaunchOutputShortID(t *testing.T) {
 		t.Errorf("--json's run = %q, %q, want the full IDs", res.Run, res.RunID)
 	}
 
-	// The hint beside a --retry names the run the short way too, because the
-	// command it names accepts it (SR14).
-	_, errOut, err := execute(t, "run", "--retry", id)
-	if err != nil || !strings.Contains(errOut, "fugaro diagnose "+task.ShortRun(id)) {
-		t.Fatalf("the --retry hint = %q, %v", errOut, err)
+	// The refusal a --retry of an already-started run is answered with names
+	// the run the short way too (D1706), the way every surface does.
+	_, _, err = execute(t, "run", "--retry", id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run "+task.ShortRun(id)+" has already started") {
+		t.Fatalf("the --retry refusal = %v, want the run named short", err)
 	}
 }
 
