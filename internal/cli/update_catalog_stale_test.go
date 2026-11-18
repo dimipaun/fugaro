@@ -7,6 +7,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/spf13/cobra"
 )
@@ -58,6 +59,17 @@ func catalogStaleRig(t *testing.T, serverBase, workerBase string) (*convergeRig,
 	// step 3): the append reaches the run through the copy, not through the
 	// rig's own file.
 	registerInstallation(t, r.initRig)
+	// The guard `fugaro update` runs before its first stage
+	// (update_catalog_guard.go) reads each entry's repository, so the catalog
+	// build's provider seam points at a fake repository holding both
+	// definitions: the two are the entries' own and ask for no secret, so the
+	// guard has nothing to say about this catalog and the tests below are about
+	// the images stage alone.
+	stubCatalogCredential(t)
+	stubCatalogProviderState(t, fake.State{Files: map[string]string{
+		"images/server.Dockerfile": "FROM example.invalid/base\nRUN true\n",
+		"images/worker.Dockerfile": "FROM example.invalid/base\nRUN true\n",
+	}})
 	putCatalogRecord(t, mustSlug("github", "acme/app"), "server", serverBase)
 	putCatalogRecord(t, mustSlug("bitbucket", "acme/sandbox"), "worker", workerBase)
 	var built []string

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 )
@@ -82,20 +81,27 @@ func guardState() fake.State {
 	}
 }
 
+// stubCatalogCredential puts the credential the catalog build's seam resolves
+// in the environment, which is where it reads it from before it reaches for a
+// secret (githubProviderEnv, bitbucketProviderEnv): a door that reads a catalog
+// entry's repository — the guard does, before its first stage plans — then
+// reads no secret value, which gcpfake's Secrets refuses an access call for
+// unless a test allowed it (internal/gcpfake).
+func stubCatalogCredential(t *testing.T) {
+	t.Helper()
+	t.Setenv(providers.EnvGitHubAppID, "12345")
+	t.Setenv(providers.EnvGitHubAppKey, catalogAppKeyPlaceholder)
+	t.Setenv(providers.EnvBitbucketToken, catalogTokenPlaceholder)
+}
+
 // newGuardRig is the fixture the guard is called on, and the bytes of the file
 // as the run found them.
 func newGuardRig(t *testing.T, catalog string, state fake.State) (*migrationRig, string) {
 	t.Helper()
 	f := newProjectFixture(t, "")
 	appendConfig(t, catalog)
-	// The credential the seam resolves, from the environment: no Secret Manager
-	// read and no policy node (catalog_provider_test's own fixture).
-	t.Setenv(providers.EnvGitHubAppID, "12345")
-	t.Setenv(providers.EnvGitHubAppKey, catalogAppKeyPlaceholder)
-	p := &fake.Provider{Repo: "acme/app", State: state}
-	was := openCatalogProvider
-	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) { return "", catalogOpen(p), nil }
-	t.Cleanup(func() { openCatalogProvider = was })
+	stubCatalogCredential(t)
+	stubCatalogProviderState(t, state)
 	h := newMigrationRig(t, f, &initOptions{})
 	before, err := os.ReadFile(f.path)
 	if err != nil {
@@ -293,14 +299,8 @@ func TestUpdateConvergesWithACatalog(t *testing.T) {
 	// re-registered over it, as the rig's other config writes do.
 	r.appendConfig(t, guardPinnedYAML)
 	registerInstallation(t, r.initRig)
-	// The provider the guard reads the entry through, and the credential from
-	// the environment: the converge rig's own app-key secret is never read.
-	t.Setenv(providers.EnvGitHubAppID, "12345")
-	t.Setenv(providers.EnvGitHubAppKey, catalogAppKeyPlaceholder)
-	p := &fake.Provider{Repo: "acme/app", State: guardState()}
-	was := openCatalogProvider
-	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) { return "", catalogOpen(p), nil }
-	t.Cleanup(func() { openCatalogProvider = was })
+	stubCatalogCredential(t)
+	stubCatalogProviderState(t, guardState())
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
