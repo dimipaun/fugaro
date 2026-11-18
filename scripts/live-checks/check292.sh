@@ -1599,14 +1599,16 @@ belong_row() {
   fact belong PASS "nothing this check reads names belong: ${SANDBOX:+the sandbox checkout ${SANDBOX}, }${REPO:+its origin ${REPO}, }${INSTALL:+the installation ${INSTALL}, }${PROJECT:+the project ${PROJECT}, }${REGION:+the region ${REGION}, }and the entry name ${ENTRY:-<none>} — Check 292 writes a catalog entry, pushes commits and submits billable Cloud Builds, so it is a sandbox check or it is nothing"
 }
 
-# restore: what this check changed, said rather than assumed. It undoes the two
-# things it can undo — the entry it added to this machine's config, and the
-# checkout it moved onto a throwaway branch — and NAMES the things it cannot:
-# the branch and its commits on the remote (it pushes through your checkout's own
+# restore: what this check changed, said rather than assumed. It undoes what it
+# can: the entry it added to this machine's config (and the node it republished),
+# the checkout it moved onto a throwaway branch, and the entry's own objects in
+# the runs bucket — the staged definition, commit and digest, the record and the
+# check state — which it removes under the entry's own name so the next nightly
+# run has nothing of this entry to decide. It NAMES the things it cannot: the
+# branch and its commits on the remote (it pushes through your checkout's own
 # git and holds no code-host credential of its own), the image in the registry
-# (nothing here deletes an image), the staged objects and the record in the runs
-# bucket (a build writes them on any day), and the catalog's own build step, which
-# every --no-apply this check used left owed to `fugaro apply`.
+# (nothing here deletes an image), and the catalog's own build step, which every
+# --no-apply this check used left owed to `fugaro apply`.
 restore() {
   RESTORE_VERDICT=PASS
   if [ -n "$DRY_RUN" ]; then
@@ -1637,7 +1639,7 @@ restore() {
       fi
     fi
   fi
-  local removed="" keys=""
+  local removed="" rm_failed=no
   if [ "$REPO_ADDED" = yes ]; then
     local pair key pattern
     for pair in "staged:gs://${BUCKET}/builds/catalog/${ENTRY}/*" "record:gs://${BUCKET}/builds/*/catalog/${ENTRY}/*"; do
@@ -1646,11 +1648,11 @@ restore() {
       say "removing the entry's own objects: gcloud storage rm ${pattern}"
       if ! bucket_rm "$CLI_TIMEOUT" "rm-${key}" "$pattern"; then
         RESTORE_VERDICT=FAIL
+        rm_failed=yes
         why="${why:+$why; }the objects ${pattern} names are still in ${BUCKET}: 'gcloud storage rm ${pattern}' exited ${BOUNDED_STATUS}$([ "$BUCKET_RM_ANSWER" = timeout ] && printf ' (it did not finish inside %ss)' "$CLI_TIMEOUT") ($(flat "$(tail -n 2 "$SCRATCH/rm-${key}.err" 2>/dev/null | head -n 1)")) — remove them by hand with 'gcloud storage rm ${pattern}', and never remove builds/image-lock.json, which is the project's and shared with every other entry"
-        keys="${keys:+$keys, }${pattern}"
       fi
     done
-    if [ -z "$keys" ]; then
+    if [ "$rm_failed" = no ]; then
       removed="The staged objects, the record and the check state this check wrote were removed from ${BUCKET} (gs://${BUCKET}/builds/catalog/${ENTRY}/ and gs://${BUCKET}/builds/*/catalog/${ENTRY}/), so the next nightly run has nothing of this entry to decide. builds/image-lock.json is the project's and was not touched."
     fi
   fi
