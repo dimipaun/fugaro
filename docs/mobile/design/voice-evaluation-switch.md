@@ -172,6 +172,18 @@ Point 5: **the remote credential never ships inside the app binary.** The hop is
 - **The hop takes the project from the request, and a modified client could misname it.** The policy check is therefore a **guard against accident, not a boundary against the device's owner** — the same posture as D113's "the mailbox is a conversation channel", and the same sentence §4.1 uses. What the hop *can* bind to an authenticated fact is the **installation** (from the uid) and the **device's liveness** (from D166's node); the project is a claim.
 - **The hop is a new receiver of the audio.** It moves the recipient from the provider to Fugaro's own service — a smaller move than it sounds, and **not a privacy win**: the audio still leaves the device, and it now reaches two parties instead of one. The hop's value is the credential (§4.4's point 4) and the policy enforcement (point 5), not confidentiality.
 
+**Where the installation opts in, and how the hop is turned off.** The hop is deployed by the same `fugaro update` that deploys the credentials service, and its switch is one key in the installation root's own tfvars: `$XDG_STATE_HOME/fugaro/terraform/<gcp-project>/installation/gcp/roots/installation/terraform.tfvars.json` (`internal/infra/workdir.go`'s `InstallationWorkdir`; by default under `~/.local/state`). Every run rewrites that file from its own spec and carries this key forward (`internal/infra`'s `CarriedVoiceService`), and a machine that has lost the file has the block re-composed out of the installation's own `voice_service` output (`internal/cli/init.go`'s `keepVoiceHop`), so the block survives the one documented command. The block is:
+
+```json
+"voice_service": {
+  "account_id": "fugaro-voice",
+  "service": "fugaro-voice",
+  "image": "<the released binary, pinned by digest>"
+}
+```
+
+`account_id` is not a choice: it is the one ID `internal/infra` creates the account under and the one the plan's cover classifies the account's single database grant by, so the module's variable accepts no other. `service` is the Cloud Run service's name and is the installation's own — a name is a force-new attribute of the service, so a later update composes the block from the name the installation's own output carries rather than from a default. `image` is the released binary pinned by digest, the same reference the credentials service and the intake run, because the hop is that binary's `voice serve` subcommand and never an image of its own. **Turning it off is the same key written as `null`**: a missing key is what a machine that never held the file has, so the run composes the block back from the installation's state, while the null is a decision the document records — the run leaves it alone and the plan that follows is the hop's removal, its service, its account, its public invoker binding and its database read, applied with those addresses named on `fugaro update --allow-delete`, the way every managed delete in this tree is. **On an installation with no hosted MCP front door — the default — that removal is five resources rather than four**: the one-permission role `fugaroStateRead` is the hop's reader and the front door's at once, created while either is on (`state_read.tf`'s `count = local.mcp_server_on || local.voice_on ? 1 : 0`), so turning the hop off with the front door already off deletes it too, and its address is the fifth flag — `--allow-delete module.installation.google_project_iam_custom_role.state_read[0]`. There is no command and no config key for either direction today: it is a hand edit of that file, and a later task's.
+
 **Who the hop is — reuse or new — is Q2, answered 2026-10-19: a new minimal service**, with the costs priced there.
 
 ### 4.5 Failure modes: local fallback, never blocking

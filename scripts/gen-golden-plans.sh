@@ -74,13 +74,20 @@ golden=$repo/internal/infra/tf/testdata/golden
 # implicit default review job (`fugaro review --pr N`'s, the owner's
 # requirement of 2026-11-13) is planned and covered there, its own account and
 # its two bucket conditions beside it, and no shared coding job at all.
+# installation-voice is the installation root with the voice hop ON (P5.3.3)
+# on the SAME image pin and the same Firebase facts as the credentials
+# service's block beside it: the hop's service (min instances 0, args `voice
+# serve`, two environment names), its account, its one role binding and the
+# one allUsers invoker member it is reached through are planned and covered
+# there. The opt-in is off by default, so every other golden here plans no hop
+# at all.
 # installation-coordinator and
 # firebase-coordinator are the two roots with the coordinator's opt-in ON
 # (coordinator plan P5): its account, the account's two reads, its job and its
 # schedule, and the Firebase root's database grant to it. The opt-in is off by
 # default, so they are goldens of their own and every other golden here plans
 # no coordinator at all.
-for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-review:installation installation-coordinator:installation installation-viewers:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase firebase-viewers:firebase; do
+for pair in installation:installation installation-accounts:installation installation-managed:installation installation-credentials:installation installation-voice:installation installation-review:installation installation-coordinator:installation installation-viewers:installation repo:repo firebase:firebase firebase-same-project:firebase firebase-coordinator:firebase firebase-viewers:firebase; do
   r=${pair%%:*}
   root=${pair##*:}
   (
@@ -91,6 +98,7 @@ for pair in installation:installation installation-accounts:installation install
       installation-accounts) cp "$repo/internal/infra/testdata/installation-accounts.tfvars.json" terraform.tfvars.json ;;
       installation-managed) jq '. + {managed_deployer_scoped: true}' "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" > terraform.tfvars.json ;;
       installation-credentials) cp "$repo/internal/infra/testdata/installation-credentials.tfvars.json" terraform.tfvars.json ;;
+      installation-voice) cp "$repo/internal/infra/testdata/installation-voice.tfvars.json" terraform.tfvars.json ;;
       installation-review) cp "$repo/internal/infra/testdata/installation-review.tfvars.json" terraform.tfvars.json ;;
       installation-coordinator) cp "$repo/internal/infra/testdata/installation-coordinator.tfvars.json" terraform.tfvars.json ;;
       installation-viewers) cp "$repo/internal/infra/testdata/installation-viewers.tfvars.json" terraform.tfvars.json ;;

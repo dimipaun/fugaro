@@ -15,7 +15,10 @@ import (
 
 // This file is D3 of docs/forge-authorship-images/implementation-plan.md: the
 // settle of one change set — the step that flips a set's pull requests ready
-// together once every member has shipped.
+// together once every member has shipped — and D4: the set's advisory merge
+// order, which the report of a settle states for the reader who sees the whole
+// set at once and every member's pull request states for the reader who sees
+// one of them (D615).
 //
 // A change set is one piece of work spanning several repositories: a run per
 // repository, launched together, each opening its own pull request (D613), and
@@ -131,6 +134,21 @@ type SettleMemberResult struct {
 // SettleReport is what one settle of one change set did.
 type SettleReport struct {
 	SetID string `json:"set_id"`
+	// MergeOrder is the set's advisory merge order (D4, D615): every member's
+	// repository, in the order the set lists them, which is the order the
+	// launch named them — contracts and shared libraries first, then the
+	// consumers that need them. It is the order every member's pull request
+	// states in its own body (gitprov.ChangeSetOrder), stated here for the
+	// reader who sees the whole set at once: the report is the coordinator's
+	// view of a set, and a person deciding what to merge reads the order off it
+	// rather than off one member's body.
+	//
+	// Nothing is derived to state it — the member list IS the order
+	// (task.ChangeSet.Members is in launch order, and every member lists the
+	// same set, D642) — and nothing acts on it: this step makes a set's pull
+	// requests ready together and never orders, blocks or reorders a merge
+	// (D615). One entry per member, in Members' own order.
+	MergeOrder []string `json:"merge_order"`
 	// Settled is whether every member's pull request is ready now. A settled
 	// report means the set's pull requests are all open, all out of draft, and
 	// all at a commit their own tests passed on.
@@ -213,7 +231,7 @@ func (s *Settler) Settle(ctx context.Context, set *task.ChangeSet) (SettleReport
 	if s.Member == nil || s.Open == nil {
 		panic("coordinator: Settler needs a Member reader and an Open")
 	}
-	report := SettleReport{SetID: set.ID, Settled: true, Members: make([]SettleMemberResult, len(set.Members))}
+	report := SettleReport{SetID: set.ID, MergeOrder: mergeOrder(set), Settled: true, Members: make([]SettleMemberResult, len(set.Members))}
 	reads := make([]MemberReads, len(set.Members))
 	held := false
 	for i, member := range set.Members {
@@ -354,6 +372,19 @@ func flipPR(ctx context.Context, flip *settleFlip) (note string, err error) {
 		return "the pull request is ready, but what a ready pull request carries could not be confirmed: " + err.Error(), nil
 	}
 	return "", nil
+}
+
+// mergeOrder is the set's advisory merge order as a report states it (D4): each
+// member's repository, in the order the set lists them. It is read from the set
+// the caller settled and never from a member's own records, because the order
+// is the launch's: membership is fixed when a set is launched (D642), so the
+// list the settle acts on is the list the launch wrote.
+func mergeOrder(set *task.ChangeSet) []string {
+	order := make([]string, 0, len(set.Members))
+	for _, m := range set.Members {
+		order = append(order, m.Repo)
+	}
+	return order
 }
 
 // listsSameSet reports whether the set a member's task carries is the set being

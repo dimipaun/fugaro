@@ -231,7 +231,11 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 			t.Errorf("%s has no roles", typ)
 		}
 		for key, w := range row {
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toLicence|toOrchestrator|toBuildIdentity) != 0 {
+			// The bits the table may name, enumerated so that a new kind is a
+			// deliberate line here and not a row nobody classified (P5.3.3
+			// added the hop's account; the hop's allUsers binding is
+			// deliberately not a kind — cover.go's toVoice says why).
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toLicence|toOrchestrator|toVoice|toBuildIdentity) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -2470,6 +2474,78 @@ func TestCoverAdmitsTheStateReadGrantOnPurpose(t *testing.T) {
 		ch := rc(rowType, tc.after, map[string]any{}, "create")
 		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
 			t.Errorf("%s is covered: the front door's account reads the orchestrator's node through one custom role on one project, and every other grant is a widening no `fugaro update` confirmation announced", tc.what)
+		}
+	}
+}
+
+// TestCoverAdmitsTheVoiceHopsStateReadGrantOnPurpose is the hop's half of the
+// same plan review (P5.3.3): the account voice.tf creates holds the one grant
+// voiceStateReadGrant narrows to, and nothing else is covered for it.
+//
+// It is the front door's test one account over, and it exists for the reason
+// the account does. The two accounts hold the same role — Realtime Database IAM
+// has the one read there is, so a second role could only differ by holding the
+// write state_read.tf exists to withhold — but this account runs the ONE
+// service of the tree anyone on the internet may call (voice.tf's allUsers
+// binding), so the instance-wide read the role carries is the reach a widening
+// edit would hand the public internet, and the run's one `fugaro update`
+// confirmation is what applies it. The member is read before the guard runs
+// (grant's isVoiceMember, on the installation's project), so what is left here
+// is the role, the project it was declared in and the absence of a condition.
+//
+// The mutations this fails on: voiceStateReadGrant neutered to `return ""` (the
+// role declared in another project than the grant's, and the condition, are
+// then covered), its call site in grant's chain removed (the same two), and the
+// toVoice bit moved off the state-read row (the good grant would be refused and
+// the release would ask twice).
+func TestCoverAdmitsTheVoiceHopsStateReadGrantOnPurpose(t *testing.T) {
+	const member = "serviceAccount:" + VoiceAccountID + "@proj-1.iam.gserviceaccount.com"
+	const role = "projects/proj-1/roles/" + MCPStateReadRole
+	const rowType = "google_project_iam_member"
+
+	// The account is not one of FugaroAccounts, and that is what makes the
+	// guard the whole of its reach: as one of them every toAccounts row would
+	// accept it, and this is the account behind the one service anyone on the
+	// internet may call.
+	if slices.Contains(FugaroAccounts, VoiceAccountID) {
+		t.Errorf("%s is in FugaroAccounts: the hop's account holds one grant, and a toAccounts row would accept every role a job's row carries", VoiceAccountID)
+	}
+
+	// The grant as voice.tf writes it: the hop's own account, the shared read
+	// role on the project it was declared in, no condition. (The module
+	// declares the role in the FIREBASE project — the one the database belongs
+	// to — which is one of this run's projects and not necessarily the
+	// installation's; the guard reads the grant's project and its role against
+	// each other, so one project here is the shape.)
+	grant := rc(rowType, map[string]any{"member": member, "role": role, "project": "proj-1"}, map[string]any{}, "create")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{grant}}, nil); len(got) != 0 {
+		t.Errorf("the hop's state-read grant: NotCovered = %q, want it covered: the grant is what `fugaro update` applies when the installation has turned the hop on, and a plan review that refused it would ask the owner for a second confirmation", got)
+	}
+
+	// Everything else that could arrive in its place, one case each: the read
+	// declared in a project the grant is not in, the read on a project this run
+	// does not know, the credentials service's role (which holds the write),
+	// another role of the account's, another member, and a condition the module
+	// never writes (RTDB cannot express a path prefix, so the condition would
+	// fence nothing).
+	cond := []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition("fugaro-runs-proj-1"), "description": nil}}
+	for _, tc := range []struct {
+		what  string
+		after map[string]any
+	}{
+		{"the read declared in a project the grant is not in", map[string]any{"member": member, "role": "projects/fp-2/roles/" + MCPStateReadRole, "project": "proj-1"}},
+		{"the read on a project this run does not know", map[string]any{"member": member, "role": "projects/fp-3/roles/" + MCPStateReadRole, "project": "fp-3"}},
+		{"the credentials service's database role, which holds the write too", map[string]any{"member": member, "role": "projects/proj-1/roles/" + CredentialsDatabaseRole, "project": "proj-1"}},
+		{"the store's role on the project", map[string]any{"member": member, "role": "roles/storage.objectAdmin", "project": "proj-1"}},
+		{"the read to a person on the review screen", map[string]any{"member": "user:me@example.com", "role": role, "project": "proj-1"}},
+		{"the read to a job account", map[string]any{"member": "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", "role": role, "project": "proj-1"}},
+		{"the read to a lookalike in another project", map[string]any{"member": "serviceAccount:" + VoiceAccountID + "@fp-2.iam.gserviceaccount.com", "role": role, "project": "proj-1"}},
+		{"the read under a condition", map[string]any{"member": member, "role": role, "project": "proj-1", "condition": cond}},
+		{"the read with a computed role", map[string]any{"member": member, "project": "proj-1"}},
+	} {
+		ch := rc(rowType, tc.after, map[string]any{}, "create")
+		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("%s is covered: the hop's account reads the whole database instance through one custom role on one project, and every other grant is a reach the one service anyone on the internet may call would hold", tc.what)
 		}
 	}
 }

@@ -534,15 +534,23 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
 		Caps:     caps,
 		Breaker:  &orchestrator.Breaker{},
-		// A tick has two things to say — a run it folded ended, and it
-		// committed a question (O7) — and the log sink is the channel slice 1
-		// ships, one cleaned line on this daemon's own output, which is where
-		// the person running it in the foreground reads what it did (and where
-		// the login unit collects it). Left unset, every say() in a cycle
-		// returns at its nil check: the daemon would stop a run nobody hears
-		// about and pause on a spend question nobody sees.
+		// A tick has three things to say — a run it folded ended, it committed
+		// a question (O7), and it merged under a ceiling that tells somebody
+		// (D2030) — and the log sink is the channel slice 1 ships, one cleaned
+		// line on this daemon's own output, which is where the person running it
+		// in the foreground reads what it did (and where the login unit collects
+		// it). Left unset, every say() in a cycle returns at its nil check: the
+		// daemon would stop a run nobody hears about, pause on a spend question
+		// nobody sees, and land a merge nobody is told to read.
 		Notifier: orchestrator.LogSink{W: d.out},
 		Triage:   orchestratorTriageSeams(d),
+		// The labels of the pull requests the runs it launched opened (F25, T7):
+		// read back from the runs bucket by run id and written through the
+		// installation's credentials service, which is the one holder of the App
+		// key (D2439). Empty until the installation records a service URL and
+		// this build can mint the daemon's own identity for it
+		// (orchestratorLabelSeams), which is the state this tree is in.
+		Labels: orchestratorLabelSeams(d),
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the
 		// same log the triage and the decision agent append to. It is wired

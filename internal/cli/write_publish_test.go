@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/agentenv"
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -431,7 +432,7 @@ func TestAfterWriteStagesFollowTheRegistryRow(t *testing.T) {
 		{"a pool, written locally and served by the node", "pools.dev.members", settings.StoreLocal, []string{initflow.Policy}},
 		{"a key the command wrote into the node itself", "budget.mode", settings.StoreNode, []string{initflow.Policy}},
 		{"a key only the project layer file carries", "layer.defaults.agent.model", settings.StoreProject, []string{initflow.Layer}},
-		{"a project-layer row a command wrote in a checkout", "agent.model", settings.StoreRepo, []string{initflow.Layer}},
+		{"a project-layer row a command wrote in a checkout", "agent.model", settings.StoreRepo, nil},
 		{"a key the registry knows nothing about", "no.such.key", settings.StoreLocal, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -445,11 +446,13 @@ func TestAfterWriteStagesFollowTheRegistryRow(t *testing.T) {
 	// A key that touches both layers owes both stages, and the run's own order is
 	// what orders them: the hook names them and stagesNamed answers in
 	// initflow's order (the policy node before the layer, its `needs`).
+	//
+	// No command writes one that way today — a key the machine's own config
+	// carries is refused `--layer project`, because that layer is not one of its
+	// own — so the case is reached from here: the machine's own key written into
+	// the project layer file, which is what the store half of the rule is for.
 	t.Run("a key that touches both layers", func(t *testing.T) {
-		names := afterWriteStagesFor(settings.Row{
-			Key:    "both.layers",
-			Layers: []string{settings.LayerProject, settings.LayerLocal},
-		}, settings.StoreProject)
+		names := apply.WriteSteps(apply.Change{Kind: apply.Setting, Key: "budget.mode"}, settings.StoreProject)
 		if !slices.Equal(names, []string{initflow.Policy, initflow.Layer}) {
 			t.Fatalf("the stages of a key that touches both layers = %v, want both", names)
 		}

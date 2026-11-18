@@ -426,6 +426,14 @@ func writerProbeWrite(t *testing.T, row settings.Row, key string, w settings.Wri
 		if err != nil {
 			return err
 		}
+		// A settings write runs the follow-up steps its key owes (AP5), and a
+		// step that publishes stops at a confirmation this hermetic installation
+		// cannot give: the key is written and the command exits non-zero. What
+		// this test measures is that the writer writes the key, which
+		// --no-apply leaves exactly as it was and answers with exit zero.
+		if len(argv) >= 2 && argv[0] == "settings" && (argv[1] == "set" || argv[1] == "unset") {
+			argv = append(argv, "--no-apply")
+		}
 		rig := newWriterRig(t)
 		was, err := writerStoreValue(t, rig, w.Store, key)
 		if err != nil {

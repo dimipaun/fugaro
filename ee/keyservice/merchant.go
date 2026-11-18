@@ -1155,7 +1155,7 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	// the subscription of a licence bought after D2196 names no key at all until
 	// a seat change or a renewal mints one.
 	subscription := e.Subscription
-	keys, err := s.licenceKeys(ctx, entitlement.ID)
+	keys, err := s.bindingKeys(ctx, entitlement.ID)
 	if err != nil {
 		return err
 	}
@@ -1235,10 +1235,17 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	// installation: a store that fails on this write leaves keys that are already
 	// dead and a licence the merchant's retry withdraws again — the walk above is
 	// idempotent — rather than a licence that is dead with its keys still live.
-	if err := s.revokeEntitlement(ctx, entitlement); err != nil {
+	if _, err := s.revokeEntitlement(ctx, entitlement); err != nil {
 		return err
 	}
-	return nil
+	// The walk above ran while the licence was still active, and a binding that
+	// minted its key and committed in the window between it and this write read
+	// the licence active: its key is one the walk never reached, and the status
+	// just written is not a withdrawal of it. The walk is taken again now that
+	// the licence is not active, with the same reason and the same instant as the
+	// first pass, and it reaches every key the licence has — the walk is
+	// idempotent, so the keys it already reached are only reached again.
+	return s.withdrawEveryKeyOf(ctx, entitlement.ID, reason, e.OccurredAt)
 }
 
 // entitlementFor resolves the entitlement one event is about: the licence the

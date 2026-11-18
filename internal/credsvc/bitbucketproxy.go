@@ -133,6 +133,14 @@ const maxPRWriteBodyBytes = 1 << 20
 // the bound that keeps an answer that is not one from being held whole.
 const maxPRFactsBytes = 1 << 20
 
+// maxLFSBatchBodyBytes bounds a git-lfs batch call's body, which this route
+// reads before the call is decided (ReadLFSBatch): a download's batch and an
+// upload's are the same POST, and the operation in the body is what tells them
+// apart (R4). A batch is the object list of one transfer, a few kilobytes of
+// JSON, so this is orders of magnitude above one - and a body that needs more
+// is not one of them.
+const maxLFSBatchBodyBytes = 1 << 20
+
 // refusalEncodedBody is this route's own refusal class for a git request whose
 // body is not identity-encoded. It is not one of gitproxy's classes because it
 // is not a rule about what a run may do: it is the transport's own, decided
@@ -449,6 +457,11 @@ func (b bundleTokens) LogValue() slog.Value { return slog.StringValue(b.String()
 //     read in full before anything is decided about it. It is bounded
 //     (maxUpdateRequestBytes), and what was read is kept to be forwarded
 //     unchanged after the rules allowed it.
+//   - a git-lfs batch's body, in the same place and for the same reason: the
+//     operation in it is what tells a download's batch from an upload's, and
+//     the rules decide the call on it (ReadLFSBatch, R4). It is bounded
+//     (maxLFSBatchBodyBytes) and forwarded unchanged once allowed, so the
+//     operation bitbucket.org acts on is the one the rules read.
 //   - the project's published block, and then the decision. Both the repository
 //     the call names and whether this installation proxies it at all are the
 //     block's answer (G3, G9), so nothing is decided before it is read.
@@ -708,6 +721,27 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 		pushHead = consumed
 	}
 
+	// A git-lfs batch call's operation, read in front of the decision and
+	// before any credential is chosen: git-lfs's path does not say whether this
+	// POST is a download's batch or an upload's, and the rules decide the call
+	// on the operation its body named (R4, ReadLFSBatch). The body read is what
+	// is forwarded once the rules have allowed it, so nothing of it is rewritten
+	// on the way out.
+	var lfsBody []byte
+	if req.LFS == gitproxy.LFSBatch {
+		operation, consumed, err := gitproxy.ReadLFSBatch(r.Body, maxLFSBatchBodyBytes)
+		if err != nil {
+			// One class for every way the body can be unreadable, as a push's
+			// is: the cause is the operator's (the service's own log line
+			// carries it) and the caller's answer is the class, which is never
+			// a byte of what it sent.
+			s.refuseProxyReason(ctx, w, id, purpose, credential, gitproxy.ReasonCallNotAllowed, err)
+			return
+		}
+		req.LFSOperation = operation
+		lfsBody = consumed
+	}
+
 	shared, found, err := s.cfg.Policy.Shared(ctx)
 	if err != nil || !found {
 		s.refuseUnavailable(ctx, w, id, purpose, credential, "the project's policy could not be read")
@@ -729,14 +763,16 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	// repository a call is served for is fixed before the rules see it and is
 	// never widened by anything the request names.
 	if verdict := gitproxy.Decide(req, proxyIdentity(id), canonical, shared.BitbucketToken); !verdict.Allow {
-		s.refuseProxy(ctx, w, id, purpose, credential, verdict.Reason)
+		s.refuseProxyRepository(ctx, w, id, purpose, credential, verdict.Reason, req.Repo, canonical)
 		return
 	}
 
 	// The body a write is checked on and then forwarded. A git push's is the
 	// section already read plus whatever follows it — the pack, streamed and
-	// never held. A REST GET has none, and the REST writes' bodies are short
-	// JSON documents, read whole because the rules read them (CheckPRWrite).
+	// never held. A git-lfs batch's is the whole document the operation was
+	// read out of, which is short and already in hand. A REST GET has none, and
+	// the REST writes' bodies are short JSON documents, read whole because the
+	// rules read them (CheckPRWrite).
 	var (
 		body          io.Reader
 		contentLength = int64(-1)
@@ -746,6 +782,12 @@ func (s *Server) bitbucketProxy(ctx context.Context, w http.ResponseWriter, r *h
 	case req.Kind == gitproxy.KindPush:
 		body = io.MultiReader(bytes.NewReader(pushHead), r.Body)
 		contentLength = r.ContentLength
+	case req.LFS == gitproxy.LFSBatch:
+		// The body was read to decide the call (ReadLFSBatch) and is forwarded
+		// as the very bytes it was read as: the operation is the only part of
+		// it this route looked at, and no byte of it is rewritten.
+		body = bytes.NewReader(lfsBody)
+		contentLength = int64(len(lfsBody))
 	case req.Call == gitproxy.CallPRCreate, req.Call == gitproxy.CallPRUpdate, req.Call == gitproxy.CallPRComment:
 		raw, err := readBoundedBody(r.Body, maxPRWriteBodyBytes)
 		if err != nil {
@@ -1537,6 +1579,21 @@ func upstreamURL(req gitproxy.Request) (string, error) {
 	}
 	if req.Kind != gitproxy.KindREST {
 		base := bitbucket.DefaultOAuthRoot + "/" + escapeSeg(workspace) + "/" + escapeSeg(repo) + ".git"
+		if req.LFS != "" {
+			// git-lfs's route, rebuilt the same way and from the same two
+			// facts: the action from the name the classification gave the
+			// call and the object id from the one segment it held to a hash.
+			// Nothing of the caller's path is copied (G13) — the batch path
+			// is this file's own constant, never the tail of what was asked
+			// for.
+			switch req.LFS {
+			case gitproxy.LFSBatch:
+				return base + "/info/lfs/objects/batch", nil
+			case gitproxy.LFSObject:
+				return base + "/info/lfs/objects/" + escapeSeg(req.OID), nil
+			}
+			return "", errors.New("credsvc: the git-lfs call is not one this route forwards")
+		}
 		switch req.Kind {
 		case gitproxy.KindFetch:
 			if len(req.Query) > 0 {
@@ -1645,6 +1702,49 @@ func (s *Server) refuseProxy(ctx context.Context, w http.ResponseWriter, id Iden
 func (s *Server) refuseProxyReason(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, class string, cause error) {
 	s.logProxyRefusal(id, purpose, class, cause)
 	s.refuseCall(ctx, w, id, purpose, credential, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
+}
+
+// refuseProxyRepository answers a call the rules refused for the repository it
+// names, and it is refuseProxyReason with exactly one class saying more.
+//
+// That class is other_repository, and the sentence that names a repository is
+// for a NESTED fetch: a submodule or a git-lfs object of a repository other
+// than the one the run is paired to is refused here, and the useful fact about
+// such a refusal is WHICH repository the checkout asked for - an operator
+// reads it to know which .gitmodules entry or submodule URL to fix (R4, the
+// spec's "a submodule in a repo the job's token doesn't cover should fail with
+// a clear message naming the repo", and S2's contract, "the sentence refusing
+// a call names the repository the call asked for"). It is request text and it
+// is deliberately the one place in this route where a refusal carries any: the
+// verdict is unchanged by it - what a call may reach was decided before this
+// sentence was built - and the name is the classification's own,
+// canonicalised, provider-qualified form ("bitbucket/acme/sibling") and never
+// a byte of the caller's spelling.
+//
+// The operator's own lines still carry the class alone and never the
+// repository asked for: a line names the act, and a byte the caller sent is not
+// what it is for (S2's own rule for this route, and the reason the sentence is
+// not simply handed to refuseCall). The refusal is still recorded exactly as
+// every other refusal of the service is — one audit line, the class's own line
+// and the refusal log's — and only the sentence the CALLER reads is the one
+// that names a repository, which is why the logged message is built separately
+// from the answered one here rather than in refuseCall.
+//
+// Every other class is answered exactly as refuseProxyReason answers it, and
+// the requested repository is ignored: not_admitted and proxy_off are refusals
+// of the RUN's own repository, which the caller already knows.
+func (s *Server) refuseProxyRepository(ctx context.Context, w http.ResponseWriter, id Identity, purpose, credential, class, requested, paired string) {
+	s.logProxyRefusal(id, purpose, class, nil)
+	if class != gitproxy.ReasonOtherRepository || requested == "" {
+		s.refuseCall(ctx, w, id, purpose, credential, "", StatusRequestRefused, ErrorRequestRefused, requestRefused+class)
+		return
+	}
+	if err := s.auditCall(ctx, id, purpose, credential, "", ErrorRequestRefused); err != nil {
+		s.log.Error("credsvc: a refused call could not be audited", "error", err)
+	}
+	s.logRefusal(ctx, id, ErrorRequestRefused, StatusRequestRefused, requestRefused+class, nil, nil)
+	s.refuse(w, StatusRequestRefused, ErrorRequestRefused,
+		requestRefused+class+": the call names "+requested+", and this run reaches "+paired+" alone")
 }
 
 // logProxyRefusal writes this route's own line for a refusal: the class, which

@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mailbox"
 	"github.com/dimipaun/fugaro/internal/mailbox/keychain"
@@ -41,8 +42,9 @@ import (
 // mailbox.Renew (T3), the dedupe ledger and its commit-before-acting fence are
 // mailbox.Perform (T4) — so there is no second reader here and no second tag
 // function. What this file decides is which node is read, in which order, and
-// what a pass is reported as. It writes the outbox and the heartbeat and
-// nothing else, under the operator's own ADC (C0).
+// what a pass is reported as. It writes the outbox, the heartbeat and — for a
+// registration message — the sibling push node `config/admin/push/$uid`
+// (P5.2.4), all three under the operator's own ADC (C0).
 //
 // **The action runner is the file's, and it is where D128 is enforced (P6.7).**
 // A message the ledger accepted reaches one of five answers, decided by its
@@ -53,12 +55,22 @@ import (
 // settles the prompt it names, and an answer to a destructive prompt is refused
 // unless it arrived as an action record with a confirmation; a **message** is
 // delivered to the orchestrator, unless it is destructive free text this file
-// recognises, which is refused; and a `prompt` or a `registration` is a kind
-// that does not travel phone to host, refused with this file's own code. A
+// recognises, which is refused; a **registration** is applied to the sibling
+// push node the phone's token lives in, and to nothing else (P5.2.4,
+// runRegistration); and a `prompt` is a kind that does not travel phone to host,
+// refused with this file's own code. A
 // destructive command without a valid confirmation record is refused, which is
 // §9's standing position and the reason M12's fourth clause exists: a pass whose
 // only reading was one of those is exit 1, because the operator asked for one
 // thing and nothing happened.
+//
+// **The one answer whose failure is not final is the registration's**, and it is
+// the only place this file takes a record back out of the ledger
+// (mailbox.Ledger.Retract, registrationOwed): a write the store refused or could
+// not be reached for is owed by the next pass rather than consumed, because the
+// act it could not make is convergent — the phone's own token, written to the
+// phone's own push node — and a registration nobody applies is invisible to the
+// phone that sent it.
 //
 // **Two things the consumer decides on its own clock**, so that neither waits on
 // a process that may not run: a command is honoured only inside the six-hour
@@ -135,12 +147,26 @@ const mailboxCodeActionRefused = mailbox.Code("refused-action")
 
 // mailboxCodeUnexpectedKind is the code a kind this consumer does not read out
 // of an inbox is recorded with. The schema names five kinds and the direction
-// decides which of them travel: a `prompt` and a `registration` are written by
-// the host, so one read out of the host's own inbox is a message nothing here
-// can act on — refused and reported rather than delivered to an orchestrator
-// that would take it for a question. **A registration is P5.2.4's** (the token
-// node), and this file refuses it rather than applying it half-way.
+// decides which of them travel: a `prompt` is written by the host, so one read
+// out of the host's own inbox is a message nothing here can act on — refused
+// and reported rather than delivered to an orchestrator that would take it for
+// a question. A `registration` used to be refused here too; since P5.2.4 it is
+// applied (runRegistration), which is why this code names the one kind left.
 const mailboxCodeUnexpectedKind = mailbox.Code("unexpected-kind")
+
+// mailboxCodeRegistrationUnpaired is the code a registration whose account has
+// no device node is recorded with: the design's own phrase for the state its
+// rule 2 rests on ("no device node, no send"), applied one step
+// earlier, at the write. The device node's existence IS the allowlist
+// (§3.4, D166), and a registration that arrives after `fugaro pair revoke`
+// deleted it would otherwise recreate the push node — the orphan §3.4 has the
+// sender reap — for an account that is off the allowlist. Writing nothing is
+// stricter than the design's own net, and it is what P5.2.4 asks for:
+// revocation stays final.
+//
+// It is this file's own code and not the module's: the module's vocabulary is
+// the schema's, and the schema has no opinion about a device node.
+const mailboxCodeRegistrationUnpaired = mailbox.Code("unpaired")
 
 // mailboxCodeUnknownPrompt is P6.5's own code for an answer that names a prompt
 // the queue does not hold — or does not hold any more, which is the same answer
@@ -185,6 +211,12 @@ const (
 	mailboxOutcomePerformed = "performed"
 	mailboxOutcomeCancelled = "cancelled"
 	mailboxOutcomeMerged    = "merged"
+	// mailboxOutcomeRegistered is what `acted[]` reports for a registration
+	// this consumer applied to the push node (P5.2.4). A registration is
+	// neither of the two things the other outcomes name — no message was
+	// handed to the orchestrator and no command ran — and "performed" would
+	// say the operator's phone asked for something this pass did for it.
+	mailboxOutcomeRegistered = "registered"
 )
 
 // mailboxPromptRequest is one question the orchestrator asks this consumer to
@@ -254,17 +286,22 @@ const (
 	mailboxOfferQueueFull = "queue-full"
 )
 
-// mailboxKindAction, mailboxKindAnswer and mailboxKindPrompt are the kinds this
-// file reads and writes beside the module's own KindMessage. The module declares
-// no constant for any of them — its KindPrompt is the *ledger's* kind
-// vocabulary, which spells one of these the same by coincidence — so they are
-// bound here and held to `mailbox.Kinds` by TestMailboxInboxKindsAreTheSchemas:
-// a kind the schema renames is a failing test rather than a branch nothing
-// reaches.
+// mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt and
+// mailboxKindRegistration are the kinds this file reads and writes beside the
+// module's own KindMessage. The module declares no constant for any of them —
+// its KindPrompt is the *ledger's* kind vocabulary, which spells one of these
+// the same by coincidence — so they are bound here and held to `mailbox.Kinds`
+// by TestMailboxInboxKindsAreTheSchemas: a kind the schema renames is a failing
+// test rather than a branch nothing reaches.
 const (
 	mailboxKindAction = "action"
 	mailboxKindAnswer = "answer"
 	mailboxKindPrompt = "prompt"
+	// mailboxKindRegistration is §3.5 (b)'s registration-and-preferences
+	// message: the app's token, its platform and §3.8's switches, which this
+	// consumer applies to `config/admin/push/$uid` and never to a device node
+	// (P5.2.4).
+	mailboxKindRegistration = "registration"
 )
 
 // mailboxCodeHeadMoved is the code a merge refused because the pull request's
@@ -438,6 +475,20 @@ func newMailboxCmd() *cobra.Command {
 			"Every reply and every heartbeat is signed before it is written, so a value\n" +
 			"the signer refuses is not written at all.\n" +
 			"\n" +
+			"A registration is the app's push token, its platform and its per-category\n" +
+			"switches, and it is written to the sibling node config/admin/push/<uid> —\n" +
+			"never under config/admin/devices/<uid>, which only `fugaro pair` and\n" +
+			"`fugaro pair revoke` write and whose existence is what admits the device. A\n" +
+			"registration whose account has no device node is refused and writes nothing,\n" +
+			"so a revocation is final; a re-registration overwrites the token, the\n" +
+			"platform and the time it was written and leaves the rest of the node alone.\n" +
+			"The write needs roles/firebasedatabase.admin, the role a pairing needs, since\n" +
+			"every node under config/admin is the operator's own credential's and no\n" +
+			"client token's: where the credential does not hold it, or the database cannot\n" +
+			"be reached, the pass stops and says so rather than pretending the phone\n" +
+			"registered — and the delivery is not consumed, so the first pass after the\n" +
+			"role is granted or the outage ends writes the node.\n" +
+			"\n" +
 			"The heartbeat IS the lease, and the loop renews it on every pass: it is\n" +
 			"rewritten with the current instant under the same compare-and-swap a take\n" +
 			"uses, which is what tells the phone this consumer is present and what keeps\n" +
@@ -451,9 +502,10 @@ func newMailboxCmd() *cobra.Command {
 			"and is never printed; the item's name is not a secret and appears in a\n" +
 			"diagnostic.\n" +
 			"\n" +
-			"The command writes only the outbox and the heartbeat, with the operator's own\n" +
-			"credential, which is what makes that write set a rule in this command's code\n" +
-			"rather than a fence the database enforces.\n" +
+			"The command writes the outbox, the heartbeat and the one push node a\n" +
+			"registration names, with the operator's own credential, which is what makes\n" +
+			"that write set a rule in this command's code rather than a fence the database\n" +
+			"enforces.\n" +
 			"\n" +
 			"Its own state is the ledger at\n" +
 			"$XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json, written 0o600 by\n" +
@@ -1307,9 +1359,9 @@ func (c *mailboxConsumer) deliver(ctx context.Context, pairing mailboxPairing, l
 // whole of D128's enforcement. Every case answers with either a performed
 // delivery — an offer handed to the orchestrator, an action this process ran —
 // or a refusal recorded against the record's own id, and never with both. The
-// kinds that do not travel phone to host are refused here rather than delivered,
-// because an orchestrator handed a `prompt` or a `registration` out of its own
-// inbox would take it for a question it must answer.
+// kind that does not travel phone to host — `prompt` — is refused here rather
+// than delivered, because an orchestrator handed one out of its own inbox would
+// take it for a question it must answer.
 //
 // The order of the checks inside a case is the rule: what the record says, then
 // whether this machine has already spent it, then the run. Nothing is run
@@ -1323,6 +1375,8 @@ func (c *mailboxConsumer) run(ctx context.Context, pairing mailboxPairing, messa
 		return c.runAnswer(ctx, pairing, message, entry, pass)
 	case mailboxKindAction:
 		return c.runAction(ctx, pairing, message, entry, pass)
+	case mailboxKindRegistration:
+		return c.runRegistration(ctx, pairing, message, entry, pass)
 	default:
 		pass.refuse(entry.ID, mailboxCodeUnexpectedKind, false)
 		return nil
@@ -1463,6 +1517,166 @@ func (c *mailboxConsumer) runAction(ctx context.Context, pairing mailboxPairing,
 	pass.verdict.actions++
 	pass.acted = append(pass.acted, mailboxActed{ID: entry.ID, Kind: mailboxKindAction, Outcome: outcome})
 	return nil
+}
+
+// runRegistration applies §3.5 (b)'s registration-and-preferences message
+// (P5.2.4): the token the phone's push service minted, the platform it was
+// minted on, the instant this consumer wrote them, and §3.8's switches, into
+// the node the design puts them in — `config/admin/push/$uid`, the **sibling**
+// of the device node and never a child of it (§3.4).
+//
+// **The write is a merge and that is what makes a re-registration one.** The
+// three fields the message carries are overwritten, `prefs` is replaced with
+// the state the message carries when it carries one, and everything else in the
+// node — the sender's `ledger` above all (§3.6, P5.2.6) — is left exactly as it
+// is, because a node this consumer cannot re-derive is a node it must not
+// clear. The phone's message is the whole of the state §3.8 asks for, so a
+// registration that stops carrying `quiet_hours` turns quiet hours off rather
+// than leaving the last window behind: `prefs` is written as one child, and a
+// child written whole cannot keep a field the app has dropped.
+//
+// **A registration the database refuses halts this pass, and the sentence names
+// the role.** The write needs the same `roles/firebasedatabase.admin` a pairing
+// needs, because `config/admin/**` is client-denied and every write under it is
+// an IAM write (P5.2.2); where the operator's credential does not hold it, the
+// refusal is a run-level one — the class `dbErr` sends a refused write to, exit
+// 1 — but it is raised with this command's own sentence rather than with the
+// shared admin-denied one, because that one is about budget caps and kill
+// switches and would send the operator to the wrong place. Registration is an
+// admin act like pairing (Q3, §3.5 (b)), and this is what it says so.
+//
+// **And a write the store would not take leaves the delivery owed rather than
+// lost** (`registrationOwed`), which is the one act in this file the ledger's
+// at-most-once fence is taken back for: the registration is convergent — the
+// same token, platform and switches written again — so the account that could
+// not be registered because the role was missing or the database was
+// unreachable is registered by the first pass that finds the store willing,
+// instead of needing the phone to notice and speak again. It is a record taken
+// back and not a fence walked around: the delivery is offered by the ledger
+// exactly as a new one is, window, cap and quota included.
+//
+// **One check runs before the write, and it is the design's own rule read one
+// step earlier.** The device node's existence IS the allowlist (§3.4, D166), so
+// a registration whose account has no device node — the everyday case being a
+// message the phone sent before `fugaro pair revoke` and this pass processes
+// after it — writes **nothing**:
+// `config/admin/devices/**` is written by `fugaro pair` and `fugaro pair
+// revoke` alone, and P5.2.4's acceptance is that a registration arriving after
+// the device node was deleted leaves the store as it found it, so revocation
+// stays final. §3.4 permits that write and has the sender reap the orphan
+// afterwards; writing nothing is the stricter half of the same rule, and the
+// net above it stays where it is for the paths that do not come through here.
+// That answer is a **decision** and not a failure, so it is refused in the pass
+// and the delivery is consumed: a revoked account is not owed a registration,
+// and a message that says otherwise is refused once.
+//
+// **The token is written because it was validated, not because it arrived.**
+// Every field below has been through the schema's own validator in the module
+// (`mailbox.Decode`, §8.1) before this runs: `token` and `platform` are
+// required by the kind, non-empty, bounded (`mailbox.TokenMax`) and free of the
+// characters no database key or screen may carry, and `prefs` is either absent
+// or the whole of §3.8's switch state. Nothing here invents a bound of its own,
+// and nothing here writes a value the message did not carry.
+func (c *mailboxConsumer) runRegistration(ctx context.Context, pairing mailboxPairing, message *mailbox.Message, entry mailbox.LedgerEntry, pass *mailboxPass) error {
+	paired, err := c.pairedDevice(ctx, pairing.uid)
+	if err != nil {
+		return c.registrationOwed(entry, err)
+	}
+	if !paired {
+		pass.refuse(entry.ID, mailboxCodeRegistrationUnpaired, false)
+		pass.notes = append(pass.notes, fmt.Sprintf("the registration %s for %s was not applied: the account has no device node at %s, so it is not paired to a phone and its push node stays as it is — a registration that arrives after `fugaro pair revoke` deletes the device node registers nothing, which is what keeps a revocation final", entry.ID, pairing.uid, rules.PathDevices+"/"+pairing.uid))
+		return nil
+	}
+	node := map[string]any{
+		"token":      message.Token,
+		"platform":   message.Platform,
+		"updated_at": c.now(),
+	}
+	if message.Prefs != nil {
+		node["prefs"] = mailboxPrefsNode(message.Prefs)
+	}
+	if err := c.db.Patch(ctx, pairPushPath(pairing.uid), node); err != nil {
+		if errors.Is(err, rtdb.ErrPermission) {
+			return c.registrationOwed(entry, userErr("the registration %s was not applied: the write to %s was refused, and applying a registration writes the push node there with the roles/firebasedatabase.admin a pairing writes the device node with, which this credential does not hold on project %s's Firebase project (its owners and editors hold it, and terraform.budget_admins): %v", entry.ID, pairPushPath(pairing.uid), c.lc.Name, err))
+		}
+		return c.registrationOwed(entry, dbErr(c.lc, err, true))
+	}
+	pass.acted = append(pass.acted, mailboxActed{ID: entry.ID, Kind: mailboxKindRegistration, Outcome: mailboxOutcomeRegistered})
+	return nil
+}
+
+// registrationOwed answers a registration the store would not let this pass
+// apply: the delivery's record is taken back out of the ledger (Retract), so the
+// next pass reads the same inbox node and applies it then, and the cause is
+// returned with the sentence that says so in front of it. The classification
+// survives the re-sentencing — `%w` and `remote` keep the code the cause's own
+// `dbErr` or `userErr` gave it, exit 1 for a refusal and exit 2 for an outage —
+// because a registration the store refused is the same failure whether or not
+// the delivery is offered again.
+//
+// **The retrying is bounded by the module's own window and not by a counter
+// here.** A registration the consumer is still holding six hours later is
+// outside the command window, so the next pass reads it as the replay it is,
+// refuses it and moves on; the app registers again on its next open (§3.5 (b)),
+// which is the design's own answer to a lost registration.
+//
+// A ledger that will not take the retraction is the worse of the two failures
+// and is said rather than hidden: the record stands, so the delivery is consumed
+// and the account keeps whatever token the push node holds until the phone
+// registers again.
+func (c *mailboxConsumer) registrationOwed(entry mailbox.LedgerEntry, cause error) error {
+	if err := c.ledger.Retract(entry.Sender, entry.ID); err != nil {
+		return userErr("the registration %s was not applied (%v), and this machine's mailbox ledger would not take the write that offers it again (%v), so the delivery is consumed and the account keeps the push node it has until the phone registers again", entry.ID, cause, err)
+	}
+	return remote(fmt.Errorf("the registration %s was not applied and is not consumed, so the next pass applies it again: %w", entry.ID, cause))
+}
+
+// pairedDevice answers whether the account this pairing serves still has a
+// device node: D166's allowlist read at the instant of the write rather than at
+// the instant of a send. A read that is refused is the same refusal a refused
+// read of the inbox is (dbErr without a write: the Viewer role, exit 1), and an
+// absent node is an answer rather than an error — it is the state `fugaro pair
+// revoke` leaves behind.
+func (c *mailboxConsumer) pairedDevice(ctx context.Context, uid string) (bool, error) {
+	var node json.RawMessage
+	found, err := c.db.Get(ctx, rules.PathDevices+"/"+uid, &node)
+	if err != nil {
+		return false, dbErr(c.lc, err, false)
+	}
+	return found, nil
+}
+
+// mailboxPrefsNode is §3.8's switch state as the push node holds it, under the
+// names the message already carries: one child per category, and `quiet_hours`
+// with the IANA zone name and the window's two ends. The node's child is the
+// message's own record rather than a second vocabulary — a sender (P5.2.6)
+// reading the node and a phone writing the message must not have two names for
+// one switch, and a test holds these keys to the schema's (`PrefsFields`,
+// `QuietHoursFields`) for the same reason the kind constants are held to
+// `mailbox.Kinds`.
+//
+// All five switches are written, on or off, because the schema requires them:
+// the message is the whole state, so a partial one would leave a reader
+// choosing a value the app never sent. The window is written only when the
+// message carries one, because §3.8's default for quiet hours is off and an
+// absent window is exactly that — a switch, by contrast, is never absent, so
+// nothing has to read off-or-on out of its absence.
+func mailboxPrefsNode(prefs *mailbox.Prefs) map[string]any {
+	node := map[string]any{
+		"kill_switch":      prefs.KillSwitch,
+		"cap_reached":      prefs.CapReached,
+		"consumer_offline": prefs.ConsumerOffline,
+		"cap_near":         prefs.CapNear,
+		"prompt":           prefs.Prompt,
+	}
+	if prefs.QuietHours != nil {
+		node["quiet_hours"] = map[string]any{
+			"zone":  prefs.QuietHours.Zone,
+			"start": prefs.QuietHours.Start,
+			"end":   prefs.QuietHours.End,
+		}
+	}
+	return node
 }
 
 // merge is D169's merge: re-read the pull request's head, refuse if it has moved

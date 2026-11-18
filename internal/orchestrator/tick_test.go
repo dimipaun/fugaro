@@ -832,6 +832,73 @@ func TestTickRecordsAMergeRefusalAsItsClosedCode(t *testing.T) {
 	}
 }
 
+// TestTickNeverMergesAnAdoptedItemWithoutAPerson is D2702 at the second place
+// this package lands work: the long-run rule reads a run's inputs and never the
+// item they belong to, so an item the daemon adopted at start-up — the one
+// adoption writes with no approval of a person's (adopt.go) — reaches the
+// MergeAsIs gate with every input it asks for green. The ladder's rung 3 refuses
+// an adopted item, and so does this: the merge is not asked for, the line
+// carries the outcome and the refusal under its closed code, and the person the
+// approval belongs to is asked, which is the shape an actor's own refusal is
+// recorded in.
+//
+// Mutation: drop the guard and a run the daemon adopted at start-up has its
+// pull request merged with no person ever having read it.
+func TestTickNeverMergesAnAdoptedItemWithoutAPerson(t *testing.T) {
+	now := o6Now()
+	const runID = "20261106-090000-aaaa"
+	h := newHarness(t, tickState(t, now, nil, nil), now)
+	// The item is the one adoption itself writes, through the store, so what
+	// the rule reads is a document this release accepted: the item carries no
+	// approval, and the attempt under it is twenty hours old.
+	seeded := adoptNode(t, h.db, now.Add(-20*time.Hour), &stubLease{held: true})
+	lister := &adoptLister{runs: []orchestrator.RunInFlight{adoptRun(runID, "")}}
+	if n, err := orchestrator.Adopt(context.Background(), lister, seeded); err != nil || n != 1 {
+		t.Fatalf("adoption wrote %d items and answered %v", n, err)
+	}
+	w := h.state().WorkItems[0]
+	if !w.Adopted || w.Approved != nil {
+		t.Fatalf("the item reads %+v, and adoption writes it adopted and unapproved", w)
+	}
+
+	h.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true}}
+	stub := &triageStub{input: triageMergeable(runID, orchestrator.TriageAfter(rigor.Default))}
+	h.tick.Triage = orchestrator.TriageSeams{Read: stub, Act: stub, Log: stub}
+
+	rep := h.step()
+	if rep.Triaged != 1 {
+		t.Fatalf("the cycle triaged %d run(s), and the adopted run's attempt is past the threshold", rep.Triaged)
+	}
+	if len(stub.merged) != 0 {
+		t.Fatalf("the cycle asked for %d merge(s) of an item no person approved: %+v", len(stub.merged), stub.merged)
+	}
+	if len(stub.cancelled) != 0 {
+		t.Fatalf("a merge this rule may not make stopped the run: %+v", stub.cancelled)
+	}
+	if len(stub.logged) != 1 {
+		t.Fatalf("the cycle logged %d entries, want one: %+v", len(stub.logged), stub.logged)
+	}
+	text := stub.logged[0].Text
+	for _, want := range []string{string(orchestrator.MergeAsIs), string(orchestrator.ReasonMergeRefused), "unapproved"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the line %q does not carry %s", text, want)
+		}
+	}
+	if strings.Contains(text, "(merged)") {
+		t.Errorf("the line reads as a merge that landed: %q", text)
+	}
+	d, ok := h.state().Decision(runID + "-triage")
+	if !ok || d.WaitingOn != orchestrator.OnPerson || d.Resolved() {
+		t.Fatalf("the refusal raised %+v, want an open question waiting on a person", d)
+	}
+	if !strings.Contains(d.Question, "unapproved") || !strings.Contains(d.Question, "Approve") {
+		t.Errorf("the question %q does not say what a person has to do about the item", d.Question)
+	}
+	if got := h.state().WorkItems; len(got) != 1 || got[0].Phase != orchestrator.PhaseRunning || got[0].Approved != nil {
+		t.Errorf("the item is %+v, and a refused merge leaves it where it was, unapproved", got)
+	}
+}
+
 // TestTickEndsTheCycleOnAMergeThatFailed: a merge the actor failed at for a
 // reason that is not a refusal is an outage — the host did not answer — so the
 // cycle ends for the next one to retry, and the run is left unfenced and

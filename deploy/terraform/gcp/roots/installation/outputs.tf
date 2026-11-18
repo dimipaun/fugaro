@@ -77,6 +77,10 @@ output "intake" {
   value = module.installation.intake
 }
 
+output "voice_service" {
+  value = module.installation.voice_service
+}
+
 output "catalog_check_service_account" {
   value = module.installation.catalog_check_service_account
 }

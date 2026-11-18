@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -22,7 +23,17 @@ type modelsAddOptions struct {
 	priceInSet  bool
 	priceOutSet bool
 	yes         bool
+	// noApply is --no-apply (D1565): the change is written and the steps that
+	// make it live are saved for `fugaro apply` instead of run here. It is the
+	// flag's own word, read at RunE's time (the flag is parsed after this
+	// struct is built).
+	noApply *bool
 }
+
+// modelsAddDoor is this command's own name: the door its chain's run is filed
+// and printed under, so the lines a person reads name the command they ran and
+// not `fugaro update` (accountsAddRunStages' rule).
+const modelsAddDoor = "models add"
 
 func newModelsAddCmd() *cobra.Command {
 	var o modelsAddOptions
@@ -37,11 +48,13 @@ func newModelsAddCmd() *cobra.Command {
 			"it; when it is absent it stays absent.\n\n" +
 			"Only the keys it changes are rewritten: every comment and every other key of\n" +
 			"the file is kept.\n\n" +
-			"The change reaches a run through `fugaro update`, which publishes the policy\n" +
-			"node: a model_prices entry and a budget.allowed_models entry are what a run\n" +
-			"reads from there. A route's own claim is not — a run routes by the copy of\n" +
-			"the providers block in its job's environment — so a repository routes to the\n" +
-			"model once `fugaro update --repo .` has been run in its checkout.",
+			"The change reaches a run when the policy node is published, which this command\n" +
+			"does itself: a model_prices entry and a budget.allowed_models entry are what a\n" +
+			"run reads from there. With --no-apply the change is saved and the publish is\n" +
+			"owed, and `fugaro apply` runs it later. A route's own claim is not published —\n" +
+			"a run routes by the copy of the providers block in its job's environment — so a\n" +
+			"repository routes to the model once `fugaro update --repo .` has been run in\n" +
+			"its checkout.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o.priceInSet = cmd.Flags().Changed("price-in")
@@ -53,6 +66,7 @@ func newModelsAddCmd() *cobra.Command {
 	f.StringVar(&o.route, "route", "", "the route that claims the model (default: the route that claims it already, or the only one)")
 	f.Float64Var(&o.priceIn, "price-in", 0, "input price, dollars per million tokens (required for a model the catalog does not price)")
 	f.Float64Var(&o.priceOut, "price-out", 0, "output price, dollars per million tokens (required for a model the catalog does not price)")
+	o.noApply = addNoApplyFlag(cmd)
 	return cmd
 }
 
@@ -120,20 +134,6 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
-	if yamledit.Changed(old, next) {
-		// The hand-off names the one command this change really needs. The policy
-		// node carries the price and the allow-list entry, so `fugaro update`
-		// publishes those; the claim lives in the providers block each job holds
-		// its own copy of, which only that repository's `fugaro update --repo .`
-		// writes (jobConfigCopyPolicyNote). E2's converge is what makes the claim
-		// reach every recorded repository from the one command, and the plan
-		// records that M3/M4 do not ship in a release before it.
-		if claim.by == "" {
-			fmt.Fprintln(out, "next: fugaro update, then fugaro update --repo . in each repository that should run the model")
-		} else {
-			fmt.Fprintln(out, "next: fugaro update")
-		}
-	}
 	if claim.by != "" {
 		fmt.Fprintf(out, "%s is already claimed by %s on route %s: the route is unchanged\n", oneLine(id), oneLine(claim.by), oneLine(route))
 	}
@@ -143,7 +143,25 @@ func runModelsAdd(cmd *cobra.Command, id string, o *modelsAddOptions) error {
 	if lc.Budget == nil || len(lc.Budget.AllowedModels) == 0 {
 		fmt.Fprintln(out, "budget.allowed_models is not set, so it stays absent: every model the routes open is allowed")
 	}
-	return modelsAddHandoff(cmd, lc, id)
+	if err := modelsAddHandoff(cmd, lc, id); err != nil {
+		return err
+	}
+	if !yamledit.Changed(old, next) {
+		return nil
+	}
+	// The change's own follow-up (AP6): the policy stage publishes the price and
+	// the allow-list entry into the node every run of the project is admitted by.
+	// What it does NOT carry is the route's own claim — that lives in the copy of
+	// the providers block each job holds, refreshed by that repository's own
+	// redeploy, which is per checkout (D1574) and so is never queued by a
+	// project-wide change (apply's ResourceModel row): `fugaro update --repo .` in
+	// a checkout is still what carries a claim to a job.
+	//
+	// A model already claimed by a pattern the change did not touch owes the
+	// publish for the same reason: the price and the allow-list entry are the
+	// node's.
+	return chainApply(cmd.Context(), cmd, lc, sel, modelsAddDoor,
+		[]apply.Change{{Kind: apply.Resource, Key: apply.ResourceModel}}, *o.noApply)
 }
 
 // modelsAddNote is one sentence a write produces: the full text the owner
