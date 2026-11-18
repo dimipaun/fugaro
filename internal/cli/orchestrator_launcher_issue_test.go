@@ -7,10 +7,11 @@ package cli
 // route, and the state node the item lives in — so what is pinned is what a
 // daemon does when it launches an item that came from a GitHub issue: the
 // ticket is read back through the route's read act, the run's brief is built
-// from its title and its body with the text fenced as data, and a body that no
-// longer hashes to the item's own is a launch that does not happen — the item
-// goes back to queued and unapproved, with one fact, and the attempt the
-// starter had already committed is closed as one nothing ran under.
+// from the item's own title and the body the ticket carries now with the text
+// fenced as data, and a body that no longer hashes to the item's own is a
+// launch that does not happen — the item goes back to queued and unapproved,
+// with one fact, and the attempt the starter had already committed is closed as
+// one nothing ran under.
 //
 // The service is a fake for the reason the label path's tests state
 // (orchestrator_labels_test.go): this tree has no daemon identity to reach the
@@ -24,8 +25,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -178,12 +181,14 @@ func (f *issueFixture) running(t *testing.T) *orchestratorDaemon {
 }
 
 // issueItem is one item of a test's node that came from the ticket number names:
-// the external id and the body's SHA-256 the ingest writes, and the approval a
-// person left over exactly that declaration.
+// the external id and the body's SHA-256 the ingest writes, the ticket's own
+// title — which is what the ingest writes onto the item, and so the title the
+// approval covers (D2720, D2747) — and the approval a person left over exactly
+// that declaration.
 func issueItem(t *testing.T, number int, body string) orchestrator.WorkItem {
 	t.Helper()
 	w := orchestrator.WorkItem{
-		ID: "wi-1", Title: "an item from the ticket", Repo: labelRepo, Recipe: "standard", RigorTier: "medium",
+		ID: "wi-1", Title: issueTitle, Repo: labelRepo, Recipe: "standard", RigorTier: "medium",
 		Brief: "Read the ticket and do the work it asks for.", Phase: orchestrator.PhaseQueued,
 		External: issueExternal(number), BodySHA256: issueHash(body),
 	}
@@ -313,11 +318,95 @@ func TestIssueItemBriefFromBody(t *testing.T) {
 	if len(fence) < 3 {
 		t.Errorf("the ticket's block is fenced with %q, which is not a fence", fence)
 	}
+	// The title the block carries is the item's own, which is the ticket's as the
+	// ingest wrote it (D2720, D2747): the two are the same string here, and
+	// TestEditedIssueTitleReachesNothing is what tells them apart.
 	if !strings.Contains(block, issueTitle) {
-		t.Errorf("the fenced block does not carry the ticket's title %q:\n%s", issueTitle, block)
+		t.Errorf("the fenced block does not carry the item's title %q:\n%s", issueTitle, block)
 	}
 	if !strings.Contains(block, issueBody) {
 		t.Errorf("the fenced block does not carry the ticket's body:\n%s", block)
+	}
+}
+
+// TestEditedIssueTitleReachesNothing: the ticket's title reaches the run through
+// the item — the copy the ingest wrote there, which is the one the approval
+// covers — and never through the answer this launch reads back. The body's hash
+// pins the body alone, so a title edited at the forge after the approval is text
+// nobody approved, and both halves of that are checked here: the run's brief
+// carries the approved title and not the edited one, and the brief is the one
+// the interrupted launch built — so the re-issue a crash needs stores no second
+// task under the same run id and the attempt is not left failing under it for
+// the rest of its life (createTask refuses a run id whose stored task differs).
+//
+// Mutation (run, restored): build the block's title from the answer instead of
+// from the item, and the tick after the crash fails with "already holds a
+// different task".
+func TestEditedIssueTitleReachesNothing(t *testing.T) {
+	f := newIssueFixture(t)
+	d := f.running(t)
+	ctx := context.Background()
+	f.now = f.serverNow(t)
+	f.service.put(7, issueTitle, issueBody)
+	item := issueItem(t, 7, issueBody)
+	f.putState(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+		Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+	})
+
+	// The daemon dies between storing the task and starting the run: the crash
+	// whose recovery re-issues the same run id and builds the brief again.
+	real := d.tick.Launcher.(*orchestratorLauncher)
+	d.tick.Launcher = crashLauncher{real: real, stored: true}
+	if _, err := d.tick.Step(ctx); !errors.Is(err, errDaemonDied) {
+		t.Fatalf("the staged crash reported %v", err)
+	}
+	runID := f.item(t, item.ID).RunID
+	if runID == "" {
+		t.Fatalf("the crash left no run id on the item: %+v", f.item(t, item.ID))
+	}
+	before, err := f.runStore(t, runID).ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("the task the crash stored: %v", err)
+	}
+
+	// The retitle, after the approval and after the crash. The body is the one
+	// the person read, so nothing here is a launch the body's hash refuses.
+	const editedTitle = "a title nobody approved, edited at the forge"
+	f.service.put(7, editedTitle, issueBody)
+
+	// The restarted daemon: its own start-up's tick, whose launcher carries the
+	// issue route's seam (f.recover's own launcher is built without one), and a
+	// clock past the claim window so that recovery acts on the attempt.
+	f.db.SetClock(func() time.Time { return f.now.Add(orchestrator.ClaimTTL + time.Minute) })
+	if err := d.lease.Beat(ctx); err != nil {
+		t.Fatalf("beating the lease again after the clock moved: %v", err)
+	}
+	d.tick.Launcher = real
+	rep, err := d.tick.Step(ctx)
+	if err != nil {
+		t.Fatalf("the cycle that re-issues an attempt whose ticket was retitled since: %v", err)
+	}
+	if rep.Carried == 0 {
+		t.Fatalf("the cycle over the attempt the crash left carried nothing, so nothing re-issued it: %+v", rep)
+	}
+
+	after, err := f.runStore(t, runID).ReadTask(ctx)
+	if err != nil {
+		t.Fatalf("reading the task after the re-issue: %v", err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Errorf("the re-issue rebuilt the task of a run whose text is the one that was approved:\nafter  %+v\nbefore %+v", after, before)
+	}
+	block, _ := issueFenceBody(t, after.Task)
+	if !strings.Contains(block, issueTitle) {
+		t.Errorf("the run's block does not carry the approved title %q:\n%s", issueTitle, block)
+	}
+	if strings.Contains(block, editedTitle) {
+		t.Errorf("a title edited after the approval reached the run's brief:\n%s", block)
+	}
+	if execs := f.run.Executions(); len(execs) != 1 {
+		t.Errorf("the run recorded as %s was started %d time(s), want the one the re-issue reports: %v", runID, len(execs), execs)
 	}
 }
 
