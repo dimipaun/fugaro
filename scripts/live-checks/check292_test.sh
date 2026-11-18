@@ -1098,7 +1098,7 @@ run_check() { # run_check DIR ENV... [-- ARGS...]
   # may itself be started from one. The case that measures that refusal sets the
   # marker again, and a variable given as an argument wins over `env -u`.
   env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
-    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" XDG_CONFIG_HOME="$dir/home/.config" TMPDIR="$dir/tmp" \
     FAKE_LOG_DIR="$dir/logs" FAKE_STATE_DIR="$dir/state" FAKE_JSON_DIR="$dir/json" \
     CHECK292_SANDBOX="$dir/sandbox" \
     CHECK292_DOCTOR_TIMEOUT_SECONDS=20 CHECK292_CLI_TIMEOUT_SECONDS=20 \
