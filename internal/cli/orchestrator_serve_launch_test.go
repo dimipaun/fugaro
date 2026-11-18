@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -182,6 +183,73 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 			}
 			if !strings.Contains(logged, "the budget switch is on") {
 				t.Errorf("the pass logged %q, and the line has to say why: \"nothing was committed\" and \"the switch is on\" are the same numbers otherwise", logged)
+			}
+		})
+	}
+}
+
+// TestOrchestratorTickReadsNothingWhenTheGuardrailsCannotBeRead is carry's
+// fail-closed half, which is the half a change can silently turn permissive:
+// both branches return before the plan is read, and a version that carried on
+// instead would plan under a value nobody read — the zero Caps' kill switch,
+// which is the OFF value Caps' own doc forbids, or a clock of this container's
+// own, which D1230 forbids for every judgment under the node. Each is driven by
+// the read that reaches it and by no other: the switch is made to fail at its
+// own path, and the clock is a store that has answered nothing, which is what
+// ServerNow's ok = false means.
+//
+// Both cases assert the same pair. The pass still ANSWERS — a guardrail this
+// process could not read is read as ON, and a tick that refused would leave the
+// scheduler retrying a read that will fail again — with nothing counted, because
+// an attempt reported off a guardrail nobody read is the permissive reading
+// wearing the fail-closed branch's numbers; and the line names the read that
+// failed, because "there was nothing to read" and "the guardrail is on" are the
+// same numbers in the pass otherwise.
+func TestOrchestratorTickReadsNothingWhenTheGuardrailsCannotBeRead(t *testing.T) {
+	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
+	statePath, err := orchestrator.PathState("aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+		errs map[string]error
+		want string
+	}{
+		{
+			name: "the budget switch could not be read",
+			at:   at,
+			errs: map[string]error{budget.PathKillGlobal: errors.New("the database refused the read")},
+			want: "the budget switch could not be read",
+		},
+		{
+			// The zero time is the store that has not answered: ServerNow is
+			// (zero, false), which is the state carry reads as "no clock to
+			// judge the claim window with".
+			name: "the database's clock could not be read",
+			want: "the database's clock could not be read",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeOrchestratorStore{
+				docs: map[string]string{statePath: residentNodeDoc(t, at)},
+				errs: tc.errs,
+				at:   tc.at,
+			}
+			rec, logged := tickForTest(t, store, "aurora")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("the tick answered %d (%s), and a guardrail this process could not read is read as ON: the pass still answers", rec.Code, logged)
+			}
+			var pass orchestratorPass
+			if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
+				t.Fatal(err)
+			}
+			if pass.Unreported != 0 || pass.Left != 0 {
+				t.Errorf("the pass reads unreported %d, left %d, and the node holds one attempt past its claim window: a count read off a guardrail nobody read is the permissive reading", pass.Unreported, pass.Left)
+			}
+			if !strings.Contains(logged, tc.want) {
+				t.Errorf("the pass logged %q, and the line has to name the read that failed (%q): \"there was nothing to read\" and \"the guardrail is on\" are the same numbers otherwise", logged, tc.want)
 			}
 		})
 	}

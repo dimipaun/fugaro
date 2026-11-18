@@ -526,11 +526,13 @@ type orchestratorPass struct {
 
 // orchestratorPassLine is the one line an operator reads to see what a tick came
 // to, and it is one sentence for every pass: a tick that read the node and
-// ran no step, which is true of every pass this revision serves. A pass that
-// held a launch request says so in the line below it (carry), which names the
-// request and the deployment fact behind it, and a pass that started a run
+// ran no step, which is true of every pass this revision serves. What a pass
+// read of the plan rides this line's own fields (unreported and left) and is
+// never written per attempt (orchestratorPass), and a pass that started a run
 // would need a sentence of its own — there is none, because there is no such
-// pass.
+// pass. The one line carry can add BELOW this one is a guardrail it could not
+// read or found on (carry), and that line is about the read and not about an
+// attempt.
 const orchestratorPassLine = "tick read the node and ran no step"
 
 // tick is one pass: read the node the previous pass left, read the lease beside

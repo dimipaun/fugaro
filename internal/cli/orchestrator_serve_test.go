@@ -266,17 +266,27 @@ func TestOrchestratorServiceConfigBuildsFromTheEnvironment(t *testing.T) {
 }
 
 // fakeOrchestratorStore is the store the pass is served from: the documents a
-// node holds, and a write half that FAILS THE TEST if it is reached. That is
-// this step's whole claim about the pass — it reads the node the previous pass
-// left and writes nothing — held the only way a claim about a code path can be:
-// by making the path that must not exist fail when it does.
+// node holds, the reads that FAIL by path, and a write half that FAILS THE TEST
+// if it is reached. That is this step's whole claim about the pass — it reads
+// the node the previous pass left and writes nothing — held the only way a
+// claim about a code path can be: by making the path that must not exist fail
+// when it does.
+//
+// errs is what makes a read fail, and it is the only way to reach carry's
+// fail-closed branches: a store that only ever failed to unmarshal could not
+// drive them, because the budget switch is not a document the pass decodes into
+// anything the plan reads.
 type fakeOrchestratorStore struct {
 	docs   map[string]string
+	errs   map[string]error
 	at     time.Time
 	writes []string
 }
 
 func (f *fakeOrchestratorStore) Get(_ context.Context, path string, out any) (bool, error) {
+	if err := f.errs[path]; err != nil {
+		return false, err
+	}
 	raw, ok := f.docs[path]
 	if !ok {
 		return false, nil
