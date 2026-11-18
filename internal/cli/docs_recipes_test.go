@@ -133,7 +133,7 @@ func TestRecipesGuideNamesCommitReports(t *testing.T) {
 		"commit_reports: {}",
 		"`reports_commit.repo`",
 		"`reports_commit.dir`",
-		"`docs/fugaro-reviews`",
+		"`docs/fugaro-reviews-mirror`",
 		"the run ids a flagged row is actionable by",
 		"no person, no address, no task text, no log line and no credential",
 	} {
