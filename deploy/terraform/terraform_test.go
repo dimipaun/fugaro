@@ -5108,6 +5108,118 @@ func TestVoiceProviderKeysContainerIsTheGoSpelling(t *testing.T) {
 	}
 }
 
+// TestVoiceProviderKeyOptOutIsTwoSteps is the hop's side of
+// TestCredentialsServiceOptOutIsTwoSteps, and it exists because the first
+// version of this text named a route that does not exist — "a code edit, the
+// lifecycle block taken out of secrets.tf, and then the update again" — in
+// SECURITY.md and in voice.tf, the two places a reader who writes
+// voice_service: null looks. That route fails twice over. internal/infra's
+// PrepareWorkdir RemoveAlls the tree and re-extracts the embedded modules on
+// every run, so the edited file is deleted before the plan that would use it
+// (docs/design/config-transitions.md:57 states the same of a repository root:
+// "no supported path at all"), and the apply the edit unblocked is one carrying
+// the addresses of exactly that plan — the destroy of the container and of
+// every hand-typed provider key in it, which is the loss prevent_destroy is
+// there to stop (secrets.tf). What works is the credentials bundle's pattern
+// one container over: forget the container in the workdir before the plan,
+// which deletes nothing in GCP, keeps the keys, and lets the service, its
+// account, its accessor and its public binding go.
+func TestVoiceProviderKeyOptOutIsTwoSteps(t *testing.T) {
+	// The address is the installation ROOT's and is written the way an owner
+	// types it: module-prefixed, because the container is a resource of
+	// `module "installation"` (roots/installation/main.tf) and the bare address
+	// names nothing in that state (terraform state rm refuses it), and
+	// single-quoted, because `[0]` is a glob to zsh, which fails the command
+	// with "no matches found" before terraform runs — the two rules
+	// credentials.tf states for the bundle (re-review N1 there).
+	const step = "terraform state rm 'module.installation.google_secret_manager_secret.voice_provider_keys[0]'"
+	// The two files the wrong route was written in, and what each of them owes a
+	// reader: SECURITY.md the command an owner types, voice.tf the two steps in
+	// the order that works (its own comment is where the switch is read, and it
+	// carries no address of its own — SECURITY.md carries them).
+	for _, tc := range []struct{ path, wanted, what string }{
+		{"../../SECURITY.md", step, "the opt-out's first step"},
+		{"gcp/modules/installation/voice.tf", "forget the container first, then an ordinary update with this switch written as null", "the opt-out's two steps and their order"},
+	} {
+		b, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The comment in voice.tf is wrapped, so the sentences pinned below are
+		// read against the text with its comment markers, line breaks and
+		// indentation flattened: a phrase that spans two comment lines is the
+		// same sentence to a reader. Nothing pinned here carries a `#`.
+		text := strings.Join(strings.Fields(strings.ReplaceAll(string(b), "#", "")), " ")
+		if !strings.Contains(text, tc.wanted) {
+			t.Errorf("%s does not document %s (%q): a reader who writes voice_service: null is left with Terraform's plan failure and no path", tc.path, tc.what, tc.wanted)
+		}
+		// The forms that must not come back: the unprefixed address (it names
+		// nothing in the root's state) and the prefixed one unquoted (zsh
+		// refuses it before terraform ever sees it).
+		for _, wrong := range []string{
+			"terraform state rm google_secret_manager_secret.voice_provider_keys[0]",
+			"terraform state rm module.installation.google_secret_manager_secret.voice_provider_keys[0]",
+		} {
+			if strings.Contains(text, wrong) {
+				t.Errorf("%s carries the opt-out's first step as %q: the address needs the module prefix and single quotes, %q", tc.path, wrong, step)
+			}
+		}
+		// And the route that is not one: editing secrets.tf. The next run
+		// deletes the edit, and the plan the edit unblocked destroys the keys.
+		for _, wrong := range []string{
+			"the way out is a code edit",
+			"the lifecycle block taken out of",
+			"the lifecycle block's removal first",
+		} {
+			if strings.Contains(text, wrong) {
+				t.Errorf("%s still documents the hop's opt-out as a code edit (%q): internal/infra's PrepareWorkdir re-extracts the tree on every run, so the edit is gone before the plan that would use it, and the plan it unblocked destroys the container", tc.path, wrong)
+			}
+		}
+	}
+
+	// The second step names the addresses of the five removals the plan carries
+	// after the container is forgotten — the accessor among them, since it is
+	// still in state — and NOT the container's: a forgotten container is in no
+	// plan, and naming it would tell a reader it is deleted rather than left
+	// behind with its keys.
+	const (
+		accessor  = "--allow-delete module.installation.google_secret_manager_secret_iam_member.voice_provider_keys[0]"
+		container = "--allow-delete module.installation.google_secret_manager_secret.voice_provider_keys[0]"
+	)
+	sec, err := os.ReadFile("../../SECURITY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sec), accessor) {
+		t.Errorf("SECURITY.md's second step does not name the accessor's address (%q): the accessor is in state and its destroy is a removal the guard refuses until the address is named", accessor)
+	}
+	if strings.Contains(string(sec), container) {
+		t.Errorf("SECURITY.md names the provider-key container in --allow-delete (%q): after the first step the plan carries no change there, and the container stays in GCP with its keys", container)
+	}
+
+	// The container's prevent_destroy is what makes the first step necessary
+	// rather than optional, so the two-step text above is true only while it
+	// stands (the credentials test's own last check, one container over).
+	const path = "gcp/modules/installation/secrets.tf"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containerBlock := false
+	for _, blk := range resourceBlocks(t, path, data, "google_secret_manager_secret") {
+		if blk.name != "google_secret_manager_secret.voice_provider_keys" {
+			continue
+		}
+		containerBlock = true
+		if !hasAttr(blk.body, "prevent_destroy", "true") {
+			t.Errorf("%s: the provider-key container holds no prevent_destroy = true, and the state rm step is necessary because it does:\n%s", path, squash(blk.body))
+		}
+	}
+	if !containerBlock {
+		t.Fatalf("%s declares no google_secret_manager_secret.voice_provider_keys: the hop's key container is what the process reads by name (P5.3.5)", path)
+	}
+}
+
 // TestCredentialsServiceResourcesAreCounted reads the sentence that counts
 // this file's own resources — locals' "a single boolean keeps the six
 // resources of this file in step" — against the file. It said five while the

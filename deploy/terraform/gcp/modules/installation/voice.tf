@@ -24,13 +24,20 @@
 # container of its own — secrets.tf's provider-key container, created and
 # removed on the same local.voice_on as the resources below — and a secret is a
 # data-bearing type (D1551, internal/infra/tf's dataBearingTypes), so the plan
-# that removes the hop (a) REFUSES until that container's address and its
-# grant's are named on the command line beside the four below, and (b) refuses
-# whatever is named, while the container's prevent_destroy block stands, because
-# the key in it is a value an operator typed by hand and nothing in this
-# installation can put it back. Taking the hop out for good is therefore the
-# lifecycle block's removal first, then the delete-naming update; SECURITY.md
-# carries the six addresses and the reason.
+# that removes the hop carries a delete the guard refuses until the address is
+# named on the command line. Terraform refuses one step earlier, and that
+# refusal answers to no flag: the container carries prevent_destroy, so with it
+# in state the plan fails whole ("Instance cannot be destroyed") and applies
+# nothing — the service, its account and their grants cannot be removed in that
+# plan either. Taking the hop out for good is therefore two owner steps, the
+# credentials bundle's order (credentials.tf and C1.22's runbook): forget the
+# container first, then an ordinary update with this switch written as null.
+# There is no route through a code edit, and it would be self-defeating: the
+# workdir this file is read from is re-extracted on every run
+# (internal/infra/workdir.go), so an edit here is gone before the plan that
+# would use it, and the plan an edit unblocked is the one that destroys the
+# container and every key typed into it. SECURITY.md carries the two commands
+# and the addresses.
 #
 # WHY THE SERVICE'S OWN ACCOUNT HOLDS EXACTLY ONE GRANT, and why that grant is
 # in state_read.tf and not here. Verifying a Firebase ID token needs no IAM at
