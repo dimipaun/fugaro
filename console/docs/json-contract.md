@@ -2097,7 +2097,7 @@ the answer those fields come back as.
 **Document:** `launchResult` —
 
 `project`, `run`, `repo`, `run_id`, `branch`, `ref`°, `execution`, `log_url`°,
-`status`, `pr`° (**int**), `previous_run`°, `recipe`°, `project_layer`°, `error`° (`launchRefusal`: `code`, `message`; a `--retry` of a run that already started starts nothing and carries `code` `retry_already_started`).
+`status`, `pr`° (**int**), `previous_run`°, `recipe`°, `project_layer`°, `error`° (`launchRefusal`: `code`, `message`; a retry of a run that already started starts nothing and carries `code` `retry_already_started`).
 `°` = `omitempty` (as in §3). `recipe` is `launchRecipe`: `name`, `source`.
 `project_layer` is `launchProjectLayer`: `sha256`, `generation`° (**int64** —
 which one layer the stored task actually carries, and never its text).
