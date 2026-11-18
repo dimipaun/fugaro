@@ -20642,9 +20642,9 @@ and what it measures is a real Cloud Build of a real catalog entry on the sandbo
 own record of itself. The check is `scripts/live-checks/check-581.sh` (its sibling test
 `scripts/live-checks/check-581_test.sh` drives it against fake `gcloud` and `fugaro` only), and the owner
 types `bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>`. A project or region
-naming `belong` is refused by name, and a coding agent's session is refused too — **no agent runs any step of
-it**, and it asks you nothing: it takes the checkout, builds one entry, reads the build back and prints one
-block.
+naming `belong` is refused by name — in the sandbox checkout, and in a checkout the build would be submitted
+from — and a coding agent's session is refused too — **no agent runs any step of it**, and it asks you
+nothing: it takes the checkout, builds one entry, reads the build back and prints one block.
 
 **What it settles.** Two things the tree can only claim offline, both read from outside: **D2301** — one
 build bakes every repository the project's image map puts on the entry it builds, not the one it runs for
@@ -20665,7 +20665,11 @@ the tree: this check builds one entry and reads what the build says and what Clo
   the checkout of the repository the entry's Dockerfile belongs to — the sandbox checkout by default, or
   `CHECK581_CHECKOUT` — because a build runs as the build account of the repository it was submitted from
   and the CLI refuses any other by name; that refusal is reported as the row's finding, with the checkout to
-  point the check at. It is billable, it waits for the build by default, and the id it names is the build the
+  point the check at. **A checkout named with `CHECK581_CHECKOUT` has to belong to the same project**: that
+  checkout's own project is read (its own `fugaro doctor --json`, before any build) and the check stops, with
+  no build run, when it is empty, names `belong`, or is not the project the sandbox checkout belongs to — a
+  build submitted from it would be a billable Cloud Build **in that other project**, promoting that
+  project's `latest`. It is billable, it waits for the build by default, and the id it names is the build the
   rows below read.
 - **The bake, out of the build's own note.** The build prints the repositories it baked and where each was
   written (`note: the catalog entry <entry> bakes the checkouts of <repo> at /work/baked/<slug>, …, so the
@@ -20712,7 +20716,8 @@ your credential that describes the build) and the installed `fugaro` (the build 
 have). Progress goes to stderr and one `CHECK 581 RESULT` block goes to stdout at the end: paste that block
 here and nothing else. **Exit `0`** is every criterion that was measured holding; **`1`** is a measured
 criterion that did not hold, or a guard that stopped the check — an empty catalog, a map with no entry over
-two repositories, `bake_repos=false`, a build that failed or was refused, a note that leaves a repository
+two repositories, `bake_repos=false`, a checkout the build would be submitted from that belongs to another
+project, a build that failed or was refused, a note that leaves a repository
 out, a scan missing or after the promote, an entry that records no digest or another one than the build
 reported; **`2`** is the check not being able to measure (a tool missing, the checkout not being one, a read
 that did not answer, a build that never ended, a build that reported no digest of its own and left the entry's
