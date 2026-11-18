@@ -175,6 +175,8 @@ resource "google_secret_manager_secret_iam_member" "orchestrator_pairing_key" {
   secret_id = google_secret_manager_secret.pairing_key[0].secret_id
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+
+  depends_on = [google_service_account.orchestrator]
 }
 
 # The launcher's project role: run.jobs.get/list, run.executions.get/list/
@@ -198,7 +200,7 @@ resource "google_project_iam_member" "orchestrator_launcher" {
   role    = "projects/${var.project}/roles/fugaroLauncher"
   member  = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
-  depends_on = [google_project_iam_custom_role.launcher]
+  depends_on = [google_service_account.orchestrator, google_project_iam_custom_role.launcher]
 }
 
 # The table's `run.jobs.run` and `run.jobs.runWithOverrides` row is the ONE row
@@ -233,6 +235,8 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_launcher" {
   role   = "roles/storage.objectUser"
   member = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
+  depends_on = [google_service_account.orchestrator]
+
   condition {
     title      = var.launcher_bucket_condition.title
     expression = var.launcher_bucket_condition.expression
@@ -259,6 +263,8 @@ resource "google_storage_bucket_iam_member" "orchestrator_runs_reader" {
   bucket = google_storage_bucket.runs.name
   role   = "roles/storage.objectViewer"
   member = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+
+  depends_on = [google_service_account.orchestrator]
 }
 
 # The token-minter row: `iam.serviceAccounts.signJwt` on the budget signer, which
@@ -283,6 +289,8 @@ resource "google_service_account_iam_member" "orchestrator_token_minter" {
   service_account_id = "projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com"
   role               = "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter"
   member             = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+
+  depends_on = [google_service_account.orchestrator]
 }
 
 # The service itself (mobile plan task P5.1c; the design's section 4.1: "one
