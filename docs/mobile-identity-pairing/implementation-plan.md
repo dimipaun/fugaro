@@ -221,19 +221,19 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Commit: `credsvc: rotating device-bound refresh and hourly custom tokens (D2783)`
 - Reviewer tier: **opus**, independent review.
 
-### P5: the mobile service and its grant (needs O1 and O8)
+### P5: the mobile service and its grant (O1 and O8 answered)
 - Acceptance: the installation module adds a second Cloud Run service of the credsvc image with a public invoker and its own service account, mounting only the mobile routes from a fail-closed allowlist (the private service mounts none of them); its signing grant is `signJwt` on a **separate device-only signer account** (O8), not the existing budget signer, and the task states what that does and does not do: it can be disabled alone and audited alone, but IAM cannot limit the claims it signs (`orchestrator.tf` calls `signJwt` the widest grant in its table), so the restriction is the service's route allowlist and tests, and `SECURITY.md` says so; the database binding the mobile routes need (the custom role `fugaroCredentialsDatabase`, `firebasedatabase.instances.get` and `.update`: whole instance, rules bypassed; O8 asks for it); the service starts in `mobile` mode (I1 owns what that mode mounts); the existing service stays private and its invoker untouched; a cover row and a sentence say why; golden plans regenerate; the project-level custom role is unchanged.
 - Files: `deploy/terraform/gcp/modules/installation/credentials.tf`, `deploy/terraform/gcp/modules/installation/mobile_service.tf` (new), `internal/infra/tf/cover.go`, `internal/infra/credentials_mobile_test.go` (new), golden plans under `internal/infra/` from `scripts/gen-golden-plans.sh`.
 - Interfaces: none.
 - Tests: `TestCredentialsMobile*`, `terraform fmt`, `init`, `validate`, `terraform test`.
 - Command: `terraform fmt -check -recursive deploy/terraform && go test -tags terraform ./internal/infra/... -run 'TestCredentialsMobile' -count=1`
 - Red step: the test asserts the private service's invoker has no public member and no project-level grant is added; it fails with either.
-- Depends on: none; **not approvable until O1 is answered**.
+- Depends on: none; its grants have the owner's go in the plan (O1, 2026-11-18), and the task still needs its own go and an independent review before any apply.
 - Commit: `terraform: a public mobile service beside credsvc and its own signer account (D2782, F31)`
 - Reviewer tier: **opus**, independent review before any apply.
 
 ### P6: project policy fields
-- Acceptance: the published project policy carries `mobile.enabled` (default on; O9), `mobile.sync` (default on), `mobile.accepted_providers`, `mobile.max_auth_age` (24 hours), `mobile.strict_new_device` (off), `mobile.costly_modes` (`pro`, `critical`), `mobile.biometric_on_costly` (off); the fields are a tolerated top-level `mobile` key with **no `Version` bump**, because `version.go` says only `Version` can make a node refused and a bump would make runners on the previous image refuse it while `update` must be safe with runs in flight (`docs/design/update-in-flight.md`); the default of `mobile.enabled` waits on O9; `fugaro doctor` prints in one line what is stored in the identity project when sync is on.
+- Acceptance: the published project policy carries `mobile.enabled` (default on, answering only after `update` publishes the policy; O9 answered), `mobile.sync` (default on), `mobile.accepted_providers`, `mobile.max_auth_age` (24 hours), `mobile.strict_new_device` (off), `mobile.costly_modes` (`pro`, `critical`), `mobile.biometric_on_costly` (off); the fields are a tolerated top-level `mobile` key with **no `Version` bump**, because `version.go` says only `Version` can make a node refused and a bump would make runners on the previous image refuse it while `update` must be safe with runs in flight (`docs/design/update-in-flight.md`); the default of `mobile.enabled` waits on O9; `fugaro doctor` prints in one line what is stored in the identity project when sync is on.
 - Files: `internal/projectpolicy/mobile.go` (new), `internal/projectpolicy/version.go`, `internal/projectpolicy/mobile_test.go` (new), `internal/cli/doctor_mobile.go` (new); `schemas/project-layer.schema.json` only if the fields belong to the layer it pins.
 - Interfaces: fields P3, K2, J3 and Z2 read.
 - Tests: `TestProjectPolicyMobile*`, a previous-version-converges test (the published policy tolerates unknown top-level keys, so the test reads the typed fields, not rejection).
@@ -327,7 +327,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Tests: `TestEmulatorRuns*` (the emulator tag as the neighbours use), `rules_test.go`.
 - Command: `go test -tags firebase ./internal/budget/rules/ -run 'TestEmulatorRuns' -count=1`
 - Red step: a device reading `outcomes` fails first.
-- Depends on: P6 (`version.go`); **not approvable until O3 is answered** (the read shows every run's `requestedBy` to viewers).
+- Depends on: P6 (`version.go`). The read shows every run's `requestedBy` to viewers; the owner accepted that for all roles (O3).
 - Commit: `rules: paired devices read outcomes (F30, D2797)`
 - Reviewer tier: **opus**.
 
@@ -338,7 +338,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Tests: `jobs/*.test.js`.
 - Command: `cd mobile && npm test -- src/jobs`
 - Red step: a project with an outcome must not list first.
-- Depends on: C2 (replaces the edge to M3); **not approvable until O3 is answered**.
+- Depends on: C2 (replaces the edge to M3). The owner accepted the `outcomes` read for all roles (O3).
 - Commit: `mobile: the running-jobs view (D2797)`
 - Reviewer tier: standard.
 
@@ -473,7 +473,7 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 | 4 | I1 |
 | 5 | D1, UP1 |
 
-\* owner-run, on devices. † not approvable until O1 and O8 are answered. The graph also lists the anticipated contract changes CR1 and CR2 (level 2 after C1 and P3; level 3 after C2, J3 and Z2); they run only if a consumer finds its contract wrong, and only after it.
+\* owner-run, on devices. † grants given in the plan (O1, O8); the task still needs its own go. The graph also lists the anticipated contract changes CR1 and CR2 (level 2 after C1 and P3; level 3 after C2, J3 and Z2); they run only if a consumer finds its contract wrong, and only after it.
 
 **Critical path (as the read prints it):** `C1 -> M1 -> M3 -> K3 -> I1 -> D1`, bottleneck C1. It is sequential because M3 builds on M1's identity records, K3 needs M3's real storing and refresh behaviour, and I1 joins everything.
 
@@ -586,4 +586,4 @@ Every decision and finding lands in a task or in a declined note: D2780 (P3, P6)
 
 ## Open items the plan carries
 
-**Answered 2026-11-18:** O6 (a per-message session signature in place of the MAC: J5, not the recommendation), O8 (a public second service with a separate signer account, with the correction that IAM cannot limit its claims), O10 (a typed launch action: J5) and O11 (D2799 confirmed). **Still open:** O1 (the signer-account grant, before P5), O2 (the amended D162 and D232 wording), O3 (the `outcomes` read, before J1 and J2), O4 (the defaults), O5 (#3195), O7 (key pinning), O9 (the default of `mobile.enabled`, before P6's default and UP1), and the owner's reconfirmation of O8's corrected consequence. Each is in [reconciliation.md](reconciliation.md).
+**Answered 2026-11-18:** O6 (a per-message session signature in place of the MAC: J5, not the recommendation), O8 (a public second service with a separate signer account; the owner reconfirmed the corrected consequence, that IAM cannot limit its claims and the route allowlist, tests and review are the control), O10 (a typed launch action: J5), O11 (D2799 confirmed), O1 (the signer account's grants, the database role and the cover row: the owner's go in the plan), O3 (the `outcomes` read for all roles) and O9 (`mobile.enabled` on in policy, the routes answering only after `update` publishes it). **Still open:** O2 (the amended D162 and D232 wording), O4 (the defaults), O5 (#3195), O7 (key pinning). Each is in [reconciliation.md](reconciliation.md).

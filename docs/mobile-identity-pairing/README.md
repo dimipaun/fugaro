@@ -19,4 +19,4 @@ Decisions **D2780-D2799** (D2780-D2789 asked, D2790-D2799 resolved); D2800-D2829
 
 ## What waits on something outside this folder
 
-The owner's own go on each task; **O1**, the signer-account grant, before P5, **O3** before J1 and J2, and **O9** before P6's default and UP1; answered 2026-11-18: O6 (a per-message device signature, task J5, not the recommendation), O8 (a public second service with a separate signer account, corrected: IAM cannot limit its claims), O10 (a typed launch action, J5) and O11 (D2799); Checks 730-736, all owner-run; the P5.1 consumer for start and cancel to work end to end.
+The owner's own go on each task; **O2, O4, O5 and O7** are still open (see [reconciliation.md](reconciliation.md)); O1, O3, O6, O8, O9, O10 and O11 were answered 2026-11-18 (O6, a per-message device signature, task J5, against the recommendation); Checks 730-736, all owner-run; the P5.1 consumer for start and cancel to work end to end.
