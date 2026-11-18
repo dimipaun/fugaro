@@ -19,4 +19,4 @@ Decisions **D2780-D2799** (D2780-D2789 asked, D2790-D2799 resolved); D2800-D2829
 
 ## What waits on something outside this folder
 
-The owner's own go on each task; **O1 and O8**, the credsvc grant and the public second service, before P5, and **O6**, the MAC key source, before P3; Checks 730-736, all owner-run; the P5.1 consumer for start and cancel to work end to end.
+The owner's own go on each task; **O1 and O8**, the public second service, its signer grant and its database role, before P5, P3, P4 and K2, **O6**, the MAC key source, before P3, **O11**, D2799, before P2, **O3** before J1 and J2, **O9** before P6's default and UP1, and **O10**, a typed launch action, before consumer enforcement of a costly start; Checks 730-736, all owner-run; the P5.1 consumer for start and cancel to work end to end.

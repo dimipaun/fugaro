@@ -453,8 +453,9 @@
         "prediction": true,
         "paths": [
           "shared/command/verbs.js",
-          "mobile/src/mailbox/client.js",
-          "shared/command/verbs.test.js"
+          "shared/command/index.js",
+          "shared/command/index.test.js",
+          "mobile/src/mailbox/client.js"
         ]
       }
     },
@@ -568,6 +569,7 @@
         "prediction": true,
         "paths": [
           "internal/credsvc/server.go",
+          "internal/cli/credentials_serve.go",
           "internal/mobilesession/stub.go",
           "internal/credsvc/mobile_e2e_test.go",
           "mobile/src/session/e2e.test.js"
