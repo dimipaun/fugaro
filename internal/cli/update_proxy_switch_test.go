@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -349,5 +351,167 @@ func TestUpdateRefusesASecondBitbucketWorkspace(t *testing.T) {
 	}
 	if p := proxyNodeOn(t, f); p.BitbucketToken != nil {
 		t.Errorf("the refused run published bitbucket_token = %+v", p.BitbucketToken)
+	}
+}
+
+// TestUpdateBitbucketProxySwitchDefersOnAReSeed is the review's first finding
+// (S6's fix, 2026-11-18): the switch is a member `fugaro update` writes, and it
+// must never be the reason the one command stops working.
+//
+// The machine's file records a policy_generation the published node has moved
+// past — another machine's publish, or the console — so the policy stage is
+// D854's re-seed: the file is written FROM the node rather than the node from
+// the file. The switch's own bitbucket_token difference is a member that splice
+// table has no case for, so a plan built from the switch's config landed on the
+// fallback and the update stopped with "put the published values of
+// bitbucket_token there by hand" — and went on stopping, on every later run,
+// until the operator edited the file by hand.
+//
+// The switch is held back for that one run instead: the generation is recorded,
+// the update converges, and the NEXT update turns the switch on. The mutation is
+// a plan that keeps the switch on the re-seed path, which is the failure this
+// test is the red step of.
+func TestUpdateBitbucketProxySwitchDefersOnAReSeed(t *testing.T) {
+	f, sm := proxySwitchFixture(t)
+	publishProxySwitchNode(t, f)
+	gen := recordedGeneration(t, f)
+	if gen == "" {
+		t.Fatal("the fixture's publish recorded no generation, so this run is not the re-seed this test is about")
+	}
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "policy_generation: "+gen, "policy_generation: etag-from-an-earlier-publish", 1)
+	})
+	seedProxyBundle(t, sm, proxySwitchBundle(t))
+	useVersion(t, proxySince)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the Bitbucket proxy switch failed the re-seed of a machine whose file is one generation behind: %v\n%s", err, out)
+	}
+	if entry, ok := proxyEntryOn(t, f); ok {
+		t.Errorf("the run turned the switch on beside a re-seed it holds back for: the config's %s entry is %+v\n%s", config.BitbucketSecret, entry, out)
+	}
+	if p := proxyNodeOn(t, f); p.BitbucketToken != nil {
+		t.Errorf("the node carries bitbucket_token = %+v, want none: the block is derived from an entry nothing wrote\n%s", p.BitbucketToken, out)
+	}
+	// The generation IS recorded, which is the whole of what that run owed: the
+	// next update reads a file written from the node it published and turns the
+	// switch on then.
+	if gen := recordedGeneration(t, f); gen != nodeETag(t, f) {
+		t.Errorf("policy_generation = %q after the run, want the ETag the node is at (%q): the re-seed records the generation and the next update turns the switch on", gen, nodeETag(t, f))
+	}
+	for _, want := range []string{"leaves the Bitbucket proxy switch off", "moved past the generation", "the next update turns the switch on"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the deferral does not say %q, so the operator does not know the switch is one update away:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "turned the credentials service's Bitbucket proxy on") {
+		t.Errorf("the run says it turned the proxy on:\n%s", out)
+	}
+}
+
+// TestUpdateLeavesTheNodeBlockWhenTheConfigStatesNoEntry is the review's second
+// finding (S6's fix, 2026-11-18), and it is the one that could take a project's
+// proxy off: the drift comparison runs for every door, and an absent
+// project_secrets entry derives nil exactly as an entry whose list is empty
+// does.
+//
+// This machine's config states no such entry at all — a second operator's file,
+// a config whose secrets live elsewhere, one whose entry was removed — while the
+// published node carries the block the project's proxy is admitted by. Before
+// the fix the run reported that difference and published the node WITHOUT
+// bitbucket_token, turning the proxy off for the whole project and stranding the
+// proxied runs in flight; an absent entry is no statement about the switch, so
+// the run now leaves the node where it is.
+//
+// The switch is off on this machine by construction (no credentials_service
+// block: the flip needs a service to forward from), so the door's note may not
+// claim a launch is proxied either — which is the second half of the finding.
+func TestUpdateLeavesTheNodeBlockWhenTheConfigStatesNoEntry(t *testing.T) {
+	const entry = "project_secrets:\n  " + config.BitbucketSecret + ": { proxy: true, allow_data_to: [acme/other] }\n"
+	f := newProjectFixture(t, entry)
+	publishProxySwitchNode(t, f)
+	if bt := proxyNodeOn(t, f).BitbucketToken; bt == nil || !bt.Proxy {
+		t.Fatalf("the fixture's node carries bitbucket_token = %+v, want the block the entry above states: this test is about leaving one alone", bt)
+	}
+	// The entry goes: the node keeps the block, and this file says nothing about
+	// the switch.
+	setConfig(t, f, func(s string) string { return strings.Replace(s, entry, "", 1) })
+	before := readFileString(t, f.path)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	f.db.Set(budget.PathMode, budget.ModeEnforce)
+	f.db.Set("agents", map[string]any{"proj-1234": map[string]any{"run-1": map[string]any{"repo": "github/acme/app"}}})
+	if err := h.s.e.announceRunsInFlight(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	note := h.out.String()
+	if !strings.Contains(note, "wait for none") && !strings.Contains(note, "waits for none") {
+		t.Fatalf("the run printed no note about the runs in flight, so the assertion below is about an empty string:\n%s", note)
+	}
+	if strings.Contains(note, "bitbucket proxy switch") {
+		t.Errorf("the note names the Bitbucket proxy switch over an update that turns nothing on: this machine holds no credentials_service block, so no launch of the project is proxied by it\n%s", note)
+	}
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update failed over a config that states no project_secrets entry: %v\n%s", err, out)
+	}
+	bt := proxyNodeOn(t, f).BitbucketToken
+	if bt == nil || !bt.Proxy {
+		t.Fatalf("the node's bitbucket_token is %+v after the run, want the block the project's proxy is admitted by left in place: publishing the node without it turns the proxy off for every repository of the project\n%s", bt, out)
+	}
+	if want := "bitbucket/acme/other"; !slices.Contains(bt.AllowRepos, want) {
+		t.Errorf("the node's bitbucket_token.allow_repos = %v, want %s among them: the block is the project's whole admission and this run may not narrow it\n%s", bt.AllowRepos, want, out)
+	}
+	if got := readFileString(t, f.path); got != before {
+		t.Errorf("the run rewrote a local config it has nothing to say about:\n%s", got)
+	}
+	if strings.Contains(out, "turned the credentials service's Bitbucket proxy on") {
+		t.Errorf("the run says it turned the proxy on:\n%s", out)
+	}
+}
+
+// TestUpdateKeepsTheHoldAWrittenProxyFalseIs: the switch is tri-state (S6's fix,
+// 2026-11-18, owner ruling): an entry that says nothing about proxy and one that
+// writes `proxy: false` are two different states, and only the absent one is a
+// state `fugaro update` turns on.
+//
+// No command of this program writes a false — `fugaro secrets set
+// bitbucket-token --proxy=false` removes the key — so a written false is a hand
+// edit and the hold it spells, and the whole update converges around it. The
+// mutation is a flip that reads the field as a bool, which is the state this
+// test is the red step of: it turned the switch on and widened the entry's
+// allow_data_to under an operator who had said no.
+func TestUpdateKeepsTheHoldAWrittenProxyFalseIs(t *testing.T) {
+	const hold = "project_secrets:\n  " + config.BitbucketSecret + ": { proxy: false }\n"
+	f, sm := proxySwitchFixture(t)
+	appendProxySwitchConfig(t, f.path, hold)
+	publishProxySwitchNode(t, f)
+	seedProxyBundle(t, sm, proxySwitchBundle(t))
+	before := readFileString(t, f.path)
+	useVersion(t, proxySince)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update failed over an entry that holds the switch off: %v\n%s", err, out)
+	}
+	entry, ok := proxyEntryOn(t, f)
+	if !ok || !entry.ProxyStated() || entry.Proxying() {
+		t.Errorf("the config's %s entry is %+v (present %v), want the written hold left exactly as it is: `proxy: false` is the operator's own word about the switch\n%s", config.BitbucketSecret, entry, ok, out)
+	}
+	if slices.Contains(entry.AllowDataTo, "acme/other") {
+		t.Errorf("the run widened an entry the operator holds the switch off on: allow_data_to = %v, want the list as it was\n%s", entry.AllowDataTo, out)
+	}
+	if got := readFileString(t, f.path); got != before {
+		t.Errorf("the run rewrote the local config of a held-off switch:\n%s", got)
+	}
+	if strings.Contains(out, "turned the credentials service's Bitbucket proxy on") {
+		t.Errorf("the run says it turned the proxy on over a written hold:\n%s", out)
+	}
+	if p := proxyNodeOn(t, f); p.BitbucketToken != nil {
+		t.Errorf("the node carries bitbucket_token = %+v, want none: the derivation of a held-off entry with no allow_data_to is no block\n%s", p.BitbucketToken, out)
 	}
 }
