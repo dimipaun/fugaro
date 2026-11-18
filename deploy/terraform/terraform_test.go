@@ -4656,7 +4656,10 @@ func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
 //
 // Mutation (run, restore): delete the resource block — the service is a
 // service no build can call, and B4.5's fetch has no binding to arrive at:
-// this test fails on the count of service-invoker resources.
+// this test fails on the count of service-invoker resources. And add a second
+// invoker binding naming the build account some other way (a job binding whose
+// member is google_service_account.build.email): the module-wide scan below
+// fails on it, so the "only the service" half is not vacuous either.
 func TestBuildAccountInvokesOnlyTheService(t *testing.T) {
 	const path = "gcp/modules/repo/build.tf"
 	const name = "google_cloud_run_v2_service_iam_member.build_credentials"
@@ -4725,7 +4728,10 @@ func TestBuildAccountInvokesOnlyTheService(t *testing.T) {
 			if blk.typ != "google_cloud_run_v2_service_iam_member" && blk.typ != "google_cloud_run_v2_job_iam_member" {
 				continue
 			}
-			if !strings.Contains(blk.body, "google_service_account.build.member") {
+			// The account however a plan would name it — .member, .email,
+			// .name — so a second binding written the other way round is
+			// caught as well.
+			if !strings.Contains(blk.body, "google_service_account.build.") {
 				continue
 			}
 			if blk.name != name {
