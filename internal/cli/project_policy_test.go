@@ -4004,7 +4004,7 @@ func TestTheReportsCommitFolderIsNotTheLayoutsFolder(t *testing.T) {
 		t.Fatalf("projectpolicy.DefaultReportsCommitDir = %q and digest.Dir = %q: the mirror's default folder must be neither the layout's folder nor inside it nor around it, or a designated repository's own reports and the mirror share paths", def, digest.Dir)
 	}
 	own := digest.Dir + "/" + digest.PeriodPath("2026-10-25")
-	for _, slug := range []string{"acme/app", "acme/reports"} {
+	for _, slug := range []string{"acme-app-dc4d4e59e884fc44", ""} {
 		if got := digest.MirrorPath(def, slug, "day", "2026-10-25"); got == "" || got == own || strings.HasPrefix(got, digest.Dir+"/") {
 			t.Errorf("MirrorPath(%q, %q) = %q: it must be a path of its own, never a path run-digest writes (%q)", def, slug, got, own)
 		}

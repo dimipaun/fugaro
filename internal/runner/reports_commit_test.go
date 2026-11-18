@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/failure"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -135,9 +136,9 @@ func commitReportsRoundsRun(t *testing.T, rounds int, reports map[string]string)
 // branch a stage moved is held to them rather than agreeing with itself.
 func commitReportsAssertStepOnly(t *testing.T, b *bk, branch string, reports map[string]string) {
 	t.Helper()
-	want := map[string]string{digest.Dir + "/" + digest.IndexName: commitReportsIndex(t, slices.Sorted(maps.Keys(reports))...)}
+	want := map[string]string{projectpolicy.DefaultReportsCommitDir + "/" + digest.IndexName: commitReportsIndex(t, slices.Sorted(maps.Keys(reports))...)}
 	for name, body := range reports {
-		want[digest.Dir+"/"+name] = body
+		want[projectpolicy.DefaultReportsCommitDir+"/"+name] = body
 	}
 	changed := digestChanged(t, b.harness, branch)
 	gotPaths, wantPaths := slices.Sorted(maps.Keys(changed)), slices.Sorted(maps.Keys(want))
@@ -250,9 +251,9 @@ func TestCommitReportsWritesEachRepositorysReportUnderItsSlug(t *testing.T) {
 	}
 	branch := "fugaro/" + runID
 	for rel, body := range map[string]string{
-		digest.Dir + "/" + repoSlug + "/" + own:                 ownBody,
-		digest.Dir + "/" + commitReportsOtherSlug + "/" + other: otherBody,
-		digest.Dir + "/" + agg:                                  aggBody,
+		projectpolicy.DefaultReportsCommitDir + "/" + repoSlug + "/" + own:                 ownBody,
+		projectpolicy.DefaultReportsCommitDir + "/" + commitReportsOtherSlug + "/" + other: otherBody,
+		projectpolicy.DefaultReportsCommitDir + "/" + agg:                                  aggBody,
 	} {
 		if !fileInTree(t, b.remote, branch, rel) {
 			t.Errorf("%s is not on the run's branch", rel)
@@ -284,7 +285,7 @@ func TestCommitReportsRegeneratesTheIndexOverTheFolder(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	index := digest.Dir + "/" + digest.IndexName
+	index := projectpolicy.DefaultReportsCommitDir + "/" + digest.IndexName
 	if !fileInTree(t, b.remote, "fugaro/"+runID, index) {
 		t.Fatalf("%s is not on the run's branch", index)
 	}
@@ -326,7 +327,7 @@ func TestCommitReportsNamesTheRepositoryOfARowThatBelongsToOne(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	body := fileContentAt(t, b.remote, "fugaro/"+runID, digest.Dir+"/"+digest.IndexName)
+	body := fileContentAt(t, b.remote, "fugaro/"+runID, projectpolicy.DefaultReportsCommitDir+"/"+digest.IndexName)
 	for _, name := range []string{repo, other, agg} {
 		if !strings.Contains(body, "]("+name+")") {
 			t.Errorf("the index has no row for %s:\n%s", name, body)
@@ -353,7 +354,7 @@ func TestCommitReportsLeavesAFileTheStoreDoesNotHold(t *testing.T) {
 	b := commitReportsRun(t, commitReportsPolicy("acme/app", ""), map[string]string{
 		repoSlug + "/2026/2026-10-20.md": "# acme/app's report\n",
 	})
-	rel := digest.Dir + "/" + repoSlug + "/" + kept
+	rel := projectpolicy.DefaultReportsCommitDir + "/" + repoSlug + "/" + kept
 	advanceBranch(t, b.remote, "main", map[string]string{rel: keptBy})
 	var logs commitReportsLog
 	b.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
@@ -369,7 +370,7 @@ func TestCommitReportsLeavesAFileTheStoreDoesNotHold(t *testing.T) {
 	if got := commitReportsBytesAt(t, b.remote, branch, rel); got != keptBy {
 		t.Errorf("%s holds %q, want the bytes the folder already held %q", rel, got, keptBy)
 	}
-	body := fileContentAt(t, b.remote, branch, digest.Dir+"/"+digest.IndexName)
+	body := fileContentAt(t, b.remote, branch, projectpolicy.DefaultReportsCommitDir+"/"+digest.IndexName)
 	if !strings.Contains(body, "]("+repoSlug+"/"+kept+")") {
 		t.Errorf("the index does not list the report the folder already held:\n%s", body)
 	}
@@ -391,9 +392,9 @@ func TestCommitReportsEndsWithoutADRWhenNothingDiffers(t *testing.T) {
 	repo, agg := repoSlug+"/2026/2026-10-20.md", "2026/2026-10-19.md"
 	bodies := map[string]string{repo: "# acme/app's report\n", agg: "# the project's report\n"}
 	b := commitReportsRun(t, commitReportsPolicy("acme/app", ""), bodies)
-	held := map[string]string{digest.Dir + "/" + digest.IndexName: commitReportsIndex(t, repo, agg)}
+	held := map[string]string{projectpolicy.DefaultReportsCommitDir + "/" + digest.IndexName: commitReportsIndex(t, repo, agg)}
 	for name, body := range bodies {
-		held[digest.Dir+"/"+name] = body
+		held[projectpolicy.DefaultReportsCommitDir+"/"+name] = body
 	}
 	advanceBranch(t, b.remote, "main", held)
 
@@ -439,9 +440,9 @@ func TestCommitReportsEndsWithoutADRWhenNothingDiffers(t *testing.T) {
 func TestCommitReportsEndsWithoutAPullRequestWhenNothingIsHandedIn(t *testing.T) {
 	repo, agg := repoSlug+"/2026/2026-10-20.md", "2026/2026-10-19.md"
 	bodies := map[string]string{repo: "# acme/app's report\n", agg: "# the project's report\n"}
-	held := map[string]string{digest.Dir + "/" + digest.IndexName: commitReportsIndex(t, repo, agg)}
+	held := map[string]string{projectpolicy.DefaultReportsCommitDir + "/" + digest.IndexName: commitReportsIndex(t, repo, agg)}
 	for name, body := range bodies {
-		held[digest.Dir+"/"+name] = body
+		held[projectpolicy.DefaultReportsCommitDir+"/"+name] = body
 	}
 	for _, tc := range []struct {
 		name  string
@@ -504,7 +505,7 @@ func TestCommitReportsEndsWithoutAPullRequestWhenNothingIsHandedIn(t *testing.T)
 func TestCommitReportsFilesEditedByFixAreRestored(t *testing.T) {
 	name := repoSlug + "/2026/2026-10-20.md"
 	const body = "# acme/app's report\n"
-	rel := digest.Dir + "/" + name
+	rel := projectpolicy.DefaultReportsCommitDir + "/" + name
 	b := commitReportsRoundsRun(t, 2, map[string]string{name: body})
 
 	rec, err := b.run(t,
@@ -539,7 +540,7 @@ func TestCommitReportsRunAddsNoOtherFile(t *testing.T) {
 	const skill = "plugin/skills/working/SKILL.md"
 	name := repoSlug + "/2026/2026-10-20.md"
 	const body = "# acme/app's report\n"
-	rel := digest.Dir + "/" + name
+	rel := projectpolicy.DefaultReportsCommitDir + "/" + name
 	b := commitReportsRoundsRun(t, 2, map[string]string{name: body})
 
 	rec, err := b.run(t,
@@ -560,7 +561,7 @@ func TestCommitReportsRunAddsNoOtherFile(t *testing.T) {
 	commitReportsAssertStepOnly(t, b, branch, map[string]string{name: body})
 	for _, path := range []string{notes, skill} {
 		if fileInTree(t, b.remote, branch, path) {
-			t.Errorf("%s is in the pull request; a commit run writes only %s/", path, digest.Dir)
+			t.Errorf("%s is in the pull request; a commit run writes only %s/", path, projectpolicy.DefaultReportsCommitDir)
 		}
 	}
 }
@@ -614,7 +615,7 @@ func TestCommitReportsRunPushesNoCheckpoint(t *testing.T) {
 func TestCommitReportsPushesNothingBeforeFinalize(t *testing.T) {
 	name := repoSlug + "/2026/2026-10-20.md"
 	const body = "# acme/app's report\n"
-	rel := digest.Dir + "/" + name
+	rel := projectpolicy.DefaultReportsCommitDir + "/" + name
 	b := commitReportsRoundsRun(t, 2, map[string]string{name: body})
 
 	rec, err := b.run(t,
