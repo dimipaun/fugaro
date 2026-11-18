@@ -506,6 +506,26 @@ bucket_cat() { # bucket_cat SECONDS KEY URI
   run_bounded "$secs" "$key" "$SANDBOX" gcloud storage cat "$uri"
 }
 
+# bucket_rm KEY PATTERN: remove the objects one pattern matches. A pattern that
+# matches nothing is not a failure — it is the state a run that stopped before it
+# staged anything leaves — and the answer says which of the two happened.
+BUCKET_RM_ANSWER=""
+bucket_rm() { # bucket_rm SECONDS KEY PATTERN
+  local secs=$1 key=$2 pattern=$3
+  run_bounded "$secs" "$key" "$SANDBOX" gcloud storage rm "$pattern"
+  BUCKET_RM_ANSWER=removed
+  if [ "$BOUNDED_TIMED_OUT" = yes ]; then
+    BUCKET_RM_ANSWER=timeout
+    return 1
+  fi
+  if [ "$BOUNDED_STATUS" = 0 ]; then return 0; fi
+  if grep -qi 'matched no objects' "$SCRATCH/$key.err" 2>/dev/null; then
+    BUCKET_RM_ANSWER=none
+    return 0
+  fi
+  return 1
+}
+
 # yaml_scalar FILE KEY: one scalar out of a flat yaml file, for the project
 # config's own fields (runs_bucket).
 yaml_scalar() { sed -n "s|^ *$2: *||p" "$1" 2>/dev/null | tr -d "\"'" | head -1; }
@@ -1614,6 +1634,23 @@ restore() {
       fi
     fi
   fi
+  local removed="" keys=""
+  if [ "$REPO_ADDED" = yes ]; then
+    local pair key pattern
+    for pair in "staged:gs://${BUCKET}/builds/catalog/${ENTRY}/*" "record:gs://${BUCKET}/builds/*/catalog/${ENTRY}/*"; do
+      key=${pair%%:*}
+      pattern=${pair#*:}
+      say "removing the entry's own objects: gcloud storage rm ${pattern}"
+      if ! bucket_rm "$CLI_TIMEOUT" "rm-${key}" "$pattern"; then
+        RESTORE_VERDICT=FAIL
+        why="${why:+$why; }the objects ${pattern} names are still in ${BUCKET}: 'gcloud storage rm ${pattern}' exited ${BOUNDED_STATUS}$([ "$BUCKET_RM_ANSWER" = timeout ] && printf ' (it did not finish inside %ss)' "$CLI_TIMEOUT") ($(flat "$(tail -n 2 "$SCRATCH/rm-${key}.err" 2>/dev/null | head -n 1)")) — remove them by hand with 'gcloud storage rm ${pattern}', and never remove builds/image-lock.json, which is the project's and shared with every other entry"
+        keys="${keys:+$keys, }${pattern}"
+      fi
+    done
+    if [ -z "$keys" ]; then
+      removed="The staged objects, the record and the check state this check wrote were removed from ${BUCKET} (gs://${BUCKET}/builds/catalog/${ENTRY}/ and gs://${BUCKET}/builds/*/catalog/${ENTRY}/), so the next nightly run has nothing of this entry to decide. builds/image-lock.json is the project's and was not touched."
+    fi
+  fi
   local leaves="This check ran no job and opened no pull request."
   if [ "$BRANCH_MADE" = yes ]; then
     leaves="$leaves The branch ${BRANCH} and the commits on it (${COMMIT_A}${COMMIT_B:+, ${COMMIT_B}}${COMMIT_C:+, ${COMMIT_C}}) stay in ${REPO}: this check pushes through your checkout's own git and holds no code-host credential of its own, so it deletes no branch — delete it with 'git push origin --delete ${BRANCH}' when you are done with it"
@@ -1621,8 +1658,8 @@ restore() {
   if [ "$BUILT" = yes ]; then
     leaves="$leaves The image${BUILD_ID:+ build ${BUILD_ID}} made is in ${REGION}-docker.pkg.dev and nothing here deletes an image from a registry: it is what the entry's own builds push, and your policy's retention is what removes it"
   fi
-  if [ "$REPO_ADDED" = yes ]; then
-    leaves="$leaves The staged objects, the record and the check state stay under gs://${BUCKET}/builds/*/catalog/${ENTRY}/: a build writes them on any day, and they are what the next decision reads"
+  if [ -n "$removed" ]; then
+    leaves="$leaves $removed"
   fi
   leaves="$leaves The catalog's own build step is OWED in this installation, because every write this check made used --no-apply (D1565): run 'fugaro apply' before you trust the catalog's image to be current — 'fugaro apply --status' lists what is owed and changes nothing"
   if [ "$RESTORE_VERDICT" = PASS ]; then
@@ -1679,6 +1716,8 @@ plan() {
   say "  [cloud write] two runs of the catalog check job (gcloud run jobs execute ${CHECK_JOB:-the catalog check job of this installation} --wait) and the decision each prints, read back from Cloud Logging"
   say "  [network, BILLABLE] the rebuild the decision submits, followed with gcloud builds describe, and the record and label it writes"
   say "  [local write, undone] one throwaway branch, three commits pushed to it, and an entry added to and removed from the project config"
+  say "  [cloud write, undone] the entry's staged objects, its record and its check state removed with gcloud storage rm, and the node republished without it"
+  say "  [left behind, named] the branch and its commits on the remote (this check holds no code-host credential), the image in the shared registry, and the catalog's build step --no-apply left owed to fugaro apply"
   local key
   for key in sandbox entry update build content record label staged quiet trigger rebuild converge; do
     fact "$key" INFO "planned: a real run measures this row; --dry-run did not"

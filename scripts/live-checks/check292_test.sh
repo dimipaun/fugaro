@@ -794,6 +794,21 @@ if groups[:2] == ["storage", "ls"]:
     for uri in found:
         print(uri)
     sys.exit(0)
+if groups[:2] == ["storage", "rm"]:
+    pattern = argv[argv.index("rm") + 1]
+    if F.env("FAKE_RM_REFUSED"):
+        sys.stderr.write("ERROR: (gcloud.storage.rm) owner@example.invalid does not have "
+                         "storage.objects.delete access to %s\n" % pattern)
+        sys.exit(1)
+    found = F.glob_objects(pattern)
+    if not found:
+        sys.stderr.write("ERROR: (gcloud.storage.rm) The following URLs matched no objects:\n  %s\n"
+                         % pattern)
+        sys.exit(1)
+    for uri in found:
+        os.remove(F.object_path(uri))
+        print("Removing %s..." % uri)
+    sys.exit(0)
 if groups[:2] == ["storage", "cat"]:
     uri = argv[argv.index("cat") + 1]
     path = F.object_path(uri)
@@ -1393,6 +1408,12 @@ test_happy_path() {
   expect_contains "$(row content)" "carries the copied file" "the copied file is in the image"
   # The restore leaves three things named and takes the entry back out.
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "image rm $trace_entry --no-apply" "the entry is taken back out"
+  # The entry's own objects go with it: the staged objects, the record and the
+  # check state, so the next nightly run has nothing of this entry to decide.
+  [ "$(grep -c 'storage rm' "$dir/logs/gcloud.calls")" = 2 ] || fail "the entry's own objects are removed in two commands: $(grep -c 'storage rm' "$dir/logs/gcloud.calls")"
+  expect_contains "$(row restore)" "were removed from" "the restore says the entry's objects went"
+  expect_absent "$(row restore)" "stay under" "the restore does not leave the staged objects behind"
+  [ -z "$(find "$dir/state/bucket" -path "*$trace_entry*" -type f 2>/dev/null | head -n 1)" ] || fail "objects of $trace_entry are still in the runs bucket after the restore: $(find "$dir/state/bucket" -path "*$trace_entry*" -type f 2>/dev/null | head -n 3 | tr '\n' ' ')"
   expect_contains "$(row restore)" "git push origin --delete chk292-" "the restore names the branch it leaves"
   expect_contains "$(row restore)" "OWED" "the restore names the step --no-apply left owed"
   expect_contains "$(cat "$dir/logs/git.calls")" "checkout -q main" "the checkout goes back to the branch it was on"
@@ -1708,6 +1729,20 @@ test_the_entry_is_taken_back_out_of_the_config() {
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "image rm $trace_entry" "the entry is removed through the CLI"
 }
 
+test_objects_that_could_not_be_removed() {
+  # The entry goes back out of the catalog, and the objects it wrote are what the
+  # next nightly run would read: a removal gcloud refused is the restore row's.
+  local dir=$work/rm-refused
+  prepare "$dir"
+  run_check "$dir" FAKE_RM_REFUSED=1
+  expect_status "$status" 1 "objects that could not be removed"
+  assert_row restore FAIL "objects that could not be removed"
+  expect_contains "$(row restore)" "storage.objects.delete" "the row quotes gcloud's own refusal"
+  expect_contains "$(row restore)" "never remove builds/image-lock.json" "the row says what not to remove by hand"
+  expect_absent "$(row restore)" "were removed from" "the row does not claim a removal that did not happen"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "image rm" "the entry is still taken back out"
+}
+
 test_a_removal_that_fails_is_reported() {
   local dir=$work/restore-fails
   prepare "$dir"
@@ -1783,6 +1818,7 @@ t test_a_submitted_build_that_had_already_recorded
 t test_the_scratch_directory_is_kept_when_asked
 t test_the_entry_is_taken_back_out_of_the_config
 t test_a_removal_that_fails_is_reported
+t test_objects_that_could_not_be_removed
 
 if [ "$failures" != 0 ]; then
   echo "$failures case(s) failed" >&2
