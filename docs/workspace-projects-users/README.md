@@ -14,19 +14,19 @@ review.
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The addendum as received, byte for byte (no typos fixed) |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, findings F1–F22, decisions D2800–D2819 with the owner's answers, open items, UNVERIFIED U1–U6. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Tasks WU0–WU21 (WU14 dropped, WU19 unused), contracts C1 and C2, integration I1; levels, critical path, shared files, the edges broken and kept; Checks 720–721 |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A7, findings F1–F22, decisions D2800–D2821 with the owner's answers, resolutions R1–R14, open items, UNVERIFIED U1–U6. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Tasks WU0–WU22 (WU14 dropped, WU19 unused), contracts C1 and C2, integration I1; levels, critical path, shared files, the edges broken and kept; Checks 720–721 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
-**Numbers reserved:** decisions **D2800–D2829** (D2800–D2819 used, D2816 unused), checks
+**Numbers reserved:** decisions **D2800–D2829** (D2800–D2821 used, D2816 unused), checks
 **720–729** (720 and 721 used). Read on 2026-11-18: the highest decision on `main` and in the open
 pull requests was D2769, the highest check 709.
 
 **Owner answers of 2026-11-18:** every decision as recommended. D2813 and D2817 were amended the same day
 because Realtime Database IAM cannot scope a grant to one path (reconciliation F11, O3); review round 1
-amended D2801, D2802, D2811 and D2813 and added D2818 and D2819 (O5), each answered as recommended.
+amended D2801, D2802, D2811 and D2813 and added D2818–D2820 (O5); round 2 amended D2806, D2807 and
+D2811 and added D2821 (O6); every answer as recommended.
 
-**What a reader should not take from here:** no task is approved, and each needs the owner's go by
-name; WU0's independent security review gates every other task; WU15 waits on periodic-reviews R9
-(#3140); an existing workspace gets people management only when each member owner runs
+**What a reader should not take from here:** no task is approved except **WU0, approved by the owner
+on 2026-11-18 to launch once this plan is on `main`**; every other task needs the owner's go by name; WU0's independent security review gates every other task; an existing workspace gets people management only when each member owner runs
 `fugaro workspace project link` (D2819).

@@ -73,9 +73,7 @@
         "paths": [
           "internal/workspace/roster_rtdb.go",
           "internal/workspace/roster_rtdb_test.go",
-          "internal/workspace/audit_firestore.go",
-          "internal/budget/rules/workspace.json.tmpl",
-          "internal/budget/rules/testdata/workspace.golden.json"
+          "internal/workspace/audit_firestore.go"
         ]
       }
     },
@@ -109,7 +107,23 @@
           "deploy/terraform/gcp/roots/workspace/outputs.tf",
           "deploy/terraform/gcp/roots/workspace/tests/workspace.tftest.hcl",
           "deploy/terraform/terraform_test.go",
-          "internal/infra/tf/workspace.go"
+          "internal/infra/tf/workspace.go",
+          "internal/infra/tf/workspace_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU22",
+      "title": "the credential probe",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_probe.go",
+          "internal/cli/workspace_probe_test.go",
+          "internal/credsvc/probe.go"
         ]
       }
     },
@@ -305,6 +319,7 @@
           "internal/cli/report_exempt.go",
           "internal/cli/noprompt_harness_test.go",
           "internal/cli/update_workspace.go",
+          "internal/cli/update_workspace_test.go",
           "website/content/cli-reference.md"
         ]
       },
@@ -319,13 +334,14 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/workspace_e2e_test.go"
+          "internal/cli/workspace_e2e_test.go",
+          "internal/gcpfake/iam.go"
         ]
       }
     },
     {
       "id": "WU10",
-      "title": "installation-level refusals on a member",
+      "title": "installation-level refusals on a linked member",
       "run": null,
       "version": null,
       "size": 1,
@@ -335,6 +351,7 @@
           "internal/cli/user.go",
           "internal/cli/user_grant.go",
           "internal/cli/offboard.go",
+          "internal/cli/update_access.go",
           "internal/cli/user_test.go"
         ]
       }
@@ -421,7 +438,17 @@
       "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
     },
     {
+      "task": "WU2",
+      "needs": "WU0",
+      "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
+    },
+    {
       "task": "WU3",
+      "needs": "WU0",
+      "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
+    },
+    {
+      "task": "WU22",
       "needs": "WU0",
       "reason": "D2800's mandatory security review gates every task and may reshape the shapes"
     },
@@ -459,11 +486,6 @@
       "task": "WU18",
       "needs": "C2",
       "reason": "built against C2's shapes"
-    },
-    {
-      "task": "WU2",
-      "needs": "C1",
-      "reason": "built against C1's shapes"
     },
     {
       "task": "WU20",
@@ -558,6 +580,11 @@
     {
       "task": "I1",
       "needs": "WU20",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU22",
       "reason": "I1 adapts and wires it"
     },
     {
@@ -680,15 +707,6 @@
       },
       "integration": "I1",
       "reason": "WU13 writes an AuditEvent, not how the sink stores it"
-    },
-    {
-      "contract": "C1",
-      "was": {
-        "task": "WU2",
-        "needs": "WU1"
-      },
-      "integration": "I1",
-      "reason": "the folder link records the original parent on the roster entry"
     },
     {
       "contract": "C1",
@@ -887,6 +905,15 @@
       },
       "integration": "I1",
       "reason": "WU11 calls StateWriter"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU11",
+        "needs": "WU22"
+      },
+      "integration": "I1",
+      "reason": "status calls CredentialProbe, not how a provider is probed"
     }
   ],
   "contract_changes": [

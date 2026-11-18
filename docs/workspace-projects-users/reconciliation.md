@@ -2,8 +2,8 @@
 
 The amended spec. [spec.md](spec.md) is the owner's addendum as received; **where this file disagrees
 with it, this file wins**. Checked against `origin/main` at `76ce3d6b9` on 2026-11-18. Citations are
-paths and symbols, never line numbers. Decisions take the block **D2800–D2829** (D2800–D2819 used,
-D2820–D2829 reserved); checks take **Checks 720–729**.
+paths and symbols, never line numbers. Decisions take the block **D2800–D2829** (D2800–D2821 used, D2816
+unused, D2822–D2829 reserved); checks take **Checks 720–729**.
 
 The addendum extends the merged workspaces design ([../workspaces/](../workspaces/README.md), W0–W9,
 listed as done in [../status.md](../status.md)) and the merged roles design
@@ -29,7 +29,7 @@ prohibition (F1, D2800).
   `fugaro user grant` and `fugaro user offboard` already write the roster live, plus the three
   authority writes this design cannot route through Terraform: `workspace init`'s folder, a member
   owner's `workspace project link` (the folder move or the SA's owner grant), and the workspace
-  admins' own bindings on the folder and the workspace SA (D2818). No binding **on a member
+  admins' own bindings on the folder, the workspace SA and the workspace's own project (D2818, R8). No binding **on a member
   project** is ever written outside that member's own Terraform (D2801). Everything else still
   reaches the cloud through `fugaro update` (D1303 stands outside the roster, D2817). *(Amended after
   review round 1.)*
@@ -134,12 +134,11 @@ is the run's existing refusal when its pool is exhausted (U4).
 
 **F14 — Gap.** "The model keys and named OAuth tokens it references are valid": no check of a
 model key's or a Claude token's validity exists — `doctor` has `--check-github-app` and
-`--check-bitbucket-token` only. Consequence: `status` reports presence, age and the credentials
-service's own broken marks; a validity probe is new behaviour and is open item O4. *(Corrected in
-review round 1.)*
+`--check-bitbucket-token` only. Consequence: D2820, task WU22. *(Corrected in review round 1.)*
 
 **F15 — Gap.** "The state repo is in sync" and "saved to the state repo" name a store that does not
-exist. Consequence: D2807 reuses periodic-reviews E6; WU15 waits on R9 (#3140).
+exist. Consequence: D2807 reuses periodic-reviews E6's setting; WU15 writes to it with its own writer
+(D2807 as amended in round 2).
 
 **F16 — Gap.** Detecting an organization, creating a folder and moving a project into it are new
 cloud surfaces (`internal/gcpfake/crm.go` fakes projects only). Moving a project needs
@@ -170,7 +169,7 @@ write on a member. Consequence: two accounts, never one; WU3's test pins it.
 
 ## 4. Decisions
 
-All answered by the owner on **2026-11-18**, every one as recommended; D2813 and D2817 were amended the same day (O3), and review round 1 amended D2801, D2802, D2811 and D2813 and added D2818 and D2819 (O5), each answer also as recommended.
+All answered by the owner on **2026-11-18**, every one as recommended; D2813 and D2817 were amended the same day (O3), and review round 1 amended D2801, D2802, D2811 and D2813 and added D2818–D2820 (O5), and round 2 amended D2806, D2807 and D2811 and added D2821 (O6), each answer also as recommended.
 
 | # | Question | Answer (2026-11-18) | Why |
 | --- | --- | --- | --- |
@@ -180,20 +179,22 @@ All answered by the owner on **2026-11-18**, every one as recommended; D2813 and
 | **D2803** | Authority mechanism (F16) | **Folder first, SA fallback**, picked by `workspace init`; the SA is used by impersonation only (no keys), workspace admins its only token creators; the folder slice ships first | The spec's two mechanisms, without a key to leak |
 | **D2804** | Workspace admin's role; open question 1 | **`roles/owner`** on the folder (or held by the SA on a member); per-project mapping unchanged from `docs/design/roles.md` | Matches D689: admin is owner/editor |
 | **D2805** | Existing bindings at join; open question 2 | **Adopt, never strip**: roster grants imported (outside the domains → external, needs `--external`); nothing removed at join; unmapped bindings reported as drift | Nobody is locked out by joining |
-| **D2806** | Machine identities; open question 3 | **Members of kind `sa`** with per-project roles via the same commands; Fugaro's own accounts recognised from Terraform outputs, never drift | Audit and drift cover CI accounts |
-| **D2807** | The state repo (F15) | **Periodic-reviews E6's designated repository and folder**, written as a pull request through R9's writer; the workspace uses its own project's E6 setting | One designated-repo setting |
+| **D2806** | Machine identities; open question 3 | **Members of kind `sa`** with per-project roles via the same commands; Fugaro's own accounts recognised from Terraform outputs, never drift — ***amended after review round 2 (owner, 2026-11-18, as recommended): machines are recorded in the workspace node only, with their expected per-project roles; their real IAM stays where it is (the member's Terraform or by hand); drift and audit compare against the record. The member roster accepts only `user:` members (`access` `canonicalMember`, strict decode), and changing that is a format migration older member CLIs would refuse*** | Audit and drift cover CI accounts with no member format change |
+| **D2807** | The state repo (F15) | **Periodic-reviews E6's designated repository and folder**, written as a pull request through R9's writer; the workspace uses its own project's E6 setting — ***amended after review round 2 (owner, 2026-11-18, as recommended): not through R9, which is a cloud run that refuses any path outside `<slug>/<YYYY>/<key>.md` (`ParseMirrorPath`); WU15 builds its own writer that clones the designated repository, commits the snapshot to a branch and opens a pull request with the host's CLI, from the owner's terminal with the owner's own credentials, and always also writes a local file. `project rm` uses the member's E6 setting; the audit export uses the workspace project's*** | One designated-repo setting; no run launched by `rm` |
 | **D2808** | `rm` and state (F8) | **Save by default** (a pull request to the state repo; with none set, a local file it names), `--no-save-state` skips; prints the running-cost warning and the console shut-down link | No question asked, nothing lost by default |
 | **D2809** | Fixing drift (F8, F9) | **A separate write verb**: `workspace project reconcile <project>` (`--dry-run` prints the change); `status` only reads and names it | `doctor` stays read-only |
 | **D2810** | The workspace sign-on (F3) | **Kept, scoped**: the Google address is the identity; the Firebase exchange stays as the hosted authorization server's sign-in. *(Round 1 removed a clause the first draft added — "its admission reads the workspace roster" — which was not the owner's answer and which `ee/coordinator/oauth/admit.go` does not do.)* | No retirement work |
-| **D2811** | Audit trail (F18) | **Firestore + Cloud Audit Logs**: create-only Firestore events (rules deny every client); `status` names IAM changes in Cloud Audit Logs that Fugaro's trail lacks; the docs say the Firestore trail is not tamper-proof — ***amended after review round 1 (owner, 2026-11-18, as recommended): a project admin's grant, revoke and offboard are audited in the member's own Firestore, which they can write; workspace admins' changes in the workspace's; `status` aggregates both*** | Console changes get a who-did-it; a project admin holds no write on the workspace project |
+| **D2811** | Audit trail (F18) | **Firestore + Cloud Audit Logs**: create-only Firestore events (rules deny every client); `status` names IAM changes in Cloud Audit Logs that Fugaro's trail lacks; the docs say the Firestore trail is not tamper-proof — ***amended after review round 1 (owner, 2026-11-18, as recommended): a project admin's grant, revoke and offboard are audited in the member's own Firestore, which they can write; workspace admins' changes in the workspace's; `status` aggregates both*** — ***amended again after review round 2 (owner, 2026-11-18, as recommended): not the member's Firestore, which a project admin cannot write (only the history account holds `roles/datastore.user`, `modules/firebase/iam.tf`); create-only entries under the member's own `config/admin/workspace-audit`, written with the permission the roster write itself needs; the threat model states they are as tamperable as the roster*** | Console changes get a who-did-it; a project admin holds no write on the workspace project |
 | **D2812** | Allowed domains | **Fugaro's list only**: outside the list needs `--external`, marked external; no organization policy set | Externals stay possible |
 | **D2813** | Enforcing membership (F10, F11) | **Workspace commands only** on a member: installation-level `fugaro user add|rm|grant|revoke|offboard` refuse and name the workspace command; console grants are drift. Project admins ~~get read-only on the workspace roster~~ — ***amended 2026-11-18 (owner, as recommended): the member list (address, kind, external) is mirrored into each member's own `config/admin/workspace-members` on every membership write and converge; no grant on the workspace project*** — ***amended again after review round 1 (owner, 2026-11-18, as recommended): the mirror gate is advisory, because a member's owners hold `roles/firebasedatabase.admin` on their own database and can rewrite it; the fence is drift, run by workspace admins against the workspace node (never against the mirror); the threat model says so*** | One writer of a member's roster; RTDB IAM cannot scope a read to one path (F11) |
 | **D2814** | fugaro-prod app sign-ins; open question 4 | **Out of scope, no task**; the app keeps per-project pairing | Spec puts the app out of scope |
 | **D2815** | Grant scope (F12) | **Carry the scope grammar**: `--scope project|all-repos|<patterns>`, default `project`, with roles-scopes' subset and last-admin refusals | Nothing a member expresses today is lost |
 | **D2816** | *(reserved, unused: the questions were numbered in the order they were asked)* | — | — |
-| **D2818** | How workspace admins are held on members (R4 withdrawn) | ***Added after review round 1, answered 2026-11-18 as recommended:*** **stored grants plus live bindings** — `workspace user add --admin` writes a project-scope admin grant marked `via: workspace` into every linked member's roster and adds the folder `roles/owner` or the workspace SA's token-creator binding directly; `rm --admin` removes all of them in the same command | Offboarding needs a stored admin grant (D1940); a removed admin must lose every member at once |
-| **D2819** | Existing workspaces | ***Added after review round 1, answered 2026-11-18 as recommended:*** **opt-in link, `update` unchanged** — `fugaro update` changes nothing about authority; a member owner turns people management on with `fugaro workspace project link` on their own machine; `status` says "not linked" | Members joined under "never widens"; widening them needs fresh consent, and an opt-in feature is not an upgrade step |
 | **D2817** | Where the roster lives | **A live node** `workspaces/<name>/roster` (moved to `workspaceRosters/<name>` by R5) in the workspace's database, ETag-conditional writes, rules deny clients; amends D1303 for the roster only — ***amended 2026-11-18 (owner, as recommended): the node holds members, their kind, the external mark, the domains and the workspace admins, written by workspace admins only; per-project grants stay in each member's own roster `config/admin/access`, written by `workspace user grant` and gated by the mirror; `workspace user ls` aggregates across members*** | Two admins never overwrite each other; a project admin's grant must not need a write that reaches the membership list (F11) |
+| **D2818** | How workspace admins are held on members (R4 withdrawn) | ***Added after review round 1, answered 2026-11-18 as recommended:*** **stored grants plus live bindings** — `workspace user add --admin` writes a project-scope admin grant ~~marked `via: workspace`~~ into every linked member's roster and adds the folder `roles/owner` or the workspace SA's token-creator binding directly; `rm --admin` removes all of them in the same command. *Corrected in review round 2: the member roster decodes strictly, so the mark lives in the workspace node (which grants the workspace wrote), never in the member's roster; and only the folder or SA binding goes at once — the stored grant's resource bindings and the intake's derived admin list follow at each member's own `fugaro update` (D2801), which `status` shows as pending* | Offboarding needs a stored admin grant (D1940); a removed admin loses the authority over every member at once and the member-level bindings at each member's next update |
+| **D2820** | Credential validity (O4) | ***Added after review round 1, answered 2026-11-18 as recommended:*** **a probe task**: `workspace project status --check-credentials`, in the owner's own terminal only (refused in an agent's session), one minimal authenticated call per model key or Claude token, the value never printed; plain `status` reports presence, age and broken marks | The spec asks for "valid"; a probe reads a secret, so it stays behind a flag in the owner's terminal, as `doctor --check-*` do |
+| **D2821** | Who runs `project add|rm` with several workspace admins | ***Added after review round 2, answered 2026-11-18 as recommended:*** **the workspace project's owner only**, on the machine whose config holds the member table (as `workspace member add` is today); other workspace admins manage users, grants, domains and `reconcile` | The member table is that config's and is published whole by its owner's `fugaro update`; a second writer would republish a different table |
+| **D2819** | Existing workspaces | ***Added after review round 1, answered 2026-11-18 as recommended:*** **opt-in link, `update` unchanged** — `fugaro update` changes nothing about authority; a member owner turns people management on with `fugaro workspace project link` on their own machine; `status` says "not linked" | Members joined under "never widens"; widening them needs fresh consent, and an opt-in feature is not an upgrade step |
 
 Resolutions with one defensible answer (no decision):
 
@@ -214,7 +215,30 @@ Resolutions with one defensible answer (no decision):
 - **R6.** The roster's person type is `Person`, not `Member`: `internal/workspace` already defines
   `Member` (a member project). *(Found in review round 1.)*
 - **R7.** A first write of the roster creates the node (a conditional create when no ETag exists),
-  so no `update` stage seeds it and an existing workspace converges with `fugaro update` unchanged.
+  so no `update` stage seeds it. The workspace rules' root already denies every client
+  (`internal/budget/rules/workspace.json.tmpl`), so `workspaceRosters` needs no rules change and no
+  `WorkspaceRulesVersion` bump. `fugaro update` gains no stage; WU3 adds one resource (the IAM
+  account) that the workspace root's existing apply converges. *(Round 2 corrected "update is
+  unchanged".)*
+- **R8.** Workspace admins also hold `roles/owner` on the workspace's own project — the folder model
+  places that project in the workspace's folder at `init`, the SA model grants it live with the
+  other admin bindings — because the roster node and the workspace audit live there. *(Round 2.)*
+- **R10.** When a member's Firebase project is a separate GCP project (F2), `link` covers both: both
+  move into the folder, or the SA is owner on both. *(Round 2; R9 is not used, to keep it apart from
+  periodic-reviews' R9.)*
+- **R11.** "Linked" — the member's mirror present and `Authority.Holds` true — is what the
+  installation-level refusals and the grant gate key on; an unlinked member, existing ones included,
+  keeps `fugaro user …` unchanged (D2819). *(Round 2.)*
+- **R12.** On a linked member, `fugaro setup|update --operator/--admin` refuse their fold into the
+  roster too (`update_access.go`), naming `fugaro workspace user grant`. *(Round 2.)*
+- **R13.** Drift compares the folder's own bindings and the IAM account's token creators with the
+  workspace admins, rather than ignoring them; the Cloud Audit Logs cross-check reports only the
+  entries whose resulting bindings are drift, so a member's own `update` is never reported.
+  *(Round 2.)*
+- **R14.** The original parent of a moved project is recorded in the member's own
+  `config/admin/workspace-link`, written by the member owner at `link`; the workspace node holds no
+  per-project entry. R2's "another workspace" is read from the member's mirror and its parent folder,
+  both readable once linked. *(Round 2.)*
 
 ## 5. Open tensions and open items
 
@@ -223,17 +247,21 @@ Resolutions with one defensible answer (no decision):
   command could, so nothing is stranded.
 - **O1.** D2800 makes WU0's independent security review a gate on every code task; its findings may
   amend D2801, D2803 or D2817.
-- **O2.** WU15 waits on periodic-reviews R9 (#3140) merging.
-- **O4.** A validity probe for model keys and Claude tokens (F14) is new behaviour with no design;
-  `status` reports presence, age and broken marks until one is designed.
-- **O5.** Round 1 of the review amended D2801, D2802, D2811 and D2813 and added D2818 and D2819; the
-  owner answered every one as recommended on 2026-11-18. D2802's amendment (`project link|unlink`)
-  follows from D2819 and was not asked separately: confirm it.
+- **O2.** *Withdrawn in review round 2:* WU15 no longer waits on periodic-reviews R9 (#3140); it
+  builds its own writer (D2807 amended).
 - **O3.** D2813 and D2817 were amended on 2026-11-18, after their first answers, because RTDB IAM
   has no path-level scope (F11). The owner answered both amendments as recommended; the original
   answers are kept, struck, beside them. "The workspace is the single source of truth" now reads:
   the workspace node is the truth for **who is a member**, each member's roster for **what they may
   do there**, and nothing else holds either fact.
+- **O4.** *Answered 2026-11-18:* D2820, task WU22.
+- **O5.** Round 1 of the review amended D2801, D2802, D2811 and D2813 and added D2818 and D2819; the
+  owner answered every one as recommended on 2026-11-18. D2802's amendment (`project link|unlink`)
+  follows from D2819; *the owner confirmed it on 2026-11-18*.
+- **O6.** Round 2 amended D2806, D2807 and D2811 and added D2821; the owner answered each as
+  recommended on 2026-11-18. It also corrected D2818's text (the mark, and what goes at once) and added
+  R8–R14 as consequences.
+
 
 ## 6. UNVERIFIED
 
@@ -251,3 +279,5 @@ Resolutions with one defensible answer (no decision):
 - **U6.** Whether a workspace admin holding `roles/owner` on the folder can move a member back to its
   original parent without the member owner's rights there. Until Check 720 settles it, `project rm`
   on the folder mechanism prints `fugaro workspace project unlink` for the member owner (WU6).
+- **U7.** Whether the credentials service's existing probe (`internal/credsvc/probe.go`) can reach a
+  model provider with a stored key, or WU22 needs a probe of its own. Settled by WU22's red test.
