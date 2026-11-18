@@ -650,6 +650,42 @@ type RepoSpec struct {
 	// plan moves for a repository nobody proxied.
 	BitbucketProxied bool `json:"bitbucket_proxied,omitempty"`
 
+	// Shared is whether a deployed profile admits this repository (M6,
+	// docs/shared-jobs-default): the repository runs on a shared project job
+	// instead of the per-repository jobs its own root deploys, which is the
+	// structural precondition the owner's answer to D2303 puts in place of a
+	// retire gate, and the fact M7 reads to stop applying that root.
+	//
+	// A deployed profile is one the published node defines for a provider a
+	// shared job is deployed for (SharedJobProvider, the same predicate the
+	// deployer skips a profile by and the launcher refuses a shared job with),
+	// and it admits the repository when projectpolicy.Admits says so — the
+	// profile's own provider, the project's allow_repos and the profile's own
+	// list, all three. A repository no profile admits is unmarked, and so is
+	// one whose provider no profile of the node serves. The profiles are
+	// walked in name order and the first admission answers, so a node answers
+	// the same way on every read.
+	//
+	// The admission is the whole rule, deliberately: this is a record of what
+	// the project's policy says about the repository, not a second copy of the
+	// launcher's decision about a run. Which job a workflow lands on is
+	// launchProjectJobFor's (the workflow's own job_profile, its checkout mode
+	// while a shared job cannot hold it), and a mark computed from that would
+	// have to guess at a run that has not happened. What reads it asks the
+	// rest of its own question (M7: the repository's workflows, the images
+	// stage, the warning).
+	//
+	// It changes no Terraform input and no behaviour on its own: it is
+	// json:"-" the way the spec's other in-process facts are
+	// (ProjectSecretCandidates, AccountProfiles), so the repository root plans
+	// exactly what it planned before the field existed and M6 merges before M7
+	// and M2 without a root applying differently. nil Policy — a caller that
+	// read no node (fugaro image, fugaro doctor, --print-vars) — marks
+	// nothing, because a node it never read deploys no profile it could be
+	// admitted to; an empty Policy is the different answer "read, and the
+	// project published no profile", and it marks nothing either.
+	Shared bool `json:"-"`
+
 	// ModelSecretsServed is which model secrets the credentials service serves
 	// to this repository's jobs (config.ModelSecretServedAll, ...Anthropic,
 	// ...None), written into the tfvars' repo object as the workflow module's
@@ -934,6 +970,45 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 		return "does not admit it with proxy: true"
 	}
 	return userErr("the local config's project_secrets.%s entry and the project's published policy disagree about %s: the entry %s, and the published node %s. Whether a repository's git credential is brokered has one source, the published node, because that node is what the credentials service reads when the repository's job asks it for the token — so make the two agree: publish this config with 'fugaro project policy publish', which derives the node's bitbucket_token block from this entry, or correct the entry to say what the node says", config.BitbucketSecret, c.in.Repo, says(localProxies), says(nodeProxies))
+}
+
+// sharedRepo is RepoSpec.Shared's answer for this repository: whether a
+// deployed profile of the published node admits it, which its doc comment
+// spells out.
+//
+// The node is read through the operator's credentials by the caller and handed
+// in as Inputs.Policy, exactly as the proxy's half is (resolveBitbucketProxied,
+// same reason: internal/infra holds no client that could read one and Repo is
+// a pure function of its Inputs), so nil is a caller that read no node and
+// answers "nothing is admitted" rather than an error: a command that does not
+// read the node must not refuse or mark anything over it.
+func (c *repoCtx) sharedRepo() bool {
+	if c.in.Policy == nil {
+		return false
+	}
+	canonical, err := projectpolicy.Canonical(c.provider, c.in.Repo)
+	if err != nil {
+		// Unreachable: resolve has already put the same pair through
+		// task.Slug, which validates the provider kind and the repository with
+		// these very functions.
+		return false
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.in.Policy.Profiles)) {
+		if !SharedJobProvider(c.in.Policy.Profiles[name].Provider) {
+			continue
+		}
+		ok, err := c.in.Policy.Admits(name, canonical)
+		if err != nil {
+			// Unreachable for the same reason Admits' own error is never a
+			// refusal: the name is one the node defines, read from the node's
+			// own key.
+			continue
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 // localRepo is the local config's entry for repo, matched as fugaro run
@@ -1756,6 +1831,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
+		Shared:           c.sharedRepo(),
 		// The same answer workflow() dropped the mounts with, read from the
 		// same two facts, so the module's accessor drop and this spec's mount
 		// drop cannot disagree: a job whose account lost an accessor on a
