@@ -42,6 +42,14 @@ package keyservice
 // checked on the memberships and not on a role in a token, which is why it holds
 // across sign-ins.
 //
+// **D2207's sign-in rule reaches this act as it reaches every other.** A
+// membership in the operations organisation or a reseller's is one a request
+// USES, and an account deletion is a request that uses every membership the
+// person holds: it removes them and ends the sign-in they are held by. So an
+// email link is refused here, with the same 403 the organisation's own screen
+// answers with, rather than the person's membership going and the sign-in
+// Google itself uses being deleted underneath it.
+//
 // What an account deletion removes is the person's memberships and every
 // invitation bound to their address — the two records that hold it — and then
 // their Firebase Auth user, through the Identity Toolkit's `accounts:delete`.
@@ -445,6 +453,30 @@ func (s *Service) deleteAccount(ctx context.Context, actor Caller) error {
 		held, err := membershipsOf(ctx, tx, actor.UID)
 		if err != nil {
 			return err
+		}
+		// D2207's rule, applied to every membership this act uses: deleting an
+		// account removes the memberships a person holds and ends the sign-in
+		// they are held by, so each of them is a membership this request is
+		// reached through. Without it, an operations member signed in by email
+		// link is refused the operations organisation's own screen and admitted
+		// this door, and pressing it removes the membership and deletes the
+		// Firebase Auth user Google sign-in uses. It is asked before the role
+		// is, which is the order the operations gate reads them in (api_ops.go):
+		// what the person does about a refusal of the sign-in is sign in again.
+		for _, membership := range held {
+			org, present, err := getRecord[WireOrganisation](ctx, tx, organisationsCollection, membership.OrganisationID)
+			if err != nil {
+				return err
+			}
+			if !present {
+				// A membership naming an organisation the store no longer holds
+				// is a record a deletion already removed, and it carries no
+				// rule: there is nothing left to sign in to.
+				continue
+			}
+			if err := s.requireSSO(actor, org); err != nil {
+				return err
+			}
 		}
 		// D2195's refusal, and it is asked of the organisations themselves: a
 		// membership that names an organisation the store no longer holds is a

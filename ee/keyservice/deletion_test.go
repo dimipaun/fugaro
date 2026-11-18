@@ -34,6 +34,7 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -554,6 +555,65 @@ func TestDeletionRemovesMembershipsAndInvitations(t *testing.T) {
 	}
 }
 
+// TestAnEmailLinkOperationsMemberCannotDeleteTheirAccount: D2207's rule follows
+// the membership a request USES, and an account deletion is a request that uses
+// every membership the person holds — it removes them and ends the sign-in they
+// are held by (deleteAccount). Without the rule, an operations member signed in
+// by email link is refused the operations organisation's own screen and admitted
+// this door, and pressing it removes the membership and deletes the Firebase Auth
+// user Google sign-in uses: the sign-in that reaches the screen which refused
+// them is the one the request ends.
+//
+// Nothing moves on the refusal, which is what a case can see of the order: the
+// membership and the invitation are where they were and the directory is never
+// reached.
+func TestAnEmailLinkOperationsMemberCannotDeleteTheirAccount(t *testing.T) {
+	f := newDeletionFixture(t)
+	// A member and not an owner, so that nothing but the sign-in is what this
+	// case reads: D2195's refusal would answer a sole owner of the operations
+	// organisation, and the rule of the sign-in is asked first.
+	operations := f.seededOrganisation("org_operations", "Fugaro operations", orgTypeOperations, opsUID, opsEmail, roleMember)
+	invitation := f.invitationTo("invite-ops-address", operations.ID, opsEmail, invitePending)
+	f.actsAs(opsUID, opsEmail, signInEmailLink)
+
+	rec := f.deleteAccount()
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("an operations member signed in by email link deleting their account answered %d: %s", rec.Code, rec.Body)
+	}
+	if code := f.refused(rec); code != "sso_required" {
+		t.Errorf("the refusal is %q, want %q: it is the refusal the operations organisation's own screen makes, and the account screen draws the API's own sentence for it", code, "sso_required")
+	}
+	if _, held := f.membership(operations.ID, opsUID); !held {
+		t.Error("the operations membership is gone after a refusal, and the refusal is made before the first removal")
+	}
+	if _, held := f.invitation(invitation.ID); !held {
+		t.Error("the invitation bound to the refused account's address is gone, and the refusal is made before anything is written")
+	}
+	if _, held := f.organisation(operations.ID); !held {
+		t.Error("the operations organisation is gone after a refusal")
+	}
+	if seen := f.directory.deleted(t); len(seen) != 0 {
+		t.Errorf("the directory was asked to delete %v, and a refused deletion reaches no sign-in", seen)
+	}
+
+	// The same person signed in the way the rule admits: the door is theirs, so
+	// what refused them above is the sign-in and not the membership.
+	f.actsAs(opsUID, opsEmail, signInGoogle)
+	rec = f.deleteAccount()
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("an operations member signed in with Google deleting their account answered %d: %s", rec.Code, rec.Body)
+	}
+	if _, held := f.membership(operations.ID, opsUID); held {
+		t.Error("the membership stands after the account it belongs to was deleted")
+	}
+	if _, held := f.organisation(operations.ID); !held {
+		t.Error("the operations organisation is gone, and deleting an account leaves the organisations the person belonged to")
+	}
+	if seen := f.directory.deleted(t); len(seen) != 1 || seen[0] != opsUID {
+		t.Errorf("the directory was asked to delete %v, want exactly %q", seen, opsUID)
+	}
+}
+
 // TestAnotherOrgCannotBeDeleted: a caller reaching an organisation that is not
 // theirs is answered as every other route answers it — the same 404 for "not
 // there" and "not yours", because which ids exist is a list of the portal's
@@ -810,6 +870,59 @@ func TestAnOrganisationDeletionRemovesItsRecordsInOneCommit(t *testing.T) {
 	}
 	if _, held := heldOverTheStore[WireWorkspace](t, docs, workspacesCollection, workspace.ID); held {
 		t.Error("a workspace of the deleted organisation stands, and nothing left can reach it")
+	}
+}
+
+// TestARetriedOrganisationDeletionFinishesTheJob: the retry P2.4 promises, in
+// the window that makes it interesting. The first attempt reaches the merchant
+// and the cancellation lands; the store then fails on the group of removals, so
+// nothing of the organisation has moved and the same request is what finishes
+// the job.
+//
+// What the retry meets is a subscription the merchant has ended already, and a
+// merchant that refuses to end it twice. The retry therefore asks it nothing
+// (billing.go's cancelSubscriptionsOf records the cancellation the merchant took
+// as it takes it, and `At` is left to the merchant's own event), which is what
+// leaves the cancellation event's delivery out of the person's way: a retry that
+// asked again would be refused, and until that event arrived the organisation
+// could not be deleted — the deletion asks the merchant before it removes
+// anything, so this is the one window a retry is in.
+func TestARetriedOrganisationDeletionFinishesTheJob(t *testing.T) {
+	store := &deletionStore{Memory: docstore.NewMemory()}
+	f, docs := newDeletionFixtureOverTheStore(t, store)
+	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's portal")
+	f.subscription("sub-dana", org.ID, workspace.ID, f.now.Add(20*24*time.Hour), false)
+	// The first attempt is the one that ends the subscription; the merchant
+	// refuses to end one it has ended already, so a second attempt at it is a
+	// failure and a deletion that is never finished.
+	f.paddle.cancelErrors = []error{nil, errors.New("the merchant of record refuses to cancel a subscription it has ended")}
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	store.refuseRemoval = workspacesCollection + "/" + workspace.ID
+	first := f.deleteOrg(org.ID)
+	if first.Code != http.StatusInternalServerError {
+		t.Fatalf("a deletion whose store failed on one of its removals answered %d (%s), want this service's own failure", first.Code, first.Body)
+	}
+	if asked := append([]string(nil), f.paddle.cancelled...); len(asked) != 1 || asked[0] != "sub-dana" {
+		t.Fatalf("the first attempt asked the merchant to cancel %v, want the organisation's subscription alone: the cancellation is asked for before a record is attempted", asked)
+	}
+
+	second := f.deleteOrg(org.ID)
+	if second.Code != http.StatusNoContent {
+		t.Fatalf("the deletion made again answered %d (%s), want it finished: the retry has nothing to ask the merchant, because the cancellation it made was recorded when the merchant took it", second.Code, second.Body)
+	}
+	if _, held := heldOverTheStore[WireOrganisation](t, docs, organisationsCollection, org.ID); held {
+		t.Error("the organisation stands after the retry went through")
+	}
+	if _, held := heldOverTheStore[WireMembership](t, docs, membershipsCollection, membershipID(org.ID, danaUID)); held {
+		t.Error("a membership of the deleted organisation stands")
+	}
+	if asked := f.paddle.cancelled; len(asked) != 1 {
+		t.Errorf("the merchant was asked to cancel %v across the two attempts, want the first attempt alone: the retry reads the cancellation off the record it wrote", asked)
+	}
+	if held, present, err := f.store.Subscription(context.Background(), "sub-dana"); err != nil || !present || !held.Cancelled {
+		t.Errorf("the subscription after the deletion is %+v (present %t, %v), want it recorded as the merchant's cancellation left it", held, present, err)
 	}
 }
 
