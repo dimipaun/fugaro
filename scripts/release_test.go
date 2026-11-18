@@ -439,12 +439,25 @@ const rehearsalSandbox = "fake-sandbox"
 // module, the same reason RELEASE_SH_STREAMS_CMD exists). A test that wants a
 // red, missing or other-commit record overrides these with g.with(...) or by
 // writing the record file itself.
+//
+// It also clears the coding-agent markers the rehearsal's guard_agent refuses
+// on (internal/agentenv's list): the fixture is a person at a terminal, and the
+// machine running these tests may itself be an agent's session, where every run
+// here would otherwise be refused before it started. A test that means to be an
+// agent's session sets one of them last (g.with("CLAUDECODE=1"), or extra in
+// runRehearsal), which wins over this.
 func rehearsalEnv(r *releaseRepo, bin string) []string {
 	return []string{
 		"FUGARO_LIVE_GCP_PROJECT=" + rehearsalSandbox,
 		"RELEASE_REHEARSAL_DIR=" + r.recordDir,
 		"RELEASE_REHEARSAL_FUGARO=" + filepath.Join(bin, "fugaro"),
 		"FAKE_FUGARO_DIR=" + r.fugaroState,
+		"CLAUDECODE=",
+		"CLAUDE_CODE_ENTRYPOINT=",
+		"CLAUDE_CODE_REMOTE=",
+		"CLAUDE_CODE_SSE_PORT=",
+		"CURSOR_AGENT=",
+		"AI_AGENT=",
 	}
 }
 

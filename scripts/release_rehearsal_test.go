@@ -90,6 +90,47 @@ func requireNoRehearsalCalls(t *testing.T, r *releaseRepo) {
 	}
 }
 
+// TestReleaseRehearsalRefusesACodingAgentsSession: the build is billable and
+// the tag it gates is permanent, so `run` refuses an agent's session itself --
+// guard_agent, over the markers internal/agentenv names, the shape
+// scripts/land-prs.sh uses. Nothing is built and no record is written, and the
+// refusal hands over the command to run instead.
+//
+// This is the fence, and it has to be: the CLI's own gate is not one. It admits
+// a coding agent's session whose plan it admitted and prints AgentProceeded
+// there (internal/cli/image_build_managed.go), refusing only where no verdict
+// came -- and internal/cli's own TestImageBuildManagedAnAgentSessionIsAdmittedAndRecorded
+// pins that an agent's admitted build IS submitted -- so a rehearsal that
+// leaned on the CLI would submit the build from an agent's session. The guard
+// is a courtesy against the accident and not a barrier (D1590): an agent can
+// unset its markers, which is what the cleared environment below does for every
+// other test here.
+func TestReleaseRehearsalRefusesACodingAgentsSession(t *testing.T) {
+	for _, tc := range []struct {
+		name, marker, value string
+	}{
+		{"agent-set marker", "CLAUDECODE", "1"},
+		{"another agent's marker", "AI_AGENT", "1"},
+		// The IDE extension's marker alone is an agent's session only where no
+		// real terminal is attached (agentenv.Session), and a test run has none.
+		{"the IDE marker with no terminal", "CLAUDE_CODE_SSE_PORT", "12345"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			sha := testutil.Git(t, r.local, "rev-parse", "HEAD")
+
+			res := runRehearsal(t, r, []string{tc.marker + "=" + tc.value}, "run", sha)
+
+			res.requireFailureContaining(t, tc.marker+" says this is a coding agent's session")
+			res.requireFailureContaining(t, "release-rehearsal.sh run "+sha)
+			requireNoRehearsalCalls(t, r)
+			if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+				t.Error("an agent's session wrote a record: the record says a build happened, and this session built nothing")
+			}
+		})
+	}
+}
+
 // TestReleaseRehearsalRunWritesAGreenRecordAndTheGatePasses: the rehearsal makes
 // the one call that builds this repository's own catalog entry -- `image build
 // go`, in the sandbox project it was told -- and writes the record the tag is
@@ -316,6 +357,24 @@ func TestReleaseRefusesTheTagOnARedRehearsal(t *testing.T) {
 	res.requireFailureContaining(t, "did not build the go catalog entry")
 	res.requireFailureContaining(t, "https://console.cloud.google.com/cloud-build/builds/fake-build-1")
 	requireNoTag(t, r, res)
+}
+
+// TestReleaseRefusesToCutTheTagInACodingAgentsSession: the whole point of the
+// guard is the tag. An agent's session that runs the release stops at the
+// rehearsal -- after the merge, before the tag -- with nothing built, no record
+// written and no tag pushed, and it is told what to hand over.
+func TestReleaseRefusesToCutTheTagInACodingAgentsSession(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("CLAUDECODE=1")
+
+	res := runRelease(t, r, g, "", "0.12.0")
+
+	res.requireFailureContaining(t, "CLAUDECODE says this is a coding agent's session")
+	requireNoTag(t, r, res)
+	requireNoRehearsalCalls(t, r)
+	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
+		t.Error("an agent's session left a record behind: the tag gate would then read it as a build that happened")
+	}
 }
 
 // TestReleaseRefusesWithoutASandboxProject: the rehearsal is the release's own

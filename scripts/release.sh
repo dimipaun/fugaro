@@ -1111,14 +1111,21 @@ GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_sec
 # build of this repository's own `go` catalog entry, in the sandbox project
 # only, with the CLI built from the very commit being tagged.
 #
-# `run` is the billable half and it is owner-run by construction: the CLI's own
-# managed gate admits a catalog build only at the owner's terminal, so a coding
-# agent's session is refused here with the sentence that says so (and the
-# refusal names what to hand the owner). `check` is the gate: the record on
-# disk -- commit, Cloud Build id, verdict -- is what the tag is cut on, never
-# this run's own memory of it, so a missing, red, or other-commit record refuses
-# the tag and names the Cloud Build to read. `run` reuses a green record for the
-# same commit, so a release resumed after an interruption rebuilds nothing.
+# `run` is the billable half, and it refuses a coding agent's session itself
+# (scripts/release-rehearsal.sh's guard_agent, the shape scripts/land-prs.sh
+# uses): a courtesy against the accident and not a barrier (D1590), because the
+# markers are environment variables an agent can unset. The CLI is NOT that
+# refusal — its gate admits an agent's session whose plan it admitted — so the
+# guard is where this release's owner-run claim is made true, and an agent
+# session running this script stops here, before the build and before the tag,
+# with the command to hand over. `check` is the gate: the record on disk --
+# commit, Cloud Build id, verdict -- is what the tag is cut on, never this run's
+# own memory of it, so a missing, red, or other-commit record refuses the tag
+# and names the Cloud Build to read. The record is a local convention and no
+# proof: nothing reads the build id back from Cloud Build, and a session that
+# can write the file can pass the gate (docs/release.md says so). `run` reuses a
+# green record for the same commit, so a release resumed after an interruption
+# rebuilds nothing.
 #
 # This is the CLI path's step alone. The hotfix path above does not run it: its
 # branch tip exists only inside its own run, in a scratch worktree removed on
