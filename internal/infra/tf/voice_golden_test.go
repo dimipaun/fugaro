@@ -380,3 +380,48 @@ func TestTheVoiceHopIsInTheVoiceGoldenOnly(t *testing.T) {
 		t.Fatal("the voice golden plans no hop, so the loop above read the wrong plans")
 	}
 }
+
+// voiceSpeechAPI is the API the hop's google engine calls, and the address the
+// module enables it at.
+const voiceSpeechAPI = "texttospeech.googleapis.com"
+
+// TestTheVoiceHopEnablesTheSpeechAPIAndNoOtherGoldenDoes is the hop's third
+// deployment fact, and the one no plan state can show: the google engine calls
+// Cloud Text-to-Speech as the hop's own account rather than with a provider key
+// (internal/voicesvc's provider.go, fromServiceAccount), so the API being ON is
+// that engine's credential. A project that never enabled it answers every
+// google call 403 SERVICE_DISABLED, which forward.go turns into
+// ReasonProviderFailed — fail-closed, and a register row (§7's google row is
+// the one the owner measures at Check 85) that can never be measured. The
+// enablement is therefore apis.tf's, gated on local.voice_on like the hop
+// itself, and this holds both halves the way TestTheVoiceHopIsInTheVoiceGoldenOnly
+// holds the service: the voice plan carries it, and no plan of an installation
+// without the hop does — which is what makes it a gate on the opt-in rather
+// than a line every installation pays for.
+func TestTheVoiceHopEnablesTheSpeechAPIAndNoOtherGoldenDoes(t *testing.T) {
+	addr := `module.installation.google_project_service.this["` + voiceSpeechAPI + `"]`
+	found := false
+	for _, rc := range goldenPlan(t, "installation-voice").ResourceChanges {
+		if rc.Address != addr {
+			continue
+		}
+		found = true
+		if rc.Type != "google_project_service" {
+			t.Errorf("%s is a %s, want google_project_service", rc.Address, rc.Type)
+		}
+		if got := str(rc.Change.After["service"]); got != voiceSpeechAPI {
+			t.Errorf("%s enables %q, want %q", rc.Address, got, voiceSpeechAPI)
+		}
+	}
+	if !found {
+		t.Fatalf("the voice golden plans no %s: the hop's google engine would answer 403 SERVICE_DISABLED in every installation that turns the hop on, and the register's own row could not be measured (apis.tf)", addr)
+	}
+	for _, name := range []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-review",
+		"installation-adopt", "installation-coordinator", "installation-viewers"} {
+		for _, rc := range goldenPlan(t, name).ResourceChanges {
+			if rc.Type == "google_project_service" && str(rc.Change.After["service"]) == voiceSpeechAPI {
+				t.Errorf("%s enables %s: the API is the hop's own engine's, so it is enabled on the hop's switch and on nothing else (apis.tf)", name, voiceSpeechAPI)
+			}
+		}
+	}
+}

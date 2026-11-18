@@ -45,7 +45,10 @@
 # (internal/credsvc's GoogleKeys, which the hop reaches through its own key
 # source), and a published certificate is a fact of the internet rather than a
 # grant of this installation. Calling a provider is plain network egress, which
-# is not IAM either. The one thing the process reaches in this installation is
+# is not IAM either — its one condition is that the provider's API is on, and
+# apis.tf enables the one of them this hop calls (Cloud Text-to-Speech, for the
+# google engine) on the same local.voice_on as everything here. The one thing
+# the process reaches in this installation is
 # its Realtime Database — the device node and the project policy node, two
 # reads, D166 — so the account's whole reach is the instance-wide read role
 # fugaroStateRead, bound to it in state_read.tf beside the front door's own

@@ -101,7 +101,10 @@ const (
 	fromProviderKey credentialFrom = iota
 	// fromServiceAccount is this service's own Google identity: a provider
 	// whose API an installation can already reach needs no key of its own, and
-	// no secret of it exists.
+	// no secret of it exists. What an installation owes this engine is that
+	// the API be on, which is exactly what apis.tf does on the hop's own
+	// switch — and it is why the call is made as this identity rather than with
+	// a value out of ProviderKeys.
 	fromServiceAccount
 )
 
