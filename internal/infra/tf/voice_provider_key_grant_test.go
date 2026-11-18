@@ -8,10 +8,9 @@ import (
 )
 
 // TestVoiceProviderKeyGrantIsTheHopsContainerAlone is the hop's second and last
-// grant, and the only credential the forwarding half holds (P5.3.5, design
-// docs/mobile/design/voice-evaluation-switch.md §4.4 point 4): the provider-key
-// container secrets.tf creates, bound to the hop's own account and to no other
-// member.
+// grant, and the only credential the forwarding half holds (P5.3.5, the voice
+// design's §4.4 point 4): the provider-key container secrets.tf creates, bound
+// to the hop's own account and to no other member.
 //
 // It is the renewal job's test one container over, and it matters more here:
 // the hop is the one account of this installation behind an endpoint ANYONE on

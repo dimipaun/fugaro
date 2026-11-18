@@ -27,7 +27,7 @@ func TestRegisterHoldsTheThreeEnginesOfTheDesign(t *testing.T) {
 	}
 	want := []string{"google", "deepgram", "elevenlabs"}
 	if got := reg.Names(); !equalStrings(got, want) {
-		t.Errorf("the register holds %v, want %v (docs/mobile/design/voice-evaluation-switch.md §7)", got, want)
+		t.Errorf("the register holds %v, want %v (the voice design's §7)", got, want)
 	}
 	for _, absent := range []string{"openai", "anthropic", "whisper"} {
 		if row, ok := reg.Row(absent); ok {
