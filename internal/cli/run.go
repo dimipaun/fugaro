@@ -6434,7 +6434,7 @@ var slipGrant = slipGrantOverService
 // slipIdentity mints the launcher's own Google ID token for serviceURL, which
 // is the identity the service's launcher class verifies (DS1.2, D1938).
 //
-// It is the PLAIN mint the read path presents (reviewReadIdentity), for the
+// It is the PLAIN mint the read path presents (serviceReadIdentity), for the
 // audience rather than for the token: a plain mint's audience is gcloud's own
 // client id (credsvc.GcloudAudience), which the launcher class admits and which
 // is the only one a person's account can mint — gcloud refuses --audiences for

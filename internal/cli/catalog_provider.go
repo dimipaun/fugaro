@@ -35,7 +35,10 @@ import (
 // session gets, for either provider's credential. `fugaro image build` has no
 // flag that allows the read -- it happens as part of building an entry whose
 // Dockerfile is in a repository -- so the command itself is what the refusal
-// names, rather than borrowing a flag this command does not take.
+// names, rather than borrowing a flag this command does not take. It is this
+// command's own name for repoProviderEnv, which every caller passes its own to:
+// the seam is shared and the sentence an operator reads is the command they
+// ran (refuseKeyReadInAgent's rule).
 const catalogKeyRead = "fugaro image build"
 
 // catalogGitHubAppID is the GitHub App ID a catalog build of repo is named
@@ -163,17 +166,41 @@ func catalogProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, r
 	}) {
 		return env, "", nil
 	}
+	return repoProviderEnv(ctx, w, lc, rs, env, catalogKeyRead, getenv, stdinTerminal, node)
+}
+
+// repoProviderEnv is the credential half of the environment a command hands
+// OpenProvider for one repository's provider: the process environment with the
+// credential that repository's provider needs added to it when the environment
+// holds none of its own -- the App ID and the App's private key for GitHub, the
+// access token for Bitbucket. catalogProviderEnv's own doc says where each
+// value comes from and why, and it is the same answer here.
+//
+// It is one function and not one per command because the credential is one
+// credential: `fugaro image build` copies an entry's Dockerfile with it, and
+// `fugaro followups` reads a run's merged parent pull request with it, and a
+// second spelling of "the config first, the environment as the override, the
+// secret read through the same seam" would be a second place the two could come
+// to differ about which key a repository is read with.
+//
+// who names the command in the coding-agent refusal each half makes before it
+// reads anything, and it is the caller's own (refuseKeyReadInAgent): a session
+// refused here has to read the command it ran, not the other command that
+// shares this seam.
+//
+// The second answer is catalogProviderEnv's hint sentence, unchanged.
+func repoProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, who string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
 	switch rs.Provider {
 	case gitprov.KindGitHub:
-		return githubProviderEnv(ctx, w, lc, rs, env, getenv, stdinTerminal, node)
+		return githubProviderEnv(ctx, w, lc, rs, env, who, getenv, stdinTerminal, node)
 	case gitprov.KindBitbucket:
-		return bitbucketProviderEnv(ctx, w, lc, rs, env, getenv, stdinTerminal, node)
+		return bitbucketProviderEnv(ctx, w, lc, rs, env, who, getenv, stdinTerminal, node)
 	}
 	return env, "", nil
 }
 
-// githubProviderEnv is catalogProviderEnv's GitHub half.
-func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
+// githubProviderEnv is repoProviderEnv's GitHub half.
+func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, who string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
 	// rs.GitHubAppID is the one answer catalogGitHubAppID gave for this
 	// repository, which the spec the build is submitted with carries too: the
 	// ID is appended after the process environment, so it is the one
@@ -198,7 +225,7 @@ func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs
 	if getenv(providers.EnvCredentialsServiceURL) != "" {
 		return env, "", nil
 	}
-	if err := refuseKeyReadAt(getenv, stdinTerminal, catalogKeyRead, "the GitHub App's private key"); err != nil {
+	if err := refuseKeyReadAt(getenv, stdinTerminal, who, "the GitHub App's private key"); err != nil {
 		return nil, "", err
 	}
 	secretID, err := catalogAppKeySecretID(ctx, lc, rs, node)
@@ -221,7 +248,7 @@ func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs
 	return env, "", nil
 }
 
-// bitbucketProviderEnv is catalogProviderEnv's Bitbucket half: the access
+// bitbucketProviderEnv is repoProviderEnv's Bitbucket half: the access
 // token providers.FromEnv wants in FUGARO_BITBUCKET_TOKEN, from the project's
 // own secret when the operator's shell has none -- which is every shell, and
 // what made `fugaro image build <entry>` fail on a Bitbucket repository's
@@ -232,11 +259,11 @@ func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs
 // always failed with, and the hint says where the token is; failing here
 // instead would replace that sentence with a new one, and the operator's next
 // step is the same either way.
-func bitbucketProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
+func bitbucketProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, who string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
 	if getenv(providers.EnvBitbucketToken) != "" {
 		return env, "", nil
 	}
-	if err := refuseKeyReadAt(getenv, stdinTerminal, catalogKeyRead, "the Bitbucket access token"); err != nil {
+	if err := refuseKeyReadAt(getenv, stdinTerminal, who, "the Bitbucket access token"); err != nil {
 		return nil, "", err
 	}
 	secretID, err := catalogTokenSecretID(ctx, lc, rs, node)

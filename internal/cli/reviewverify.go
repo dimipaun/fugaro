@@ -196,12 +196,14 @@ func impersonateVerifier(ctx context.Context, ts oauth2.TokenSource, account str
 	return out, nil
 }
 
-// reviewReadIdentity mints the caller's own Google ID token for the
+// serviceReadIdentity mints the caller's own Google ID token for the
 // installation's credentials service at serviceURL, which is the identity the
-// service's person class verifies and therefore the credential a read of a pull
-// request's head is made with: the machine that reads holds no GitHub App key
-// at all (C2.2, D145), so the service mints the token and this presents who
-// asked for it.
+// service's person class verifies and therefore the credential a person's
+// forge read is made with (serviceReadProvider): the machine that reads holds
+// no GitHub App key at all (C2.2, D145), so the service mints the token and
+// this presents who asked for it. what names the work the token is minted FOR,
+// which is the caller's sentence and not this one's -- a refusal has to read as
+// the work it stopped.
 //
 // It is the PLAIN mint, whose audience is gcloud's own client id
 // (credsvc.GcloudAudience), and that audience is the whole of the reason: the
@@ -223,8 +225,8 @@ func impersonateVerifier(ctx context.Context, ts oauth2.TokenSource, account str
 // It is a package variable so a test replaces it: no test mints a real
 // credential, and no value this returns or refuses with reaches an error, a
 // log line or an output.
-var reviewReadIdentity = func(ctx context.Context, serviceURL string) (string, error) {
-	return personIdentity(ctx, serviceURL, "a pull request's head is read")
+var serviceReadIdentity = func(ctx context.Context, serviceURL, what string) (string, error) {
+	return personIdentity(ctx, serviceURL, what)
 }
 
 // personIdentity is the mint both callers of the service present: the read
@@ -302,28 +304,37 @@ func reviewPrintableToken(tok string) bool {
 	return true
 }
 
-// reviewGitHubAPIURL and reviewBitbucketAPIURL are the forge API roots a head
-// read goes to, and the one place they are named: the installation's service
-// mints a token for the repository, and a root taken from the launcher's
+// serviceReadGitHubAPIURL and serviceReadBitbucketAPIURL are the forge API roots
+// a person's read goes to, and the one place they are named: the installation's
+// service mints a token for the repository, and a root taken from the launcher's
 // environment would send that token (and the head the replay check compares
-// against) to whatever host a shell variable names. The coordinator's person-class
-// read holds its root the same way (coordinatorGitHubAPIURL, D474). They are
-// variables only so a test can stand a server in for the forge.
+// against) to whatever host a shell variable names. The coordinator's
+// person-class read holds its root the same way (coordinatorGitHubAPIURL, D474).
+// They are variables only so a test can stand a server in for the forge.
 var (
-	reviewGitHubAPIURL    = github.DefaultBaseURL
-	reviewBitbucketAPIURL = bitbucket.DefaultBaseURL
+	serviceReadGitHubAPIURL    = github.DefaultBaseURL
+	serviceReadBitbucketAPIURL = bitbucket.DefaultBaseURL
 )
 
-// reviewReadProvider opens the provider a pull request's head is read through:
+// serviceReadProvider opens the provider a person's forge read is made through:
 // the forge's own adapter for one repository, keyless, with the installation's
-// credentials service as the source of every token it uses.
+// credentials service as the source of every token it uses. `fugaro review
+// verify` reads a pull request's head with it, and `fugaro followups` reads the
+// parent pull request a run was filed on with it (followUpsProvider) -- the one
+// seam, because the credential is one credential: a machine that holds no App
+// key reads through the service's mint or it does not read at all.
+//
+// what names the work the read is FOR, in the caller's own words, and every
+// refusal below and the mint it presents say it (personIdentity's `what`): a
+// session or an operator refused here has to read the work it stopped, not the
+// other caller's.
 //
 // The three values the read mint needs each have ONE source, and none of them
 // is a variable of this process's environment: the service URL is the
 // installation's published credentials_service block (the same value and the
 // same source reviewVerifier reads), the GitHub App ID is the project's own
 // recorded value for the repository, and the caller's own identity is minted
-// here (reviewReadIdentity). A read that reached for any of the three in the
+// here (serviceReadIdentity). A read that reached for any of the three in the
 // environment would read differently on a machine that exports something --
 // and a person's machine is the one this command runs on (F23).
 //
@@ -333,19 +344,19 @@ var (
 // key is exactly what this machine does not hold. A provider with no read mint
 // at all is refused rather than opened some other way, which is what keeps the
 // fallback this task removes from coming back through the default branch.
-func reviewReadProvider(ctx context.Context, env *cloudEnv, kind, repo string) (gitprov.Provider, error) {
+func serviceReadProvider(ctx context.Context, env *cloudEnv, kind, repo, what string) (gitprov.Provider, error) {
 	serviceURL := ""
 	if env.lc != nil && env.lc.CredentialsService != nil {
 		serviceURL = env.lc.CredentialsService.URL
 	}
 	if serviceURL == "" {
-		return nil, userErr("this installation has no credentials service (credentials_service is not published in this project's config), and a pull request's head is read with a token the service mints for you: a person's machine holds no GitHub App key to read one with. Ask the owner to opt this installation in to the credentials service and run fugaro update")
+		return nil, userErr("this installation has no credentials service (credentials_service is not published in this project's config), and %s with a token the service mints for you: a person's machine holds no GitHub App key to read one with. Ask the owner to opt this installation in to the credentials service and run fugaro update", what)
 	}
 	owner, name, ok := gitprov.SplitRepo(repo)
 	if !ok {
-		return nil, userErr("a pull request's head is read from %s, which is not a repository in owner/name form", pluginwire.Printable(repo))
+		return nil, userErr("%s from %s, which is not a repository in owner/name form", what, pluginwire.Printable(repo))
 	}
-	identity := func(ctx context.Context) (string, error) { return reviewReadIdentity(ctx, serviceURL) }
+	identity := func(ctx context.Context) (string, error) { return serviceReadIdentity(ctx, serviceURL, what) }
 	switch kind {
 	case gitprov.KindGitHub:
 		appID := ""
@@ -357,7 +368,7 @@ func reviewReadProvider(ctx context.Context, env *cloudEnv, kind, repo string) (
 		}
 		p, err := github.New(github.Options{
 			Owner: owner, Repo: name, AppID: appID, ServiceHeldKey: true,
-			BaseURL: reviewGitHubAPIURL,
+			BaseURL: serviceReadGitHubAPIURL,
 		})
 		if err != nil {
 			return nil, remote(err)
@@ -373,11 +384,11 @@ func reviewReadProvider(ctx context.Context, env *cloudEnv, kind, repo string) (
 		// UseServiceTokens: a Bitbucket provider takes its tokens as an
 		// argument to New (Options.TokenSource) and offers no install.
 		return bitbucket.New(bitbucket.Options{
-			Workspace: owner, Slug: name, BaseURL: reviewBitbucketAPIURL,
+			Workspace: owner, Slug: name, BaseURL: serviceReadBitbucketAPIURL,
 			TokenSource: (&bitbucket.ServiceReadTokens{URL: serviceURL, IDToken: identity}).Repo(repo),
 		})
 	default:
-		return nil, userErr("a pull request's head is read with a token the installation's credentials service mints, and there is no read mint for the %s provider: only %s and %s have one, so no read is made", pluginwire.Printable(kind), gitprov.KindGitHub, gitprov.KindBitbucket)
+		return nil, userErr("%s with a token the installation's credentials service mints, and there is no read mint for the %s provider: only %s and %s have one, so no read is made", what, pluginwire.Printable(kind), gitprov.KindGitHub, gitprov.KindBitbucket)
 	}
 }
 
@@ -390,15 +401,22 @@ func reviewReadProvider(ctx context.Context, env *cloudEnv, kind, repo string) (
 //
 // The refusal names both halves a person has to act on: the read mint is what
 // mints the token, and what it verifies is the caller's own identity.
-func reviewReadMintRefusal(err error) error {
+func reviewReadMintRefusal(err error, what string) error {
 	switch {
 	case errors.Is(err, github.ErrServiceRead), errors.Is(err, github.ErrServiceReadIdentity),
 		errors.Is(err, bitbucket.ErrServiceRead), errors.Is(err, bitbucket.ErrServiceReadIdentity):
 	default:
 		return nil
 	}
-	return userErr("the installation's credentials service's read mint did not mint the token a pull request's head is read with: the read presents your own Google ID token, and the service mints only for a person the installation lists (its people are the installation's operators) and only for a caller it admits on the service (roles/run.invoker on it). Ask the owner to add you to the installation's people and run fugaro update, then try again (%s)", safetext.FieldErr(err))
+	return userErr("the installation's credentials service's read mint did not mint the token %s with: the read presents your own Google ID token, and the service mints only for a person the installation lists (its people are the installation's operators) and only for a caller it admits on the service (roles/run.invoker on it). Ask the owner to add you to the installation's people and run fugaro update, then try again (%s)", what, safetext.FieldErr(err))
 }
+
+// reviewHeadRead is this command's own name for the read serviceReadProvider
+// makes for it, and the name every refusal of it carries: `fugaro review
+// verify` reads a pull request's HEAD, where `fugaro followups` reads the parent
+// pull request itself (followUpsParentRead), and one shared seam has to say
+// which of the two it was asked for.
+const reviewHeadRead = "a pull request's head is read"
 
 // reviewPRHeadSeam, when a test sets it, is what reviewHead answers instead of
 // the forge's own read: a real FetchPRHead needs a provider credential this
@@ -412,7 +430,7 @@ var reviewPRHeadSeam func(ctx context.Context, env *cloudEnv, repo string, pr in
 // replay, and it is refused rather than acted on (spec §6, §8's window).
 //
 // The credential it reads WITH is the installation's credentials service's
-// read mint and never this process's own (reviewReadProvider): the machine
+// read mint and never this process's own (serviceReadProvider): the machine
 // that reads holds no GitHub App key at all, and the token the service mints
 // is read-only and one repository's.
 //
@@ -438,7 +456,7 @@ func reviewHead(ctx context.Context, env *cloudEnv, repo string, pr int) (string
 	if kind == "" {
 		return "", userErr("cannot tell the git provider of %s, so its pull request's head cannot be read: set provider in its repos entry of the local config, or run from its checkout", pluginwire.Printable(repo))
 	}
-	p, err := reviewReadProvider(ctx, env, kind, repo)
+	p, err := serviceReadProvider(ctx, env, kind, repo, reviewHeadRead)
 	if err != nil {
 		return "", err
 	}
@@ -447,7 +465,7 @@ func reviewHead(ctx context.Context, env *cloudEnv, repo string, pr int) (string
 		// The mint is the forge call's first step, so a mint refused comes
 		// back here: it is worded as what it is rather than as a failure of
 		// the forge's.
-		if refusal := reviewReadMintRefusal(err); refusal != nil {
+		if refusal := reviewReadMintRefusal(err, reviewHeadRead); refusal != nil {
 			return "", refusal
 		}
 		return "", remote(err)
