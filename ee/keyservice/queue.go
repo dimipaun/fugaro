@@ -73,16 +73,18 @@ const routeOps = "/ops"
 //
 // The notification is what makes a failed enqueue a failed request: a request
 // written and never mentioned is one nobody will look at, and the applicant's
-// request is the only place it existed.
+// request is the only place it existed. That is why the link is read first: a
+// deployment that states no portal origin (portalOrigin) is one whose owner
+// cannot be told where the queue is, and an entry written before that is read is
+// left in the queue unannounced — with another beside it at every retry, so the
+// queue grows by the requests nobody heard about instead of by the ones waiting
+// to be decided (§4.5).
 func (s *Service) enqueue(ctx context.Context, a Application) error {
 	if a.ID == "" {
 		return errors.New("a queued request with no id is one the store cannot tell from another")
 	}
 	if a.At.IsZero() {
 		a.At = s.now()
-	}
-	if err := s.store.SaveApplication(ctx, a); err != nil {
-		return err
 	}
 	// The link is the portal's, built from the deployment's own origin and never
 	// from the request's Host header (§7.2's rule, as invitationURL's link is): a
@@ -91,6 +93,9 @@ func (s *Service) enqueue(ctx context.Context, a Application) error {
 	// request that failed.
 	origin, err := portalOrigin(s.cfg.URL)
 	if err != nil {
+		return err
+	}
+	if err := s.store.SaveApplication(ctx, a); err != nil {
 		return err
 	}
 	return s.alerts.Notify(ctx, queueAlert(origin, a))
