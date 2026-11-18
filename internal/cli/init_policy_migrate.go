@@ -1299,6 +1299,21 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, 
 			lc = sw.lc
 		}
 		s.m, s.published, s.err = policyMigrationForIn(ctx, lc, s.e.path)
+		// A plan that landed on D854's re-seed path is a node another machine
+		// moved past what this file records, and the switch is dropped with it:
+		// the re-seed writes the local file and NEVER the node, so a run that
+		// kept the switch would record the file back to the node's own state and
+		// leave the block the flip implies unpublished — the pair
+		// resolveBitbucketProxied stops every run of the project over until a
+		// hand repair. The plan is then re-read from the config this run holds,
+		// which is the state the re-seed converges to, so the stage converges
+		// and the NEXT update turns the switch on: the flip waits for the file
+		// and the node to be one generation again, and it waits one run rather
+		// than refusing (the HARD RULE's one command).
+		if sw != nil && s.m != nil && s.m.generations != nil {
+			s.sw = nil
+			s.m, s.published, s.err = policyMigrationForIn(ctx, s.e.lc, s.e.path)
+		}
 	}
 	return s.m, s.published, s.err
 }

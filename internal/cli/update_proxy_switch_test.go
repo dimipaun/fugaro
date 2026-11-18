@@ -260,6 +260,115 @@ func TestUpdateBitbucketProxyConvergesInOneUpdate(t *testing.T) {
 	}
 }
 
+// TestUpdateDefersTheBitbucketProxyOnAReSeed is the fix for the failure the
+// switch met on a file behind the published node: this machine's config records
+// a generation the node has moved past, so the stage plans D854's re-seed —
+// which writes the LOCAL FILE and never the node — and the flip's own edit is
+// what makes the file state a switch the node does not carry. The re-seed has no
+// member for the block (it splices the hands a hand edit can reach), so the run
+// used to stop with "put the published values of bitbucket-token there by hand
+// and run fugaro update again": the second command the HARD RULE forbids, and
+// one that repeated forever, because the run that refused to write the switch
+// never converged the file to the node's generation either.
+//
+// The switch is deferred instead: the plan is re-read from the config this run
+// holds, which is the state the re-seed converges to, so this update records the
+// generation and finishes with nothing written to the node, and the NEXT update
+// — the file and the node one generation again — turns the proxy on.
+func TestUpdateDefersTheBitbucketProxyOnAReSeed(t *testing.T) {
+	f, sm := proxySwitchFixture(t)
+	publishProxySwitchNode(t, f)
+	stale := recordedGeneration(t, f)
+	if stale == "" {
+		t.Fatal("the fixture's publish recorded no generation, so there is nothing for this row's file to be behind")
+	}
+	setConfig(t, f, func(s string) string {
+		return strings.Replace(s, "policy_generation: "+stale, "policy_generation: etag-from-an-earlier-publish", 1)
+	})
+	seedProxyBundle(t, sm, proxySwitchBundle(t))
+	useVersion(t, proxySince)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update did not converge a file behind the published node: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "by hand") {
+		t.Errorf("the update left the switch for a hand edit:\n%s", out)
+	}
+	if _, ok := proxyEntryOn(t, f); ok {
+		t.Errorf("the deferred run wrote the config's %s entry anyway:\n%s", config.BitbucketSecret, out)
+	}
+	if p := proxyNodeOn(t, f); p.BitbucketToken != nil {
+		t.Errorf("the deferred run published bitbucket_token = %+v, want none: the re-seed writes no node\n%s", p.BitbucketToken, out)
+	}
+	if got := recordedGeneration(t, f); got != nodeETag(t, f) {
+		t.Errorf("policy_generation = %q after the run, want the node's own generation (%q): a file that stays behind the node defers the switch on every update\n%s", got, nodeETag(t, f), out)
+	}
+	if p := proxyNodeOn(t, f); p.Version != projectpolicy.Version {
+		t.Errorf("the node is version %d after the run, want %d", p.Version, projectpolicy.Version)
+	}
+
+	// The file and the node are one generation again, so the next update is the
+	// one that turns the switch on.
+	h = newMigrationRig(t, f, &initOptions{})
+	out, err = h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update after the re-seed failed: %v\n%s", err, out)
+	}
+	entry, ok := proxyEntryOn(t, f)
+	if !ok || !entry.Proxy || !slices.Contains(entry.AllowDataTo, "acme/other") {
+		t.Fatalf("the config's %s entry is %+v (present %v) after the second update, want it forwarding for acme/other\n%s", config.BitbucketSecret, entry, ok, out)
+	}
+	if p := proxyNodeOn(t, f); p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
+		t.Errorf("the node carries bitbucket_token = %+v after the second update, want the block the entry implies\n%s", p.BitbucketToken, out)
+	}
+}
+
+// TestUpdateLeavesABlockThisMachineNeverStated is the second fix: the node
+// carries a bitbucket_token block and this machine's config states no entry for
+// it at all. The published node is the ONE source of proxiedness and an absent
+// entry is not a statement about it (resolveBitbucketProxied), so the update
+// leaves the block exactly where it is — while an entry that IS stated still
+// reports its own answer, an empty allow_data_to included, which is the removal
+// an operator has to see.
+//
+// The state is the ordinary one of a second machine: another machine (or the
+// console) published the block, this machine's local config never named the
+// entry, and its bundle holds no Bitbucket token, so the flip is held back. A
+// row derived from the absent entry used to report the block as drift and
+// publish the node without it, which takes every proxied run of the repository
+// apart with no one having asked.
+func TestUpdateLeavesABlockThisMachineNeverStated(t *testing.T) {
+	const stated = "project_secrets:\n  " + config.BitbucketSecret + ": { proxy: true, allow_data_to: [acme/other] }\n"
+	f, sm := proxySwitchFixture(t)
+	appendProxySwitchConfig(t, f.path, stated)
+	publishProxySwitchNode(t, f)
+	before := proxyNodeOn(t, f)
+	if before.BitbucketToken == nil {
+		t.Fatal("the fixture's own publish carries no bitbucket_token block, so this row is not about a node that states one")
+	}
+	// The entry goes: what is left is a machine that never stated it, beside the
+	// node the machine that did published.
+	rewriteConfigLine(t, stated, "")
+	seedProxyBundle(t, sm, []byte(config.AnthropicSecret + ": " + credsValue(t, "model") + "\n"))
+	useVersion(t, proxySince)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update failed on a machine that states no entry: %v\n%s", err, out)
+	}
+	after := proxyNodeOn(t, f)
+	if after.BitbucketToken == nil || !after.BitbucketToken.Proxy || !slices.Contains(after.BitbucketToken.AllowRepos, "bitbucket/acme/other") {
+		t.Errorf("the node carries bitbucket_token = %+v after the run, want the block it carried (%+v) left exactly where it is: this machine stated nothing about the switch, and a row read off the absent entry removes a block no one here asked to remove\n%s",
+			after.BitbucketToken, before.BitbucketToken, out)
+	}
+	if _, ok := proxyEntryOn(t, f); ok {
+		t.Errorf("the run wrote the config's %s entry, which this machine never stated:\n%s", config.BitbucketSecret, out)
+	}
+}
+
 // TestUpdateAsksForTheWorkspaceTokenOnce is R7 on the door that cannot take the
 // value: the proxy forwards the workspace token the bundle holds, so a project
 // whose bundle holds none is one the flip must not turn on (a proxied run has no

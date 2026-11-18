@@ -380,8 +380,23 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	// operator's entry is named by the publish that does refuse it, which is where
 	// they meet it (S6's flip warns and holds itself back rather than publishing
 	// one; update_proxy_switch.go's bitbucketProxyBlock).
-	if token, err := bitbucketProxyBlock(lc); err == nil {
-		add(bitbucketTokenKey, token, p.BitbucketToken, false)
+	//
+	// The row is reported only when the local config states the entry at all. An
+	// entry that is there and an entry that is absent are two different things
+	// to resolveBitbucketProxied: the published node is the one source of
+	// proxiedness, and an absent entry is NO statement about it rather than a
+	// disagreement (spec.go). So on a machine whose file never named the entry —
+	// the ordinary state of a project whose Bitbucket proxy another machine
+	// turned on, and of one whose node carries the block because a typed token
+	// does — a row derived from that absence would report the node's block as
+	// drift and publish it away: the update would remove a block no one on this
+	// machine asked to remove, and take a proxied repository's runs apart with
+	// it. An entry that IS stated still reports its own answer, an empty
+	// allow_data_to included: that is the removal an operator has to see.
+	if _, stated := lc.ProjectSecrets[config.BitbucketSecret]; stated {
+		if token, err := bitbucketProxyBlock(lc); err == nil {
+			add(bitbucketTokenKey, token, p.BitbucketToken, false)
+		}
 	}
 	// The typed Bitbucket tokens are DERIVED from the local config, like the
 	// accounts block and for a stronger reason: the node is the only place the
