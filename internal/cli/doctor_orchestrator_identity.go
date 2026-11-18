@@ -36,9 +36,18 @@ import (
 // 11) — and any role carrying setIamPolicy, which would let the account widen
 // its own envelope.
 //
-// It is read-only, like every check of this class: it reads the account, four
+// It is read-only, like every check of this class: it reads the account, five
 // policies and the jobs' own policies, and it changes nothing. It prints, it
 // never asks, and there is no branch of it that waits for anything.
+//
+// The fifth of those policies is the credentials service's own (F19, O2), and
+// it is read on the same Cloud Run client the jobs are: the daemon is admitted
+// to that service by `roles/run.invoker` on the service rather than by any
+// project role — Cloud Run decides admission per service — so an account whose
+// invoker row went missing is an account that cannot reach the label route at
+// all, whatever the service's own caller list says. A project with no service
+// of that name has no such row to hold and is a report of an unread scope
+// rather than a missing grant.
 //
 // The table is checked in both directions. A row MISSING is an account that
 // cannot do what section 4.3 says it does — no launch, no `fugaro ls`/`watch`/
@@ -161,34 +170,72 @@ func doctorOrchestratorIdentity(ctx context.Context, lc *localcfg.Config, c *crm
 		notRead = append(notRead, "the signer account's policy (this configuration names no signer)")
 	}
 
-	// The launch itself, which lives per job rather than per project: what the
-	// account holds is the job runner's custom role on the installation's jobs,
-	// and any other role on a job is a reach the table does not have. Unlike
-	// every other scope, a count is not the question here — an installation
-	// with no project job has nothing to launch and the account holds nothing —
-	// so what a job row is checked for is its ROLE, and the count is reported.
-	listed, jread := 0, 0
-	if lc.Endpoints.NoAuth && lc.Endpoints.Run == "" {
-		notRead = append(notRead, "the Cloud Run jobs' policies (this configuration reads no Cloud Run)")
-	} else if svc, err := runapi.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Run)...); err != nil {
-		notRead = append(notRead, "the Cloud Run jobs' policies")
-	} else if jobs, err := doctorListedJobs(ctx, svc, doctorJobsParent(lc)); err != nil {
-		notRead = append(notRead, "the Cloud Run jobs' policies")
-	} else {
-		listed = len(jobs)
-		for _, lj := range jobs {
-			p, err := svc.Projects.Locations.Jobs.GetIamPolicy(lj.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
-			if err != nil {
-				notRead = append(notRead, "the IAM policy of a Cloud Run job (the caller may not read it)")
-				continue
+	// The two Cloud Run resources this check reads are one client and two
+	// questions. The launch itself lives per job rather than per project: what
+	// the account holds is the job runner's custom role on the installation's
+	// jobs, and any other role on a job is a reach the table does not have.
+	// Unlike every other scope, a count is not the question there — an
+	// installation with no project job has nothing to launch and the account
+	// holds nothing — so what a job row is checked for is its ROLE, and the
+	// count is reported. The credentials service's own policy is the one
+	// resource-level row of the table (F19, O2), and it is a row of the
+	// account's envelope exactly as the project's is: Cloud Run decides
+	// admission per service, so the invoker bit on that service is the whole of
+	// the daemon's reach to it.
+	var runSvc *runapi.Service
+	switch {
+	case lc.Endpoints.NoAuth && lc.Endpoints.Run == "":
+		notRead = append(notRead,
+			"the Cloud Run jobs' policies (this configuration reads no Cloud Run)",
+			"the credentials service's own policy (this configuration reads no Cloud Run)")
+	default:
+		s, err := runapi.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Run)...)
+		if err != nil {
+			notRead = append(notRead, "the Cloud Run jobs' policies", "the credentials service's own policy")
+			break
+		}
+		runSvc = s
+	}
+	listed, jread, serviceDeployed := 0, 0, false
+	if runSvc != nil {
+		jobs, err := doctorListedJobs(ctx, runSvc, doctorJobsParent(lc))
+		switch {
+		case err != nil:
+			notRead = append(notRead, "the Cloud Run jobs' policies")
+		default:
+			listed = len(jobs)
+			for _, lj := range jobs {
+				p, err := runSvc.Projects.Locations.Jobs.GetIamPolicy(lj.Name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+				if err != nil {
+					notRead = append(notRead, "the IAM policy of a Cloud Run job (the caller may not read it)")
+					continue
+				}
+				jread++
+				got = append(got, orchestratorGrantsIn(runBindings(p.Bindings), account, "a Cloud Run job")...)
 			}
-			jread++
-			got = append(got, orchestratorGrantsIn(runBindings(p.Bindings), account, "a Cloud Run job")...)
+		}
+		// The row hangs on the service's own switch, so the service's presence
+		// is what makes it part of this installation's table: a project with no
+		// service of that name has nothing the row could be bound on, and the
+		// account holding none of it is the design rather than a drift.
+		name := fmt.Sprintf("projects/%s/locations/%s/services/%s", lc.GCPProject, lc.Region, infra.CredentialsServiceName)
+		p, err := runSvc.Projects.Locations.Services.GetIamPolicy(name).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
+		switch {
+		case err == nil:
+			serviceDeployed = true
+			got = append(got, orchestratorGrantsIn(runBindings(p.Bindings), account, "the credentials service")...)
+		case isNotFound(err):
+			notRead = append(notRead, "the credentials service's own policy (this project has no service "+pluginwire.Printable(infra.CredentialsServiceName)+", so no row of the table binds on one)")
+		default:
+			notRead = append(notRead, "the credentials service's own policy, which is where the invoker row F19 and O2 added lives")
 		}
 	}
 
 	want := []orchestratorGrant{
 		{scope: "the installation project", role: "projects/" + lc.GCPProject + "/roles/" + infra.RoleLauncher},
+	}
+	if serviceDeployed {
+		want = append(want, orchestratorGrant{scope: "the credentials service", role: "roles/run.invoker"})
 	}
 	if fp != "" {
 		want = append(want, orchestratorGrant{scope: "the signer account", role: "projects/" + fp + "/roles/" + infra.MinterRoleID})
@@ -285,7 +332,7 @@ func doctorOrchestratorIdentity(ctx context.Context, lc *localcfg.Config, c *crm
 		}
 		return out
 	}
-	table := "the launcher's project role (run.jobs.get/list, run.executions.get/list/cancel, run.operations.get and the two secret-list permissions), run.jobs.run and run.jobs.runWithOverrides on the installation's Cloud Run jobs, the runs bucket's write under the launchers' condition and its unconditioned read, and the token-minter role on the signer account"
+	table := "the launcher's project role (run.jobs.get/list, run.executions.get/list/cancel, run.operations.get and the two secret-list permissions), run.jobs.run and run.jobs.runWithOverrides on the installation's Cloud Run jobs, the runs bucket's write under the launchers' condition and its unconditioned read, the token-minter role on the signer account, and the invoker bit on the credentials service where this project has one"
 	if len(findings) == 0 {
 		reach := " — the jobs' own policies were not read, so the launch reach is unknown rather than absent"
 		if jread > 0 {

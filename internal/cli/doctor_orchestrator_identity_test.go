@@ -1,6 +1,10 @@
 package cli
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -26,6 +30,7 @@ const (
 	oiLauncherRole = "projects/proj-1234/roles/fugaroLauncher"
 	oiRunnerRole   = "projects/proj-1234/roles/fugaroJobRunner"
 	oiMinterRole   = "projects/" + oiFP + "/roles/fugaroTokenMinter"
+	oiInvokerRole  = "roles/run.invoker"
 
 	oiBucket = "fugaro-runs-proj-1234"
 	oiJob    = "fugaroweb"
@@ -35,7 +40,8 @@ const (
 
 type orchestratorIdentityRig struct {
 	*signerRig
-	gcs *gcpfake.GCS
+	gcs  *gcpfake.GCS
+	svcs *gcpfake.RunServices
 
 	// The two project policies the tests build up, so that a case can add one
 	// binding without spelling out the rest of the policy.
@@ -45,10 +51,11 @@ type orchestratorIdentityRig struct {
 
 func newOrchestratorIdentityRig(t *testing.T) *orchestratorIdentityRig {
 	t.Helper()
-	r := &orchestratorIdentityRig{signerRig: newSignerDoctorRig(t), gcs: gcpfake.NewGCS(t)}
+	r := &orchestratorIdentityRig{signerRig: newSignerDoctorRig(t), gcs: gcpfake.NewGCS(t), svcs: gcpfake.NewRunServices(t)}
 	r.crm.AddProject(oiFP, 123456789013)
 	r.withBudget(t, oiFP, oiSigner)
 	r.withStorage(t)
+	r.withBothCloudRunResources(t)
 	r.gcs.AddBucket(oiBucket, 123456789012, nil)
 	// The signer is the Firebase project's own account, and the IAM fake answers
 	// a policy read for an account it does not have with a 404: without this the
@@ -59,6 +66,53 @@ func newOrchestratorIdentityRig(t *testing.T) *orchestratorIdentityRig {
 	r.crm.SetPolicy("proj-1234", r.projBindings...)
 	r.crm.SetPolicy(oiFP, r.fpBindings...)
 	return r
+}
+
+// withBothCloudRunResources points the config's one Cloud Run endpoint at a
+// proxy of this rig's over the TWO fakes: the jobs the account may start and
+// the credentials service whose own policy carries the invoker row. The real
+// API answers both resource types from one host, and the check reads both
+// through the one endpoint it is given, so a rig that served only one of them
+// would be checking a shape no installation has — and the call to the other
+// would reach the fake's unhandled path and fail the test from inside the
+// proxy.
+func (r *orchestratorIdentityRig) withBothCloudRunResources(t *testing.T) {
+	t.Helper()
+	jobs, err := url.Parse(r.run.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services, err := url.Parse(r.svcs.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(jobs)
+	inner := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		inner(req)
+		if strings.Contains(req.URL.Path, "/services/") {
+			req.URL.Scheme, req.URL.Host = services.Scheme, services.Host
+		}
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+		t.Errorf("the rig's Cloud Run proxy could not forward %s %s: %v", req.Method, req.URL.Path, err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
+	srv := httptest.NewServer(proxy)
+	t.Cleanup(srv.Close)
+
+	b, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := r.run.URL + "/"
+	cfg := strings.Replace(string(b), direct, srv.URL+"/", 1)
+	if cfg == string(b) {
+		t.Fatalf("the config does not name the Cloud Run endpoint %s", direct)
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // withStorage adds a storage endpoint to the config withBudget rewrote: the
@@ -94,7 +148,8 @@ func (r *orchestratorIdentityRig) grantOn(t *testing.T, project, role string) {
 // asDesigned gives the account exactly section 4.3's table, one row per place
 // the rows live: the launcher's project role, the runner's role on the
 // installation's Cloud Run job, the runs bucket's conditioned write and its
-// unconditioned read, and the token-minter role on the budget signer.
+// unconditioned read, the token-minter role on the budget signer, and the
+// invoker bit on the credentials service.
 func (r *orchestratorIdentityRig) asDesigned(t *testing.T) {
 	t.Helper()
 	r.iam.AddServiceAccount("proj-1234", oiAccount, "orchestrator")
@@ -107,6 +162,8 @@ func (r *orchestratorIdentityRig) asDesigned(t *testing.T) {
 	})
 	r.run.AddJob(oiJob, "1", "512Mi")
 	r.run.SetJobPolicy(oiJob, gcpfake.Binding{Role: oiRunnerRole, Members: []string{oiMember}})
+	r.svcs.AddService(infra.CredentialsServiceName)
+	r.svcs.SetServicePolicy(infra.CredentialsServiceName, gcpfake.Binding{Role: oiInvokerRole, Members: []string{oiMember}})
 }
 
 // TestDoctorOrchestratorIdentityTable is the check's own table: the identity as
@@ -144,11 +201,51 @@ func TestDoctorOrchestratorIdentityTable(t *testing.T) {
 		sev    string
 		need   []string
 		fix    []string
+		// unread is whether the case leaves a scope this check cannot read —
+		// the rig's other cases all answer every read it makes, and the one
+		// that deletes the credentials service does not.
+		unread bool
 	}{
 		{
 			name: "identity as designed",
 			ok:   true,
-			need: []string{"holds exactly the design's section 4.3 table", "run.jobs.run", "token-minter role on the signer account"},
+			need: []string{"holds exactly the design's section 4.3 table", "run.jobs.run", "token-minter role on the signer account", "invoker bit on the credentials service"},
+		},
+		{
+			// The invoker row is the one the daemon's whole reach to the
+			// credentials service is (F19, O2): Cloud Run decides admission per
+			// service, so a missing row is a daemon the front end refuses
+			// before its class is ever read, and doctor has to say so.
+			name: "the invoker row on the credentials service is gone",
+			drift: func(t *testing.T, r *orchestratorIdentityRig) {
+				r.svcs.SetServicePolicy(infra.CredentialsServiceName)
+			},
+			sev:  "warning",
+			need: []string{"missing", oiInvokerRole + " on the credentials service"},
+		},
+		{
+			name: "a stray role on the credentials service",
+			drift: func(t *testing.T, r *orchestratorIdentityRig) {
+				r.svcs.SetServicePolicy(infra.CredentialsServiceName,
+					gcpfake.Binding{Role: oiInvokerRole, Members: []string{oiMember}},
+					gcpfake.Binding{Role: "roles/run.viewer", Members: []string{oiMember}})
+			},
+			sev:  "warning",
+			need: []string{"roles/run.viewer on the credentials service"},
+		},
+		{
+			// An installation whose credentials service was never deployed (or
+			// was deleted) has no policy for the invoker row to be bound on, so
+			// the row is not part of that installation's table and the check
+			// says what it did not read rather than warning about a grant
+			// nothing could hold.
+			name: "the credentials service is not deployed",
+			drift: func(t *testing.T, r *orchestratorIdentityRig) {
+				r.svcs.RemoveService(infra.CredentialsServiceName)
+			},
+			sev:    "info",
+			need:   []string{"holds exactly the design's section 4.3 table", "where this project has one"},
+			unread: true,
 		},
 		{
 			name:   "the account is there only for an installation that opted in",
@@ -249,8 +346,12 @@ func TestDoctorOrchestratorIdentityTable(t *testing.T) {
 			if !c.ok && ck.Fix == "" {
 				t.Error("a finding carries no fix: the owner is told what is wrong and not what to do")
 			}
-			if _, unread := checkByID(o, "orchestrator-identity-not-read"); unread {
+			_, unread := checkByID(o, "orchestrator-identity-not-read")
+			switch {
+			case unread && !c.unread:
 				t.Errorf("the rig reads every scope this check looks at, so nothing is unread: %+v", o.Checks)
+			case !unread && c.unread:
+				t.Errorf("this case leaves a scope the check cannot read, and the check reports none: %+v", o.Checks)
 			}
 		})
 	}

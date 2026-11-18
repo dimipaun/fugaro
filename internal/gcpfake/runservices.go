@@ -52,6 +52,14 @@ func (f *RunServices) AddService(name string) {
 	f.services[name] = &fakeRunService{}
 }
 
+// RemoveService takes a service out of the fake, as deleting one does: a
+// policy read for it is then the 404 Google answers.
+func (f *RunServices) RemoveService(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.services, name)
+}
+
 // SetServicePolicy sets the IAM policy of service name, which must exist.
 func (f *RunServices) SetServicePolicy(name string, bindings ...Binding) {
 	f.mu.Lock()
