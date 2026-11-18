@@ -64,7 +64,7 @@ func orchestratorLabelSeams(d *orchestratorDaemon) orchestrator.LabelSeams {
 			opened: map[string]gitprov.Labeler{},
 		},
 		PRs: &orchestratorLabelPRs{bucket: d.env.bucket.Bucket, numbers: map[string]int{}},
-		Log: orchestratorLabelLog{id: d.id, w: d.warn},
+		Log: orchestratorDaemonLog{id: d.id, w: d.warn},
 	}
 }
 
@@ -242,18 +242,22 @@ func (r *orchestratorLabelPRs) PRNumber(ctx context.Context, runID string) (int,
 	return rec.PR.Number, true, nil
 }
 
-// orchestratorLabelLog is where the syncer's failures go: one cleaned line on
+// orchestratorDaemonLog is where a feature's failures go: one cleaned line on
 // this daemon's own warning stream, prefixed with the id it drives, which is
 // what every other seam of this daemon does with a line (orchestratorTriage's
-// warnOnce). The syncer's lines already say what failed and why.
-type orchestratorLabelLog struct {
+// warnOnce). The lines already say what failed and why, so the one shape serves
+// every seam that has one (the label syncer, the issue sync).
+type orchestratorDaemonLog struct {
 	id string
 	w  io.Writer
 }
 
-var _ orchestrator.LabelLog = orchestratorLabelLog{}
+var (
+	_ orchestrator.LabelLog     = orchestratorDaemonLog{}
+	_ orchestrator.IssueSyncLog = orchestratorDaemonLog{}
+)
 
-func (l orchestratorLabelLog) Warn(_ context.Context, line string) {
+func (l orchestratorDaemonLog) Warn(_ context.Context, line string) {
 	if l.w == nil {
 		return
 	}
