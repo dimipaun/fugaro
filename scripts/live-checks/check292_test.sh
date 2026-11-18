@@ -818,8 +818,9 @@ if groups[:2] == ["builds", "cancel"]:
     if F.env("FAKE_CANCEL_FAIL"):
         sys.stderr.write("ERROR: (gcloud.builds.cancel) build %s is already in a terminal state\n" % build_id)
         sys.exit(1)
-    if F.env("FAKE_BUILD_ALREADY_DONE") and not F.read_state("race/lost"):
-        F.write_state("race/lost", "1")
+    if F.env("FAKE_RACE_AT") and str(F.counter("cancel/n")) == F.env("FAKE_RACE_AT"):
+        # The Nth cancel loses the race: the build reached its own last step
+        # first, so the record moved with the staged digest.
         F.finish_staged_build(F.staged_entries()[0])
         F.write_state(os.path.join("builds", build_id), "SUCCESS")
     else:
@@ -1427,7 +1428,7 @@ test_update_that_asks_a_question() {
   run_check "$dir" FAKE_UPDATE_ASKS=1
   expect_status "$status" 1 "an update that asks"
   assert_row update FAIL "an update that asks"
-  expect_contains "$(row update)" "asks nothing new" "the row is about the question"
+  expect_contains "$(row update)" "ask nothing new" "the row is about the question"
   assert_row build FAIL "an update that asks: the build is not reached"
 }
 
@@ -1438,7 +1439,8 @@ test_update_that_stages_an_object() {
   expect_status "$status" 1 "an update that stages"
   assert_row update FAIL "an update that stages"
   expect_contains "$(row update)" "staged objects under the entry's own prefix" "the row names what the update staged"
-  assert_row staged FAIL "an update that stages: the staged row is not reached"
+  assert_row build PASS "an update that stages: the build below still runs"
+  assert_row staged PASS "an update that stages: the objects the build's own copy staged are what the row reads"
 }
 
 test_the_published_node_drops_the_context() {
@@ -1498,7 +1500,7 @@ test_a_record_that_is_not_there() {
   expect_status "$status" 1 "a build that left no record"
   assert_row record FAIL "a build that left no record"
   expect_contains "$(row record)" "no build record" "the row says the record is missing"
-  assert_row content FAIL "a build that left no record: the image is not read"
+  assert_row content PASS "a build that left no record: the image the build's own line named is still read"
 }
 
 test_a_record_naming_another_commit() {
@@ -1675,7 +1677,7 @@ test_a_submitted_build_that_had_already_recorded() {
   # pushes another commit and looks again.
   local dir=$work/race-lost
   prepare "$dir"
-  run_check "$dir" FAKE_BUILD_ALREADY_DONE=1
+  run_check "$dir" FAKE_RACE_AT=2
   expect_status "$status" 0 "a cancel that lost the race"
   assert_row quiet PASS "a cancel that lost the race: the first attempt is quiet"
   assert_row trigger PASS "a cancel that lost the race: the trigger still fires"

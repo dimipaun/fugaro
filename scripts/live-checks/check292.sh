@@ -974,7 +974,7 @@ step_build() {
       hint=" The build's own words name '--build-context': that is the 0.25.0 bug the release after it fixes (#2995 — the flag is not one the Cloud Build runner it pinned understands), so this row is the release BEHIND and not the feature: take the current CLI, run its fugaro update, and build again"
       ;;
     esac
-    fact build FAIL "fugaro image build ${ENTRY} exited ${BOUNDED_STATUS} in ${SANDBOX}: the entry whose source names a context: does not build through Cloud Build, so nothing below it — the copied file, the record, the label — exists to read. What it printed is in $SCRATCH/build.out and $SCRATCH/build.err.${hint}"
+    fact build FAIL "fugaro image build ${ENTRY} exited ${BOUNDED_STATUS} in ${SANDBOX}: the entry whose source names a context: does not build through Cloud Build, so nothing below it — the copied file, the record, the label — exists to read. Its own words are '$(flat "$(tail -n 3 "$SCRATCH/build.err" 2>/dev/null | grep -v '^$' | head -n 2 | tr '\n' ' ' || true)")'. What it printed is in $SCRATCH/build.out and $SCRATCH/build.err.${hint}"
     return 0
   fi
   if [ -z "$made" ]; then
@@ -1227,6 +1227,9 @@ entry_event() { # entry_event KEY SINCE
   local key=$1 since=$2 waited=0 line=""
   EVENT_WHY=""
   while :; do
+    # The retry reads the same file, and `run_bounded` appends: without this the
+    # second pass holds two documents and no JSON reader can take them for one.
+    : >"$SCRATCH/$key.out"
     run_bounded "$CLI_TIMEOUT" "$key" "$SANDBOX" gcloud logging read "$LOG_FILTER" \
       --project="$PROJECT" --freshness=30m --limit=100 --format=json
     if [ "$BOUNDED_TIMED_OUT" = yes ]; then
