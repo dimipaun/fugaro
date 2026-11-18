@@ -1802,12 +1802,18 @@ var (
 	// google_service_account.voice[0] is the voice hop's own account
 	// (P5.3.3, modules/installation/voice.tf): the account the service the
 	// installation's phones call runs as, created on the same one switch
-	// (var.voice_service) as that service. Its own reach in this tree is ONE
-	// row — the get-only state-reader role on the Firebase project's database,
-	// bound in state_read.tf beside the front door's own binding of the same
-	// role — and it is a member here for the same reason the credentials
-	// service's account is: the account is created by a module and named by a
-	// grant.
+	// (var.voice_service) as that service. Its own reach in this tree is TWO
+	// rows and no more — the get-only state-reader role on the Firebase
+	// project's database, bound in state_read.tf beside the front door's own
+	// binding of the same role, and (P5.3.5) the secretAccessor on the
+	// installation's provider-key container alone, bound in secrets.tf — and it
+	// is a member here for the same reason the credentials service's account
+	// is: the account is created by a module and named by a grant. It is the
+	// one account of this tree behind an endpoint anyone on the internet may
+	// call (voice.tf's allUsers binding), so the second of those two rows is
+	// narrowed in internal/infra/tf (voiceProviderKeyGrant, which reads the
+	// plan's secret_id) and the two spellings of the container's ID are held
+	// together by TestVoiceProviderKeysContainerIsTheGoSpelling below.
 	//
 	// "allUsers" is deliberately NOT on this list, and the absence is the
 	// point: a member expression admitted here is admitted for every IAM
@@ -5019,6 +5025,86 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	// caller passes through before the container runs.
 	if !strings.Contains(squash(code), "invoker_iam_disabled = false") {
 		t.Errorf("%s: the service must set invoker_iam_disabled = false explicitly, so a change of the provider's default cannot open it silently", path)
+	}
+}
+
+// TestVoiceProviderKeysContainerIsTheGoSpelling is the one string this tree
+// spells twice: the provider-key container's ID is a literal in the module
+// (`secrets.tf`, because Terraform cannot compute a gcp.ProjectSecretID — the
+// suffix is a hash) and a constant of the Go binary that reads it
+// (internal/backend/gcp's VoiceProviderKeysSecret, which the hop passes to the
+// Secret Manager API). The deployment names neither: voice.tf's third
+// environment value is the GCP PROJECT the container lives in, and the process
+// reads the ID from its own constant, so a drift between the two spellings is
+// not a plan anybody sees — it is a hop that finds no container and refuses
+// every forwarded call, in production, with a green plan. Nothing but this
+// test can hold them together: the module cannot read Go, and the Go side
+// cannot read the module at build time.
+//
+// The falsifiable half is the grep below, and it is deliberately narrow: the
+// secret_id inside the google_secret_manager_secret.voice_provider_keys block,
+// and not any other "fugaro-voice-provider-keys" in the file, so the comment
+// that documents the gcloud line cannot satisfy it — the blocks are read with
+// comments stripped (resourceBlocks) for exactly that reason, since the
+// operator's command is written in the header and a test that read the comment
+// would pass while the resource said something else.
+//
+// Mutation (verified, run and restored): changing the module's literal to
+// "fugaro-voice-provider-key" (one word short — the near miss
+// internal/infra/tf's voice test names) fails this test and this test alone.
+// The golden plan carries whatever the module said when it was generated, and
+// its own check compares the plan with the Go constant rather than with the
+// module, so a drift of the module's literal from Go's is silent everywhere
+// but here.
+func TestVoiceProviderKeysContainerIsTheGoSpelling(t *testing.T) {
+	const path = "gcp/modules/installation/secrets.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var container string
+	for _, blk := range resourceBlocks(t, path, b, "google_secret_manager_secret") {
+		if blk.name != "google_secret_manager_secret.voice_provider_keys" {
+			continue
+		}
+		m := regexp.MustCompile(`secret_id\s*=\s*"([^"]*)"`).FindStringSubmatch(blk.body)
+		if m == nil {
+			t.Fatalf("%s: google_secret_manager_secret.voice_provider_keys has no literal secret_id:\n%s", path, squash(blk.body))
+		}
+		container = m[1]
+	}
+	if container == "" {
+		t.Fatalf("%s declares no google_secret_manager_secret.voice_provider_keys: the hop's key container is what the process reads by name (P5.3.5)", path)
+	}
+	if container != gcp.VoiceProviderKeysSecret {
+		t.Errorf("%s: the provider-key container is %q, internal/backend/gcp's VoiceProviderKeysSecret is %q. The process reads the container by the Go constant and the deployment never names it, so these two are one fact in two languages and a drift between them is silent",
+			path, container, gcp.VoiceProviderKeysSecret)
+	}
+	// And the grant names that same resource rather than a second spelling of
+	// the ID: an accessor on a string that happens to read the same is a grant
+	// on a container whose deletion the module does not track.
+	grant := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member") {
+		if blk.name == "google_secret_manager_secret_iam_member.voice_provider_keys" {
+			grant = squash(blk.body)
+		}
+	}
+	if grant == "" {
+		t.Fatalf("%s declares no google_secret_manager_secret_iam_member.voice_provider_keys: the hop reads no provider key without it", path)
+	}
+	for _, want := range []string{
+		"secret_id = google_secret_manager_secret.voice_provider_keys[0].secret_id",
+		`role = "roles/secretmanager.secretAccessor"`,
+		"member = google_service_account.voice[0].member",
+		"count = local.voice_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the provider-key grant does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the provider-key grant carries a condition. The container is the fence and Secret Manager scopes a binding per secret (secrets.tf), so a condition here narrows nothing and hides the reach from internal/infra/tf's voiceProviderKeyGrant:\n%s", path, grant)
 	}
 }
 

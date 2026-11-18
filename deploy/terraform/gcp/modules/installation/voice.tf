@@ -14,12 +14,23 @@
 # P5.3.5's half, at a later level, and no part of that half is deployed here.
 #
 # OFF BY DEFAULT, like the other two services and for the same reason (D147):
-# with var.voice_service null this file creates nothing — no account and no
+# with var.voice_service null none of this is created — no account and no
 # service — and the installation is exactly what it was before the hop existed.
-# Nothing here reads a value and nothing here carries a prevent_destroy:
-# turning the hop off removes a service, an account and a public binding, and
-# touches no data (there is no container, no store and no node of the hop's own
-# — what it reads is the database and the policy node, and both outlive it).
+# Nothing in this file reads a value. Turning the hop off removes a service, an
+# account, a public binding and its database read, and it takes no data of the
+# database it reads with it: the store and the policy node outlive the hop.
+#
+# IT IS NOT A DATA-FREE REMOVAL ANY MORE (P5.3.5). The hop now owns one
+# container of its own — secrets.tf's provider-key container, created and
+# removed on the same local.voice_on as the resources below — and a secret is a
+# data-bearing type (D1551, internal/infra/tf's dataBearingTypes), so the plan
+# that removes the hop (a) REFUSES until that container's address and its
+# grant's are named on the command line beside the four below, and (b) refuses
+# whatever is named, while the container's prevent_destroy block stands, because
+# the key in it is a value an operator typed by hand and nothing in this
+# installation can put it back. Taking the hop out for good is therefore the
+# lifecycle block's removal first, then the delete-naming update; SECURITY.md
+# carries the six addresses and the reason.
 #
 # WHY THE SERVICE'S OWN ACCOUNT HOLDS EXACTLY ONE GRANT, and why that grant is
 # in state_read.tf and not here. Verifying a Firebase ID token needs no IAM at

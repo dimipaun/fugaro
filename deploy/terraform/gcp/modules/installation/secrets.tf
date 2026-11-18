@@ -83,8 +83,9 @@ resource "google_secret_manager_secret_iam_member" "operator" {
 # from it), and Terraform cannot compute one: the suffix is a hash. The hop
 # reads this container by its OWN constant — internal/backend/gcp's
 # VoiceProviderKeysSecret, which is this same string — beside the GCP project
-# its environment names, so the two spellings are one fact; the module's own
-# root test holds them together. The labels are credentials.tf's bundle's, and
+# its environment names, so the two spellings are one fact; deploy/terraform's
+# TestVoiceProviderKeysContainerIsTheGoSpelling is what holds them together.
+# The labels are credentials.tf's bundle's, and
 # fugaro_secret is deliberately absent for that resource's reason: that label
 # is what `fugaro update`'s discovery and `fugaro secrets ls --project-wide`
 # read to decide which *logical secret* of the project's set a container holds,
