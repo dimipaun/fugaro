@@ -193,7 +193,7 @@ func TestUpdateTurnsTheBitbucketProxyOn(t *testing.T) {
 			if string(after) != string(beforeNode) {
 				t.Errorf("%s: the node's bitbucket_token moved from %s to %s:\n%s", name, beforeNode, after, out)
 			}
-			if tc.extra == "" && ok && entry.Proxy {
+			if tc.extra == "" && ok && entry.ProxyStated() {
 				t.Errorf("%s: the config's %s entry forwards after the run:\n%s", name, config.BitbucketSecret, out)
 			}
 			if strings.Contains(out, "turned the credentials service's Bitbucket proxy on") {
@@ -201,7 +201,7 @@ func TestUpdateTurnsTheBitbucketProxyOn(t *testing.T) {
 			}
 			continue
 		}
-		if !ok || !entry.Proxy {
+		if !ok || !entry.Proxying() {
 			t.Fatalf("%s: the config's %s entry does not forward after the run (entry %+v, present %v): the flip is the write S6 is\n%s", name, config.BitbucketSecret, entry, ok, out)
 		}
 		if !slices.Contains(entry.AllowDataTo, "acme/other") {
@@ -255,7 +255,7 @@ func TestUpdateBitbucketProxyConvergesInOneUpdate(t *testing.T) {
 		t.Fatalf("the migrated node carries bitbucket_token = %+v, want the block the same run's config edit implies: a node that moves with no block beside a file that forwards is the pair resolveBitbucketProxied stops a run over\n%s", p.BitbucketToken, out)
 	}
 	entry, ok := proxyEntryOn(t, f)
-	if !ok || !entry.Proxy || !slices.Contains(entry.AllowDataTo, "acme/other") {
+	if !ok || !entry.Proxying() || !slices.Contains(entry.AllowDataTo, "acme/other") {
 		t.Errorf("the config's %s entry is %+v (present %v) after one run, want it forwarding for acme/other: the switch is the file half of the same step\n%s", config.BitbucketSecret, entry, ok, out)
 	}
 }

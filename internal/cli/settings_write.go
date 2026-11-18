@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -375,7 +376,9 @@ func settingsSetListFallback(src []byte, path []string, want []string, err error
 
 // settingsRewriteList writes one allow-list entry again in the block style this
 // program writes a list in — values under allow_data_to, and the Bitbucket
-// token's proxy written back only when the entry carried it — and is the second
+// token's proxy written back exactly as the entry stated it, absence included:
+// the switch is tri-state (S6's fix), and a `proxy: false` an operator wrote as
+// the hold is not the reformat's to drop — and is the second
 // half of every edit of the two lists that share it: `project_secrets`/
 // `workflow_secrets` and `claude_accounts`.
 //
@@ -394,7 +397,7 @@ func settingsSetListFallback(src []byte, path []string, want []string, err error
 // bytes unchanged and no error, and the refusal the operator reads comes from
 // the write that follows; that is why every step below, the removal included,
 // means the same thing by its error (workspaceEditResult).
-func settingsRewriteList(old []byte, block, name string, values []string, proxy bool) ([]byte, error) {
+func settingsRewriteList(old []byte, block, name string, values []string, proxy *bool) ([]byte, error) {
 	path := block + "." + name
 	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
 	if next, err = workspaceEditResult(path, next, err); err != nil {
@@ -406,8 +409,8 @@ func settingsRewriteList(old []byte, block, name string, values []string, proxy 
 			return nil, err
 		}
 	}
-	if proxy {
-		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, "true")
+	if proxy != nil {
+		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, strconv.FormatBool(*proxy))
 		if next, err = workspaceEditResult(path, scaled, setErr); err != nil {
 			return nil, err
 		}

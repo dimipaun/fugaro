@@ -923,7 +923,7 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 	if !hasEntry {
 		return nil
 	}
-	localProxies := entry.Proxy && entry.AllowsData(c.in.Repo)
+	localProxies := entry.Proxying() && entry.AllowsData(c.in.Repo)
 	if localProxies == nodeProxies {
 		return nil
 	}
