@@ -72,8 +72,10 @@
 #             `--no-apply` and removed in the Restore), one throwaway branch on
 #             the remote carrying three commits, the entry's staged objects, its
 #             record and its check state in the project's runs bucket, and one
-#             image in the installation's shared registry. The Restore row names
-#             every one of them.
+#             image in the installation's shared registry. The Restore removes
+#             the entry and its own objects from the bucket, and its row names
+#             what it cannot undo: the branch and its commits, the image, and the
+#             build step `--no-apply` leaves owed to `fugaro apply`.
 # Costs:      four Cloud Builds (**billable**, each reserved against the project's
 #             budget the way every build is): the entry's own build, the two
 #             submissions staged with `--no-wait` and cancelled before their
@@ -84,9 +86,10 @@
 # Runs:       by YOU. Its sibling test (check292_test.sh) drives it against fake
 #             tools only and reaches no cloud.
 # Cleanup:    the scratch directory, removed from the exit trap even on a failed
-#             assertion or a Ctrl-C. What the check leaves behind — the throwaway
-#             branch and its commits, the image — is named in the Restore row and
-#             is not this check's to undo.
+#             assertion or a Ctrl-C, and the entry with its own objects, removed
+#             from the bucket by the Restore. What the check leaves behind — the
+#             throwaway branch and its commits, the image, the owed build step —
+#             is named in the Restore row and is not this check's to undo.
 # Output:     progress on stderr, ONE block on stdout headed CHECK 292 RESULT,
 #             then CHECK 292 RESULT END (exit N) — to copy back into the
 #             register's Check 292 section, and nothing else. Exit 0: every
