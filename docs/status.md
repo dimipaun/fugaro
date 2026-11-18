@@ -51,8 +51,8 @@ As of 2026-11-18 04:35 UTC (night), read from `main` at `312a3957a` (#3167), the
 | Spec | State |
 | --- | --- |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
-| workspace-projects-users | plan only, 0/24 merged; WU0 (the threat model and its independent security review) approved by the owner 2026-11-18 to launch once the plan is on `main`; every other task waits on WU0's findings and its own go |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
+| workspace-projects-users | plan only, 0/26 merged; WU0 (the threat model and its independent security review) approved by the owner 2026-11-18 to launch once the plan is on `main`; every other task waits on WU0's findings and its own go |
 
 ## Done
 

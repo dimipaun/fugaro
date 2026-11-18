@@ -79,7 +79,7 @@
     },
     {
       "id": "WU2",
-      "title": "the folder authority and `workspace init`",
+      "title": "the folder authority",
       "run": null,
       "version": null,
       "size": 3,
@@ -87,10 +87,24 @@
         "prediction": true,
         "paths": [
           "internal/infra/folder.go",
+          "internal/infra/folder_test.go",
           "internal/gcpfake/crm.go",
           "internal/workspace/authority_folder.go",
-          "internal/workspace/authority_folder_test.go",
-          "internal/cli/workspace_init.go"
+          "internal/workspace/authority_folder_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU24",
+      "title": "`workspace init`",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_init.go",
+          "internal/cli/workspace_init_test.go"
         ]
       }
     },
@@ -122,8 +136,7 @@
         "prediction": true,
         "paths": [
           "internal/cli/workspace_probe.go",
-          "internal/cli/workspace_probe_test.go",
-          "internal/credsvc/probe.go"
+          "internal/cli/workspace_probe_test.go"
         ]
       }
     },
@@ -239,7 +252,8 @@
         "paths": [
           "internal/cli/offboard.go",
           "internal/cli/workspace_offboard.go",
-          "internal/cli/workspace_offboard_test.go"
+          "internal/cli/workspace_offboard_test.go",
+          "internal/runner/accountchoice_test.go"
         ]
       }
     },
@@ -270,6 +284,7 @@
           "internal/workspace/drift.go",
           "internal/workspace/drift_test.go",
           "internal/infra/auditlogs.go",
+          "internal/infra/auditlogs_test.go",
           "internal/gcpfake/logging.go"
         ]
       }
@@ -299,6 +314,20 @@
         "paths": [
           "internal/cli/workspace_state.go",
           "internal/cli/workspace_state_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU23",
+      "title": "`workspace project save`",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_project_save.go",
+          "internal/cli/workspace_project_save_test.go"
         ]
       }
     },
@@ -468,6 +497,11 @@
       "reason": "built against C1's shapes"
     },
     {
+      "task": "WU12",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
       "task": "WU13",
       "needs": "C1",
       "reason": "built against C1's shapes"
@@ -489,6 +523,26 @@
     },
     {
       "task": "WU20",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU23",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU23",
+      "needs": "C2",
+      "reason": "built against C2's shapes"
+    },
+    {
+      "task": "WU24",
+      "needs": "C1",
+      "reason": "built against C1's shapes"
+    },
+    {
+      "task": "WU24",
       "needs": "C2",
       "reason": "built against C2's shapes"
     },
@@ -589,6 +643,16 @@
     },
     {
       "task": "I1",
+      "needs": "WU23",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
+      "needs": "WU24",
+      "reason": "I1 adapts and wires it"
+    },
+    {
+      "task": "I1",
       "needs": "WU3",
       "reason": "I1 adapts and wires it"
     },
@@ -643,6 +707,11 @@
       "reason": "the end-to-end test drives the real commands"
     },
     {
+      "task": "WU21",
+      "needs": "WU10",
+      "reason": "the end-to-end test runs workspace user rm through offboard.go with the refusals in place"
+    },
+    {
       "task": "R-member-firebase",
       "needs": "C2",
       "reason": "amends a file C2 creates"
@@ -689,6 +758,24 @@
       },
       "integration": "I1",
       "reason": "WU11 reads and writes the roster through Store, not how the node is stored"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU23",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "WU23 reads and writes the roster through Store, not how the node is stored"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU24",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "WU24 reads and writes the roster through Store, not how the node is stored"
     },
     {
       "contract": "C1",
@@ -905,6 +992,51 @@
       },
       "integration": "I1",
       "reason": "WU11 calls StateWriter"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU23",
+        "needs": "WU15"
+      },
+      "integration": "I1",
+      "reason": "project save calls StateWriter"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU24",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU24 calls Authority, not the folder move"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU24",
+        "needs": "WU20"
+      },
+      "integration": "I1",
+      "reason": "WU24 calls Authority, not the SA grant"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU12",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU12 calls Authority, not the folder move"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU12",
+        "needs": "WU20"
+      },
+      "integration": "I1",
+      "reason": "WU12 calls Authority, not the SA grant"
     },
     {
       "contract": "C2",

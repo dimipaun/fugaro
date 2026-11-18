@@ -1,9 +1,11 @@
 # Workspace projects and users: implementation plan
 
 Builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). **Nothing is
-implemented and no task is approved**: each task needs the owner's explicit go by name. The plan is
-written to the answers of 2026-11-18 (D2800–D2821, every one as recommended, D2816 unused; the
-amendments of that day are reconciliation O3, O5 and O6, and the resolutions R1–R14 are its §4), and
+implemented, and no task is approved except WU0**, which the owner approved on 2026-11-18 to launch
+once this plan is on `main`; every other task needs the owner's explicit go by name. The plan is
+written to the answers of 2026-11-18 (D2800–D2825, D2816 unused; every one as recommended except
+**D2822 and D2824, which are not the recommendation**; the amendments of that day are reconciliation
+O3, O5, O6 and O7, and the resolutions R1–R14 are its §4), and
 the graph beside it is [implementation-plan.graph.json](implementation-plan.graph.json).
 
 **The repository's settings.** `rigor.default` is `startup` with no area rules, and
@@ -29,7 +31,13 @@ WU9, WU22), `.claude/rules/website.md` (WU0's and I1's website files: `npm run c
   wraps each command with the reporter (D1354) and adds its census row when it registers it, so no
   level-2 task turns `TestEveryMutatingCommandWritesALog` red. **A task's tests use fakes declared in
   its own `_test.go` files, never the contract's stub**, so I1 deletes the stubs without rewriting
-  them. Comments say why.
+  them, and **every fake and test helper a task declares carries its task id** (`wu8FakeMember`), so
+  the level-2 tasks in `internal/cli` merge without a name clash. A Command's `-run` pattern
+  abbreviates: the run anchors it to the task's listed test names (`-run '^(TestA|TestB)$'`). Every
+  member-controlled string `status`, `ls` and drift print is escaped, as
+  `TestUpdateEscapesWhatTheRecordMigrationEchoes` pins for the record. Every write of a member's
+  roster keeps `fugaro user grant`'s refusal on unmigrated lists (`TestGrantRefusesOnUnmigratedLists`).
+  Comments say why.
 - **Ask first.** A new dependency; any change to a contract's files (raise a contract change
   `R-…`, never work around it); any change to `fugaro update`'s stages (this plan adds none, R7);
   any change to the member roster's format (`internal/access`; D2806 keeps it unchanged).
@@ -60,14 +68,18 @@ WU9, WU22), `.claude/rules/website.md` (WU0's and I1's website files: `npm run c
 | An unlinked member keeps `fugaro user …` (R11, D2819) | WU10 `TestUserCommandsUnchangedOnAnUnlinkedMember` |
 | `status` writes nothing on any path, `--json` and `--check-credentials` included | WU11, WU22 tests against fakes that fail on any write |
 | The roster never lives under the published record (R5) | WU1: a roster write leaves `workspaces/<name>`'s ETag unchanged |
-| The member roster's format never changes (D2806, D2818) | WU5, WU7, WU8 tests decode every member write with today's `access.Decode` |
+| The member roster's format never changes (D2806, D2818) | WU4 `TestMemberGrantsDecodeWithTodaysAccess` (every member write goes through WU4) |
+| Only an admin backed by the live folder or SA binding is propagated or trusted (D2823) | WU5 `TestProjectAddPropagatesOnlyBoundAdmins`, WU12 `TestDriftTrustsOnlyBoundAdmins`, WU11 `TestStatusFlagsAdminTampering` |
+| A member owner's `unlink` drops the authority only; the grants go with `project rm` (D2822) | WU18 `TestUnlinkDropsOnlyTheAuthority`, WU11 `TestStatusUnlinkedGrantsLeft` |
+| The state writer never pushes addresses to a public repository (D2824) | WU15 `TestStateSaveRefusesAPublicRepo` |
 
 ## 3. Slices and tasks
 
 Four slices. **S0** (WU0) is the gate. **S1** (C1, C2, and the pure providers WU1, WU2, WU3, WU22)
-settles the shapes and builds what consumes none. **S2** builds every other part against the shapes,
-side by side. **S3** (I1, then WU10, WU16, WU17, WU21) wires, refuses the old doors on linked
-members, documents and hands the owner the live checks. D2803's "folder first": WU2 (folder) is
+settles the shapes and builds what consumes none; `workspace init` (WU24) and `project save` (WU23)
+are S2 consumers. **S2** builds every other part against the shapes,
+side by side. **S3** (I1, then WU10, WU16, WU17, and WU21 after WU10) wires, refuses the old doors on
+linked members, documents and hands the owner the live checks. D2803's "folder first": WU2 (folder) is
 launched before WU20 (SA), and Check 720 exercises the folder before any SA link is tried live.
 WU14 of the first draft was dropped in review round 1 (R7) and WU19 was never used; neither number
 is reused.
@@ -79,8 +91,11 @@ is reused.
   workspace project's owners, editors and budget admins (de facto workspace admins: they can write
   the roster and grant themselves token-creator); a hostile project admin (rewrites the mirror and
   the member's audit node, D2813, D2811); a hostile member owner; and every member's launchers and
-  viewers, who read the mirror's addresses and external marks. It states the revocation lag of
-  D2818 as corrected. It says which of `docs/workspaces/spec.md` §9's rules the addendum supersedes
+  viewers, who read the mirror's addresses and external marks. It states that a workspace admin's
+  `roles/owner` on a member reads every member secret, personal Claude tokens included, against
+  §9's "never hands out a credential"; that a member's budget admins can rewrite
+  `config/admin/workspace-link` (R14), which WU2's `Unlink` guards; and the revocation lag of D2818
+  as corrected. It says which of `docs/workspaces/spec.md` §9's rules the addendum supersedes
   ("never widens a member", "never writes a member's database", "never a second permission model")
   and on what consent; `SECURITY.md` and `docs/design/v1.md` say the same; an independent security
   review (`fugaro review --pr N`, run by the coordinator) has returned and the owner has answered
@@ -103,7 +118,8 @@ is reused.
 - Acceptance: the roster's Go types (`Roster`, `Person` with `Kind` human|sa, `External` and, for a
   machine, its expected per-project roles (D2806); `Domains`, `Admins`, the set of member grants the
   workspace wrote (D2818's mark, kept here and never in a member roster), `AuditEvent`,
-  `MirrorEntry`; R6), its path `workspaceRosters/<name>` (R5), its JSON Schema, the audit event's
+  `MirrorEntry`; `Mechanism` (folder or SA) and `FolderID`, which `workspace init` writes with the
+  caller as the first admin; R6), its path `workspaceRosters/<name>` (R5), its JSON Schema, the audit event's
   schema, the `Store` (ETag read, conditional write and create) and `AuditSink` interfaces and their
   stubs exist, with a contract document saying what each side may rely on.
 - Files: `internal/workspace/roster.go` (new), `internal/workspace/rosterstore.go` (new),
@@ -121,15 +137,16 @@ is reused.
 ### C2: the member-operations contract
 - Acceptance: interfaces `MemberOps` (`ReadGrants`, `WriteGrants`, `ReadMirror`, `WriteMirror`,
   `Bindings`, `PendingApply`, `Offboard`, `Audit` to the member's `config/admin/workspace-audit`),
-  `Authority` (`Kind`, `Link`, `Unlink`, `Holds`, `AddAdmin`, `RemoveAdmin`), `StateWriter` (`Save`,
-  `LastSaved`), `CredentialProbe` (`Probe`) and `Drift(...) DriftReport` exist with stubs and a
+  `Authority` (`Kind`, `Link`, `Unlink`, `Holds`, `AddAdmin`, `RemoveAdmin`, `AdminBindings`), `StateWriter` (`Save`,
+  `LastSaved`), `CredentialProbe` (`Probe`) and `Drift(...) DriftReport` (WU12's implementation is
+  named `ComputeDrift`, so it never collides with this stub in the same package) exist with stubs and a
   contract document; the workspace root's IAM-account output is named **`workspace_iam_account`**
   (fixed here and in WU3's acceptance, so WU3 needs no edge to C2); every method names the member's
   GCP project and its Firebase project separately (F2, R10).
 - Files: `internal/workspace/memberops.go` (new), `internal/workspace/memberops_stub.go` (new),
   `docs/workspace-projects-users/contract-member.md` (new).
-- Interfaces: produces what the consumers call; WU2, WU4, WU9, WU12, WU15 and WU22 provide concrete
-  types I1 adapts onto it.
+- Interfaces: produces what the consumers call; WU2, WU4, WU9, WU12, WU15, WU20 and WU22 provide
+  concrete types I1 adapts onto it.
 - Tests: `TestMemberOpsStubShapes`.
 - Command: `go test ./internal/workspace/ -run TestMemberOps -count=1`.
 - Red step: the shape test fails until each stub returns its declared zero shape.
@@ -155,28 +172,45 @@ is reused.
 - Commit: `workspace: the roster node and the audit writer (WU1, D2811, D2817, R5)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### WU2: the folder authority and `workspace init`
-- Acceptance: `workspace init` detects an organization the caller can create folders in, creates
-  the workspace's folder with the workspace admins as `roles/owner` on it and places the workspace's
-  own project in it (R8), else records the SA mechanism; the folder authority's `Link` moves the
-  member's project — and its Firebase project when separate (R10) — into the folder from the member
-  owner's own credentials, records the original parent in the member's
-  `config/admin/workspace-link` (R14), and refuses a project under another workspace's folder (R2);
-  `Unlink` moves it back; `Holds` reports the parent; `AddAdmin`/`RemoveAdmin` change the folder's
-  owner binding.
-- Files: `internal/infra/folder.go` (new), `internal/gcpfake/crm.go`,
-  `internal/workspace/authority_folder.go` (new), `internal/workspace/authority_folder_test.go` (new),
-  `internal/cli/workspace_init.go` (new; constructor only, registered by I1).
+### WU2: the folder authority
+- Acceptance: the folder authority's `Link` moves the member's project — and its Firebase project
+  when separate (R10) — into the workspace's folder from the member owner's own credentials, records
+  the original parent in the member's `config/admin/workspace-link` (R14), and refuses a project
+  under another workspace's folder (R2); `Unlink` prints the recorded parent and moves the project
+  back there, refusing a recorded parent inside any workspace's folder (a budget admin can rewrite
+  the record, WU0); `Holds` reports the parent; `AddAdmin`/`RemoveAdmin` change the folder's owner
+  binding; `AdminBindings` lists the folder's owners; `CreateFolder` creates a folder with the
+  caller as owner and places a project in it (for WU24).
+- Files: `internal/infra/folder.go` (new), `internal/infra/folder_test.go` (new),
+  `internal/gcpfake/crm.go`, `internal/workspace/authority_folder.go` (new),
+  `internal/workspace/authority_folder_test.go` (new).
 - Interfaces: consumes none; produces a concrete folder authority I1 adapts to C2's `Authority`.
-  `crm.go` gains folders, moves and project `setIamPolicy` for this task's and WU21's tests.
-- Tests: `TestWorkspaceInitPicksFolderWithOrg`, `TestWorkspaceInitPlacesTheWorkspaceProject`,
-  `TestWorkspaceInitRecordsSAWithoutOrg`, `TestFolderLinkMovesTheFirebaseProjectToo`,
-  `TestFolderLinkRefusesOtherWorkspaceFolder`, `TestFolderUnlinkRestoresParent`,
-  `TestFolderAdminBindingAddedAndRemoved`.
-- Command: `go test ./internal/infra/ ./internal/workspace/ ./internal/cli/ -run 'TestWorkspaceInit|TestFolder' -count=1`.
-- Red step: the init test fails until the fake answers an organization search.
+  `crm.go` gains folders, moves, organization search and project `setIamPolicy` for this task's and
+  WU21's tests.
+- Tests: `TestFolderLinkMovesTheFirebaseProjectToo`, `TestFolderLinkRefusesOtherWorkspaceFolder`,
+  `TestFolderUnlinkRestoresParent`, `TestFolderUnlinkRefusesATamperedParent`,
+  `TestFolderAdminBindingAddedAndRemoved`, `TestCreateFolderPlacesTheProject`.
+- Command: `go test ./internal/infra/ ./internal/workspace/ -run 'TestFolder|TestCreateFolder' -count=1`.
+- Red step: the link test fails until the fake records a move.
 - Depends on: WU0 (the gate).
-- Commit: `workspace: the folder authority and workspace init (WU2, D2803, D2804, D2818, R8, R10)`.
+- Commit: `workspace: the folder authority (WU2, D2803, D2804, D2818, R10, R14)`.
+- Reviewer tier: opus, mandatory independent review.
+
+### WU24: `workspace init`
+- Acceptance: `workspace init` detects an organization the caller can create folders in, creates
+  the workspace's folder with the caller as `roles/owner`, places the workspace's own project in it
+  (R8), and writes the roster's `Mechanism`, `FolderID` and the caller as its first admin; with no
+  organization it records the SA mechanism; it refuses a workspace whose roster already exists.
+- Files: `internal/cli/workspace_init.go` (new; constructor only, registered by I1),
+  `internal/cli/workspace_init_test.go` (new).
+- Interfaces: consumes C1 `Store`; C2 `Authority`.
+- Tests: `TestWorkspaceInitPicksFolderWithOrg`, `TestWorkspaceInitPlacesTheWorkspaceProject`,
+  `TestWorkspaceInitRecordsSAWithoutOrg`, `TestWorkspaceInitWritesTheFirstAdmin`,
+  `TestWorkspaceInitRefusesASecondInit`.
+- Command: `go test ./internal/cli/ -run TestWorkspaceInit -count=1`.
+- Red step: the folder test fails until its fake answers an organization search.
+- Depends on: C1, C2.
+- Commit: `workspace: workspace init (WU24, D2803, R8)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WU3: the SA fallback's account
@@ -199,30 +233,33 @@ is reused.
 - Reviewer tier: opus, mandatory independent review. Six files: three are test files.
 
 ### WU22: the credential probe
-- Acceptance: `Probe` makes one minimal authenticated call per model key and Claude token a member
-  references, through the credentials service, and returns pass or fail with the provider's status,
-  never the value; it refuses in a coding agent's session.
-- Files: `internal/cli/workspace_probe.go` (new), `internal/cli/workspace_probe_test.go` (new),
-  `internal/credsvc/probe.go`.
+- Acceptance: `Probe` reads each project model key and each project-owned Claude account a member
+  references in memory, in the owner's own terminal, as `doctor --check-bitbucket-token` reads the
+  bundle, and makes one minimal authenticated call per credential; it returns pass or fail with the
+  provider's status and never the value; it never reads a personal token under a person's own
+  prefix (D2825), whose broken marks `status` still shows; it refuses in a coding agent's session;
+  it needs no credentials-service route (U7).
+- Files: `internal/cli/workspace_probe.go` (new), `internal/cli/workspace_probe_test.go` (new).
 - Interfaces: consumes none; produces a concrete probe I1 adapts to C2's `CredentialProbe`.
-- Tests: `TestProbeNeverPrintsTheValue`, `TestProbeRefusedInAnAgentSession`, `TestProbeReportsAProviderRefusal`.
-- Command: `go test ./internal/cli/ ./internal/credsvc/ -run 'TestProbe' -count=1`.
-- Red step: the provider-refusal test fails until the credentials service's probe reaches a model
-  provider (U7).
+- Tests: `TestProbeNeverPrintsTheValue`, `TestProbeRefusedInAnAgentSession`,
+  `TestProbeReportsAProviderRefusal`, `TestProbeSkipsPersonalTokens`.
+- Command: `go test ./internal/cli/ -run 'TestProbe(NeverPrints|RefusedInAn|ReportsA|SkipsPersonal)' -count=1`.
+- Red step: the personal-token test fails until the person prefix is skipped.
 - Depends on: WU0 (the gate).
-- Commit: `workspace: the credential probe (WU22, D2820)`.
+- Commit: `workspace: the credential probe (WU22, D2820, D2825)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WU20: the SA authority
 - Acceptance: `Link` grants the workspace IAM account `roles/owner` on the member — and on its
   Firebase project when separate (R10) — from the member owner's own credentials; `Unlink` removes
   it; `Holds` reports the grant; `AddAdmin`/`RemoveAdmin` change the account's token-creator bindings
-  and the admin's owner grant on the workspace's own project (R8); the account is only ever
-  impersonated.
+  and the admin's owner grant on the workspace's own project (R8), printing Google's
+  console-invitation step when Google refuses an owner grant by API outside an organization (U8,
+  D2825); `AdminBindings` lists the token creators; the account is only ever impersonated.
 - Files: `internal/workspace/authority_sa.go` (new), `internal/workspace/authority_sa_test.go` (new).
 - Interfaces: consumes C2's output name; produces a concrete SA authority I1 adapts to `Authority`.
 - Tests: `TestSALinkGrantsOwner`, `TestSALinkCoversTheFirebaseProject`, `TestSAUnlinkRemovesGrant`,
-  `TestSAAdminTokenCreatorAddedAndRemoved`, `TestSANeverReadsAKey`.
+  `TestSAAdminTokenCreatorAddedAndRemoved`, `TestSAAddAdminPrintsTheInviteStep`, `TestSANeverReadsAKey`.
 - Command: `go test ./internal/workspace/ -run TestSA -count=1`.
 - Red step: the link test fails until its fake records the binding.
 - Depends on: C2.
@@ -237,14 +274,17 @@ is reused.
   `Bindings` reads the member's IAM policy and names the member's own Terraform accounts and the
   workspace IAM account; `PendingApply` compares the roster's derived launcher and operator lists
   with the installation outputs `launchers` and `operators`, read from the member's state bucket,
-  and reports viewers and repository-scope grants as "not measured" (no output carries them).
+  and the derived admin list with the published admin-list object (`access.PathAdminList`, D1940),
+  and reports viewers and repository-scope grants as "not measured" (no output carries them);
+  `WriteGrants` refuses on unmigrated lists, as `fugaro user grant` does.
   Nothing here runs Terraform.
 - Files: `internal/cli/workspace_memberops.go` (new), `internal/cli/workspace_memberops_test.go` (new),
   `internal/cli/workspace_member_audit.go` (new).
 - Interfaces: consumes C1's `MirrorEntry` and `AuditEvent`; produces a concrete member writer I1
   adapts to C2's `MemberOps` (except `Offboard`).
 - Tests: `TestMemberGrantsWriteRefusesStaleETag`, `TestMemberGrantsDecodeWithTodaysAccess`,
-  `TestPendingApplyNamesUnappliedOperators`, `TestPendingApplyViewersNotMeasured`,
+  `TestPendingApplyNamesUnappliedOperators`, `TestPendingApplyNamesAnUnpublishedAdmin`,
+  `TestPendingApplyViewersNotMeasured`, `TestMemberGrantsRefuseUnmigratedLists`,
   `TestBindingsLabelsFugaroAccounts`, `TestMemberAuditCreateOnly`.
 - Command: `go test ./internal/cli/ -run 'TestMemberGrants|TestPendingApply|TestBindingsLabels|TestMemberAudit' -count=1`.
 - Red step: the pending test fails until the outputs' lists are read.
@@ -256,14 +296,15 @@ is reused.
 - Acceptance: run by the workspace project's owner on the machine holding the member table (D2821),
   it carries `workspace member add`'s flags and table entry unchanged (the record is still published
   by `fugaro update`); on a linked member it adopts the member's grantees into the workspace node
-  (outside the domains only with `--external`), writes each workspace admin's stored grant (D2818;
-  the mark kept in the workspace node) and the mirror; on an unlinked member it records the entry
+  (outside the domains only with `--external`), writes the stored grant of each workspace admin
+  who also holds the live binding (D2818, D2823; the mark kept in the workspace node) and the mirror; on an unlinked member it records the entry
   and says the member owner runs `fugaro workspace project link`; it refuses a project the mirror or
   the parent folder shows in another workspace (R2, R14) and strips nothing (D2805).
 - Files: `internal/cli/workspace_project.go` (new), `internal/cli/workspace_project_test.go` (new).
 - Interfaces: consumes C1 `Store`, `AuditSink`; C2 `Authority.Holds`, `MemberOps`.
 - Tests: `TestProjectAddAdoptsGrants`, `TestProjectAddWaitsForLink`, `TestProjectAddRefusesOtherWorkspace`,
-  `TestProjectAddNeedsExternalFlag`, `TestProjectAddKeepsMemberFlags`, `TestProjectAddOnlyOnTheTablesMachine`.
+  `TestProjectAddNeedsExternalFlag`, `TestProjectAddKeepsMemberFlags`, `TestProjectAddOnlyOnTheTablesMachine`,
+  `TestProjectAddPropagatesOnlyBoundAdmins`.
 - Command: `go test ./internal/cli/ -run TestProjectAdd -count=1`.
 - Red step: the adopt test fails against its fake's empty roster.
 - Depends on: C1, C2.
@@ -273,29 +314,32 @@ is reused.
 ### WU18: `workspace project link|unlink`
 - Acceptance: run on the member owner's machine with the member's own config selected and its pin
   naming the workspace (`fugaro workspace add`), `link` calls `Authority.Link` with the owner's own
-  credentials and writes the mirror and a member audit entry; `unlink` reverses it and also removes
-  the workspace admins' stored grants and the mirror; both refuse on a config that is not the
-  member's or whose pin names another workspace.
+  credentials and writes a member audit entry (the mirror is written by the workspace owner's
+  `project add`, since a member owner cannot read the roster); `unlink` drops only the authority —
+  the folder move back or the SA's owner grant — and writes a member audit entry, and says that the
+  workspace admins' stored grants stay until the workspace project owner's `project rm` (D2822);
+  both refuse on a config that is not the member's or whose pin names another workspace.
 - Files: `internal/cli/workspace_project_link.go` (new), `internal/cli/workspace_project_link_test.go` (new).
-- Interfaces: consumes C2 `Authority`, `MemberOps`.
-- Tests: `TestLinkNeedsTheMembersOwnConfig`, `TestLinkRefusesOtherWorkspacePin`, `TestUnlinkRemovesGrantsAndMirror`.
+- Interfaces: consumes C2 `Authority`, `MemberOps.Audit`.
+- Tests: `TestLinkNeedsTheMembersOwnConfig`, `TestLinkRefusesOtherWorkspacePin`, `TestUnlinkDropsOnlyTheAuthority`.
 - Command: `go test ./internal/cli/ -run 'TestLink|TestUnlink' -count=1`.
 - Red step: the own-config test fails until the pin is read.
 - Depends on: C2.
-- Commit: `workspace: project link, the member owner's consent (WU18, D2800, D2819)`.
+- Commit: `workspace: project link and unlink, the member owner's consent (WU18, D2800, D2819, D2822)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WU6: `workspace project rm`
 - Acceptance: run by the workspace project's owner (D2821); saves the state by default through
   `StateWriter` to the member's E6 repository (D2807) and a local file, `--no-save-state` skips it;
-  removes the workspace admins' stored grants and the mirror from the member; on the SA mechanism
+  removes the workspace admins' stored grants and the mirror from the member, also after the member
+  owner's `unlink` (D2822); on the SA mechanism
   removes the account's grant; on the folder mechanism prints `fugaro workspace project unlink` for
   the member owner (U6); prints the running-cost warning naming the rebuild Scheduler jobs and the
   credentials service, and R3's console link; deletes no GCP or Firebase resource.
 - Files: `internal/cli/workspace_project_rm.go` (new), `internal/cli/workspace_project_rm_test.go` (new).
 - Interfaces: consumes C1 `Store`; C2 `Authority`, `MemberOps`, `StateWriter`.
 - Tests: `TestProjectRmSavesByDefault`, `TestProjectRmDeletesNothing`, `TestProjectRmPrintsShutdownLink`,
-  `TestProjectRmRemovesWorkspaceAdminGrants`.
+  `TestProjectRmRemovesWorkspaceAdminGrants`, `TestProjectRmAfterUnlinkRemovesTheGrants`.
 - Command: `go test ./internal/cli/ -run TestProjectRm -count=1`.
 - Red step: the save test fails against its fake writer.
 - Depends on: C1, C2.
@@ -350,11 +394,12 @@ is reused.
   (D2818, D1940) — before that it says which member's `fugaro update` is pending and sweeps nothing
   there; a run whose only credential was swept ends with the gateway's existing refusal (U4).
 - Files: `internal/cli/offboard.go`, `internal/cli/workspace_offboard.go` (new),
-  `internal/cli/workspace_offboard_test.go` (new).
+  `internal/cli/workspace_offboard_test.go` (new), `internal/runner/accountchoice_test.go`.
 - Interfaces: consumes C2 `MemberOps.Audit`; produces a concrete offboarder I1 adapts to `MemberOps.Offboard`.
 - Tests: `TestOffboardMemberSweepsPrefix`, `TestOffboardMemberWaitsForTheAdminList`,
   `TestOffboardMemberAudits`, `TestSweptOnlyCredentialRefusesClearly`.
-- Command: `go test ./internal/cli/ -run 'TestOffboardMember|TestSweptOnlyCredential' -count=1`.
+- Command: `go test ./internal/cli/ -run TestOffboardMember -count=1` and
+  `go test ./internal/runner/ -run TestSweptOnlyCredentialRefusesClearly -count=1`.
 - Red step: the sweep test fails until the core takes a named project.
 - Depends on: C2.
 - Commit: `workspace: offboarding reaches every member (WU9, D2813, D2818)`.
@@ -366,14 +411,17 @@ is reused.
   stored and not marked broken, and with `--check-credentials` in the owner's own terminal the
   probe's result (D2820); images fresh (the rebuild Scheduler jobs' last success); caps set and use
   against them; grants waiting for the member's `fugaro update` (`PendingApply`, with "not measured"
-  where it says so); state repo in sync (`LastSaved`); drift (`Drift`); a single workspace admin
-  (R1); `ls` prints one line per member with its worst row; neither writes anything on any path.
+  where it says so); "unlinked, grants left" after a member owner's `unlink` (D2822); state repo in
+  sync (`LastSaved`, saved by `project save` or `project rm`, D2824); drift (`Drift`); admin tampering
+  — an `Admins` entry without the live binding, or a binding holder not in `Admins` (D2823); a single
+  workspace admin (R1); every member-controlled string escaped; `ls` prints one line per member with its worst row; neither writes anything on any path.
 - Files: `internal/cli/workspace_project_status.go` (new), `internal/cli/workspace_project_status_test.go`
   (new), `schemas/workspace-projects.schema.json` (new).
 - Interfaces: consumes C1 `Store`; C2 `Authority`, `MemberOps`, `StateWriter`, `Drift`,
   `CredentialProbe`; calls `claudeAccountsStoredCheck` and doctor's brokering reads.
 - Tests: `TestStatusRowsInOrder`, `TestStatusWritesNothing`, `TestStatusNotLinked`,
-  `TestStatusCheckCredentialsOnlyInOwnTerminal`, `TestStatusSingleAdminWarns`, `TestProjectLsJSONSchema`.
+  `TestStatusCheckCredentialsOnlyInOwnTerminal`, `TestStatusSingleAdminWarns`, `TestStatusFlagsAdminTampering`, `TestStatusUnlinkedGrantsLeft`,
+  `TestStatusEscapesMemberStrings`, `TestProjectLsJSONSchema`.
 - Command: `go test ./internal/cli/ -run 'TestStatus|TestProjectLs' -count=1`.
 - Red step: the write-nothing test fails until every read goes through the read-only fake.
 - Depends on: C1, C2.
@@ -381,28 +429,35 @@ is reused.
 - Reviewer tier: standard.
 
 ### WU12: drift and the Cloud Audit Logs cross-check
-- Acceptance: `Drift` reports extra and missing grants between a member's IAM policy, its roster and
-  **the workspace node** (never the mirror, D2813), and for machines between their bindings and the
-  roles the node records (D2806); it ignores the member's own Terraform accounts and the workspace
-  IAM account's own grant, and reports any folder owner or token creator who is not a workspace
-  admin (R13); it flags outside-domain principals; it names each Cloud Audit Logs `SetIamPolicy`
-  whose resulting binding is drift and which neither audit trail holds, and never a member's own
-  `update` (R13).
+- Acceptance: `ComputeDrift` (not `Drift`, which is C2's stub until I1) reports extra and missing
+  grants between a member's IAM policy, its roster and **the workspace node** (never the mirror,
+  D2813), and for machines between their bindings and the roles the node records (D2806); it trusts
+  only the admins that also hold the live binding, read through `Authority.AdminBindings` (D2823);
+  it ignores the member's own Terraform accounts and the workspace IAM account's own grants (its
+  owner grant and, in the SA model, the Firebase admin binding the member's own `update` derives from
+  project owners); it reports any folder owner or token creator who is not a bound workspace admin
+  (R13) and names budget admins as implicit admins; it flags outside-domain principals; it names each
+  Cloud Audit Logs `SetIamPolicy` whose resulting binding is drift and which neither audit trail
+  holds, and never a member's own `update` (R13).
 - Files: `internal/workspace/drift.go` (new), `internal/workspace/drift_test.go` (new),
-  `internal/infra/auditlogs.go` (new), `internal/gcpfake/logging.go`.
-- Interfaces: consumes C1's `Person`, `AuditEvent`; produces `Drift` I1 adapts to C2's signature.
+  `internal/infra/auditlogs.go` (new), `internal/infra/auditlogs_test.go` (new),
+  `internal/gcpfake/logging.go`.
+- Interfaces: consumes C1's `Person`, `AuditEvent`; C2's `Authority.AdminBindings`; produces
+  `ComputeDrift`, which I1 adapts to C2's `Drift`.
 - Tests: `TestDriftIgnoresFugaroAccounts`, `TestDriftIgnoresARewrittenMirror`,
-  `TestDriftReportsAFolderOwnerWhoIsNotAnAdmin`, `TestDriftChecksMachinesAgainstTheRecord`,
-  `TestDriftExtraAndMissing`, `TestDriftNamesConsoleChangeNotUpdate`.
-- Command: `go test ./internal/workspace/ ./internal/infra/ -run 'TestDrift|TestAuditLogs' -count=1`.
+  `TestDriftTrustsOnlyBoundAdmins`, `TestDriftReportsAFolderOwnerWhoIsNotAnAdmin`,
+  `TestDriftChecksMachinesAgainstTheRecord`, `TestDriftExtraAndMissing`,
+  `TestDriftNamesConsoleChangeNotUpdate`, `TestAuditLogsReadsSetIamPolicy`.
+- Command: `go test ./internal/workspace/ ./internal/infra/ -run 'TestDrift|TestAuditLogsReadsSetIamPolicy' -count=1`.
 - Red step: the rewritten-mirror test fails until drift reads the workspace node.
-- Depends on: C1.
-- Commit: `workspace: drift against the workspace node and the audit logs (WU12, D2806, D2811, D2813, R13)`.
+- Depends on: C1, C2.
+- Commit: `workspace: drift against the workspace node and the audit logs (WU12, D2806, D2811, D2813, D2823, R13)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WU13: `workspace project reconcile`
 - Acceptance: adds missing grants and removes extras on the member's roster from `Drift` (people
-  only; a machine's drift is reported, never written, D2806), audits each change, and prints that
+  only; a machine's drift is reported, never written, D2806; an admin grant only for an admin who
+  holds the live binding, D2823), audits each change, and prints that
   the member's own `fugaro update` applies them; `--dry-run` writes nothing.
 - Files: `internal/cli/workspace_project_reconcile.go` (new), `internal/cli/workspace_project_reconcile_test.go` (new).
 - Interfaces: consumes C1 `AuditSink`; C2 `Drift`, `MemberOps`.
@@ -415,23 +470,41 @@ is reused.
 
 ### WU15: the state writer
 - Acceptance: `Save` writes the project's settings and spend summary — and, for the workspace, its
-  audit export — always to a local file it names, and, when the E6 designated repository is set,
-  as a pull request: clone, commit to a new branch, push, and open the pull request with the host's
-  CLI (`gh` or `bb`), from the owner's terminal with the owner's own credentials (D2807); it refuses
-  in a coding agent's session; `LastSaved` reads the last snapshot's time.
+  audit export — always to a local file it names, and, when the E6 designated repository is set, as
+  a pull request: clone, commit to a new branch, push, and open the pull request through the
+  repository's own provider (`gh` for GitHub; `internal/gitprov` for Bitbucket, which has no CLI),
+  from the owner's terminal with the owner's own credentials (D2807); before it pushes it prints the
+  target repository and where its setting came from, and it refuses a public repository, naming a
+  `--repo` override, because the snapshot carries addresses (D2824); it refuses in a coding agent's
+  session; `LastSaved` reads the last snapshot's time.
 - Files: `internal/cli/workspace_state.go` (new), `internal/cli/workspace_state_test.go` (new).
 - Interfaces: consumes C1's `AuditEvent`; produces a concrete writer I1 adapts to `StateWriter`.
-- Tests: `TestStateSaveAlwaysWritesLocal`, `TestStateSaveOpensPR`, `TestStateSaveRefusedInAgentSession`, `TestLastSaved`.
+- Tests: `TestStateSaveAlwaysWritesLocal`, `TestStateSaveOpensPR`, `TestStateSaveRefusesAPublicRepo`,
+  `TestStateSaveNamesTheTargetAndItsSource`, `TestStateSaveRefusedInAgentSession`, `TestLastSaved`.
 - Command: `go test ./internal/cli/ -run 'TestStateSave|TestLastSaved' -count=1`.
-- Red step: the PR test fails until the fake host CLI is called.
+- Red step: the public-repository test fails until the visibility is read.
 - Depends on: C1.
-- Commit: `workspace: state snapshots to the designated repository (WU15, D2807)`.
+- Commit: `workspace: state snapshots to the designated repository (WU15, D2807, D2824)`.
 - Reviewer tier: opus, mandatory independent review (it pushes to a repository with the owner's credentials).
+
+### WU23: `workspace project save`
+- Acceptance: run by the workspace project's owner, `project save [<project>]` saves one member's
+  state, or every member's with no argument, and `--audit` saves the workspace's audit export,
+  through `StateWriter` (D2824); it is the only saver besides `project rm`; it refuses in a coding
+  agent's session and asks nothing.
+- Files: `internal/cli/workspace_project_save.go` (new), `internal/cli/workspace_project_save_test.go` (new).
+- Interfaces: consumes C1 `Store`; C2 `StateWriter`.
+- Tests: `TestProjectSaveOneMember`, `TestProjectSaveEveryMember`, `TestProjectSaveAuditExport`.
+- Command: `go test ./internal/cli/ -run TestProjectSave -count=1`.
+- Red step: the one-member test fails against its fake writer.
+- Depends on: C1, C2.
+- Commit: `workspace: project save (WU23, D2824)`.
+- Reviewer tier: opus.
 
 ### I1: wire the workspace commands
 - Acceptance: the stubs are deleted; C1's and C2's interfaces are adapted onto WU1, WU2, WU20, WU4,
-  WU9, WU12, WU15 and WU22; `newWorkspaceCmd` registers `init`,
-  `project add|ls|rm|status|reconcile|link|unlink`, `user add|rm|ls|grant|revoke` and
+  WU9, WU12 (`ComputeDrift`), WU15 and WU22; `newWorkspaceCmd` registers `init`,
+  `project add|ls|rm|status|reconcile|link|unlink|save`, `user add|rm|ls|grant|revoke` and
   `domains add|rm|ls`, each wrapped with the reporter (D1354), and removes `workspace member` in the
   same change; the census, the no-prompt harness, the CLI reference and `update_workspace.go`'s
   refusal text and test name the new commands.
@@ -444,11 +517,12 @@ is reused.
 - Tests: `TestWorkspaceCommandsRegistered`, `TestEveryCommandIsOnTheReporterOrExempt`,
   `TestEveryMutatingCommandWritesALog`, `TestEveryCommandRunsWithClosedStdin`,
   `TestCoreCommandsAreInTheReference`, `ee/clidoc`'s CLI-reference comparison.
-- Command: `go test ./internal/cli/ -run 'TestWorkspaceCommandsRegistered|TestEveryCommandIsOnTheReporterOrExempt|TestEveryMutatingCommandWritesALog|TestEveryCommandRunsWithClosedStdin|TestUpdateWorkspace' -count=1`,
+- Command: `go test ./internal/cli/ -run 'TestWorkspaceCommandsRegistered|TestEveryCommandIsOnTheReporterOrExempt|TestEveryMutatingCommandWritesALog|TestEveryCommandRunsWithClosedStdin|TestMembership|TestWorkspaceRemoval|TestUpdate.*Workspace' -count=1`,
   `go test ./internal/clidoc/ -run TestCoreCommandsAreInTheReference -count=1`,
   `go test ./ee/clidoc/ -count=1`, and `npm run check` in `website/`.
 - Red step: the registration test fails while either stub is wired.
-- Depends on: WU1, WU2, WU20, WU3, WU4, WU5, WU18, WU6, WU7, WU8, WU9, WU11, WU12, WU13, WU15, WU22.
+- Depends on: WU1, WU2, WU20, WU3, WU4, WU5, WU18, WU6, WU7, WU8, WU9, WU11, WU12, WU13, WU15, WU22,
+  WU23, WU24.
 - Commit: `workspace: wire projects and users (I1)`.
 - Reviewer tier: opus, mandatory independent review. Ten files: two deletions, one regeneration and
   five census or text lines; the end-to-end test is WU21.
@@ -460,25 +534,30 @@ is reused.
   and operator lists into the fake's installation outputs → status (clean) → a binding added straight
   in the fake → status names the drift and the audit-log entry → reconcile → user rm (prefix swept
   once the admin list is published) → `--admin` removal (binding gone, grants queued) → project rm
-  (state saved locally, nothing deleted).
+  (state saved locally, nothing deleted), with WU10's refusals in place.
 - Files: `internal/cli/workspace_e2e_test.go` (new), `internal/gcpfake/iam.go`.
 - Interfaces: none.
 - Tests and command: `go test ./internal/cli/ -run TestWorkspaceProjectsUsersEndToEnd -count=1`.
 - Red step: it fails on the first command any part leaves unwired.
-- Depends on: I1 (behaviour: the real commands).
+- Depends on: I1 and WU10 (behaviour: the real commands, with the old doors refused, which share
+  `offboard.go` with `workspace user rm`).
 - Commit: `workspace: projects and users end to end (WU21)`.
 - Reviewer tier: standard.
 
 ### WU10: installation-level refusals on a linked member
-- Acceptance: on a **linked** member (R11) — its mirror present — `fugaro user add|rm|grant|revoke|offboard`
-  and `fugaro setup|update --operator/--admin`'s fold into the roster (R12) refuse, naming the
-  `fugaro workspace user …` command; on an unlinked member, and on any other project, nothing changes.
+- Acceptance: on a **linked** member (R11) — its mirror present and `Authority.Holds` true —
+  `fugaro user add|rm|grant|revoke|offboard` and `fugaro setup|update --operator/--admin/--budget-admin`'s
+  fold into the roster (R12) refuse, naming the `fugaro workspace user …` command, and the existing
+  hints that name those doors (`offboard.go`'s `fugaro update --admin`, `user_grant.go`'s
+  `--budget-admin`) name the workspace command there instead; `fugaro workspace user rm` still
+  offboards through WU9's core; on an unlinked member, and on any other project, nothing changes.
 - Files: `internal/cli/user.go`, `internal/cli/user_grant.go`, `internal/cli/offboard.go`,
   `internal/cli/update_access.go`, `internal/cli/user_test.go`.
 - Interfaces: reads C2's `ReadMirror` through I1's wiring.
 - Tests: `TestUserCommandsRefuseOnALinkedMember`, `TestUserCommandsUnchangedOnAnUnlinkedMember`,
-  `TestOperatorFlagFoldRefusedOnALinkedMember`, `TestUserCommandsUnchangedOutsideWorkspace`.
-- Command: `go test ./internal/cli/ -run 'TestUserCommands|TestOperatorFlagFold' -count=1`.
+  `TestOperatorFlagFoldRefusedOnALinkedMember`, `TestUserCommandsUnchangedOutsideWorkspace`,
+  `TestWorkspaceUserRmStillOffboards`.
+- Command: `go test ./internal/cli/ -run 'TestUserCommands|TestOperatorFlagFold|TestWorkspaceUserRmStillOffboards' -count=1`.
 - Red step: the linked-member refusal test fails today.
 - Depends on: I1 (behaviour: the commands the refusal names must exist).
 - Commit: `cli: installation-level user commands defer to the workspace on linked members (WU10, D2813, R11, R12)`.
@@ -501,7 +580,9 @@ is reused.
 ### WU17: Checks 720 and 721
 - Acceptance: two owner-run scripts with offline tests: **Check 720** creates a test folder, runs
   `workspace init`, `project link`, `project add`, `project rm` and `project unlink` on a throwaway
-  project, and checks the folder move and its return (U1, U6); **Check 721** grants a role in the
+  project, checks the folder move and its return (U1, U6), checks whether an owner grant by API
+  succeeds outside an organization (U8), and prints R3's console link for the owner to open (U3);
+  **Check 721** grants a role in the
   console, runs `status` and checks the drift row names the audit-log entry and does not name the
   member's own update (U5).
 - Files: `scripts/live-checks/check-720.sh` (new), `scripts/live-checks/check-720_test.sh` (new),
@@ -525,9 +606,10 @@ is reused.
 | --- | --- |
 | 0 | WU0 |
 | 1 | C1, C2, WU1, WU2, WU3, WU22 |
-| 2 | WU20, WU4, WU5, WU18, WU6, WU7, WU8, WU9, WU11, WU12, WU13, WU15; the anticipated contract changes R-member-firebase and R-roster-sa, if raised |
+| 2 | WU20, WU24, WU4, WU5, WU18, WU6, WU7, WU8, WU9, WU11, WU12, WU13, WU15, WU23; the anticipated contract changes R-member-firebase and R-roster-sa, if raised |
 | 3 | I1 |
-| 4 | WU10, WU16, WU17, WU21 |
+| 4 | WU10, WU16, WU17 |
+| 5 | WU21 |
 
 **Critical path:** see §5a. Sequential by necessity: WU0 first (D2800's gate: its review may
 reshape both contracts), I1 after every side it joins, and the refusals (WU10), the docs, the live
@@ -541,11 +623,14 @@ contracts. D2803's folder-first order is a launch order inside level 1 and 2, no
 | --- | --- |
 | `internal/cli/workspace.go`, `workspace_test.go`, `update_workspace.go`, `update_workspace_test.go` | I1 (3) |
 | `internal/cli/offboard.go` | WU9 (2), WU10 (4) |
+| `internal/runner/accountchoice_test.go` | WU9 (2) |
+| `internal/infra/folder.go`, `folder_test.go` | WU2 (1) |
+| `internal/infra/auditlogs.go`, `auditlogs_test.go` | WU12 (2) |
+| `internal/cli/workspace_init.go`, `workspace_init_test.go` | WU24 (2) |
 | `internal/cli/user.go`, `user_grant.go`, `user_test.go`, `update_access.go` | WU10 (4) |
 | `internal/gcpfake/crm.go` | WU2 (1) |
 | `internal/gcpfake/logging.go` | WU12 (2) |
-| `internal/gcpfake/iam.go` | WU21 (4) |
-| `internal/credsvc/probe.go` | WU22 (1) |
+| `internal/gcpfake/iam.go` | WU21 (5) |
 | `deploy/terraform/gcp/roots/workspace/*`, `deploy/terraform/terraform_test.go`, `internal/infra/tf/workspace.go`, `workspace_test.go` | WU3 (1) |
 | `internal/workspace/roster_stub.go`, `memberops_stub.go` | C1, C2 (1); I1 deletes them (3) |
 | `internal/workspace/roster.go`, `rosterstore.go`, `memberops.go`, the two contract documents, the two contract schemas | C1, C2 (1) and their changes (2) only, never the same file in one level |
@@ -558,14 +643,16 @@ contracts. D2803's folder-first order is a launch order inside level 1 and 2, no
 
 Broken, each by a contract and re-joined by I1 (each side needed only the shape):
 
-- **By C1 (the roster):** WU5, WU6, WU7, WU11 → WU1 (they read and write through `Store`); WU8, WU13 →
+- **By C1 (the roster):** WU5, WU6, WU7, WU11, WU23, WU24 → WU1 (they read and write through `Store`); WU8, WU13 →
   WU1 (they write an `AuditEvent`); WU4 → WU1 (the mirror is `MirrorEntry`); WU12 → WU1 (drift reads
   people, kinds and machines' roles); WU15 → WU1 (the audit export reads `AuditEvent`).
 - **By C2 (member operations):** WU5, WU6, WU7, WU8, WU11, WU13, WU18 → WU4 (they call `MemberOps`);
   WU9 → WU4 (it writes through `MemberOps.Audit`); WU5, WU6, WU7, WU11, WU18 → WU2 (they call
   `Authority`); WU20 → WU3 (the output `workspace_iam_account`); WU7 → WU9 (`user rm` calls
   `Offboard`); WU11, WU13 → WU12 (they consume `DriftReport`); WU6, WU11 → WU15 (they call
-  `StateWriter`); WU11 → WU22 (it calls `CredentialProbe`).
+  `StateWriter`); WU11 → WU22 (it calls `CredentialProbe`); WU23 → WU15 (it calls `StateWriter`);
+  WU24 → WU2 and WU24 → WU20 (`workspace init` calls `Authority`); WU12 → WU2 and WU12 → WU20 (drift
+  reads `Authority.AdminBindings`).
 
 Kept:
 
@@ -573,17 +660,18 @@ Kept:
   change the shapes — a contract written before it would be rewritten.
 - C1/C2 → each consumer: the contract is what lets it run beside its provider.
 - The parts → I1: I1 joins them. I1 → WU10, WU16, WU17, WU21: the refusals name, and the skills'
-  tests, the live checks and the end-to-end test drive, the real commands (behaviour).
+  tests, the live checks and the end-to-end test drive, the real commands (behaviour). WU10 → WU21:
+  the end-to-end test runs `workspace user rm` through `offboard.go` with WU10's refusals in place.
 - C1 → R-roster-sa and C2 → R-member-firebase: a change amends a file its contract creates.
 
 ### 5a. What the graph read reports
 
 `fugaro plan graph --plan docs/workspace-projects-users/implementation-plan.md`, 2026-11-18, after
-review round 2: no refusal, five levels matching §4; **29 edges broken, 4 kept** in the read's own
+review round 3: no refusal, six levels matching §4; **36 edges broken, 5 kept** in the read's own
 count, **5 tasks added** (C1, C2, I1 and the two anticipated contract changes); the critical path
-goes from **6 tasks, weight 12.5** before the pass to **5 tasks, weight 8.5** after it — WU0 → C1 →
-WU11 → I1 → WU10 — "improves". The weights are the plan's own `size` guesses (a contract 0.5, the
-largest tasks 3); no run history exists yet for any of them.
+goes from **7 tasks, weight 13.5** before the pass to **6 tasks, weight 9.5** after it — WU0 → C1 →
+WU11 → I1 → WU10 → WU21 — "improves". The weights are the plan's own `size` guesses (a contract 0.5,
+the largest tasks 3); no run history exists yet for any of them.
 
 ## 6. Contract changes anticipated
 
@@ -619,13 +707,19 @@ is "run `fugaro update`". People management is turned on per member by its owner
 - Saving state through periodic-reviews R9 (D2807 as amended: R9 carries reports only).
 - `project add|rm` by any workspace admin (D2821's alternative).
 - Giving members' admins `roles/datastore.user` for audit (D2811's round-2 alternative).
+- Carrying the workspace's mark in the member's mirror so a member owner's `unlink` removes the
+  grants (D2822's recommendation, not the owner's answer).
+- Saving state on `project rm` only, without the in-sync row and the audit export (D2824's
+  recommendation, not the owner's answer).
+- A credentials-service route for the probe, or probing personal tokens (D2825).
+- Moving the roster out of the database (D2823's alternative).
 - Linking fugaro-prod app sign-ins (D2814): no task.
 
 ## 10. Cost
 
-24 runs (WU0, C1, C2, WU1–WU13 without WU14, WU15, WU18, WU20, WU21, WU22, I1, WU16, WU17), none
-launched; the two anticipated contract changes are two more only if raised. The gateway enforces
-each run's cap (`fugaro budget set --repo`); the worst case is 24 times that cap, plus one independent
-review run for each of the 20 tasks marked "mandatory independent review" (WU0, C1, C2, WU1, WU2,
-WU3, WU22, WU20, WU4, WU5, WU18, WU6, WU7, WU8, WU9, WU12, WU13, WU15, I1, WU10). The owner's go so
+26 runs (WU0, C1, C2, WU1–WU13 without WU14, WU15, WU18, WU20–WU24, I1, WU16, WU17), none launched;
+the two anticipated contract changes are two more only if raised. The gateway enforces each run's
+cap (`fugaro budget set --repo`); the worst case is 26 times that cap, plus one independent review
+run for each of the 21 tasks marked "mandatory independent review" (WU0, C1, C2, WU1, WU2, WU3,
+WU22, WU20, WU24, WU4, WU5, WU18, WU6, WU7, WU8, WU9, WU12, WU13, WU15, I1, WU10). The owner's go so
 far covers **WU0 only**, once this plan is on `main`.
