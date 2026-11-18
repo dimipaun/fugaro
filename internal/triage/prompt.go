@@ -21,7 +21,7 @@ var personaFS embed.FS
 //
 // D1851 leaves POC, Critical and Hotfix out (Critical tolerates nothing and
 // Hotfix's table blocks nothing a judge could defer), so they have no file.
-var personaFiles = map[rigor.Mode]string{
+var personaFiles = map[rigor.Rigor]string{
 	rigor.Startup: "personas/startup.md",
 	rigor.Pro:     "personas/pro.md",
 }
@@ -81,7 +81,7 @@ type Finding struct {
 // close its block and have its own prose read as the brief's. A fresh nonce is
 // right here and not in FixFindings, which stores its text: nothing stores a
 // triage brief, so two renders of the same round need not agree.
-func Prompt(mode rigor.Mode, goal string, findings []Finding) string {
+func Prompt(mode rigor.Rigor, goal string, findings []Finding) string {
 	nonce := followup.NewNonce()
 	looksLikeDelimiter := regexp.MustCompile(`(?i)(end-)?fugaro-triage-|` + nonce)
 	neutralize := func(s string) string { return looksLikeDelimiter.ReplaceAllString(s, delimiterRemoved) }
@@ -168,7 +168,7 @@ func findingHeader(f Finding, neutralize func(string) string) string {
 // the default mode's (D19) and the stricter of the two: the stage runs for
 // Startup and Pro only (D1851), so a mode that reaches here is one no run
 // triages, and the strictest stance is the fail-closed reading of it.
-func persona(mode rigor.Mode) string {
+func persona(mode rigor.Rigor) string {
 	file, ok := personaFiles[mode]
 	if !ok {
 		file = personaFiles[rigor.Pro]

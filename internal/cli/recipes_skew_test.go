@@ -423,7 +423,7 @@ func TestLaunchReviewLevelsAskHoldsTheFloorOfTheModeTheLayersResolved(t *testing
 	f := newCloudFixture(t)
 	env := fileEnv(t, f)
 	env.policy = policyReadOnce{done: true, found: true, p: &projectpolicy.Policy{
-		ReviewFloor: map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
+		ReviewFloor: map[rigor.Rigor][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
 	}}
 	cfg := &config.Config{RepoRigor: &config.Rigor{Default: rigor.Pro}}
 	spec := &task.Spec{Version: 1, Rigor: rigor.Hotfix}

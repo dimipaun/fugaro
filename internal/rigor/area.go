@@ -10,7 +10,7 @@ import (
 )
 
 // Area is one rule of rigor.areas (D20c): a name, a doublestar path glob
-// relative to the repository root, and the mode the rule sets.
+// relative to the repository root, and the level the rule sets.
 //
 // The name is not decoration. It is what the run record, the pull request
 // body and fugaro watch print when they say which rule decided (D24), and a
@@ -26,7 +26,7 @@ import (
 type Area struct {
 	Name  string `yaml:"name" json:"name"`
 	Match string `yaml:"match" json:"match"`
-	Mode  Mode   `yaml:"mode" json:"mode"`
+	Level Rigor  `yaml:"level" json:"level"`
 }
 
 // Bounds on a rule's two pieces of text and on how many rules a layer may
@@ -63,7 +63,7 @@ var areaNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$`)
 func (a Area) Validate() string {
 	switch {
 	case a.Name == "":
-		return "must have a name: it is what the run record and the pull request say decided the mode"
+		return "must have a name: it is what the run record and the pull request say decided the level"
 	case !areaNameRE.MatchString(a.Name):
 		return fmt.Sprintf("a name must be 1 to %d characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit", MaxAreaName)
 	case strings.TrimSpace(a.Match) == "":
@@ -76,19 +76,19 @@ func (a Area) Validate() string {
 		return "a match must not contain a .. component"
 	case !doublestar.ValidatePattern(a.Match):
 		return "is not a valid glob pattern"
-	case !Known(a.Mode):
-		return "mode must be one of " + ModeList()
+	case !Known(a.Level):
+		return "level must be one of " + RigorList()
 	}
 	return ""
 }
 
-// ModeList is the vocabulary as an error names it: "poc, startup, pro,
+// RigorList is the vocabulary as an error names it: "poc, startup, pro,
 // critical, hotfix". One spelling of the set, read by every refusal that has
 // to say what a value should have been — this package's and
 // internal/config's, which validates the two layers' rigor blocks.
-func ModeList() string {
-	names := make([]string, len(Modes))
-	for i, m := range Modes {
+func RigorList() string {
+	names := make([]string, len(Rigors))
+	for i, m := range Rigors {
 		names[i] = string(m)
 	}
 	return strings.Join(names, ", ")

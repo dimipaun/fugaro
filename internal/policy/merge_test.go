@@ -279,13 +279,13 @@ func TestBinariesCapTightensOnly(t *testing.T) {
 // away: a merge that let a lower layer's shorter list replace the owner's
 // would be the launcher choosing how much review it gets.
 func TestReviewFloorMergesTightenOnly(t *testing.T) {
-	owner := Layer{ReviewFloor: map[rigor.Mode][]Level{
+	owner := Layer{ReviewFloor: map[rigor.Rigor][]Level{
 		rigor.Pro:      {LevelL2},
 		rigor.Critical: {LevelL2, LevelL3},
 	}}
 	// A layer that asks for more review than the owner requires, and one that
 	// names no floor at all — the shape every launcher-written layer has.
-	more := Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Pro: {LevelL1, LevelL3}}}
+	more := Layer{ReviewFloor: map[rigor.Rigor][]Level{rigor.Pro: {LevelL1, LevelL3}}}
 	none := Layer{}
 	e := Merge(owner, more, none)
 
@@ -299,7 +299,7 @@ func TestReviewFloorMergesTightenOnly(t *testing.T) {
 		t.Errorf("ReviewFloor(startup) = %v, want nil: no layer set a floor for that mode", got)
 	}
 	// A layer that repeats a level the owner already required adds nothing.
-	e = Merge(owner, Layer{ReviewFloor: map[rigor.Mode][]Level{rigor.Critical: {LevelL3, LevelL3}}})
+	e = Merge(owner, Layer{ReviewFloor: map[rigor.Rigor][]Level{rigor.Critical: {LevelL3, LevelL3}}})
 	if got, want := e.ReviewFloor(rigor.Critical), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
 		t.Errorf("ReviewFloor(critical) = %v, want %v: the union holds a level once", got, want)
 	}
@@ -319,13 +319,13 @@ func TestReviewFloorMergesTightenOnly(t *testing.T) {
 // to hotfix's row *and* to the row the layers resolved for it. Reading one
 // row would let a per-run flag drop a floor the owner set.
 func TestReviewFloorForHoldsBothRowsOfAnOffAxisRequest(t *testing.T) {
-	e := Merge(Layer{ReviewFloor: map[rigor.Mode][]Level{
+	e := Merge(Layer{ReviewFloor: map[rigor.Rigor][]Level{
 		rigor.Pro:    {LevelL2, LevelL3},
 		rigor.Hotfix: {LevelL1},
 	}})
 
 	// No second row: the request did not take the run off the axis ("" is
-	// what rigor.LayersMode answers for every on-axis request), so the answer
+	// what rigor.LayersRigor answers for every on-axis request), so the answer
 	// is ReviewFloor's own.
 	if got, want := e.ReviewFloorFor(rigor.Pro, ""), []Level{LevelL2, LevelL3}; !slices.Equal(got, want) {
 		t.Errorf("ReviewFloorFor(pro, no beside) = %v, want %v", got, want)
@@ -369,7 +369,7 @@ func TestParseFloor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[rigor.Mode][]Level{rigor.Pro: {LevelL2}, rigor.Critical: {LevelL2, LevelL3}}
+	want := map[rigor.Rigor][]Level{rigor.Pro: {LevelL2}, rigor.Critical: {LevelL2, LevelL3}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseFloor = %v, want %v", got, want)
 	}

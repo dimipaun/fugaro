@@ -431,7 +431,7 @@ func TestTaskSchemaCorpus(t *testing.T) {
 }
 
 // TestTaskSchemaRigorRequestMatchesTheGoRules ties the task schema's `rigor`
-// and `paths` properties to the Go rules they mirror (rigor.Modes,
+// and `paths` properties to the Go rules they mirror (rigor.Rigors,
 // task.MaxDeclaredPaths, task.MaxDeclaredPathBytes): the schema's enum and
 // bounds are separate copies of both, so without this a mode added to the
 // vocabulary, or a bound moved, would drift from the published schema with
@@ -461,12 +461,12 @@ func TestTaskSchemaRigorRequestMatchesTheGoRules(t *testing.T) {
 	} else if err := json.Unmarshal(raw, &mode); err != nil {
 		t.Fatal(err)
 	}
-	want := make([]string, 0, len(rigor.Modes))
-	for _, m := range rigor.Modes {
+	want := make([]string, 0, len(rigor.Rigors))
+	for _, m := range rigor.Rigors {
 		want = append(want, string(m))
 	}
 	if !slices.Equal(mode.Enum, want) {
-		t.Errorf("schema rigor enum %v != rigor.Modes %v", mode.Enum, want)
+		t.Errorf("schema rigor enum %v != rigor.Rigors %v", mode.Enum, want)
 	}
 	var paths struct {
 		MaxItems int `json:"maxItems"`
@@ -832,10 +832,10 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		// And the rigor block (docs/rigor-modes/implementation-plan.md T1.2):
 		// the mode the run resolved, the layer that won, the areas that
 		// matched with the moment each was applied, and the revision it read.
-		Rigor: &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+		Rigor: &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
 			Areas: []runstore.RigorArea{
-				{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
-				{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtRound},
+				{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap},
+				{Name: "docs", Level: rigor.POC, At: runstore.RigorAtRound},
 			},
 			At:       runstore.RigorAtFinalize,
 			Revision: "origin/main"},

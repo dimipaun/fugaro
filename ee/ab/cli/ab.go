@@ -300,7 +300,7 @@ func slugOfRecord(rec runstore.Record, slugs []string) string {
 // The note keeps the advice honest where the layer is not the bucket's own
 // object -- a cached copy and its age, or why no layer applies -- instead of
 // silently reading the advice at another project's rates.
-func abRateSource(ctx context.Context, lc *localcfg.Config) (map[rigor.Mode]float64, string, error) {
+func abRateSource(ctx context.Context, lc *localcfg.Config) (map[rigor.Rigor]float64, string, error) {
 	layer, note, err := fcli.ProjectLayerOf(ctx, lc)
 	if err != nil {
 		return nil, "", err

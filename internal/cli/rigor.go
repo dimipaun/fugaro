@@ -264,14 +264,14 @@ func rigorKey(layer string, area bool) string {
 // D834's refusal, the target, the old document, the edit, the loader's read of
 // it, the rank rule, and then the one write path with the gate beside it.
 func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
-	mode := rigor.Mode(name)
+	mode := rigor.Rigor(name)
 	// §3 step 1: the vocabulary. The design asks for the list in the message "as
 	// `fugaro run --mode` refuses it" — that refusal and not its words: run's
 	// sentence names a `--mode` flag and offers to leave it off, and this command
 	// has no such flag (the mode is its argument) and nothing to resolve from.
-	// The list is rigor.ModeList's one spelling either way.
+	// The list is rigor.RigorList's one spelling either way.
 	if !rigor.Known(mode) {
-		return userErr("%q is not a rigor mode: use %s; nothing was written", name, rigor.ModeList())
+		return userErr("%q is not a rigor mode: use %s; nothing was written", name, rigor.RigorList())
 	}
 	// §3 step 2 (D834): hotfix is off the axis and is a per-run mode (D12),
 	// so no layer sets it — as a default or as a rule — and the refusal names
@@ -642,7 +642,7 @@ func rigorDiscardCreatedLayer(path string, shell []byte) {
 // fugaro.yaml. The two documents spell the same two keys differently (M3), so
 // reading them into one shape is what lets the rules below be one cap for both.
 type rigorBlock struct {
-	def   rigor.Mode
+	def   rigor.Rigor
 	areas []rigor.Area
 }
 
@@ -719,7 +719,7 @@ type rigorBaseline struct {
 // mode is what these inputs resolve to for one glob, over the document's own
 // block as the edit leaves it: the resolution §3's rank rule compares two of,
 // and — with glob empty — the mode every path of that document falls back to.
-func (b rigorBaseline) mode(block rigorBlock, glob string) rigor.Mode {
+func (b rigorBaseline) mode(block rigorBlock, glob string) rigor.Rigor {
 	cfg := rigor.Config{Project: b.below.def, ProjectAreas: b.below.areas}
 	if b.repo {
 		cfg.Repo, cfg.RepoAreas = block.def, block.areas
@@ -730,7 +730,7 @@ func (b rigorBaseline) mode(block rigorBlock, glob string) rigor.Mode {
 	if glob != "" {
 		req.Paths = []string{glob}
 	}
-	return rigor.Resolve(cfg, req).Mode
+	return rigor.Resolve(cfg, req).Level
 }
 
 // subject names the mode a resolution decides, for the sentence a widening
@@ -824,7 +824,7 @@ func rigorWideningWhy(base rigorBaseline, repo, lowered string) string {
 // is held to rigor.Area.Validate before a byte is built: the check is the rule's
 // own, so the bounds (MaxAreaPattern, MaxAreaName, the doublestar pattern,
 // "no ..") are the ones internal/config refuses the document for.
-func rigorEdit(old []byte, prev rigorBlock, mode rigor.Mode, o rigorOptions, target settingsTarget) ([]byte, error) {
+func rigorEdit(old []byte, prev rigorBlock, mode rigor.Rigor, o rigorOptions, target settingsTarget) ([]byte, error) {
 	name := strings.Join(target.keyPath, ".")
 	if o.area == "" {
 		next, err := yamledit.SetScalar(old, target.keyPath, string(mode))
@@ -845,7 +845,7 @@ func rigorEdit(old []byte, prev rigorBlock, mode rigor.Mode, o rigorOptions, tar
 		}
 		return nil, userErr("--area %s is a glob this document does not carry yet, so it needs --name: a rule's name is what the run record and the pull request say decided the mode, and `fugaro rigor set %s --area %s --name NAME%s` adds it", safetext.Field(o.area), string(mode), safetext.Field(o.area), where)
 	}
-	written := rigor.Area{Name: o.name, Match: o.area, Mode: mode}
+	written := rigor.Area{Name: o.name, Match: o.area, Level: mode}
 	if rule != nil {
 		written.Name = rule.Name
 		if o.name != "" {
@@ -855,7 +855,7 @@ func rigorEdit(old []byte, prev rigorBlock, mode rigor.Mode, o rigorOptions, tar
 	if msg := written.Validate(); msg != "" {
 		return nil, userErr("%s[%d]: %s; nothing was written", name, index, msg)
 	}
-	fields := map[string]string{"mode": string(mode), "name": written.Name}
+	fields := map[string]string{"level": string(mode), "name": written.Name}
 	next, err := yamledit.UpsertSeqItemByKey(old, target.keyPath, "match", o.area, fields)
 	if err != nil {
 		return nil, userErr("%s: %v", name, err)
@@ -883,9 +883,9 @@ func rigorAreaIn(areas []rigor.Area, glob string) (*rigor.Area, int) {
 // glob that does not match its own literal text (a brace or a character class)
 // resolves to the document's own default against itself, so the resolution alone
 // misses the lowering of such a rule.
-func rigorAreaLowered(areas []rigor.Area, glob string, mode rigor.Mode) bool {
+func rigorAreaLowered(areas []rigor.Area, glob string, mode rigor.Rigor) bool {
 	rule, _ := rigorAreaIn(areas, glob)
-	return rule != nil && mode.Rank() < rule.Mode.Rank()
+	return rule != nil && mode.Rank() < rule.Level.Rank()
 }
 
 // rigorAreaIsNew says whether the area form adds a rule the document does not
@@ -901,7 +901,7 @@ func rigorAreaIsNew(areas []rigor.Area, glob string) bool {
 // the sentence names what a person will find in the file they are about to
 // edit — defaults.rigor.default in a project layer file, rigor.default in a
 // checkout's fugaro.yaml.
-func rigorWhat(o rigorOptions, mode rigor.Mode, target settingsTarget) string {
+func rigorWhat(o rigorOptions, mode rigor.Rigor, target settingsTarget) string {
 	key := strings.Join(target.keyPath, ".")
 	if o.area == "" {
 		return fmt.Sprintf("set %s to %s in %s", key, mode, target.path)
@@ -947,7 +947,7 @@ func rigorSetCommand(mode string, o rigorOptions) string {
 // can move it, and the sentence beside it names the command that can — which is
 // the design's own reason for printing it (§3, SD10).
 func rigorFloorLine(lc *localcfg.Config) string {
-	var floor map[rigor.Mode][]policy.Level
+	var floor map[rigor.Rigor][]policy.Level
 	if lc != nil {
 		if f, err := lc.ReviewFloorPolicy(); err == nil {
 			floor = f

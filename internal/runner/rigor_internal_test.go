@@ -67,7 +67,7 @@ const workflowsYAML = "workflows:\n  server: { commands: { build: make, test: ma
 
 // rigorLayer is a project layer whose defaults.rigor sets Critical: the value
 // a run falls back to when no branch can be read.
-func rigorLayer(t *testing.T, mode rigor.Mode) *config.ProjectLayer {
+func rigorLayer(t *testing.T, mode rigor.Rigor) *config.ProjectLayer {
 	t.Helper()
 	return &config.ProjectLayer{Defaults: config.LayerDefaults{Rigor: config.LayerRigor{Default: mode}}}
 }
@@ -316,7 +316,7 @@ func TestBootstrapRigorForAFollowUpReadsNoBranch(t *testing.T) {
 // decides nothing and the layer that already set the mode keeps its name, which
 // is the fail-closed direction a launcher must not be able to outvote.
 //
-// Hotfix is the one mode the request takes whole (rigor.Mode.PerRun): the owner
+// Hotfix is the one mode the request takes whole (rigor.Rigor.PerRun): the owner
 // ruled on 2026-11-13 that `--mode hotfix` needs no opt-in
 // (docs/rigor-command/implementation-plan.md R7), so it decides even from below
 // every on-axis mode, and the block names the request as the layer that did.
@@ -332,7 +332,7 @@ rigor:
 	for _, tc := range []struct {
 		name string
 		req  string
-		mode rigor.Mode
+		mode rigor.Rigor
 		from rigor.Layer
 	}{
 		{"a request above the repository's default", "critical", rigor.Critical, rigor.FromRequest},
@@ -341,7 +341,7 @@ rigor:
 		{"no request at all", "", rigor.Startup, rigor.FromRepo},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: rigor.Mode(tc.req)})
+			r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil, &task.Spec{Rigor: rigor.Rigor(tc.req)})
 
 			r.bootstrapRigor(context.Background())
 
@@ -381,7 +381,7 @@ rigor: { default: pro }
 		t.Fatalf("the mode the layers resolved beside the request = %q; want pro, the repository's own mode", got)
 	}
 	r.policy = policy.Effective{Layer: policy.Layer{
-		ReviewFloor: map[rigor.Mode][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
+		ReviewFloor: map[rigor.Rigor][]policy.Level{rigor.Pro: {policy.LevelL2, policy.LevelL3}},
 	}}
 	r.rcp = parseRecipe(t, "version: 1\nname: loop\nsteps:\n  - review: {}\n")
 
@@ -440,7 +440,7 @@ rigor:
 	if rg == nil || rg.Mode != rigor.Critical || rg.From != rigor.FromArea || rg.At != runstore.RigorAtBootstrap {
 		t.Fatalf("the block = %+v, want critical from the area the declared path matched", rg)
 	}
-	want := []runstore.RigorArea{{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}}
+	want := []runstore.RigorArea{{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap}}
 	if !reflect.DeepEqual(rg.Areas, want) {
 		t.Errorf("the areas = %+v, want %+v", rg.Areas, want)
 	}
@@ -626,8 +626,8 @@ workflows:
 	// Both rules matched; the strictest is first (D23) and each carries its
 	// own mode and the moment it was applied at.
 	want := []runstore.RigorArea{
-		{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtFinalize},
-		{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtFinalize},
+		{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtFinalize},
+		{Name: "docs", Level: rigor.POC, At: runstore.RigorAtFinalize},
 	}
 	if !reflect.DeepEqual(rg.Areas, want) {
 		t.Errorf("the areas = %+v, want %+v", rg.Areas, want)

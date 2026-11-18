@@ -954,8 +954,8 @@ func TestJoinPlanTaskDropsAnIDThatIsNotOne(t *testing.T) {
 // never an empty block a reader would render as a decision nobody took.
 func TestJoinCarriesTheRunsRigor(t *testing.T) {
 	r := rec(runstore.StatusSucceeded, nil)
-	r.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
-		Areas: []runstore.RigorArea{{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}},
+	r.Rigor = &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
+		Areas: []runstore.RigorArea{{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap}},
 		At:    runstore.RigorAtFinalize, Revision: "origin/main"}
 	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
 	if row.Rigor == nil || row.Rigor.Mode != rigor.Critical || row.Rigor.From != rigor.FromArea ||
@@ -999,10 +999,10 @@ func TestJoinBoundsTheRecordedRigor(t *testing.T) {
 	// block whose answer contradicts its own mode.
 	var many []runstore.RigorArea
 	for i := range 3 * rigor.MaxAreas {
-		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), Mode: rigor.POC, At: runstore.RigorAtRound})
+		many = append(many, runstore.RigorArea{Name: fmt.Sprintf("a%03d", i), Level: rigor.POC, At: runstore.RigorAtRound})
 	}
-	many[len(many)-1] = runstore.RigorArea{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap}
-	r.Rigor = &runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromRepo, Areas: many, At: runstore.RigorAtFinalize}
+	many[len(many)-1] = runstore.RigorArea{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap}
+	r.Rigor = &runstore.RigorRecord{Level: rigor.POC, From: rigor.FromRepo, Areas: many, At: runstore.RigorAtFinalize}
 	row := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now)
 	if row.Rigor == nil || len(row.Rigor.Areas) != rigor.MaxAreas {
 		t.Fatalf("an oversized block reached the row as %+v", row.Rigor)
@@ -1013,9 +1013,9 @@ func TestJoinBoundsTheRecordedRigor(t *testing.T) {
 	// An area whose own mode is unreadable is dropped whole rather than
 	// reaching a reader as a rule it cannot rank.
 	noMode := rec(runstore.StatusSucceeded, nil)
-	noMode.Rigor = &runstore.RigorRecord{Mode: rigor.Critical, From: rigor.FromArea,
+	noMode.Rigor = &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
 		Areas: []runstore.RigorArea{
-			{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
+			{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap},
 			{Name: "web", At: runstore.RigorAtRound},
 		}, At: runstore.RigorAtFinalize}
 	if got := Join(Input{Task: spec, Launch: launch, Record: noMode}, prices, now).Rigor; got == nil || len(got.Areas) != 1 || got.Areas[0].Name != "payments" {

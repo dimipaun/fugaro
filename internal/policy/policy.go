@@ -395,14 +395,14 @@ func ParseLevel(s string) (Level, bool) {
 // the key out or writes an empty object: the empty object is how an operator
 // says the node's floor goes away on purpose, and it is what leaves the
 // published node without the member.
-func ParseFloor(written map[string][]string) (map[rigor.Mode][]Level, error) {
+func ParseFloor(written map[string][]string) (map[rigor.Rigor][]Level, error) {
 	var errs []error
 	bad := func(f string, a ...any) { errs = append(errs, fmt.Errorf("review_floor."+f, a...)) }
-	out := make(map[rigor.Mode][]Level, len(written))
+	out := make(map[rigor.Rigor][]Level, len(written))
 	for _, mode := range slices.Sorted(maps.Keys(written)) {
 		m, ok := rigor.Parse(mode)
 		if !ok {
-			bad("%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Modes))
+			bad("%s: %q is not a rigor mode (%s)", mode, mode, vocabulary(rigor.Rigors))
 			continue
 		}
 		names := written[mode]
@@ -439,7 +439,7 @@ func ParseFloor(written map[string][]string) (map[rigor.Mode][]Level, error) {
 
 // vocabulary is a closed vocabulary as an error prints it, read off the list
 // itself rather than written out again: the floor's refusals name the whole
-// set (rigor.Modes, Levels), so a name this package refuses is a name the
+// set (rigor.Rigors, Levels), so a name this package refuses is a name the
 // operator can see is not in it, and a vocabulary that grows cannot leave the
 // sentence behind.
 func vocabulary[T ~string](names []T) string {
@@ -535,7 +535,7 @@ type Layer struct {
 	// It is merged as a union (see Merge), so a lower layer that writes one
 	// can add a level and never remove one; the merge is what makes that
 	// direction a property of this package rather than of its callers.
-	ReviewFloor map[rigor.Mode][]Level
+	ReviewFloor map[rigor.Rigor][]Level
 	// Orchestrator is this layer's block of the orchestrator's spawn
 	// guardrails and decision models (D1239, D1234); the zero value sets none,
 	// which leaves the ceiling's own alone (see Orchestrator).
@@ -573,10 +573,10 @@ type Layer struct {
 //
 // The method shadows Layer.ReviewFloor, the field the merge fills: the whole
 // map is e.Layer.ReviewFloor, and a mode's levels are asked for here.
-func (e Effective) ReviewFloor(mode rigor.Mode) []Level { return e.Layer.ReviewFloor[mode] }
+func (e Effective) ReviewFloor(mode rigor.Rigor) []Level { return e.Layer.ReviewFloor[mode] }
 
 // ReviewFloorFor is the floor a run at mode is held to, given the mode the
-// layers resolved beside its own request (rigor.LayersMode, "" for every run
+// layers resolved beside its own request (rigor.LayersRigor, "" for every run
 // whose request did not take it off the axis): both rows hold, in the
 // vocabulary's order.
 //
@@ -592,7 +592,7 @@ func (e Effective) ReviewFloor(mode rigor.Mode) []Level { return e.Layer.ReviewF
 // ReviewFloor's does, so a caller that appends to the answer clones it first —
 // which is what the two callers already do with a floor (internal/runner's
 // resolveLevelsForcing, the launcher's copy, both forcing level 3 on).
-func (e Effective) ReviewFloorFor(mode, beside rigor.Mode) []Level {
+func (e Effective) ReviewFloorFor(mode, beside rigor.Rigor) []Level {
 	return FloorFor(e.Layer.ReviewFloor, mode, beside)
 }
 
@@ -601,7 +601,7 @@ func (e Effective) ReviewFloorFor(mode, beside rigor.Mode) []Level {
 // rather than as a merged Effective: the launcher's own read of the policy,
 // which resolves the levels a launch will run before any run exists
 // (internal/cli's launchReviewLevelsAsk).
-func FloorFor(floor map[rigor.Mode][]Level, mode, beside rigor.Mode) []Level {
+func FloorFor(floor map[rigor.Rigor][]Level, mode, beside rigor.Rigor) []Level {
 	if beside == "" || beside == mode {
 		return floor[mode]
 	}

@@ -664,7 +664,7 @@ func chainDimensionWord(d runstore.Dimension) string {
 // still only tightens it. A run whose mode contributes no default — Critical,
 // which is today's behaviour, or one no resolution recorded — carries the
 // owner's cap exactly.
-func envCeiling(c Spend, mode rigor.Mode) policy.Layer {
+func envCeiling(c Spend, mode rigor.Rigor) policy.Layer {
 	l := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
 	if c.Mode != "" && c.Mode != policy.ModeOff {
 		l.Mode = c.Mode

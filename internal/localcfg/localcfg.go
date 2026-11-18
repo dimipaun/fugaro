@@ -2537,7 +2537,7 @@ func profileNames(profiles map[string]config.JobProfile) []string {
 // the floor is a minimum, so a level lost on the way to the node would be a
 // run reviewing less than the file says, which is the direction this key must
 // never move.
-func (c *Config) ReviewFloorPolicy() (map[rigor.Mode][]policy.Level, error) {
+func (c *Config) ReviewFloorPolicy() (map[rigor.Rigor][]policy.Level, error) {
 	return policy.ParseFloor(c.ReviewFloor)
 }
 

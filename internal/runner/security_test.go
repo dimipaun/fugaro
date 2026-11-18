@@ -36,14 +36,14 @@ const (
 // branch of its own, the recipe and the configuration the levels are resolved
 // against, and a record to write into. mode is the rigor mode the run resolved
 // at bootstrap, which is what decides whether level 3 already runs.
-func securityRun(t *testing.T, mode rigor.Mode) (*run, *gitops.Repo) {
+func securityRun(t *testing.T, mode rigor.Rigor) (*run, *gitops.Repo) {
 	t.Helper()
 	return securityRunOn(t, "main", mode)
 }
 
 // securityRunOn is securityRun with the base branch the run's diff is measured
 // against spelled out, so a test can hand it one git cannot resolve.
-func securityRunOn(t *testing.T, base string, mode rigor.Mode) (*run, *gitops.Repo) {
+func securityRunOn(t *testing.T, base string, mode rigor.Rigor) (*run, *gitops.Repo) {
 	t.Helper()
 	testutil.IsolateGit(t)
 	remote := testutil.NewRemote(t, map[string]string{"README.md": "hello\n"})
@@ -497,7 +497,7 @@ func TestRunRecordGainsTheFieldAdditively(t *testing.T) {
 	rec := runstore.Record{
 		Version: 1, RunID: "20261108-000000-abcd", Repo: "acme/app",
 		Status: runstore.StatusSucceeded, Stage: "finalize", Outcome: runstore.OutcomeDraft,
-		Rigor:        &runstore.RigorRecord{Mode: rigor.Pro, From: rigor.FromDefault, At: runstore.RigorAtBootstrap},
+		Rigor:        &runstore.RigorRecord{Level: rigor.Pro, From: rigor.FromDefault, At: runstore.RigorAtBootstrap},
 		ChangedFiles: &runstore.ChangedFiles{Paths: []string{listedPath}, Total: 1},
 		Security: runstore.NewSecurityEscalation(runstore.SecurityAtImplement,
 			sensitivity.Pattern{Name: "credentials", Match: "internal/creds/**", Category: sensitivity.Credentials}),
@@ -586,7 +586,7 @@ func TestSecurityFieldForcesLevelThreeAtBootstrap(t *testing.T) {
 // it was cut from — nothing on the list, which is the point: nothing is
 // classified for this to hold.
 func TestAlwaysLevelThreeRaisesEveryRun(t *testing.T) {
-	for _, mode := range []rigor.Mode{rigor.Startup, rigor.Pro, rigor.Hotfix} {
+	for _, mode := range []rigor.Rigor{rigor.Startup, rigor.Pro, rigor.Hotfix} {
 		t.Run(string(mode), func(t *testing.T) {
 			r, _ := securityRun(t, mode)
 			if levelOn(r.levels, policy.LevelL3) {

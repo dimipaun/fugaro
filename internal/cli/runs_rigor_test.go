@@ -14,10 +14,10 @@ import (
 // rigorRow is a row with a rigor block, as runview.Join hands it over.
 func rigorRow(run string) runview.Row {
 	return runview.Row{Run: run, Status: "succeeded", Rigor: &runstore.RigorRecord{
-		Mode: rigor.Critical, From: rigor.FromArea,
+		Level: rigor.Critical, From: rigor.FromArea,
 		Areas: []runstore.RigorArea{
-			{Name: "payments", Mode: rigor.Critical, At: runstore.RigorAtBootstrap},
-			{Name: "docs", Mode: rigor.POC, At: runstore.RigorAtRound},
+			{Name: "payments", Level: rigor.Critical, At: runstore.RigorAtBootstrap},
+			{Name: "docs", Level: rigor.POC, At: runstore.RigorAtRound},
 		},
 		At:       runstore.RigorAtFinalize,
 		Revision: "origin/main",
@@ -74,7 +74,7 @@ func TestRunsLSRigorColumn(t *testing.T) {
 	rows = append(rows,
 		rigorRow("acme-app/20261007-110000-abcd"),
 		runview.Row{Run: "acme-app/20261007-120000-abcd", Status: "running",
-			Rigor: &runstore.RigorRecord{Mode: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtBootstrap}},
+			Rigor: &runstore.RigorRecord{Level: rigor.Pro, From: rigor.FromRepo, At: runstore.RigorAtBootstrap}},
 		// This one resolved none, and its launcher is named: the "-" the last
 		// column shows is the mode's, not the BY column's.
 		runview.Row{Run: "acme-app/20261007-130000-abcd", Status: "running", LaunchedBy: "me@example.com"},
@@ -172,7 +172,7 @@ func TestDiagnosePrintsTheRigorLine(t *testing.T) {
 	if want := "Rigor:    " + rigorRow("a/b").Rigor.Line(); !strings.Contains(out, want) {
 		t.Errorf("the rigor line is not the block's own:\nwant %q\ngot:\n%s", want, out)
 	}
-	if l := (&runstore.RigorRecord{Mode: rigor.POC, From: rigor.FromProject, At: runstore.RigorAtBootstrap}).Line(); !strings.Contains(l, "poc") || strings.Contains(l, "read from") {
+	if l := (&runstore.RigorRecord{Level: rigor.POC, From: rigor.FromProject, At: runstore.RigorAtBootstrap}).Line(); !strings.Contains(l, "poc") || strings.Contains(l, "read from") {
 		t.Errorf("a block with no areas and no revision: %q", l)
 	}
 }

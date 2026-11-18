@@ -320,7 +320,7 @@ func TestPolicyRecordCraftIgnoredNamesALayer(t *testing.T) {
 // rides the ceiling layer from there (policyCeiling) and the merge unions it
 // into the effective policy, which is what L3.1's resolver will consume.
 func TestRunnerReadsReviewFloorFromNode(t *testing.T) {
-	node := &projectpolicy.Policy{ReviewFloor: map[rigor.Mode][]policy.Level{
+	node := &projectpolicy.Policy{ReviewFloor: map[rigor.Rigor][]policy.Level{
 		rigor.Pro:      {policy.LevelL2},
 		rigor.Critical: {policy.LevelL2, policy.LevelL3},
 	}}

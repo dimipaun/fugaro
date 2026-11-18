@@ -8,9 +8,9 @@ import (
 	"testing"
 )
 
-// The threshold table and the label (docs/rigor-modes/implementation-plan.md
+// The threshold table and the label (docs/rigor-levels/implementation-plan.md
 // T2.3). Every case below cites the sentence it holds: spec.md's findings
-// policy per mode and its severity override, D1's 1–5 scale, D2's answer that
+// policy per level and its severity override, D1's 1–5 scale, D2's answer that
 // the table reads the three axes and the class while the five words stay
 // labels, and D4's fail-closed rule. The names carry Table, Label or Threshold
 // so the task's own command — `-run 'Table|Label|Threshold'` — is the whole
@@ -39,51 +39,51 @@ func everyScore() []Score {
 
 // TestThresholdsAreTheSpecsTwoExamples: D1's reason for a 1–5 scale is that
 // three values cannot separate the spec's own pair, so that pair is the first
-// thing the table is asked, in the mode the spec names for it.
+// thing the table is asked, in the level the spec names for it.
 func TestThresholdsAreTheSpecsTwoExamples(t *testing.T) {
 	// "rare but catastrophic findings (data loss, security) block even in
-	// Startup mode" (spec.md, Finding scoring). Rare, catastrophic and
+	// Startup level" (spec.md, Finding scoring). Rare, catastrophic and
 	// expensive all at once, so nothing but the override can block it.
 	rareButCatastrophic := Score{Likelihood: 1, Impact: 5, FixCost: 5, Class: DataLoss}
 	if !Blocks(Startup, rareButCatastrophic) {
 		t.Errorf("Startup tolerates a rare but catastrophic finding: %+v", rareButCatastrophic)
 	}
 	// The other half of D1's pair. Startup "fixes common" findings, so this
-	// case is about the axes and not about the likelihood alone: what the mode
+	// case is about the axes and not about the likelihood alone: what the level
 	// spends its rounds on is what is both likely and material, and this one is
 	// the likelihood without the materiality.
 	commonButCosmetic := Score{Likelihood: 5, Impact: 1, FixCost: 1, Class: Cosmetic}
 	if Blocks(Startup, commonButCosmetic) {
 		t.Errorf("Startup blocks a common but cosmetic finding: %+v", commonButCosmetic)
 	}
-	// The same likelihood with something behind it is what the mode does
+	// The same likelihood with something behind it is what the level does
 	// block, so the case above is the impact and not "Startup blocks nothing".
 	if !Blocks(Startup, Score{Likelihood: 5, Impact: 3, FixCost: 1, Class: Correctness}) {
 		t.Error("Startup tolerates a likely correctness finding")
 	}
 }
 
-// TestTableBlocksTheSecurityOverrideInEveryMode: the spec's severity override,
-// asked of every mode rather than of one. The finding is the lowest risk the
-// scale can express with the most expensive fix, so no mode's own threshold
+// TestTableBlocksTheSecurityOverrideInEveryLevel: the spec's severity override,
+// asked of every level rather than of one. The finding is the lowest risk the
+// scale can express with the most expensive fix, so no level's own threshold
 // would block it and only the override can — which is what makes each case
 // fail if the override is dropped rather than passing on a floor.
 //
-// Security is the half of the override every mode applies, Hotfix included by
+// Security is the half of the override every level applies, Hotfix included by
 // the owner's ruling of 2026-10-26; data loss is the half the four on-axis
-// modes apply, and the ruling is that Hotfix does not, which
+// levels apply, and the ruling is that Hotfix does not, which
 // TestTableHotfixKeepsOnlyTheSecurityGate holds from the other side.
 func TestTableBlocksTheSecurityOverrideInEveryMode(t *testing.T) {
-	for _, m := range Modes {
+	for _, m := range Rigors {
 		s := Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: Security}
 		if !Blocks(m, s) {
-			t.Errorf("%s tolerates a security finding at the lowest risk: the override is not applied in every mode", m)
+			t.Errorf("%s tolerates a security finding at the lowest risk: the override is not applied in every level", m)
 		}
 	}
-	for _, m := range Modes[:len(Modes)-1] {
+	for _, m := range Rigors[:len(Rigors)-1] {
 		s := Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: DataLoss}
 		if !Blocks(m, s) {
-			t.Errorf("%s tolerates a data loss finding at the lowest risk: the override is not applied in every on-axis mode", m)
+			t.Errorf("%s tolerates a data loss finding at the lowest risk: the override is not applied in every on-axis level", m)
 		}
 	}
 	// And it is the class that carries it rather than the axes: the same score
@@ -93,9 +93,9 @@ func TestTableBlocksTheSecurityOverrideInEveryMode(t *testing.T) {
 	}
 }
 
-// TestTableBlocksAnUnscoredFindingInEveryMode is D4's rule, asserted mode by
-// mode and shape by shape: a reviewer that stops emitting scores must not be
-// able to turn a mode down, so the table's answer for a finding it cannot read
+// TestTableBlocksAnUnscoredFindingInEveryMode is D4's rule, asserted level by
+// level and shape by shape: a reviewer that stops emitting scores must not be
+// able to turn a level down, so the table's answer for a finding it cannot read
 // is the strictest one everywhere.
 func TestTableBlocksAnUnscoredFindingInEveryMode(t *testing.T) {
 	cases := []struct {
@@ -109,17 +109,17 @@ func TestTableBlocksAnUnscoredFindingInEveryMode(t *testing.T) {
 		{"an axis above the scale", Score{Likelihood: 6, Impact: 1, FixCost: 1, Class: Cosmetic}},
 		{"a class outside the vocabulary", Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: "style"}},
 	}
-	for _, m := range Modes {
+	for _, m := range Rigors {
 		for _, c := range cases {
 			if !Blocks(m, c.s) {
-				t.Errorf("%s tolerates a finding with %s: an unscored finding blocks in every mode (D4)", m, c.what)
+				t.Errorf("%s tolerates a finding with %s: an unscored finding blocks in every level (D4)", m, c.what)
 			}
 		}
 	}
 }
 
 // TestTableCriticalBlocksEveryFinding: "Critical — Every finding blocks"
-// (spec.md), with no exception for a finding the other modes tolerate.
+// (spec.md), with no exception for a finding the other levels tolerate.
 func TestTableCriticalBlocksEveryFinding(t *testing.T) {
 	for _, s := range []Score{
 		{Likelihood: 1, Impact: 1, FixCost: 5, Class: Cosmetic},
@@ -182,19 +182,19 @@ func TestTableProWeighsTheFixCost(t *testing.T) {
 	if !Blocks(Pro, Score{Likelihood: 2, Impact: 2, FixCost: 5, Class: Correctness}) {
 		t.Error("Pro tolerates a finding that is not extremely rare because its fix is expensive")
 	}
-	// Startup, the weaker mode, tolerates what Pro's escape tolerates, so the
-	// escape never makes Pro stricter than the mode below it.
+	// Startup, the weaker level, tolerates what Pro's escape tolerates, so the
+	// escape never makes Pro stricter than the level below it.
 	if Blocks(Startup, rareExpensive) {
 		t.Error("Startup blocks what Pro tolerates")
 	}
 }
 
-// TestTheTableTightensWithTheAxis: the modes are one axis (mode.go's Rank), and
-// the table has to move the same way — a stricter mode may tolerate nothing a
+// TestTheTableTightensWithTheAxis: the levels are one axis (level.go's Rank), and
+// the table has to move the same way — a stricter level may tolerate nothing a
 // weaker one blocks. This is §7's fourth review question in the direction that
-// matters: a mode may require more, and never permit more.
+// matters: a level may require more, and never permit more.
 func TestTheTableTightensWithTheAxis(t *testing.T) {
-	axis := Modes[:len(Modes)-1] // the four on-axis modes, weakest first
+	axis := Rigors[:len(Rigors)-1] // the four on-axis levels, weakest first
 	for i := 1; i < len(axis); i++ {
 		weaker, stronger := axis[i-1], axis[i]
 		for _, s := range everyScore() {
@@ -251,23 +251,23 @@ func TestTableHotfixKeepsOnlyTheSecurityGate(t *testing.T) {
 		t.Errorf("POC tolerates %+v; the cases above are about Hotfix's row and not about the override", tolerated[0].s)
 	}
 	if got := tolerated[0].s.Label(); got != Blocker {
-		t.Errorf("a data loss finding is labelled %q; the ruling moved a mode's row, not the vocabulary", got)
+		t.Errorf("a data loss finding is labelled %q; the ruling moved a level's row, not the vocabulary", got)
 	}
 }
 
 // TestTableHotfixToleratesEverythingPOCDoes: the ruling narrows Hotfix's row
-// below POC's rather than moving the mode off the table's axis. Hotfix ranks
-// below POC (mode.go's Rank), so the table's own tightening rule — a stricter
-// mode may tolerate nothing a weaker one blocks — has to hold in this direction
+// below POC's rather than moving the level off the table's axis. Hotfix ranks
+// below POC (level.go's Rank), so the table's own tightening rule — a stricter
+// level may tolerate nothing a weaker one blocks — has to hold in this direction
 // too. It is a strict narrowing, and that is the ruling rather than an accident:
-// the two modes disagreed about data loss and about an impact of 5 before
+// the two levels disagreed about data loss and about an impact of 5 before
 // 2026-10-26 and they keep disagreeing, which is what "the fewest gates" means.
 func TestTableHotfixToleratesEverythingPOCDoes(t *testing.T) {
 	var onlyPOC []Score
 	for _, s := range everyScore() {
 		switch {
 		case Blocks(Hotfix, s) && !Blocks(POC, s):
-			t.Fatalf("Hotfix blocks %+v and POC, the stricter mode, tolerates it", s)
+			t.Fatalf("Hotfix blocks %+v and POC, the stricter level, tolerates it", s)
 		case Blocks(POC, s) && !Blocks(Hotfix, s):
 			onlyPOC = append(onlyPOC, s)
 		}
@@ -283,28 +283,28 @@ func TestTableHotfixToleratesEverythingPOCDoes(t *testing.T) {
 }
 
 // TestTableIsTotalOverTheVocabularyAndBlocksWithoutARow: the table is total
-// over the vocabulary — every mode's policy is data here or it is nowhere —
-// and a mode it does not hold blocks on every finding. The zero Mode is what a
-// layer that sets nothing carries and what a record written before the mode
+// over the vocabulary — every level's policy is data here or it is nowhere —
+// and a level it does not hold blocks on every finding. The zero Rigor is what a
+// layer that sets nothing carries and what a record written before the level
 // existed has, and a name outside the vocabulary is what config refuses at
 // load; D4's rule read at the table is that a value it cannot place is never
 // the lenient answer.
 func TestTableIsTotalOverTheVocabularyAndBlocksWithoutARow(t *testing.T) {
-	for _, m := range Modes {
+	for _, m := range Rigors {
 		if _, ok := thresholds[m]; !ok {
 			t.Errorf("%q has no row in the table", m)
 		}
 	}
 	tolerable := Score{Likelihood: 1, Impact: 1, FixCost: 5, Class: Cosmetic}
-	for _, m := range []Mode{"", "bogus"} {
+	for _, m := range []Rigor{"", "bogus"} {
 		if !Blocks(m, tolerable) {
-			t.Errorf("Blocks(%q, …) is false; a mode the table does not hold blocks", m)
+			t.Errorf("Blocks(%q, …) is false; a level the table does not hold blocks", m)
 		}
 	}
 }
 
 // TestTableSplitIsTheVerdictsFindingsInTwo: the runner prints the findings a
-// mode left open in the order the reviewer wrote them, so the split keeps each
+// level left open in the order the reviewer wrote them, so the split keeps each
 // group's order as well as its membership, and a verdict with nothing in it
 // answers with nothing rather than with two empty slices a caller has to check
 // for length.
@@ -326,7 +326,7 @@ func TestTableSplitIsTheVerdictsFindingsInTwo(t *testing.T) {
 		t.Errorf("Split of no findings = %+v, %+v; want nothing in each", b, tol)
 	}
 	// And the split is Blocks asked once per finding rather than a second
-	// rule: a finding the split tolerates is one Blocks says the mode does not
+	// rule: a finding the split tolerates is one Blocks says the level does not
 	// block, and no finding is lost on the way.
 	for _, s := range everyScore() {
 		b, tol := Split(Startup, []Score{s})
@@ -342,7 +342,7 @@ func TestTableSplitIsTheVerdictsFindingsInTwo(t *testing.T) {
 // TestThresholdClassesAreTheSchemasEnum: the vocabulary in this package is a
 // second copy of runner.VerdictSchema's enum, which is the schema that
 // constrains the model (D3). A class the schema gains and this list does not is
-// a finding the table cannot read — unscored, so it blocks in every mode — and
+// a finding the table cannot read — unscored, so it blocks in every level — and
 // a class this list gains and the schema does not is a word no reviewer will
 // ever emit. The guard reads the schema's own text rather than a third copy of
 // the six words, because two copies that agree today are exactly the pair that
@@ -396,7 +396,7 @@ func TestLabelIsDerivedFromTheAxes(t *testing.T) {
 		{"a finding nobody would notice", Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: Cosmetic}, Nit},
 		{"the most a nit can be", Score{Likelihood: 3, Impact: 1, FixCost: 1, Class: Maintainability}, Nit},
 		// Fail closed, like the table: a finding the score cannot be read for
-		// is the word no mode tolerates, not the mildest one.
+		// is the word no level tolerates, not the mildest one.
 		{"a finding with no score at all", Score{}, Blocker},
 		{"a finding with a class outside the vocabulary", Score{Likelihood: 1, Impact: 1, FixCost: 1, Class: "style"}, Blocker},
 	}
@@ -408,7 +408,7 @@ func TestLabelIsDerivedFromTheAxes(t *testing.T) {
 }
 
 // TestLabelsAreTheFiveWordsD2Names: D2's answer names the vocabulary —
-// blocker, high, medium, low, nit — and closes it, the way the modes are
+// blocker, high, medium, low, nit — and closes it, the way the levels are
 // closed, so a reader of a pull request body meets one set of words.
 func TestLabelsAreTheFiveWordsD2Names(t *testing.T) {
 	want := []Label{Blocker, High, Medium, Low, Nit}
@@ -429,38 +429,38 @@ func TestLabelsAreTheFiveWordsD2Names(t *testing.T) {
 
 // TestTheLabelAndTheTableAgree: the label is what a person reads in the pull
 // request body and in `fugaro diagnose` (D2), so the word and the decision have
-// to be the same statement in both directions — a finding a mode blocks on is
+// to be the same statement in both directions — a finding a level blocks on is
 // one the label already calls serious, and a finding the label calls serious
-// enough for that mode is one it blocks on. A one-way check would let the bands
+// enough for that level is one it blocks on. A one-way check would let the bands
 // drift away from the floors and still read as a green test, which is the drift
 // this test exists to catch.
 //
 // Hotfix is asked one way and not both, by the owner's ruling of 2026-10-26:
 // its row keeps the security gate alone, so a finding the label calls `blocker`
 // — data loss, or any impact of 5 — is one Hotfix tolerates. The label is still
-// the severity of the score and not of the mode, so the direction that has to
-// hold there is the first one, and the second is stated below for that mode
+// the severity of the score and not of the level, so the direction that has to
+// hold there is the first one, and the second is stated below for that level
 // alone.
 func TestTheLabelAndTheTableAgree(t *testing.T) {
-	// Each mode's set is the bands its floor reaches, or is narrower than them
+	// Each level's set is the bands its floor reaches, or is narrower than them
 	// where the ruling left it a gate rather than a floor: POC blocks only what
 	// the override reaches, Startup starts at the medium band, Pro at the low
 	// one, and Critical at every finding.
-	allowed := map[Mode][]Label{
+	allowed := map[Rigor][]Label{
 		POC:      {Blocker},
 		Hotfix:   {Blocker},
 		Startup:  {Blocker, High, Medium},
 		Pro:      {Blocker, High, Medium, Low},
 		Critical: Labels,
 	}
-	for _, m := range Modes {
+	for _, m := range Rigors {
 		for _, s := range everyScore() {
 			if Blocks(m, s) && !slices.Contains(allowed[m], s.Label()) {
 				t.Fatalf("%s blocks a finding it labels %q: %+v", m, s.Label(), s)
 			}
 		}
 	}
-	for _, m := range []Mode{POC, Startup, Critical} {
+	for _, m := range []Rigor{POC, Startup, Critical} {
 		for _, s := range everyScore() {
 			if got, want := Blocks(m, s), slices.Contains(allowed[m], s.Label()); got != want {
 				t.Fatalf("%s blocks %+v = %v and labels it %q", m, s, got, s.Label())

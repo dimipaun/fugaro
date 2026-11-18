@@ -26,7 +26,7 @@ var historyReadAt = time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 // breakdown at all (a record from before the breakdown existed), and every
 // record starts at the same instant so two of them with the same duration are
 // the same sample.
-func historyRun(tr tier.Tier, mode rigor.Mode, status runstore.Status, minutes, cost float64) runstore.Record {
+func historyRun(tr tier.Tier, mode rigor.Rigor, status runstore.Status, minutes, cost float64) runstore.Record {
 	start := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
 	finish := start.Add(time.Duration(minutes * float64(time.Minute)))
 	rec := runstore.Record{
@@ -48,7 +48,7 @@ func historyRun(tr tier.Tier, mode rigor.Mode, status runstore.Status, minutes, 
 // historySeries is one record per duration, all of the same tier, mode and
 // status, each carrying the cost at the same index. A costs list shorter than
 // the durations, nil included, writes no cost figure for the rest.
-func historySeries(tr tier.Tier, mode rigor.Mode, status runstore.Status, minutes, costs []float64) []runstore.Record {
+func historySeries(tr tier.Tier, mode rigor.Rigor, status runstore.Status, minutes, costs []float64) []runstore.Record {
 	out := make([]runstore.Record, 0, len(minutes))
 	for i, m := range minutes {
 		cost := -1.0

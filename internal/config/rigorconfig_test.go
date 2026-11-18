@@ -27,13 +27,13 @@ defaults:
 // and a single merged list would silently drop one.
 func TestRigorConfigKeepsTheTwoLayersApart(t *testing.T) {
 	layer := mustLayer(t, rigorLayer)
-	repo := &Rigor{Default: rigor.POC, Areas: []rigor.Area{{Name: "docs", Match: "docs/**", Mode: rigor.Startup}}}
+	repo := &Rigor{Default: rigor.POC, Areas: []rigor.Area{{Name: "docs", Match: "docs/**", Level: rigor.Startup}}}
 
 	got := (&Config{Layer: layer, RepoRigor: repo}).RigorConfig()
 	if got.Project != rigor.Critical || got.Repo != rigor.POC {
 		t.Errorf("the two defaults: project %q, repo %q", got.Project, got.Repo)
 	}
-	if len(got.ProjectAreas) != 1 || got.ProjectAreas[0].Name != "payments" || got.ProjectAreas[0].Mode != rigor.Hotfix {
+	if len(got.ProjectAreas) != 1 || got.ProjectAreas[0].Name != "payments" || got.ProjectAreas[0].Level != rigor.Hotfix {
 		t.Errorf("the project layer's areas: %+v", got.ProjectAreas)
 	}
 	if len(got.RepoAreas) != 1 || got.RepoAreas[0].Name != "docs" || got.RepoAreas[0].Match != "docs/**" {
@@ -99,7 +99,7 @@ func TestRigorIsOutOfTheHashWhenTheFileWritesNone(t *testing.T) {
 // give, so a method that quietly included RepoRigor would hand the branch the
 // mode it asked for.
 func TestProjectRigorIsTheLayersHalfAlone(t *testing.T) {
-	repo := &Rigor{Default: rigor.POC, Areas: []rigor.Area{{Name: "docs", Match: "docs/**", Mode: rigor.POC}}}
+	repo := &Rigor{Default: rigor.POC, Areas: []rigor.Area{{Name: "docs", Match: "docs/**", Level: rigor.POC}}}
 	got := (&Config{Layer: mustLayer(t, rigorLayer), RepoRigor: repo}).ProjectRigor()
 	if got.Repo != "" || len(got.RepoAreas) != 0 {
 		t.Fatalf("the project layer's half carries the repository's: %+v", got)

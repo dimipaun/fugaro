@@ -2240,8 +2240,8 @@ func launchReviewLevels(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg
 // providers rather than reaching for the config it does not have.
 func launchResolve(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *config.Config, rcp *recipe.Recipe, warn io.Writer) launchResolution {
 	rigorCfg := cfg.RigorConfig()
-	req := rigor.Request{Mode: rigor.Mode(spec.Rigor), Paths: spec.Paths}
-	mode := rigor.Resolve(rigorCfg, req).Mode
+	req := rigor.Request{Level: rigor.Rigor(spec.Rigor), Paths: spec.Paths}
+	mode := rigor.Resolve(rigorCfg, req).Level
 	var floor []policy.Level
 	// The node is read once for both halves of the model's own gates: its
 	// floor, and the crafts it carries, which are the project layer's answer to
@@ -2258,7 +2258,7 @@ func launchResolve(ctx context.Context, env *cloudEnv, spec *task.Spec, cfg *con
 			// takes the run off the axis leaves the floor of the mode the layers
 			// resolved in force beside hotfix's (D8, LF5), and a note resolved
 			// against one row would say the launch's levels differ from the run's.
-			floor = policy.FloorFor(p.ReviewFloor, mode, rigor.LayersMode(rigorCfg, req, ""))
+			floor = policy.FloorFor(p.ReviewFloor, mode, rigor.LayersRigor(rigorCfg, req, ""))
 		}
 	}
 	fromTask, fromSwitch := securityRequestSources(spec, cfg)

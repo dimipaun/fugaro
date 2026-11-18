@@ -85,7 +85,7 @@ func (s LadderSeams) Set() bool {
 // cannot read (G5), so an unread item is a person's and never rung 1's.
 type LadderReading struct {
 	Read               bool
-	Mode               rigor.Mode
+	Mode               rigor.Rigor
 	Elapsed            time.Duration
 	CostUSD            float64
 	Churn              escalation.Kind

@@ -315,7 +315,7 @@ func TestNewToleratedBoundsWhatItStores(t *testing.T) {
 	}{
 		{"no title", ToleratedFinding{Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
 		{"no mode", ToleratedFinding{Title: "t", Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
-		{"a mode outside the vocabulary", ToleratedFinding{Title: "t", Mode: rigor.Mode("paranoid"), Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
+		{"a mode outside the vocabulary", ToleratedFinding{Title: "t", Mode: rigor.Rigor("paranoid"), Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Correctness}},
 		{"an unscored finding", ToleratedFinding{Title: "t", Mode: rigor.Pro, Class: rigor.Correctness}},
 		{"a class outside the vocabulary", ToleratedFinding{Title: "t", Mode: rigor.Pro, Likelihood: 1, Impact: 1, FixCost: 1, Class: rigor.Class("style")}},
 	} {
@@ -391,7 +391,7 @@ func TestNewAcceptedBoundsWhatItStores(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name   string
-		mode   rigor.Mode
+		mode   rigor.Rigor
 		round  int
 		at     string
 		findng []ToleratedFinding
@@ -575,7 +575,7 @@ func TestNewTriageBoundsWhatItStores(t *testing.T) {
 		r    TriageRound
 	}{
 		{"a round the run never numbered", TriageRound{Round: 0, Mode: rigor.Pro, Level: policy.LevelL1}},
-		{"a mode outside the vocabulary", TriageRound{Round: 1, Mode: rigor.Mode("paranoid"), Level: policy.LevelL1}},
+		{"a mode outside the vocabulary", TriageRound{Round: 1, Mode: rigor.Rigor("paranoid"), Level: policy.LevelL1}},
 		{"a level outside the vocabulary", TriageRound{Round: 1, Mode: rigor.Pro, Level: policy.Level("l4")}},
 		{"no level", TriageRound{Round: 1, Mode: rigor.Pro}},
 	} {

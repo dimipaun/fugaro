@@ -13,9 +13,9 @@ import (
 )
 
 // axis is the four modes a window reads, and the whole of what these cases
-// vary. It is written out here rather than taken from rigor.Modes' head so
+// vary. It is written out here rather than taken from rigor.Rigors' head so
 // that a mode added to the axis is a case this file has to name.
-var axis = []rigor.Mode{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical}
+var axis = []rigor.Rigor{rigor.POC, rigor.Startup, rigor.Pro, rigor.Critical}
 
 // TestWindowTableAdmitsExactlyItsRange is the table D926 describes, every
 // pair of the axis, both halves of it: the window a pair leaves admits

@@ -397,7 +397,7 @@ type Policy struct {
 	// publisher writes nothing at all for a project that sets none, so the
 	// node of such a project is byte for byte what it was before this member
 	// existed.
-	ReviewFloor map[rigor.Mode][]policy.Level `json:"review_floor,omitempty"`
+	ReviewFloor map[rigor.Rigor][]policy.Level `json:"review_floor,omitempty"`
 
 	// Triage is the owner's switch for the run's triage stage (D1854): the
 	// step that weighs a review round's findings before the fix round takes
@@ -1786,7 +1786,7 @@ func decodeWithKeys(raw []byte, keys map[string]bool) (*Policy, bool, error) {
 // A block that names no mode at all is no floor: the publisher writes nothing
 // for a project that sets none, and a written empty object — which is how an
 // operator takes a published floor away on purpose — reads as the same answer.
-func decodeReviewFloor(raw json.RawMessage) (map[rigor.Mode][]policy.Level, error) {
+func decodeReviewFloor(raw json.RawMessage) (map[rigor.Rigor][]policy.Level, error) {
 	names, err := objectMemberNames(raw)
 	if err != nil {
 		return nil, fmt.Errorf("projectpolicy: review_floor: %w", err)

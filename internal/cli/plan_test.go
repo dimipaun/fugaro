@@ -668,7 +668,7 @@ func TestPlanGraphUsesCacheThenSeeds(t *testing.T) {
 		records = append(records, runstore.Record{
 			Version: 1, RunID: fmt.Sprintf("20261116-09000%d-aaaa", i), Repo: "acme/app",
 			Status: runstore.StatusSucceeded, StartedAt: start, FinishedAt: &end,
-			Tier: &runstore.TierRecord{Tier: tier.Small}, Rigor: &runstore.RigorRecord{Mode: rigor.Pro},
+			Tier: &runstore.TierRecord{Tier: tier.Small}, Rigor: &runstore.RigorRecord{Level: rigor.Pro},
 			Cost: &runstore.Cost{TotalUSD: 2},
 		})
 	}

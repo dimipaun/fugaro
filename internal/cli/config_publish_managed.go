@@ -536,7 +536,7 @@ func layerReservedRun(path []string) []string {
 
 // layerRigorRules names every rigor floor the layer removes: a
 // defaults.rigor.default lowered or dropped, and a defaults.rigor.areas rule
-// lowered or dropped, both compared by rigor.Mode.Rank().
+// lowered or dropped, both compared by rigor.Rigor.Rank().
 //
 // This is one of the two directions the gate refuses for admitting LESS rather
 // than more — the review rounds a run spends are the other (layerRoundsRules,
@@ -566,9 +566,9 @@ func layerRigorRules(prev, next *config.ProjectLayer) []string {
 			add("lowers defaults.rigor.default from " + string(was) + " to " + string(now))
 		}
 	}
-	was := make(map[string]rigor.Mode, len(prev.Defaults.Rigor.Areas))
+	was := make(map[string]rigor.Rigor, len(prev.Defaults.Rigor.Areas))
 	for _, a := range prev.Defaults.Rigor.Areas {
-		was[a.Name] = a.Mode
+		was[a.Name] = a.Level
 	}
 	for _, a := range next.Defaults.Rigor.Areas {
 		held, ok := was[a.Name]
@@ -577,10 +577,10 @@ func layerRigorRules(prev, next *config.ProjectLayer) []string {
 		}
 		delete(was, a.Name)
 		switch {
-		case a.Mode == "":
-			add("removes the rigor rule " + safetext.Field(a.Name) + "'s mode, which was " + string(held))
-		case a.Mode.Rank() < held.Rank():
-			add("lowers the rigor rule " + safetext.Field(a.Name) + " from " + string(held) + " to " + string(a.Mode))
+		case a.Level == "":
+			add("removes the rigor rule " + safetext.Field(a.Name) + "'s level, which was " + string(held))
+		case a.Level.Rank() < held.Rank():
+			add("lowers the rigor rule " + safetext.Field(a.Name) + " from " + string(held) + " to " + string(a.Level))
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(was)) {

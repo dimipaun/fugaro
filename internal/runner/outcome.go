@@ -533,7 +533,7 @@ func (r *run) levelRound(l policy.Level, round int) (seniorRound, bool) {
 type FindingsPolicy struct {
 	// Mode is the mode the run resolved (D22's fold). A tolerated round's
 	// reason names it, so the record says which mode let the findings through.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Round is the review round the split was made from. Decide checks it
 	// against the summary it was given, so a split from another round is a
 	// policy it cannot read — and a policy that cannot decide blocks (F3).
@@ -605,7 +605,7 @@ type FindingsPolicy struct {
 // ends at. A run whose mode never rose has none, which is D19.
 type RigorRaise struct {
 	// Mode is the mode this raise reached, which is the mode the reason names.
-	Mode rigor.Mode
+	Mode rigor.Rigor
 	// Area is the rule the raising moment matched — its own strictest, which
 	// D23 makes the deciding one — and "" when the layer that decided it is not
 	// an area: a raise by a layer, or by a built-in floor outside every layer
@@ -754,7 +754,7 @@ func (pol FindingsPolicy) acceptsAtStop(last *runstore.ReviewSummary) bool {
 // stop, so it is a draft at the stop whatever this branch does; a task that
 // named a mode is a run in that mode (rigor.Request.Mode), and the ruling's
 // answer is the mode's.
-func findingsPolicyOf(cfg rigor.Config, mode rigor.Mode, round int, findings []rigor.Score, atStop string) FindingsPolicy {
+func findingsPolicyOf(cfg rigor.Config, mode rigor.Rigor, round int, findings []rigor.Score, atStop string) FindingsPolicy {
 	// D9 first, and the mode's own round rule with it: a mode may not let a
 	// finding through where the repository has not asked for the mode, so the
 	// split is taken only where both hold — the repository opted in

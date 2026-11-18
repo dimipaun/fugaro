@@ -468,7 +468,7 @@ func listUnderLeaf(v any) bool {
 // rigor: block carries, because either layer may set either of them
 // (docs/project-layer.md §5).
 type LayerRigor struct {
-	Default rigor.Mode   `yaml:"default"`
+	Default rigor.Rigor  `yaml:"default"`
 	Areas   []rigor.Area `yaml:"areas"`
 }
 

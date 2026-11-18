@@ -140,7 +140,7 @@ type Group struct {
 	// Rigor is the mode this group is the runs of, and empty for the tier's
 	// own group: every run of the tier, whatever mode it resolved, which is
 	// the fallback D2713 reaches for second.
-	Rigor rigor.Mode `json:"rigor,omitempty"`
+	Rigor rigor.Rigor `json:"rigor,omitempty"`
 	// Runs is the group's sample size: every run the table could draw a
 	// duration from.
 	Runs int `json:"runs"`
@@ -210,7 +210,7 @@ func Build(records []runstore.Record, now time.Time) *Table {
 	// One map holds both kinds of group: the (tier, mode) pair where the mode
 	// is known, and (tier, "") -- the tier's own group -- for every run.
 	groups := map[[2]string]*sample{}
-	of := func(tr tier.Tier, mode rigor.Mode) *sample {
+	of := func(tr tier.Tier, mode rigor.Rigor) *sample {
 		key := [2]string{string(tr), string(mode)}
 		s := groups[key]
 		if s == nil {
@@ -252,7 +252,7 @@ func Build(records []runstore.Record, now time.Time) *Table {
 		s := groups[key]
 		g := Group{
 			Tier:            tier.Tier(key[0]),
-			Rigor:           rigor.Mode(key[1]),
+			Rigor:           rigor.Rigor(key[1]),
 			Runs:            len(s.durations),
 			DurationMinutes: quartiles(s.durations),
 		}
@@ -271,7 +271,7 @@ func Build(records []runstore.Record, now time.Time) *Table {
 // release does not ship. The mode is empty where the record carries no rigor
 // block or names a mode outside the vocabulary, and the run is then a sample of
 // its tier alone.
-func historyOf(rec *runstore.Record) (tr tier.Tier, mode rigor.Mode, ok bool) {
+func historyOf(rec *runstore.Record) (tr tier.Tier, mode rigor.Rigor, ok bool) {
 	if rec.Status == runstore.StatusRunning || rec.FinishedAt == nil {
 		return "", "", false
 	}
@@ -311,7 +311,7 @@ func figure(v float64) bool { return v >= 0 && v <= maxFigure }
 // asked for the tier's answer, and its basis says so. A tier this release does
 // not ship has no seed and answers the zero range -- the plan's own `assumed`
 // answer (D2722) is where a node that names no tier is decided, and never here.
-func (t *Table) Answer(tr tier.Tier, mode rigor.Mode) Answer {
+func (t *Table) Answer(tr tier.Tier, mode rigor.Rigor) Answer {
 	if rigor.Known(mode) {
 		if g := t.group(tr, mode); g != nil && g.Runs >= MinRuns {
 			return g.answer(BasisHistory)
@@ -327,7 +327,7 @@ func (t *Table) Answer(tr tier.Tier, mode rigor.Mode) Answer {
 // carries none. The scan is linear, and a table holds at most one group per
 // tier and one per (tier, mode) -- twenty-four, for four tiers and five modes
 // -- so the flat shape on the wire costs nothing a reader can measure.
-func (t *Table) group(tr tier.Tier, mode rigor.Mode) *Group {
+func (t *Table) group(tr tier.Tier, mode rigor.Rigor) *Group {
 	if t == nil {
 		return nil
 	}

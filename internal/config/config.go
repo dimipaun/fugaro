@@ -252,7 +252,7 @@ type Rigor struct {
 	// decides (the built-in default is rigor.Default, D19). A narrower layer
 	// may set a *lower* mode than a wider one (D21): this is a default, and a
 	// project that wants a floor says so with a floor.
-	Default rigor.Mode `yaml:"default,omitempty"`
+	Default rigor.Rigor `yaml:"default,omitempty"`
 	// Areas are this layer's area rules (D20c). A rule sets the mode for the
 	// paths it matches; the repository's list and the project layer's are
 	// both in effect, never one replacing the other (the merge rule §4
@@ -684,7 +684,7 @@ type Agent struct {
 // repository's answer lands (Resolve); the policy node's arrives beside it as
 // policy.Effective.TriageOff, which the runner merges — a true there is not a
 // way to put the stage back either.
-func (a Agent) TriageOn(mode rigor.Mode) bool {
+func (a Agent) TriageOn(mode rigor.Rigor) bool {
 	if !TriageMode(mode) {
 		return false
 	}
@@ -697,7 +697,7 @@ func (a Agent) TriageOn(mode rigor.Mode) bool {
 // that spend review rounds on a run's own output want and the others do not —
 // POC and Critical judge findings by the mode's own table, and Hotfix's table
 // blocks the ones the judge could move.
-func TriageMode(mode rigor.Mode) bool {
+func TriageMode(mode rigor.Rigor) bool {
 	return mode == rigor.Startup || mode == rigor.Pro
 }
 

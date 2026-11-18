@@ -8,17 +8,17 @@ import (
 
 // Select is the areas a run's paths match (D20c, D23), strictest first.
 //
-// It is D23's answer to a run that touches several areas: the strictest mode
+// It is D23's answer to a run that touches several areas: the strictest level
 // among the matched rules decides, and every rule that matched is kept so
 // the run can record which ones did. Strictest-first means the caller never
-// has to order them again, and the first entry is the one whose mode won.
+// has to order them again, and the first entry is the one whose level won.
 //
 // The result is deduplicated by name, keeping the strictest rule of each
 // name: the two layers may each carry an area list (D20c), so the same name
 // can arrive twice, and a record that printed it twice would be saying two
 // rules decided when one idea did.
 //
-// A path that matches nothing is not an error and produces no rule: the mode
+// A path that matches nothing is not an error and produces no rule: the level
 // then stays what the layers below set, which is what a run with no declared
 // paths and an empty diff gets.
 //
@@ -35,7 +35,7 @@ func Select(areas []Area, paths []string) []Area {
 		if i, seen := at[a.Name]; seen {
 			// Same name, twice: keep the stricter rule, in place, so the
 			// order out is already strictest-first.
-			if a.Mode.Rank() > out[i].Mode.Rank() {
+			if a.Level.Rank() > out[i].Level.Rank() {
 				out[i] = a
 			}
 			continue
@@ -44,7 +44,7 @@ func Select(areas []Area, paths []string) []Area {
 		out = append(out, a)
 	}
 	// Stable, so rules of equal rank keep the order they were written in.
-	slices.SortStableFunc(out, func(x, y Area) int { return y.Mode.Rank() - x.Mode.Rank() })
+	slices.SortStableFunc(out, func(x, y Area) int { return y.Level.Rank() - x.Level.Rank() })
 	return out
 }
 
@@ -61,15 +61,15 @@ func matches(pattern string, paths []string) bool {
 	return false
 }
 
-// ModesOf is the modes of areas, in order: the set Strictest reads to answer
+// RigorsOf is the levels of areas, in order: the set Strictest reads to answer
 // which of them decided.
-func ModesOf(areas []Area) []Mode {
+func RigorsOf(areas []Area) []Rigor {
 	if len(areas) == 0 {
 		return nil
 	}
-	out := make([]Mode, 0, len(areas))
+	out := make([]Rigor, 0, len(areas))
 	for _, a := range areas {
-		out = append(out, a.Mode)
+		out = append(out, a.Level)
 	}
 	return out
 }

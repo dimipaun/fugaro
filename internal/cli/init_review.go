@@ -627,17 +627,17 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	if o.billingAccount != "" {
 		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
 	}
-	// The project's rigor mode, resolved the one way (task W of
+	// The project's rigor level, resolved the one way (task W of
 	// docs/rigor-command/implementation-plan.md; D900): what every run of this
 	// project gets where nothing narrower sets one — the repository's own
 	// fugaro.yaml, an area rule, the run's --mode — and the layer that set it.
-	// The word beside the mode is what tells a project that answered the
+	// The word beside the level is what tells a project that answered the
 	// wizard's question (`pro (project)`) from one that has not (`pro
 	// (default)`): the built-in default is reported as the built-in default
 	// rather than as a choice somebody made, and it is the one reading this
 	// summary owes a converge, which asks nothing and rewrites nothing.
 	if res, ok := e.projectRigor(); ok {
-		fmt.Fprintf(w, "  %-15s %s (%s)\n", "rigor mode:", pluginwire.Printable(string(res.Mode)), pluginwire.Printable(string(res.From)))
+		fmt.Fprintf(w, "  %-15s %s (%s)\n", "rigor level:", pluginwire.Printable(string(res.Level)), pluginwire.Printable(string(res.From)))
 	}
 	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) is shown and then applied, and where nobody is at the terminal the run leaves it to you.")
 	if managed {
@@ -736,7 +736,7 @@ func (e *initEngine) projectRigor() (rigor.Resolved, bool) {
 	cfg := rigor.Config{}
 	switch {
 	case e.r != nil && e.r.o.rigor != "":
-		cfg.Project = rigor.Mode(e.r.o.rigor)
+		cfg.Project = rigor.Rigor(e.r.o.rigor)
 	case e.lc != nil && e.lc.Name != "":
 		path, err := localcfg.LayerFile(os.Getenv, e.lc.Name)
 		if err != nil {
