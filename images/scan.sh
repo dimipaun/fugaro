@@ -185,6 +185,10 @@ leaks() {
       # beside its layers and which this is not the fence for. Anything else
       # is a layer in a codec this worker cannot decode, and the distinct count
       # alone would let it pass beside a second blob of an already-read diff ID.
+      case "$entry" in
+        blobs/*|layer.tar|*/layer.tar) ;;
+        *) continue ;;
+      esac
       first=$(head -c 512 "$work/layer" | LC_ALL=C tr -d ' \t\r\n' | head -c 1)
       case "$first" in
         '{'|'['|'') continue ;;
