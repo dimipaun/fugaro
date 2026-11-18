@@ -391,6 +391,30 @@ var (
 	troubleshootUpload = troubleshootUploadBundle
 )
 
+// troubleshootPlanDecline is what tier 4 prints when the plan — the half that
+// decides what the tier would launch, before anything of the cloud is touched —
+// declines: the decline, and beside it the refusal that brought the person to
+// this tier at all.
+//
+// This tier is reached only by a machine that holds no usable credential of its
+// own (D2400's order), and that refusal is a fact the person can still act on —
+// a placeholder left in ANTHROPIC_API_KEY, a login that expired, a variable set
+// to something too short to redact. Dropping it would leave them with the cloud
+// path's own problem and no word about the machine they are standing at, and
+// dropping the decline would leave them with the credential and no word about
+// what to fix instead. Both are one reason because the person reads one.
+//
+// It is the plan's decline and not one of the declines below it: once the tier
+// has reached the cloud — a gate's judgement, the upload, the launch, the
+// read-back — what is left to say is about the cloud, and the credential is the
+// reason the person came here rather than news about where they ended up.
+func troubleshootPlanDecline(decline, credErr error) error {
+	if credErr == nil {
+		return decline
+	}
+	return fmt.Errorf("%v The local diagnosis could not answer this failure either: %v", decline, credErr)
+}
+
 // troubleshootCloudTier is D2400's third tier: this machine holds no credential
 // of its own, so the diagnosis runs as a job in the person's own project, on
 // the project's account (D2403) — the local child is never reached on the
@@ -429,7 +453,7 @@ func troubleshootCloudTier(cmd *cobra.Command, o *troubleshootOptions, ev diagno
 	}
 	job, err := troubleshootCloudPlan(ctx, ev)
 	if err != nil {
-		return troubleshootOffline(cmd, o, ev, d, err)
+		return troubleshootOffline(cmd, o, ev, d, troubleshootPlanDecline(err, credErr))
 	}
 	s := runstore.Open(job.env.bucket.Bucket, job.slug, job.spec.RunID)
 	// The spec is judged before anything of it exists: no task, no token, no
