@@ -1417,10 +1417,10 @@ func secretsPolicyDryRun(o secretsOptions, block, name string, old, next []byte,
 
 // secretsPolicyValue is one key's own value in a document, rendered the way
 // version 1 renders every value: a list as its members comma-separated, a
-// scalar as itself, and "" when the document holds none. proxy is read as "set
-// or not set" rather than as the two booleans, because the switch's off state
-// is the key's absence — the state --proxy=false writes — and a document that
-// spelled it "false" would describe a key the edit never leaves behind.
+// scalar as itself, and "" when the document holds none. proxy is the one key
+// whose absence and whose false differ (S6's fix): the command's off state is
+// the key's absence — the state --proxy=false writes — but a document that
+// spells it "false" says so, and the dry run shows the file as it is.
 func secretsPolicyValue(data []byte, block, name string, proxy bool) string {
 	lc, err := localcfg.Parse(data)
 	if err != nil {
@@ -1428,10 +1428,10 @@ func secretsPolicyValue(data []byte, block, name string, proxy bool) string {
 	}
 	entry := secretsPolicyEntryOf(lc, block, name)
 	if proxy {
-		if !entry.Proxy {
+		if !entry.ProxyStated() {
 			return ""
 		}
-		return "true"
+		return strconv.FormatBool(*entry.Proxy)
 	}
 	return strings.Join(entry.AllowDataTo, ", ")
 }

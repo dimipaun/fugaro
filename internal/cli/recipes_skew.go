@@ -131,6 +131,38 @@ const sharedSince = "0.14.0"
 // early (an image that would have worked stays blocked).
 const proxySince = "0.22.0"
 
+// serviceAuthSince is the first fugaro release whose runner serves a switched
+// `api-key` or `oauth` repository's MODEL calls through the installation's
+// credentials service (B2.2, F30; D2071, D2072): such a run's job mounts
+// neither the Anthropic key nor the Claude OAuth token from B2.7's flip on
+// (config.ServiceServedAuths), so its model credential comes from the service
+// and from nothing in its own environment. A runner older than this release reads the
+// mounted key it has always read, and on a job that no longer mounts one it
+// would have no credential at all: the gateway would open its upstream with an
+// empty key and every stage would fail at the provider.
+//
+// The launch gate (serviceAuthGate, launch_budget.go) refuses such a launch,
+// judged the way every other *Since gate is (checkImageSince, or
+// checkCloneImageSince for a checkout: clone workflow). It carries no shipped
+// flag, on proxySince's reasoning: refusing every image that predates it is
+// exactly the direction the gate wants, since a switched run on an older runner
+// cannot work at all.
+//
+// It names 0.25.0, the release that carries the RUNNER half (B2.2's
+// gatewayUpstream and ServiceSwitchedAuth), and NOT the release the flip
+// itself ships in — the two are one release apart here, and that is D2072's
+// second step: B2.3 hands a switched repository's job the service's address in
+// the same release as the flip, so from that release on the address and the
+// dropped mount arrive together and an image of the release BETWEEN them
+// (0.25.0) is the oldest one that can carry the pair. A number naming the
+// flip's own release would refuse a 0.25.0 image that works; a number below
+// 0.25.0 would admit one whose runner knows nothing of the service and dies at
+// its first model call. docs/release.md's Before-you-tag list verifies it
+// against the release actually cut, as it does for the other *Since constants,
+// and proxySince's own comment above is the cautionary tale for a value that
+// names the wrong release.
+const serviceAuthSince = "0.25.0"
+
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
 // in, R4). Like cloneSince and unlike the policy's own integer `version` or

@@ -5,15 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -117,8 +126,20 @@ func followUpPR(number int, branch string, state gitprov.PRState) fake.PRState {
 // followUpsStub installs the command's opener over one fake host holding prs:
 // the provider kind is resolved from this machine's config for real, and the
 // read itself is the fake's, which is the network no test has.
+//
+// The credential the command resolves before it opens anything is this
+// machine's own -- an App ID and the App's key, which no shell holds
+// (catalog_provider.go) -- so the fixture exports both. They are the seam's own
+// override (the environment wins over the config and no secret is read for
+// it), which is what keeps the read these tests are about the only thing
+// standing in for the credential: the key is never parsed, because the opener
+// below is what opens. The App ID and the key's ID and secret are the catalog
+// fixtures' own placeholders, since the two commands share the seam.
 func followUpsStub(t *testing.T, prs ...fake.PRState) *fake.Provider {
 	t.Helper()
+	catalogClearProviderEnv(t)
+	t.Setenv(providers.EnvGitHubAppID, catalogBuildAppID)
+	t.Setenv(providers.EnvGitHubAppKey, catalogAppKeyPlaceholder)
 	p := &fake.Provider{Repo: "acme/app", State: fake.State{PRs: prs}}
 	was := openFollowUpsProvider
 	openFollowUpsProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
@@ -1144,4 +1165,413 @@ func TestFollowupsSaysWhenEveryGroupIsAlreadyFiled(t *testing.T) {
 	if doc := followUpsDoc(t, parent, "--launch"); doc.Launched || len(doc.Tasks) != 0 {
 		t.Errorf("the repeat reported %+v, want nothing launched", doc)
 	}
+}
+
+// followUpsDeferredParent stores a parent run whose record defers d, without
+// installing any opener: a test that means to say where the credential comes
+// from adds its own seam over the fixture's config.
+func followUpsDeferredParent(t *testing.T, f *cloudFixture, d *runstore.DeferredFindings) string {
+	t.Helper()
+	parent := wallRunIDAt(0, "090000", "aaaa")
+	rec := parentRecord(parent)
+	rec.Deferred = d
+	seedParent(t, f, parent, rec)
+	return parent
+}
+
+// followUpsConfigRepo rewrites the fixture config's acme/app entry so that its
+// provider reads as field -- `provider: github, github_app_id: "12345"`, or
+// another provider entirely -- the way onboarding would have written it. The
+// entry's own shape is asserted, so a fixture change fails here rather than
+// silently testing nothing.
+func followUpsConfigRepo(t *testing.T, field string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(data), "provider: github", field, 1)
+	if updated == string(data) {
+		t.Fatal("the fixture config's repos entry has changed shape")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// followUpsOpenerEnv installs the command's opener seam so that a test can read
+// the environment the credential was resolved into: the opener answers p -- the
+// host a real opener would have handed back -- and the returned slice is the
+// environment it was handed.
+func followUpsOpenerEnv(t *testing.T, p *fake.Provider) *[]string {
+	t.Helper()
+	env := new([]string)
+	was := openFollowUpsProvider
+	openFollowUpsProvider = func(e []string, _ func(string)) (string, gitprov.Opener, error) {
+		*env = e
+		return "", func(context.Context, string, string) (gitprov.Provider, []string, error) {
+			return p, nil, nil
+		}, nil
+	}
+	t.Cleanup(func() { openFollowUpsProvider = was })
+	return env
+}
+
+// TestFollowUpsReadsTheGitHubAppFromTheConfigOrTheEnvironment is issue #1701's
+// defect, in this command: `fugaro followups RUN` opened the provider with
+// os.Environ() alone and a person's terminal holds neither a GitHub App ID nor
+// the App's private key, so the plan stopped at "FUGARO_GITHUB_APP_ID is not
+// set" -- though every run of the same repository already reads it from where it
+// is. The ID comes from the repository's own field in the local config, and only
+// from the variable when the config holds none; the key comes from the
+// repository's github-app-key secret, read once with the person's own
+// credentials after the one-line notice, and reaches the provider's environment
+// and nothing else.
+//
+// The red step (run, restored): read the config file under a different name or
+// hand the opener os.Environ() instead of the seam's environment and both cases
+// fail -- the first at "has no GitHub App ID", the second at the assertion that
+// the key is in the environment.
+func TestFollowUpsReadsTheGitHubAppFromTheConfigOrTheEnvironment(t *testing.T) {
+	t.Run("the config's App ID and the repository's secret hold the credential", func(t *testing.T) {
+		f := newCloudFixture(t)
+		parent := followUpsDeferredParent(t, f, allDeferred(t))
+		catalogClearProviderEnv(t)
+		followUpsConfigRepo(t, `provider: github, github_app_id: "`+catalogBuildAppID+`"`)
+		key := appKey(t)
+		resolves, reads := catalogStubKeyRead(t, key, nil)
+		env := followUpsOpenerEnv(t, &fake.Provider{Repo: "acme/app", State: fake.State{PRs: []fake.PRState{followUpPR(7, "fugaro/"+parent, gitprov.PRMerged)}}})
+
+		doc := followUpsDoc(t, parent)
+		if doc.PR != 7 || doc.Deferred != 4 || len(doc.Tasks) != 3 {
+			t.Fatalf("the plan = %+v, want the merged parent's four findings in three groups", doc)
+		}
+		if got := envValue(*env, providers.EnvGitHubAppID); got != catalogBuildAppID {
+			t.Errorf("%s = %q, want the App ID the local config records", providers.EnvGitHubAppID, got)
+		}
+		if got := envValue(*env, providers.EnvGitHubAppKey); got != string(key) {
+			t.Errorf("%s is not the key the repository's %s secret holds", providers.EnvGitHubAppKey, config.GitHubAppKeySecret)
+		}
+		if *resolves != 1 || *reads != 1 {
+			t.Errorf("the key's secret was resolved %d times and read %d times, want one of each", *resolves, *reads)
+		}
+	})
+
+	t.Run("the environment's App ID answers when the config holds none", func(t *testing.T) {
+		f := newCloudFixture(t)
+		parent := followUpsDeferredParent(t, f, allDeferred(t))
+		catalogClearProviderEnv(t)
+		t.Setenv(providers.EnvGitHubAppID, catalogEnvOnlyAppID)
+		t.Setenv(providers.EnvGitHubAppKey, catalogAppKeyPlaceholder)
+		resolves, reads := catalogStubKeyRead(t, nil, errors.New("Secret Manager must not be read"))
+		env := followUpsOpenerEnv(t, &fake.Provider{Repo: "acme/app", State: fake.State{PRs: []fake.PRState{followUpPR(7, "fugaro/"+parent, gitprov.PRMerged)}}})
+
+		doc := followUpsDoc(t, parent)
+		if len(doc.Tasks) != 3 {
+			t.Fatalf("the plan = %+v, want the three groups", doc)
+		}
+		if got := envValue(*env, providers.EnvGitHubAppID); got != catalogEnvOnlyAppID {
+			t.Errorf("%s = %q, want the exported ID", providers.EnvGitHubAppID, got)
+		}
+		if *resolves != 0 || *reads != 0 {
+			t.Errorf("the key was read (%d resolutions, %d reads) although the environment holds one", *resolves, *reads)
+		}
+	})
+}
+
+// TestFollowUpsWithoutAnAppIDNamesBothPlaces: with neither the config nor the
+// environment holding one there is nothing to open the provider with, and the
+// refusal names both ways the ID gets here -- the config key, where the fix is,
+// and the variable -- rather than a flag this command does not take. Nothing is
+// opened and nothing is written.
+func TestFollowUpsWithoutAnAppIDNamesBothPlaces(t *testing.T) {
+	f := newCloudFixture(t)
+	parent := followUpsDeferredParent(t, f, allDeferred(t))
+	launchable(t, f)
+	catalogClearProviderEnv(t)
+	asked := followUpsTripwire(t, &fake.Provider{Repo: "acme/app"})
+	before := followUpsRuns(t, f)
+
+	err := followUpsErr(t, parent, "--launch")
+	if ExitCode(errors.New(err)) == 0 {
+		t.Fatalf("the refusal reads as a success: %s", err)
+	}
+	for _, want := range []string{"repos.acme/app.github_app_id", "update --repo acme/app --github-app-id", providers.EnvGitHubAppID} {
+		if !strings.Contains(err, want) {
+			t.Errorf("the refusal does not name %q: %s", want, err)
+		}
+	}
+	if len(*asked) != 0 {
+		t.Errorf("a provider was opened for %v although no App ID was found", *asked)
+	}
+	if after := followUpsRuns(t, f); !slices.Equal(before, after) {
+		t.Errorf("a refused call wrote %v, want %v", after, before)
+	}
+}
+
+// TestFollowUpsBitbucketWithoutATokenSaysWhereItIs: the same defect on a
+// Bitbucket repository, which has no App and no key and whose credential is the
+// project's bitbucket-token secret. A read that produces no token leaves the
+// provider's own "is not set" failure standing -- the operator still reads the
+// sentence that names the variable -- and one sentence beside it says where the
+// token is and what reading it needs (tokenReadHint). The provider here is the
+// real one (OpenProvider), so what fails is the opener a real call fails at.
+func TestFollowUpsBitbucketWithoutATokenSaysWhereItIs(t *testing.T) {
+	catalogClearProviderEnv(t)
+	catalogStubTokenRead(t, nil, fmt.Errorf("secret versions.access: %w", gcp.ErrNoVersion))
+	env := followUpsEnv(t, gitprov.KindBitbucket)
+
+	_, err := followUpsProvider(t.Context(), env, "acme/app", gitprov.KindBitbucket, io.Discard, true)
+	if err == nil {
+		t.Fatal("a Bitbucket repository with no token answered a provider")
+	}
+	if want := providers.EnvBitbucketToken + " is not set: the provider needs a Bitbucket access token"; !strings.Contains(err.Error(), want) {
+		t.Errorf("the failure no longer carries the provider's own sentence %q: %v", want, err)
+	}
+	for _, want := range []string{"opening acme/app", config.BitbucketSecret, gcp.SecretAccessorRole} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the failure does not name %q: %v", want, err)
+		}
+	}
+}
+
+// followUpsEnv is the cloudEnv followUpsProvider is called with by a test that
+// makes the call itself: the fixture's project and this machine's config for
+// acme/app, and no bucket, because none of the credential's own resolution
+// reads one.
+func followUpsEnv(t *testing.T, kind string) *cloudEnv {
+	t.Helper()
+	return &cloudEnv{lc: &localcfg.Config{
+		Name: "aurora", GCPProject: "proj-1234",
+		Repos: map[string]localcfg.Repo{"acme/app": {Provider: kind, BaseBranch: "main"}},
+	}}
+}
+
+// TestFollowUpsInACodingAgentsSessionReadsThroughTheCredentialsService is the
+// fence and the path that keeps it (C2.2, D145; SECURITY.md): a coding agent's
+// session reads the parent pull request with a token the installation's
+// credentials service mints, and never with the App's key -- not even when the
+// marker stands on an installation whose config records an App ID and whose
+// repository has a key stored. The plan prints and --launch files the tasks
+// exactly as it does from a person's terminal, and the count of Secret Manager
+// reads stays at zero: a read of the key here would be the value an agent's
+// process must never hold.
+//
+// Mutation (run, restored): drop the agent half of followUpsProvider and the
+// session takes the config-and-key path -- the seam refuses it (the first
+// subtest's own refusal, "refused in a coding agent's session") -- so no plan is
+// printed and both the plan case and the launch case fail. The second subtest
+// pins the same fence from the other side: the seam is never reached while the
+// installation publishes a service.
+func TestFollowUpsInACodingAgentsSessionReadsThroughTheCredentialsService(t *testing.T) {
+	f := newCloudFixture(t)
+	parent := followUpsDeferredParent(t, f, allDeferred(t))
+	launchable(t, f)
+	catalogClearProviderEnv(t)
+	// An App ID the config records and a key the repository is supposed to have:
+	// the session must use neither, so the counters below have something to be
+	// zero about.
+	followUpsConfigRepo(t, `provider: github, github_app_id: "`+catalogBuildAppID+`"`)
+	f.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	resolves, reads := catalogStubKeyRead(t, appKey(t), nil)
+	// The config-and-key seam is a tripwire: a session that reached it would
+	// open the provider through it, and this fails the test where it happens.
+	asked := followUpsTripwire(t, &fake.Provider{Repo: "acme/app"})
+	service := followUpsServiceStub(t, followUpPR(7, "fugaro/"+parent, gitprov.PRMerged))
+	t.Setenv("CLAUDECODE", "1")
+
+	doc := followUpsDoc(t, parent)
+	if doc.PR != 7 || doc.Deferred != 4 || len(doc.Tasks) != 3 {
+		t.Fatalf("the plan = %+v, want the merged parent's four findings in three groups", doc)
+	}
+	if *service != 1 {
+		t.Errorf("the credentials service's read opened the provider %d times, want once", *service)
+	}
+	if len(*asked) != 0 {
+		t.Errorf("the config-and-key opener was reached for %v in an agent's session", *asked)
+	}
+	if *resolves != 0 || *reads != 0 {
+		t.Errorf("a coding agent's session read the App key (%d resolutions, %d reads)", *resolves, *reads)
+	}
+
+	before := followUpsRuns(t, f)
+	launched := followUpsDoc(t, parent, "--launch")
+	if len(launched.Tasks) != 3 || !launched.Launched {
+		t.Fatalf("--launch in an agent's session = %+v, want the three groups launched", launched)
+	}
+	for _, tk := range launched.Tasks {
+		if tk.RunID == "" || tk.Status == "planned" {
+			t.Errorf("task %+v was not launched", tk)
+		}
+	}
+	if after := followUpsRuns(t, f); len(after) != len(before)+3 {
+		t.Errorf("the session's --launch wrote %d runs, want 3 beside the parent: %v", len(after)-len(before), after)
+	}
+	if *resolves != 0 || *reads != 0 {
+		t.Errorf("--launch in a coding agent's session read the App key (%d resolutions, %d reads)", *resolves, *reads)
+	}
+}
+
+// TestFollowUpsInAnAgentSessionWithoutAServiceIsRefusedWithItsOwnName: an
+// installation that publishes no credentials service leaves a coding agent's
+// session no path that needs no key, and the refusal it gets names THIS command
+// rather than the one the seam is shared with (repoProviderEnv's who) -- the
+// sentence a session reads has to be about the command it ran.
+func TestFollowUpsInAnAgentSessionWithoutAServiceIsRefusedWithItsOwnName(t *testing.T) {
+	f := newCloudFixture(t)
+	parent := followUpsDeferredParent(t, f, allDeferred(t))
+	catalogClearProviderEnv(t)
+	followUpsConfigRepo(t, `provider: github, github_app_id: "`+catalogBuildAppID+`"`)
+	resolves, reads := catalogStubKeyRead(t, appKey(t), nil)
+	before := followUpsRuns(t, f)
+	t.Setenv("CLAUDECODE", "1")
+
+	err := followUpsErr(t, parent)
+	for _, want := range []string{"fugaro followups", "refused in a coding agent's session", "your own terminal window"} {
+		if !strings.Contains(err, want) {
+			t.Errorf("the refusal does not say %q: %s", want, err)
+		}
+	}
+	if strings.Contains(err, catalogBuildAppID) {
+		t.Errorf("the refusal names the App ID, which a session must not even be told: %s", err)
+	}
+	if *resolves != 0 || *reads != 0 {
+		t.Errorf("a refused session read the App key (%d resolutions, %d reads)", *resolves, *reads)
+	}
+	if after := followUpsRuns(t, f); !slices.Equal(before, after) {
+		t.Errorf("a refused call wrote %v, want %v", after, before)
+	}
+}
+
+// followUpsServiceStub installs the credentials-service seam -- the read a
+// coding agent's session takes -- so that the PATH the session chooses can be
+// asserted without a service standing: it counts its opens and answers the
+// forge stub, which is the network no test has. The real one is
+// serviceReadProvider, and what it does with the service is pinned separately
+// (TestFollowUpsParentReadsThroughTheServiceMint).
+func followUpsServiceStub(t *testing.T, prs ...fake.PRState) *int {
+	t.Helper()
+	calls := new(int)
+	p := &fake.Provider{Repo: "acme/app", State: fake.State{PRs: prs}}
+	was := openFollowUpsServiceProvider
+	openFollowUpsServiceProvider = func(_ context.Context, _ *cloudEnv, _, repo string) (gitprov.Provider, error) {
+		if repo != "acme/app" {
+			return nil, fmt.Errorf("the service read was asked for %s", repo)
+		}
+		*calls++
+		return p, nil
+	}
+	t.Cleanup(func() { openFollowUpsServiceProvider = was })
+	return calls
+}
+
+// TestFollowUpsParentReadsThroughTheServiceMint: the read a coding agent's
+// session makes, end to end and with the REAL provider: the launcher presents
+// its own Google ID token to the installation's credentials service, the service
+// mints a read-only installation token for the ONE repository named and for the
+// project's own App, and the forge's read of the pull request by its source
+// branch carries that token and no other. The merged state is what the command
+// decides on (followUpsParent), and no machine that reads this way holds an App
+// key at all.
+//
+// The red step (run, restored): open the provider from the environment here
+// instead and the mint is never called -- the read resolves an App key this
+// machine does not have.
+func TestFollowUpsParentReadsThroughTheServiceMint(t *testing.T) {
+	mint := startReadMintStandIn(t)
+	forge := startFollowUpsForgeStandIn(t, "fugaro/the-branch")
+	setReviewReadIdentity(t)
+	// The environment carries a job's App ID, and it is not the App the
+	// project's configuration records: the read must name the project's own.
+	t.Setenv(providers.EnvGitHubAppID, "999999999")
+	env := reviewHeadEnv(t, mint.url)
+
+	p, err := serviceReadProvider(t.Context(), env, gitprov.KindGitHub, "acme/app", followUpsParentRead)
+	if err != nil {
+		t.Fatalf("opening the provider through the installation's read mint: %v", err)
+	}
+	r, ok := p.(gitprov.PRBranchReader)
+	if !ok {
+		t.Fatal("the service-read provider does not read a pull request by its source branch")
+	}
+	info, found, err := r.PullRequestByBranch(t.Context(), "fugaro/the-branch")
+	if err != nil {
+		t.Fatalf("reading the pull request by its source branch: %v", err)
+	}
+	if !found {
+		t.Fatal("the forge's own pull request was not found")
+	}
+	if info.State != gitprov.PRMerged {
+		t.Errorf("the pull request reads as %q, want merged: the merge is what this command decides on", info.State)
+	}
+	if info.Number != 7 {
+		t.Errorf("the pull request number is %d, want 7", info.Number)
+	}
+	if mint.calls() != 1 {
+		t.Fatalf("%d read mint calls, want 1", mint.calls())
+	}
+	if mint.paths[0] != github.ServiceReadPath {
+		t.Errorf("the mint call went to %s, want %s", mint.paths[0], github.ServiceReadPath)
+	}
+	if got, want := mint.bodies[0]["repository"], "acme/app"; got != want {
+		t.Errorf("the mint call names the repository %q, want %q", got, want)
+	}
+	if got, want := mint.bodies[0]["app_id"], reviewHeadAppID; got != want {
+		t.Errorf("the mint call names the App %q, want the project's own %q", got, want)
+	}
+	if got, want := mint.auth[0], "Bearer "+reviewHeadPersonToken; got != want {
+		t.Errorf("the mint call carried %q, want the caller's own identity token", got)
+	}
+	token := "fake-" + t.Name() + "-read-token-not-a-real-credential"
+	if got := forge.auth(); len(got) != 2 || got[0] != "Bearer "+token || got[1] != "Bearer "+token {
+		t.Errorf("the forge's reads carried %v, want the token the service minted for both calls", got)
+	}
+}
+
+// followUpsForgeStandIn is the stand-in forge of the by-branch read: the pull
+// request list the lookup starts from, and the pull request itself. It records
+// the authorization every read carried, so a test can say which credential the
+// forge was asked with.
+type followUpsForgeStandIn struct {
+	mu    sync.Mutex
+	auths []string
+	state string
+}
+
+func startFollowUpsForgeStandIn(t *testing.T, branch string) *followUpsForgeStandIn {
+	t.Helper()
+	s := &followUpsForgeStandIn{state: "closed"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		s.auths = append(s.auths, r.Header.Get("Authorization"))
+		state := s.state
+		s.mu.Unlock()
+		pr := map[string]any{
+			"number": 7, "state": state, "title": "a pull request", "draft": false,
+			"merged":   state == "closed",
+			"html_url": "https://example.invalid/acme/app/pull/7",
+			"head":     map[string]any{"sha": reviewHeadSHA, "ref": branch},
+			"base":     map[string]any{"ref": "main"},
+			"user":     map[string]any{"id": 1, "login": "someone"},
+		}
+		// The lookup asks for the collection (head=<owner>:<branch>) and the
+		// read that follows asks for the pull request itself.
+		if strings.HasSuffix(r.URL.Path, "/pulls") {
+			_ = json.NewEncoder(w).Encode([]map[string]any{pr})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(pr)
+	}))
+	t.Cleanup(srv.Close)
+	prev := serviceReadGitHubAPIURL
+	serviceReadGitHubAPIURL = srv.URL
+	t.Cleanup(func() { serviceReadGitHubAPIURL = prev })
+	return s
+}
+
+func (s *followUpsForgeStandIn) auth() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.auths...)
 }

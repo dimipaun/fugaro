@@ -190,8 +190,23 @@ func isArm(rec runstore.Record) bool {
 // not a pair at all. The recipe is compared by its name and by the hash of the
 // bytes it came from, so two arms that ran different recipes of one name — a
 // recipe edited between the two launches — are not one pair either.
+//
+// The slot is the fourth input (B1.3, D728): two arms that vary different slots
+// are two experiments, not one pair, and scoring them as one would read a
+// reviewer against a coder's signals. A reviewer pair is asked one thing more,
+// because its challenger is a replay of the champion rather than a second run
+// of the task: the challenger must name the champion's run as the run whose
+// patch it read (ab.champion_run, B1.4), or the two arms are two readings of
+// two different changes.
 func sameArmInputs(champion, challenger runstore.Record) bool {
 	if champion.StartSHA == "" || champion.StartSHA != challenger.StartSHA {
+		return false
+	}
+	slot := SlotOf(champion)
+	if slot != SlotOf(challenger) {
+		return false
+	}
+	if slot.IsReviewer() && challenger.AB.ChampionRun != champion.RunID {
 		return false
 	}
 	return recordMode(champion) == recordMode(challenger) &&
@@ -338,6 +353,17 @@ type Verdict struct {
 	// JudgeModel is the model that judged the pair, the one the judge run's
 	// manifest was admitted with (D553, O2); empty for a pair no judge decided.
 	JudgeModel string
+	// Matched reports whether the judge matched the pair's two finding sets,
+	// with Misses the champion's findings the challenger's review lacked and
+	// FalseAlarms the challenger's findings it called not real (D728, read for
+	// a reviewer pair by review.go). A judgement that matched nothing is not a
+	// marking of zero, so Matched is what a reader asks before it reads either
+	// count. No judge run built here writes a marking yet — matching two
+	// finding sets is a reading of free text (F18), and whether it can be
+	// relied on is U4, unmeasured — so a verdict read from a judge run's
+	// verdicts object carries none today.
+	Matched             bool
+	Misses, FalseAlarms int
 }
 
 // Judged reports whether a judge decided anything about the pair: a verdict

@@ -22,8 +22,11 @@ import (
 // These are B2.2's runner half (F30): an api-key or oauth run whose job carries
 // the credentials service's URL is served by the service, and declares which
 // repository it is and, for oauth, which account. The switch is the URL alone
-// (D2072): the mounts are still there (B2.3 keeps them, B2.7 drops them), and a
-// run keyed on the flip list instead would ignore the URL that arrived first.
+// (D2072): B2.3 handed that URL to jobs whose mounts were all still there, and
+// B2.7 dropped the mounts behind it, so a run keyed on the flip list instead
+// would ignore the URL that arrived first. The planted key in the tests below
+// is what holds that: the runner reads the service's answer and never the
+// job's own environment.
 //
 // The runs here are built the way C1.15's own tests build them (svcRun,
 // svcSession): the file's auth, the platform's report of the execution, the
@@ -69,9 +72,11 @@ func switchedJob(t *testing.T) (env []string, seen func() []*http.Request) {
 
 // TestSwitchedAPIKeyRunGoesThroughTheService is B2.2's red step: an api-key
 // run whose job carries the service's URL takes the service upstream, and the
-// key the job still mounts (B2.3) is nowhere in it — the gateway is not the
-// thing that holds this run's credential any more, the service is (D2071,
-// D2072).
+// key planted in its job's environment is nowhere in it — the gateway is not
+// the thing that holds this run's credential any more, the service is (D2071,
+// D2072). The plant is the point after B2.7 as much as before it: a job of a
+// switched repository mounts no Anthropic key at all, and one that did would be
+// answered from the service anyway.
 func TestSwitchedAPIKeyRunGoesThroughTheService(t *testing.T) {
 	env, _ := switchedJob(t)
 	r := svcRun(t, "api-key", func(r *run) {
@@ -134,8 +139,8 @@ func TestSwitchedOAuthRunStartsTheGateway(t *testing.T) {
 		_ = r.gw.Close(c)
 	}()
 
-	// The agent's own environment: the gateway, and not the token the job
-	// still mounts (B2.3 keeps it until B2.7's flip).
+	// The agent's own environment: the gateway, and never the token planted in
+	// the job's own environment.
 	agentEnv, _, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{Auth: r.servedAuth(), Gateway: r.gateway()})
 	if err != nil {
 		t.Fatalf("the agent's environment for a switched oauth run: %v", err)

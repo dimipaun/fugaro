@@ -370,6 +370,119 @@ func TestOrchestratorGrantsAreTheDesignsTableRows(t *testing.T) {
 	}
 }
 
+// The daemon's own way into the credentials service, at the plan level (F19
+// and O2 of docs/forge-labels; E16, D2049). Two facts, and both are about a
+// plan rather than about the module's text: the installation grants the
+// daemon's account the invoker bit on the credentials service — without which
+// Cloud Run's front end refuses its call before the class check runs — and the
+// same account is the whole of FUGARO_ORCHESTRATOR_ACCOUNTS, the class the
+// service admits a label write and the gated merge mint by.
+//
+// The fixture is the local config build_identity_test.go plans its own
+// installations from — the service on, with the image a release pins and the
+// job table the config's repository derives — with the orchestrator block
+// added by hand exactly as an operator's own tfvars would carry it: this
+// release has no writer for the key, and the plan is of the module either way.
+//
+// The second half is the fail-closed direction: on the same installation with
+// no orchestrator block the entry is absent and no grant is made, so a service
+// deployed by a release before this one — or by this one on an installation
+// that never opted in — starts with a class that admits nobody and answers
+// every caller of the two routes with the class's own refusal rather than
+// admitting a caller nobody named.
+func TestOrchestratorDaemonIsTheCredentialsServicesOwnCallerClass(t *testing.T) {
+	lc := credentialsLC(t)
+	spec, err := Installation(lc, InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := Credentials(lc, credsVarsImage(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.CredentialsService = &svc
+	const (
+		invokerAddr = "module.installation.google_cloud_run_v2_service_iam_member.orchestrator_credentials_invoker[0]"
+		serviceAddr = "module.installation.google_cloud_run_v2_service.credentials[0]"
+		envName     = "FUGARO_ORCHESTRATOR_ACCOUNTS"
+	)
+	account := OrchestratorAccountID + "@" + spec.Project + ".iam.gserviceaccount.com"
+	member := "serviceAccount:" + account
+
+	_, off := installationPlan(t, spec)
+	svcOff, ok := off[serviceAddr]
+	if !ok {
+		t.Fatalf("the plan of the credentials fixture creates no credentials service: every fact below hangs off it")
+	}
+	envOff := credentialsServiceEnv(t, svcOff)
+	if got, ok := envOff[envName]; ok {
+		t.Errorf("%s carries %s = %q on an installation that runs no resident orchestrator: the class has to be absent rather than empty, so a service this release deploys on an installation with no daemon admits nobody", serviceAddr, envName, got)
+	}
+	if _, ok := off[invokerAddr]; ok {
+		t.Errorf("%s is in the plan of an installation that never opted in: the daemon does not exist there, and a grant to an account the same plan does not create is a principal nobody can be", invokerAddr)
+	}
+
+	_, on := installationPlanWith(t, spec, map[string]any{"orchestrator": orchestratorBlock(t, spec, credentialsFP)})
+
+	row, ok := on[invokerAddr]
+	if !ok {
+		t.Fatalf("turning the resident orchestrator on plans no %s: the daemon's token is minted and never served, because Cloud Run's front end refuses a caller without roles/run.invoker before the container decides the caller's class", invokerAddr)
+	}
+	for _, c := range []struct{ key, want string }{
+		{"role", "roles/run.invoker"},
+		{"member", member},
+		{"name", CredentialsServiceName},
+		{"project", spec.Project},
+		{"location", spec.Region},
+	} {
+		if got := str(row.After[c.key]); got != c.want {
+			t.Errorf("%s: %s is %q, want %q — the grant is the invoker bit on this installation's own credentials service for the account this same plan creates, and any other member, role or service is a different reach with the same name", invokerAddr, c.key, got, c.want)
+		}
+	}
+	if title, expr := conditionStrings(row); title != "" || expr != "" {
+		t.Errorf("%s carries the condition (%q, %q): the service's own class check is what decides who is served, and the grant stays unconditional as every other invoker grant of this service is", invokerAddr, title, expr)
+	}
+	if _, ok := on["module.installation.google_service_account.orchestrator[0]"]; !ok {
+		t.Fatalf("the plan grants %s the invoker bit and creates no such account: the member above would name an identity nothing makes", account)
+	}
+
+	svcOn, ok := on[serviceAddr]
+	if !ok {
+		t.Fatalf("the plan with the opt-in creates no credentials service: %s is in it and the service it names is not", invokerAddr)
+	}
+	env := credentialsServiceEnv(t, svcOn)
+	raw, ok := env[envName]
+	if !ok {
+		t.Fatalf("the credentials service's environment carries no %s (%v): the class admits nobody, and the daemon's label write and merge mint are refused with every other caller after the front end has already admitted it", envName, env)
+	}
+	var got []string
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("%s is not a JSON array of addresses (%q): internal/cli's credentialsServiceOrchestrators refuses to build a service from one it cannot decode", envName, raw)
+	}
+	if want := []string{account}; !slices.Equal(got, want) {
+		t.Errorf("%s is %v, want exactly %v: the class is the daemon's own address and nothing else — a person or a run account in it is a caller the label route and the merge mint must refuse", envName, got, want)
+	}
+	// The entry is the ONLY thing the opt-in changes about this service: the
+	// class lists beside it are the installation's own record, and an update
+	// that moved one of them would silently widen or narrow another route.
+	for name, value := range envOff {
+		if name == envName {
+			continue
+		}
+		if env[name] != value {
+			t.Errorf("turning the resident orchestrator on changed %s: %q became %q — the daemon's own class is the one entry it adds, and the other routes' classes are the installation's record", name, value, env[name])
+		}
+	}
+	for name := range env {
+		if name == envName {
+			continue
+		}
+		if _, ok := envOff[name]; !ok {
+			t.Errorf("turning the resident orchestrator on added %s to the credentials service: the daemon's own class is the one entry it adds", name)
+		}
+	}
+}
+
 // customRoleID is the role_id of the custom role the plan creates under the
 // installation module, which is what a grant naming that role as a literal has
 // to name.

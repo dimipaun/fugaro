@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -437,8 +438,8 @@ func secretsEntryFields(data []byte, block, name string) string {
 	if len(entry.AllowDataTo) > 0 {
 		pairs = append(pairs, "allow_data_to="+strings.Join(entry.AllowDataTo, ", "))
 	}
-	if entry.Proxy {
-		pairs = append(pairs, "proxy=true")
+	if entry.ProxyStated() {
+		pairs = append(pairs, "proxy="+strconv.FormatBool(*entry.Proxy))
 	}
 	return strings.Join(pairs, ", ")
 }

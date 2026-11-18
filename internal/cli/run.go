@@ -2378,6 +2378,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// The model credential's gate (B2.7, G17): a run of a repository whose
+	// model calls the credentials service serves holds no Anthropic key and
+	// no Claude OAuth token of its own, so the job image has to be one whose
+	// runner knows to call the service for them. Judged from the same build
+	// record and the same local config as the gate above, and like it not at
+	// all for a launch the service does not serve.
+	if err := env.serviceAuthGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}
@@ -6434,7 +6443,7 @@ var slipGrant = slipGrantOverService
 // slipIdentity mints the launcher's own Google ID token for serviceURL, which
 // is the identity the service's launcher class verifies (DS1.2, D1938).
 //
-// It is the PLAIN mint the read path presents (reviewReadIdentity), for the
+// It is the PLAIN mint the read path presents (serviceReadIdentity), for the
 // audience rather than for the token: a plain mint's audience is gcloud's own
 // client id (credsvc.GcloudAudience), which the launcher class admits and which
 // is the only one a person's account can mint — gcloud refuses --audiences for

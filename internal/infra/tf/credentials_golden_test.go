@@ -5,10 +5,24 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 )
+
+// moduleSource is the installation module's own file, read as this test's
+// third check needs it: whether the module SETS a name is a fact of its text
+// and not of any plan, so a name the cover admits has to be found there when
+// no golden renders it.
+func moduleSource(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "terraform", "gcp", "modules", "installation", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
 
 // credentialsFixture is the credentials case of the installation golden's
 // tfvars (internal/infra/testdata/installation-credentials.tfvars.json, the
@@ -248,9 +262,34 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		}
 	}
 	names = append(names, pending...)
+	// ... and the third kind of name the allow-list holds: one the module DOES
+	// render, on an installation this golden is not. The daemon's own class
+	// (F19, O2) is gated on var.orchestrator, and every fixture here runs the
+	// credentials service with no resident orchestrator — the daemon is the
+	// owner's opt-in of its own, and no golden turns it on — so this plan
+	// carries no such entry while credentials.tf does set it. A name is only
+	// admitted on this list if the module's own source is checked for it
+	// below, which is the same tripwire the awaiting list carries in the other
+	// direction: a name here that the module does not set would be a cover
+	// admitting an entry nothing writes. The value the entry carries on an
+	// installation that runs the daemon is pinned by internal/infra's
+	// TestOrchestratorDaemonIsTheCredentialsServicesOwnCallerClass, which
+	// plans that installation with the module itself.
+	module := moduleSource(t, "credentials.tf")
+	for _, n := range []string{"FUGARO_ORCHESTRATOR_ACCOUNTS"} {
+		if slices.Contains(names, n) {
+			// A fixture renders it now, so it is an ordinary name above and
+			// nothing here may exempt it.
+			continue
+		}
+		if !regexp.MustCompile(`name\s*=\s*"` + n + `"`).MatchString(module) {
+			t.Fatalf("the cover admits %s and neither this plan nor credentials.tf renders it: the allow-list would admit an entry nothing writes", n)
+		}
+		names = append(names, n)
+	}
 	slices.Sort(names)
 	if !slices.Equal(names, allowed) {
-		t.Fatalf("this test spells %v (the plan plus %v) as the service's environment, the cover allows %v", names, pending, credentialsServiceEnv)
+		t.Fatalf("this test spells %v (the plan, %v and the names the module renders on an installation this golden is not) as the service's environment, the cover allows %v", names, pending, credentialsServiceEnv)
 	}
 
 	got, fromSource := credentialsServiceEnvOf(t, rc)

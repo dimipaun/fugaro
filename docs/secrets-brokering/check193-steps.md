@@ -3,10 +3,12 @@
 **Status: written by task B2.5 of the secrets-brokering plan; run by the owner, task B2.6 (the switch
 mode) and task B2.8 (the `--after-flip` mode, after the flip).** NOT RUN. No agent runs any step of it,
 and no agent has: what it measures is a live installation, real runs, and the credentials service's own
-answers about them. A **FAIL in the switch mode** means S2 is not in place for one of the two
-repositories, and the flip (**B2.7**) does not go on until it is; a **FAIL in the `--after-flip` mode**
-means the flip did not reach the jobs or reached into a run that was already going, and both come back
-to the owner as a decision rather than as something to work around.
+answers about them. **Both modes are run on the release that carries the flip** (the owner's ruling of
+2026-11-18 moved the switch mode behind it, waiving the PASS it was to give B2.7), so the two are one
+sitting: a **FAIL in the switch mode** means S2 is not in place for one of the two repositories — the
+service is not serving a run whose job no longer holds the credential **the flip took away** — and a
+**FAIL in the `--after-flip` mode** means the flip did not reach the jobs or reached into a run that was
+already going. Both come back to the owner as a decision rather than as something to work around.
 
 The check is `scripts/live-checks/check193.sh` — one script, two modes: without an argument it runs
 **Check 193** (the switch mode, the plan's B2.6), with `--after-flip` it runs the flip's half (B2.8).

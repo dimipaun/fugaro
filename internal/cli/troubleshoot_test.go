@@ -23,12 +23,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/cmdlog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/report"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/srctree"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // tsCredentials is the value the world's own credential is set to. It is not
@@ -59,6 +63,10 @@ type tsWorld struct {
 	// egress line's ordering (D1606) is read from it.
 	outAtRun string
 	out      *bytes.Buffer
+	// errOut is the other stream, for the runs that print the egress line there
+	// (--json): a spy reads it the way a person reads the line, without having
+	// to be inside the printer.
+	errOut *bytes.Buffer
 }
 
 // tsSetup builds the world and installs the seams. A test edits the fields and
@@ -165,8 +173,8 @@ func tsRun(t *testing.T, x *tsWorld, args ...string) (string, string, error) {
 	root.SetOut(&out)
 	root.SetErr(&errOut)
 	root.SetArgs(NormalizeArgs(append([]string{"troubleshoot"}, args...)))
-	x.out = &out
-	defer func() { x.out = nil }()
+	x.out, x.errOut = &out, &errOut
+	defer func() { x.out, x.errOut = nil, nil }()
 	err := root.Execute()
 	return out.String(), errOut.String(), err
 }
@@ -964,5 +972,620 @@ func TestTroubleshootPrintsTheCauseTheDoctorCannotHide(t *testing.T) {
 	}
 	if strings.Contains(out, "Nothing it printed is here") {
 		t.Errorf("the doctor's note still says the doctor's output is nowhere:\n%s", out)
+	}
+}
+
+// The cloud tier (T-TC7, D2400): the order the tiers are reached in, the one
+// line about what leaves the machine (F4), and the answer's parity with a local
+// one (D2410). Everything the tier reaches outside this process is a seam (the
+// header of troubleshoot.go): the plan and the launch are T-TC8's and are
+// declared nil there, the pre-flight is T-TC1's, and each case here replaces all
+// three so that what the test reads is the order itself — which tier answers,
+// what is written before what, and what is left behind.
+//
+// The gates the pre-flight carries are pinned against the real block in
+// troubleshoot_preflight_test.go. What is under test here is the tier's use of
+// its verdict and the wiring around it, not the verdict.
+
+// tcCloud is the cloud tier's three seams: the plan, the pre-flight and the
+// launch. Each counts what it was asked and answers with the verdict a case
+// sets.
+type tcCloud struct {
+	job          troubleshootCloudJob
+	planErr      error
+	preflightErr error
+	launchErr    error
+	// ref is the reference the launch answers, and answer what the job leaves
+	// in the run's own prefix for the read-back.
+	ref    string
+	answer diagnoseagent.Answer
+
+	planned    int
+	preflights int
+	launches   int
+
+	// inputsAtPreflight and inputsAtLaunch are what the run's prefix held when
+	// the two were called: the order of the tier's writes is read from them, and
+	// an empty first one is what says the judgement came before the upload.
+	inputsAtPreflight []string
+	inputsAtLaunch    []string
+	// egressAtUpload is what the command had printed when the first object of
+	// the bundle was written. The egress line is D1606's sentence about what is
+	// *about* to be sent, so it is only true if it was already on the terminal
+	// at that instant — the launch is later than the upload, so a snapshot there
+	// would pass just as well with the sentence printed after the evidence was
+	// already in the person's bucket.
+	egressAtUpload string
+	uploads        int
+	// noAnswer is a job that ran and left nothing behind: the read-back finds no
+	// record and no answer, which is the other half of "the job did not answer"
+	// beside a launch that failed.
+	noAnswer bool
+}
+
+// tcSetup installs the cloud tier's four seams over the world's own runs bucket
+// and returns them. The plan answers a job of the fixture's own repository, the
+// pre-flight admits everything unless a case says otherwise, the upload is the
+// real one with the terminal read first, and the launch writes the answer into
+// the run's prefix the way the runner leaves it and answers a run reference.
+func tcSetup(t *testing.T, x *tsWorld) *tcCloud {
+	t.Helper()
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := blobx.Open(t.Context(), "file://"+x.f.runsDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	c := &tcCloud{
+		job:    troubleshootCloudJob{env: &cloudEnv{lc: lc, bucket: b}, slug: appSlug, spec: tcSpec()},
+		ref:    appSlug + "/" + tbRunID,
+		answer: diagnoseagent.Answer{Outcome: diagnoseagent.OutcomeConfiguration, Signature: "configuration", Text: "The layer check read the wrong cache.\n"},
+	}
+	wasPlan, wasPreflight, wasUpload, wasLaunch := troubleshootCloudPlan, troubleshootPreflight, troubleshootUpload, troubleshootLaunchCloud
+	t.Cleanup(func() {
+		troubleshootCloudPlan, troubleshootPreflight, troubleshootUpload, troubleshootLaunchCloud = wasPlan, wasPreflight, wasUpload, wasLaunch
+	})
+	troubleshootCloudPlan = func(context.Context, diagnoseagent.Evidence) (troubleshootCloudJob, error) {
+		c.planned++
+		if c.planErr != nil {
+			return troubleshootCloudJob{}, c.planErr
+		}
+		return c.job, nil
+	}
+	troubleshootPreflight = func(context.Context, *cloudEnv, *runOptions, string, *runstore.Store, *task.Spec) error {
+		c.preflights++
+		c.inputsAtPreflight = tcInputs(x, tbRunID)
+		return c.preflightErr
+	}
+	troubleshootUpload = func(ctx context.Context, s *runstore.Store, ev diagnoseagent.Evidence, rec srctree.Record) error {
+		c.uploads++
+		c.egressAtUpload = tsPrinted(x)
+		return troubleshootUploadBundle(ctx, s, ev, rec)
+	}
+	troubleshootLaunchCloud = func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, error) {
+		c.launches++
+		c.inputsAtLaunch = tcInputs(x, tbRunID)
+		if c.launchErr != nil {
+			return "", c.launchErr
+		}
+		if c.noAnswer {
+			return c.ref, nil
+		}
+		// The job answers by leaving its two files and the run's record in the
+		// run's own prefix, which is what the read-back reads.
+		tbAnswer(t, runstore.Open(env.bucket.Bucket, slug, spec.RunID), c.answer)
+		return c.ref, nil
+	}
+	return c
+}
+
+// tcSpec is the task the plan resolves: a mode: artifact run of the fixture's
+// own repository, carrying the catalog recipe a diagnosis runs.
+func tcSpec() *task.Spec {
+	return &task.Spec{Version: 1, RunID: tbRunID, Repo: "acme/app", Ref: "main", Workflow: "web",
+		Task: "diagnose a failed fugaro command", Mode: recipe.ModeArtifact,
+		Recipe: &task.Recipe{Name: "troubleshoot"}}
+}
+
+// tcNoCredential clears the two variables and leaves PATH as tsSetup left it,
+// with no claude in it: the state D2400's third tier is reached in.
+func tcNoCredential(t *testing.T) {
+	t.Helper()
+	t.Setenv(config.ReservedSecrets[config.ClaudeOAuthToken], "")
+	t.Setenv(config.ReservedSecrets[config.AnthropicSecret], "")
+}
+
+// tcInputs is what a run's own prefix holds under inputs/diagnose: the bundle
+// the tier uploaded, as the names the file:// driver's disk shows. nil when the
+// prefix is not there at all, which is the reading that says nothing was
+// written.
+func tcInputs(x *tsWorld, id string) []string {
+	entries, err := os.ReadDir(filepath.Join(x.f.runsDir(), "runs", appSlug, id, "inputs", "diagnose"))
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// tsPrinted is everything the command has written so far, on both streams: a
+// spy reads it the way a person at the terminal would.
+func tsPrinted(x *tsWorld) string {
+	var b strings.Builder
+	if x.out != nil {
+		b.WriteString(x.out.String())
+	}
+	if x.errOut != nil {
+		b.WriteString(x.errOut.String())
+	}
+	return b.String()
+}
+
+// tsCloudAuth is the credential the fixture's world holds: the environment's
+// own token, which is D1601's first case.
+const tsCloudAuth = "ANTHROPIC_API_KEY"
+
+// TestTroubleshootTierOrder is D2400's order, one case per tier and one spy per
+// tier: the log's own cause answers with nothing sent anywhere, a credential
+// runs the local child, only a machine with no credential at all reaches the
+// cloud job, and a tier that did not answer leaves the evidence.
+//
+// Mutation (reach the cloud tier before the credential): the local case fails
+// with the plan asked and the child never called.
+// Mutation (run the local child with no credential): the cloud case fails on
+// the child's own request list.
+func TestTroubleshootTierOrder(t *testing.T) {
+	t.Run("rules", func(t *testing.T) {
+		x := tsSetup(t)
+		tcNoCredential(t)
+		c := tcSetup(t, x)
+		x.id = tsFailedLog(t, time.Now().UTC(), tsImageGateLog(), "Failed in 12.3s")
+		out, _, err := tsRun(t, x)
+		if err != nil {
+			t.Fatalf("a log that names its own cause answered %v", err)
+		}
+		for _, want := range []string{"Cause:", "Fix:", "Log:"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("the rules tier's answer carries no %q:\n%s", want, out)
+			}
+		}
+		if len(x.reqs) != 0 {
+			t.Errorf("the local child was called %d times for a cause the log answered by itself", len(x.reqs))
+		}
+		if c.planned != 0 {
+			t.Errorf("the cloud tier was reached for a cause the log answered by itself")
+		}
+	})
+	t.Run("local", func(t *testing.T) {
+		x := tsSetup(t)
+		c := tcSetup(t, x)
+		x.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+		x.diag = diagnoseagent.Diagnosis{Outcome: diagnoseagent.OutcomeConfiguration, Signature: "configuration", Text: "The account is not allowed for this repository.\n"}
+		out, errOut, err := tsRun(t, x, "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d troubleshootDoc
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		if d.Tier != troubleshootTierLocal {
+			t.Errorf("the tier that answered is %q, want %q", d.Tier, troubleshootTierLocal)
+		}
+		if len(x.reqs) != 1 {
+			t.Errorf("the local child was asked %d times, want once", len(x.reqs))
+		}
+		if c.planned != 0 || c.launches != 0 {
+			t.Errorf("a machine holding a credential reached the cloud tier: %d plans, %d launches", c.planned, c.launches)
+		}
+		if !strings.Contains(errOut, "your own Claude login") {
+			t.Errorf("the local tier's egress line does not name this machine's own login: %q", errOut)
+		}
+		if strings.Contains(out+errOut, "Cloud project") {
+			t.Errorf("the cloud tier's line was printed by the local tier:\n%s%s", out, errOut)
+		}
+	})
+	t.Run("cloud", func(t *testing.T) {
+		x := tsSetup(t)
+		tcNoCredential(t)
+		c := tcSetup(t, x)
+		x.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+		out, errOut, err := tsRun(t, x, "--json")
+		if err != nil {
+			t.Fatalf("the cloud tier answered %v", err)
+		}
+		var d troubleshootDoc
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		if d.Tier != troubleshootTierCloud {
+			t.Errorf("the tier that answered is %q, want %q", d.Tier, troubleshootTierCloud)
+		}
+		if d.CloudRun != c.ref {
+			t.Errorf("the answer names the run %q, want the one the launch answered (%q)", d.CloudRun, c.ref)
+		}
+		if d.Outcome != diagnoseagent.OutcomeConfiguration || d.Signature != "configuration" {
+			t.Errorf("the cloud answer is %+v, want the job's own outcome and signature", d)
+		}
+		if !strings.Contains(d.Answer, "The layer check read the wrong cache.") {
+			t.Errorf("the answer does not carry the job's text:\n%s", d.Answer)
+		}
+		if len(x.reqs) != 0 {
+			t.Errorf("the cloud tier ran the local child %d times", len(x.reqs))
+		}
+		if c.planned != 1 || c.preflights != 1 || c.uploads != 1 || c.launches != 1 {
+			t.Errorf("the tier planned %d, judged %d, uploaded %d and launched %d times, want one each", c.planned, c.preflights, c.uploads, c.launches)
+		}
+		// D2401: the judgement is reads alone, so it comes before the first
+		// object is written.
+		if len(c.inputsAtPreflight) != 0 {
+			t.Errorf("the pre-flight ran with the bundle already up: %v", c.inputsAtPreflight)
+		}
+		// The runner reads the bundle at its own stage start, so the upload comes
+		// before the launch and not after it.
+		if len(c.inputsAtLaunch) == 0 {
+			t.Error("the launch was asked for before the bundle was up")
+		}
+		// D1606: the sentence about what is *about* to be sent is printed before
+		// it is sent, and the upload is the instant that becomes true or false —
+		// a snapshot at the launch would read the same with the sentence printed
+		// after the evidence was already in the person's bucket.
+		if !strings.Contains(c.egressAtUpload, "your own Cloud project") {
+			t.Errorf("the egress line was not printed before the bundle went up:\n%s", c.egressAtUpload)
+		}
+		if strings.Contains(errOut, "your own Claude login") {
+			t.Errorf("the cloud tier's line claims this machine's own login: %q", errOut)
+		}
+	})
+	// The two ways a job does not answer: the launch itself fails (a refused
+	// execution, a timeout, a quota), and the job runs and leaves nothing behind
+	// for the read-back. Both leave the person their evidence with the reason,
+	// and neither removes the bundle.
+	for _, job := range []struct {
+		name   string
+		reason string
+		run    func(c *tcCloud)
+	}{
+		{"the launch failed", "did not answer within 15 minutes", func(c *tcCloud) {
+			c.launchErr = errors.New("the cloud diagnosis did not answer within 15 minutes")
+		}},
+		{"the job left no answer", "has no result.json: it never finished", func(c *tcCloud) {
+			c.noAnswer = true
+		}},
+	} {
+		t.Run("evidence/"+job.name, func(t *testing.T) {
+			x := tsSetup(t)
+			tcNoCredential(t)
+			c := tcSetup(t, x)
+			job.run(c)
+			x.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+			out, _, err := tsRun(t, x, "--json")
+			var exit *ExitError
+			if !errors.As(err, &exit) || exit.Code != ExitUserError {
+				t.Fatalf("a job that did not answer returned %v, want a non-zero exit", err)
+			}
+			var d troubleshootDoc
+			if err := json.Unmarshal([]byte(out), &d); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			if d.Tier != troubleshootTierEvidence {
+				t.Errorf("the tier a job that did not answer leaves is %q, want %q", d.Tier, troubleshootTierEvidence)
+			}
+			if !d.Offline || !strings.Contains(d.Reason, job.reason) {
+				t.Errorf("the evidence path does not carry the reason: %+v", d)
+			}
+			if len(d.LogTail) == 0 || !strings.Contains(d.Doctor, "check 410") {
+				t.Errorf("the evidence path printed no evidence: %+v", d)
+			}
+			if len(x.reqs) != 0 {
+				t.Errorf("the evidence tier ran the local child %d times", len(x.reqs))
+			}
+			// D2407: the launch is asked once and nothing retries it.
+			if c.launches != 1 {
+				t.Errorf("the launch was asked %d times for one diagnosis, want once", c.launches)
+			}
+			// D2405: the delete is the answer's, and a job that never answered may
+			// still be reading its inputs — the bundle stays, and the run's own
+			// expiry is what collects it.
+			if len(tcInputs(x, tbRunID)) == 0 {
+				t.Error("the bundle of a run that never answered was removed")
+			}
+		})
+	}
+}
+
+// TestTroubleshootEgressNamesTheProjectFirstAndTheCredential is F4's fourth
+// case, and it is the one sentence that must be right: the evidence goes to the
+// person's own project first — the bucket the bundle is written into and the job
+// that reads it — and only from there to Anthropic, on the account the project's
+// job is signed for. The line names both, project first.
+//
+// The local tier's own sentence is here beside it, unchanged: the two lines are
+// one function, and a case added for the cloud must not have moved the words a
+// person reads when their own login answers (D1601).
+func TestTroubleshootEgressNamesTheProjectFirstAndTheCredential(t *testing.T) {
+	t.Run("cloud", func(t *testing.T) {
+		x := tsSetup(t)
+		tcNoCredential(t)
+		tcSetup(t, x)
+		x.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+		out, _, err := tsRun(t, x)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := strings.Index(out, "Sending to")
+		if at < 0 {
+			t.Fatalf("no egress line was printed:\n%s", out)
+		}
+		sentence := out[at:]
+		if nl := strings.IndexByte(sentence, '\n'); nl >= 0 {
+			sentence = sentence[:nl]
+		}
+		for _, want := range []string{
+			"your own Cloud project proj-1234",
+			"Anthropic",
+			"the project's Claude account " + config.DefaultClaudeAccount,
+			"the redacted log",
+			"effective configuration",
+		} {
+			if !strings.Contains(sentence, want) {
+				t.Errorf("the cloud tier's line does not name %q: %q", want, sentence)
+			}
+		}
+		project, provider := strings.Index(sentence, "proj-1234"), strings.Index(sentence, "Anthropic")
+		if project > provider {
+			t.Errorf("the line names Anthropic before the project the evidence goes to first: %q", sentence)
+		}
+		// The one credential this tier never touches: a line naming this
+		// machine's own login would be describing a diagnosis that did not run
+		// on it (D2403).
+		for _, never := range []string{"your own Claude login", "this machine", "Fugaro sends no token"} {
+			if strings.Contains(sentence, never) {
+				t.Errorf("the cloud tier's line claims %q: %q", never, sentence)
+			}
+		}
+	})
+	t.Run("local", func(t *testing.T) {
+		x := tsSetup(t)
+		x.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+		x.diag = diagnoseagent.Diagnosis{Outcome: diagnoseagent.OutcomeConfiguration, Text: "nothing to do\n"}
+		out, _, err := tsRun(t, x)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "Sending to Anthropic on your own Claude login") {
+			t.Errorf("the local tier's line no longer names this machine's own login:\n%s", out)
+		}
+		if strings.Contains(out, "Cloud project") {
+			t.Errorf("the local tier's line names a project it never sends to:\n%s", out)
+		}
+	})
+}
+
+// TestTroubleshootCloudAnswerIsCheckedLikeALocalOne is D2410's parity in the
+// part a person acts on: the job's text is model output about text nobody here
+// wrote, so every command in it goes through the same check against this CLI's
+// own command tree, and an unchecked one is marked where it is printed. A bug
+// answer writes the same report file a local bug answer writes (D1605).
+//
+// Mutation (print the job's text without the check): the unchecked command goes
+// out unmarked and both assertions fail.
+func TestTroubleshootCloudAnswerIsCheckedLikeALocalOne(t *testing.T) {
+	x := tsSetup(t)
+	tcNoCredential(t)
+	c := tcSetup(t, x)
+	c.answer = diagnoseagent.Answer{
+		Outcome:   diagnoseagent.OutcomeBug,
+		Signature: "bug: the layer check",
+		Text: "The layer check read the wrong cache.\n\n" +
+			"fugaro doctor\n" +
+			"gcloud auth application-default login\n",
+	}
+	x.id = tsFailedLog(t, time.Now().UTC(), "error: the layer could not be read", "Failed in 3.1s")
+	out, _, err := tsRun(t, x, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d troubleshootDoc
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	want := []struct {
+		command string
+		checked bool
+	}{{"fugaro doctor", true}, {"gcloud auth application-default login", false}}
+	if len(d.Fixes) != len(want) {
+		t.Fatalf("the answer's fixes are %+v, want %+v", d.Fixes, want)
+	}
+	for i, w := range want {
+		if d.Fixes[i].Command != w.command || d.Fixes[i].Checked != w.checked {
+			t.Errorf("fix %d is %+v, want %+v", i, d.Fixes[i], w)
+		}
+	}
+	if !strings.Contains(d.Answer, "gcloud auth application-default login\n  ("+diagnoseagent.UncheckedFlag) {
+		t.Errorf("the unchecked command is not marked under its own line:\n%s", d.Answer)
+	}
+	if !strings.Contains(d.Answer, "fugaro doctor\n") || strings.Contains(d.Answer, "fugaro doctor\n  (") {
+		t.Errorf("a command this CLI has was not left as it was printed:\n%s", d.Answer)
+	}
+	if d.ReportPath == "" {
+		t.Fatalf("a bug answer carries a report (D1605) and none was written: %+v", d)
+	}
+	if _, err := os.Stat(d.ReportPath); err != nil {
+		t.Errorf("the report the cloud answer says it wrote is not there: %v", err)
+	}
+}
+
+// TestTroubleshootCloudAnswerCostIsTheRecords is D2407's figure and T4's
+// warning: a job killed at its timeout may have spent without recording, so
+// what is printed is what the run's record holds and it says so. The local
+// child's own account of itself keeps its own field: a reader that read one
+// figure under the other's name would draw a wrong number with no error.
+//
+// Mutation (print the run's cost as cost_usd): the cloud document carries a
+// field whose meaning is the local tier's, and this test fails on it.
+func TestTroubleshootCloudAnswerCostIsTheRecords(t *testing.T) {
+	x := tsSetup(t)
+	tcNoCredential(t)
+	tcSetup(t, x)
+	x.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+	out, _, err := tsRun(t, x, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	// tbAnswer writes the record with 0.42, which is the job's own figure and
+	// not this command's: what is printed is the record's.
+	if got, _ := raw["cloud_cost_usd"].(float64); got != 0.42 {
+		t.Errorf("the cloud cost is %v, want the run record's 0.42: %s", raw["cloud_cost_usd"], out)
+	}
+	if _, ok := raw["cost_usd"]; ok {
+		t.Errorf("the cloud answer wrote cost_usd, which is the local child's own figure: %s", out)
+	}
+
+	human := tsSetup(t)
+	tcNoCredential(t)
+	tcSetup(t, human)
+	human.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+	printed, _, err := tsRun(t, human)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(printed, "Cost:      $0.4200 (what the diagnosis run's record holds)") {
+		t.Errorf("the printed cost is not said to be the run record's:\n%s", printed)
+	}
+}
+
+// TestTroubleshootDocFieldsAreAdditive is the field-meaning rule over the one
+// shape a reader outside this binary consumes here: the cloud document is the
+// local one plus the fields the cloud tier has to add, and nothing that was
+// there before changed what it means. The two runs are the same command on the
+// same machine, differing in whether a credential is there.
+func TestTroubleshootDocFieldsAreAdditive(t *testing.T) {
+	keys := func(t *testing.T, out string) map[string]any {
+		t.Helper()
+		var m map[string]any
+		if err := json.Unmarshal([]byte(out), &m); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return m
+	}
+	// The two tiers answer the same diagnosis, in the same shape: the two
+	// documents differ in what the tier that answered had to add, and in
+	// nothing else. A field either side omits for being empty is not part of
+	// the comparison, so the answer carries a fix that makes both carry theirs.
+	const answer = "The layer check read the wrong cache.\n\nfugaro doctor\n"
+	local := tsSetup(t)
+	local.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+	local.diag = diagnoseagent.Diagnosis{Outcome: diagnoseagent.OutcomeConfiguration, Signature: "configuration", Text: answer}
+	lout, _, err := tsRun(t, local, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloud := tsSetup(t)
+	tcNoCredential(t)
+	cc := tcSetup(t, cloud)
+	cc.answer = diagnoseagent.Answer{Outcome: diagnoseagent.OutcomeConfiguration, Signature: "configuration", Text: answer}
+	cloud.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+	cout, _, err := tsRun(t, cloud, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, c := keys(t, lout), keys(t, cout)
+	for k := range l {
+		if _, ok := c[k]; !ok {
+			t.Errorf("the cloud document dropped the field %q the local one carries", k)
+		}
+	}
+	added := map[string]bool{"cloud_run": true, "cloud_cost_usd": true}
+	for k := range c {
+		if _, ok := l[k]; !ok && !added[k] {
+			t.Errorf("the cloud document added the field %q, which is not one of the cloud tier's two", k)
+		}
+	}
+	if l["tier"] != troubleshootTierLocal || c["tier"] != troubleshootTierCloud {
+		t.Errorf("the tier field reads %v for the local answer and %v for the cloud one", l["tier"], c["tier"])
+	}
+}
+
+// TestTroubleshootDeclinedCloudStillPrintsTheEvidence is D2401 and the spec's
+// third acceptance criterion, which is the whole reason the pre-flight exists: a
+// person whose launch path is broken is told so by the gate's own sentence, at
+// the terminal, and is not sent to a job that would meet the same gate and fail
+// a second time. Nothing leaves the machine on that path — no line saying it
+// does, no object in the run's bucket, no execution.
+//
+// Mutation (skip the pre-flight): the launch runs and the bundle goes up for a
+// diagnosis the launch path would refuse.
+// Mutation (upload before the judgement): the run's prefix holds the bundle and
+// its parts.
+func TestTroubleshootDeclinedCloudStillPrintsTheEvidence(t *testing.T) {
+	refusal := "the launch path refused it: a review launch needs a job image whose runner knows the review variant, so run fugaro update in your own terminal window"
+	for _, asJSON := range []bool{false, true} {
+		name := "printed"
+		args := []string{}
+		if asJSON {
+			name, args = "json", []string{"--json"}
+		}
+		t.Run(name, func(t *testing.T) {
+			x := tsSetup(t)
+			tcNoCredential(t)
+			c := tcSetup(t, x)
+			c.preflightErr = errors.New(refusal)
+			x.id = tsFailedLog(t, time.Now().UTC(), "error: the project layer refuses it", "Failed in 2.1s")
+			out, _, err := tsRun(t, x, args...)
+			var exit *ExitError
+			if !errors.As(err, &exit) || exit.Code != ExitUserError {
+				t.Fatalf("a declined cloud diagnosis returned %v, want a non-zero exit", err)
+			}
+			decline := troubleshootDeclineCloud(errors.New(refusal))
+			if asJSON {
+				var d troubleshootDoc
+				if err := json.Unmarshal([]byte(out), &d); err != nil {
+					t.Fatalf("%v: %s", err, out)
+				}
+				if d.Offline != true || d.Reason != decline {
+					t.Errorf("the document is not the evidence with the decline: %+v", d)
+				}
+				if d.Tier != troubleshootTierEvidence {
+					t.Errorf("the tier after a declined cloud diagnosis is %q, want %q", d.Tier, troubleshootTierEvidence)
+				}
+				return
+			}
+			for _, want := range []string{decline, "The end of the log (2 lines)", "error: the project layer refuses it", "fugaro doctor said", "Evidence"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the decline does not carry %q:\n%s", want, out)
+				}
+			}
+			// The gate's own sentence, and the command that fixes it, survive
+			// verbatim (T-TC2's own test ties the two together; here it is the
+			// tier's use of them that is read).
+			for _, want := range []string{"so run fugaro update in your own terminal window", "The evidence follows."} {
+				if !strings.Contains(out, want) {
+					t.Errorf("the decline dropped %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "Sending to") {
+				t.Errorf("the decline printed an egress line for evidence it never sent:\n%s", out)
+			}
+			if c.launches != 0 {
+				t.Errorf("a declined cloud diagnosis launched %d times", c.launches)
+			}
+			if names := tcInputs(x, tbRunID); len(names) != 0 {
+				t.Errorf("a declined cloud diagnosis left %v in the run's prefix", names)
+			}
+			if len(x.reqs) != 0 {
+				t.Errorf("the declined cloud diagnosis ran the local child %d times", len(x.reqs))
+			}
+		})
 	}
 }

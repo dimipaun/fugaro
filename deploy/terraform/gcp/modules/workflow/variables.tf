@@ -76,6 +76,13 @@ variable "workflow" {
     })
     vertex     = bool
     deploy_job = bool
+    # Whether this is a mixed stage account's own variant job (B0's one mix,
+    # docs/design/mixed-credentials.md §11): Go's WorkflowSpec.StageAccount,
+    # the one thing that exempts this job's Claude OAuth mount from the
+    # credentials service's drop (local.is_stage_account_token, B2.7).
+    # Optional and false, so a tfvars written before the fact existed plans
+    # exactly what it planned.
+    stage_account = optional(bool, false)
   })
 
   validation {

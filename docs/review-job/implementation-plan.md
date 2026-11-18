@@ -15,8 +15,8 @@ placement, Terraform or IAM is marked opus with an independent review.
 ## Status as of 2026-11-18
 
 Pieces 1 and 3 are in runs or merged; see the tasks. RJ1, RJ6 and RJ7 are merged (3 of 10). RJ3 is live (run
-`20261114-130709-a709`). RJ2 and RJ8 are approved (owner word 2026-11-14) and **RJ10** is approved (owner word
-2026-11-18); RJ4, RJ5 and RJ9 are not started and not approved. **RJ10 is written and NOT RUN**: the check is
+`20261114-130709-a709`). RJ2 and RJ8 are approved (owner word 2026-11-14), and RJ9 and **RJ10** are approved (owner word
+2026-11-18); RJ4 and RJ5 are not started and not approved. **RJ9 is written and NOT RUN**: Check 610, `scripts/live-checks/check610.sh` with its sibling `check610_test.sh`, the owner's to run. **RJ10 is written and NOT RUN**: the check is
 `scripts/live-checks/check611.sh` with its sibling `check611_test.sh` (both registered in
 `scripts/live_checks_test.go`), and its row and its section are in [docs/gcp-live-checklist.md](../gcp-live-checklist.md).
 The owner runs it, at their own terminal, after Check 191's open state is closed.
@@ -151,6 +151,10 @@ The owner runs it, at their own terminal, after Check 191's open state is closed
 - Owner-run: the owner runs one command from a script a later task provides (the sandbox GitHub repository with no
   `profiles:` block): `fugaro review --pr N`. It answers U1, U2, U3 and U4. No agent performs any step.
 - Depends on: RJ2, RJ3, RJ4.
+- Approval: **approved** (owner word 2026-11-18), level L2. The check is written: `scripts/live-checks/check610.sh`,
+  its hermetic sibling `scripts/live-checks/check610_test.sh` (driving fake `fugaro`, `gh`, `gcloud` and `git`), its
+  row and its `## Check 610` section in `docs/gcp-live-checklist.md`, which are **NOT RUN** until the owner runs it.
+- Level: L2.
 
 ### RJ10: Check 611, the same on a Bitbucket repository
 - Owner-run: as RJ9 on the Bitbucket sandbox repository, after Check 191's open state is closed. Depends on: RJ8.

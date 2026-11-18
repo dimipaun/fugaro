@@ -174,6 +174,38 @@ func planApprove(t *testing.T, s orchestrator.State, node string, ids ...string)
 	return orchestrator.Op{Op: orchestrator.OpPlanApprove, PlanApprove: &orchestrator.PlanApproveOp{Node: node, Items: items}}
 }
 
+// TestPatchCountsPlanApproveAsPersonOnly is G4's own pin on the first half of
+// the fence (G2, D1225, D2706): the CLI counts a plan approval among the ops
+// only a person may land. It is what sends a document that carries one through
+// the typed confirmation whatever else rides beside it — one actor lands the
+// whole document, so an approval a session bundled with an op of its own would
+// otherwise be confirmed by nobody — and the count turns on the list the op
+// carries, because a list is the whole of what it approves.
+func TestPatchCountsPlanApproveAsPersonOnly(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	s := seedOrchestratorState(t, f, planItemUpsert("plan-a", "graph-import", "the plan's first task"))
+	approve := planApprove(t, s, "graph-import", "plan-a")
+
+	if got := personOnlyOps(s, orchestrator.Patch{Ops: []orchestrator.Op{approve}}); got != 1 {
+		t.Errorf("a document carrying one plan approval counts %d ops only a person may land, and an approval is the person's own word", got)
+	}
+
+	// Beside a session's own op it is still counted: the confirmation is what
+	// covers the whole document, so the approval's presence is what asks for it.
+	goal := orchestrator.Op{Op: orchestrator.OpGoalSet, Goal: &orchestrator.GoalOp{Goal: "ship the plan"}}
+	if got := personOnlyOps(s, orchestrator.Patch{Ops: []orchestrator.Op{goal, approve}}); got != 2 {
+		t.Errorf("a plan approval riding beside a session's op counts %d ops only a person may land, and both are", got)
+	}
+
+	// The list is the scope and the whole of it: an op with none approves
+	// nothing, so it is not an op only a person may land — requesting one is an
+	// ordinary op the document may carry. Apply is what refuses it (an empty
+	// list is not an approval of a node), and the fence does not have to.
+	if personOnly(s, orchestrator.Op{Op: orchestrator.OpPlanApprove}) {
+		t.Error("a plan approval with no list is counted as an op only a person may land, and it approves nothing")
+	}
+}
+
 // TestAPlanApprovalIsPersonOnlyAndShowsItsItems is G2's fence at the CLI
 // (D1225, D2706, D2717). Approving a plan's imported items is an op only a
 // person may land, and one actor lands the whole document: a session that

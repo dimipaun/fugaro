@@ -68,3 +68,47 @@ func TestQueueNotifiesTheOwner(t *testing.T) {
 		t.Errorf("the queued request mailed the applicant %d message(s), want none", got)
 	}
 }
+
+// TestOpenSourceAskStoresNothingWhenItCannotNotify: a deployment whose intake
+// origin is not `keys.` plus the site's canonical host has no portal origin to
+// read (portalOrigin), and the owner's notification is built from it — so the
+// ask cannot be finished. What it must not do is leave the request behind: the
+// entry is stored for a person to answer and the person is told where it is, and
+// an entry written before that origin is read is one nobody is ever told about
+// (queue.go's enqueue). Each retry would then add another, which is a queue
+// growing by the requests nobody was told about rather than by the ones waiting
+// to be decided (§4.5).
+//
+// The deployment is the fixture's with one field changed, and the ask is the
+// ordinary one every other case drives: what is held is the order of two steps
+// inside enqueue, not a route a caller reaches differently.
+func TestOpenSourceAskStoresNothingWhenItCannotNotify(t *testing.T) {
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		// An intake that is not `keys.<site>`: the portal's own origin cannot be
+		// read from it, and portalOrigin refuses rather than guessing at one.
+		f.cfg.URL = "https://intake.example"
+	})
+	f.actsAs(danaUID, danaEmail, signInGoogle)
+
+	// Twice, because the failure the finding names is cumulative: the first
+	// attempt stores one entry and the second stores another, so a case that
+	// asked once could not tell a queue that grows from one that never did.
+	for attempt := 1; attempt <= 2; attempt++ {
+		rec := f.askOpenSource(openSourceAsk(t, repositoryURL))
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf(
+				"attempt %d answered %d (%s), want 500: the ask cannot be told to the owner, and a failure is what that is",
+				attempt, rec.Code, rec.Body.String(),
+			)
+		}
+		if got := len(f.queued()); got != 0 {
+			t.Errorf(
+				"attempt %d left %d entr(ies) in the queue, want none: a request stored before the owner's notification can be built is one nobody is ever told about, and every retry adds another (§4.5)",
+				attempt, got,
+			)
+		}
+		if got := len(f.notifier.alerts); got != 0 {
+			t.Errorf("attempt %d notified the owner %d time(s), want none: there is no queue page to lead them to", attempt, got)
+		}
+	}
+}

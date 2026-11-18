@@ -300,6 +300,14 @@ func patchWords(before, after orchestrator.State, p orchestrator.Patch) string {
 // argument reaches it. The state it is given as after is the one the patch would
 // write, which at this point exists in memory alone: nothing reaches the node
 // before this returns and the conditional write runs.
+//
+// The issues an approval names are read back here, after that fence has
+// answered and before the person is asked to type (G4, D2741): an item the
+// ingest wrote carries the issue's id and a hash of its body and never the body
+// itself (D2720), so the body the person is approving has to be fetched and put
+// on the screen. A run with no terminal, a --json run and a coding agent's
+// session spawn nothing at all, and the read is refused — with the fix printed
+// and nothing written — when the issue no longer hashes to what the item pins.
 func confirmPersonPatch(cmd *cobra.Command, o *orchestratorPatchOptions, lc *localcfg.Config, before, after orchestrator.State, p orchestrator.Patch) error {
 	terminal := stdinIsTerminal(cmd.InOrStdin())
 	marker := agentMarker(os.Getenv, terminal)
@@ -309,6 +317,13 @@ func confirmPersonPatch(cmd *cobra.Command, o *orchestratorPatchOptions, lc *loc
 		return userErr("nothing was written: %s", initflow.AgentRefusal(marker))
 	case !initflow.CanConfirmRun(initflow.Conditions{Terminal: terminal, JSON: o.json, Agent: marker}):
 		return userErr("%s: %s; nothing was written", initflow.NeedsTerminal("the typed confirmation of this step"), what)
+	}
+	issues, err := approvedIssues(cmd.Context(), after, p)
+	if err != nil {
+		return err
+	}
+	if issues != "" {
+		fmt.Fprint(cmd.OutOrStdout(), issues)
 	}
 	return confirmTypedStrict(cmd, lc, "a patch that approves a work item, sets the goal or closes a person's decision is the person's own word, and no flag stands in for it: everything this document carries lands with it", what)
 }

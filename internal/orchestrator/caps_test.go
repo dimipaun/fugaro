@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // TestCapsStopALoop: the caps are what stops a daemon from starting everything
@@ -226,6 +227,49 @@ func TestRetryCountsTowardEveryCap(t *testing.T) {
 				t.Fatalf("the plan under the wide cap is %+v, and the retry is not among them", wide)
 			}
 		})
+	}
+}
+
+// TestDisabledPolicyStillFoldsRunning: the project's own switch (D2701, D2739)
+// reaches a cycle as the caps' kill switch (CapsOf), and it stops the launches
+// and nothing else. A run already going is the daemon's to finish folding
+// whatever the switch says: the cycle under it still reads what the run
+// reported, still lands the outcome on the item, and still plans nothing — the
+// state it leaves is one the switch can be lifted on, which is what D2701's
+// "launches nothing while it is off" means and not a daemon that forgets the
+// work it started.
+func TestDisabledPolicyStillFoldsRunning(t *testing.T) {
+	now := o6Now()
+	const runID = "20261107-090000-abcd"
+	going, it := o6OpenItem("wi-1", runID, now.Add(-time.Hour), now.Add(-30*time.Minute))
+	ready := o6Item("wi-2", orchestrator.PhaseQueued, now.Add(-time.Hour))
+	h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{going, ready}, []orchestrator.Intent{it}), now)
+	// The project's switch as the daemon folds it: the budget's kill switch is
+	// off and the project's is not on, which is one kill switch to the cycle.
+	h.tick.Caps = orchestrator.CapsOf(policy.Orchestrator{
+		MaxRunning: 8, BatchSize: 4, SpawnPerMinute: 4, SpawnPerHour: 16, SpawnPerDay: 64,
+	}, false, false)
+	h.reader.reports = []orchestrator.RunReport{{RunID: runID, Started: true, Finished: true, Outcome: orchestrator.OutcomeSucceeded}}
+
+	rep := h.step()
+	if rep.Folded != 1 {
+		t.Fatalf("the cycle under the project's own switch folded %d finished runs where one reported", rep.Folded)
+	}
+	got := h.state()
+	if w, ok := got.Item("wi-1"); !ok || w.Phase != orchestrator.PhaseDone {
+		t.Errorf("the run that reported left wi-1 %+v, and the switch stops launches rather than the fold", w)
+	}
+	if it1 := intentByID(t, got, "wi-1:1"); it1.Outcome != orchestrator.OutcomeSucceeded {
+		t.Errorf("the intent ended %q, and the run reported succeeded", it1.Outcome)
+	}
+	if len(h.launcher.asked) != 0 {
+		t.Errorf("a cycle under the project's own switch asked the launcher to start %v", h.launcher.asked)
+	}
+	if len(got.Intents) != 1 {
+		t.Errorf("the cycle committed an attempt under the project's own switch: %+v", got.Intents)
+	}
+	if w, ok := got.Item("wi-2"); !ok || w.Phase != orchestrator.PhaseQueued {
+		t.Errorf("wi-2 is %+v, and the switch holds it rather than deciding about it", w)
 	}
 }
 

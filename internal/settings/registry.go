@@ -1065,7 +1065,7 @@ var localRows = []Row{
 	locLocal("crafts.merge-judge.access", "the coder's access", "accounts", docCrafts),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
-	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
+	loc("project_secrets.*.proxy", "none: an entry that says nothing about the switch is the state `fugaro update` turns on, and a written false is a hold it never lifts", "secrets", docSetup),
 
 	loc("workflow_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("workflow_secrets.*.proxy", "none: refused, D1275", "secrets", docSetup),
@@ -1198,14 +1198,18 @@ var localRows = []Row{
 	// payload to every teammate's runs (D986; Shared nils it besides, and
 	// sharedForbidden refuses the key).
 	//
-	// The owner is the project family because `fugaro project policy publish`
-	// is the door that carries the block onto the node — the run reads it
-	// there and nowhere else — and because no generic write reaches these
-	// leaves: an entry is a doublestar path glob held to the node's own rule
+	// The owner is `fugaro project binaries` (K2 of docs/config-ownership): it
+	// writes both members into this file, and the update it ends on publishes
+	// the block onto the node — the run reads it there and nowhere else. It is
+	// a token of its own rather than the `project` family's because that family
+	// writes the project's other policy keys and neither member of this block:
+	// an entry is a doublestar path glob held to the node's own rule
 	// (projectpolicy.ValidBinariesAllow) and the cap to its ceiling, which are
-	// checks no scalar write can make.
-	locLocal("binaries.allow", "none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there", "project", docBinaryAllow),
-	locLocal("binaries.max_bytes", "2097152 (2 MiB): the largest a single added file may be, and a project may lower it", "project", docBinaryAllow),
+	// checks no generic write can make, and a refusal for one of the two binds
+	// names the command that works rather than `fugaro project`, which does not
+	// write it.
+	locLocal("binaries.allow", "none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there", "project binaries", docBinaryAllow),
+	locLocal("binaries.max_bytes", "2097152 (2 MiB): the largest a single added file may be, and a project may lower it", "project binaries", docBinaryAllow),
 
 	// The reports_commit block is the owner's designation of the one repository
 	// a report run may commit into and of the folder inside it (D2750, D2751;
