@@ -62,13 +62,13 @@ const (
 	// so it is far below any run's per-run cap.
 	//
 	// It goes into the task as overrides.max_usd — the chain's dollar limit,
-	// which is the field the runner hands the gateway as the run's per-run cap
-	// and nothing else does (run-limit-carry-over D1041/D1059, runner's
-	// policy.go: setChainLayer writes the limit the chain layer resolved into
-	// the merged per_run_usd, which becomes the cap the lease is taken
-	// against). A diagnosis is a chain of one run, so the figure it carries is
-	// its own cap, and the merge only tightens: a project or a repository whose
-	// own budget.per_run_usd is smaller keeps the smaller one.
+	// which the runner's chain layer resolves into the merged per_run_usd, the
+	// figure the gateway's lease is taken against (run-limit-carry-over D1041
+	// and D1059, the runner's policy.go and lease.go). It is the only override
+	// that reaches that cap, and the merge keeps the smallest figure any layer
+	// names: a diagnosis is a chain of one run, so the number it carries is its
+	// own cap, while a project or a repository whose own budget.per_run_usd is
+	// smaller keeps the smaller one.
 	//
 	// overrides.max_budget_usd is NOT this: that is the per-stage ceiling the
 	// agent binary is launched with (Spec.Apply writes it into
