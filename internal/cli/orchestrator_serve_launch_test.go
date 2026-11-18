@@ -1,10 +1,18 @@
 package cli
 
 // This file drives P5.1d's half of the resident service: the launch requests a
-// node's own record already holds, which this pass reads and starts none of. The
-// store, the route and the strictness of the node's decoder are P5.1c's
+// node's own record already holds, which this pass reads and starts. The store,
+// the route and the strictness of the node's decoder are P5.1c's
 // (orchestrator_serve_test.go); what is here is one node that holds a request,
-// and what the pass answers and logs about it.
+// and what the pass asks a launcher for, answers and logs about it.
+//
+// The launcher under these tests is a FAKE, deliberately: what is under test
+// here is the pass's own wiring — which actions reach a launcher at all, what
+// the pass reports about them, and what one refusal does to the rest — while the
+// launcher itself is `fugaro run`'s own path, driven for real over a fixture in
+// orchestrator_launcher_test.go (TestResidentLauncherStartsTheRecordedAttempt:
+// the claim, the mint, the job execution, and the identity the run's own task
+// decides).
 
 import (
 	"bytes"
@@ -25,9 +33,34 @@ import (
 )
 
 // residentLaunchRun is the run id the node below records: one of the shapes
-// internal/task mints, and the id a re-issue would start under — the same one,
-// never a second one.
+// internal/task mints, and the id a re-issue starts under — the same one, never
+// a second one.
 const residentLaunchRun = "20261117-050000-abcd"
+
+// fakeResidentLauncher is the launcher the tick is served with in this file. It
+// records every start it was asked for, in the order it was asked, and answers
+// the run id it was handed — which is what the real launcher answers for a run
+// whose launch record exists (the same id, never a second one) — unless the test
+// gave it a refusal for that run id.
+type fakeResidentLauncher struct {
+	starts []residentStart
+	refuse map[string]error
+}
+
+// residentStart is one launch the fake was asked for: the item the spec names
+// and the run id the node recorded.
+type residentStart struct {
+	ItemID string
+	RunID  string
+}
+
+func (l *fakeResidentLauncher) Launch(_ context.Context, spec orchestrator.Spec, runID string) (string, error) {
+	l.starts = append(l.starts, residentStart{ItemID: spec.ItemID, RunID: runID})
+	if err := l.refuse[runID]; err != nil {
+		return "", err
+	}
+	return runID, nil
+}
 
 // residentNodeDoc is a node whose one attempt is past its claim window, in an
 // item that is still running: the record a person's patch leaves, and the same
@@ -41,28 +74,42 @@ const residentLaunchRun = "20261117-050000-abcd"
 // decoder's test, and what is under test HERE is the read of the plan.
 func residentNodeDoc(t *testing.T, at time.Time) string {
 	t.Helper()
+	return residentNode(t, at, [2]string{"p5-1d", residentLaunchRun})
+}
+
+// residentNode is one node holding one RUNNING item per (id, run id) pair, each
+// with one attempt past its claim window: residentNodeDoc's own document, with
+// as many items as the test needs — which is how a test gives a pass two
+// re-issues and a launcher that refuses one of them.
+func residentNode(t *testing.T, at time.Time, pairs ...[2]string) string {
+	t.Helper()
 	approvalAt := at.Add(-2 * time.Hour)
-	w := orchestrator.WorkItem{
-		ID:        "p5-1d",
-		Title:     "the launcher half",
-		Repo:      "example/repo",
-		Recipe:    "default",
-		RigorTier: "medium",
-		Brief:     "Start the run the node already records.",
-		Phase:     orchestrator.PhaseRunning,
-		RunID:     residentLaunchRun,
-		Attempts:  1,
-	}
-	it := orchestrator.Intent{
-		ID:         orchestrator.IntentID(w.ID, 1),
-		RunID:      w.RunID,
-		SpecDigest: orchestrator.SpecDigest(w),
-		ApprovalAt: approvalAt.UTC(),
-		At:         at.Add(-orchestrator.ClaimTTL - time.Minute).UTC(),
-	}
-	w.Approved = &orchestrator.Approval{
-		By: "owner", At: approvalAt.UTC(), SpecDigest: orchestrator.SpecDigest(w),
-		Attempts: orchestrator.ApprovalAttempts,
+	items := make([]orchestrator.WorkItem, 0, len(pairs))
+	intents := make([]orchestrator.Intent, 0, len(pairs))
+	for _, p := range pairs {
+		w := orchestrator.WorkItem{
+			ID:        p[0],
+			Title:     "the launcher half",
+			Repo:      "example/repo",
+			Recipe:    "default",
+			RigorTier: "medium",
+			Brief:     "Start the run the node already records.",
+			Phase:     orchestrator.PhaseRunning,
+			RunID:     p[1],
+			Attempts:  1,
+		}
+		w.Approved = &orchestrator.Approval{
+			By: "owner", At: approvalAt.UTC(), SpecDigest: orchestrator.SpecDigest(w),
+			Attempts: orchestrator.ApprovalAttempts,
+		}
+		items = append(items, w)
+		intents = append(intents, orchestrator.Intent{
+			ID:         orchestrator.IntentID(w.ID, 1),
+			RunID:      w.RunID,
+			SpecDigest: orchestrator.SpecDigest(w),
+			ApprovalAt: approvalAt.UTC(),
+			At:         at.Add(-orchestrator.ClaimTTL - time.Minute).UTC(),
+		})
 	}
 	s := orchestrator.State{
 		SchemaVersion: orchestrator.SchemaVersion,
@@ -70,11 +117,11 @@ func residentNodeDoc(t *testing.T, at time.Time) string {
 		AgentID:       "aurora",
 		Role:          orchestrator.RoleOrchestrator,
 		Goal:          "keep the installation's work moving",
-		WorkItems:     []orchestrator.WorkItem{w},
+		WorkItems:     items,
 		Decisions:     []orchestrator.Decision{},
 		Facts:         map[string]orchestrator.Fact{},
 		Archived:      []orchestrator.Archived{},
-		Intents:       []orchestrator.Intent{it},
+		Intents:       intents,
 	}
 	raw, err := json.Marshal(s)
 	if err != nil {
@@ -83,14 +130,14 @@ func residentNodeDoc(t *testing.T, at time.Time) string {
 	return string(raw)
 }
 
-// tickWithNode serves one tick against the node the test names, and fails the
-// test if the pass reached the store's write half: this process reads a node and
-// writes none.
-func tickWithNode(t *testing.T, docs map[string]string, at time.Time) (*httptest.ResponseRecorder, string) {
+// tickWithNode serves one tick against the node the test names, with the
+// launcher the test names, and fails the test if the pass reached the store's
+// write half: this process reads a node and writes none.
+func tickWithNode(t *testing.T, docs map[string]string, at time.Time, launch orchestrator.Launcher) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	var log bytes.Buffer
 	store := &fakeOrchestratorStore{docs: docs, at: at}
-	srv, err := newResidentOrchestrator(orchestratorConfig{id: "aurora", db: store, log: runner.NewLogger(&log)})
+	srv, err := newResidentOrchestrator(orchestratorConfig{id: "aurora", db: store, launch: launch, log: runner.NewLogger(&log)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,25 +149,32 @@ func tickWithNode(t *testing.T, docs map[string]string, at time.Time) (*httptest
 	return rec, log.String()
 }
 
-// TestOrchestratorTickReportsTheAttemptsItCannotSeeStarted is P5.1d's half of
-// the pass as this deployment serves it, and it is written around the fact the
-// review turned up: the fixture's item is in PhaseRunning with a run id — an
-// attempt the node records, past its claim window — and this pass reads NO runs
-// bucket, so a run that is simply longer than the ten-minute window reads here
-// exactly as one that never went. The count is therefore an upper bound, named
-// for what was read (`unreported`) and never for a launch the node is asking
-// for, and it is the whole of what is said about it: no per-attempt line, and
-// nothing at WARNING, because a warning once per tick per long run would fire
-// for every normal run this installation has going.
-func TestOrchestratorTickReportsTheAttemptsItCannotSeeStarted(t *testing.T) {
+// TestOrchestratorTickCarriesTheReissueItReads is P5.1d's half of the pass as
+// this deployment serves it, and it is written around the fact the P5.1c review
+// turned up: the fixture's item is in PhaseRunning with a run id — an attempt
+// the node records, past its claim window — and this pass reads NO runs bucket,
+// so a run that is simply longer than the ten-minute window reads here exactly
+// as one that never went. The count is therefore an upper bound, named for what
+// was read (`unreported`) and never for a launch the node is asking for.
+//
+// What the pass DOES with such a reading is start it, under the run id the node
+// recorded and through the one launcher (the fake here): that is `carried`, and
+// it is a second field rather than the same number under another name because
+// the two differ exactly where a launcher refused. Nothing is counted per
+// attempt and nothing is named: the run id never reaches this process's log (a
+// project's plan does not belong in Cloud Logging), and a long run — which
+// reads as one of these too — is not a warning, because there is nothing a
+// person could do about it.
+func TestOrchestratorTickCarriesTheReissueItReads(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	doc := residentNodeDoc(t, at)
 	statePath, err := orchestrator.PathState("aurora")
 	if err != nil {
 		t.Fatal(err)
 	}
+	launch := &fakeResidentLauncher{}
 
-	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at)
+	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at, launch)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the tick answered %d (%s), and the node it read is this installation's: %s", rec.Code, rec.Body.String(), logged)
 	}
@@ -128,20 +182,67 @@ func TestOrchestratorTickReportsTheAttemptsItCannotSeeStarted(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 		t.Fatalf("the tick's answer is not a pass: %v (%s)", err, rec.Body.String())
 	}
-	if pass.Unreported != 1 || pass.Left != 0 {
-		t.Errorf("the pass reads unreported %d, left %d, and the node holds one attempt past its claim window", pass.Unreported, pass.Left)
+	if pass.Unreported != 1 || pass.Carried != 1 || pass.Left != 0 {
+		t.Errorf("the pass reads unreported %d, carried %d, left %d, and the node holds one attempt past its claim window with nothing to refuse it", pass.Unreported, pass.Carried, pass.Left)
 	}
-	if !strings.Contains(rec.Body.String(), `"unreported"`) {
-		t.Errorf("the tick answered %s, and the field's own name is the reading: a caller has to be able to tell it from a launch the node asked for", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"carried"`) {
+		t.Errorf("the tick answered %s, and the field's own name is the reading: a caller has to be able to tell a launch that was carried from a step that was left", rec.Body.String())
+	}
+	want := []residentStart{{ItemID: "p5-1d", RunID: residentLaunchRun}}
+	if len(launch.starts) != 1 || launch.starts[0] != want[0] {
+		t.Errorf("the tick asked the launcher to start %v, and the node records one attempt of p5-1d under %s: a re-issue is started under the run id the node recorded and never under a second one", launch.starts, residentLaunchRun)
 	}
 	if strings.Contains(logged, "WARNING") {
-		t.Errorf("the pass logged %q, and a count that is an upper bound for every run longer than the window is not a warning: one per tick per long run is a line nobody can act on", logged)
+		t.Errorf("the pass logged %q, and a carried attempt is not a warning: the pass's own line carries the count", logged)
 	}
 	if strings.Contains(logged, residentLaunchRun) {
 		t.Errorf("the pass logged %q, and the node's items are counted and never quoted: a project's plan does not belong in Cloud Logging", logged)
 	}
-	if strings.Contains(logged, "started") {
-		t.Errorf("the pass logged %q, and it started nothing: every line this revision writes says so", logged)
+}
+
+// TestOrchestratorTickCarriesTheRestWhenALauncherRefusesOne is the fence around
+// the carrying: one attempt a launcher refuses — a task the runs bucket does not
+// hold, a repository this deployment cannot start — is ONE warning line, and
+// every other attempt the node records is still started. A pass that stopped at
+// the first refusal would hold the whole node back for as long as that one
+// attempt stands: this process has no abandon, no breaker and no pause (all of
+// them writes), so the node would never make progress again.
+//
+// The refusal is logged once, with the launcher's own words and on one line, and
+// the pass still answers 200 with the count of what it carried: what a person
+// needs is both the number and the reason.
+func TestOrchestratorTickCarriesTheRestWhenALauncherRefusesOne(t *testing.T) {
+	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
+	const secondRun = "20261117-051500-ef01"
+	doc := residentNode(t, at, [2]string{"p5-1d", residentLaunchRun}, [2]string{"p5-1d-b", secondRun})
+	statePath, err := orchestrator.PathState("aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The launcher refuses the first attempt the plan reads and answers the
+	// second: what the pass does with a plan whose first request fails is the
+	// whole of this test.
+	launch := &fakeResidentLauncher{refuse: map[string]error{residentLaunchRun: errors.New("the runs bucket holds no task for this run")}}
+
+	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at, launch)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the tick answered %d (%s): one attempt a launcher refuses does not make the pass a failure", rec.Code, logged)
+	}
+	var pass orchestratorPass
+	if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
+		t.Fatal(err)
+	}
+	if pass.Unreported != 2 || pass.Carried != 1 || pass.Left != 0 {
+		t.Errorf("the pass reads unreported %d, carried %d, left %d, and the node holds two attempts past their window of which one was refused", pass.Unreported, pass.Carried, pass.Left)
+	}
+	if len(launch.starts) != 2 {
+		t.Fatalf("the launcher was asked for %v, and both attempts were the pass's to carry: a refusal must not stop the rest", launch.starts)
+	}
+	if !strings.Contains(logged, "could not start an attempt the node records") || !strings.Contains(logged, "holds no task") {
+		t.Errorf("the pass logged %q, and a refusal that is not written down is an attempt nobody knows is stuck", logged)
+	}
+	if strings.Contains(logged, residentLaunchRun) || strings.Contains(logged, secondRun) {
+		t.Errorf("the pass logged %q, and the run ids are the node's, not this process's log's", logged)
 	}
 }
 
@@ -169,8 +270,9 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			launch := &fakeResidentLauncher{}
 
-			rec, logged := tickWithNode(t, map[string]string{statePath: doc, budget.PathKillGlobal: tc.node}, at)
+			rec, logged := tickWithNode(t, map[string]string{statePath: doc, budget.PathKillGlobal: tc.node}, at, launch)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("the tick answered %d (%s), and a stopped pass is still a pass", rec.Code, logged)
 			}
@@ -178,8 +280,11 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 			if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 				t.Fatal(err)
 			}
-			if pass.Unreported != 0 || pass.Left != 0 {
-				t.Errorf("the pass reads unreported %d, left %d under the switch, and a switch that is on is read before any attempt is", pass.Unreported, pass.Left)
+			if pass.Unreported != 0 || pass.Carried != 0 || pass.Left != 0 {
+				t.Errorf("the pass reads unreported %d, carried %d, left %d under the switch, and a switch that is on is read before any attempt is", pass.Unreported, pass.Carried, pass.Left)
+			}
+			if len(launch.starts) != 0 {
+				t.Errorf("the pass asked the launcher for %v under a switch that is on: the kill switch is this pass's too, and the re-issues are not exempt", launch.starts)
 			}
 			if !strings.Contains(logged, "the budget switch is on") {
 				t.Errorf("the pass logged %q, and the line has to say why: \"nothing was committed\" and \"the switch is on\" are the same numbers otherwise", logged)
@@ -200,11 +305,11 @@ func TestOrchestratorTickStartsNothingUnderTheBudgetSwitch(t *testing.T) {
 //
 // Both cases assert the same pair. The pass still ANSWERS — a guardrail this
 // process could not read is read as ON, and a tick that refused would leave the
-// scheduler retrying a read that will fail again — with nothing counted, because
-// an attempt reported off a guardrail nobody read is the permissive reading
-// wearing the fail-closed branch's numbers; and the line names the read that
-// failed, because "there was nothing to read" and "the guardrail is on" are the
-// same numbers in the pass otherwise.
+// scheduler retrying a read that will fail again — with nothing counted and
+// nothing launched, because an attempt started off a guardrail nobody read is
+// the permissive reading wearing the fail-closed branch's numbers; and the line
+// names the read that failed, because "there was nothing to read" and "the
+// guardrail is on" are the same numbers in the pass otherwise.
 func TestOrchestratorTickReadsNothingWhenTheGuardrailsCannotBeRead(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	statePath, err := orchestrator.PathState("aurora")
@@ -237,7 +342,8 @@ func TestOrchestratorTickReadsNothingWhenTheGuardrailsCannotBeRead(t *testing.T)
 				errs: tc.errs,
 				at:   tc.at,
 			}
-			rec, logged := tickForTest(t, store, "aurora")
+			launch := &fakeResidentLauncher{}
+			rec, logged := tickForTest(t, store, "aurora", launch)
 			if rec.Code != http.StatusOK {
 				t.Fatalf("the tick answered %d (%s), and a guardrail this process could not read is read as ON: the pass still answers", rec.Code, logged)
 			}
@@ -245,8 +351,11 @@ func TestOrchestratorTickReadsNothingWhenTheGuardrailsCannotBeRead(t *testing.T)
 			if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 				t.Fatal(err)
 			}
-			if pass.Unreported != 0 || pass.Left != 0 {
-				t.Errorf("the pass reads unreported %d, left %d, and the node holds one attempt past its claim window: a count read off a guardrail nobody read is the permissive reading", pass.Unreported, pass.Left)
+			if pass.Unreported != 0 || pass.Carried != 0 || pass.Left != 0 {
+				t.Errorf("the pass reads unreported %d, carried %d, left %d, and the node holds one attempt past its claim window: a count read off a guardrail nobody read is the permissive reading", pass.Unreported, pass.Carried, pass.Left)
+			}
+			if len(launch.starts) != 0 {
+				t.Errorf("the pass asked the launcher for %v behind a guardrail it could not read", launch.starts)
 			}
 			if !strings.Contains(logged, tc.want) {
 				t.Errorf("the pass logged %q, and the line has to name the read that failed (%q): \"there was nothing to read\" and \"the guardrail is on\" are the same numbers otherwise", logged, tc.want)
@@ -258,7 +367,7 @@ func TestOrchestratorTickReadsNothingWhenTheGuardrailsCannotBeRead(t *testing.T)
 // TestOrchestratorTickReadsNothingForARecentAttempt is the fence around the
 // read: an attempt inside its claim window may be a launch that is still in
 // flight, so no request is read for it — which is what keeps a pass that cannot
-// read the run records from reporting the same attempt twice.
+// read the run records from starting the same attempt twice.
 func TestOrchestratorTickReadsNothingForARecentAttempt(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	doc := residentNodeDoc(t, at)
@@ -276,8 +385,9 @@ func TestOrchestratorTickReadsNothingForARecentAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	launch := &fakeResidentLauncher{}
 
-	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at)
+	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at, launch)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the tick answered %d (%s)", rec.Code, logged)
 	}
@@ -285,19 +395,23 @@ func TestOrchestratorTickReadsNothingForARecentAttempt(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &pass); err != nil {
 		t.Fatal(err)
 	}
-	if pass.Unreported != 0 {
-		t.Errorf("the pass reads unreported %d, and the attempt is inside its claim window", pass.Unreported)
+	if pass.Unreported != 0 || pass.Carried != 0 {
+		t.Errorf("the pass reads unreported %d, carried %d, and the attempt is inside its claim window: a launch beside it may still be in flight", pass.Unreported, pass.Carried)
+	}
+	if len(launch.starts) != 0 {
+		t.Errorf("the pass asked the launcher for %v for an attempt inside its claim window", launch.starts)
 	}
 }
 
-// TestOrchestratorServiceConfigCarriesNoLauncher is the wiring's own shape, and
-// it is the review finding this revision answers: the service is built with the
-// node and the log and NOTHING else, because the one launcher is
-// `fugaro run`'s own path (orchestrator_launcher.go) and this deployment cannot
-// give it the runs bucket, the GCP project and the region it needs. A launcher
-// built here would be a second launch path — and an empty one made every request
-// look refused while nothing could start.
-func TestOrchestratorServiceConfigCarriesNoLauncher(t *testing.T) {
+// TestOrchestratorServiceConfigBuildsALauncher is the wiring's own shape, and
+// it replaces the review finding this revision answers: the service is built
+// with the node, the log AND a launcher, because the plan's re-issues are
+// carried only through one — a service with no launcher would read a node and
+// refuse every attempt it found, and would be refused at start-up rather than
+// serving (newResidentOrchestrator). The launcher the configuration builds is
+// the resident one, which is `fugaro run`'s own path behind it
+// (orchestrator_launcher.go).
+func TestOrchestratorServiceConfigBuildsALauncher(t *testing.T) {
 	orchestratorTest = &orchestratorWiring{tokens: func(context.Context) (oauth2.TokenSource, error) {
 		return oauth2.StaticTokenSource(&oauth2.Token{}), nil
 	}}
@@ -307,7 +421,13 @@ func TestOrchestratorServiceConfigCarriesNoLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a complete environment was refused: %v", err)
 	}
+	if _, ok := cfg.launch.(*residentLauncher); !ok {
+		t.Fatalf("the configuration carries %T, and the one launcher this tree has is the resident one over the command's own path", cfg.launch)
+	}
 	if _, err := newResidentOrchestrator(cfg); err != nil {
 		t.Fatalf("the configuration does not build the service: %v", err)
+	}
+	if _, err := newResidentOrchestrator(orchestratorConfig{id: "aurora", db: cfg.db, log: cfg.log}); err == nil {
+		t.Fatal("a service with no launcher was built: it would read a node and refuse every re-issue it found, which is a fault nobody would see in the log")
 	}
 }

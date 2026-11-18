@@ -10,6 +10,168 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
+// The resident orchestrator's launcher (mobile plan task P5.1d): the same
+// launch, started from a container that has no checkout and no local config.
+//
+// WHY IT IS A SECOND TYPE OVER THE SAME STEPS, AND NOT A SECOND LAUNCH PATH.
+// The daemon's launcher above builds the launch it starts: resolveAttemptPlan
+// and buildAttemptSpec read the item's repository, its ref and its account out
+// of a local config and a checkout, and createTask writes the task the run
+// reads. The resident service has neither of those — its container is told six
+// names and holds no project file (orchestrator_serve.go) — so it cannot build
+// a spec, and it does not have to: the only action it is handed is a re-issue,
+// an attempt whose run id is already on the node and whose task a launcher
+// before it stored. What is left is the half that can be reused, and it is
+// reused whole: retrySpec is `fugaro run --retry`'s own reader of a stored task,
+// and launchRun is the command's claim, mint and job start — the three steps
+// the design names for this function (always-on-orchestrator.md section 4.2,
+// "takes the launch claim, mints the budget token, and starts the job
+// execution. That is fugaro run's existing path with a service account behind
+// it"). Nothing here starts a run the node does not carry, and nothing here
+// writes a task: createTask is the command's and the daemon's, and an attempt
+// whose task the runs bucket does not hold is refused below rather than
+// rebuilt.
+//
+// WHAT IT DELIBERATELY DOES NOT RUN IS THE GATE BLOCK, and the trade is worth
+// stating because freshLaunchGates is what the other two launch shapes pass.
+// Those gates judge two things this launcher has no hand in: the spec they
+// would build (the workflow's kind, the account, the levels, the layer, the
+// fields a flag asked for) and the task they would write (the drop a skew gate
+// makes lands in what createTask stores, and the image gate judges the task the
+// run will read). Here both halves are somebody else's and already done: the
+// task was gated by the launch that stored it, and this process neither rebuilds
+// it nor writes it. What a skip can cost is bounded and is not a widening: a
+// task whose deployed image has since moved under it starts and dies at
+// bootstrap on a field its runner cannot read — a spent attempt of a run whose
+// execution the launch record then reports — and never a run on a job the gates
+// would have refused for a reason about this launch, because the job, the
+// variant, the marker and the sealed token are decided by launchRun itself,
+// which is the same code the command runs. The caps are the plan's:
+// ResidentRequests hands this launcher only re-issues, which planNode's own
+// reason is that they spend nothing a cap is there to bound (an attempt that
+// was committed and counted before this process woke). A release that wants the
+// gate block here too is a change of behaviour over this one, and it belongs to
+// whoever owns the deployment that asks for it.
+//
+// THE ONE QUESTION A CONTAINER CANNOT ANSWER, AND WHY THE ANSWER IS A REFUSAL.
+// retrySpec asks the command's own questions of the stored task, and one of them
+// is a question about the OPERATOR'S LOCAL CONFIG: the account a recorded task
+// names is judged against `claude_accounts` (claudeAccountFor, with
+// retrySpec's own nameRecorded origin). A resident container is told six names
+// and holds no project file (orchestrator_serve.go), so that list is empty and
+// the walk answers `default` for every repository: a task naming no account at
+// all is admitted here exactly as it is on a machine whose config lists no
+// `claude_accounts`, and a task naming a NAMED Claude account is refused with
+// the command's own sentence every tick ("not one <repo> may use (allowed:
+// default)"). That sentence sends a reader to a key this deployment does not
+// have, so the fix it means is the person's, and it is the same fix the empty
+// requested_by refusal below names: `fugaro run --retry <slug>/<run>` from a
+// machine whose config knows the account. What the refusal deliberately is NOT
+// is a guess: the credential a run mounts is the account its stored task names
+// (the job variant is derived from it), so a launcher that resolved another
+// account here — the published policy's per-repository axis is what would answer
+// this, and this revision reads no policy node — would start a run whose review
+// stages are refused for a token nothing mounted. Fail-closed, loud, once per
+// tick, and TestResidentLauncherRefusesANamedAccountThisDeploymentCannotSee
+// pins it.
+type residentLauncher struct {
+	// open is the environment each launch starts through, and it is opened
+	// per launch rather than once: the config it carries is written with the
+	// identity the stored task names (below), and one config shared by the
+	// passes of a service that Cloud Run may run two of at once would be two
+	// launches attributing each other's run. The opener copies the
+	// deployment's config for the same reason, so what a launch writes is
+	// never the next launch's.
+	open func(ctx context.Context) (*cloudEnv, error)
+}
+
+// Launch starts the run the node recorded, over the command's own launch.
+//
+// The request it reads is the run's stored record and not the spec it is
+// handed: the spec is the item's declaration (orchestrator.SpecOf), and what
+// launchRun starts is the task the earlier launcher stored — which is what
+// makes this a re-issue of one attempt rather than a launch of an item. The
+// two are held to each other all the same: a task whose repository is not the
+// item's is refused, so the run this returns is the run the node's own record
+// asks for and not merely the one whose id it happens to name.
+func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
+	// A container has no checkout, and this launch must not read one if a
+	// deployment ever gives it one: every reader below that could reach a
+	// working tree — the document, the account, the job decision — is a
+	// reader of the repository's own bytes, and the resident service reads
+	// them from the bucket or not at all (the daemon's Launch installs the
+	// same switch for the same reason).
+	ctx = withoutCheckout(ctx)
+	// One read of the repository's document at the forge for this whole
+	// launch, installed before any reader of it: the same cache finishLaunch
+	// and the daemon's launch install, and for the same reason.
+	ctx = withServiceReadCache(ctx)
+	env, err := l.open(ctx)
+	if err != nil {
+		return "", err
+	}
+	// retrySpec is the command's --retry reader: the run is located in the
+	// runs bucket by the id the node recorded (a bare id, which is the
+	// whole-bucket listing the launcher's own binding exists for, so a
+	// repository this deployment cannot name is still reachable), its task is
+	// read, and the refusals a stored task meets — an A/B arm, a report run,
+	// an account the repository may no longer use — are the command's own,
+	// in the command's words.
+	slug, ts, err := retrySpec(ctx, env, runID)
+	if err != nil {
+		return "", err
+	}
+	if err := residentRunIsTheItems(spec, slug, ts); err != nil {
+		return "", err
+	}
+	// The run's document, at the ref the task names, for every reader below
+	// that asks for it (launchRun's job decision among them). finishLaunch
+	// installs it in the same place and for the same reason; retrySpec's own
+	// install is its own reader's and does not outlive it.
+	ctx = withLaunchDocument(ctx, ts.Repo, ts.Ref)
+	// The identity this launch mints the run's budget token under, and the
+	// one name a container cannot answer for itself. `Me` would reach for git
+	// config in a container that has neither a person nor a checkout, and a
+	// resident launch is not nobody's: the task says who asked for the run
+	// (requested_by, written by the launch that stored it), the launch record
+	// says the same name (launched_by), and the token's RB claim — its own
+	// self-asserted attribution, which nothing in the rules reads — says it
+	// too rather than a service account's. So the config this launch's env
+	// carries is given that name here, on a config the opener made for this
+	// launch alone.
+	if ts.RequestedBy == "" {
+		return "", userErr("run %s/%s names nobody who asked for it, and a resident launch gives the run the budget identity of the person its own record carries: the task's requested_by is what the launch record's launched_by says beside it, and this service will not mint a run's identity under a name it invented. Launch it from a machine of your own (fugaro run --retry %s/%s), or patch the item's attempt so that it names a run whose task does", slug, runID, slug, runID)
+	}
+	env.lc.User = ts.RequestedBy
+	res, err := launchRun(ctx, env, slug, ts, time.Now())
+	if err != nil {
+		return "", err
+	}
+	return res.RunID, nil
+}
+
+// residentRunIsTheItems refuses a run whose stored task is not the item's own
+// repository: the node records the attempt's run id, and this service locates
+// that run in the bucket by the id alone (retrySpec, a bare run id), so a node
+// whose item names one repository and whose run id belongs to another would
+// otherwise start the other repository's run. It is the same fence the starter
+// keeps on the id: what is started is the attempt the record names, and the
+// record here is the item beside the run id as well as the id itself.
+func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) error {
+	want, err := task.CanonicalRepo(spec.Repo)
+	if err != nil {
+		return userErr("the item of run %s/%s names no repository this release can read (%v), and a resident launch starts what the item and the run's own task agree on", slug, ts.RunID, err)
+	}
+	got, err := task.CanonicalRepo(ts.Repo)
+	if err != nil {
+		return userErr("run %s/%s holds the task of %s, whose repository this release cannot read (%v)", slug, ts.RunID, oneLine(ts.Repo), err)
+	}
+	if got != want {
+		return userErr("the item of run %s/%s is %s's, and the run's stored task is %s's: a resident launch starts the attempt the node recorded, and the record it acts on is the item and the run id together — nothing was started", slug, ts.RunID, oneLine(spec.Repo), oneLine(ts.Repo))
+	}
+	return nil
+}
+
 // The daemon's launcher: one launch path, shared with `fugaro run` (F11, D931,
 // T2).
 //

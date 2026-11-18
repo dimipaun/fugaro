@@ -1788,13 +1788,16 @@ var (
 
 // orchestratorServiceResource, orchestratorServiceArgs, orchestratorServiceEnv
 // and orchestratorTickPath are the same quartet for the resident orchestrator's
-// own service (mobile plan task P5.1c; modules/installation/orchestrator.tf):
-// the resource name the service case dispatches on, the argv of the released
-// image's `orchestrator serve` subcommand, the three names
-// internal/cli/orchestrator_serve.go reads and nothing else — the project that
-// names this installation's node, the Firebase project it belongs to and the
-// database URL it is read from — and the one route that process answers, which
-// is the only path a tick of this installation may be pointed at.
+// own service (mobile plan tasks P5.1c and P5.1d;
+// modules/installation/orchestrator.tf): the resource name the service case
+// dispatches on, the argv of the released image's `orchestrator serve`
+// subcommand, the six names internal/cli/orchestrator_serve.go reads and nothing
+// else — the project that names this installation's node, the Firebase project
+// it belongs to and the database URL it is read from, plus the launch's own
+// three (the GCP project the jobs are in, the region they were deployed to and
+// the runs bucket's URL, which P5.1d's launcher builds a launch from) — and the
+// one route that process answers, which is the only path a tick of this
+// installation may be pointed at.
 //
 // A scheduling job of this service is the tree's ONE tick whose target is a
 // run.app URL rather than the run API's job path, and whose token is therefore
@@ -1807,7 +1810,7 @@ const (
 
 var (
 	orchestratorServiceArgs = []string{"orchestrator", "serve"}
-	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"}
+	orchestratorServiceEnv  = []string{"FUGARO_PROJECT", "FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_GCP_PROJECT", "FUGARO_REGION", "FUGARO_BUCKET"}
 )
 
 // CredentialsServiceEnvAwaitingTheModule are the names credentialsServiceEnv

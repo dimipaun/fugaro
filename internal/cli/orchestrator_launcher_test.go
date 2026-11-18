@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"reflect"
@@ -834,5 +836,242 @@ func TestTaskWithoutExternalDecodes(t *testing.T) {
 	}
 	if back.External != ticket {
 		t.Errorf("the task decoded into external %q, want %q", back.External, ticket)
+	}
+}
+
+// The resident launcher (mobile plan task P5.1d): the same launch, started from
+// a container that has no checkout and no local config, over the task a
+// launcher before it stored.
+
+// resident is the real resident launcher over the fixture's own environment.
+// The opener is the service's own shape (orchestrator_serve.go's `open`: a
+// closure the launcher calls per launch), and it answers the one environment
+// this fixture has, which is what every other launch in this file reads.
+func (f *launcherFixture) resident(t *testing.T) *residentLauncher {
+	t.Helper()
+	ctx := context.Background()
+	lc, _, err := openBudget(ctx, cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := openCloudFor(ctx, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = env.bucket.Close() })
+	return &residentLauncher{open: func(context.Context) (*cloudEnv, error) { return env, nil }}
+}
+
+// seedResidentRun stores the task of a run no launcher of this fixture ever
+// started: the state a person's patch leaves on an orchestrator node, and the
+// whole of what a resident pass is handed — the node records the run id, and
+// the runs bucket holds the task that id names.
+func seedResidentRun(t *testing.T, f *launcherFixture, runID, requestedBy string) {
+	t.Helper()
+	seedTaskRun(t, f.cloudFixture, runID, &task.Spec{RequestedBy: requestedBy})
+}
+
+// tokenClaim reads one developer claim out of the custom token a launch sealed
+// and left in the fixture's bucket: the payload's "claims" object, which is
+// what internal/budget/token wrote (token.Claims.claimSet) and what Firebase's
+// own exchange reads back. The token is not a secret in a test — it is the
+// fixture's own fake signer's signature — and what is read here is one claim,
+// never the token itself.
+func tokenClaim(t *testing.T, tok, claim string) string {
+	t.Helper()
+	parts := strings.Split(tok, ".")
+	if len(parts) != 3 {
+		t.Fatalf("the run's token has %d segments, want a JWT's three", len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("the token's payload does not decode: %v", err)
+	}
+	var body struct {
+		Claims map[string]any `json:"claims"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		t.Fatalf("the token's payload is not JSON: %v", err)
+	}
+	v, _ := body.Claims[claim].(string)
+	return v
+}
+
+// TestResidentLauncherStartsTheRecordedAttempt is the plan task's own sentence,
+// run the way the resident service runs it: read the launch request, take the
+// run's claim, mint the budget token and start the JOB execution — for the run
+// id the node recorded, over the task a launcher before it stored, from a
+// process that has no checkout.
+//
+// What the identity is minted under is the whole of what this launcher decides
+// that the command's path does not: `Me` would reach for git config in a
+// container that has neither a person nor a checkout, so the name is the task's
+// own requested_by — the same name the launch record's launched_by carries
+// beside it, and the token's rb claim. The last two assertions are the fence
+// around that: a task that names nobody is refused below, and a run whose
+// stored task is another repository's is refused as well.
+func TestResidentLauncherStartsTheRecordedAttempt(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	seedResidentRun(t, f, runID, "dana@example.com")
+	l := f.resident(t)
+	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app", Recipe: "standard", Brief: "Start the run the node recorded."}
+
+	got, err := l.Launch(ctx, spec, runID)
+	if err != nil {
+		t.Fatalf("the resident launcher refused the run the node records: %v", err)
+	}
+	if got != runID {
+		t.Fatalf("the resident launcher started %q for the run the node recorded as %q", got, runID)
+	}
+	execs := f.run.Executions()
+	if len(execs) != 1 {
+		t.Fatalf("the resident launch started %d executions, want one: %v", len(execs), execs)
+	}
+	// The claim: this launch went through `fugaro run`'s own, so the run has
+	// exactly one execution and the record of it is at the run's own node.
+	rec, err := f.runStore(t, runID).ReadLaunch(ctx)
+	if err != nil {
+		t.Fatalf("the launch was not recorded at the run's own node: %v", err)
+	}
+	if rec.LaunchedBy != "dana@example.com" {
+		t.Errorf("the launch record says launched_by %q, and a resident launch is the person the run's own task names (dana@example.com)", rec.LaunchedBy)
+	}
+	// The mint: sealed in the bucket, handed to the execution by the marker,
+	// and attributed to the task's requested_by rather than to a service
+	// account or to whatever git config a container might have.
+	if tok := tokenClaim(t, launchedToken(t, f.cloudFixture, runID), "rb"); tok != "dana@example.com" {
+		t.Errorf("the run's identity is attributed to %q, and the task the node recorded names dana@example.com", tok)
+	}
+	// A second call for the same run id — the next tick re-issuing the same
+	// attempt, which is what a resident pass does with a run it cannot see
+	// started — is answered with the run that exists and starts nothing: the
+	// fence around every re-issue.
+	again, err := l.Launch(ctx, spec, runID)
+	if err != nil {
+		t.Fatalf("re-issuing a run whose launch is already recorded: %v", err)
+	}
+	if again != runID {
+		t.Errorf("the second call reported %q, want the run that exists (%q)", again, runID)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("the run was started %d times, want once: the resident pass re-issues on every tick", n)
+	}
+}
+
+// TestResidentLauncherRefusesARunThatNamesNobody: a stored task whose
+// requested_by is empty is one this launcher will not start, because the name
+// it mints the run's identity under would have to be invented. The refusal is a
+// user error and it leaves NOTHING of the launch behind — no claim, no token,
+// no execution, no record — which is what the assertions below hold it to: the
+// identity is decided before launchRun is called.
+func TestResidentLauncherRefusesARunThatNamesNobody(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	seedResidentRun(t, f, runID, "")
+	l := f.resident(t)
+	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app", Recipe: "standard", Brief: "Start the run the node recorded."}
+
+	_, err := l.Launch(ctx, spec, runID)
+	if err == nil {
+		t.Fatal("a resident launch minted the identity of a run whose task names nobody")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: nothing about this launch is a service's fault, and the fix is the operator's (patch the item, or launch from a machine of your own)", err)
+	}
+	for _, want := range []string{"requested_by", runID} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("the run was started %d time(s) for a task that names nobody", n)
+	}
+	if raw := readToken(t, f.cloudFixture, runID); raw != "" {
+		t.Error("a budget token was minted for a run that names nobody")
+	}
+	if _, err := f.runStore(t, runID).ReadLaunch(ctx); err == nil {
+		t.Error("a launch was recorded for a run that names nobody")
+	}
+}
+
+// TestResidentLauncherRefusesARunThatIsNotTheItems: the node records the
+// attempt's run id, and this service locates that run in the bucket by the id
+// alone (retrySpec, a bare run id) — so a node whose item names one repository
+// and whose run id belongs to another would otherwise start the other
+// repository's run. What the resident launch starts is the attempt the ITEM and
+// the run's own task agree on, and nothing is started when they do not.
+func TestResidentLauncherRefusesARunThatIsNotTheItems(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	seedResidentRun(t, f, runID, "dana@example.com")
+	l := f.resident(t)
+	// The item's repository is another one, and its run id is this run's.
+	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/other", Recipe: "standard", Brief: "Start the run the node recorded."}
+
+	_, err := l.Launch(ctx, spec, runID)
+	if err == nil {
+		t.Fatal("a resident launch started the run of a repository the item does not name")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	for _, want := range []string{"acme/other", "acme/app", runID} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not name %q: a person has to be able to tell which record is wrong: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("the run was started %d time(s) for an item of another repository", n)
+	}
+}
+
+// TestResidentLauncherRefusesANamedAccountThisDeploymentCannotSee pins a
+// LIMITATION of this deployment rather than a property to be proud of, so that
+// it is a known refusal with a test behind it instead of a surprise in a log:
+// the account a stored task names is judged against the operator's own
+// `claude_accounts` (retrySpec asks claudeAccountFor with a recorded name), and
+// a resident container is told six names and holds no project file. So a
+// re-issue of a task that names a NAMED Claude account is refused, every tick,
+// with the command's own sentence — and the run is NOT started on some other
+// account to make the tick quiet: the credential a run mounts is the one its
+// stored task names, so a launcher that substituted an account would start a
+// run whose review stages are refused inside the run, for a token nothing
+// mounted.
+//
+// The person's fix is the command's own, from a machine whose config knows the
+// account (`fugaro run --retry acme/app/<run>`), which is the same fix the
+// empty requested_by refusal names. Until then the node's attempt stays open and
+// the tick writes one warning line per pass, which is a thing an operator can
+// see. The plain account and a task naming no account are unaffected: they are
+// answered without the key at all.
+func TestResidentLauncherRefusesANamedAccountThisDeploymentCannotSee(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	seedTaskRun(t, f.cloudFixture, runID, &task.Spec{RequestedBy: "dana@example.com", OAuthToken: "acme-overflow"})
+	l := f.resident(t)
+	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app", Recipe: "standard", Brief: "Start the run the node recorded."}
+
+	_, err := l.Launch(ctx, spec, runID)
+	if err == nil {
+		t.Fatal("a resident launch started a task whose named account this deployment cannot judge: the account walk has to answer for the name the task carries")
+	}
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: the fix is the operator's (retry it from their own machine)", err)
+	}
+	for _, want := range []string{"acme-overflow", "claude_accounts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q, so a person cannot tell which account or which key to fix: %v", want, err)
+		}
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Errorf("the run was started %d time(s) on an account its stored task does not name", n)
+	}
+	if raw := readToken(t, f.cloudFixture, runID); raw != "" {
+		t.Error("a budget token was minted for a run that was not started")
 	}
 }
