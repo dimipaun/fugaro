@@ -17,6 +17,13 @@ package keyservice
 // the address, told the owner, queued an application, asked the minter to sign
 // or recorded an issuance is not a retired route.
 //
+// The answer must be the mux's own 404, and a 405 is a failure rather than the
+// other refusal that fits. On a path no pattern names, every method is answered
+// by the mux's not-found, so a 405 means a pattern for this path does exist —
+// for some other method — and the door is back. Accepting it would leave the
+// guard blind to a re-registration on any verb these two do not drive: a
+// `PUT /admin` answers both of them with 405, and the retired path would pass.
+//
 // The paths are written out rather than named by a constant. The constants went
 // with the routes, and what this file holds is the addresses themselves — the
 // ones a cached form or a bookmarked link can still reach — rather than a name
@@ -106,6 +113,11 @@ func TestRetiredRoutesAreGone(t *testing.T) {
 		// the retired method alone would leave the other free for a later task
 		// to register — a `GET /free-seat` is as much a door as the `POST` was,
 		// and a body is read the same way whichever verb carried it.
+		//
+		// The two are a probe and not the list of verbs a door could come back
+		// on: the 404 below is what covers the rest, because a path registered
+		// for a method neither of these drives still refuses both of them with a
+		// 405.
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
 			was := count()
 			var rec *httptest.ResponseRecorder
@@ -114,9 +126,9 @@ func TestRetiredRoutesAreGone(t *testing.T) {
 			} else {
 				rec = f.post(tc.path, tc.form)
 			}
-			if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+			if rec.Code != http.StatusNotFound {
 				t.Errorf(
-					"%s (%s %s) answered %d: the route went with the site's forms and the admin page (portal plan P9.3), so this path serves no door — the mux's own 404, or its 405 where a pattern matches another method, is the answer, and anything else is a door a stranger reaches",
+					"%s (%s %s) answered %d: the route went with the site's forms and the admin page (portal plan P9.3), so this path serves no door — the mux's own 404 is the answer, and anything else is a door a stranger reaches. A 405 is one too: it is what a pattern registered for another method answers, so it means this path is back in the table",
 					tc.what, method, tc.path, rec.Code,
 				)
 			}
