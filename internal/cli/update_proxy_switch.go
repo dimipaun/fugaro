@@ -213,7 +213,8 @@ func (s *policyMigrateStage) proxySwitch(ctx context.Context) (*bitbucketProxySw
 	}
 	workspaces := bitbucketProxyWorkspaces(repos)
 	if len(workspaces) > 1 {
-		return nil, refuseSecondBitbucketWorkspace(s.e.lc, repos, workspaces)
+		s.proxySwitchSays(secondBitbucketWorkspaceWarning(s.e.lc, repos, workspaces))
+		return nil, nil
 	}
 	if s.proxySwitchForwardsNothing(ctx, workspaces) {
 		return nil, nil
@@ -319,24 +320,31 @@ func (s *policyMigrateStage) proxySwitchSays(msg string) {
 	s.e.r.warn(msg)
 }
 
-// refuseSecondBitbucketWorkspace is D2314: one Bitbucket access token reaches
-// the repositories of one workspace, and the proxy forwards that one token, so a
-// project whose Bitbucket repositories span two workspaces is one the credentials
-// service cannot serve. The refusal names the second workspace and a repository
-// of each, because the fix is the operator's own: a repository in another
-// workspace is another project's, or it runs on the per-repository job the
-// provider admits without the proxy.
+// secondBitbucketWorkspaceWarning is D2314 as the owner amended it on
+// 2026-11-18: one Bitbucket access token reaches the repositories of one
+// workspace, and the proxy forwards that one token, so a project whose Bitbucket
+// repositories span two workspaces is one the credentials service cannot serve.
+// The line names the second workspace and a repository of each, because the fix
+// is the operator's own: a repository in another workspace is another project's,
+// or it runs on the per-repository job the provider admits without the proxy.
 //
-// It is the flip's refusal and not a rule over every project: it is raised where
+// It WARNS and holds the switch back rather than failing the policy stage, which
+// is the amendment: the whole upgrade is `fugaro update`, and a project whose
+// repositories span two workspaces is one this update converges every other step
+// of whether or not the operator ever moves one. The step it holds back is the
+// flip alone — nothing is written and nothing is published — and the line
+// appears again on the next update, because the state it names is still there.
+//
+// It is the flip's own gate and not a rule over every project: it is asked where
 // this update would turn the switch on or widen it, so a project that is already
 // forwarding for the workspaces it names is left exactly as it is (a project
 // already on it is unchanged), and so is an installation whose credentials
 // service is not deployed or whose runner predates the proxy — neither of those
-// runs the proxy at all, and a refusal there would stop an update over a state
-// this step is not about.
-func refuseSecondBitbucketWorkspace(lc *localcfg.Config, repos, workspaces []string) error {
+// runs the proxy at all, and a warning there would be about a state this step is
+// not about.
+func secondBitbucketWorkspaceWarning(lc *localcfg.Config, repos, workspaces []string) string {
 	first, second := workspaces[0], workspaces[1]
-	return userErr("project %s has Bitbucket repositories in two workspaces, %s and %s (%s and %s), and the credentials service's Bitbucket proxy forwards one workspace token per project (D2314): the token it holds reaches %s's repositories alone, so a run of %s would have nothing to fetch its git credential with. Give %s its own project, or leave it on a per-repository job without the proxy; nothing was written",
+	return fmt.Sprintf("this update leaves the Bitbucket proxy switch off: project %s has Bitbucket repositories in two workspaces, %s and %s (%s and %s), and the credentials service's Bitbucket proxy forwards one workspace token per project (D2314): the token it holds reaches %s's repositories alone, so a run of %s would have nothing to fetch its git credential with. Give %s its own project, or leave it on a per-repository job without the proxy; nothing was written, and this update finished every other step",
 		lc.Name, first, second, bitbucketProxyRepoIn(repos, first), bitbucketProxyRepoIn(repos, second), first, bitbucketProxyRepoIn(repos, second), bitbucketProxyRepoIn(repos, second))
 }
 
