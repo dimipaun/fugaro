@@ -176,13 +176,14 @@ func TestTheCredentialsServiceURLReachesTheJobEnv(t *testing.T) {
 // keyless and the run mints at the service
 // (internal/gitprov/providers/providers.go, gated on the very name this entry
 // carries), which is the whole of what makes the switch worth turning on for
-// these two auths — and it is why every mount is still there at the same time
-// (D2072, G17): `api-key` hashes its own key, `oauth` runs on its own
-// subscription, and neither is handed back by the service until the flip
-// (config.ServiceServedAuths is empty, so the mount drop answers `none` for
-// every non-cascade repository: internal/infra's
-// TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount is the plan's half of
-// that pair).
+// these two auths — and the address and the mounts are two answers, one release
+// apart (D2072, G17): B2.3 handed the address out while every mount was still
+// there, because `api-key` hashes its own key and `oauth` runs on its own
+// subscription until the flip hands the serving back, and B2.7's flip is what
+// took the two Claude mounts away afterwards (config.ServiceServedAuths;
+// internal/infra's TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly and
+// TestFilledServiceServedAuthsKeepsProviderKeys are the plan's half of that
+// pair — a provider key stays mounted either way, R6, D1634).
 //
 // A node nobody published and a node whose mode is `off` are the same answer
 // here, and both are the state an api-key repository is held off in today: the
@@ -366,7 +367,7 @@ func TestCredentialsServiceLaunchEnv(t *testing.T) {
 		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce} {
 			got := credentialsServiceLaunchEnv(optedIn, "", "acme/app", auth, mode, false, false)
 			if len(got) != 1 || got[0] != envCredentialsServiceURL+"="+launchCredsURL {
-				t.Errorf("credentialsServiceLaunchEnv(auth %s, mode %s) = %v, want [%s=%s]: this release switches such a repository on, and its job's mounts are all still there (config.ServiceServedAuths)", auth, mode, got, envCredentialsServiceURL, launchCredsURL)
+				t.Errorf("credentialsServiceLaunchEnv(auth %s, mode %s) = %v, want [%s=%s]: this release switches such a repository on, whatever its job mounts (config.ServiceServedAuths keys the mounts, not the address)", auth, mode, got, envCredentialsServiceURL, launchCredsURL)
 			}
 		}
 	}

@@ -20,9 +20,13 @@ import (
 // were built on it, so doctor fires before the run. The trap is that the old
 // base stays pullable — nothing refuses it — so an update that left the pin
 // where it is would converge every other check and leave this installation on
-// a base no release maintains, still carrying the seven harnesses. Both halves
-// are the run's work: re-pin the base, and rebuild the repository's own job
-// images on the new pin rather than on the one the records still show.
+// a base no release maintains, still carrying the seven harnesses. What the
+// run's work is here is the re-pin, and since M7 it is the whole of it: this
+// repository is admitted by the profile the same run writes for its provider
+// (S5's default), so it runs on the project's shared job — there is no
+// repository-level image left on the previous base to rebuild, and the job
+// images the records show on it belong to a derived image nothing runs any
+// more (M7, D2312 as amended; spec decision 3).
 func TestUpdateConvergesSlimBase(t *testing.T) {
 	// The node is the one this binary writes, and deliberately: this test is
 	// about the base image, and a node one version behind would take doctor's
@@ -42,7 +46,7 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 	// The stale base is what the assertions after the run are about: the job
 	// images the records show were built on the previous release's base, which
 	// is what the images stage has to move.
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
 	// The pin this release's images stage resolves, verifies and records: the
 	// one value whose movement is this installation reaching the slim base.
@@ -50,16 +54,15 @@ func TestUpdateConvergesSlimBase(t *testing.T) {
 	if got := projectConfigOf(t, r).BaseImages[config.BaseKind]; got != want {
 		t.Errorf("base_images.base = %s after one fugaro update, want this release's %s: the installation is still on the base the previous release published", got, want)
 	}
-	// And the job images the run rebuilt are on that pin, not on the old one: a
-	// re-pin whose builds still pass the previous base would leave this
-	// installation's workflows running a base the pin no longer names.
-	if len(r.builder.specs) == 0 {
-		t.Fatal("the update rebuilt no job image, so nothing here shows a workflow reaching the new base")
-	}
-	for _, s := range r.builder.specs {
-		if s.Base != want {
-			t.Errorf("the build of %s on workflow %s passes base %s, want this release's %s", s.Slug, s.Workflow, s.Base, want)
-		}
+	// And the pin is not moved beside a build still on the old base: the run
+	// builds nothing for this repository at all, which is the same fact the
+	// assertion above rests on and not a second, weaker one. What the
+	// repository's workflows run is the project's shared job, and the project's
+	// own images are built FROM base_images.base — so a build that still passed
+	// the previous base could only be one of a repository-level job this
+	// installation no longer launches.
+	if n := len(r.builder.specs); n != 0 {
+		t.Errorf("%d job image(s) reached Cloud Build, want none: the repository is admitted by the project's profile, so it has no job image of its own to move to %s\n%s", n, want, out)
 	}
 }
 

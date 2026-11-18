@@ -356,8 +356,26 @@ resource "google_cloud_run_v2_service" "api" {
 
     # Scale to zero: a public endpoint nobody is calling costs nothing, and a
     # cold start is what a caller waits for.
+    #
+    # **And one instance at most, which is what makes the two mint limits the
+    # limits the specs state.** D454's per-tier rate (ops.go) and a reseller's
+    # credit limit (accrual.go) are counted in the process's own memory, in the
+    # one lock each takes: the store has no counter for either — both are counted
+    # over the entitlements by queries of their own, and a query inside a grant's
+    # transaction is a read every concurrent write conflicts with — so what each
+    # lock closes is one process's window. The platform's own ceiling is about a
+    # hundred instances, scaled by the caller's traffic, which is the shape that
+    # makes the gap dangerous rather than merely wide: the caller a mint limit is
+    # meant to refuse is the one whose traffic buys the instances, so a reseller
+    # minting in a burst would get a limit's worth of sales on each replica and
+    # the plan's own constraint — two concurrent reseller mints cannot pass the
+    # credit limit together — would hold of a process and not of the
+    # installation. A second instance buys this API nothing it cannot serve from
+    # the first: it answers the console's own requests and the platform's
+    # callbacks, and a cold start is what a caller pays for either way.
     scaling {
       min_instance_count = 0
+      max_instance_count = 1
     }
 
     containers {

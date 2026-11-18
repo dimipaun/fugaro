@@ -181,7 +181,7 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	}
 	if e.bitbucketProxySwitchTurns() {
 		steps = append(steps, inFlightStep{
-			line: "bitbucket proxy switch: the repository's next launch fetches its credential from the service"})
+			line: "bitbucket proxy switch: the address is set; the job's mount drops next update"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
@@ -376,11 +376,16 @@ func (e *initEngine) tokensPublishReachesRuns(ctx context.Context, db *rtdb.Clie
 // proxied however the node reads — and its runner computed proxiedness ONCE, at
 // bootstrap, from the node it memoized (proxiedBitbucket, internal/runner), so
 // the run going on now keeps the credential it started with, mounted token and
-// all. What the flip moves is where the repository's NEXT launch gets its
-// credential, and that launch is a job holding no Bitbucket token at all (the
-// drop the same project's repository stage makes, update_proxied.go): the step
-// is named for that launch, which is the one a person watching a project
-// converge needs to know is different from the one they just watched run.
+// all. What the flip sets is the ADDRESS the repository's jobs are admitted by
+// (the node's bitbucket_token block, derived from the entry the same run writes)
+// and not the job's own shape: the mount comes off at the NEXT update's
+// repository stage (the drop, update_proxied.go), so the launch that fetches its
+// credential from the service is the one after that update and not this step's
+// neighbour. The line says what this run leaves behind — the address, and the
+// mount still on the job — because that is the state a person watching a project
+// converge has to read correctly: nothing of the run in flight changes, and a
+// launch under the mount it still holds is a run that goes on mounting its own
+// token.
 //
 // It asks the cheap half rather than the whole flip, as every clause here asks
 // the question its step is gated on and not the whole of its decision: whether

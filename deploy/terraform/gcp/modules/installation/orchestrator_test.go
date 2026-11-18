@@ -166,7 +166,7 @@ func TestOrchestratorModuleGrantsTheDesignsTable(t *testing.T) {
 			need: []string{
 				`role    = "projects/${var.project}/roles/fugaroLauncher"`,
 				`project = var.project`,
-				`depends_on = [google_project_iam_custom_role.launcher]`,
+				`depends_on = [google_service_account.orchestrator, google_project_iam_custom_role.launcher]`,
 				`member  = ` + orchestratorMemberExpr,
 			},
 			absent: []string{"orchestrator[0].member"},

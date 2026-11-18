@@ -526,7 +526,7 @@ func IsProviderKeyEnv(name string) bool {
 //
 // The git credential's two variables are deliberately not here: neither is a
 // model credential, and which of the two the credentials service holds is a
-// different question (ServiceHeldSecretNames, IsServiceHeldSecretEnv).
+// different question (ServiceHeldSecretNames, IsServiceHeldSecretName).
 var ModelSecretEnvs = []string{ReservedSecrets[ClaudeOAuthToken], ReservedSecrets[AnthropicSecret]}
 
 // IsModelSecretEnv reports whether the job variable name carries a model
@@ -535,9 +535,11 @@ var ModelSecretEnvs = []string{ReservedSecrets[ClaudeOAuthToken], ReservedSecret
 // It is the model half of the credentials service's rule (D146): once an
 // installation opts in, a job's account keeps no secretAccessor on these
 // (modules/workflow/sa.tf) because the service holds them (C1.11), and C1.20
-// drops the mount. IsServiceHeldSecretEnv is the whole rule. Terraform cannot
-// ask Go, so the same three names are literals in that module's locals, held
-// to this function by deploy/terraform's
+// drops the mount. WHICH of them it holds is the arm the repository's root
+// plans (IsServiceHeldModelEnv), and the other family the rule covers is a
+// name, not a variable (IsServiceHeldSecretName). Terraform cannot ask Go, so
+// the same three names are literals in that module's locals, held to this
+// function by deploy/terraform's
 // TestServiceHeldSecretsMatchTheCredentialsService.
 func IsModelSecretEnv(name string) bool {
 	return slices.Contains(ModelSecretEnvs, name) || IsProviderKeyEnv(name)
@@ -597,17 +599,28 @@ var ServiceHeldSecretNames = []string{}
 // the switch admits `api-key` and `oauth` from the release that hands them the
 // service's address (B2.3), and this list is what decides whether their jobs
 // still MOUNT the model credential the service now serves them
-// (infra.ModelSecretsServed, dropModelMounts). It is EMPTY until B2.7, so
-// every mount stays for every auth but the cascade, which is G17's rule: a job
-// never loses a mount before the service serves that credential to the image
-// it runs.
+// (infra.ModelSecretsServed, dropModelMounts).
+//
+// IT IS FILLED BY B2.7'S FLIP — the owner's go of 2026-11-18, with Check 193's
+// before-flip half and its PASS waived and the check's own runs moved after
+// this release (implementation-plan.md, B2.7/B2.8). A switched `api-key` or
+// `oauth` repository's job therefore mounts no `ANTHROPIC_API_KEY` and no
+// `CLAUDE_CODE_OAUTH_TOKEN` from the release that carries this value, and
+// reaches the service for both; the mounts come back for a repository the
+// switch does not serve, and a provider's key (`FUGARO_PROVIDER_KEY_*`) is a
+// mount no arm of this list ever takes away (R6, D1634: the route that spends
+// it forwards the value rather than attaching it). G17's rule is the order
+// that made this a list rather than a condition of the switch: a job never
+// loses a mount before the service serves that credential to the image it
+// runs, which the address hand-out (B2.3) and the launcher's image gate
+// (internal/cli's serviceAuthSince) are the two halves of.
 //
 // A name in it is a name the credentials service can serve a model call under,
-// and the two that belong here — "api-key" and "oauth" (B2.7) — are the two
-// whose runs the service's cascade and pool serve. `vertex` is not one of
-// them: a Vertex workflow's calls go to Vertex AI on the job's own service
-// account, which is not a credential this service holds. `cascade` is not one
-// either, and never will be: a cascade job has no model mount at all
+// and the two that belong here — "api-key" and "oauth" — are the two whose
+// runs the service's cascade and pool serve. `vertex` is not one of them: a
+// Vertex workflow's calls go to Vertex AI on the job's own service account,
+// which is not a credential this service holds. `cascade` is not one either,
+// and never will be: a cascade job has no model mount at all
 // (ModelSecretsServed answers `all` for it), so there is no mount for a flip
 // to take away.
 //
@@ -615,7 +628,7 @@ var ServiceHeldSecretNames = []string{}
 // this one has no Terraform literal to be held to, because the value it feeds
 // is the per-repository model_secrets_served input Go writes into the tfvars,
 // whose three values ARE held to Go by TestModelSecretsServedValidationMatchesGo.
-var ServiceServedAuths = []string{}
+var ServiceServedAuths = []string{"api-key", "oauth"}
 
 // The three values of the repository root's model_secrets_served input — which
 // model secrets the credentials service serves to a job, and therefore which
@@ -642,23 +655,66 @@ const (
 // that holds the module's validation block to them.
 var ModelSecretsServedValues = []string{ModelSecretServedAll, ModelSecretServedAnthropic, ModelSecretServedNone}
 
-// IsServiceHeldSecretEnv reports whether a job mounting the logical secret
-// name under the variable env carries a credential the credentials service
-// holds once an installation opts in, and which the job's own account has
-// therefore given up (D145, D146): a model credential, or a name in
-// ServiceHeldSecretNames. Bitbucket's token and every workflow's own secret
-// are false, whatever they are mounted as — and so is the GitHub App's private
-// key until C2.2's release fills that list (review finding F1).
+// IsServiceHeldModelEnv reports whether a job mounting a model credential
+// under the variable env is served that credential by the credentials service,
+// for a run of the arm the repository's root plans (served, one of the three
+// ModelSecretsServed values) — the model half of the rule
+// modules/workflow/sa.tf's is_service_held is written from, one variable at a
+// time. A job whose mount is served by the service loses both its
+// secretAccessor and its mount (the module's job_secret_names, C1.18; Go's
+// dropModelMounts, C1.20), so the two halves have to answer the same way and
+// both read this function.
 //
-// This is the rule modules/workflow/sa.tf's job_secret_names is written from
-// and internal/infra's mountsServiceHeldSecret mirrors: a credential that is
-// true here loses the job's secretAccessor when the opt-in is on, because the
-// service holds it (C1.11's bundle, C2.1's mint) and the job's mount follows
-// (C1.20, C2.2). Terraform cannot ask Go, so the same names are literals in
-// that module's locals, held to this function by deploy/terraform's
-// TestServiceHeldSecretsMatchTheCredentialsService.
-func IsServiceHeldSecretEnv(env, name string) bool {
-	return IsModelSecretEnv(env) || slices.Contains(ServiceHeldSecretNames, name)
+// The three arms are the flip's own vocabulary (D2072, G17), because the two
+// halves of the family are served at different times:
+//
+//   - all — the cascade: every model credential the job mounts. That is
+//     IsModelSecretEnv's whole predicate, and what this rule was before B2.7
+//     gave the other two arms a value: a cascade job mounts none of them
+//     (SecretMounts' cascade case), so the arm is inert for it.
+//   - anthropic — an `api-key` or `oauth` repository the switch admits: the
+//     two names in ModelSecretEnvs (the Claude OAuth token and the Anthropic
+//     key) and never a provider key, whose value the run's own route forwards
+//     rather than attaches (R6, D1634). stageAccount is that arm's one
+//     exception: a mixed stage account's own variant job mounts the account's
+//     OAuth token for the `review`, `adversarial` and `triage` stages, which
+//     the RUNNER hands straight to Anthropic and the run's gateway never sees,
+//     so the service serves no call of theirs and the mount stays — with it
+//     the job account's accessor (B0's ruling of 2026-11-04,
+//     docs/design/mixed-credentials.md §11; WorkflowSpec.StageAccount is the
+//     fact, and it is api-key's alone: under oauth the account's token is the
+//     run's own credential and IS served).
+//   - none — a repository the switch holds off: nothing, so every mount stays.
+//
+// A value this release does not know is answered false as well: fail closed
+// toward keeping the mount the run may still read (G17).
+func IsServiceHeldModelEnv(env, served string, stageAccount bool) bool {
+	switch served {
+	case ModelSecretServedAll:
+		return IsModelSecretEnv(env)
+	case ModelSecretServedAnthropic:
+		return slices.Contains(ModelSecretEnvs, env) && !(stageAccount && env == ReservedSecrets[ClaudeOAuthToken])
+	}
+	return false
+}
+
+// IsServiceHeldSecretName reports whether the logical secret name is one the
+// credentials service holds for EVERY job of an installation that opted in,
+// whatever the arm and whatever variable the job mounts it as
+// (ServiceHeldSecretNames, C2.3): C1.11's bundle holds the model credentials
+// and C2.1 mints installation tokens from the GitHub App's private key, so a
+// name in that list loses the job's secretAccessor and its mount together
+// whenever the opt-in is on. It is the name clause of the module's
+// is_service_held, and internal/infra's mountsServiceHeldSecret mirrors it.
+//
+// The list is empty until C2.2's release fills it (review finding F1), so this
+// answers false for the App key today and the job keeps the accessor and the
+// mount it needs to read the key. Bitbucket's token and a workflow's own
+// secret are false whatever they are mounted as (D145) — the proxied
+// repository's token is a different list, read per repository
+// (ProxiedGitSecretNames).
+func IsServiceHeldSecretName(name string) bool {
+	return slices.Contains(ServiceHeldSecretNames, name)
 }
 
 // ProxiedGitSecretNames are the git credential logical names a job gives up

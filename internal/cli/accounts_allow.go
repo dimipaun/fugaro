@@ -171,7 +171,7 @@ func runAccountsAllowList(cmd *cobra.Command, name string, repos []string, allow
 		// has this one field, so it is written again in the block style this
 		// program writes a list in, with the repositories it holds, and the
 		// edit is made there; the diff shows the reformatting beside it.
-		shaped, shapeErr := settingsRewriteList(old, "claude_accounts", name, held, false)
+		shaped, shapeErr := settingsRewriteList(old, "claude_accounts", name, held, nil)
 		if shapeErr != nil {
 			return shapeErr
 		}

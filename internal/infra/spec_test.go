@@ -2437,9 +2437,13 @@ func serviceReady(t *testing.T, lc *localcfg.Config, repo string) {
 // and the per-repository record the update read out of the bundle). The pair
 // is the whole of what DON1's own change is, which is why every caller asserts
 // what it moves for the agent.auth it spells: the switch is installed &&
-// ready && auth == config.AuthCascade (CredentialsServiceServes), so a
-// repository of any other auth may not move at all — the finding the switch
-// was written for (docs/credentials-service/default-on.md §1.4).
+// ready && (auth == config.AuthCascade || the auth is one of
+// config.ServiceServedAuths && the published mode is observe or enforce)
+// (CredentialsServiceServes), so this pair — which publishes no policy, and so
+// carries no mode — may not move a repository of any other auth at all: the
+// finding the switch was written for (docs/credentials-service/default-on.md
+// §1.4). A mode that IS published moves the flip list's two auths, which is
+// what repoRootServed and the tests below are for.
 func converged(t *testing.T, in Inputs, lc *localcfg.Config) (off, on RepoSpec) {
 	t.Helper()
 	in.LC = lc
@@ -2609,6 +2613,13 @@ type repoRootFixture struct {
 	// lives there rather than in the agent block — the stage account B2's mix
 	// names is a local-config key, never a published one.
 	lc string
+	// mode publishes a project policy with this budget mode for the fixture
+	// (projectpolicy.Policy), the switch's fourth condition: the flip needs
+	// `observe` or `enforce`, so a fixture that has the block and the record
+	// and publishes no mode is a repository the service is deployed for and
+	// does not serve (D2071). Empty leaves the fixture with no policy at all,
+	// which is every other one.
+	mode string
 }
 
 // repoRootFixtures are the fixture specs, keyed by the golden's name.
@@ -2649,6 +2660,21 @@ var repoRootFixtures = map[string]repoRootFixture{
 	// accessor beside them (docs/design/mixed-credentials.md §11). No other
 	// fixture has an api-key job at all.
 	"repo_root_mixed": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC},
+	// repo_root_mixed_served is the mixed fixture SWITCHED: the same api-key
+	// repository with its stage account, plus the credentials service in the
+	// installation's outputs, the record `fugaro update` writes and a
+	// published mode — the switch's four conditions, so
+	// ModelSecretsServed answers `anthropic` and the drop runs. It is a
+	// fixture of its own because a golden is generated from a real plan and
+	// RepoSpec carries no way to ask the generator for the ON state of
+	// another fixture: repoRootServed builds that state for the Go tests,
+	// and only a fixture in this map reaches TestRealRepoRootAddresses. What
+	// it pins is the pair of rules the flip turns into one — the coder job's
+	// two Claude mounts and their accessors go, and the stage account's own
+	// job keeps the account's token and the accessor beside it, because that
+	// token is the stage's and its stages go straight to Anthropic (B0's
+	// ruling, docs/design/mixed-credentials.md §11; C1.20).
+	"repo_root_mixed_served": {agent: `agent: { auth: api-key }`, lc: repoRootMixedLC, credentialsService: true, credentialsReady: true, mode: config.BudgetEnforce},
 }
 
 // repoRootFixtureSpec builds one fixture's spec by name, the opt-in
@@ -2671,6 +2697,9 @@ func repoRootFixtureSpec(t *testing.T, name string) RepoSpec {
 	}
 	if f.credentialsReady {
 		serviceReady(t, in.LC, in.Repo)
+	}
+	if f.mode != "" {
+		in.Policy = &projectpolicy.Policy{Budget: projectpolicy.Budget{Mode: f.mode}}
 	}
 	rs, err := Repo(in)
 	if err != nil {
@@ -2813,6 +2842,156 @@ func TestRepoAddressesMatchTheMixedGolden(t *testing.T) {
 	for _, a := range want {
 		if strings.HasPrefix(a, coder) && strings.Contains(a, "claude-oauth-token") {
 			t.Errorf("the coder's own job reaches a Claude token: %s", a)
+		}
+	}
+}
+
+// TestRepoAddressesMatchTheMixedServedGolden pins the SWITCHED mixed
+// repository's address set against a real plan: the state
+// TestRepoAddressesMatchTheMixedGolden cannot see, because that fixture plans
+// with the credentials service off. The flip's two halves are both in the
+// addresses, and this is what holds the module's sa.tf to Go's drop: the
+// coder job keeps no accessor on either Claude credential
+// (is_run_model_secret), and the stage account's job keeps the one on the
+// account's own token (is_stage_account_token) while losing the Anthropic
+// key's — the exemption the module cannot derive from its inputs and Go
+// therefore passes down as stage_account.
+func TestRepoAddressesMatchTheMixedServedGolden(t *testing.T) {
+	const (
+		account = "bmb"
+		token   = "claude-oauth-token-" + account
+		stages  = `module.repo.module.workflow["web_` + account + `"].`
+		coder   = `module.repo.module.workflow["web"].`
+	)
+	spec := repoRootFixtureSpec(t, "repo_root_mixed_served")
+	if spec.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		t.Fatalf("the fixture plans model_secrets_served = %q, want %q: the golden would pin the unswitched state", spec.ModelSecretsServed, config.ModelSecretServedAnthropic)
+	}
+	want := addressesGolden(t, "repo_root_mixed_served")
+	if len(want) == 0 {
+		t.Fatal("the golden is empty")
+	}
+	got := spec.Addresses()
+	if !slices.Equal(got, want) {
+		t.Errorf("Addresses() differs from repo_root_mixed_served_addresses.golden:\nmissing: %v\nunexpected: %v",
+			missingFrom(want, got), missingFrom(got, want))
+	}
+	if a := stages + `google_secret_manager_secret_iam_member.job["` + token + `"]`; !slices.Contains(want, a) {
+		t.Errorf("the switched plan does not hold %s: the account's own job still mounts its token, so it keeps the accessor beside it (C1.20)", a)
+	}
+	for _, a := range want {
+		if !strings.Contains(a, ".google_secret_manager_secret_iam_member.job[") {
+			continue
+		}
+		if strings.HasPrefix(a, coder) && (strings.Contains(a, "claude-oauth-token") || strings.Contains(a, "anthropic-api-key")) {
+			t.Errorf("the coder's own job keeps an accessor on a Claude credential: %s", a)
+		}
+		if strings.HasPrefix(a, stages) && strings.Contains(a, "anthropic-api-key") {
+			t.Errorf("the stage account's job keeps the accessor on the Anthropic key: %s", a)
+		}
+	}
+}
+
+// TestSwitchedMixedRepositoryKeepsItsStageAccountToken is B2.7's flip on the
+// one repository that mixes credentials (B0's ruling of 2026-11-04,
+// docs/design/mixed-credentials.md §11): switched ON, an api-key repository
+// with a stage account gives up the two Claude mounts of its CODER job, and
+// the account's own variant job gives up its Anthropic key while keeping the
+// account's OAuth token.
+//
+// That token is the STAGE's credential, not the run's: `review`,
+// `adversarial` and `triage` go out on that job and the RUNNER hands the
+// account's token straight to Anthropic, so the run's gateway never sees those
+// calls and the credentials service has no call of theirs to serve. Taking the
+// mount would leave the stage reading a variable nothing mounted and halt
+// every run of such a repository at its review stage — the failure the mixed
+// account's own job exists to avoid — which is why the exemption is Go's
+// (dropModelMounts' anthropic arm) AND the module's (sa.tf's
+// is_stage_account_token): the mount and the account's accessor are one rule,
+// because a job whose account keeps an accessor its container no longer mounts
+// is a job Cloud Run refuses to create (C1.20).
+//
+// It is the test the mixed fixture could not be: repoRootFixtures'
+// repo_root_mixed plans with the credentials service OFF, so
+// TestRepoAddressesMatchTheMixedGolden pins the token's accessor only in the
+// state where nothing drops, and nothing pinned the switched one.
+func TestSwitchedMixedRepositoryKeepsItsStageAccountToken(t *testing.T) {
+	const (
+		account = "bmb"
+		token   = "claude-oauth-token-" + account
+		agent   = `agent: { auth: api-key }`
+	)
+	stages, coder := "web_"+account, "web"
+	offIn := repoRootInputs(t, agent)
+	offIn.LC = parseLC(t, repoRootMixedLC)
+	off, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	on := repoRootServed(t, agent, repoRootMixedLC, config.BudgetEnforce)
+	if on.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		t.Fatalf("the switched mixed repository plans model_secrets_served = %q, want %q: the test would be vacuous", on.ModelSecretsServed, config.ModelSecretServedAnthropic)
+	}
+	for _, key := range []string{stages, coder} {
+		if _, ok := on.Workflows[key]; !ok {
+			t.Fatalf("the switched spec has no %s job: %v", key, slices.Sorted(maps.Keys(on.Workflows)))
+		}
+	}
+	if !on.Workflows[stages].StageAccount {
+		t.Errorf("the %s job's StageAccount is false: it is the mixed stage account's own variant job, and the module reads exactly that field to leave the stage's token where the flip takes the run's mounts away (sa.tf's is_stage_account_token)", stages)
+	}
+	if on.Workflows[coder].StageAccount {
+		t.Errorf("the %s job's StageAccount is true: only the stage account's own variant job is exempt from the drop", coder)
+	}
+	// The account's job: the Anthropic key is the RUN's credential and goes,
+	// the account's own token is the STAGE's and stays, and a provider key was
+	// never in any arm's reach (R6, D1634).
+	want := append(withoutClaudeMounts(modelMountsOf(off.Workflows[stages])), "CLAUDE_CODE_OAUTH_TOKEN="+token)
+	slices.Sort(want)
+	if got := modelMountsOf(on.Workflows[stages]); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's %s job mounts %v, want %v: the service serves it the Anthropic key, while the account's token is what its stages read straight from the job (B0's mix, D2072, R6)", stages, got, want)
+	}
+	// The coder's job: both Claude credentials are the run's, so both go.
+	if got, want := modelMountsOf(on.Workflows[coder]), withoutClaudeMounts(modelMountsOf(off.Workflows[coder])); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's %s job mounts %v, want %v: the service serves it both Claude credentials, so those two mounts go and every other one stays (D2072)", coder, got, want)
+	}
+	// The redaction list follows the mounts, and a mounted credential left off
+	// it is one the runner would print.
+	for _, key := range []string{stages, coder} {
+		if got, want := on.Workflows[key].Env[runner.SecretEnvsVar], redactionEnvs(on.Workflows[key].SecretEnv); got != want {
+			t.Errorf("the %s job's %s = %q, want %q: the list follows the mounts it has left", key, runner.SecretEnvsVar, got, want)
+		}
+	}
+	if got := on.Workflows[stages].Env[runner.SecretEnvsVar]; !strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("the %s job's %s = %q does not name the account's token: that job still mounts it, so the runner has to redact it", stages, runner.SecretEnvsVar, got)
+	}
+	if got := on.Workflows[coder].Env[runner.SecretEnvsVar]; strings.Contains(got, "CLAUDE_CODE_OAUTH_TOKEN") || strings.Contains(got, "ANTHROPIC_API_KEY") {
+		t.Errorf("the %s job's %s = %q still names a Claude credential: both of its mounts are gone (D2072)", coder, runner.SecretEnvsVar, got)
+	}
+	// The containers do not move — a dropped one carries prevent_destroy and
+	// would plan a destruction — and the accessors follow the mounts: the
+	// account's job keeps its grant on the token, and no job keeps one on the
+	// Anthropic key (the module's half of the same rule, C1.20).
+	if !maps.Equal(off.Secrets, on.Secrets) {
+		t.Errorf("the secret containers moved with the switch: %v, want %v", on.Secrets, off.Secrets)
+	}
+	addrs := on.Addresses()
+	if len(addrs) == 0 {
+		t.Fatal("the switched spec produces no address at all: the test would be vacuous")
+	}
+	if a := `module.repo.module.workflow["` + stages + `"].google_secret_manager_secret_iam_member.job["` + token + `"]`; !slices.Contains(addrs, a) {
+		t.Errorf("the switched plan does not hold %s: the account's own job must keep its accessor on the token it still mounts (C1.20)", a)
+	}
+	// The job's own grant, and not the container's the root declares or the
+	// operators' pair: those are the root's for every repository and move with
+	// nothing here.
+	const jobGrant = ".google_secret_manager_secret_iam_member.job["
+	for _, a := range addrs {
+		if strings.Contains(a, jobGrant) && strings.Contains(a, "anthropic-api-key") {
+			t.Errorf("the switched plan still holds %s: the service serves the Anthropic key to every job of this repository, so no account keeps an accessor on it (D2072, C1.20)", a)
+		}
+		if strings.Contains(a, jobGrant) && strings.Contains(a, "claude-oauth-token") && !strings.Contains(a, stages) {
+			t.Errorf("the switched plan holds %s: only the stage account's own job keeps an accessor on a Claude OAuth token (B0's mix)", a)
 		}
 	}
 }
@@ -3047,10 +3226,10 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 // CredentialsServiceServes — is what keeps the block out of a repository the
 // service does not serve, and that is the authorization condition. This
 // fixture publishes no policy, so these two rows are repositories held off by
-// the mode as well (B2.3, D2071), and their mounts stay for the stronger reason
-// that covers every non-cascade repository this release serves: the flip that
-// takes a model mount away is B2.7's, and until it every mount is kept
-// (D2072, G17, ModelSecretsServed's `none`).
+// the mode as well (B2.3, D2071), and their mounts stay because the switch's
+// answer is `none` for a held-off repository whatever the flip list says:
+// B2.7's flip takes the two Claude mounts from a SWITCHED `api-key` or `oauth`
+// repository (ModelSecretsServed's `anthropic` arm), and this pair is not one.
 //
 // What each held-off row asserts, in the two forms the installations
 // distinguish (oauth: the shared subscription token, once per Claude account;
@@ -3098,7 +3277,7 @@ func TestTheDeployAloneDropsNoModelMount(t *testing.T) {
 				t.Fatal("the fixture mounts no model credential with no service at all: the test would be vacuous")
 			}
 			if onMounted := mounted(onWS); !slices.Equal(onMounted, offMounted) {
-				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: every one of this repository's mounts is kept until the flip (D2072, G17), so a mount the deploy alone dropped is the release blocker docs/credentials-service/default-on.md §1.4 states, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
+				t.Errorf("the converged installation's job mounts %v, want exactly %v, the credentials it mounted before the service was deployed: the deploy alone changes no run — a repository the switch holds off plans model_secrets_served = none and keeps every mount (D2072, G17) — so a mount the deploy alone dropped is the release blocker docs/credentials-service/default-on.md §1.4 states, and the module's accessor drop would refuse to deploy it (D145, D146)", onMounted, offMounted)
 			}
 			// The redaction list follows the mounts: it is built from them, and
 			// a name left out of it that the job holds is a credential the
@@ -3293,6 +3472,36 @@ func modelMountsOf(ws WorkflowSpec) []string {
 	return out
 }
 
+// claudeMountsOf are the two Claude mounts of a model-mount list: the pair the
+// credentials service serves whole for an `api-key` or `oauth` repository — the
+// Anthropic key and the OAuth token — and therefore the pair B2.7's flip takes
+// away (config.ModelSecretServedAnthropic). A provider's key is deliberately not
+// one of them: it is spent on a route the service forwards rather than attaches
+// (R6, D1634).
+func claudeMountsOf(mounts []string) []string {
+	var out []string
+	for _, m := range mounts {
+		if env, _, _ := strings.Cut(m, "="); slices.Contains(config.ModelSecretEnvs, env) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// withoutClaudeMounts is mounts with claudeMountsOf's entries taken out, which
+// is what a flipped job's mounts must be: everything it mounted with no service
+// at all, minus the two the service now serves it.
+func withoutClaudeMounts(mounts []string) []string {
+	var out []string
+	for _, m := range mounts {
+		if env, _, _ := strings.Cut(m, "="); slices.Contains(config.ModelSecretEnvs, env) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // TestServesAPIKeyAndOAuthWhenTheModeIsOn is B2.3's own answer (D2071, F30): an
 // `api-key` or `oauth` repository of an installation whose published mode is
 // `observe` or `enforce` is ON the switch, and one whose mode is off is not.
@@ -3307,10 +3516,12 @@ func modelMountsOf(ws WorkflowSpec) []string {
 //
 // The spec half is what the switch's answer buys a repository root: the
 // installation's block (the job's invoker grant and the address its launches
-// are handed) and — this release's step of D2072 — a model_secrets_served of
-// `none`, so the module drops no accessor and the job keeps every mount. The
-// red step of the task was the first assertion below: with the auth half
-// removed, `api-key` answered false and this repository root carried no block.
+// are handed) and the second step of D2072, which this release carries — a
+// model_secrets_served of `anthropic`, so the module drops the two Claude
+// accessors and the job gives up those two mounts while every provider key it
+// mounts stays (B2.7). The red step of the task was the first assertion below:
+// with the auth half removed, `api-key` answered false and this repository root
+// carried no block.
 func TestServesAPIKeyAndOAuthWhenTheModeIsOn(t *testing.T) {
 	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
 		for _, mode := range []string{config.BudgetObserve, config.BudgetEnforce} {
@@ -3351,24 +3562,30 @@ func TestServesAPIKeyAndOAuthWhenTheModeIsOn(t *testing.T) {
 			}) {
 				t.Errorf("the switched repository's jobs carry no invoker grant on the service: %v", addrs)
 			}
-			// D2072's first step, and G17's whole point: the address is handed
-			// out with every mount kept.
-			if on.ModelSecretsServed != config.ModelSecretServedNone {
-				t.Errorf("the switched %s repository's root plans model_secrets_served = %q, want %q: this release hands out the address and takes nothing away, so an older launcher or an older job image still finds the credential it reads (D2072, G17)", tc.name, on.ModelSecretsServed, config.ModelSecretServedNone)
+			// D2072's second step, B2.7's flip: the address is handed out AND the
+			// two Claude mounts go, because this auth is in the flip list from
+			// the release that carries it.
+			if on.ModelSecretsServed != config.ModelSecretServedAnthropic {
+				t.Errorf("the switched %s repository's root plans model_secrets_served = %q, want %q: the service serves this auth's model calls, so the two Claude mounts go and a provider's key stays (D2072, R6)", tc.name, on.ModelSecretsServed, config.ModelSecretServedAnthropic)
 			}
-			var checked int
+			var checked, dropped int
 			for key, ws := range on.Workflows {
 				offWS, ok := off.Workflows[key]
 				if !ok {
 					continue
 				}
 				checked++
-				if !slices.Equal(modelMountsOf(ws), modelMountsOf(offWS)) {
-					t.Errorf("the switched repository's %s job mounts %v, want %v, the credentials it mounted with no service at all: every mount stays until the flip (D2072, G17)", key, modelMountsOf(ws), modelMountsOf(offWS))
+				if kept, had := claudeMountsOf(modelMountsOf(ws)), claudeMountsOf(modelMountsOf(offWS)); len(kept) != 0 || len(had) == 0 {
+					t.Errorf("the switched repository's %s job still mounts %v, and with no service at all it mounted %v: the two Claude mounts must be gone from the flipped job and present in the unserved one (D2072, G17)", key, kept, had)
+				} else {
+					dropped++
+				}
+				if got, want := modelMountsOf(ws), withoutClaudeMounts(modelMountsOf(offWS)); !slices.Equal(got, want) {
+					t.Errorf("the switched repository's %s job mounts %v, want %v, what it mounted with no service at all minus the two Claude credentials: the flip takes those two away and nothing else (D2072, R6)", key, got, want)
 				}
 			}
-			if checked == 0 {
-				t.Fatal("the two plans share no workflow: the mount assertion above passed vacuously")
+			if checked == 0 || dropped == 0 {
+				t.Fatalf("%d shared workflows and %d of them dropped a Claude mount: the mount assertions above passed vacuously", checked, dropped)
 			}
 		})
 	}
@@ -3403,12 +3620,14 @@ func TestServesNoAPIKeyOrOAuthWithBudgetOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The fixture's premise: this repository root DOES carry the block and a
-	// model mount when the switch is on, so the assertions below are about the
-	// mode and not about a hold-off that would happen anyway.
+	// The fixture's premise: this repository root DOES carry the block and DOES
+	// reach the service for its model credential when the switch is on, so the
+	// assertions below are about the mode and not about a hold-off that would
+	// happen anyway. The mount is gone on that side, which is the flip's answer
+	// and not this test's subject.
 	on := repoRootServed(t, repoRootOAuthAgent, repoRootLC, config.BudgetObserve)
-	if on.Installation.CredentialsService == nil || len(modelMountsOf(on.Workflows["web"])) == 0 {
-		t.Fatalf("the mode-on fixture carries no block or no model mount (%+v): the test would be vacuous", on.Installation.CredentialsService)
+	if on.Installation.CredentialsService == nil || on.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		t.Fatalf("the mode-on fixture carries no block or does not reach the service (%+v, model_secrets_served=%q): the test would be vacuous", on.Installation.CredentialsService, on.ModelSecretsServed)
 	}
 
 	for _, mode := range []string{"", config.BudgetOff} {
@@ -3432,30 +3651,35 @@ func TestServesNoAPIKeyOrOAuthWithBudgetOff(t *testing.T) {
 	}
 }
 
-// TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount is D2072's first step
-// pinned where it holds: the flip list is empty on this branch, so an `api-key`
-// or `oauth` repository that IS on the switch plans `model_secrets_served =
-// none` and keeps every mount and every accessor.
+// TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly is D2072's SECOND
+// step pinned where it holds: B2.7's flip list is filled, so an `api-key` or
+// `oauth` repository that IS on the switch plans `model_secrets_served =
+// anthropic` and its job gives up the two Claude mounts — and nothing else.
 //
-// The premise is asserted rather than assumed: a list that was filled in —
-// B2.7's release — turns the very next plan of these repositories into dropped
-// mounts, so a test that only read the spec would pass for the wrong reason.
-// The services served are read through ModelSecretsServed, the one function
-// both the root's tfvars and Readiness' mount drop call.
-func TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount(t *testing.T) {
-	if len(config.ServiceServedAuths) != 0 {
-		t.Fatalf("config.ServiceServedAuths is %v, and this branch's whole point is that it is empty: a filled list is B2.7's flip, and every assertion below would have to move with it", config.ServiceServedAuths)
-	}
+// It was written red: with `config.ServiceServedAuths` still empty, the first
+// assertion below fails and every mount is still there, which is the state
+// B2.3 shipped and the reason this test exists rather than a comment.
+//
+// The premise is asserted rather than assumed, and on the real list rather than
+// on a fixture's copy of it: the flip list is the release's own value, so a
+// list that lost a name would fail here and not in a place nobody reads. The
+// services served are read through ModelSecretsServed, the one function both
+// the root's tfvars and Readiness' mount drop call.
+func TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly(t *testing.T) {
 	for _, auth := range []string{config.AuthAPIKey, config.AuthOAuth} {
-		if got := ModelSecretsServed(true, auth); got != config.ModelSecretServedNone {
-			t.Errorf("ModelSecretsServed(serving, %q) = %q, want %q: a switched non-cascade repository's mounts are dropped only once the auth is in the flip list (D2072, G17)", auth, got, config.ModelSecretServedNone)
+		if !slices.Contains(config.ServiceServedAuths, auth) {
+			t.Fatalf("config.ServiceServedAuths is %v and does not carry %q: B2.7's flip is what makes a switched %s repository give up its two Claude mounts (D2072, G17)", config.ServiceServedAuths, auth, auth)
+		}
+		if got := ModelSecretsServed(true, auth); got != config.ModelSecretServedAnthropic {
+			t.Errorf("ModelSecretsServed(serving, %q) = %q, want %q: a switched repository of an auth in the flip list reaches the service for the Anthropic key and the OAuth token, so those two mounts go (D2072)", auth, got, config.ModelSecretServedAnthropic)
 		}
 		if got := ModelSecretsServed(false, auth); got != config.ModelSecretServedNone {
-			t.Errorf("ModelSecretsServed(held off, %q) = %q, want %q", auth, got, config.ModelSecretServedNone)
+			t.Errorf("ModelSecretsServed(held off, %q) = %q, want %q: a repository the switch holds off keeps every mount, whatever the flip list says", auth, got, config.ModelSecretServedNone)
 		}
 	}
-	// And through the spec: the switched root names none, keeps its mounts,
-	// keeps its containers, and still redacts what it mounts.
+	// And through the spec: the switched root names the anthropic arm, its job
+	// loses the two Claude mounts, it keeps its containers, and the redaction
+	// list follows the mounts it has left.
 	offIn := repoRootInputs(t, repoRootOAuthAgent)
 	offIn.LC = parseLC(t, repoRootLC)
 	off, err := Repo(offIn)
@@ -3466,12 +3690,15 @@ func TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount(t *testing.T) {
 	if on.Installation.CredentialsService == nil {
 		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
 	}
-	offMounts := modelMountsOf(off.Workflows["web"])
-	if len(offMounts) == 0 {
-		t.Fatal("the fixture mounts no model credential even with no service at all: the test would be vacuous")
+	if on.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		t.Errorf("the switched repository's root plans model_secrets_served = %q, want %q: the flip is why its job drops the mounts (D2072)", on.ModelSecretsServed, config.ModelSecretServedAnthropic)
 	}
-	if got := modelMountsOf(on.Workflows["web"]); !slices.Equal(got, offMounts) {
-		t.Errorf("the switched repository's web job mounts %v, want %v: the address is handed out with every mount kept (D2072, G17)", got, offMounts)
+	offMounts := modelMountsOf(off.Workflows["web"])
+	if len(claudeMountsOf(offMounts)) == 0 {
+		t.Fatalf("the fixture mounts neither Claude credential with no service at all (%v): the test would be vacuous", offMounts)
+	}
+	if got, want := modelMountsOf(on.Workflows["web"]), withoutClaudeMounts(offMounts); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's web job mounts %v, want %v: the service serves it both Claude credentials, so those two mounts go and every other one stays (D2072, R6)", got, want)
 	}
 	if !maps.Equal(off.Secrets, on.Secrets) {
 		t.Errorf("the secret containers moved with the switch: %v, want %v — a container carries prevent_destroy, so a dropped one plans a destruction and is reported as retired", on.Secrets, off.Secrets)
@@ -3481,15 +3708,57 @@ func TestEmptyServiceServedAuthsKeepsEveryNonCascadeMount(t *testing.T) {
 	}
 }
 
+// TestFilledServiceServedAuthsKeepsProviderKeys is R6 on the flipped side
+// (D1634): a provider's key is spent on a route the credentials service
+// FORWARDS rather than attaches, so its mount is the run's own and no arm of
+// the flip list takes it away. Losing it would leave the run with no way to
+// reach the provider whose model it was told to use.
+func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
+	const apiKeyAgent = `agent: { auth: api-key }`
+	offIn := repoRootInputs(t, apiKeyAgent)
+	offIn.LC = parseLC(t, repoRootAPIKeyLC)
+	off, err := Repo(offIn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	offMounts := modelMountsOf(off.Workflows["web"])
+	if !slices.Contains(offMounts, "FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY=openrouter-api-key") {
+		t.Fatalf("the fixture mounts no provider key with no service at all (%v): the test would be vacuous", offMounts)
+	}
+
+	on := repoRootServed(t, apiKeyAgent, repoRootAPIKeyLC, config.BudgetEnforce)
+	if on.ModelSecretsServed != config.ModelSecretServedAnthropic {
+		t.Fatalf("the switched api-key repository's root plans model_secrets_served = %q, want %q: nothing below would be about a flipped job (D2072)", on.ModelSecretsServed, config.ModelSecretServedAnthropic)
+	}
+	got := modelMountsOf(on.Workflows["web"])
+	for _, m := range got {
+		env, _, _ := strings.Cut(m, "=")
+		if config.IsProviderKeyEnv(env) {
+			continue
+		}
+		t.Errorf("the flipped repository's web job still mounts %s (%v): the service serves it both Claude credentials, so every other model mount is gone (D2072)", m, got)
+	}
+	if !slices.Contains(got, "FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY=openrouter-api-key") {
+		t.Errorf("the flipped repository's web job mounts %v, and the provider's key is missing: the service forwards that key rather than attaching it, so its mount is the run's own and the flip never takes it (R6, D1634)", got)
+	}
+	// The provider's key is not a credential of the service's, at any auth: a
+	// vertex repository's calls are the project's own GCP service.
+	if got := ModelSecretsServed(true, "vertex"); got != config.ModelSecretServedNone {
+		t.Errorf("ModelSecretsServed(serving, vertex) = %q, want %q: a Vertex workflow's calls are not a credential this service holds", got, config.ModelSecretServedNone)
+	}
+}
+
 // TestCascadeStillDropsItsMounts is the cascade's arm, unchanged by this task:
 // the one auth whose in-job credential the service replaces whole, so its
 // answer is `all` and every model mount and accessor goes (D143, C1.18/C1.20).
 //
-// The last block is the `anthropic` arm of the same function — B2.7's, and
-// unreachable through a spec on this branch because the flip list is empty —
-// pinned here where the drop rule lives: it drops the two Claude credentials
-// and never a provider's key, whose value the runner forwards rather than
-// attaches (R6, D1634).
+// The last block is the `anthropic` arm of the same function — B2.7's, and by
+// then the arm an `api-key` or `oauth` repository's root plans
+// (TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly) — pinned here too
+// where the drop rule lives: it drops the two Claude credentials and never a
+// provider's key, whose value the runner forwards rather than attaches (R6,
+// D1634). A mixed stage account's own variant job is the arm's one exception,
+// its Claude OAuth mount being the STAGE's credential rather than the run's.
 func TestCascadeStillDropsItsMounts(t *testing.T) {
 	if got := ModelSecretsServed(true, config.AuthCascade); got != config.ModelSecretServedAll {
 		t.Errorf("ModelSecretsServed(serving, cascade) = %q, want %q: the cascade's runner reads every model credential from the service, so its job keeps none (D143)", got, config.ModelSecretServedAll)
@@ -3522,7 +3791,11 @@ func TestCascadeStillDropsItsMounts(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		served string
-		want   []string
+		// stageAccount is WorkflowSpec.StageAccount: a mixed stage account's
+		// own variant job, the one job of an api-key repository whose Claude
+		// OAuth mount is the STAGE's credential rather than the run's.
+		stageAccount bool
+		want         []string
 		// redaction is the list the drop leaves behind: the mounts that
 		// remain, or the fixture's own stale value where nothing was dropped
 		// and so nothing is rebuilt.
@@ -3530,9 +3803,18 @@ func TestCascadeStillDropsItsMounts(t *testing.T) {
 	}{
 		{served: config.ModelSecretServedAll, want: []string{"NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"NPM_TOKEN": "npm-token"})},
 		{served: config.ModelSecretServedAnthropic, want: []string{"FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"FUGARO_PROVIDER_KEY_OPENROUTER": "openrouter-api-key", "NPM_TOKEN": "npm-token"})},
+		// The mixed stage account's own job is the one job the anthropic arm
+		// does not reach whole: its Claude OAuth mount is that account's token
+		// for the three stages that go straight to Anthropic rather than
+		// through the run's gateway, so the service never serves them and the
+		// mount stays — with the account's accessor on it, which sa.tf exempts
+		// by the same field. Its Anthropic key is the run's own credential and
+		// still goes, and a provider key was never in reach (R6, D1634).
+		{served: config.ModelSecretServedAnthropic, stageAccount: true, want: []string{"CLAUDE_CODE_OAUTH_TOKEN=claude-oauth-token", "FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: redactionEnvs(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-token", "FUGARO_PROVIDER_KEY_OPENROUTER": "openrouter-api-key", "NPM_TOKEN": "npm-token"})},
 		{served: config.ModelSecretServedNone, want: []string{"ANTHROPIC_API_KEY=anthropic-api-key", "CLAUDE_CODE_OAUTH_TOKEN=claude-oauth-token", "FUGARO_PROVIDER_KEY_OPENROUTER=openrouter-api-key", "NPM_TOKEN=npm-token"}, redaction: "stale"},
 	} {
 		s := ws()
+		s.StageAccount = tc.stageAccount
 		dropModelMounts(s, tc.served)
 		var got []string
 		for env, logical := range s.SecretEnv {
@@ -3540,10 +3822,10 @@ func TestCascadeStillDropsItsMounts(t *testing.T) {
 		}
 		slices.Sort(got)
 		if !slices.Equal(got, tc.want) {
-			t.Errorf("dropModelMounts(%q) leaves %v, want %v", tc.served, got, tc.want)
+			t.Errorf("dropModelMounts(%q, stage account %t) leaves %v, want %v", tc.served, tc.stageAccount, got, tc.want)
 		}
 		if s.Env[runner.SecretEnvsVar] != tc.redaction {
-			t.Errorf("dropModelMounts(%q) leaves %s = %q, want %q", tc.served, runner.SecretEnvsVar, s.Env[runner.SecretEnvsVar], tc.redaction)
+			t.Errorf("dropModelMounts(%q, stage account %t) leaves %s = %q, want %q", tc.served, tc.stageAccount, runner.SecretEnvsVar, s.Env[runner.SecretEnvsVar], tc.redaction)
 		}
 	}
 }
@@ -4269,7 +4551,7 @@ func TestGitHubRepositoryIsNeverJudgedAgainstTheBitbucketEntry(t *testing.T) {
 	in := webappInputs(t)
 	in.Installation.CredentialsService = credentialsService()
 	in.LC.ProjectSecrets = map[string]config.ProjectSecret{
-		config.BitbucketSecret: {AllowDataTo: []string{"acme/webapp"}, Proxy: true},
+		config.BitbucketSecret: {AllowDataTo: []string{"acme/webapp"}, Proxy: config.ProxyFlag(true)},
 	}
 	// The node admits the same owner/name, and only as a bitbucket repository:
 	// MatchRepo compares the provider segment, so this never admits a GitHub

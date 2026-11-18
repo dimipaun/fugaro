@@ -366,19 +366,17 @@ type troubleshootCloudJob struct {
 
 // This command's cloud tier is four seams, one per call that reaches outside
 // this process (the header of this file): the plan that resolves what the tier
-// would launch, T-TC1's pre-flight, T-TC5's upload and the launch itself. The
-// two halves of the launch are the next task's and are declared here, nil, so
-// that this binary compiles and ships without them: troubleshootCloudTier
-// answers what this command answered before the tier existed when either is
-// unset, rather than launching a spec nothing here can build.
+// would launch, T-TC1's pre-flight, T-TC5's upload and the launch itself, each
+// a variable so a test drives the tier's order and its answer without a project
+// (the tier's own file, troubleshoot_launch.go, holds the plan and the launch).
 var (
 	// troubleshootCloudPlan resolves the job above from the evidence's own
 	// facts, and declines with D2409's reason when there is no repository to
 	// scope a run to.
-	troubleshootCloudPlan func(ctx context.Context, ev diagnoseagent.Evidence) (troubleshootCloudJob, error)
+	troubleshootCloudPlan = troubleshootPlanJob
 	// troubleshootLaunchCloud is the launch, in the interface the plan names:
 	// one execution, no retry, and the run reference a person reads.
-	troubleshootLaunchCloud func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, error)
+	troubleshootLaunchCloud = troubleshootLaunchRun
 	// troubleshootPreflight is T-TC1's judgement of the spec, made without
 	// launching any of it. It is a variable for the same reason the launch is:
 	// a test drives the tier's order and its answer with a verdict of its own,
@@ -392,6 +390,30 @@ var (
 	// object is written, and that instant is this call.
 	troubleshootUpload = troubleshootUploadBundle
 )
+
+// troubleshootPlanDecline is what tier 4 prints when the plan — the half that
+// decides what the tier would launch, before anything of the cloud is touched —
+// declines: the decline, and beside it the refusal that brought the person to
+// this tier at all.
+//
+// This tier is reached only by a machine that holds no usable credential of its
+// own (D2400's order), and that refusal is a fact the person can still act on —
+// a placeholder left in ANTHROPIC_API_KEY, a login that expired, a variable set
+// to something too short to redact. Dropping it would leave them with the cloud
+// path's own problem and no word about the machine they are standing at, and
+// dropping the decline would leave them with the credential and no word about
+// what to fix instead. Both are one reason because the person reads one.
+//
+// It is the plan's decline and not one of the declines below it: once the tier
+// has reached the cloud — a gate's judgement, the upload, the launch, the
+// read-back — what is left to say is about the cloud, and the credential is the
+// reason the person came here rather than news about where they ended up.
+func troubleshootPlanDecline(decline, credErr error) error {
+	if credErr == nil {
+		return decline
+	}
+	return fmt.Errorf("%v The local diagnosis could not answer this failure either: %v", decline, credErr)
+}
 
 // troubleshootCloudTier is D2400's third tier: this machine holds no credential
 // of its own, so the diagnosis runs as a job in the person's own project, on
@@ -423,16 +445,15 @@ var (
 func troubleshootCloudTier(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, rec srctree.Record, credErr error) error {
 	ctx := cmd.Context()
 	if troubleshootCloudPlan == nil || troubleshootLaunchCloud == nil {
-		// The launch is the next task's, and this binary does not carry it yet:
-		// what it answers is what it answered before this tier existed — the
-		// evidence, with the reason the credential was refused — rather than a
-		// refusal of a tier nobody asked for or a job launched from a spec no
-		// code here can build.
+		// Both halves are this binary's own (troubleshoot_launch.go), so this
+		// is a test that cleared one: what it asks for is the answer this
+		// command gave before the tier existed — the evidence, with the reason
+		// the credential was refused — rather than a tier nobody launched.
 		return troubleshootOffline(cmd, o, ev, d, credErr)
 	}
 	job, err := troubleshootCloudPlan(ctx, ev)
 	if err != nil {
-		return troubleshootOffline(cmd, o, ev, d, err)
+		return troubleshootOffline(cmd, o, ev, d, troubleshootPlanDecline(err, credErr))
 	}
 	s := runstore.Open(job.env.bucket.Bucket, job.slug, job.spec.RunID)
 	// The spec is judged before anything of it exists: no task, no token, no

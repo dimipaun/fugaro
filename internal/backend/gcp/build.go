@@ -90,6 +90,18 @@ type BuildSpec struct {
 	GitSecretID string
 	GitUser     string // Bitbucket: the token's https username, such as x-token-auth
 	GitHubAppID string // GitHub: the App's ID, which is not a secret
+	// CredentialsServiceURL is the installation's credentials service, "" for
+	// a repository that is not switched to it: the credential step then fetches
+	// the build's git credential — and the workflow's build secrets — from that
+	// service with the build account's own identity, instead of the step
+	// holding the provider credential the request mounts for it (B4.5, D2076,
+	// D2077). It reaches the step as the env variable of the substitution
+	// below, so a build on a base image whose fugaro predates this release is
+	// served the mounted secret exactly as before. The step is the one that
+	// judges the address before it sends its identity token to it
+	// (internal/cli's checkBuildServiceURL), and a value that is not one fails
+	// the build there rather than reaching another host with a token.
+	CredentialsServiceURL string
 	// ServiceAccount is the email of the repository's build account
 	// (BuildServiceAccountID), which the build runs as.
 	ServiceAccount string
@@ -173,9 +185,24 @@ const (
 	credentialStep  = "credential"
 )
 
+// credentialServiceEnv are the credential step's variables of the fetch from
+// the installation's credentials service (B4.5): where the service is, the
+// workflow whose build secrets this build needs, the variables it needs them
+// under and the volume it writes them into. They are the template's own
+// spelling, and they travel as the step's env and never in its argv: the step
+// runs the base image's fugaro, so an installation whose base predates this
+// release hands them to a binary that ignores them and reads the secret it was
+// mounted — which is what keeps a build working across the update.
+var credentialServiceEnv = []string{
+	"FUGARO_CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}",
+	"WORKFLOW=${_WORKFLOW}",
+	"SECRET_ENVS=${_SECRET_ENVS}",
+	"SECRET_DIR=/secrets",
+}
+
 var credentialEnv = map[string][]string{
-	gitprov.KindBitbucket: {"PROVIDER=" + gitprov.KindBitbucket, "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}"},
-	gitprov.KindGitHub:    {"PROVIDER=" + gitprov.KindGitHub, "REPO_URL=${_REPO_URL}", "GITHUB_APP_ID=${_GITHUB_APP_ID}"},
+	gitprov.KindBitbucket: append([]string{"PROVIDER=" + gitprov.KindBitbucket, "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}"}, credentialServiceEnv...),
+	gitprov.KindGitHub:    append([]string{"PROVIDER=" + gitprov.KindGitHub, "REPO_URL=${_REPO_URL}", "GITHUB_APP_ID=${_GITHUB_APP_ID}"}, credentialServiceEnv...),
 }
 
 var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, gitprov.KindGitHub: githubAppKeyEnv}
@@ -191,7 +218,12 @@ const contextDirDefault = "/workspace/context"
 // with its substitutions set, the credential step's secret and env chosen
 // by provider, the provider credential's version in availableSecrets, and
 // each workflow secret added to availableSecrets and to the build step's
-// secretEnv (and nowhere else). It always names the repository's build
+// secretEnv (and nowhere else). They stay mounted for a repository switched
+// to the installation's credentials service too, whose credential step
+// fetches the same credentials there instead of reading them (B4.5, D2076,
+// D2077): dropping the mounts is that flip's own change (B4.9), so until it
+// lands the request is the same one either way. It always names the
+// repository's build
 // account: a request without one would run as the project's default build
 // identity. It makes no calls.
 func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
@@ -245,6 +277,10 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		"_BUCKET":               s.Bucket,
 		"_SLUG":                 s.Slug,
 		"_PROJECT_LAYER_SHA256": s.ProjectLayerSHA256,
+		// The installation's credentials service, "" for a repository that is
+		// not switched to it: the credential step reads it and fetches the
+		// build's credentials there when it is set (B4.5).
+		"_CREDENTIALS_SERVICE_URL": s.CredentialsServiceURL,
 		// The directory the build step builds from. A repository's own image
 		// renders its Dockerfile beside the checkout the source step made, so
 		// this is the template's default; a catalog entry that names a

@@ -1294,12 +1294,37 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, 
 			s.m, s.published, s.err = nil, false, err
 			return nil, false, err
 		}
-		s.sw = sw
 		lc := s.e.lc
 		if sw != nil {
 			lc = sw.lc
 		}
-		s.m, s.published, s.err = policyMigrationForIn(ctx, lc, s.e.path)
+		m, published, err := policyMigrationForIn(ctx, lc, s.e.path)
+		if sw != nil && err == nil && m != nil && m.generations != nil {
+			// The node has moved past the generation this machine's config was
+			// written from, so this run is D854's re-seed: the file is written
+			// from the node and the generation is recorded, rather than the node
+			// from the file. The switch has no part in that — it is a member the
+			// re-seed's splice table has no case for, so a plan built from the
+			// switch's config lands on the fallback that refuses the whole
+			// update with "put the published values of bitbucket_token there by
+			// hand", and the operator meets an update that fails and goes on
+			// failing until they edit the file by hand (S6's fix, 2026-11-18).
+			//
+			// So the switch is held back for this run and the plan is taken
+			// again from the config as it is: the generation is recorded, every
+			// other stage of the update runs, and the NEXT update — whose
+			// generation now matches — is the one that turns the switch on.
+			// Dropping it leaves the file and the node in agreement, which is
+			// what the switch may never break: the entry this run does not write
+			// is one the node does not carry, and an absent entry is never a
+			// disagreement for resolveBitbucketProxied.
+			s.proxySwitchSays("this update leaves the Bitbucket proxy switch off: the published policy node has moved past the generation this machine's local config was written from, and this run re-seeds the config from it — the next update turns the switch on")
+			sw = nil
+			lc = s.e.lc
+			m, published, err = policyMigrationForIn(ctx, lc, s.e.path)
+		}
+		s.sw = sw
+		s.m, s.published, s.err = m, published, err
 	}
 	return s.m, s.published, s.err
 }

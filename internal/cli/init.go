@@ -656,6 +656,13 @@ type initRun struct {
 	printed          bool // the --json result has been printed
 	anchorNoted      bool // update --repo's pointer at --anchor has been said
 	ideNoted         bool // the IDE-terminal notice has been said, once per run
+	// enrolmentNote is what the repo engine did for a repository a deployed
+	// profile admits, in one line (M7): the engine prints it where there is no
+	// stage of its own to carry it (the update --repo door), and the converge's
+	// repository stage reports it as what the run changed instead of an apply
+	// (repositoryStage's did). "" on every other path, which is every path that
+	// applied a root.
+	enrolmentNote string
 	// licence is the licence renewal job as the installation root's last
 	// completion decided it (licenceJob): the block that root's plan is written
 	// from, and nil where this installation deploys no coordinator job. It is
@@ -3090,6 +3097,11 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// own eligible names unioned with every one discovery found live, so a
 	// config edit can never shrink the module's for_each (N3).
 	spec.ProjectSecrets = im.ProjectSecrets
+	// The catalog check's git credentials name a project container only when
+	// the plan holds it, which is known only now.
+	if spec, err = spec.WithPlannedProjectSecrets(lc); err != nil {
+		return outs, false, err
+	}
 	// Whether this installation uses managed projects, which is what the
 	// module's managed_deployer_scoped turns on: the deployer's seven scoped
 	// roles and their seven conditioned bindings (managedDeployerShipped,
@@ -4750,26 +4762,6 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err != nil {
 		return userErr("%v", err)
 	}
-	if o.forget {
-		if err := r.forgetRepo(ctx, c, t, backend, repo, inst.StateBucket, slug); err != nil {
-			return err
-		}
-		return finish()
-	}
-
-	// 2. The installation, and its outputs.
-	switch ok, err := infra.InstallationStateExists(ctx, c, inst.StateBucket); {
-	case err != nil:
-		return initErr(err)
-	case !ok:
-		return userErr("gs://%s holds no installation state (%s/): run fugaro setup first", inst.StateBucket, infra.StatePrefixInstallation)
-	}
-	outs, err := r.installationOutputs(ctx, lc, bin, inst.StateBucket)
-	if err != nil {
-		return err
-	}
-	r.res.Outputs = &outs
-	in.Installation = outs
 	// The published node, read through the operator's own credentials. It is
 	// the one source of whether this repository is proxied (G15), so it is
 	// what the spec's bitbucket_proxied fact is read from, and what a local
@@ -4803,8 +4795,42 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// contradiction in the configuration, not a change to make, and a plan
 	// that cannot be applied is not a plan — so the refusal lands before the
 	// plan is written, in every mode.
+	//
+	// It is read before the forget branch as well as before the spec (M7): a
+	// deployed profile admitting this repository is the mark that decides both
+	// what this run applies and what --forget has to take away, and --forget
+	// reads no spec at all.
 	p, found, err := repoPolicyRead(ctx, lc)
 	in.Policy = repoPolicyInput(lc, p, found, err)
+	if o.forget {
+		if infra.SharedRepo(in.Policy, cfg.Git.Provider, repo) {
+			// M7, D2312 as amended: a repository a deployed profile admits has
+			// no root of its own for this door to have applied, so removing it
+			// is the config change alone.
+			if err := r.forgetSharedRepo(ctx, lc, repo, path, old); err != nil {
+				return err
+			}
+			return finish()
+		}
+		if err := r.forgetRepo(ctx, c, t, backend, repo, inst.StateBucket, slug); err != nil {
+			return err
+		}
+		return finish()
+	}
+
+	// 2. The installation, and its outputs.
+	switch ok, err := infra.InstallationStateExists(ctx, c, inst.StateBucket); {
+	case err != nil:
+		return initErr(err)
+	case !ok:
+		return userErr("gs://%s holds no installation state (%s/): run fugaro setup first", inst.StateBucket, infra.StatePrefixInstallation)
+	}
+	outs, err := r.installationOutputs(ctx, lc, bin, inst.StateBucket)
+	if err != nil {
+		return err
+	}
+	r.res.Outputs = &outs
+	in.Installation = outs
 	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
 		return err
 	}
@@ -4844,6 +4870,25 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	printWorkflowWarnings(r, spec)
 	r.warnCatalogSecrets(ctx, lc, spec)
+	// M7, D2312 as amended: a repository a deployed profile admits (the spec's
+	// Shared, M6's mark) runs on the project's shared jobs, so this run enrols
+	// it and applies no repository-level Terraform at all. The root is skipped
+	// whole — its workdir's plan, its state, its first image builds, its
+	// retirement and the flip's drop, which is judged on the applies that would
+	// take a mount away and there are none — while everything the project's
+	// records need is still written (enrolSharedRepo).
+	if spec.Shared {
+		if err := r.enrolSharedRepo(ctx, lc, spec, cfg, path, old); err != nil {
+			return err
+		}
+		if !embedded {
+			// The converge's repository stage carries this line as its own
+			// outcome (repositoryStage's did); the door has no stage, so the
+			// engine says it here.
+			fmt.Fprintln(r.w, r.enrolmentNote)
+		}
+		return finish()
+	}
 	// The flip's drop, refused here rather than left to the plan: this is the
 	// apply that gives a proxied repository's jobs up their Bitbucket token,
 	// and it runs only while the credentials service's bundle holds one to
@@ -6090,6 +6135,82 @@ func (r *initRun) forgetRepo(ctx context.Context, c *infra.Clients, t *tf.TF, ba
 	r.res.Deleted = deleted
 	fmt.Fprintf(r.w, "Terraform no longer manages %s; nothing was destroyed. Its jobs, accounts, secrets and grants stay as they are.\n", repo)
 	return nil
+}
+
+// forgetSharedRepo is --forget for a repository a deployed profile admits (M7,
+// D2312 as amended): it leaves the local config and the shared config is
+// published again, which is what takes it out of the profile's allow_repos —
+// and that is the whole removal, because this door applied no root of its own
+// to take out of Terraform's state.
+//
+// Nothing is destroyed and nothing is retired here: the jobs a root of its own
+// deployed before the profile admitted it are M2's to retire, behind the
+// guard that release carries (this task only stops applying). The repository's
+// secret containers, its registry and its state object stay exactly where the
+// ruling leaves them (D2313, D2406), and no state is read: a shared
+// repository's state object is not this door's to delete, and a run that
+// reached forgetRepo with one would report "the state holds nothing of it, so
+// there is nothing to forget" over a removal that has something to do.
+//
+// No confirmation is asked, and that is the same fact: nothing is deleted and
+// nothing is destroyed, so this is the inverse of the write that enrols the
+// repository (writeRepoConfig) rather than a rollback of an apply.
+func (r *initRun) forgetSharedRepo(ctx context.Context, lc *localcfg.Config, repo, path string, old []byte) error {
+	next := *lc
+	next.Repos = maps.Clone(lc.Repos)
+	key := repoConfigKey(lc, repo)
+	if _, ok := next.Repos[key]; !ok {
+		return userErr("%s is not one of %s's repositories, so there is nothing to forget", repo, lc.Name)
+	}
+	delete(next.Repos, key)
+	if err := r.writeLocalConfig(&next, path, old, false); err != nil {
+		return err
+	}
+	if !r.o.planOnly {
+		r.publishSharedConfig(ctx, &next)
+	}
+	r.res.Forgotten = true
+	r.enrolmentNote = fmt.Sprintf("%s left the local config; no repository-level Terraform ran, and nothing was destroyed: its jobs, accounts, secrets and grants stay as they are", oneLineCLI(repo))
+	fmt.Fprintf(r.stageDetail(), "%s\n", r.enrolmentNote)
+	return nil
+}
+
+// enrolSharedRepo is M7's apply-free enrolment of a repository a deployed
+// profile admits (spec.Shared, D2312 as amended): the whole of what a
+// repository's onboarding is once its root is not applied. The profile's
+// allow_repos, the project sync and the policy are the writeRepoConfig below
+// (its publishSharedConfig is the project sync, and the profile's list is
+// derived from the config it writes); the credentials service's two records
+// are written from THIS spec rather than from Readiness' output, which only an
+// apply produces — and they are right without one, because a shared job mounts
+// the profile's secrets and the project's copies of this repository's, so the
+// container a name is read from is the project's whatever this repository's
+// own containers hold (update_workflowsecrets.go's D2313 half).
+//
+// Nothing of the repository root is reached: no plan, no state, no first image
+// build, no retirement, and no flip drop (there is no apply that could take a
+// mount away).
+func (r *initRun) enrolSharedRepo(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
+	// M1's warning (D2313), once for the repository and not once per name: a
+	// repository declaring secrets: keeps its containers and mounts, and no run
+	// of it mounts one. `fugaro validate` prints the same sentence, and the
+	// converge's secrets stage says it for the names it therefore does not
+	// take; this is the door's own line, where `fugaro update --repo` has no
+	// stage before it to say it.
+	for _, p := range config.RepoSecretsWarnings(cfg) {
+		r.warn(p.Path + ": " + p.Message)
+	}
+	r.writeWorkflowSecrets(ctx, lc, spec, cfg)
+	r.writeRepoAuth(ctx, lc, spec, cfg)
+	r.enrolmentNote = fmt.Sprintf("enrolled %s with no repository-level Terraform: it runs on the project's shared jobs, so this run planned and applied nothing of its own (D2312)", oneLineCLI(spec.Name))
+	if r.o.planOnly {
+		r.enrolmentNote = fmt.Sprintf("enrols %s with no repository-level Terraform: it runs on the project's shared jobs (D2312)", oneLineCLI(spec.Name))
+		return nil
+	}
+	// Step 8 of the path that applies a root, and the whole of this one: the
+	// local config entry (the App ID, the workflows, the provider) and the
+	// project sync.
+	return r.writeRepoConfig(ctx, lc, spec, cfg, path, old)
 }
 
 // printCeiling says what update --repo is about to apply as the repository's

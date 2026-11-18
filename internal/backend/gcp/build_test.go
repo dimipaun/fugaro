@@ -72,7 +72,14 @@ func TestBuildRequest(t *testing.T) {
 		len(secretEnvs["source"])+len(secretEnvs["render"])+len(secretEnvs["prep"]) != 0 {
 		t.Fatalf("secretEnv = %v", secretEnvs)
 	}
-	if env := step(t, b, "credential").Env; !slices.Equal(env, []string{"PROVIDER=bitbucket", "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}"}) {
+	// The provider's own three, then the fetch's four: the credential step
+	// reads the service, the workflow and the variables it would fetch when the
+	// repository is switched to the credentials service (B4.5).
+	if env := step(t, b, "credential").Env; !slices.Equal(env, []string{
+		"PROVIDER=bitbucket", "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}",
+		"FUGARO_CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}", "WORKFLOW=${_WORKFLOW}",
+		"SECRET_ENVS=${_SECRET_ENVS}", "SECRET_DIR=/secrets",
+	}) {
 		t.Fatalf("credential env = %v", env)
 	}
 	if _, ok := b.Substitutions["_GITHUB_APP_ID"]; ok {
@@ -216,7 +223,11 @@ func TestBuildRequestGitHub(t *testing.T) {
 	}
 	cred := step(t, b, "credential")
 	if !slices.Equal(cred.SecretEnv, []string{"GITHUB_APP_KEY"}) ||
-		!slices.Equal(cred.Env, []string{"PROVIDER=github", "REPO_URL=${_REPO_URL}", "GITHUB_APP_ID=${_GITHUB_APP_ID}"}) {
+		!slices.Equal(cred.Env, []string{
+			"PROVIDER=github", "REPO_URL=${_REPO_URL}", "GITHUB_APP_ID=${_GITHUB_APP_ID}",
+			"FUGARO_CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}", "WORKFLOW=${_WORKFLOW}",
+			"SECRET_ENVS=${_SECRET_ENVS}", "SECRET_DIR=/secrets",
+		}) {
 		t.Fatalf("credential step = %v / %v", cred.SecretEnv, cred.Env)
 	}
 	if b.Substitutions["_GITHUB_APP_ID"] != "12345" {
@@ -356,6 +367,56 @@ func checkEverySubstitution(t *testing.T, spec BuildSpec) {
 		if !strings.Contains(string(body), "${"+k+"}") {
 			t.Errorf("substitution %s is sent but not referenced, which Cloud Build rejects", k)
 		}
+	}
+}
+
+// TestBuildRequestCarriesTheServiceURL: a repository switched to the
+// installation's credentials service (B4.5) submits the address its credential
+// step fetches at, and the step reads that address from its env and never from
+// its argv — the step runs the base image's fugaro, so a flag it does not know
+// would be a build that fails on an installation whose base predates this
+// release, while a variable it does not read is one it ignores.
+//
+// The mount of the provider credential is untouched here, which is what B4.9
+// drops: until it lands, a switched build is served both the mounted secret and
+// the service, and a build of a repository that is not switched is served the
+// mount alone — its request carries the empty address and is otherwise exactly
+// the request it was before this release.
+//
+// Mutation (verified, run and restored): set `_CREDENTIALS_SERVICE_URL` from a
+// constant instead of s.CredentialsServiceURL and the empty case is the one
+// that fails: a switched repository would submit "the service is off" to a step
+// that then reads a secret its installation does not mount.
+func TestBuildRequestCarriesTheServiceURL(t *testing.T) {
+	spec := buildSpec(t)
+	b, err := BuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := b.Substitutions["_CREDENTIALS_SERVICE_URL"]; !ok || v != "" {
+		t.Fatalf("a build of a repository that is not switched sends _CREDENTIALS_SERVICE_URL %q (present %v): %v", v, ok, b.Substitutions)
+	}
+	spec.CredentialsServiceURL = "https://credentials.example.com"
+	b, err = BuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Substitutions["_CREDENTIALS_SERVICE_URL"]; got != spec.CredentialsServiceURL {
+		t.Fatalf("_CREDENTIALS_SERVICE_URL = %q, want %q", got, spec.CredentialsServiceURL)
+	}
+	cred := step(t, b, "credential")
+	if !slices.Contains(cred.Env, "FUGARO_CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}") {
+		t.Fatalf("the credential step does not read the service's address from its env: %v", cred.Env)
+	}
+	if args := strings.Join(cred.Args, " "); strings.Contains(args, spec.CredentialsServiceURL) {
+		t.Errorf("the credential step's argv carries the address: %q", args)
+	}
+	// The provider credential is still mounted for the step, and the workflow
+	// secrets are still in availableSecrets and in the build step's secretEnv:
+	// the flip that drops them is B4.9's, so this request is the same one either
+	// way.
+	if len(b.AvailableSecrets.SecretManager) != 2 || !slices.Equal(step(t, b, "build").SecretEnv, []string{"NPM_TOKEN"}) {
+		t.Fatalf("a switched build's mounts changed: %+v / %v", b.AvailableSecrets, step(t, b, "build").SecretEnv)
 	}
 }
 

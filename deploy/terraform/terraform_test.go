@@ -2388,6 +2388,64 @@ func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
 	}
 }
 
+// TestInstallationStringNamedAccountsAreWaitedFor: a resource that names a
+// service account this module creates by a literal path or member string
+// (which the test above requires of every service-account grant) carries no
+// reference to the account resource, so Terraform has no edge between them and
+// applies the two in parallel: the first `fugaro update` of an installation
+// that gains the account fails with "Unknown service account, notFound" on the
+// grants that ran before it existed (0.25.0 -> 0.26.0, the build identity).
+// Every resource whose body spells such an account must therefore name the
+// account resource, in depends_on or otherwise.
+func TestInstallationStringNamedAccountsAreWaitedFor(t *testing.T) {
+	const dir = "gcp/modules/installation/"
+	type account struct{ name, idExpr string }
+	var accounts []account
+	var blocks []block
+	var paths []string
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, dir) || !strings.HasSuffix(path, ".tf") {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			blocks = append(blocks, blk)
+			paths = append(paths, path)
+			if blk.typ == "google_service_account" {
+				accounts = append(accounts, account{blk.name, firstAttr(blk.body, "account_id")})
+			}
+		}
+	})
+	if len(accounts) < 5 {
+		t.Fatalf("found only %d service accounts in %s: the scan is not seeing the module's own accounts", len(accounts), dir)
+	}
+	spelled := 0
+	for _, a := range accounts {
+		// The ID as it reads inside a "${...}" string: a literal stays itself,
+		// an expression (var.x.account_id) is interpolated.
+		id := strings.Trim(a.idExpr, `"`)
+		if strings.HasPrefix(a.idExpr, `"`) {
+			// literal
+		} else {
+			id = "${" + id + "}"
+		}
+		for i, blk := range blocks {
+			if blk.name == a.name {
+				continue
+			}
+			if !strings.Contains(blk.body, "/"+id+"@") && !strings.Contains(blk.body, ":"+id+"@") {
+				continue
+			}
+			spelled++
+			if !strings.Contains(blk.body, a.name) {
+				t.Errorf("%s: %s names the account %s by its ID string (%s@...) and never references the resource, so Terraform applies it in parallel with the account's creation and it fails with notFound; add depends_on = [%s]", paths[i], blk.name, a.name, id, a.name)
+			}
+		}
+	}
+	if spelled < 4 {
+		t.Errorf("found only %d resources that spell a module-created account by string: the scan is not seeing the grants it exists for", spelled)
+	}
+}
+
 // REGRESSION (same-project layout): the project-level roles any job, build or
 // scheduler account holds are exactly these, in every module and IAM resource
 // type. None gives access to the RTDB, Firestore, Identity Platform or the
@@ -5738,8 +5796,30 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	if !strings.Contains(squash(code), "env => local.is_served_model_secret[env] || contains(local.service_held_secret_names, logical)") {
 		t.Errorf("%s: is_service_held must be `local.is_served_model_secret[env] || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
 	}
-	if !strings.Contains(squash(code), "env => var.model_secrets_served != \"none\" && (contains(local.model_secret_env_names, env) || (var.model_secrets_served == \"all\" && startswith(env, local.model_secret_env_prefix)))") {
+	if !strings.Contains(squash(code), "env => local.is_run_model_secret[env] || (var.model_secrets_served == \"all\" && startswith(env, local.model_secret_env_prefix))") {
 		t.Errorf("%s: is_served_model_secret must be the input's three arms — `all` the named model credentials AND every provider key, `anthropic` the named ones alone, `none` neither; a clause that ignores the input takes a provider key's accessor away from a repository the service serves no provider credential to (D2072, G17, R6):\n%s", path, code)
+	}
+
+	// And the one mount those arms leave standing, with Go's half of it: a
+	// mixed stage account's own variant job keeps its Claude OAuth mount,
+	// because that token is the STAGE's — the runner hands it straight to
+	// Anthropic for `review`, `adversarial` and `triage`, the run's gateway
+	// never sees those calls, and the service therefore serves nothing of
+	// theirs. Taking it would leave the stage with a variable nothing mounted,
+	// which every run of such a repository would halt on. The exemption is the
+	// `anthropic` arm's alone (Go's dropModelMounts reads it there too), it is
+	// keyed on the stage-account fact Go passes down, and the two sides are ONE
+	// rule: an account keeping an accessor its mount no longer has is a job
+	// Cloud Run refuses to create (C1.20).
+	tok := regexp.MustCompile(`claude_oauth_token_env\s*=\s*"([^"]*)"`).FindStringSubmatch(code)
+	if tok == nil || tok[1] != config.ReservedSecrets[config.ClaudeOAuthToken] {
+		t.Errorf("%s: claude_oauth_token_env = %v, config.ReservedSecrets[config.ClaudeOAuthToken] = %q: the exemption has to read the variable Go exempts, or the module keeps a token Go's drop takes away (C1.20):\n%s", path, tok, config.ReservedSecrets[config.ClaudeOAuthToken], code)
+	}
+	if !strings.Contains(squash(code), "env => var.workflow.stage_account && env == local.claude_oauth_token_env") {
+		t.Errorf("%s: is_stage_account_token must be the stage-account fact AND the Claude token's variable — the fact alone exempts every mount of that job, the variable alone every job's token:\n%s", path, code)
+	}
+	if !strings.Contains(squash(code), "env => var.model_secrets_served != \"none\" && contains(local.model_secret_env_names, env) && !(var.model_secrets_served == \"anthropic\" && local.is_stage_account_token[env])") {
+		t.Errorf("%s: is_run_model_secret must drop the named model credentials and exempt the stage account's Claude OAuth mount from the `anthropic` arm alone — `all` is the cascade, which holds that token too (D143, C1.18):\n%s", path, code)
 	}
 
 	// The drop is gated on the opt-in, in the same expression that reads the
@@ -6008,6 +6088,33 @@ func TestModelSecretsServedValidationMatchesGo(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("%s: model_secrets_served accepts %v, config.ModelSecretsServedValues = %v", path, got, want)
+	}
+
+	// And B2.7's half: the `anthropic` arm stopped being hypothetical when
+	// config.ServiceServedAuths was filled, so the module's own account of
+	// WHICH auths get it is held to that list, the way
+	// TestServiceHeldSecretsMatchTheCredentialsService holds a names list and
+	// TestProxiedGitSecretNamesMatchTheModule holds a per-repository one.
+	// Terraform cannot ask Go, so the module's `api-key`/`oauth` is a literal,
+	// and the two sides drift in both directions: an auth added to the list and
+	// not to the module's words is a repository whose root drops mounts the
+	// module's own description does not know about, and a name the module
+	// promises and the list does not carry is a claim about a job that keeps
+	// every mount. Neither is a plan that fails — which is why nothing else
+	// would catch it — and both are wrong where a reader looks.
+	var promised []string
+	m2 := regexp.MustCompile("`anthropic` for (.*?) one it admits").FindStringSubmatch(string(b))
+	if m2 == nil {
+		t.Fatalf("%s: the model_secrets_served variable's description no longer says which auths the anthropic arm is for (`anthropic` for an `api-key` or `oauth` one it admits): the flip list is held to that sentence, and a rewrite that drops it removes the only place the module names them", path)
+	}
+	for _, q := range regexp.MustCompile("`([^`]*)`").FindAllStringSubmatch(m2[1], -1) {
+		promised = append(promised, q[1])
+	}
+	flip := slices.Clone(config.ServiceServedAuths)
+	slices.Sort(promised)
+	slices.Sort(flip)
+	if !slices.Equal(promised, flip) {
+		t.Errorf("%s: the anthropic arm's description names %v, config.ServiceServedAuths = %v: B2.7's flip is the list that decides which auths get that arm, so the two have to name the same ones", path, promised, flip)
 	}
 }
 

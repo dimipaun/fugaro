@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -27,10 +28,12 @@ import (
 // shipped: the same run's apply reaches the repository roots, and a root whose
 // `installation.credentials_service` is set is one whose job account is granted
 // roles/run.invoker on the service; the model-secret accessor the module drops
-// for such a root keys on the answer `model_secrets_served` carries, which is
-// `none` for every non-cascade repository until the flip (modules/workflow/sa.tf,
-// D2072, G17). The service's bundle is empty on a fresh
-// installation — `fugaro creds set` is its only writer — so a switch gated on
+// for such a root keys on the answer `model_secrets_served` carries — `all` for
+// a cascade job, `anthropic` for a switched `api-key` or `oauth` one since the
+// flip (the two Claude mounts and no provider key), and `none` for a repository
+// the switch holds off (modules/workflow/sa.tf, D2072, G17). The service's
+// bundle is empty on a fresh installation — `fugaro creds set` is its only
+// writer — so a switch gated on
 // the block alone would hand every repository's runs an address the service can
 // answer nothing to, and that address is what opens the git provider keyless
 // (internal/gitprov/providers/providers.go returns before it reads appKey), for
@@ -73,9 +76,10 @@ func TestTheSwitchTurnsOnForACascadeRepositoryWithAReadyBundle(t *testing.T) {
 // present, the record set and the bundle ready, the mode is the whole of what
 // holds it off.
 //
-// Nothing is lost by that: every one of these repositories' mounts is still
-// there (D2072, G17, config.ServiceServedAuths is empty until the flip), so a
-// run held off the service runs on exactly the credential it has always run on.
+// Nothing is lost by that: the mounts follow the same answer, so a repository
+// the mode holds off plans `model_secrets_served = none` and keeps every mount
+// it had (D2072, G17), and a run held off the service runs on exactly the
+// credential it has always run on.
 // The positive — the same two auths, on a node that is `observe` or `enforce` —
 // is TestLaunchEnvCarriesTheURLForASwitchedAPIKeyRepository.
 func TestTheSwitchStaysOffForANonCascadeRepositoryWhereTheBudgetIsOff(t *testing.T) {
@@ -266,6 +270,93 @@ func repoCredentialsServiceFact(t *testing.T, slug string) (map[string]any, bool
 		t.Fatalf("installation.credentials_service = %s: %v", raw, err)
 	}
 	return svc, true
+}
+
+// repoModelSecretsFact is the repository root's model_secrets_served input as
+// the tfvars this run wrote under the repository's own workdir carry it: the
+// one fact modules/workflow/sa.tf keys the model mount and accessor drop on,
+// and therefore the fact that says which release's answer an applied root
+// holds (infra.ModelSecretsServed, D2072).
+func repoModelSecretsFact(t *testing.T, slug string) string {
+	t.Helper()
+	wd, err := infra.RepoWorkdir(os.Getenv, initProject, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(wd, "gcp", "roots", "repo", infra.VarsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Repo struct {
+			ModelSecretsServed string `json:"model_secrets_served"`
+		} `json:"repo"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc.Repo.ModelSecretsServed
+}
+
+// TestUpdateConvergesARootAppliedBeforeTheFlip is the HARD RULE's own test for
+// B2.7: an installation at the previous version — its repository root applied
+// by a release whose flip list was empty, so the tfvars under this workdir say
+// `none` for an `api-key` repository and its job still mounts the Anthropic
+// key — converges with `fugaro update` alone, and the second run has nothing
+// left to change.
+//
+// That is what the flip IS: no migration, no operator step beyond the one
+// command, because the root's own answer is rebuilt from Go at every plan
+// (infra.ModelSecretsServed, in.Repo's model_secrets_served) and the mounts go
+// in the apply that follows. A repository that is not switched keeps every
+// mount whatever release applies it, which is the other half and is pinned in
+// internal/infra's spec tests.
+func TestUpdateConvergesARootAppliedBeforeTheFlip(t *testing.T) {
+	slug, err := task.Slug("bitbucket", "acme/sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := credentialsRig(t)
+	r.repoReady(t)
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	credentialsOutputs(t, r)
+	putSwitchBundle(t, r.initRig, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
+	// The published node the switch's fourth condition reads for an `api-key`
+	// repository: the mode has to be one the gateway exists in (D2071), and a
+	// node is only read at all behind the rules marker the same deploy writes
+	// (projectpolicy.Read).
+	r.db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	r.db.Set(projectpolicy.PathShared(), currentPolicyNode())
+	// The state the previous release left: the root it applied planned `none`
+	// for this repository (config.ServiceServedAuths was empty), so its job
+	// mounts the Anthropic key still.
+	seedRepoRootVars(t, slug, `{"repo":{"model_secrets_served":"none"}}`)
+	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "api-key", "aurora", "")))
+
+	out, errOut, err := executeStdin(t, "", "update", "--repo", "--plan-only")
+	if err != nil {
+		t.Fatalf("an ordinary update of a repository root applied before the flip failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	if _, present := repoCredentialsServiceFact(t, slug); !present {
+		t.Fatalf("the repository root's tfvars carry no installation.credentials_service: an api-key repository on a project whose mode is enforce, whose bundle holds the Anthropic key, is switched — the plan has to grant its job roles/run.invoker and drop the mounts, and the switch is what the model_secrets_served answer below is read on (D2071, D2072)")
+	}
+	if got := repoModelSecretsFact(t, slug); got != config.ModelSecretServedAnthropic {
+		t.Fatalf("the repository root's tfvars plan model_secrets_served = %q, want %q: the installation is switched, the bundle holds the Anthropic key and the published mode is enforce, so the flip answers `anthropic` for this api-key repository — that is the mount drop, and the installation converges with this one command or it does not converge at all (D2072, G17)", got, config.ModelSecretServedAnthropic)
+	}
+	// And the converged installation is the fixed point: a second run of the
+	// same command writes the same document.
+	wd, err := infra.RepoWorkdir(os.Getenv, initProject, slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	varsPath := filepath.Join(wd, "gcp", "roots", "repo", infra.VarsFile)
+	first := readFileString(t, varsPath)
+	if out, errOut, err := executeStdin(t, "", "update", "--repo", "--plan-only"); err != nil {
+		t.Fatalf("a second update of a converged repository root failed: %v\nstdout:\n%s\nstderr:\n%s", err, out, errOut)
+	}
+	if second := readFileString(t, varsPath); second != first {
+		t.Errorf("a second update wrote different tfvars for a root the first one had already converged: the flip has to be reached in one run, not by running the command twice (CLAUDE.md's HARD RULE)\nfirst:\n%s\nsecond:\n%s", first, second)
+	}
 }
 
 // repoStateGrantAddress is where an applied repository root's state keeps the

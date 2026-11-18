@@ -88,7 +88,7 @@ Build order: `bb-shared-jobs` first, the smallest slice that gives a Bitbucket p
 | D2311 | May a catalog entry keep a credential of its own (open item 7) | No: entry builds are credential-free | **No credential in entries (as recommended), 2026-11-13.** The catalog refuses an entry that mounts a secret (B9). |
 | D2312 | Is "no job apply" enough for adding a repository (open item 8) | Yes, the root still applies its secrets and catalog check | **"No job apply is enough" (as recommended), 2026-11-13; amended later the same day by the owner: no repository-level Terraform at all.** After reading `secrets.tf` and `catalogcheck.tf`, the owner ruled the root goes: adding or removing a repository applies nothing, and the spec's "no Terraform re-run" stands as written. |
 | D2313 | What becomes of the secrets a repository declares in `fugaro.yaml` (they were created by the repo root) | Became project secrets, adopted without destroying | **Amended the same day by the owner, 2026-11-13, "repository-level secrets are in a way similar to repository-level images": disabled for now, as the images are. A repository's `secrets:` is accepted and ignored with a warning; existing containers and their values are left alone; the code stays so the feature can return.** (The first answer, "become project secrets", was withdrawn.) M1. |
-| D2314 | May one project span more than one Bitbucket workspace (F15) | One workspace per project | **One workspace per project (as recommended), 2026-11-13.** S6 refuses a second workspace, naming it. |
+| D2314 | May one project span more than one Bitbucket workspace (F15) | One workspace per project | **One workspace per project (as recommended), 2026-11-13; amended 2026-11-18 by the owner.** The limit stands — one access token reaches one workspace, and the proxy forwards that one token (R7) — and what the second workspace costs the update changed: S6 used to FAIL the policy stage over it, which failed the one command that is the whole upgrade and left the installation a release behind on every other step. The update now WARNS, naming both workspaces and a repository of each, holds the switch back exactly as the no-token case does, and finishes every other step; the runs of the project keep the mounted credential they have. |
 
 Resolutions (one defensible answer, so not asked):
 
@@ -108,7 +108,7 @@ Resolutions (one defensible answer, so not asked):
 - **Open item 6** is answered: D2310.
 - **Open item 7** is answered: D2311.
 - **Open item 8** is answered: D2312, as amended (no repository-level Terraform).
-- **Open item 3** is answered (2026-11-13), as recommended: one Bitbucket workspace per project; `update` refuses a second one naming it (S6). Recorded as D2314.
+- **Open item 3** is answered (2026-11-13), as recommended: one Bitbucket workspace per project; `update` names a second one and holds the switch back over it (S6, amended 2026-11-18: the update warns and finishes every other step rather than failing — the refusal cost the one command that is the whole upgrade). Recorded as D2314.
 - **Open item 4** is answered (2026-11-13): D2309 is amended, the runner removes the other baked directories (S9).
 - **Open item 5** is confirmed (2026-11-13): M6, M7, S10 and M2 launch only after Check 580 passes, and M2 retires a job only when no execution runs on it.
 

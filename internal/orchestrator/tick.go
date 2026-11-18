@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -123,6 +124,14 @@ type Tick struct {
 	// an item whose pull request is never read stays in `review`, and nothing
 	// about a merge fails a cycle.
 	Merge MergeWaitSeams
+	// Issues is what this cycle ingests the project's open issues through
+	// (B4, D2718–D2720, D2728, D2742): the repositories `issue_sync` names,
+	// read at most once per cadence, as the items the standing backlog's node
+	// takes. Left unset the cycle ingests nothing at all, which is the same
+	// direction a project that configures no adapter and a daemon whose path to
+	// the credentials service could not be built both fail in: nothing about an
+	// issue fails a cycle, and the backlog holds what people filed.
+	Issues IssueSyncSeams
 	// Footprints is what the cycle knows of the items' expected paths, keyed by
 	// the item's own id: the plan graph's footprint for the task an item stands
 	// for, which is what a run's entry naming a path is matched against when the
@@ -240,6 +249,57 @@ func (t *Tick) ready() error {
 	return nil
 }
 
+// IssueSyncer is the project's issue sync as one cycle reaches it (B4, D2718):
+// the repositories `issue_sync` names, each read through the credentials
+// service's issue route at most once per cadence (D2742), as the one patch the
+// standing backlog's node takes this cycle.
+//
+// It is a seam and not an import because the sync lives in internal/issuesync
+// and this package knows nothing of GitHub, of a route or of a config: what a
+// cycle hands over is the backlog node as it stands, the nodes beside it — the
+// external id an item is keyed on is unique across all of them (D2728) — and
+// the cycle's own reading of the server's clock, and what it takes back is a
+// patch it applies through its own fence like any other.
+type IssueSyncer interface {
+	Sync(ctx context.Context, backlog State, others []State, now time.Time) (Patch, error)
+}
+
+// IssueSyncLog is where the issue sync's failures go: one line per repository
+// per cadence. Its shape is the merge read's (MergeWaitLog) and it is an
+// interface of its own for the reason that one is — a daemon wires the two
+// separately, and a line about an issue list in the merge read's log would be
+// read as the merge read's own.
+type IssueSyncLog interface {
+	Warn(ctx context.Context, line string)
+}
+
+// IssueSyncSeams is what one cycle reaches the issue sync through: the sync
+// itself, the store of the node every op it answers with lands on, and the log
+// a repository that could not be read leaves a line in. All three or none — a
+// Tick built with fewer reads no issues at all, which is what a daemon whose
+// `issue_sync` is unconfigured or whose path to the credentials service could
+// not be built is: the backlog then holds what people file and no more.
+type IssueSyncSeams struct {
+	// Sync answers one cycle's turn at the ingest.
+	Sync IssueSyncer
+	// Backlog is the store of the standing backlog's node (D2735): the node the
+	// ops land on, and the node identity that tells this cycle which of the
+	// nodes it works is that one. It is a Store and not an index because a
+	// daemon builds the node once — the same one it may also hand to the tick's
+	// Nodes — and an index would be a second list to keep in step with it.
+	//
+	// The ops reach it through this store either way: where the node is one this
+	// cycle works, the step reads and commits it as any other step does, and
+	// where it is not — a daemon working the state node alone — the step reads
+	// and writes it here, once, under the ETag it read it at (see syncIssues).
+	Backlog Store
+	// Log is where a repository that could not be read leaves its one line.
+	Log IssueSyncLog
+}
+
+// Set reports whether every seam is there.
+func (s IssueSyncSeams) Set() bool { return s.Sync != nil && s.Backlog != nil && s.Log != nil }
+
 // node is one node of the project's orchestrator subtree as one cycle works it:
 // the store it is read and written through, the state this cycle read, the ETag
 // its next write has to carry, and whether it is still this cycle's to write
@@ -353,6 +413,148 @@ func (c *cycle) anyNode(f func(State) bool) bool {
 	return false
 }
 
+// syncIssues is one cycle's turn at the issue sync (B4, D2718–D2720, D2728,
+// D2742): the backlog node's own patch of ingested issues, applied through this
+// cycle's fence like every other write.
+//
+// The sync answers for one node of the project's — the standing backlog's
+// (D2735) — and it reaches it through the seam's own store, which is the node
+// the ops land on (IssueSyncSeams.Backlog). Where the tick carries that node
+// among the nodes this cycle works, the step reads and writes it exactly as the
+// other steps do; where it does not — a daemon working the state node alone,
+// which is every daemon this release starts — the node is read and written
+// through that same store here, so that the ingest runs for the project rather
+// than for a node nothing carries. The two paths are one rule: the document is
+// read, patched and written once, under the ETag it was read at.
+//
+// The daemon's pause does not stop it: what it writes are queued, unapproved
+// items, so it starts nothing and is the person's view of the work rather than
+// a launch into a refusal (O19). The read is the sync's own cadence, per
+// repository (D2742), and it is not read here.
+//
+// Four conditions leave the node exactly as it stands: a node this cycle works
+// and another writer has moved (fresh is false, so a patch built from this
+// cycle's reading would be refused anyway), one the seam's store will not answer
+// for at all, one already over its size target (OverCap — the ingest reads the
+// room it has from the state, and a node past its target has none), and a patch
+// its own fence refuses. Each of them is the same rule: this cycle does not
+// write a document it cannot derive from.
+//
+// What this step reads and writes it reads and writes through the node's own
+// entry, and it moves the cycle onto it only for the write it makes: the cycle
+// is on the state node when this step is reached and the steps after it — the
+// counts, the launches, the decisions and the labels — read and write that node,
+// so a turn that writes nothing has to leave the cycle where it found it.
+func (c *cycle) syncIssues(ctx context.Context) error {
+	seams := &c.tick.Issues
+	if !seams.Set() {
+		return nil
+	}
+	i := c.backlogIndex(seams.Backlog)
+	backlog, etag := State{}, ETag("")
+	switch {
+	case i >= 0:
+		if !c.nodes[i].fresh {
+			return nil
+		}
+		backlog, etag = c.nodes[i].state, c.nodes[i].etag
+	default:
+		read, got, err := seams.Backlog.Load(ctx)
+		if err != nil {
+			// One line and nothing else: a node that could not be read is a
+			// wait until the next cycle, not a cycle that failed — and a write
+			// this step cannot derive from the document is one it does not make.
+			warnIssues(ctx, seams, fmt.Sprintf("the standing backlog could not be read: %s", safetext.Field(err.Error())))
+			return nil
+		}
+		backlog, etag = read, got
+	}
+	if OverCap(backlog) {
+		return nil
+	}
+	// Every node but this one: the external id is unique across the project's
+	// items (D2728), and the backlog's own items are the node the sync was
+	// handed. A node this cycle does not work is not one of them, and its items
+	// are not seen by this turn.
+	others := make([]State, 0, len(c.nodes))
+	for j, n := range c.nodes {
+		if j != i {
+			others = append(others, n.state)
+		}
+	}
+	patch, err := seams.Sync.Sync(ctx, backlog, others, c.now)
+	if err != nil {
+		// One line and nothing else: a repository that could not be read is a
+		// wait until the next cadence, not a cycle that failed (D2742). The
+		// sync answers with no ops at all alongside an error, so nothing of
+		// that repository's turn is written.
+		warnIssues(ctx, seams, fmt.Sprintf("the issues of the backlog could not be read: %s", safetext.Field(err.Error())))
+		return nil
+	}
+	if len(patch.Ops) == 0 {
+		return nil
+	}
+	next, err := Apply(backlog, Patch{BaseRev: backlog.Rev, Ops: patch.Ops}, Actor{Class: Daemon, Now: c.now})
+	if err != nil {
+		// A patch this build's own seam built and this release's fence refuses
+		// is a bug and not an outage: it is refused rather than written, the
+		// node keeps what it had, and the line says so.
+		warnIssues(ctx, seams, fmt.Sprintf("the patch the issue sync answered with was refused: %s", safetext.Field(err.Error())))
+		return nil
+	}
+	if i < 0 {
+		// The cycle does not work this node: the write is the store's own and
+		// the cycle's own nodes are untouched — the node the ops landed on is
+		// not one of them, so nothing this cycle reads afterwards has to see it.
+		_, err := saveNode(ctx, seams.Backlog, next, etag)
+		return err
+	}
+	c.bind(i)
+	if err := c.commit(ctx, next); err != nil {
+		return err
+	}
+	c.settle()
+	c.bind(0)
+	return nil
+}
+
+// warnIssues leaves the issue sync's one line in its log.
+func warnIssues(ctx context.Context, seams *IssueSyncSeams, line string) {
+	seams.Log.Warn(ctx, line)
+}
+
+// backlogIndex is which of the nodes this cycle works is the backlog node, or
+// -1 where none of them is.
+//
+// The two stores are one node when they are the same store, compared by path
+// where the store is one of this package's nodes and by identity otherwise: the
+// daemon builds the backlog's node once and hands it to both the tick and the
+// seam, and a store this cycle cannot place is left alone rather than guessed
+// at — writing the wrong node's document is the one outcome nothing here may
+// have.
+func (c *cycle) backlogIndex(backlog Store) int {
+	for i, n := range c.nodes {
+		if sameStore(n.store, backlog) {
+			return i
+		}
+	}
+	return -1
+}
+
+// sameStore reports whether two stores are one node.
+func sameStore(a, b Store) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if p, ok := a.(interface{ Path() string }); ok {
+		if q, ok := b.(interface{ Path() string }); ok {
+			return p.Path() == q.Path()
+		}
+	}
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	return ta == tb && ta.Comparable() && a == b
+}
+
 // load reads every node this cycle works — the state node and the plan and
 // backlog nodes beside it — each under its own ETag, so each is written back
 // under its own precondition (D2735). A node of any of them that cannot be read
@@ -448,6 +650,17 @@ func (c *cycle) run(ctx context.Context) error {
 	// labels.
 	c.bind(0)
 	if err := c.merge(ctx); err != nil {
+		return c.settled(err)
+	}
+	// The issue sync follows the merge and reaches the backlog node alone: the
+	// merge read has just said which items are done, and the ingest is what
+	// turns the project's open issues into items of the backlog beside them
+	// (D2720). It lands before the plan is made, so the room the fold and the
+	// merge freed is room the ingest may use in this same cycle — and the items
+	// it writes are queued and unapproved, so nothing here starts a run.
+	// Nothing about it fails a cycle: a repository that could not be read is a
+	// line in the log and a wait until the next cadence (D2742).
+	if err := c.syncIssues(ctx); err != nil {
 		return c.settled(err)
 	}
 	// The counts are read once, here, and held for every node the cycle plans —
@@ -700,25 +913,38 @@ func (c *cycle) outcome() CycleOutcome {
 // and that read is also the check that the node is still the one this cycle
 // wrote.
 func (c *cycle) commit(ctx context.Context, next State) error {
-	store := c.nodes[c.at].store
-	if err := store.Save(ctx, next, c.etag); err != nil {
+	etag, err := saveNode(ctx, c.nodes[c.at].store, next, c.etag)
+	if err != nil {
 		// Whatever the reason, this cycle no longer holds the document its
 		// next write would be derived from.
 		c.fresh = false
 		return err
 	}
-	back, etag, err := store.Load(ctx)
-	if err != nil {
-		c.fresh = false
-		return err
-	}
-	if back.Rev != next.Rev {
-		c.fresh = false
-		return fmt.Errorf("%w: the node reads back at revision %d after the write of revision %d",
-			ErrStateMoved, back.Rev, next.Rev)
-	}
 	c.state, c.etag = next, etag
 	return nil
+}
+
+// saveNode is commit's write for a store the cycle may not be working on: the
+// standing backlog's node, which the issue sync reaches through its own seam
+// whether or not the tick carries it among the nodes the cycle works (D2735).
+//
+// The rule is the same one write under the ETag the document was read at, and
+// the read-back is the ETag the next write has to carry. The caller keeps what
+// the read-back says about freshness for itself, because a node the cycle is not
+// working on has no freshness of its own to lose.
+func saveNode(ctx context.Context, store Store, next State, etag ETag) (ETag, error) {
+	if err := store.Save(ctx, next, etag); err != nil {
+		return "", err
+	}
+	back, left, err := store.Load(ctx)
+	if err != nil {
+		return "", err
+	}
+	if back.Rev != next.Rev {
+		return "", fmt.Errorf("%w: the node reads back at revision %d after the write of revision %d",
+			ErrStateMoved, back.Rev, next.Rev)
+	}
+	return left, nil
 }
 
 // reread takes the node as it now stands after a write this cycle did not make.
