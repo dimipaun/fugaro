@@ -1,0 +1,827 @@
+{
+  "schema_version": 3,
+  "plan": "docs/workspace-projects-users/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "WU0",
+      "title": "the threat model, rewritten for workspace authority",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/workspace-projects-users/threat-model.md",
+          "SECURITY.md",
+          "docs/workspaces/README.md"
+        ]
+      }
+    },
+    {
+      "id": "C1",
+      "title": "the roster contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/roster.go",
+          "internal/workspace/rosterstore.go",
+          "internal/workspace/roster_stub.go",
+          "schemas/workspace-roster.schema.json",
+          "schemas/workspace-audit-event.schema.json",
+          "docs/workspace-projects-users/contract.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/workspace/roster_stub.go"
+      ]
+    },
+    {
+      "id": "C2",
+      "title": "the member-operations contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/memberops.go",
+          "internal/workspace/memberops_stub.go",
+          "docs/workspace-projects-users/contract-member.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/workspace/memberops_stub.go"
+      ]
+    },
+    {
+      "id": "WU1",
+      "title": "the roster store and the audit sink",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/roster_rtdb.go",
+          "internal/workspace/audit_firestore.go",
+          "internal/budget/rules/workspace.json.tmpl",
+          "internal/budget/rules/workspace_test.go",
+          "internal/workspace/roster_rtdb_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU2",
+      "title": "both authorities and `workspace init`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/folder.go",
+          "internal/gcpfake/crm.go",
+          "internal/workspace/authority_folder.go",
+          "internal/workspace/authority_sa.go",
+          "internal/cli/workspace_init.go"
+        ]
+      }
+    },
+    {
+      "id": "WU3",
+      "title": "the SA fallback's account",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/roots/workspace/main.tf",
+          "deploy/terraform/gcp/roots/workspace/variables.tf",
+          "deploy/terraform/gcp/roots/workspace/outputs.tf",
+          "deploy/terraform/gcp/roots/workspace/tests/workspace.tftest.hcl"
+        ]
+      }
+    },
+    {
+      "id": "WU4",
+      "title": "member operations",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_memberops.go",
+          "internal/cli/workspace_memberops_test.go",
+          "internal/cli/init_new_machine.go",
+          "internal/budget/rules/rules.json.tmpl"
+        ]
+      }
+    },
+    {
+      "id": "WU5",
+      "title": "`workspace project add` and the rename",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace.go",
+          "internal/cli/workspace_project.go",
+          "internal/cli/workspace_project_test.go",
+          "internal/cli/workspace_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU6",
+      "title": "`workspace project rm`",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_project_rm.go",
+          "internal/cli/workspace_project_rm_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU7",
+      "title": "`workspace user add|rm|ls` and `workspace domains`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_user.go",
+          "internal/cli/workspace_domains.go",
+          "internal/cli/workspace_user_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU8",
+      "title": "`workspace user grant|revoke`",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_user_grant.go",
+          "internal/cli/workspace_user_grant_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU9",
+      "title": "offboarding a member project",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/offboard.go",
+          "internal/cli/workspace_offboard.go",
+          "internal/cli/workspace_offboard_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU10",
+      "title": "installation-level refusals on a member",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/user.go",
+          "internal/cli/user_grant.go",
+          "internal/cli/user_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU11",
+      "title": "`workspace project ls` and `status`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_project_status.go",
+          "internal/cli/workspace_project_status_test.go",
+          "schemas/workspace-projects.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "WU12",
+      "title": "drift and the Cloud Audit Logs cross-check",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/drift.go",
+          "internal/workspace/drift_test.go",
+          "internal/infra/auditlogs.go",
+          "internal/gcpfake/logging.go",
+          "internal/cli/workspace_project_drift.go"
+        ]
+      }
+    },
+    {
+      "id": "WU13",
+      "title": "`workspace project reconcile`",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_project_reconcile.go",
+          "internal/cli/workspace_project_reconcile_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WU14",
+      "title": "`fugaro update` seeds the roster",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_workspace_roster.go",
+          "internal/cli/update_workspace_roster_test.go",
+          "internal/cli/update.go"
+        ]
+      }
+    },
+    {
+      "id": "WU15",
+      "title": "the state writer",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_state.go",
+          "internal/cli/workspace_state_test.go"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "wire the workspace commands and prove them end to end",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/roster_stub.go",
+          "internal/workspace/memberops_stub.go",
+          "internal/cli/workspace.go",
+          "internal/cli/workspace_e2e_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "WU16",
+      "title": "docs, skills and the release note",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/working/SKILL.md",
+          "docs/workspaces/README.md",
+          "docs/releases/*.md",
+          "website/data/release-summaries.yaml"
+        ]
+      }
+    },
+    {
+      "id": "WU17",
+      "title": "Checks 720 and 721",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-720.sh",
+          "scripts/live-checks/check-720_test.sh",
+          "scripts/live-checks/check-721.sh",
+          "scripts/live-checks/check-721_test.sh",
+          "scripts/live_checks_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "R-member-firebase",
+      "title": "amend the member-operations contract: Converge takes the Firebase project",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/memberops.go",
+          "docs/workspace-projects-users/contract-member.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-roster-sa",
+      "title": "amend the roster contract: a machine member's owner and expiry",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/workspace/roster.go",
+          "schemas/workspace-roster.schema.json",
+          "docs/workspace-projects-users/contract.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "C1",
+      "needs": "WU0",
+      "reason": "D2800's mandatory security review may reshape the contract"
+    },
+    {
+      "task": "C2",
+      "needs": "WU0",
+      "reason": "D2800's mandatory security review may reshape the contract"
+    },
+    {
+      "task": "WU10",
+      "needs": "WU0",
+      "reason": "D2800's mandatory security review gates every task"
+    },
+    {
+      "task": "WU2",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU2",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU4",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU5",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU5",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU6",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU7",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU7",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU8",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU8",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU9",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU11",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU11",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU12",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU12",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU13",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU13",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU14",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU14",
+      "needs": "C2",
+      "reason": "builds against C2's shapes"
+    },
+    {
+      "task": "WU15",
+      "needs": "C1",
+      "reason": "builds against C1's shapes"
+    },
+    {
+      "task": "WU1",
+      "needs": "WU0",
+      "reason": "D2800's mandatory security review gates every task"
+    },
+    {
+      "task": "WU3",
+      "needs": "WU0",
+      "reason": "D2800's mandatory security review gates every task"
+    },
+    {
+      "task": "I1",
+      "needs": "WU1",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU3",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU2",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU4",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU5",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU6",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU7",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU8",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU9",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU11",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU12",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU13",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU14",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "I1",
+      "needs": "WU15",
+      "reason": "I1 joins it to the commands"
+    },
+    {
+      "task": "WU16",
+      "needs": "I1",
+      "reason": "the plugin's tests need the real commands"
+    },
+    {
+      "task": "WU17",
+      "needs": "I1",
+      "reason": "the live checks drive the real commands"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU5",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "WU5 reads and writes the roster through Store; the RTDB write is WU1's"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU7",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "WU7 reads and writes the roster through Store; the RTDB write is WU1's"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU11",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "WU11 reads and writes the roster through Store; the RTDB write is WU1's"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU14",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "WU14 reads and writes the roster through Store; the RTDB write is WU1's"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU5",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU5 calls MemberOps; how a member is written and converged is WU4's"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU7",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU7 calls MemberOps; how a member is written and converged is WU4's"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU8",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU8 calls MemberOps; how a member is written and converged is WU4's"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU13",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU13 calls MemberOps; how a member is written and converged is WU4's"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU14",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "WU14 calls MemberOps; how a member is written and converged is WU4's"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU5",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU5 calls Authority.Link/Unlink, not the folder move itself"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU6",
+        "needs": "WU2"
+      },
+      "integration": "I1",
+      "reason": "WU6 calls Authority.Link/Unlink, not the folder move itself"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU2",
+        "needs": "WU3"
+      },
+      "integration": "I1",
+      "reason": "the SA authority reads the workspace root's IAM-account output by the name C2 fixes"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU8",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "grant writes an AuditEvent, not how the sink stores it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU13",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "reconcile writes an AuditEvent, not how the sink stores it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU2",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "the folder link records the member's original parent on its roster entry"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU4",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "the mirror is the roster's MirrorEntry, not how the roster is stored"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU9",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "Offboard joins the MemberOps interface WU4 would have defined"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU12",
+        "needs": "WU4"
+      },
+      "integration": "I1",
+      "reason": "drift reads MemberOps.Bindings, not how bindings are read"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU12",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "drift reads the roster's members and kinds, not the store"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WU15",
+        "needs": "WU1"
+      },
+      "integration": "I1",
+      "reason": "the audit export reads AuditEvent's shape, not the sink"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU7",
+        "needs": "WU9"
+      },
+      "integration": "I1",
+      "reason": "user rm calls MemberOps.Offboard"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU13",
+        "needs": "WU12"
+      },
+      "integration": "I1",
+      "reason": "reconcile consumes DriftReport, not how drift is computed"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU6",
+        "needs": "WU15"
+      },
+      "integration": "I1",
+      "reason": "WU6 calls StateWriter"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WU11",
+        "needs": "WU15"
+      },
+      "integration": "I1",
+      "reason": "WU11 calls StateWriter"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-member-firebase",
+      "contract": "C2",
+      "raised_by": "WU4",
+      "reason": "if U2 shows the member's Firebase project is not in its outputs, Converge takes it as an argument",
+      "affects": [
+        "WU4",
+        "WU5",
+        "WU7",
+        "WU8",
+        "WU14"
+      ]
+    },
+    {
+      "change": "R-roster-sa",
+      "contract": "C1",
+      "raised_by": "WU0",
+      "reason": "if the security review asks for a machine member's owner or expiry",
+      "affects": [
+        "WU1",
+        "WU5",
+        "WU7",
+        "WU12"
+      ]
+    }
+  ]
+}

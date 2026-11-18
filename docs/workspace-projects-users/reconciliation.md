@@ -110,8 +110,11 @@ refuse on a member; console grants are drift).
 
 **F11 — Gap.** Project admins checking "is this person a workspace member" need to read the
 workspace roster; the merged design gives a member's people **no grant on the workspace's project**
-(`docs/workspaces/spec.md` §2). Consequence: D2813's read-only grant on the roster node for project
-admins, in the workspace root (WU10).
+(`docs/workspaces/spec.md` §2). Realtime Database IAM is whole-database (`docs/workspaces/README.md`
+states it for the service's grant), so a "read-only grant on the roster" would also read the record,
+the cap and D1296's token hashes, and a write would reach the membership list itself. Consequence:
+D2813 and D2817 as amended on 2026-11-18 — the member list is mirrored into each member's own
+database, and per-project grants stay in each member's own roster.
 
 **F12 — Exists.** Repository-scoped grants exist in the member roster (`access.ParseScope`). The
 addendum speaks only of per-project roles. Consequence: D2815 carries the scope grammar.
@@ -156,7 +159,7 @@ write on a member. Consequence: two accounts, never one; WU3's test pins it.
 
 ## 4. Decisions
 
-All answered by the owner on **2026-11-18**, every one as recommended.
+All answered by the owner on **2026-11-18**, every one as recommended; D2813 and D2817 were amended the same day (O3), each amendment also as recommended.
 
 | # | Question | Answer (2026-11-18) | Why |
 | --- | --- | --- | --- |
@@ -173,11 +176,11 @@ All answered by the owner on **2026-11-18**, every one as recommended.
 | **D2810** | The workspace sign-on (F3) | **Kept, scoped**: the Google address is the identity; the Firebase exchange stays as the hosted authorization server's sign-in, and its admission reads the workspace roster | No retirement work |
 | **D2811** | Audit trail (F18) | **Firestore + Cloud Audit Logs**: create-only Firestore events (rules deny every client); `status` names IAM changes in Cloud Audit Logs that Fugaro's trail lacks; the docs say the Firestore trail is not tamper-proof | Console changes get a who-did-it |
 | **D2812** | Allowed domains | **Fugaro's list only**: outside the list needs `--external`, marked external; no organization policy set | Externals stay possible |
-| **D2813** | Enforcing membership (F10, F11) | **Workspace commands only** on a member: installation-level `fugaro user add|rm|grant|revoke|offboard` refuse and name the workspace command; project admins get read-only on the workspace roster; console grants are drift | One writer of a member's roster |
+| **D2813** | Enforcing membership (F10, F11) | **Workspace commands only** on a member: installation-level `fugaro user add|rm|grant|revoke|offboard` refuse and name the workspace command; console grants are drift. Project admins ~~get read-only on the workspace roster~~ — ***amended 2026-11-18 (owner, as recommended): the member list (address, kind, external) is mirrored into each member's own `config/admin/workspace-members` on every membership write and converge; no grant on the workspace project*** | One writer of a member's roster; RTDB IAM cannot scope a read to one path (F11) |
 | **D2814** | fugaro-prod app sign-ins; open question 4 | **Out of scope, no task**; the app keeps per-project pairing | Spec puts the app out of scope |
 | **D2815** | Grant scope (F12) | **Carry the scope grammar**: `--scope project|all-repos|<patterns>`, default `project`, with roles-scopes' subset and last-admin refusals | Nothing a member expresses today is lost |
-| **D2816** | *(not used: number skipped by the question order)* | — | — |
-| **D2817** | Where the roster lives | **A live node** `workspaces/<name>/roster` in the workspace's database, ETag-conditional writes, rules deny clients; amends D1303 for the roster only | Two admins never overwrite each other |
+| **D2816** | *(reserved, unused: the questions were numbered in the order they were asked)* | — | — |
+| **D2817** | Where the roster lives | **A live node** `workspaces/<name>/roster` in the workspace's database, ETag-conditional writes, rules deny clients; amends D1303 for the roster only — ***amended 2026-11-18 (owner, as recommended): the node holds members, their kind, the external mark, the domains and the workspace admins, written by workspace admins only; per-project grants stay in each member's own roster `config/admin/access`, written by `workspace user grant` and gated by the mirror; `workspace user ls` aggregates across members*** | Two admins never overwrite each other; a project admin's grant must not need a write that reaches the membership list (F11) |
 
 Resolutions with one defensible answer (no decision):
 
@@ -198,6 +201,11 @@ Resolutions with one defensible answer (no decision):
 - **O1.** D2800 makes WU0's independent security review a gate on every code task; its findings may
   amend D2801, D2803 or D2817.
 - **O2.** WU15 waits on periodic-reviews R9 (#3140) merging.
+- **O3.** D2813 and D2817 were amended on 2026-11-18, after their first answers, because RTDB IAM
+  has no path-level scope (F11). The owner answered both amendments as recommended; the original
+  answers are kept, struck, beside them. "The workspace is the single source of truth" now reads:
+  the workspace node is the truth for **who is a member**, each member's roster for **what they may
+  do there**, and nothing else holds either fact.
 
 ## 6. UNVERIFIED
 
