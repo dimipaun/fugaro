@@ -2,11 +2,13 @@ package rigor
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"gopkg.in/yaml.v3"
 )
 
 // Area is one rule of rigor.areas (D20c): a name, a doublestar path glob
@@ -27,6 +29,59 @@ type Area struct {
 	Name  string `yaml:"name" json:"name"`
 	Match string `yaml:"match" json:"match"`
 	Level Rigor  `yaml:"level" json:"level"`
+}
+
+// areaType is Area's own type name, for the unknown-field refusal below:
+// UnmarshalYAML has to build the message yaml.v3's strict mode would have
+// built, and that mode names the type it was decoding into.
+var areaType = reflect.TypeOf(Area{})
+
+// areaKeys are the yaml keys one rule accepts, read from the struct's own tags
+// so a new field is picked up without a second list (the same thing
+// internal/config's jobProfileKeys does for a profiles entry).
+var areaKeys = func() map[string]bool {
+	out := map[string]bool{}
+	t := reflect.TypeOf(Area{})
+	for i := range t.NumField() {
+		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
+			out[tag] = true
+		}
+	}
+	return out
+}()
+
+// UnmarshalYAML decodes one rule, refuses a key it does not know, and refuses
+// `mode:` by name.
+//
+// The second job is normally the decoder's own (Decoder.KnownFields), but known
+// fields are a property of a Decoder while decoding through a Node is always
+// lenient, so the check is repeated here, with the same message.
+//
+// The third is the migration: the key this rule's level is written under was
+// `mode:` before LD2 renamed the axis, so a document a person upgrades carries
+// that key and a bare "field mode not found" would leave them to guess the new
+// one. The refusal says both spellings, which is the whole of what a reader
+// needs to fix the file.
+func (a *Area) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: an area rule must be a mapping of field to value", node.Line)}}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		k := node.Content[i]
+		if k.Value == "mode" {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: an area rule's level is written `level:`, not `mode:` (the mode key was renamed)", k.Line)}}
+		}
+		if !areaKeys[k.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, areaType)}}
+		}
+	}
+	type plain Area // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*a = Area(v)
+	return nil
 }
 
 // Bounds on a rule's two pieces of text and on how many rules a layer may
