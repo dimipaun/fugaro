@@ -1,6 +1,10 @@
 package orchestrator
 
-import "time"
+import (
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/policy"
+)
 
 // The windows a spawn cap counts over. windowDay is RetentionWindow on
 // purpose: retention never drops an intent younger than that, so the longest
@@ -23,8 +27,8 @@ const (
 // What no cap bounds is the other half of a plan — a re-issue, which starts the
 // attempt that was already committed and counted, and an abandonment, which
 // closes one that may not start: both are decided before the caps are read, and
-// neither spends the allowance a cap exists to bound. O8 fills these from the
-// policy's orchestrator block, whose defaults are what a person who never
+// neither spends the allowance a cap exists to bound. CapsOf builds these from
+// the policy's orchestrator block, whose defaults are what a person who never
 // touched them gets.
 type Caps struct {
 	MaxRunning     int
@@ -32,11 +36,43 @@ type Caps struct {
 	SpawnPerMinute int
 	SpawnPerHour   int
 	SpawnPerDay    int
-	// KillSwitch is the budget kill switch. Whoever makes a plan reads it and
-	// hands the answer in here, because a plan is pure and asks no cloud: the
-	// tick reads it over budget (`Kills.On`, which is IO) and a switch it could
-	// not read is on.
+	// KillSwitch stops every start at once. It carries two switches, which
+	// CapsOf folds into this one flag because a cycle under either does the same
+	// thing: the budget's global kill switch (F3), and the project's own
+	// orchestrator switch (orchestrator_enabled, D2701, D2739).
+	//
+	// Whoever makes a plan reads the switches and hands the answer in here,
+	// because a plan is pure and asks no cloud: the daemon reads the budget's
+	// over the budget node (`budget.Kill.On`, which is IO) and the project's out
+	// of the policy read the block above comes from, and a switch it could not
+	// read is on. That both of them are this one field is what keeps the stop
+	// whole: every path that starts a run already asks it — the plan, the
+	// ladder, the decision agent — so a launch path added later asks both
+	// switches without being written to. What the fold costs is that the caps
+	// alone do not say which switch is thrown; whoever built them does.
 	KillSwitch bool
+}
+
+// CapsOf builds the guardrails a cycle plans under from the project's
+// orchestrator block, with the two switches that stop every start at once
+// folded into KillSwitch.
+//
+// Both readings are handed in because neither is a reading of the block: a
+// switch that could not be read is ON, and who read it — over the budget node,
+// over the policy node the block came from — is the caller's to answer. killOn
+// is the budget's global switch (F3) and orchestratorOn is the project's own
+// (projectpolicy.Policy.OrchestratorOn, which is true for a project that never
+// wrote the key), in that order; a false orchestratorOn stops the cycle exactly
+// as a true killOn does.
+func CapsOf(blk policy.Orchestrator, killOn, orchestratorOn bool) Caps {
+	return Caps{
+		MaxRunning:     int(blk.MaxRunning),
+		MaxPerCycle:    int(blk.BatchSize),
+		SpawnPerMinute: int(blk.SpawnPerMinute),
+		SpawnPerHour:   int(blk.SpawnPerHour),
+		SpawnPerDay:    int(blk.SpawnPerDay),
+		KillSwitch:     killOn || !orchestratorOn,
+	}
 }
 
 // Counts is what the committed intents say has been spent: the runs still in
