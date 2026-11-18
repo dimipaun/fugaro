@@ -105,7 +105,7 @@ type bitbucketProxySwitch struct {
 //     operator wrote, which this step never lifts (owner ruling 2026-11-18).
 func (e *initEngine) bitbucketProxyFlip() (repos []string, turn bool) {
 	o, lc := e.r.o, e.lc
-	if lc == nil || o == nil || o.planOnly || policyNodeUnreachable(lc) {
+	if lc == nil || o == nil || o.doorName() != updateDoor.name || o.planOnly || policyNodeUnreachable(lc) {
 		return nil, false
 	}
 	if lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
