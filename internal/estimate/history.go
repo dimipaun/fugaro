@@ -281,8 +281,8 @@ func historyOf(rec *runstore.Record) (tr tier.Tier, mode rigor.Rigor, ok bool) {
 	if rec.Tier == nil || !tier.Known(rec.Tier.Tier) {
 		return "", "", false
 	}
-	if rec.Rigor != nil && rigor.Known(rec.Rigor.Mode) {
-		mode = rec.Rigor.Mode
+	if lvl := rec.Rigor.LevelOf(); rigor.Known(lvl) {
+		mode = lvl
 	}
 	return rec.Tier.Tier, mode, true
 }
