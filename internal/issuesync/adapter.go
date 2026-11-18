@@ -48,12 +48,14 @@ type Issue struct {
 	// listing's sake: ListOpen answers open issues only, so an item whose number
 	// the listing does not carry is one whose issue closed.
 	State string
-	// AuthorLogin is the account that opened the issue, and AppSlug the slug of
-	// the GitHub App the action was performed through — empty for an issue a
-	// person's own account opened. The two together are the whole of "the
-	// installation's App opened this issue" (D2728).
+	// AuthorLogin is the account that opened the issue; AppSlug and AppID are
+	// the GitHub App the action was performed through — all empty for an issue
+	// a person's own account opened. The three together are the whole of "the
+	// installation's App opened this issue" (D2728), and the id is the one
+	// that names an App rather than a slug: see AppOpened.
 	AuthorLogin string
 	AppSlug     string
+	AppID       string
 }
 
 // Adapter is one repository's issues as the sync reaches them (D2718): the
@@ -89,22 +91,28 @@ type Adapter interface {
 // which holds a run's commits to the same login).
 const botSuffix = "[bot]"
 
-// AppOpened reports whether an App opened this issue rather than a person's own
-// account (D2728). Both of the route's signals have to agree for it to count:
-// the action was performed through an App (AppSlug), and the issue's author is
-// that App's own bot login, exactly "<slug>[bot]" — an account that merely ends
-// in "[bot]" is some other App's, and a login without the suffix is a person's
-// whatever the slug says.
+// AppOpened reports whether THIS installation's App opened this issue rather
+// than a person's own account or another App's (D2728). Every signal the route
+// answers with has to agree for it to count: the action was performed through
+// the App the installation records (AppID == appID, the config's own), that
+// App's slug is there, and the issue's author is that slug's own bot login,
+// exactly "<slug>[bot]" — an account that merely ends in "[bot]" is some other
+// App's, and a login without the suffix is a person's whatever the rest says.
 //
-// What this cannot tell is whether the App is *this installation's*: the
-// route's answer carries a slug and no id, and the daemon knows its App only by
-// the id its installation was recorded with. An issue another App opened with a
-// marker in it therefore counts here as one of ours. What it is worth is still
-// the whole of the fence the marker needs: only a GitHub App's bot can have
-// performed the action, so a person cannot write a marker that counts by
-// editing their own issue, and a marker written by one App is read as an App's
-// own — never as a person's.
-func (i Issue) AppOpened() bool { return i.AppSlug != "" && i.AuthorLogin == i.AppSlug+botSuffix }
+// The id is what makes this exact, and it is the reason a slug alone is not
+// enough: a slug names an App within the host, and a repository may have other
+// Apps installed whose bot logins look exactly like ours — a workflow's own
+// App opens issues too. A marker in one of those issues would otherwise count
+// as ours, which hides the issue from the ingest and lets an unapproved item
+// adopt it, so the item's external id and body hash would point at a body this
+// side never read.
+//
+// appID is empty where the installation names no App for the repository, and
+// then nothing counts: an unknown App is not ours, which is the direction that
+// leaves every issue to be ingested and no item to be adopted by a marker.
+func (i Issue) AppOpened(appID string) bool {
+	return appID != "" && i.AppID == appID && i.AppSlug != "" && i.AuthorLogin == i.AppSlug+botSuffix
+}
 
 // externalHost is the one host an external id names, and it is GitHub's alone
 // (D2718): a second host here would have to mean a second ingest, and a key

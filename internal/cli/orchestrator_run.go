@@ -536,6 +536,10 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 	if err != nil {
 		return nil, err
 	}
+	issues, err := d.orchestratorIssueSeams(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &orchestrator.Tick{
 		Store:    d.node,
 		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
@@ -562,6 +566,17 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// cannot mint says so through the client's own refusal rather than
 		// labelling nothing quietly.
 		Labels: orchestratorLabelSeams(d),
+		// The issue sync (B4, D2718): the open issues of the repositories the
+		// project's `issue_sync` names, ingested into the standing backlog's
+		// node through the installation's credentials service, which is the one
+		// holder of the App key (D2439) and the only thing here that reads or
+		// opens an issue. Empty where the project publishes no block that
+		// decides anything, and where this installation records no credentials
+		// service or no daemon account to mint a token as
+		// (orchestratorIssueSeams); a daemon that has both and cannot read one
+		// repository says so through the client's own refusal, once per cadence,
+		// rather than ingesting nothing quietly.
+		Issues: issues,
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the
 		// same log the triage and the decision agent append to. It is wired

@@ -66,6 +66,17 @@ func approved(w orchestrator.WorkItem) orchestrator.WorkItem {
 	return w
 }
 
+// appID is the App the installation every turn below runs in recorded for the
+// repository: the id the fake's own issues carry, so that an issue it opened is
+// the App's own (AppOpened). A test about another App names its own.
+const appID = issuesync.FakeAppID
+
+// cfg is one repository's turn as the daemon builds one: the repository, the
+// App the installation recorded for it, and whether the mirror is on.
+func cfg(mirror bool) issuesync.Config {
+	return issuesync.Config{Repo: repo, AppID: appID, Mirror: mirror}
+}
+
 // sync is one repository's turn, or the test's own failure.
 func sync(t *testing.T, a issuesync.Adapter, before orchestrator.State, others []orchestrator.State, cfg issuesync.Config) orchestrator.Patch {
 	t.Helper()
@@ -127,7 +138,7 @@ func TestIngestOpenIssuesOnce(t *testing.T) {
 		Add(issuesync.Issue{Title: "the second issue", Body: "the body of the second"})
 	before := backlog()
 
-	after := ingested(t, fake, before, issuesync.Config{Repo: repo})
+	after := ingested(t, fake, before, cfg(false))
 	if len(after.WorkItems) != 2 {
 		t.Fatalf("the ingest wrote %d items, want 2: %v", len(after.WorkItems), ids(after))
 	}
@@ -153,7 +164,7 @@ func TestIngestOpenIssuesOnce(t *testing.T) {
 		t.Fatalf("the second item carries the external id %q", w.External)
 	}
 
-	if p := sync(t, fake, after, nil, issuesync.Config{Repo: repo}); len(p.Ops) != 0 {
+	if p := sync(t, fake, after, nil, cfg(false)); len(p.Ops) != 0 {
 		t.Fatalf("the second turn wrote %d ops over a node that already had every item", len(p.Ops))
 	}
 	if fake.Lists() != 2 {
@@ -173,7 +184,7 @@ func TestIngestStoresNoBodyOnlyItsHash(t *testing.T) {
 	const body = "the body of the issue, which the state never carries"
 	fake := issuesync.NewFake(repo).Add(issuesync.Issue{Title: "an issue", Body: body})
 
-	after := ingested(t, fake, backlog(), issuesync.Config{Repo: repo})
+	after := ingested(t, fake, backlog(), cfg(false))
 	w := itemOf(t, after, "gh-acme-app-1")
 	sum := sha256.Sum256([]byte(body))
 	if want := hex.EncodeToString(sum[:]); w.BodySHA256 != want {
@@ -203,7 +214,7 @@ func TestMarkerFromAnotherAuthorIgnored(t *testing.T) {
 	before := backlog()
 	before.WorkItems = []orchestrator.WorkItem{item("wi-1")}
 
-	after := ingested(t, fake, before, issuesync.Config{Repo: repo})
+	after := ingested(t, fake, before, cfg(false))
 	if len(after.WorkItems) != 2 {
 		t.Fatalf("the person's issue came in as %d items, want 2: %v", len(after.WorkItems), ids(after))
 	}
@@ -212,6 +223,40 @@ func TestMarkerFromAnotherAuthorIgnored(t *testing.T) {
 	}
 	if w := itemOf(t, after, "wi-1"); w.External != "" {
 		t.Fatalf("wi-1 adopted a person's issue: %q", w.External)
+	}
+}
+
+// TestMarkerFromAnotherAppIgnored is the other half of D2728: the marker counts
+// only on an issue THIS installation's App opened, and a bot login alone does
+// not say which App it was. A repository may have other Apps installed — a
+// workflow's own App opens issues too, and a workflow that copies a person's
+// text into a new issue can carry one of our markers in it — and such an issue
+// is neither hidden from the ingest nor allowed to be adopted: the item's
+// external id and body hash would otherwise point at a body this side never
+// read, which is the body a later launch would be briefed with (B9, D2720).
+//
+// Mutation: compare the slug and the bot login alone (drop the App id) and this
+// issue is skipped and then adopted, and both assertions below fail.
+func TestMarkerFromAnotherAppIgnored(t *testing.T) {
+	fake := issuesync.NewFake(repo).Add(issuesync.Issue{
+		Title: "an issue another App opened", Body: issuesync.Marker("wi-1") + "\n\ncopied text",
+		AuthorLogin: "actions[bot]", AppSlug: "actions", AppID: "9999",
+	})
+	before := backlog()
+	before.WorkItems = []orchestrator.WorkItem{item("wi-1")}
+
+	after := ingested(t, fake, before, cfg(true))
+	if w := itemOf(t, after, "gh-acme-app-1"); w.External != "github:acme/app#1" {
+		t.Fatalf("another App's issue was hidden from the ingest: %v", ids(after))
+	}
+	// wi-1 is mirrored, so it has an issue of its own: the one the mirror
+	// opened, and never the one the other App opened.
+	if fake.Opens() != 1 {
+		t.Fatalf("the mirror opened %d issues for wi-1, and another App's issue is not its own", fake.Opens())
+	}
+	mine := issuesync.ExternalID(repo, fake.Opened()[0].Number)
+	if w := itemOf(t, after, "wi-1"); w.External != mine {
+		t.Fatalf("wi-1 carries %q, want the issue the mirror opened (%q)", w.External, mine)
 	}
 }
 
@@ -225,7 +270,7 @@ func TestFloodLeavesRoomForBacklogAdd(t *testing.T) {
 	for n := 1; n <= 400; n++ {
 		fake.Add(issuesync.Issue{Number: n, Title: fmt.Sprintf("issue %d: %s", n, strings.Repeat("x", 60)), Body: "b"})
 	}
-	after := ingested(t, fake, backlog(), issuesync.Config{Repo: repo})
+	after := ingested(t, fake, backlog(), cfg(false))
 	if orchestrator.OverCap(after) {
 		t.Fatalf("the flood left the node over its size target")
 	}
@@ -272,7 +317,7 @@ func TestIssueFloodNeverPassesTheCap(t *testing.T) {
 		fake.Add(issuesync.Issue{Number: n, Title: strings.Repeat("a long title ", 30), Body: strings.Repeat("body ", 400)})
 	}
 	before := backlog()
-	after := apply(t, before, sync(t, fake, before, nil, issuesync.Config{Repo: repo}))
+	after := apply(t, before, sync(t, fake, before, nil, cfg(false)))
 	if orchestrator.OverCap(after) {
 		t.Fatalf("the flood left the node over its size target: %d work items", len(after.WorkItems))
 	}
@@ -300,7 +345,7 @@ func TestMirroredIssueIsNotIngestedBack(t *testing.T) {
 	before := backlog()
 	before.WorkItems = []orchestrator.WorkItem{approved(item("wi-1"))}
 
-	after := ingested(t, fake, before, issuesync.Config{Repo: repo})
+	after := ingested(t, fake, before, cfg(false))
 	if len(after.WorkItems) != 1 {
 		t.Fatalf("the mirrored issue came back as %d items: %v", len(after.WorkItems), ids(after))
 	}
@@ -311,7 +356,7 @@ func TestMirroredIssueIsNotIngestedBack(t *testing.T) {
 		t.Fatalf("the mirror opened %d issues for an approved item, and it mirrors none (D2728)", fake.Opens())
 	}
 	opened := issuesync.NewFake(repo).Add(issuesync.Issue{Title: "the item's issue", Body: issuesync.Marker("wi-1")})
-	after2 := ingested(t, opened, before, issuesync.Config{Repo: repo})
+	after2 := ingested(t, opened, before, cfg(false))
 	if len(after2.WorkItems) != 1 {
 		t.Fatalf("the App-opened marked issue was ingested: %v", ids(after2))
 	}
@@ -327,7 +372,7 @@ func TestMirrorAdoptsItsOwnIssueAfterLostSave(t *testing.T) {
 	before.WorkItems = []orchestrator.WorkItem{item("wi-1")}
 
 	// The first turn opens the issue and records it.
-	opened := ingested(t, fake, before, issuesync.Config{Repo: repo, Mirror: true})
+	opened := ingested(t, fake, before, cfg(true))
 	if fake.Opens() != 1 {
 		t.Fatalf("the mirror opened %d issues for one item", fake.Opens())
 	}
@@ -338,7 +383,7 @@ func TestMirrorAdoptsItsOwnIssueAfterLostSave(t *testing.T) {
 
 	// The state the write-back was lost from: the item as it was, and the issue
 	// as the host has it.
-	after := ingested(t, fake, before, issuesync.Config{Repo: repo, Mirror: true})
+	after := ingested(t, fake, before, cfg(true))
 	if fake.Opens() != 1 {
 		t.Fatalf("the mirror opened a second issue (%d) instead of adopting its own", fake.Opens())
 	}
@@ -358,7 +403,7 @@ func TestMirrorOffByDefault(t *testing.T) {
 	before := backlog()
 	before.WorkItems = []orchestrator.WorkItem{item("wi-1")}
 
-	p := sync(t, fake, before, nil, issuesync.Config{Repo: repo})
+	p := sync(t, fake, before, nil, cfg(false))
 	if len(p.Ops) != 0 {
 		t.Fatalf("a turn with the mirror off wrote %d ops: %+v", len(p.Ops), p.Ops)
 	}
@@ -392,7 +437,7 @@ func TestClosedIssueArchivesQueuedItem(t *testing.T) {
 	// have closed, and #7's item is depended on.
 	fake := issuesync.NewFake(repo).Add(issuesync.Issue{Number: 6, Title: "the issue of the item that ran", Body: ""})
 
-	after := ingested(t, fake, before, issuesync.Config{Repo: repo})
+	after := ingested(t, fake, before, cfg(false))
 	if len(after.Archived) != 1 || after.Archived[0].ID != "wi-1" {
 		t.Fatalf("the archive holds %+v, want wi-1 alone", after.Archived)
 	}
@@ -414,15 +459,15 @@ func TestSyncIsIdempotent(t *testing.T) {
 		Close(2)
 	before := backlog()
 	before.WorkItems = []orchestrator.WorkItem{item("wi-1")}
-	cfg := issuesync.Config{Repo: repo, Mirror: true}
+	mirrored := cfg(true)
 
-	first := sync(t, fake, before, nil, cfg)
-	again := sync(t, fake, before, nil, cfg)
+	first := sync(t, fake, before, nil, mirrored)
+	again := sync(t, fake, before, nil, mirrored)
 	if !reflect.DeepEqual(first, again) {
 		t.Fatalf("the same node answered two different patches:\n%+v\n%+v", first, again)
 	}
 	after := apply(t, before, first)
-	if p := sync(t, fake, after, nil, cfg); len(p.Ops) != 0 {
+	if p := sync(t, fake, after, nil, mirrored); len(p.Ops) != 0 {
 		t.Fatalf("the turn after the write wrote %d more ops: %+v", len(p.Ops), p.Ops)
 	}
 }
@@ -471,7 +516,7 @@ func TestTitlesPassSafetext(t *testing.T) {
 	raw := "\x1b[31mred\x1b[0m title\nsecond line\x07 " + strings.Repeat("x", 300)
 	fake := issuesync.NewFake(repo).Add(issuesync.Issue{Title: raw, Body: "b"})
 
-	after := ingested(t, fake, backlog(), issuesync.Config{Repo: repo})
+	after := ingested(t, fake, backlog(), cfg(false))
 	w := itemOf(t, after, "gh-acme-app-1")
 	if strings.ContainsAny(w.Title, "\x1b\n\x07") {
 		t.Fatalf("the title carries an escape, a control or a newline: %q", w.Title)

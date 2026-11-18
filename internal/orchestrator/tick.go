@@ -285,8 +285,13 @@ type IssueSyncSeams struct {
 	// Backlog is the store of the standing backlog's node (D2735): the node the
 	// ops land on, and the node identity that tells this cycle which of the
 	// nodes it works is that one. It is a Store and not an index because a
-	// daemon builds the node once and hands the same one to the tick's Nodes,
-	// and an index would be a second list to keep in step with it.
+	// daemon builds the node once — the same one it may also hand to the tick's
+	// Nodes — and an index would be a second list to keep in step with it.
+	//
+	// The ops reach it through this store either way: where the node is one this
+	// cycle works, the step reads and commits it as any other step does, and
+	// where it is not — a daemon working the state node alone — the step reads
+	// and writes it here, once, under the ETag it read it at (see syncIssues).
 	Backlog Store
 	// Log is where a repository that could not be read leaves its one line.
 	Log IssueSyncLog
@@ -412,18 +417,28 @@ func (c *cycle) anyNode(f func(State) bool) bool {
 // D2742): the backlog node's own patch of ingested issues, applied through this
 // cycle's fence like every other write.
 //
-// The sync answers for one node of the ones this cycle works — the standing
-// backlog's (D2735) — and the daemon's pause does not stop it: what it writes
-// are queued, unapproved items, so it starts nothing and is the person's view
-// of the work rather than a launch into a refusal (O19). The read is the
-// sync's own cadence, per repository (D2742), and it is not read here.
+// The sync answers for one node of the project's — the standing backlog's
+// (D2735) — and it reaches it through the seam's own store, which is the node
+// the ops land on (IssueSyncSeams.Backlog). Where the tick carries that node
+// among the nodes this cycle works, the step reads and writes it exactly as the
+// other steps do; where it does not — a daemon working the state node alone,
+// which is every daemon this release starts — the node is read and written
+// through that same store here, so that the ingest runs for the project rather
+// than for a node nothing carries. The two paths are one rule: the document is
+// read, patched and written once, under the ETag it was read at.
 //
-// Three conditions leave the node exactly as it stands: a node another writer
-// has moved (fresh is false, so a patch built from this cycle's reading would be
-// refused anyway), one already over its size target (OverCap — the ingest reads
-// the room it has from the state, and a node past its target has none), and a
-// seam that names a store no node of this cycle is. Each of them is the same
-// rule: this cycle does not write a document it cannot derive from.
+// The daemon's pause does not stop it: what it writes are queued, unapproved
+// items, so it starts nothing and is the person's view of the work rather than
+// a launch into a refusal (O19). The read is the sync's own cadence, per
+// repository (D2742), and it is not read here.
+//
+// Four conditions leave the node exactly as it stands: a node this cycle works
+// and another writer has moved (fresh is false, so a patch built from this
+// cycle's reading would be refused anyway), one the seam's store will not answer
+// for at all, one already over its size target (OverCap — the ingest reads the
+// room it has from the state, and a node past its target has none), and a patch
+// its own fence refuses. Each of them is the same rule: this cycle does not
+// write a document it cannot derive from.
 //
 // What this step reads and writes it reads and writes through the node's own
 // entry, and it moves the cycle onto it only for the write it makes: the cycle
@@ -436,17 +451,32 @@ func (c *cycle) syncIssues(ctx context.Context) error {
 		return nil
 	}
 	i := c.backlogIndex(seams.Backlog)
-	if i < 0 {
-		return nil
+	backlog, etag := State{}, ETag("")
+	switch {
+	case i >= 0:
+		if !c.nodes[i].fresh {
+			return nil
+		}
+		backlog, etag = c.nodes[i].state, c.nodes[i].etag
+	default:
+		read, got, err := seams.Backlog.Load(ctx)
+		if err != nil {
+			// One line and nothing else: a node that could not be read is a
+			// wait until the next cycle, not a cycle that failed — and a write
+			// this step cannot derive from the document is one it does not make.
+			warnIssues(ctx, seams, fmt.Sprintf("the standing backlog could not be read: %s", safetext.Field(err.Error())))
+			return nil
+		}
+		backlog, etag = read, got
 	}
-	backlog := c.nodes[i].state
-	if !c.nodes[i].fresh || OverCap(backlog) {
+	if OverCap(backlog) {
 		return nil
 	}
 	// Every node but this one: the external id is unique across the project's
 	// items (D2728), and the backlog's own items are the node the sync was
-	// handed.
-	others := make([]State, 0, len(c.nodes)-1)
+	// handed. A node this cycle does not work is not one of them, and its items
+	// are not seen by this turn.
+	others := make([]State, 0, len(c.nodes))
 	for j, n := range c.nodes {
 		if j != i {
 			others = append(others, n.state)
@@ -471,6 +501,13 @@ func (c *cycle) syncIssues(ctx context.Context) error {
 		// node keeps what it had, and the line says so.
 		warnIssues(ctx, seams, fmt.Sprintf("the patch the issue sync answered with was refused: %s", safetext.Field(err.Error())))
 		return nil
+	}
+	if i < 0 {
+		// The cycle does not work this node: the write is the store's own and
+		// the cycle's own nodes are untouched — the node the ops landed on is
+		// not one of them, so nothing this cycle reads afterwards has to see it.
+		_, err := saveNode(ctx, seams.Backlog, next, etag)
+		return err
 	}
 	c.bind(i)
 	if err := c.commit(ctx, next); err != nil {
@@ -876,25 +913,38 @@ func (c *cycle) outcome() CycleOutcome {
 // and that read is also the check that the node is still the one this cycle
 // wrote.
 func (c *cycle) commit(ctx context.Context, next State) error {
-	store := c.nodes[c.at].store
-	if err := store.Save(ctx, next, c.etag); err != nil {
+	etag, err := saveNode(ctx, c.nodes[c.at].store, next, c.etag)
+	if err != nil {
 		// Whatever the reason, this cycle no longer holds the document its
 		// next write would be derived from.
 		c.fresh = false
 		return err
 	}
-	back, etag, err := store.Load(ctx)
-	if err != nil {
-		c.fresh = false
-		return err
-	}
-	if back.Rev != next.Rev {
-		c.fresh = false
-		return fmt.Errorf("%w: the node reads back at revision %d after the write of revision %d",
-			ErrStateMoved, back.Rev, next.Rev)
-	}
 	c.state, c.etag = next, etag
 	return nil
+}
+
+// saveNode is commit's write for a store the cycle may not be working on: the
+// standing backlog's node, which the issue sync reaches through its own seam
+// whether or not the tick carries it among the nodes the cycle works (D2735).
+//
+// The rule is the same one write under the ETag the document was read at, and
+// the read-back is the ETag the next write has to carry. The caller keeps what
+// the read-back says about freshness for itself, because a node the cycle is not
+// working on has no freshness of its own to lose.
+func saveNode(ctx context.Context, store Store, next State, etag ETag) (ETag, error) {
+	if err := store.Save(ctx, next, etag); err != nil {
+		return "", err
+	}
+	back, left, err := store.Load(ctx)
+	if err != nil {
+		return "", err
+	}
+	if back.Rev != next.Rev {
+		return "", fmt.Errorf("%w: the node reads back at revision %d after the write of revision %d",
+			ErrStateMoved, back.Rev, next.Rev)
+	}
+	return left, nil
 }
 
 // reread takes the node as it now stands after a write this cycle did not make.

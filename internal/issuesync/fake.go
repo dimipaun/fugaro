@@ -19,6 +19,11 @@ type Fake struct {
 	// by "<Slug>[bot]" and carries Slug as its AppSlug, which is what makes
 	// AppOpened true of it (D2728). Empty means "fugaro".
 	Slug string
+	// AppID is the id of that App, which is the field AppOpened holds an issue
+	// to: a Config whose AppID is this one counts the fake's issues as the
+	// App's own, and one that names another App — or none — counts none of
+	// them. Empty means FakeAppID.
+	AppID string
 	// ListErr and OpenErr are what the two acts answer with instead of working:
 	// a host that would not answer.
 	ListErr error
@@ -30,8 +35,13 @@ type Fake struct {
 	opens   int
 }
 
+// FakeAppID is the App a Fake answers as when a test names none, and the id a
+// Config must carry for the fake's own issues to count as the App's (AppOpened).
+// It is a number and not a secret, as a real App id is.
+const FakeAppID = "1001"
+
 // NewFake is one repository's adapter.
-func NewFake(repo string) *Fake { return &Fake{Repo: repo, Slug: "fugaro"} }
+func NewFake(repo string) *Fake { return &Fake{Repo: repo, Slug: "fugaro", AppID: FakeAppID} }
 
 // Add seeds one issue. An issue with no state is open, which is the state a
 // listing answers; an issue with no number is given the next free one, so a
@@ -48,8 +58,8 @@ func (f *Fake) Add(issue Issue) *Fake {
 	if issue.State == "" {
 		issue.State = "open"
 	}
-	if issue.AuthorLogin == "" && issue.AppSlug == "" {
-		issue.AuthorLogin, issue.AppSlug = f.slug()+botSuffix, f.slug()
+	if issue.AuthorLogin == "" && issue.AppSlug == "" && issue.AppID == "" {
+		issue.AuthorLogin, issue.AppSlug, issue.AppID = f.slug()+botSuffix, f.slug(), f.appID()
 	}
 	f.issues = append(f.issues, issue)
 	return f
@@ -113,6 +123,13 @@ func (f *Fake) slug() string {
 		return "fugaro"
 	}
 	return f.Slug
+}
+
+func (f *Fake) appID() string {
+	if f.AppID == "" {
+		return FakeAppID
+	}
+	return f.AppID
 }
 
 func (f *Fake) nextNumber() int {

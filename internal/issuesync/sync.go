@@ -48,6 +48,14 @@ type Config struct {
 	// Mirror is whether an unapproved, spec-less item of this repository opens
 	// an issue of its own (D2719). Off is the default and means it does not.
 	Mirror bool
+	// AppID is the GitHub App this installation recorded for the repository
+	// (localcfg's github_app_id), and the one value that says an issue was
+	// opened by THIS installation's App rather than by another App the
+	// repository has installed (D2728): the sync compares every issue's own
+	// AppID against it. Empty is an installation that names none, and then no
+	// issue counts as the App's own — the marker neither hides an issue from
+	// the ingest nor lets an item adopt one.
+	AppID string
 	// Log is where a line goes about something a turn could not do that is not
 	// the whole turn — an issue that would not open, above all. A nil one
 	// writes nothing.
@@ -98,12 +106,13 @@ type Nodes struct {
 //     external id adopts an open issue one of the installation's App opened
 //     with this item's marker in it, and opens one otherwise (D2719).
 //
-// An issue the App opened whose body carries a marker is never ingested: it is
-// the other face of an item that is already here (D2728). A marker in anybody
-// else's issue is text and nothing more — AppOpened is the whole of the
-// distinction — so such an issue is ingested like any other, which is what
-// keeps a person from hiding their own issue from the daemon by quoting a
-// marker.
+// An issue THIS installation's App opened whose body carries a marker is never
+// ingested: it is the other face of an item that is already here (D2728). A
+// marker in anybody else's issue — a person's, or another App the repository
+// has installed — is text and nothing more: AppOpened is the whole of the
+// distinction, and it holds an issue to the App ID the installation recorded
+// (Config.AppID). Such an issue is ingested like any other, which is what keeps
+// a marker from hiding an issue from the daemon, whoever wrote it.
 //
 // Every op is put through the daemon's own fence before it is answered with
 // (orchestrator.Apply, item by item, against the state the turn has built so
@@ -134,7 +143,7 @@ func Sync(ctx context.Context, adapter Adapter, nodes Nodes, cfg Config) (orches
 		room = orchestrator.MaxOps
 	}
 	s := &syncer{
-		ctx: ctx, adapter: adapter, repo: repo, mirror: cfg.Mirror, log: cfg.Log,
+		ctx: ctx, adapter: adapter, repo: repo, mirror: cfg.Mirror, appID: cfg.AppID, log: cfg.Log,
 		base: nodes.Backlog, cur: nodes.Backlog, others: nodes.Others, now: nodes.Now,
 		actor: orchestrator.Actor{Class: orchestrator.Daemon, Now: nodes.Now},
 		room:  room, open: make(map[int]Issue, len(issues)),
@@ -165,6 +174,7 @@ type syncer struct {
 	adapter Adapter
 	repo    string
 	mirror  bool
+	appID   string
 	log     Logger
 
 	base   orchestrator.State
@@ -208,7 +218,7 @@ func (s *syncer) index(issues []Issue) {
 		}
 	}
 	for _, i := range issues {
-		if !i.AppOpened() {
+		if !i.AppOpened(s.appID) {
 			continue
 		}
 		if id, ok := markedItem(i.Body); ok {
@@ -296,7 +306,7 @@ func (s *syncer) hasDependent(itemID string) bool {
 // once per repository (recordStop).
 func (s *syncer) ingest(issues []Issue) {
 	for i, issue := range issues {
-		if issue.AppOpened() {
+		if issue.AppOpened(s.appID) {
 			if _, ok := markedItem(issue.Body); ok {
 				// The other face of an item that is already here (D2728). The
 				// item carries the external id this issue's number makes, so
@@ -662,6 +672,11 @@ type Runner struct {
 	// Adapters are the repositories' adapters, keyed by the canonical
 	// repository name the external ids are built from.
 	Adapters map[string]Adapter
+	// AppIDs are the GitHub App this installation recorded for each of those
+	// repositories, keyed the same way: the id a turn holds an issue's own App
+	// to before its marker counts (Config.AppID, D2728). A repository absent
+	// from it names no App, and no issue of it counts as the App's own.
+	AppIDs map[string]string
 	// Mirror is whether an unapproved, spec-less item of a repository opens an
 	// issue there (D2719).
 	Mirror bool
@@ -708,7 +723,8 @@ func (r *Runner) Sync(ctx context.Context, backlog orchestrator.State, others []
 		// answer is a host to ask again in a minute, not one to ask again on the
 		// next wake.
 		r.markRead(repo, now)
-		patch, err := Sync(ctx, r.Adapters[repo], Nodes{Backlog: cur, Others: others, Now: now, Room: orchestrator.MaxOps - len(ops)}, Config{Repo: repo, Mirror: r.Mirror, Log: r.Log})
+		patch, err := Sync(ctx, r.Adapters[repo], Nodes{Backlog: cur, Others: others, Now: now, Room: orchestrator.MaxOps - len(ops)},
+			Config{Repo: repo, Mirror: r.Mirror, AppID: r.AppIDs[repo], Log: r.Log})
 		if err != nil {
 			r.warn(ctx, fmt.Sprintf("the issues of %s could not be read: %s", safetext.Field(repo), safetext.Field(err.Error())))
 			continue
