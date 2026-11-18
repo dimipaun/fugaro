@@ -2894,6 +2894,10 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 	serviceAccessor := func(workflow, logical string) string {
 		return `module.repo.module.workflow["` + workflow + `"].google_secret_manager_secret_iam_member.service["` + logical + `"]`
 	}
+	// buildInvoker is B4.4's grant: the repository's build account may invoke
+	// the service too, and it is one address for the module rather than one
+	// per workflow, because a repository has one build account.
+	buildInvoker := []string{"module.repo.google_cloud_run_v2_service_iam_member.build_credentials[0]"}
 	for _, tc := range []struct {
 		name string
 		in   Inputs
@@ -2907,9 +2911,11 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		wantGone   []string
 		wantAppKey []string
 		// wantAdd is what the switch ARRIVES with in each of those two states,
-		// and it is two sets of grants, not one: the job's invoker grant on the
-		// service (D135), and the service's own accessor on each container the
-		// job still mounts (D2074) — which is one fewer under C2.2's release,
+		// and it is three sets of grants, not one: the job's invoker grant on
+		// the service (D135), the build account's own invoker grant on it
+		// (B4.4 — one address for the module, since a repository has one build
+		// account), and the service's own accessor on each container the job
+		// still mounts (D2074) — which is one fewer under C2.2's release,
 		// because the App key's mount goes with its accessor (F1).
 		wantAdd       []string
 		wantAddAppKey []string
@@ -2918,8 +2924,8 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 			name:          "cascade, the auth the service serves",
 			in:            repoRootInputs(t, repoRootCascadeAgent),
 			lc:            parseLC(t, repoRootLC),
-			wantAdd:       slices.Concat(invoker("web"), []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
-			wantAddAppKey: slices.Concat(invoker("web"), []string{serviceAccessor("web", "npm-token")}),
+			wantAdd:       slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
+			wantAddAppKey: slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "npm-token")}),
 			wantAppKey:    appKey("web"),
 		},
 		{
@@ -2982,7 +2988,7 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 					t.Errorf("with the credentials service deployed (%s), Addresses() drops %v, want exactly %v: the module's gate is auth-blind (modules/workflow/sa.tf's var.credentials_service), so the repository root's own block — CredentialsServiceServes — is what decides a job may give an accessor up, and only a cascade job of a ready installation may", well, gone, wantGone)
 				}
 				if !slices.Equal(added, wantAdd) {
-					t.Errorf("with the credentials service deployed (%s), Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135), and nothing else", well, added, wantAdd)
+					t.Errorf("with the credentials service deployed (%s), Addresses() adds %v, want exactly %v: the job's invoker grant and the build account's own on the service (D135, B4.4), the service's accessor per mounted container (D2074), and nothing else", well, added, wantAdd)
 				}
 				// The retirement directions: what an installation that applied
 				// with the service off must be told to retire when the switch

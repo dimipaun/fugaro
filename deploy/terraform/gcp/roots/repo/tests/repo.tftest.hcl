@@ -2263,6 +2263,88 @@ run "credentials_service_on_build_keeps_the_app_key" {
   }
 }
 
+# The build account's own door to the credentials service (B4.4), the run
+# above's sibling: with the service ON, the module plans ONE invoker binding,
+# on the service the installation named, with the build account as its only
+# member and no condition — the service's own class check is the fence behind
+# it (B4.3, Q6). B4.5 is what points the build's clone and its secret fetch at
+# the service; until then nothing reads this binding, and what fails without it
+# is the move itself.
+run "build_account_invokes_the_service" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = merge(var.github.installation, { credentials_service = { name = "fugaro-credentials", region = "us-east5" } })
+    repo           = var.github.repo
+  }
+
+  override_resource {
+    target          = google_service_account.build
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.build_credentials) == 1
+    error_message = "with the credentials service on, the repository's build account holds exactly one invoker binding on it (B4.4)"
+  }
+  # The whole of the binding: the installation's project, the service's name and
+  # the region it runs in (never a URL), roles/run.invoker, and the BUILD
+  # account's own member — the member the override above fixes, so a member
+  # that is a job account or a person fails here.
+  assert {
+    condition = alltrue([for m in google_cloud_run_v2_service_iam_member.build_credentials :
+      m.project == var.github.project &&
+      m.location == "us-east5" &&
+      m.name == "fugaro-credentials" &&
+      m.role == "roles/run.invoker" &&
+    m.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"])
+    error_message = "the build account's invoker binding is the installation's own service, roles/run.invoker, to the build account alone (B4.4)"
+  }
+  # No IAM condition: IAM says which account may call the service, the service's
+  # own ID-token check says which callers are served (Q6), and a condition here
+  # would be a second place for the reach to be wrong.
+  assert {
+    condition     = length([for m in google_cloud_run_v2_service_iam_member.build_credentials : m if length(try(m.condition, [])) > 0]) == 0
+    error_message = "the build account's invoker binding carries no condition (B4.4)"
+  }
+}
+
+# ... and the switch's other side: on an installation that has not opted in, the
+# build account has no door to a service that is not there — the count is the
+# switch's own answer, so nothing is planned and nothing is granted.
+run "build_account_without_the_service_invokes_nothing" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_service_iam_member.build_credentials) == 0
+    error_message = "with the credentials service off, the module must plan no invoker binding at all: the build account reaches the service on the installations whose jobs do, and on no others (B4.4, D135)"
+  }
+}
+
 # The Bitbucket token's flip list, with the per-repository fact true — the
 # meaning of the input is the published node's block (G15), and internal/infra
 # derives it into the tfvars (B1.8b). The list carries bitbucket-token since

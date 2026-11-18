@@ -4643,6 +4643,104 @@ func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
 	}
 }
 
+// TestBuildAccountInvokesOnlyTheService is B4.4's Terraform half: a
+// repository's build account is the member of the installation's credentials
+// service invoker binding, and of nothing else that would let it start a
+// container. B4.3's build route serves that class, B4.5 is what points the
+// build's clone and its secret fetch at the service, and until then the grant
+// is inert — so what this test pins is the shape of the one resource that
+// makes the move possible: the installation's own switch, the service's name
+// and region and never a URL, roles/run.invoker, the build account's own
+// member, no condition (the service's own ID-token check is the fence behind
+// the binding, Q6), and no second invoker grant anywhere in the module.
+//
+// Mutation (run, restore): delete the resource block — the service is a
+// service no build can call, and B4.5's fetch has no binding to arrive at:
+// this test fails on the count of service-invoker resources. And add a second
+// invoker binding naming the build account some other way (a job binding whose
+// member is google_service_account.build.email): the module-wide scan below
+// fails on it, so the "only the service" half is not vacuous either.
+func TestBuildAccountInvokesOnlyTheService(t *testing.T) {
+	const path = "gcp/modules/repo/build.tf"
+	const name = "google_cloud_run_v2_service_iam_member.build_credentials"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_cloud_run_v2_service_iam_member")
+	names := make([]string, 0, len(blocks))
+	for _, blk := range blocks {
+		names = append(names, blk.name)
+	}
+	if len(blocks) != 1 || blocks[0].name != name {
+		t.Fatalf("%s holds %d service-invoker resources %v, want exactly %s: the build account's one binding on the installation's own service", path, len(blocks), names, name)
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// Null is the switch's own answer on this side, and the whole of it:
+		// an installation that has not opted in plans no binding at all, and
+		// one that has plans this one.
+		"count = var.installation.credentials_service == null ? 0 : 1",
+		// The service's own name and the region it runs in: the two values
+		// internal/infra writes (infra.CredentialsServiceName and the
+		// installation's region), and never a URL.
+		"location = var.installation.credentials_service.region",
+		"name     = var.installation.credentials_service.name",
+		`role     = "roles/run.invoker"`,
+		// The build account and no other member, ever.
+		"member   = google_service_account.build.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: %s does not hold %q:\n%s", path, name, want, body)
+		}
+	}
+	if strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) || strings.Contains(body, "**:") {
+		t.Errorf("%s: the invoker grant names something wider than the build account:\n%s", path, body)
+	}
+	// No IAM condition: the grant is the front door the service admits a build
+	// caller at, and the service's own class check is the fence behind it
+	// (B4.3, Q6) — a condition here would be a second place for the reach to
+	// be wrong.
+	if strings.Contains(body, "condition {") || strings.Contains(body, "condition =") {
+		t.Errorf("%s: the invoker grant carries a condition, want none: the service's own name is what it reaches:\n%s", path, body)
+	}
+
+	// The other half of the name, and the reason the account's reach is a
+	// sentence of one clause: across every file of the repository module, the
+	// build account is the member of no other service or job invoker binding.
+	// The workflow submodule's job grant is the submodule's (the workflow
+	// module's own test pins it), and the check job's invoker is the
+	// scheduler's — so this module's one binding of the type is the whole of
+	// what a build account may send a request to.
+	files, err := filepath.Glob("gcp/modules/repo/*.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("gcp/modules/repo holds no .tf file: the glob is not looking where the module is")
+	}
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, blk := range allResourceBlocks(t, f, src) {
+			if blk.typ != "google_cloud_run_v2_service_iam_member" && blk.typ != "google_cloud_run_v2_job_iam_member" {
+				continue
+			}
+			// The account however a plan would name it — .member, .email,
+			// .name — so a second binding written the other way round is
+			// caught as well.
+			if !strings.Contains(blk.body, "google_service_account.build.") {
+				continue
+			}
+			if blk.name != name {
+				t.Errorf("%s: %s names the build account, want the build account in %s alone", f, blk.name, name)
+			}
+		}
+	}
+}
+
 // customRolePermissions is the snapshot of the permissions Google allows in a
 // custom role (GA, customRolesSupportLevel empty), for the service prefixes
 // the modules use. See the header of the file for how it is made and refreshed.
