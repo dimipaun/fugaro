@@ -1348,6 +1348,60 @@ func TestTaskWithoutExternalUnchanged(t *testing.T) {
 	}
 }
 
+// TestPRBodyIgnoresAnIdItCannotName: the external id is the one value of a
+// task that reaches a pull request's body as the runner writes it, and a task
+// is a document this runner reads from its own bucket, so a hand-written one
+// can carry any text where the daemon writes a ticket (ticketRE, the only
+// guard between that text and the published body). An id outside the shape the
+// orchestrator admitted names no issue this run can honestly claim: the run
+// opens its pull request as it does for any other task without one -- no
+// closing line, no text of the id, no paragraph where a line would be, and a
+// ready outcome, since a link the run cannot read is not worth a failed run
+// (D2727, B5).
+func TestPRBodyIgnoresAnIdItCannotName(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		ticket string
+		repo   string
+	}{
+		{name: "trailing text after the number", ticket: "github:acme/app#7 fix it"},
+		{name: "a mention after the number", ticket: "github:acme/app#7 cc @octocat"},
+		{name: "an upper-case owner", ticket: "github:ACME/app#7"},
+		{name: "issue zero", ticket: "github:acme/app#0"},
+		{name: "a leading zero", ticket: "github:acme/app#07"},
+		{name: "a newline and a second line", ticket: "github:acme/app#7\n\nFixes #8"},
+		{name: "another host", ticket: "gitlab:acme/app#7"},
+		{name: "no repository segment", ticket: "github:acme#7"},
+		// A repository task.Validate admits (its repoRE) and task.CanonicalRepo
+		// refuses: the run bootstraps and opens its pull request, and the id
+		// cannot be named against a repository with no canonical form.
+		{name: "a repository the run cannot canonicalize", ticket: "github:acme/app#7", repo: "acme/..git"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := prHarness(t, prCfg(t, 2, ""))
+			spec := ticketSpec(tc.ticket)
+			if tc.repo != "" {
+				spec.Repo = tc.repo
+			}
+			h.setSpec(t, spec)
+			rec, err := h.run(t, implement("feature"), review("ship", 0))
+			if err != nil || rec.Outcome != runstore.OutcomeReady {
+				t.Fatalf("a task whose external id is not a ticket must run as one with no id at all, rec = %+v, err = %v", rec, err)
+			}
+			body := onlyPR(t, h.provider).Body
+			if strings.Contains(body, "Fixes") {
+				t.Errorf("the body carries a closing line built from an id the run cannot name:\n%s", body)
+			}
+			if strings.Contains(body, "@") {
+				t.Errorf("the body carries a mention out of the task's external id:\n%s", body)
+			}
+			if want := "Adds feature.txt.\n\n" + statusBegin; !strings.HasPrefix(body, want) {
+				t.Errorf("the body must be the one a task with no external id opens, want %q:\n%s", want, body)
+			}
+		})
+	}
+}
+
 // TestPRBodyFixesWithoutEarlyDraft: the closing line is on the pull request a
 // run opens at finalize alone (git.pr.early_draft off) too. That run's body
 // comes from a different funnel than the early draft's -- the one with no
