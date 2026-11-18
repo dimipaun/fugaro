@@ -4824,3 +4824,122 @@ func TestProjectSecretCandidateFromNode(t *testing.T) {
 		}
 	})
 }
+
+// sharedSandboxPolicy is the published node of a project whose Bitbucket
+// default profile serves the sandbox fixture, with both allow_repos lists —
+// the project's and the profile's, which projectpolicy.Admits reads together —
+// admitting exactly repos, spelled the one way a policy spells a repository
+// (projectpolicy.Canonical: "bitbucket/acme/sandbox").
+func sharedSandboxPolicy(repos ...string) *projectpolicy.Policy {
+	return &projectpolicy.Policy{
+		Version:    projectpolicy.Version,
+		AllowRepos: repos,
+		Profiles: map[string]projectpolicy.Profile{
+			projectpolicy.DefaultProfileName: {JobProfile: config.JobProfile{Provider: "bitbucket", AllowRepos: repos}},
+		},
+	}
+}
+
+// TestSpecMarksASharedRepo is M6's mark: a repository a deployed profile
+// admits is shared, which is the fact M7 reads to stop applying its
+// repository-level root and the structural precondition D2303 puts in place of
+// a retire gate.
+func TestSpecMarksASharedRepo(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rs.Shared {
+		t.Errorf("a repository the deployed %s profile admits is not marked shared, so `fugaro update` keeps applying its repository root (M6, D2303): policy %+v",
+			projectpolicy.DefaultProfileName, in.Policy)
+	}
+}
+
+// TestTheSharedMarkChangesNoTerraformInput is the half of M6's acceptance that
+// lets it merge before M7 and M2: the mark is a fact this process holds and
+// never a Terraform input, so a repository root plans what it planned before
+// the field existed and no root applies differently on the strength of the
+// mark alone.
+func TestTheSharedMarkChangesNoTerraformInput(t *testing.T) {
+	marked := sandboxInputs(t, m5Additions)
+	marked.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
+	unmarked := sandboxInputs(t, m5Additions)
+	unmarked.Policy = sharedSandboxPolicy("bitbucket/acme/other")
+
+	ms, err := Repo(marked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	us, err := Repo(unmarked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without this the test would pass on two specs that both carry no mark,
+	// which is the state the field was added to change.
+	if !ms.Shared || us.Shared {
+		t.Fatalf("the fixture does not show the mark: marked.Shared = %v, unmarked.Shared = %v", ms.Shared, us.Shared)
+	}
+	mv, err := RepoVars(ms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uv, err := RepoVars(us)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(mv, uv) {
+		t.Errorf("the mark moved the repository root's tfvars, so a root applies differently for a shared repository (M6):\n%s\n%s", mv, uv)
+	}
+	var doc struct {
+		Repo map[string]json.RawMessage `json:"repo"`
+	}
+	if err := json.Unmarshal(mv, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Repo["shared"]; ok {
+		t.Errorf("the mark reached the tfvars as repo.shared: it is a fact of this process and not a Terraform input (M6)\n%s", mv)
+	}
+}
+
+// TestARepoNoProfileAdmitsIsUnmarked is the other half of the mark's rule: the
+// answer is a deployed profile's admission and nothing else, so every way a
+// profile can fail to admit the repository leaves it on its own job — which is
+// what M7's "a repository no profile admits keeps the existing path" reads.
+func TestARepoNoProfileAdmitsIsUnmarked(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy *projectpolicy.Policy
+	}{
+		{"no node was read", nil},
+		{"the node defines no profile", &projectpolicy.Policy{
+			Version: projectpolicy.Version, AllowRepos: []string{"bitbucket/acme/sandbox"}}},
+		{"the project's list does not admit it", sharedSandboxPolicy("bitbucket/acme/other")},
+		{"the profile's list does not admit it", func() *projectpolicy.Policy {
+			p := sharedSandboxPolicy("bitbucket/acme/sandbox", "bitbucket/acme/other")
+			p.Profiles[projectpolicy.DefaultProfileName] = projectpolicy.Profile{
+				JobProfile: config.JobProfile{Provider: "bitbucket", AllowRepos: []string{"bitbucket/acme/other"}}}
+			return p
+		}()},
+		{"the profile serves another provider", func() *projectpolicy.Policy {
+			p := sharedSandboxPolicy("bitbucket/acme/sandbox")
+			p.Profiles[projectpolicy.DefaultProfileName] = projectpolicy.Profile{
+				JobProfile: config.JobProfile{Provider: "github", AllowRepos: []string{"bitbucket/acme/sandbox"}}}
+			return p
+		}()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := sandboxInputs(t, m5Additions)
+			in.Policy = tc.policy
+			rs, err := Repo(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rs.Shared {
+				t.Errorf("the repository is marked shared, but no deployed profile admits it (M6): policy %+v", tc.policy)
+			}
+		})
+	}
+}
