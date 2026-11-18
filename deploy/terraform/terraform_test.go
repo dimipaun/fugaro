@@ -5911,6 +5911,33 @@ func TestModelSecretsServedValidationMatchesGo(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("%s: model_secrets_served accepts %v, config.ModelSecretsServedValues = %v", path, got, want)
 	}
+
+	// And B2.7's half: the `anthropic` arm stopped being hypothetical when
+	// config.ServiceServedAuths was filled, so the module's own account of
+	// WHICH auths get it is held to that list, the way
+	// TestServiceHeldSecretsMatchTheCredentialsService holds a names list and
+	// TestProxiedGitSecretNamesMatchTheModule holds a per-repository one.
+	// Terraform cannot ask Go, so the module's `api-key`/`oauth` is a literal,
+	// and the two sides drift in both directions: an auth added to the list and
+	// not to the module's words is a repository whose root drops mounts the
+	// module's own description does not know about, and a name the module
+	// promises and the list does not carry is a claim about a job that keeps
+	// every mount. Neither is a plan that fails — which is why nothing else
+	// would catch it — and both are wrong where a reader looks.
+	var promised []string
+	m2 := regexp.MustCompile("`anthropic` for (.*?) one it admits").FindStringSubmatch(string(b))
+	if m2 == nil {
+		t.Fatalf("%s: the model_secrets_served variable's description no longer says which auths the anthropic arm is for (`anthropic` for an `api-key` or `oauth` one it admits): the flip list is held to that sentence, and a rewrite that drops it removes the only place the module names them", path)
+	}
+	for _, q := range regexp.MustCompile("`([^`]*)`").FindAllStringSubmatch(m2[1], -1) {
+		promised = append(promised, q[1])
+	}
+	flip := slices.Clone(config.ServiceServedAuths)
+	slices.Sort(promised)
+	slices.Sort(flip)
+	if !slices.Equal(promised, flip) {
+		t.Errorf("%s: the anthropic arm's description names %v, config.ServiceServedAuths = %v: B2.7's flip is the list that decides which auths get that arm, so the two have to name the same ones", path, promised, flip)
+	}
 }
 
 // TestAppKeyAndProxiedGitClausesStayOnTheVariable pins the half of the drop

@@ -147,16 +147,18 @@ locals {
   #     before B2.3, and the arms a tfvars written then means by saying
   #     nothing (the variable's own default).
   #   * `anthropic` — an `api-key` or `oauth` repository the switch admits
-  #     (B2.3): the service serves its runs the Anthropic key or the account's
-  #     token, and it serves them NOTHING else — the run may still reach a
-  #     provider of its own on a FUGARO_PROVIDER_KEY_ the job mounts, so that
-  #     accessor stays with the job. It is the arm B2.7's flip turns on, and
-  #     config.ServiceServedAuths is the list that decides which auths get it;
-  #     the input is empty of it until that flip, so every mount stays.
-  #   * `none` — an `api-key` or `oauth` repository whose credential the
-  #     service does NOT hold yet: every mount stays, and with it every
-  #     accessor, which is what makes this release inert for the repositories
-  #     it switches on.
+  #     AND config.ServiceServedAuths carries (B2.3's switch, B2.7's flip):
+  #     the service serves its runs the Anthropic key or the account's token,
+  #     and it serves them NOTHING else — the run may still reach a provider of
+  #     its own on a FUGARO_PROVIDER_KEY_ the job mounts, so that accessor
+  #     stays with the job (R6, D1634). config.ServiceServedAuths is the list
+  #     that decides which auths get it, and a name in it is a name the
+  #     service's own cascade and pool serve a model call under.
+  #   * `none` — a repository the switch holds off: every mount stays, and with
+  #     it every accessor. That is an `api-key` or `oauth` repository on a
+  #     project whose mode is off or whose root was applied while its record
+  #     said so, a `vertex` repository, and a root whose tfvars was written
+  #     before B2.7's flip — the state this arm leaves untouched.
   #
   # A repository the switch does not admit is `none` by the same input, and so
   # the model clauses of the drop below never fire for it — its job keeps the

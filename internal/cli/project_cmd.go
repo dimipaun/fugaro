@@ -322,6 +322,16 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		if err != nil {
 			return publishFailure(err, narrowedSoFar)
 		}
+		// D2071 (a), before the empty-allow-list confirmation and the gate:
+		// a node whose mode is `off` is the fourth condition of the switch, so
+		// publishing it takes the service's address away from every switched
+		// `api-key` or `oauth` repository at its next launch — and their jobs
+		// hold no model credential of their own, because the mode they were
+		// applied under was a gateway one. Judged per attempt, on the node this
+		// attempt would write, so a retry re-reads the records it decided on.
+		if err := refuseModeOffWhileTheServiceServes(ctx, db, lc, pol.Budget.Mode); err != nil {
+			return publishFailure(err, narrowedSoFar)
+		}
 		// A policy whose allow-list admits nothing stops every run of the
 		// project before it starts, which is doctor's allow-list-empty state —
 		// and the diff that shows the empty list prints only after the write, so
@@ -464,6 +474,75 @@ func runProjectPolicyPublish(cmd *cobra.Command, o *projectPolicyPublishOptions)
 		}
 	}
 	return remote(fmt.Errorf("the policy node kept changing under the write (%d attempts); the shared node is as it was%s; run it again", setAttempts, narrowedNote(narrowedSoFar)))
+}
+
+// refuseModeOffWhileTheServiceServes is D2071 (a) at the publish door: a
+// project whose budget mode is published as `off` while a repository the
+// credentials service serves the model path of holds no model mount of its own
+// is refused here, before a node is written.
+//
+// The order is what makes the state unrepairable rather than merely bad. The
+// mode is one of the switch's four conditions and it is read when a
+// repository's ROOT is applied: an `api-key` or `oauth` repository whose root
+// was applied under `observe` or `enforce` has B2.7's flip in its job — the
+// Anthropic key and the OAuth token are not mounted, because its runs reach the
+// service for them (config.ServiceServedAuths, infra.ModelSecretsServed). The
+// mode a LAUNCH reads is the published node's, so a node lowered to `off`
+// withholds the service's address from those runs at once (D2071's fourth
+// condition, credentialsServiceLaunchEnv) while the mounts come back only when
+// each repository's own root is applied again — and until then every run of
+// that repository is handed no address and has nothing of its own to read. It
+// is the same reasoning that makes `off` a mode an installation converges out
+// of deliberately, and it is why the direction is refused here rather than left
+// for a `fugaro doctor` line: nobody reads a doctor line before a run.
+//
+// What the refusal does NOT ask is for an update to finish first, and it holds
+// no run back: it is a write of the project's own policy, judged against the
+// two facts the write would move — the mode it would publish and the
+// repositories whose records say a root of theirs is on the switch.
+//
+// A repository is "switched" here in the sense the run itself reads it: the
+// installation carries the service (its block, with the address the launch
+// hands a job), the repository's own record says a root of it was applied with
+// the service on (localcfg.Repo.CredentialsServiceOn, the half no cloud read
+// answers), and the auth the record names is one the flip list carries — a
+// `cascade` repository is not one of them, because its job gave its mounts up
+// long before this flip and a mode of `off` refuses its launch outright
+// (cascadeLaunchRefusal is what says so, and at the launch rather than here).
+//
+// A record that cannot be read is a refusal and not a skipped repository: the
+// answer it would give is whether the repository's own jobs hold a model
+// credential, and publishing `off` over "could not tell" is the direction that
+// breaks runs. A record that is absent is a repository this release never
+// recorded, which is a repository it never applied a root of.
+func refuseModeOffWhileTheServiceServes(ctx context.Context, db creds.DB, lc *localcfg.Config, mode string) error {
+	if mode != config.BudgetOff || lc.CredentialsService == nil || lc.CredentialsService.URL == "" {
+		return nil
+	}
+	for _, repo := range slices.Sorted(maps.Keys(lc.Repos)) {
+		entry, ok := lc.RepoFor(repo)
+		if !ok || !entry.CredentialsServiceOn() {
+			continue
+		}
+		slug, err := task.Slug(entry.Provider, repo)
+		if err != nil {
+			// A repository whose provider this config cannot name has no
+			// record: the slug is what names one (writeRepoAuth's own
+			// derivation).
+			continue
+		}
+		rec, found, err := creds.ReadRepoAuth(ctx, db, slug)
+		if err != nil {
+			return userErr("the budget mode would be published as %s, and whether %s is a repository whose model path the credentials service serves could not be read from its record (%s): the mode is what decides whether its runs are handed the service's address, and a repository whose root was applied with the service on holds none of its own model credentials — so a publish over an unreadable record is one that can leave those runs with nothing to read. Run the publish again once the record can be read",
+				mode, repo, safetext.FieldErr(err))
+		}
+		if !found || !slices.Contains(config.ServiceServedAuths, rec.Auth) {
+			continue
+		}
+		return userErr("the budget mode would be published as %s while %s is a repository whose model path the credentials service serves (its record says agent.auth %s, and a root of it was applied with the service on): its jobs mount neither the Anthropic key nor the Claude OAuth token, so a mode of %s is what would withhold the service's address from every run of it — a run handed no address, on a job that has no credential of its own to read (D2071). Publish the mode as %s or %s, or lower it and then run 'fugaro update --repo' in that checkout, which re-applies the root and puts the mounts back",
+			mode, repo, rec.Auth, mode, config.BudgetObserve, config.BudgetEnforce)
+	}
+	return nil
 }
 
 // requirePolicyRules refuses a publish without the deployed rules marker
