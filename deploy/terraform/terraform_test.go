@@ -5177,24 +5177,64 @@ func TestVoiceProviderKeyOptOutIsTwoSteps(t *testing.T) {
 		}
 	}
 
-	// The second step names the addresses of the five removals the plan carries
-	// after the container is forgotten — the accessor among them, since it is
-	// still in state — and NOT the container's: a forgotten container is in no
-	// plan, and naming it would tell a reader it is deleted rather than left
-	// behind with its keys.
-	const (
-		accessor  = "--allow-delete module.installation.google_secret_manager_secret_iam_member.voice_provider_keys[0]"
-		container = "--allow-delete module.installation.google_secret_manager_secret.voice_provider_keys[0]"
-	)
+	// The addresses are not written out here: they are READ OFF THE PLAN, which
+	// is the only thing that can keep them honest. The two goldens are one
+	// installation with the hop and without it — the voice fixture is the
+	// credentials fixture plus its voice_service block and nothing else
+	// (internal/infra/testdata) — so the addresses the voice-on plan carries and
+	// the voice-off plan does not are exactly the removals the null plans, and
+	// the guard refuses each of them until it is named (tf.Guard, the function
+	// internal/cli's own guard step calls). The document's own list is read the
+	// same way, off its command lines: step 2's six, plus the one address the
+	// paragraph after it adds for the installation whose front door is already
+	// off — every --allow-delete address SECURITY.md carries, and no other. Two
+	// directions, and both matter: a removal the list leaves out stops the
+	// update, and an address the plan does not remove is one a reader is being
+	// told to approve for nothing. Writing the addresses out instead is how this
+	// test first came to document one short — P5.3.5's google engine added a
+	// google_project_service gated on the same local.voice_on (apis.tf), and a
+	// hand-written five could not notice.
+	const container = "module.installation.google_secret_manager_secret.voice_provider_keys[0]"
+	removals := voiceRemovals(t)
+	if !removals[container] {
+		t.Fatalf("the voice-on golden carries no %s, so the two goldens this test reads are not the pair that differs by the hop: %v", container, removals)
+	}
+	// The container is the one address the list must NOT name: the first step
+	// forgets it before the plan, so the plan carries no change there and naming
+	// it would tell a reader it is deleted rather than left behind with its keys.
+	delete(removals, container)
 	sec, err := os.ReadFile("../../SECURITY.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(sec), accessor) {
-		t.Errorf("SECURITY.md's second step does not name the accessor's address (%q): the accessor is in state and its destroy is a removal the guard refuses until the address is named", accessor)
+	named := documentedAllowDeletes(string(sec))
+	for a := range removals {
+		if !named[a] {
+			t.Errorf("SECURITY.md does not name %q in --allow-delete, and the null removes it: the guard refuses an unnamed delete, so the update stops and the hop stays up", a)
+		}
 	}
-	if strings.Contains(string(sec), container) {
-		t.Errorf("SECURITY.md names the provider-key container in --allow-delete (%q): after the first step the plan carries no change there, and the container stays in GCP with its keys", container)
+	for a := range named {
+		if !removals[a] {
+			t.Errorf("SECURITY.md names %q in --allow-delete, and turning the hop off removes nothing there: an address the plan carries no change at is an approval a reader is asked for nothing", a)
+		}
+	}
+	// And the guard itself, over that exact plan and that exact list: it must
+	// admit the documented removal, and must refuse it as soon as one of the
+	// documented addresses is dropped — the experiment that found this gap.
+	list := slices.Sorted(maps.Keys(named))
+	plan := &tf.Plan{ResourceChanges: make([]tf.ResourceChange, 0, len(removals))}
+	for a := range removals {
+		plan.ResourceChanges = append(plan.ResourceChanges, tf.ResourceChange{Address: a, Mode: "managed", Change: tf.Change{Actions: []string{"delete"}}})
+	}
+	slices.SortFunc(plan.ResourceChanges, func(a, b tf.ResourceChange) int { return strings.Compare(a.Address, b.Address) })
+	if err := tf.Guard(plan, list); err != nil {
+		t.Errorf("the guard refuses the removal SECURITY.md documents: %v", err)
+	}
+	if len(list) < 2 {
+		t.Fatalf("SECURITY.md's second step names %d addresses (%v), too few to be the plan's removal set", len(list), list)
+	}
+	if err := tf.Guard(plan, list[1:]); err == nil {
+		t.Errorf("the guard admits the removal with %q left out: the addresses SECURITY.md names are the plan's own removal set, so each of them is there because leaving it out refuses the update", list[0])
 	}
 
 	// The container's prevent_destroy is what makes the first step necessary
@@ -5218,6 +5258,68 @@ func TestVoiceProviderKeyOptOutIsTwoSteps(t *testing.T) {
 	if !containerBlock {
 		t.Fatalf("%s declares no google_secret_manager_secret.voice_provider_keys: the hop's key container is what the process reads by name (P5.3.5)", path)
 	}
+}
+
+// voiceRemovals is the removal the hop's opt-out plans, read off the tree's own
+// plans rather than written down: the addresses of
+// testdata/golden/installation-voice.plan.json (the hop on) that
+// installation-credentials.plan.json (the same installation with the hop off —
+// the voice fixture is that fixture plus its voice_service block,
+// internal/infra/testdata) does not carry. Every one of them is a resource the
+// hop's switch creates, so writing the switch as null is a plan that deletes
+// each of them, which is what SECURITY.md's second step has to name.
+func voiceRemovals(t *testing.T) map[string]bool {
+	t.Helper()
+	addresses := func(name string) map[string]bool {
+		b, err := os.ReadFile(filepath.Join("..", "..", "internal", "infra", "tf", "testdata", "golden", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p tf.Plan
+		if err := json.Unmarshal(b, &p); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		out := make(map[string]bool, len(p.ResourceChanges))
+		for _, rc := range p.ResourceChanges {
+			out[rc.Address] = true
+		}
+		return out
+	}
+	on, off := addresses("installation-voice.plan.json"), addresses("installation-credentials.plan.json")
+	// The difference is the hop's own resources only while the hop's switch ADDS
+	// them: an address the hop-off plan carries and the hop-on one does not would
+	// be a resource the switch counts down or renames, and the answer below would
+	// then be missing a removal rather than the plan's own set. The next reader
+	// meets that as a failing derivation rather than as a list one short.
+	for a := range off {
+		if !on[a] {
+			t.Fatalf("the hop-off plan carries %q and the hop-on one does not, so these two plans are not a pair that differs by the hop's own resources: voiceRemovals' answer would be missing it", a)
+		}
+	}
+	removals := map[string]bool{}
+	for a := range on {
+		if !off[a] {
+			removals[a] = true
+		}
+	}
+	return removals
+}
+
+// allowDeleteRE reads an address off a command line in a document: the token
+// after --allow-delete, with the single quotes an address carrying characters
+// the shell would otherwise read (double quotes in an index, a `[0]` glob)
+// stripped off.
+var allowDeleteRE = regexp.MustCompile("--allow-delete '?([^\\s'`]+)'?")
+
+// documentedAllowDeletes is every address a document names that way — for
+// SECURITY.md the hop's own removal, which is the only removal this document
+// gives as a command line.
+func documentedAllowDeletes(doc string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range allowDeleteRE.FindAllStringSubmatch(doc, -1) {
+		out[m[1]] = true
+	}
+	return out
 }
 
 // TestCredentialsServiceResourcesAreCounted reads the sentence that counts
