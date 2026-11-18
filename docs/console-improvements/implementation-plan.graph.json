@@ -116,7 +116,8 @@
           "console/src/main/settingsview.ts",
           "console/src/renderer/confirm.ts",
           "console/src/preload/confirm.ts",
-          "console/test/unit/confirm.test.ts"
+          "console/test/unit/confirm.test.ts",
+          "console/test/unit/settingsview.test.ts"
         ]
       }
     },
@@ -428,7 +429,7 @@
     },
     {
       "id": "MW2",
-      "title": "image catalog add from the Manage list",
+      "title": "image add from the Manage list",
       "run": null,
       "version": null,
       "size": 4,
@@ -471,14 +472,16 @@
         "paths": [
           "console/src/main/spawn.ts",
           "console/src/main/ipc.ts",
+          "console/src/main/index.ts",
+          "console/src/source/source.ts",
           "console/src/preload/index.ts",
           "console/src/shared/version.ts",
           "console/test/unit/spawn.test.ts",
           "console/test/unit/ipc.test.ts",
+          "console/test/unit/version.test.ts",
           "docs/design/desktop-console.md",
           "console/docs/json-contract.md",
-          "internal/cli/docs_desktop_console_test.go",
-          "console/test/unit/version.test.ts"
+          "internal/cli/docs_desktop_console_test.go"
         ]
       }
     },
@@ -570,13 +573,14 @@
           "console/src/main/wizardrun.ts",
           "console/src/main/setupview.ts",
           "console/src/main/onboarding.ts",
+          "console/src/renderer/confirm.ts",
           "console/test/unit/wizard-main.test.ts"
         ]
       }
     },
     {
       "id": "SW3b",
-      "title": "the wizard screens and the Add project button",
+      "title": "the wizard screens in the onboarding view",
       "run": null,
       "version": null,
       "size": 3,
@@ -585,10 +589,7 @@
         "prediction": true,
         "paths": [
           "console/src/renderer/wizard/wizard.ts",
-          "console/src/renderer/installations.ts",
-          "console/src/main/picker.ts",
-          "console/src/main/installations.ts",
-          "console/src/preload/installations.ts",
+          "console/src/renderer/entry.ts",
           "console/test/unit/wizard.test.ts"
         ]
       }
@@ -659,8 +660,7 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "console/src/source/source.ts",
-          "console/src/source/cli.ts",
+          "console/src/source/new-reads.ts",
           "console/src/source/fixture.ts",
           "console/test/unit/source-new-reads.test.ts"
         ]
@@ -676,11 +676,12 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/report.go",
-          "internal/cli/report_stream.go",
-          "internal/cli/report_stream_test.go",
+          "ee/report/cli/report.go",
+          "ee/report/cli/report_stream.go",
+          "ee/report/cli/report_stream_test.go",
           "schemas/report-stream.schema.json",
-          "internal/cli/testdata/report_stream.golden.ndjson"
+          "ee/report/cli/testdata/report_stream.golden.ndjson",
+          "ee/report/cli/testdata/report_stream.golden.ndjson.license"
         ]
       }
     },
@@ -717,6 +718,24 @@
           "console/src/renderer/stream.ts",
           "console/test/unit/spend-stream.test.ts",
           "console/test/unit/projects-stream.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "SW3c",
+      "title": "the Add project operation in the rail and the picker",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/installations.ts",
+          "console/src/preload/installations.ts",
+          "console/src/renderer/installations.ts",
+          "console/src/main/picker.ts",
+          "console/test/unit/installations-view.test.ts"
         ]
       }
     },
@@ -936,6 +955,16 @@
       "reason": "names a flag that must exist"
     },
     {
+      "task": "PL1",
+      "needs": "RS3",
+      "reason": "names a flag that must exist"
+    },
+    {
+      "task": "PL1",
+      "needs": "RS4",
+      "reason": "names a flag that must exist"
+    },
+    {
       "task": "AL",
       "needs": "RS1",
       "reason": "the docs pin holds the allow-list's flags to flags the CLI registers"
@@ -954,16 +983,6 @@
       "task": "AL",
       "needs": "SM-E",
       "reason": "both write `console/docs/json-contract.md`"
-    },
-    {
-      "task": "AL",
-      "needs": "RS3",
-      "reason": "the docs pin holds the allow-list's flags to flags the CLI registers"
-    },
-    {
-      "task": "AL",
-      "needs": "RS4",
-      "reason": "same"
     },
     {
       "task": "SM1",
@@ -1036,6 +1055,11 @@
       "reason": "`left_for_you` lines use the safe copy builder"
     },
     {
+      "task": "SW3b",
+      "needs": "PW1",
+      "reason": "both write `entry.ts`"
+    },
+    {
       "task": "PW1",
       "needs": "RB1",
       "reason": "uses the cache API it adds"
@@ -1091,14 +1115,19 @@
       "reason": "needs the real consumer"
     },
     {
+      "task": "I-OPS",
+      "needs": "RS3",
+      "reason": "compares the console's copy with the report golden"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "RS4",
+      "reason": "compares the console's copy with the budget golden"
+    },
+    {
       "task": "SRC",
       "needs": "C-OPS",
       "reason": "built against the payloads and handler signatures"
-    },
-    {
-      "task": "RS3",
-      "needs": "RS1",
-      "reason": "reuses RS1's stream writer and line shape (`runs_stream.go`)"
     },
     {
       "task": "RS4",
@@ -1124,6 +1153,11 @@
       "task": "RS5",
       "needs": "SU2b",
       "reason": "both write `projects.ts`"
+    },
+    {
+      "task": "SW3c",
+      "needs": "SW3b",
+      "reason": "opens the wizard SW3b builds"
     }
   ],
   "decoupling": [

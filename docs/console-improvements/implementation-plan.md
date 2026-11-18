@@ -14,7 +14,7 @@ and project deletion declined.
 
 - Rules files: `.claude/rules/console.md` for every `console/**` task (Node 22, exact-pinned dependencies, the allow-list tests, `TEXT_CLASSES`, the parallel-sections rule, goldens skipped in CI); `CLAUDE.md` for the CLI tasks. Run targeted tests, never a whole package (`internal/cli` takes about 25 minutes).
 - **Always:** write the failing test first; run the task's command before the commit; `git status --short` and `git diff --stat` before every commit and `git add <paths>`; cite a `T#` and `D#` in the pull-request body.
-- **Ask first:** a new console argv or IPC operation (only AL, SU1, SW3b, MW1 and MW2 may add one or change an IPC shape); a CLI flag that is not named in this plan; a new dependency; a change to a wire document other than an added member.
+- **Ask first:** a new console argv or IPC operation (only AL, SU1, SW3c, MW1 and MW2 may add one or change an IPC shape); a CLI flag that is not named in this plan; a new dependency; a change to a wire document other than an added member.
 - **Never:** edit `.github/workflows/`; re-record a screenshot golden; add a confirmation, a prompt or a `--yes` to the CLI (the no-prompt policy); let the console read, hold or pass a secret value (design rule 2); bump elkjs; change an existing `--json` document's meaning or shape; delete or skip a failing test.
 - **Safety rules:** no secret-shaped literal in a test, fixture or doc; no live cloud action by an agent (the three Checks are the owner's); `fugaro update` is unaffected (no installed state changes: every CLI change is an added flag or member, so the release's `### For operators` is "run `fugaro update`", which asks nothing new).
 - **Size limits:** `console/src/renderer/entry.ts` is about 8,950 lines, `console/src/main/spawn.ts` about 5,500 and `ipc.ts` about 4,300. A task adds a new file for new code and a small wiring change to these, never a reformat.
@@ -40,8 +40,8 @@ Inputs and failure modes the spec implies and no single task owns, each with the
 | A hostile CLI floods a stream or a setup is killed half-way | AL (per-line, row and byte caps; a deadline of its own for `setup.*`, never the 90 s read timeout) |
 | The answers file is read as consent | ST1 (`TestSetupAnswersFileGrantsNoConsent`) |
 | Text from a repository or the CLI reaches the clipboard in a Copy-command | MG0 (`command.ts` refuses any token outside the safe grammar), MO-SH, MO-P, MO-C, SW3b |
-| A write the first pass admits is destructive | MW1, MW2 (only `models add` as a widening and `image catalog add` with `--no-apply`; `models use`, `models rm` and `image catalog rm` stay Copy-commands, O5) |
-| The `setup` and `models` rows of `NEVER_REACHABLE` and §3.4 rule 3 (`--gcp-project`, `--region`) | AL (narrows the `setup` row to two exact vectors; the answers reach the CLI only in the file main wrote), MW1 (the `models add|use` rows) |
+| A write the first pass admits is destructive | MW1, MW2 (only `models add` as a widening and `image add` with `--no-apply`; `models use`, `models rm` and `image rm` stay Copy-commands, O5) |
+| The `setup` and `models` rows of `NEVER_REACHABLE` and §3.4 rule 3 (`--gcp-project`, `--region`) | AL (keeps the `setup` command row and grants `setup.plan` and `setup.apply` by name through `except`; the answers reach the CLI only in the file main wrote), MW1 (the `models add` command and argv rows, granted by operation name through `except`) |
 | A floor constant set before the CLI release carries the flag | AL (`null` until the release) |
 | The docs tests pin `desktop-console.md`, `console-styling.md` and `json-contract.md` | AL, GF1, SM-E (each runs `go test ./internal/cli/ -run Docs`) |
 
@@ -58,7 +58,7 @@ Ships alone: two readable screens, and the goldens are re-recorded by the owner.
 - Files: `docs/console-improvements/live-watch-fields.md` (new); `console/test/unit/live-watch-fields.test.ts` (new)
 - Interfaces: Consumes `internal/watch/json.go` as text and `console/test/fixtures/watch-parity.json`; produces the table.
 - Tests: `live-watch-fields.test.ts` (new): every member of the parity fixture is accounted for.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/live-watch-fields.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/live-watch-fields.test.ts)`
 - Red step: Add a member to a copy of the fixture inside the test: the test must fail naming it.
 - Depends on: none
 - Commit: `docs(console): the fields Watch shows and where Live draws them (F1, D2901)`
@@ -70,7 +70,7 @@ Ships alone: two readable screens, and the goldens are re-recorded by the owner.
 - Files: `console/src/renderer/screens/live.ts`; `console/src/renderer/theme/screens.css`; `console/src/renderer/theme/flight-deck.css`; `console/test/unit/live.test.ts`; `console/test/unit/degraded.test.ts`
 - Interfaces: Consumes the existing `WindowHistory` samples; produces no new export.
 - Tests: `live.test.ts` (extended: one element per sparkline, contrast ratio of every text/background pair in the Live CSS, run box has a max height); `live-parity.test.ts` and `degraded.test.ts` unchanged and green.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/live.test.ts test/unit/live-parity.test.ts test/unit/degraded.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/live.test.ts test/unit/live-parity.test.ts test/unit/degraded.test.ts)`
 - Red step: The contrast test fails on `--text-muted` over `--accent` (about 1.24:1) before the fix.
 - Depends on: none
 - Commit: `console(live): sparklines drawn in place with readable contrast; run rows scroll (F2, F3, D2901)`
@@ -83,7 +83,7 @@ Ships alone: two readable screens, and the goldens are re-recorded by the owner.
 - Files: `console/src/renderer/graph/layout.ts`; `console/test/unit/graph.test.ts`; `console/test/unit/graph-model.test.ts`; `docs/design/console-styling.md`
 - Interfaces: Consumes `graph --json` and the existing worker; produces the same layout shape with new coordinates.
 - Tests: `graph.test.ts` and `graph-model.test.ts` (the pinned direction and no-wrapping assertions replaced with the new ones); the Go docs tests that pin `console-styling.md`.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/graph.test.ts test/unit/graph-model.test.ts) && go test ./internal/cli/ -count=1 -run Docs`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/graph.test.ts test/unit/graph-model.test.ts) && go test ./internal/cli/ -count=1 -run Docs`
 - Red step: The updated direction assertion fails against the unchanged `layout.ts`.
 - Depends on: none
 - Commit: `console(graph): top-to-bottom layout, wide levels stack (F4, D2900)`
@@ -95,7 +95,7 @@ Ships alone: two readable screens, and the goldens are re-recorded by the owner.
 - Files: `console/src/renderer/theme/flight-deck.css`; `console/test/e2e/graph.spec.ts`
 - Interfaces: Consumes GF1's layout.
 - Tests: `graph.spec.ts` (extended).
-- Command: `(cd console && npm run test:e2e -- graph.spec.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:e2e -- graph.spec.ts)`
 - Red step: The new `scrollWidth` assertion fails while `overflow-x: auto` and `min-width: 100%` are in place.
 - Depends on: **GF1** (the CSS follows the new layout's geometry; one behaviour split in two); **LP2** (both write `flight-deck.css`)
 - Commit: `console(graph): vertical scroll only (F4, D2900)`
@@ -113,7 +113,7 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 - Files: `console/src/shared/new-ops.ts` (new); `console/src/renderer/stubs/bridge-stub.ts` (new); `console/test/unit/new-ops.test.ts` (new); `docs/console-improvements/contract-ops.md` (new)
 - Interfaces: Produces the types, the stub bridge and the document; consumers import the types and the stub, the allow-list task (AL) implements the operations beside it and does not import them.
 - Tests: `new-ops.test.ts` (new): the stub answers every operation with a fixture that decodes against its type.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/new-ops.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/new-ops.test.ts)`
 - Red step: A stub answer with a missing field fails the decode before the type exists.
 - Depends on: none
 - Commit: `console: the new operations' contract (F24)`
@@ -121,25 +121,25 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 
 #### AL: the argv rows, IPC operations, bridge, floors, the narrowed never-table and the section 5.1 and contract text
 
-- Acceptance: `SPAWN_COMMANDS` and `CONSOLE_OPERATIONS` gain, as one change, `runs.stream` (`runs ls --stream --json --since <w>`), `whoami` (`user ls --me --json`), `spend.stream` (the `spend.report` argv plus `--stream`), `budget.stream` (the `budget.show` argv plus `--stream`), `image.catalog.ls` (`image catalog ls --json`), `recipes.ls` (`recipes ls --json`), `setup.plan` (`setup --plan-only --answers-file <path> --events --json`), `setup.apply` (`setup --answers-file <path> --events --json`, payload `{}`: apply carries nothing and reuses the file and digest main stored at plan time, so a renderer cannot slip in new answers at apply) and `settings.editor.open` (payload `{key}` only, validated with `SETTINGS_KEY_RE` and the closed payload schema; the layer and phase stay main-process decided), each with its sanitiser class and no flag the renderer can choose; each new operation is registered in `ipc.ts` with an explicit handler that answers 'not available in this build', so the existing startup check (`refuses to build a surface with a handler missing`) still holds and still stops the console when a handler is truly missing; the handlers sit behind the same wrappers as every other (`lapseHandlers`, `reducedModeHandlers`, and the refused-console rule that a refused console registers nothing), so a lapsed console refuses `setup.apply` and a refused console has no channel, and duplicate or unknown registrations are refused; I-OPS replaces the explicit stubs through the `gated` table in `console/src/main/index.ts`; main chooses `<path>` (a fresh `mkdtemp` directory, mode 0700, the file 0600) and the renderer sends only an answers object, which a payload schema refuses if it carries a path; `setup.apply` carries `refusedAfterLapse` as `settings.edit` does (the licence-lapse read-only gate, nothing more); **bounds:** `runs.stream` and the setup event feed are read under `MAX_FEED_LINE_LENGTH` per line, a row cap and a total byte cap, and `setup.*` have a deadline of their own (never the 90 s `READ_TIMEOUT_MS`, which would kill an apply part-way; the run ends on the CLI's exit or the user's cancel); the `setup` command row of `NEVER_REACHABLE` is replaced by argv rows that refuse every `setup` vector except those two, with `assertSpawnSurface` and the `ipc.test.ts` pin of the `setup` never-row following; the `models` never-rows are left for MW1; design §3.4 rule 3 (the renderer never names a cloud project; the existing `--gcp-project` and `--region` rows guard `run`) is amended to say that the wizard's answers, validated in main and shown in the confirmation window, are the one way a project name reaches the CLI from the console; `version.ts` gains one plain floor constant per new row, each `string | null = null` until the CLI release that carries it and each pinned by `version.test.ts`; §5.1 of `desktop-console.md` gains a row each, rule 12 describes the single modal (D2902) and the 2026-10-20 ruling is amended (D2904); `console/docs/json-contract.md` says four documents are line-delimited and states the new read documents and the two write operations, with its pinned sentences in `docs_desktop_console_test.go` updated; the old `settings.edit` operation is unchanged and stays main-confirmed.
-- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/preload/index.ts`; `console/src/shared/version.ts`; `console/test/unit/spawn.test.ts`; `console/test/unit/ipc.test.ts`; `docs/design/desktop-console.md`; `console/docs/json-contract.md`; `internal/cli/docs_desktop_console_test.go`; `console/test/unit/version.test.ts`
-- Interfaces: Consumes RS1, RS3, RS4, WH1 and ST2 (the CLI registers the flags the allow-list names, which `TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands); produces the argv table, the operations, the handler registry, the bridge methods and the floors every console task spawns through.
-- Tests: `spawn.test.ts` (an exact-argv pin per row and a mutation per row that a widened argv is refused), `ipc.test.ts` (each operation pinned, a renderer-supplied path refused, a frame of another origin refused, the `setup` never-rows), `pinning.test.ts`, `version.test.ts`, `TestDocsDesktopConsole*` in `internal/cli/docs_desktop_console_test.go`. The `refuses to build a surface with a handler missing` test in `ipc.test.ts` stays green; new tests: a lapsed console refuses `setup.apply`, a refused console has no channel for the new operations.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/ipc.test.ts test/unit/pinning.test.ts test/unit/version.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
+- Acceptance: `SPAWN_COMMANDS` and `CONSOLE_OPERATIONS` gain, as one change, `runs.stream` (`runs ls --stream --json --since <w>`), `whoami` (`user ls --me --json`), `spend.stream` (the `spend.report` argv plus `--stream`), `budget.stream` (the `budget.show` argv plus `--stream`), `image.catalog.ls` (`image ls --json`), `recipes.ls` (`recipes ls --json`), `setup.plan` (`setup --plan-only --answers-file <path> --events --json`), `setup.apply` (`setup --answers-file <path> --events --json`, payload `{}`: apply carries nothing and reuses the file and digest main stored at plan time, so a renderer cannot slip in new answers at apply) and `settings.editor.open` (payload `{key}` only, validated with `SETTINGS_KEY_RE` and the closed payload schema; the layer and phase stay main-process decided), each with its sanitiser class and no flag the renderer can choose; each new operation is added to the closed `ConsoleHandlers` type in `ipc.ts`, to the `Omit` of `CliBackedHandlers` in `console/src/source/source.ts`, and to the `gated` table in `console/src/main/index.ts` with an explicit handler that answers 'not available in this build', so the existing startup check (`refuses to build a surface with a handler missing`) still holds and still stops the console when a handler is truly missing; the handlers sit behind the same wrappers as every other (`lapseHandlers`, `reducedModeHandlers`, and the refused-console rule that a refused console registers nothing), so a lapsed console refuses `setup.apply` and a refused console has no channel, and duplicate or unknown registrations are refused; I-OPS replaces the explicit stubs through the `gated` table in `console/src/main/index.ts`; main chooses `<path>` (a fresh `mkdtemp` directory, mode 0700, the file 0600) and the renderer sends only an answers object, which a payload schema refuses if it carries a path; `setup.apply` carries `refusedAfterLapse` as `settings.edit` does (the licence-lapse read-only gate, nothing more); **bounds:** `runs.stream`, `spend.stream`, `budget.stream` and the setup event feed are read under `MAX_FEED_LINE_LENGTH` per line, a row cap and a total byte cap, and `setup.*` have a deadline of their own (never the 90 s `READ_TIMEOUT_MS`, which would kill an apply part-way; the run ends on the CLI's exit or the user's cancel); the `setup` command row of `NEVER_REACHABLE` **stays**, and `except` (today a flag-row field, `ipc.ts`) is extended to command rows so that row grants exactly the operations `setup.plan` and `setup.apply` by name, with `assertSpawnSurface` and the `ipc.test.ts` pin of the `setup` never-row following (a total ban with two named exceptions, never a denylist); the `models` never-rows are left for MW1; design §3.4 rule 3 (the renderer never names a cloud project; the existing `--gcp-project` and `--region` rows guard `run`) is amended to say that the wizard's answers, validated in main and shown in the confirmation window, are the one way a project name reaches the CLI from the console; `version.ts` gains one plain floor constant per new row, each `string | null = null` until the CLI release that carries it and each pinned by `version.test.ts`; §5.1 of `desktop-console.md` gains a row each, rule 12 describes the single modal (D2902) and the 2026-10-20 ruling is amended (D2904); `console/docs/json-contract.md` says four documents are line-delimited and states the new read documents and the two write operations, with its pinned sentences in `docs_desktop_console_test.go` updated; the old `settings.edit` operation is unchanged and stays main-confirmed. `REDUCED_VIEW_OPERATIONS` gains `spend.stream` under `spend` and `budget.stream` under `caps`, so reduced mode withholds them in main as well as in the renderer.
+- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/main/index.ts`; `console/src/source/source.ts`; `console/src/preload/index.ts`; `console/src/shared/version.ts`; `console/test/unit/spawn.test.ts`; `console/test/unit/ipc.test.ts`; `console/test/unit/version.test.ts`; `docs/design/desktop-console.md`; `console/docs/json-contract.md`; `internal/cli/docs_desktop_console_test.go`
+- Interfaces: Consumes RS1, WH1 and ST2 (the CLI in the tree registers every flag word the allow-list names, which `TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands: `--stream` arrives with RS1, so RS3 and RS4 need not precede it; their rows stay behind floors that are `null` until the release); produces the argv table, the operations, the bridge methods, the stub handlers and the floors every console task spawns through.
+- Tests: `spawn.test.ts` (an exact-argv pin per row and a mutation per row that a widened argv is refused), `ipc.test.ts` (each operation pinned, a renderer-supplied path refused, a frame of another origin refused, the `setup` never-rows), `pinning.test.ts`, `version.test.ts`, `TestDocsDesktopConsole*` in `internal/cli/docs_desktop_console_test.go`. The `refuses to build a surface with a handler missing` test in `ipc.test.ts` stays green; new tests: a lapsed console refuses `setup.apply`, a refused console has no channel for the new operations. Also: `spend.stream` and `budget.stream` are unreachable in reduced mode; `except` on a command row grants only the operations it names.
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/ipc.test.ts test/unit/pinning.test.ts test/unit/version.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
 - Red step: Each row's pin fails while the row is absent; adding `--yes` or a renderer-chosen `--answers-file` path to `setup.apply` must fail a test; a lapsed console must refuse `setup.apply`, a refused console must register no new channel, and a missing handler must still stop the console at startup; the docs pin fails until the contract sentences say four.
-- Depends on: **RS1** (the docs pin holds the allow-list's flags to flags the CLI registers); **WH1** (same); **ST2** (same); **SM-E** (both write `console/docs/json-contract.md`); **RS3** (the docs pin holds the allow-list's flags to flags the CLI registers); **RS4** (same)
+- Depends on: **RS1** (the docs pin holds the allow-list's flags to flags the CLI registers); **WH1** (same); **ST2** (same); **SM-E** (both write `console/docs/json-contract.md`)
 - Commit: `console(spawn): the rows, operations and floors the improvements need (F24, F25, F26)`
 - Reviewer tier: opus, independent review mandatory (the spawn and IPC allow-lists and a write operation); tier `large`, size 6
 
 #### I-OPS: retire the stub bridge and hold the allow-list to the contract (integration)
 
-- Acceptance: The stub bridge is deleted and every consumer runs on the real bridge; `handlers.ts` supplies SU1's `settings.editor.open` handler, SW3a's `setup.plan` and `setup.apply` handlers and the read handlers SRC adds, and fills the `gated` table in `index.ts` with them before `registerHandlers` runs, so every handler still passes the lapse and reduced-mode wrappers (a refused console still registers nothing); `ops-contract.test.ts` fails if `CONSOLE_OPERATIONS` and `new-ops.ts` disagree on a name or a payload field, if a handler's signature differs from the contract's, or if a stub answer differs from the CLI golden it stands for (`internal/cli/testdata/runs_stream.golden.ndjson`, `whoami.golden.json`, `setup_events.golden.ndjson`; the console reads them as bytes); `ops.spec.ts` drives one operation of each consumer against the stub CLI.
+- Acceptance: The stub bridge is deleted and every consumer runs on the real bridge; `handlers.ts` supplies SU1's `settings.editor.open` handler, SW3a's `setup.plan` and `setup.apply` handlers and the read handlers SRC adds, and replaces AL's stub handlers in the `gated` table in `index.ts` with them before `registerHandlers` runs, so every handler still passes the lapse and reduced-mode wrappers (a refused console still registers nothing); `ops-contract.test.ts` fails if `CONSOLE_OPERATIONS` and `new-ops.ts` disagree on a name or a payload field, if a handler's signature differs from the contract's, or if a stub answer differs from the CLI golden it stands for (`internal/cli/testdata/runs_stream.golden.ndjson`, `whoami.golden.json`, `setup_events.golden.ndjson`, `budget_stream.golden.ndjson` and `ee/report/cli/testdata/report_stream.golden.ndjson`; the console reads them as bytes); `ops.spec.ts` drives one operation of each consumer against the stub CLI.
 - Files: `console/src/renderer/stubs/bridge-stub.ts`; `console/src/main/handlers.ts` (new); `console/src/main/index.ts`; `console/test/unit/ops-contract.test.ts` (new); `console/test/e2e/ops.spec.ts` (new)
 - Interfaces: Joins C-OPS, AL, SRC, SU1, RB4, RS2, MO-C and SW3a.
 - Tests: `ops-contract.test.ts` (new), `ops.spec.ts` (new).
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/ops-contract.test.ts) && test -f console/test/e2e/ops.spec.ts && (cd console && npm run test:e2e -- ops.spec.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/ops-contract.test.ts) && test -f console/test/e2e/ops.spec.ts && (cd console && npm run test:e2e -- ops.spec.ts)`
 - Red step: Rename one operation in `ipc.ts` in a copy: the contract test fails; take a handler out of the `gated` table: the surface check stops the console at startup and the e2e spec fails.
-- Depends on: **C-OPS** (integrates the contract); **AL** (needs the real operations); **SU1** (needs the real consumer); **RB4** (needs the real consumer); **RS2** (needs the real consumer); **MO-C** (needs the real consumer); **SW3a** (needs the real consumer); **SRC** (needs the real consumer)
+- Depends on: **C-OPS** (integrates the contract); **AL** (needs the real operations); **SU1** (needs the real consumer); **RB4** (needs the real consumer); **RS2** (needs the real consumer); **MO-C** (needs the real consumer); **SW3a** (needs the real consumer); **SRC** (needs the real consumer); **RS3** (compares the console's copy with the report golden); **RS4** (compares the console's copy with the budget golden)
 - Commit: `console: the stub bridge is gone and the operations match the contract (F24)`
 - Reviewer tier: standard; tier `medium`, size 2
 
@@ -149,7 +149,7 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 - Files: `console/src/renderer/section.ts`; `console/src/renderer/screens/degraded.ts`; `console/src/renderer/cache-invalidate.ts` (new); `console/src/renderer/entry.ts`; `console/test/unit/section.test.ts`
 - Interfaces: Produces `invalidate`, the Retry control and the empty-state strings.
 - Tests: `section.test.ts` (extended), `entry-wiring.test.ts`, `degraded.test.ts`.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/section.test.ts test/unit/entry-wiring.test.ts test/unit/degraded.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/section.test.ts test/unit/entry-wiring.test.ts test/unit/degraded.test.ts)`
 - Red step: A test that a settings write leaves the Project tab's cache entry gone fails before `invalidate` exists.
 - Depends on: none
 - Commit: `console: Retry, empty states, write invalidation (R1, R2)`
@@ -173,7 +173,7 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 - Files: `console/src/renderer/gating.ts` (new); `console/src/renderer/writes.ts`; `console/src/renderer/entry.ts`; `console/test/unit/gating.test.ts` (new); `console/test/e2e/gating.spec.ts` (new)
 - Interfaces: Consumes the `whoami` op (AL) and WH1's shape; produces `can`.
 - Tests: `gating.test.ts` (new): each role, `none`, no answer; `gating.spec.ts` (new): a viewer's write controls are disabled with the tooltip.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/gating.test.ts test/unit/entry-wiring.test.ts) && test -f console/test/e2e/gating.spec.ts && (cd console && npm run test:e2e -- gating.spec.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/gating.test.ts test/unit/entry-wiring.test.ts) && test -f console/test/e2e/gating.spec.ts && (cd console && npm run test:e2e -- gating.spec.ts)`
 - Red step: A test that a viewer's control is disabled fails while `can` does not exist.
 - Depends on: **WH1** (decodes the document and fixture the CLI task produces); **C-OPS** (built against the operations' names and types and the stub bridge); **RB1** (both write `entry.ts`)
 - Commit: `console: role-gated controls with a reason (D2907, F22)`
@@ -181,13 +181,13 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 
 #### PL1: the skills name the new flags
 
-- Acceptance: The working and setup skills name `runs ls --stream`, `user ls --me` and `setup --answers-file --events` exactly as the CLI spells them, and the plugin's command-and-flag tests pass.
+- Acceptance: The working and setup skills name `runs ls --stream`, `report --stream`, `budget show --stream`, `user ls --me` and `setup --answers-file --events` exactly as the CLI spells them, and the plugin's command-and-flag tests pass.
 - Files: `plugin/skills/working/SKILL.md`; `plugin/skills/setup/SKILL.md`
 - Interfaces: Consumes RS1, WH1, ST2.
 - Tests: The plugin tests that check every command and flag a skill names.
 - Command: `go test ./plugin/ -count=1`
 - Red step: Name a flag the CLI lacks in a copy: the plugin test fails.
-- Depends on: **RS1** (names a flag that must exist); **WH1** (names a flag that must exist); **ST2** (names a flag that must exist)
+- Depends on: **RS1** (names a flag that must exist); **WH1** (names a flag that must exist); **ST2** (names a flag that must exist); **RS3** (names a flag that must exist); **RS4** (names a flag that must exist)
 - Commit: `plugin: the skills name the new flags (F24)`
 - Reviewer tier: opus, independent review mandatory (plugin skills); tier `small`, size 1
 
@@ -198,7 +198,7 @@ Metadata first, then the one modal and the accordion; the inline editor is delet
 
 #### SM0: the settings metadata type and its table
 
-- Acceptance: `Meta{Label, Description, Group, Type, Enum, Min, Max}`, `Register(key, Meta)` (a duplicate key is refused) and `Lookup(key)` exist in `internal/settings` with an empty table; `Type` is one of `string|bool|int|float|duration|enum`; the group order is one exported list. The tests that need `settingsGenericKey` and `settingsReparse` live in `internal/cli` (they are unexported there and `internal/settings` cannot import `cli`), so SM0 only tests the table itself.
+- Acceptance: `Meta{Label, Description, Group, Type, Enum, Min, Max, Format}` (`Format` names one of a closed list of formats the CLI already validates, such as a duration, a repository `owner/name` or an e-mail address, or is empty), `Register(key, Meta)` (a duplicate key is refused) and `Lookup(key)` exist in `internal/settings` with an empty table; `Type` is one of `string|bool|int|float|duration|enum`; the group order is one exported list. The tests that need `settingsGenericKey` and `settingsReparse` live in `internal/cli` (they are unexported there and `internal/settings` cannot import `cli`), so SM0 only tests the table itself.
 - Files: `internal/settings/meta.go` (new); `internal/settings/meta_test.go` (new)
 - Interfaces: Produces `Meta`, `Register`, `Lookup`, the group order.
 - Tests: `TestMetaRegisterRefusesDuplicate`, `TestMetaLookupMissingKey` (new).
@@ -210,7 +210,7 @@ Metadata first, then the one modal and the accordion; the inline editor is delet
 
 #### SM-E: settings --json and settings get emit the metadata, and the schema says so
 
-- Acceptance: Each `settingsJSON` row carries `label`, `description`, `group`, `type`, `enum`, `min`, `max` when `Lookup` has them and omits them when not; the schema gains the seven members as optional on `$defs.row` (added members within version 1, D848) and the console fixture carries them on three rows; `json-contract.md` §6.19 lists them and says a missing member means 'fall back to the key and a text control'; `settings get KEY` text prints the label and the description above the value; no existing member changes meaning.
+- Acceptance: Each `settingsJSON` row carries `label`, `description`, `group`, `type`, `enum`, `min`, `max`, `format` when `Lookup` has them and omits them when not; the schema gains the eight members as optional on `$defs.row` (added members within version 1, D848) and the console fixture carries them on three rows; `json-contract.md` §6.19 lists them and says a missing member means 'fall back to the key and a text control'; `settings get KEY` text prints the label and the description above the value; no existing member changes meaning.
 - Files: `internal/cli/settings_render.go`; `internal/cli/settings_render_meta_test.go` (new); `schemas/settings.schema.json`; `console/test/fixtures/settings.json`; `console/docs/json-contract.md`
 - Interfaces: Consumes `settings.Lookup` (SM0); produces the emitted members, the schema members and the fixture rows the console tasks read.
 - Tests: `TestSettingsJSONCarriesMeta` and `TestSettingsGetTextShowsLabel` (new); `TestSettingsSchema`, `TestSettingsConsoleFixture` and `TestSettingsConsoleFixtureOwnerAndWritable` stay green.
@@ -283,10 +283,10 @@ Metadata first, then the one modal and the accordion; the inline editor is delet
 #### SU1: one main-process modal for entry, validation, diff and confirmation
 
 - Acceptance: The modal shows the label, the description, the raw key (subtle), the current value, the control for the key's type (select for a small enum, toggle for a bool, number input with min and max, text with the metadata's format), OK disabled until the client validation passes, inline errors, and 'Reset to default' with the built-in default (R6); OK runs the dry run and the same window then shows old/new/layer/widening and the exact argv, and a second OK writes; every property of rules 11 and 12 holds (cancel is the default, only the window's own top frame answers, a yes waits `CONFIRM_READY_DELAY_MS`); a key with no metadata falls back to the key and a text control; list, map and entry keys show read-only with the command to copy (R5); every string from the CLI passes `TEXT_CLASSES`. The confirm window's channel changes shape (today it answers only `answer(yes, ticked?)` in `src/preload/confirm.ts`) to carry a typed value or a reset, and that shape is pinned in `confirm.test.ts`; SU1 is one of the tasks allowed to change an IPC shape, with an independent review.
-- Files: `console/src/main/confirm.ts`; `console/src/main/settingsedit.ts`; `console/src/main/settingsview.ts`; `console/src/renderer/confirm.ts`; `console/src/preload/confirm.ts`; `console/test/unit/confirm.test.ts`
+- Files: `console/src/main/confirm.ts`; `console/src/main/settingsedit.ts`; `console/src/main/settingsview.ts`; `console/src/renderer/confirm.ts`; `console/src/preload/confirm.ts`; `console/test/unit/confirm.test.ts`; `console/test/unit/settingsview.test.ts`
 - Interfaces: Consumes the metadata members (SM-E) and the `settings.editor.open` payload and handler signature (C-OPS); produces the handler function the integration task registers and the outcome the renderer redraws from.
 - Tests: `settingsview.test.ts` (extended), `confirm.test.ts`, `settings-write-floor.test.ts`; a mutation check that a renderer frame cannot answer.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/settingsview.test.ts test/unit/confirm.test.ts test/unit/settings-write-floor.test.ts test/unit/ipc.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/settingsview.test.ts test/unit/confirm.test.ts test/unit/settings-write-floor.test.ts test/unit/ipc.test.ts)`
 - Red step: A test that a number outside `min..max` leaves OK disabled fails before the control exists.
 - Depends on: **SM-E** (the controls are built against the emitted members and the fixture); **C-OPS** (built against the operation's payload and the handler signature, and the stub bridge)
 - Commit: `console(settings): one modal for entry and confirmation (D2902, F6, F10)`
@@ -298,7 +298,7 @@ Metadata first, then the one modal and the accordion; the inline editor is delet
 - Files: `console/src/renderer/screens/projects.ts`; `console/src/renderer/theme/screens.css`; `console/test/unit/projects.test.ts`; `console/test/e2e/projects.spec.ts`
 - Interfaces: Consumes the `settings --json` members (SM-E).
 - Tests: `projects.test.ts` (extended: grouping, collapsed default, search expands, fallback group); `projects.spec.ts`.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/projects.test.ts) && (cd console && npm run test:e2e -- projects.spec.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/projects.test.ts) && (cd console && npm run test:e2e -- projects.spec.ts)`
 - Red step: The search test fails while the panel is a flat list.
 - Depends on: **SM-E** (the groups and search read the emitted members); **LP2** (both write `theme/screens.css`)
 - Commit: `console(settings): accordion groups and search (D2908, R7)`
@@ -310,7 +310,7 @@ Metadata first, then the one modal and the accordion; the inline editor is delet
 - Files: `console/src/renderer/entry.ts`; `console/src/renderer/screens/projects.ts`; `console/test/unit/entry-wiring.test.ts`; `console/test/unit/projects.test.ts`
 - Interfaces: Consumes SU1's window and AL's op.
 - Tests: `entry-wiring.test.ts` (extended), `projects.test.ts`.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/entry-wiring.test.ts test/unit/projects.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/entry-wiring.test.ts test/unit/projects.test.ts)`
 - Red step: A test that the row contains no `input` after the pencil is pressed fails while the inline editor exists.
 - Depends on: **SU1** (the inline editor is deleted together with the window that replaces it); **SU2a** (both write `projects.ts`); **I-MG** (both write `projects.ts`); **RS2** (both write `entry.ts`)
 - Commit: `console(settings): the pencil opens the modal; inline editor removed (D2902, F6)`
@@ -348,19 +348,19 @@ A measurement, then an opt-in stream and its decoder.
 
 #### RS3: report --stream
 
-- Acceptance: FIRST the task writes in its pull-request body how `report --json` is assembled and which part of it can be emitted before the whole is known (a row per group, a total last); if nothing can, it stops and reports. Then `report --stream` (with `--json`, accepted with the flags `report` takes today: `--by`, `--since`, `--until`, `--repo`) writes one NDJSON line per record in the `row`/`end`/`error` shape RS1 uses (a `row` is one element of today's document, unchanged; the `end` carries the totals and the document `version`); without `--stream` the output is byte for byte what it was; the schema and a golden recorded from the CLI's own output hold the shape.
-- Files: `internal/cli/report.go`; `internal/cli/report_stream.go` (new); `internal/cli/report_stream_test.go` (new); `schemas/report-stream.schema.json` (new); `internal/cli/testdata/report_stream.golden.ndjson` (new)
+- Acceptance: `report` is a paid command under `ee/` (`ee/report/cli/report.go`; `paidCommands` in `internal/cli/extend.go`), so `.claude/rules/ee.md` applies: every new file carries the two-line SPDX notice (the golden, which has no comment syntax, gets a sibling `.license` file) and nothing outside `ee/` imports it. FIRST the task writes in its pull-request body how `report --json` is assembled and which part of it can be emitted before the whole is known (a row per group, a total last); if nothing can, it stops and reports. Then `report --stream` (with `--json`, accepted with the flags `report` takes today: `--by`, `--since`, `--until`, `--repo`) writes one NDJSON line per record in the `row`/`end`/`error` shape RS1's schema states (its own writer: `ee/` may not be imported from the core and RS1's writer is in package `cli`) (a `row` is one element of today's document, unchanged; the `end` carries the totals and the document `version`); without `--stream` the output is byte for byte what it was; the schema and a golden recorded from the CLI's own output hold the shape.
+- Files: `ee/report/cli/report.go`; `ee/report/cli/report_stream.go` (new); `ee/report/cli/report_stream_test.go` (new); `schemas/report-stream.schema.json` (new); `ee/report/cli/testdata/report_stream.golden.ndjson` (new); `ee/report/cli/testdata/report_stream.golden.ndjson.license` (new)
 - Interfaces: Produces the stream, the schema and the golden.
 - Tests: `TestReportStreamRows`, `TestReportStreamEndCarriesTotals`, `TestReportJSONUnchanged`, `TestReportStreamSchema`, `TestReportStreamGolden` (new).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestReportStream|TestReportJSONUnchanged'`
+- Command: `go test ./ee/report/cli/ -count=1 -run 'TestReportStream|TestReportJSONUnchanged' && go test ./internal/eeboundary/ -count=1`
 - Red step: `TestReportStreamEndCarriesTotals` fails while the stream has no `end` line; `TestReportJSONUnchanged` is written first and stays green.
-- Depends on: **RS1** (reuses RS1's stream writer and line shape (`runs_stream.go`))
+- Depends on: none
 - Commit: `report: --stream, one record per line (O3, D2906)`
 - Reviewer tier: standard; tier `medium`, size 3
 
 #### RS4: budget show --stream
 
-- Acceptance: FIRST the task writes in its pull-request body how `budget show --json` reads its sources (config, spend, repos, agents, kill state) and which can be emitted as they arrive; if its shape is one indivisible document, it stops and reports. Then `budget show --stream` (with `--json`) writes `row` lines per repository and per kill switch as their reads complete, then an `end` line; without `--stream` the output is byte for byte what it was; the schema and a golden hold the shape.
+- Acceptance: FIRST the task writes in its pull-request body how `budget show --json` reads its sources (config, spend, repos, agents, kill state) and which can be emitted as they arrive; if its shape is one indivisible document, it stops and reports. Then `budget show --stream` (with `--json`, and with every flag `budget show` takes today: `--repo`, `--all`, `--compute`, each meaning what it means without `--stream`) writes `row` lines per repository and per kill switch as their reads complete, then an `end` line; without `--stream` the output is byte for byte what it was; the schema and a golden hold the shape.
 - Files: `internal/cli/budget.go`; `internal/cli/budget_stream.go` (new); `internal/cli/budget_stream_test.go` (new); `schemas/budget-stream.schema.json` (new); `internal/cli/testdata/budget_stream.golden.ndjson` (new)
 - Interfaces: Produces the stream, the schema and the golden.
 - Tests: `TestBudgetShowStreamRows`, `TestBudgetShowStreamEnd`, `TestBudgetShowJSONUnchanged`, `TestBudgetStreamSchema`, `TestBudgetStreamGolden` (new).
@@ -376,7 +376,7 @@ A measurement, then an opt-in stream and its decoder.
 - Files: `console/src/renderer/stream.ts` (new); `console/src/renderer/entry.ts`; `console/src/renderer/section.ts`; `console/test/unit/stream.test.ts` (new); `console/test/e2e/runs-stream.spec.ts` (new)
 - Interfaces: Consumes AL's `runs.stream` and RS1's line shape; produces `readStream`.
 - Tests: `stream.test.ts` (new): in-order rows, interrupted read, old-CLI fallback; `runs-stream.spec.ts` (new): rows appear before `end`.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/stream.test.ts test/unit/section.test.ts) && test -f console/test/e2e/runs-stream.spec.ts && (cd console && npm run test:e2e -- runs-stream.spec.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/stream.test.ts test/unit/section.test.ts) && test -f console/test/e2e/runs-stream.spec.ts && (cd console && npm run test:e2e -- runs-stream.spec.ts)`
 - Red step: The interrupted-read test fails while a missing `end` is treated as complete.
 - Depends on: **RS1** (decodes the fixture and the line shape the CLI task produces); **RB1** (both write `section.ts`); **RB4** (both write `entry.ts`); **C-OPS** (built against the operations' names and types and the stub bridge)
 - Commit: `console(runs): rows render as they arrive (D2906, F18)`
@@ -384,11 +384,11 @@ A measurement, then an opt-in stream and its decoder.
 
 #### SRC: the main-side handlers and fixtures for the six new reads
 
-- Acceptance: `handlersFor` answers `runs.stream`, `spend.stream` and `budget.stream` (a line-by-line feed under the per-line, row and byte caps), `whoami`, `image.catalog.ls` and `recipes.ls` from the CLI source, and from the fixture source for the e2e specs; every answer passes `TEXT_CLASSES`; a CLI below the floor, or a floor still `null`, answers the section's refusal and Retry rather than spawning.
-- Files: `console/src/source/source.ts`; `console/src/source/cli.ts`; `console/src/source/fixture.ts`; `console/test/unit/source-new-reads.test.ts` (new)
+- Acceptance: `new-reads.ts`, typed from `new-ops.ts` (C-OPS), answers `runs.stream`, `spend.stream` and `budget.stream` (a line-by-line feed under the per-line, row and byte caps), `whoami`, `image.catalog.ls` and `recipes.ls` from the CLI source, and from the fixture source for the e2e specs; every answer passes `TEXT_CLASSES`; a CLI below the floor, or a floor still `null`, answers the section's refusal and Retry rather than spawning. The handlers are not added to `handlersFor` here (the names do not exist in its type until AL lands); I-OPS swaps AL's stubs in the `gated` table for them.
+- Files: `console/src/source/new-reads.ts` (new); `console/src/source/fixture.ts`; `console/test/unit/source-new-reads.test.ts` (new)
 - Interfaces: Consumes the operations' payloads and handler signatures (C-OPS); produces the read handlers I-OPS registers.
 - Tests: `source-new-reads.test.ts` (new): each read from a stub child, the caps, the floor refusal.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/source-new-reads.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/source-new-reads.test.ts)`
 - Red step: The cap test fails while a line longer than `MAX_FEED_LINE_LENGTH` is accepted.
 - Depends on: **C-OPS** (built against the payloads and handler signatures)
 - Commit: `console(source): handlers and fixtures for runs.stream, whoami, image catalog and recipes reads (F24)`
@@ -400,7 +400,7 @@ A measurement, then an opt-in stream and its decoder.
 - Files: `console/src/renderer/prewarm.ts` (new); `console/src/renderer/entry.ts`; `console/test/unit/prewarm.test.ts` (new)
 - Interfaces: Consumes `resultCache` and `invalidate` (RB1).
 - Tests: `prewarm.test.ts` (new): order, one at a time, cancelled on switch, nothing in reduced mode.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/prewarm.test.ts test/unit/section.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/prewarm.test.ts test/unit/section.test.ts)`
 - Red step: The cancel test fails while the queue keeps reading after a tab switch.
 - Depends on: **RB1** (uses the cache API it adds); **RS2** (both write `entry.ts`); **SU2b** (both write `entry.ts`)
 - Commit: `console: prewarm the other tabs after the first paint (D2906)`
@@ -412,7 +412,7 @@ A measurement, then an opt-in stream and its decoder.
 - Files: `console/src/renderer/screens/spend.ts`; `console/src/renderer/screens/projects.ts`; `console/src/renderer/stream.ts`; `console/test/unit/spend-stream.test.ts` (new); `console/test/unit/projects-stream.test.ts` (new)
 - Interfaces: Consumes `spend.stream` and `budget.stream` (C-OPS types, I-OPS wiring) and RS2's `readStream`.
 - Tests: `spend-stream.test.ts` and `projects-stream.test.ts` (new): in-order rows, interrupted read, old-CLI fallback, reduced mode.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spend-stream.test.ts test/unit/projects-stream.test.ts test/unit/spend.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spend-stream.test.ts test/unit/projects-stream.test.ts test/unit/spend.test.ts)`
 - Red step: The reduced-mode test fails while the stream path ignores `hidesView`.
 - Depends on: **RS2** (uses `readStream`); **RS3** (decodes the report stream's golden); **RS4** (decodes the budget stream's golden); **SU2b** (both write `projects.ts`)
 - Commit: `console: Spend and Project draw rows as they arrive (O3, D2906)`
@@ -429,7 +429,7 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/renderer/manage/types.ts` (new); `console/src/renderer/manage/command.ts` (new); `console/test/unit/manage-types.test.ts` (new); `docs/console-improvements/manage-kinds.md` (new)
 - Interfaces: Produces the descriptor type and the group order.
 - Tests: `manage-types.test.ts` (new): a kind with an unknown group is refused; `;`, `$(`, a backtick, a newline, a space, a leading `-`, `=`, `@` or `~` and a `..` segment in a token are refused.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-types.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-types.test.ts)`
 - Red step: The unknown-group test fails before the type exists.
 - Depends on: none
 - Commit: `console(manage): the kind descriptor (D2903)`
@@ -441,7 +441,7 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/renderer/manage/shell.ts` (new); `console/src/renderer/theme/manage.css` (new); `console/test/unit/manage-shell.test.ts` (new)
 - Interfaces: Consumes `ManageKind` (MG0); produces `mountManage(kinds)`, which the integration task calls; tested against fixture kinds.
 - Tests: `manage-shell.test.ts` (new): groups, per-kind busy and refusal, copy action.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-shell.test.ts test/unit/projects.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-shell.test.ts test/unit/projects.test.ts)`
 - Red step: A test that one kind's refusal leaves the others drawn fails while the shell uses one read.
 - Depends on: **MG0** (built against the descriptor)
 - Commit: `console(manage): the Manage section shell (R3, D2903)`
@@ -453,7 +453,7 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/renderer/manage/kinds/people.ts` (new); `console/test/unit/manage-people.test.ts` (new); `console/test/fixtures/members.json`
 - Interfaces: Consumes `ManageKind` (MG0); the existing `members.list` and `accounts.inventory` ops.
 - Tests: `manage-people.test.ts` (new).
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-people.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-people.test.ts)`
 - Red step: A test that no write control exists fails if one is added.
 - Depends on: **MG0** (built against the descriptor)
 - Commit: `console(manage): people and access lists (D2903, D2905)`
@@ -465,7 +465,7 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/renderer/manage/kinds/models.ts` (new); `console/src/renderer/manage/kinds/keys.ts` (new); `console/test/unit/manage-models.test.ts` (new)
 - Interfaces: Consumes `ManageKind` (MG0); the existing `models.list` and `secrets.inventory` ops.
 - Tests: `manage-models.test.ts` (new).
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-models.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-models.test.ts)`
 - Red step: A test that no input element exists in the keys kind fails if one is added.
 - Depends on: **MG0** (built against the descriptor)
 - Commit: `console(manage): models and keys lists (D2903, D2905)`
@@ -477,7 +477,7 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/renderer/manage/kinds/budget.ts` (new); `console/test/unit/manage-budget.test.ts` (new)
 - Interfaces: Consumes `ManageKind` (MG0) and `budget.show`.
 - Tests: `manage-budget.test.ts` (new), including the reduced-mode case.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-budget.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-budget.test.ts)`
 - Red step: The reduced-mode test fails while the kind ignores `hidesView`.
 - Depends on: **MG0** (built against the descriptor)
 - Commit: `console(manage): budget list (D2903, D2909)`
@@ -489,7 +489,7 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/renderer/manage/kinds/repos.ts` (new); `console/src/renderer/manage/kinds/images.ts` (new); `console/src/renderer/manage/kinds/recipes.ts` (new); `console/test/unit/manage-code.test.ts` (new)
 - Interfaces: Consumes `ManageKind` (MG0) and AL's two new ops.
 - Tests: `manage-code.test.ts` (new).
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-code.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-code.test.ts)`
 - Red step: A test that the remove action only copies text fails if it spawns.
 - Depends on: **MG0** (built against the descriptor); **C-OPS** (built against the operations' names and types and the stub bridge)
 - Commit: `console(manage): code lists (D2903, D2413)`
@@ -501,7 +501,7 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/renderer/manage/kinds/index.ts` (new); `console/src/renderer/screens/projects.ts`; `console/test/e2e/manage.spec.ts` (new)
 - Interfaces: Joins MG0, MO-SH and the four kind tasks.
 - Tests: `manage.spec.ts` (new).
-- Command: `test -f console/test/e2e/manage.spec.ts && (cd console && npm run test:e2e -- manage.spec.ts)`
+- Command: `(cd console && npm run typecheck) && test -f console/test/e2e/manage.spec.ts && (cd console && npm run test:e2e -- manage.spec.ts)`
 - Red step: Leave one kind out of `index.ts`: the e2e spec fails on the missing group row.
 - Depends on: **MG0** (the index lists kinds typed by the descriptor); **MO-SH** (mounts the shell); **MO-P** (lists the kind); **MO-K** (lists the kinds); **MO-B** (lists the kind); **MO-C** (lists the kinds); **SU2a** (both write `projects.ts`)
 - Commit: `console(manage): mount the Manage section on the real kinds (D2903)`
@@ -513,23 +513,23 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/models.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`
 - Interfaces: Consumes the Manage list (I-MG), the modal (SU1), `invalidate` (RB1) and the ops table (AL).
 - Tests: `spawn.test.ts` (exact argv per write and a widened-argv mutation), `models-writes.test.ts` (new).
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/models-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/models-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
 - Red step: The exact-argv pin for `models add` fails while the row is absent; a test that `models use` and `models rm` are refused fails if either is allowed.
 - Depends on: **I-MG** (adds an action to the list kind the integration wired); **SU1** (confirms through the same window); **RB1** (calls `invalidate`); **AL** (writes the same allow-list, after it)
 - Commit: `console(manage): models add behind the modal as a widening (D2903)`
 - Reviewer tier: opus, independent review mandatory (a console write); tier `large`, size 4
 - Owner-run: the owner's own go for this task by name.
 
-#### MW2: image catalog add from the Manage list
+#### MW2: image add from the Manage list
 
-- Acceptance: As MW1 for `image catalog add`, admitting only `--dockerfile owner/name:path`, `--tags` and `--description`, with `--no-apply` set by main so nothing is built (the console's child environment has no agent-session marker, so the CLI's own refusal of `--inline`, `--image`, `--default` and `--branch` would not apply; those flags define executable content and a test pins that each is refused); U5 settled first in `docs/console-improvements/image-catalog-writes.md` (the CLI has no dry run for it either); `image catalog rm` stays a Copy-command (O5); `image build` and `image refresh` stay on `NEVER_REACHABLE` and `image promote` has no row and none is added.
+- Acceptance: As MW1 for `image add`, admitting only `--dockerfile owner/name:path`, `--tags` and `--description`, with `--no-apply` set by main so nothing is built (the console's child environment has no agent-session marker, so the CLI's own refusal of `--inline`, `--image`, `--default` and `--branch` would not apply; those flags define executable content and a test pins that each is refused); U5 settled first in `docs/console-improvements/image-catalog-writes.md` (the CLI has no dry run for it either); `image rm` stays a Copy-command (O5); `image build` and `image refresh` stay on `NEVER_REACHABLE` and `image promote` has no row and none is added.
 - Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/images.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`
 - Interfaces: Consumes MW1's pattern and the same files after it.
 - Tests: `spawn.test.ts`, `image-catalog-writes.test.ts` (new).
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/image-catalog-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
-- Red step: The exact-argv pin for `image catalog add` fails while the row is absent.
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/image-catalog-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
+- Red step: The exact-argv pin for `image add` fails while the row is absent.
 - Depends on: **MW1** (both write `spawn.ts`, `ipc.ts` and the §5.1 table)
-- Commit: `console(manage): image catalog add behind the modal (D2903)`
+- Commit: `console(manage): image add behind the modal (D2903)`
 - Reviewer tier: opus, independent review mandatory (a console write); tier `large`, size 4
 - Owner-run: the owner's own go for this task by name.
 
@@ -564,28 +564,40 @@ CLI first (answers file, events), then the wizard.
 
 #### SW3a: the wizard's main process half: validation, the answers file, plan then apply
 
-- Acceptance: Main validates the answers from the renderer against the schema (`gcp_project` and `region` against the grammars the CLI enforces, `rigor` present, no sixth key), writes them to a 0600 file in a fresh 0700 `mkdtemp` directory it removes after the run, runs `setup.plan`, and shows in the shared confirmation window the answers **as main parsed them** (project, region, name, rigor, bake) beside their SHA-256; on a yes it runs `setup.apply` on the same file and refuses if the bytes changed. **What apply does is stated honestly:** `--json` confirms no step (`unconfirmedWhy`), so `setup.apply` applies only what the CLI applies without a confirmation, and every step that needs one (project creation, the billing link, the Firestore location, a Terraform review in a managed project, secrets) arrives as `left_for_you` with its one line to run in the owner's terminal; the window's yes is the owner's go to run the CLI, never a consent the CLI accepts, and the Terraform plan is recomputed at apply, which the window says. A path or flag from the renderer is refused; every event and sentence passes `TEXT_CLASSES`; the window is SU1's single window with a view of its own (rule 11/12 properties); a CLI older than the floor, or a floor still unset, shows the command to run instead. The task opens by writing in its pull-request body what working directory and repository `setup` takes with no installation (U9); if it needs a repository question, the task stops and reports.
-- Files: `console/src/main/wizardrun.ts` (new); `console/src/main/setupview.ts` (new); `console/src/main/onboarding.ts`; `console/test/unit/wizard-main.test.ts` (new)
+- Acceptance: Main validates the answers from the renderer against the schema (`gcp_project` and `region` against the grammars the CLI enforces, `rigor` present, no sixth key), writes them to a 0600 file in a fresh 0700 `mkdtemp` directory it removes after the run, runs `setup.plan`, and shows in the shared confirmation window the answers **as main parsed them** (project, region, name, rigor, bake) beside their SHA-256; on a yes it runs `setup.apply` on the same file and refuses if the bytes changed. **What apply does is stated honestly:** `--json` confirms no step (`unconfirmedWhy`), so `setup.apply` applies only what the CLI applies without a confirmation, and every step that needs one (project creation, the billing link, the Firestore location, a Terraform review in a managed project, secrets) arrives as `left_for_you` with its one line to run in the owner's terminal; the window's yes is the owner's go to run the CLI, never a consent the CLI accepts, and the Terraform plan is recomputed at apply, which the window says. A path or flag from the renderer is refused; every event and sentence passes `TEXT_CLASSES`; the window is SU1's single window with a view of its own (rule 11/12 properties); a CLI older than the floor, or a floor still unset, shows the command to run instead. The task opens by writing in its pull-request body what working directory and repository `setup` takes with no installation (U9); if it needs a repository question, the task stops and reports. The file and its digest are held by the window instance that showed them, a `setup.plan` while one is pending is refused, and the `setup.apply` handler spawns only on that window's own top-frame yes.
+- Files: `console/src/main/wizardrun.ts` (new); `console/src/main/setupview.ts` (new); `console/src/main/onboarding.ts`; `console/src/renderer/confirm.ts`; `console/test/unit/wizard-main.test.ts` (new)
 - Interfaces: Consumes the `setup.plan` and `setup.apply` payloads and handler signatures (C-OPS), ST2's events and SU1's window; produces handler functions the integration task registers.
-- Tests: `wizard-main.test.ts` (new): validation, mode 0700/0600 and removal, the digest (a changed byte between plan and apply is refused), the window shows main's parsed answers, a renderer-supplied path refused, an event sentence sanitised, a renderer frame cannot start apply, an unregistered or old CLI shows the command; apply never passes a confirming word (`--yes`, `--ask`, `--non-interactive`) and its argv equals the allow-list row.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/wizard-main.test.ts test/unit/onboarding.test.ts test/unit/ipc.test.ts)`
+- Tests: `wizard-main.test.ts` (new): validation, mode 0700/0600 and removal, the digest (a changed byte between plan and apply is refused), the window shows main's parsed answers, a renderer-supplied path refused, an event sentence sanitised, a renderer frame cannot start apply, an unregistered or old CLI shows the command; apply never passes a confirming word (`--yes`, `--ask`, `--non-interactive`) and its argv equals the allow-list row. Also: an IPC `setup.apply` with no yes spawns nothing; plan, plan, yes applies nothing.
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/wizard-main.test.ts test/unit/onboarding.test.ts test/unit/ipc.test.ts)`
 - Red step: The digest test fails while apply re-reads a file that plan did not show.
 - Depends on: **ST2** (decodes the events and fixture the CLI task produces (ST1's answers file arrives through it)); **SU1** (the confirmation window is SU1's single window); **C-OPS** (built against the operations' payloads and the handler signatures)
 - Commit: `console(setup): the wizard's main half, answers validated and bound to the plan (D2904)`
 - Reviewer tier: opus, independent review mandatory (a console write that provisions cloud resources); tier `large`, size 5
 - Owner-run: Check 712: the owner runs the wizard on a scratch GCP project.
 
-#### SW3b: the wizard screens and the Add project button
+#### SW3b: the wizard screens in the onboarding view
 
-- Acceptance: With no installation the console shows the wizard in place of the command line; it asks the five questions with `setupQuestions`'s defaults (rigor has none and is required), sends the answers object to main, draws the events as they arrive, shows an `error` line's sentence with the failed stage, lists every `left_for_you` with its one line to copy (built by MG0's `command.ts`), and never opens a terminal prompt; the 'Add project' button in the rail and the picker opens the same wizard; no secret value is ever asked for. 'Add project' is one new `INSTALLATION_OPERATIONS` entry that only opens the wizard (it spawns nothing), pinned in the picker's allow-list tests. Its tests build their own fake bridge from the `new-ops.ts` types and never import `bridge-stub.ts`, which I-OPS deletes.
-- Files: `console/src/renderer/wizard/wizard.ts` (new); `console/src/renderer/installations.ts`; `console/src/main/picker.ts`; `console/src/main/installations.ts`; `console/src/preload/installations.ts`; `console/test/unit/wizard.test.ts` (new)
+- Acceptance: With no installation the onboarding view (`drawOnboarding`, `entry.ts`) shows the wizard in place of the command line; it asks the five questions with `setupQuestions`'s defaults (rigor has none and is required), sends the answers object to main, draws the events as they arrive, shows an `error` line's sentence with the failed stage, and lists every `left_for_you` line: a line whose first word is `fugaro` or `gcloud` gets a Copy built by MG0's `command.ts`, and any other is displayed only. It never opens a terminal prompt and never asks for a secret value. Its tests build their own fake bridge from the `new-ops.ts` types and never import `bridge-stub.ts`, which I-OPS deletes.
+- Files: `console/src/renderer/wizard/wizard.ts` (new); `console/src/renderer/entry.ts`; `console/test/unit/wizard.test.ts` (new)
 - Interfaces: Consumes the operations (AL) and main's event feed (SW3a).
 - Tests: `wizard.test.ts` (new): defaults, rigor required, events in order against a stub bridge, `left_for_you`, error, Add project.
-- Command: `(cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/wizard.test.ts test/unit/installations-view.test.ts)`
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/wizard.test.ts)`
 - Red step: A test that rigor has no default and Enter is not an answer fails before the screen exists.
-- Depends on: **SW3a** (one change split in two: the screens follow main's event feed and digest binding); **MG0** (`left_for_you` lines use the safe copy builder)
-- Commit: `console(setup): the wizard screens and Add project (D2904, R4)`
-- Reviewer tier: opus, independent review mandatory (a new IPC operation on the picker); tier `medium`, size 3
+- Depends on: **SW3a** (one change split in two: the screens follow main's event feed and digest binding); **MG0** (`left_for_you` lines use the safe copy builder); **PW1** (both write `entry.ts`)
+- Commit: `console(setup): the wizard screens (D2904)`
+- Reviewer tier: standard; tier `medium`, size 3
+
+#### SW3c: the Add project operation in the rail and the picker
+
+- Acceptance: 'Add project' is one new `INSTALLATION_OPERATIONS` entry that only opens the wizard (it spawns nothing), exposed by the installations preload and drawn as a button in the rail and the picker; the picker's allow-list tests pin it, and a test proves it spawns no child.
+- Files: `console/src/main/installations.ts`; `console/src/preload/installations.ts`; `console/src/renderer/installations.ts`; `console/src/main/picker.ts`; `console/test/unit/installations-view.test.ts`
+- Interfaces: Consumes SW3b's wizard entry point.
+- Tests: `installations-view.test.ts` (extended).
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/installations-view.test.ts test/unit/installations-ipc.test.ts)`
+- Red step: The pin for the new operation fails while it is absent; a test that it spawns nothing fails if it does.
+- Depends on: **SW3b** (opens the wizard SW3b builds)
+- Commit: `console(setup): Add project in the rail and the picker (D2904, R4)`
+- Reviewer tier: opus, independent review mandatory (a new IPC operation on the picker); tier `medium`, size 2
 
 ## Parallel execution
 
@@ -593,12 +605,14 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 
 | Level | Tasks |
 | --- | --- |
-| 0 | LP1, LP2, GF1, SM0, P1, RS1, RB1, WH1, ST1, MG0, C-OPS |
-| 1 | GF2, SM-E, RB4, ST2, MO-SH, MO-P, MO-K, MO-B, MO-C, SM1, SM2, SM3, SM4, SRC, RS3, RS4 |
+| 0 | LP1, LP2, GF1, SM0, P1, RS1, RB1, WH1, ST1, MG0, C-OPS, RS3 |
+| 1 | GF2, SM-E, RB4, ST2, MO-SH, MO-P, MO-K, MO-B, MO-C, SM1, SM2, SM3, SM4, SRC, RS4 |
 | 2 | SU1, SU2a, RS2, PL1, AL, SMC |
 | 3 | I-MG, SW3a |
-| 4 | SU2b, MW1, SW3b, I-OPS |
+| 4 | SU2b, MW1, I-OPS |
 | 5 | MW2, PW1, RS5 |
+| 6 | SW3b |
+| 7 | SW3c |
 
 **Edges kept, one line each, with the reason that decided it.** Every edge is a real dependency: either the dependent needs the other task's behaviour or data at the moment it runs, or both write one file.
 
@@ -642,12 +656,12 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - PL1 needs RS1: names a flag that must exist.
 - PL1 needs WH1: names a flag that must exist.
 - PL1 needs ST2: names a flag that must exist.
+- PL1 needs RS3: names a flag that must exist.
+- PL1 needs RS4: names a flag that must exist.
 - AL needs RS1: the docs pin holds the allow-list's flags to flags the CLI registers.
 - AL needs WH1: same.
 - AL needs ST2: same.
 - AL needs SM-E: both write `console/docs/json-contract.md`.
-- AL needs RS3: the docs pin holds the allow-list's flags to flags the CLI registers.
-- AL needs RS4: same.
 - SM1 needs SM0: the entries are built against `Meta` and `Register`.
 - SM2 needs SM0: the entries are built against `Meta` and `Register`.
 - SM3 needs SM0: the entries are built against `Meta` and `Register`.
@@ -662,6 +676,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - SW3a needs C-OPS: built against the operations' payloads and the handler signatures.
 - SW3b needs SW3a: one change split in two: the screens follow main's event feed and digest binding.
 - SW3b needs MG0: `left_for_you` lines use the safe copy builder.
+- SW3b needs PW1: both write `entry.ts`.
 - PW1 needs RB1: uses the cache API it adds.
 - PW1 needs RS2: both write `entry.ts`.
 - PW1 needs SU2b: both write `entry.ts`.
@@ -673,26 +688,30 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - I-OPS needs MO-C: needs the real consumer.
 - I-OPS needs SW3a: needs the real consumer.
 - I-OPS needs SRC: needs the real consumer.
+- I-OPS needs RS3: compares the console's copy with the report golden.
+- I-OPS needs RS4: compares the console's copy with the budget golden.
 - SRC needs C-OPS: built against the payloads and handler signatures.
-- RS3 needs RS1: reuses RS1's stream writer and line shape (`runs_stream.go`).
 - RS4 needs RS1: both reuse RS1's stream writer and line shape (`runs_stream.go`).
 - RS5 needs RS2: uses `readStream`.
 - RS5 needs RS3: decodes the report stream's golden.
 - RS5 needs RS4: decodes the budget stream's golden.
 - RS5 needs SU2b: both write `projects.ts`.
+- SW3c needs SW3b: opens the wizard SW3b builds.
 
-**Sequential by necessity:** the allow-list task `AL` waits for the three CLI tasks that register the flags it names (`RS1`, `WH1`, `ST2`) and cannot be split, because `assertSpawnSurface`, the IPC set and the docs pins each refuse a half-change (nine files, which is why it is tier large); `MW1` then `MW2` write the same allow-list and §5.1 table, so they are one after the other; `ST1` then `ST2` register flags in `init.go`; `SU2b` deletes the inline editor only after the modal and the Manage mount that share `projects.ts`.
+**Sequential by necessity:** the allow-list task `AL` waits for the three CLI tasks that register the flags it names (`RS1`, `WH1`, `ST2`) and cannot be split, because `assertSpawnSurface`, the IPC set and the docs pins each refuse a half-change (twelve files, which is why it is tier large: the spawn rows, the operations, the handler type and its stubs, the floors and the docs pins each refuse a half-change); `MW1` then `MW2` write the same allow-list and §5.1 table, so they are one after the other; `ST1` then `ST2` register flags in `init.go`; `SU2b` deletes the inline editor only after the modal and the Manage mount that share `projects.ts`.
 
-**Critical path (the graph read):** `critical path (7 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> RS5`.
+**Critical path (the graph read):** `critical path (8 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> SW3b -> SW3c`.
 
 **Shared-files table.** A file appears here only when more than one task names it; no level holds two writers of any of them (a change to any task's Files re-checks this).
 
 | File | Tasks (level) |
 | --- | --- |
 | `console/docs/json-contract.md` | SM-E (1), AL (2) |
+| `console/src/main/index.ts` | AL (2), I-OPS (4) |
 | `console/src/main/ipc.ts` | MW1 (4), MW2 (5), AL (2) |
 | `console/src/main/spawn.ts` | MW1 (4), MW2 (5), AL (2) |
-| `console/src/renderer/entry.ts` | SU2b (4), RS2 (2), RB1 (0), RB4 (1), PW1 (5) |
+| `console/src/renderer/confirm.ts` | SU1 (2), SW3a (3) |
+| `console/src/renderer/entry.ts` | SU2b (4), RS2 (2), RB1 (0), RB4 (1), SW3b (6), PW1 (5) |
 | `console/src/renderer/manage/kinds/images.ts` | MO-C (1), MW2 (5) |
 | `console/src/renderer/manage/kinds/models.ts` | MO-K (1), MW1 (4) |
 | `console/src/renderer/screens/projects.ts` | SU2a (2), SU2b (4), I-MG (3), RS5 (5) |
@@ -711,17 +730,17 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 The contract-first pass is on (`fugaro settings planning.decoupling` reads `true`; rigor `startup`, which decouples aggressively). Two passes were measured with `fugaro plan graph`.
 
 - **Tried first and undone.** Four wire contracts (the settings metadata, the runs stream, the caller-role read, the setup answers and events) broke twelve edges between a console consumer and a CLI producer: `"12 broken, 36 kept, 10 added; before 6 tasks, weight 19; after 6 tasks, weight 19; no gain"`. The critical path was the allow-list to Manage to writes chain and no broken edge was on it, so all twelve were undone and each producing CLI task now owns its schema and its fixture, which the console task reads once it has merged.
-- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put five console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the seven operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `"5 broken, 52 kept, 3 added; before 7 tasks, weight 25; after 6 tasks, weight 20; improves"`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2 (3 + 3 + 6 + 4 + 4 = 20); before it, the consumers of AL pushed it to 25. The read prints a six-task critical path (SM0, SM-E, SU2a, I-MG, MW1, MW2) because it orders by position as well as weight; the gain line is the measure.
+- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put six console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the nine operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `"5 broken, 52 kept, 3 added; before 7 tasks, weight 25; after 6 tasks, weight 20; improves"`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2 (3 + 3 + 6 + 4 + 4 = 20); before it, the consumers of AL pushed it to 27. The read prints its critical path by task count (`critical path (8 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> SW3b -> SW3c`); the gain line is the weighted measure.
 
 **Edges broken, one line each.** SU1, RB4, RS2, MO-C, SW3a and SRC each needed the operations' names and types, not the allow-list's rows (contract `C-OPS`, integration `I-OPS`).
 
 **Edges kept** are listed one per line under Parallel execution, each with the reason; the ones a reader might ask about: `AL` needs RS1, WH1 and ST2 (behaviour: the flags must exist in the tree for the docs pin); `MW1` needs `AL` (it writes the same files); SW3a needs SU1 (it uses the single confirmation window SU1 builds, and a view for it is behaviour, not an interface); SW3b needs SW3a (the screens follow main's event feed and digest binding).
 
-**Contract changes anticipated:** `R-OPS` against `C-OPS` (an operation or payload field a consumer needs that the contract lacks), raised first by SU1; it would reach SU1, RB4, RS2, MO-C, SW3a and AL, whose launched runs are reached by a follow-up run on their pull request that names `docs/console-improvements/contract-ops.md` by path. The descriptor `MG0` and the metadata type `SM0` are ordinary prerequisites: the shell and the five kinds never needed each other's behaviour, so there was no edge to break.
+**Contract changes anticipated:** `R-OPS` against `C-OPS` (an operation or payload field a consumer needs that the contract lacks), raised first by SU1; it would reach SU1, RB4, RS2, MO-C, SW3a, SRC and AL, whose launched runs are reached by a follow-up run on their pull request that names `docs/console-improvements/contract-ops.md` by path. The descriptor `MG0` and the metadata type `SM0` are ordinary prerequisites: the shell and the five kinds never needed each other's behaviour, so there was no edge to break.
 
 ## The estimate the graph read printed
 
-`ready in 450–1800 min, no history yet for 43 tasks (43 tasks; seeds for 43; from the seeds: no history is cached on this machine yet)`
+`ready in 450–1800 min, no history yet for 44 tasks (44 tasks; seeds for 44; from the seeds: no history is cached on this machine yet)`
 
 This is informational and reserves no budget: it is what the tasks' tiers and this machine's history predict, not a figure the plan holds to. It moves as runs finish and as the graph changes. Proposed runs, when the owner gives a go: one run per approved task; the worst case is every task at its tier's ceiling, and no figure here is a reservation.
 
@@ -735,8 +754,8 @@ This is informational and reserves no budget: it is what the tasks' tiers and th
 
 ## After-deploy steps
 
-- **The CLI release** that carries `runs ls --stream` (RS1), `user ls --me` (WH1), `setup --answers-file` and `--events` (ST1, ST2) and the settings metadata (SM-E, SM1 to SM4): its `### For operators` is "run `fugaro update`" and nothing it asks, since no installed state changes.
-- **The console release** that follows it sets the floor constants AL left `null` (`RUNS_STREAM_CLI_FLOOR`, the whoami floor, the setup floor) to that CLI version in a one-line pull request, and its notes carry the user-facing changes. Until then the new controls fall back as the global constraints say. This is a release step, not a task of this plan.
+- **The CLI release** that carries `runs ls --stream` (RS1), `user ls --me` (WH1), `report --stream` (RS3, an ee command), `budget show --stream` (RS4), `setup --answers-file` and `--events` (ST1, ST2) and the settings metadata (SM-E, SM1 to SM4): its `### For operators` is "run `fugaro update`" and nothing it asks, since no installed state changes.
+- **The console release** that follows it sets the floor constants AL left `null` (one each for the runs, report and budget streams, the whoami read and setup) to that CLI version in a one-line pull request, and its notes carry the user-facing changes. Until then the new controls fall back as the global constraints say. This is a release step, not a task of this plan.
 - `PL1` ships with that CLI release so the plugin names flags that exist.
 
 ## Considered and declined
@@ -750,7 +769,7 @@ This is informational and reserves no budget: it is what the tasks' tiers and th
 - **Reusing Watch's RTDB stream for list commands (F19):** it does not serve the slow reads.
 - **A Watch-clone Live pane and removing the sparklines (D2901).**
 - **Wizard modes that open a terminal (D2904 alternative).**
-- **`models rm` and `image catalog rm` as console writes:** destructive (`models rm` stops every run that names the model); D2903 admits only non-destructive writes, so they stay Copy-commands until the owner says otherwise (O5).
+- **`models rm` and `image rm` as console writes:** destructive (`models rm` stops every run that names the model); D2903 admits only non-destructive writes, so they stay Copy-commands until the owner says otherwise (O5).
 - **Removing the old `settings.edit` operation after SU2b:** it stays main-confirmed; removal is a follow-up.
 - **"Every setting is editable" (spec acceptance), narrowed:** only keys `settingsGenericKey` allows are editable, and the list, map and entry keys show read-only with the command to copy (R5); the family-owned read-only rows are shown, grouped and searched but not editable.
 - **A console consent for `setup` (O6):** `--json` confirms no step and there is no mechanism an agent's own command line could not also pass; adding one is a product decision, so the wizard applies only what the CLI applies unconfirmed and hands the rest back.
