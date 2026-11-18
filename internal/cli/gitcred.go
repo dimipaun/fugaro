@@ -208,14 +208,14 @@ func fetchBuildCredentials(cmd *cobra.Command, o gitCredentialOptions, u *url.UR
 	}
 	// Every refusal is taken BEFORE anything is written, so a refused answer
 	// leaves no half of a build's credentials behind.
-	line, err := servedGitCredentialLine(o.provider, u, ans.Git)
+	user, token, err := servedGitCredential(o.provider, u, ans.Git)
 	if err != nil {
 		return err
 	}
 	if err := writeBuildSecrets(dir, secrets, ans.Secrets); err != nil {
 		return err
 	}
-	return writeCredential(o.out, line)
+	return writeCredential(o.out, "https://"+credEscape(user)+":"+credEscape(token)+"@"+u.Host+"\n")
 }
 
 // buildSecretEnvs is the workflow-secret variables this build mounts, read from
@@ -247,37 +247,34 @@ func buildSecretEnvs() ([]string, error) {
 	return fields, nil
 }
 
-// servedGitCredentialLine is the one credential-store line the build clones
-// with, from the service's answer.
+// servedGitCredential is the username and the token a build clones with, from
+// the service's answer, held to what the build itself is doing.
 //
-// The answer is held to what this step was asked to do. The provider the answer
-// echoes has to be the one this build clones from, and the host it names has to
-// be the host of the URL this build clones: git reads a credential-store line
-// for the host the line carries, so an answer naming another host would hand
-// this token to a server that never minted it, and a GitHub token answered to a
-// Bitbucket build would be a Bitbucket credential. The host written is the
-// URL's own, which is the one the two have just been held equal.
+// The provider the answer echoes has to be the one this build clones from, and
+// the host it names has to be the host of the URL this build clones: git reads
+// a credential for the host it was asked about, so an answer naming another host
+// would hand this token to a server that never minted it, and a GitHub token
+// answered to a Bitbucket build would be read as a Bitbucket credential.
 //
-// The token reaches no refusal and no error: the build's log is read by
-// everyone.
-func servedGitCredentialLine(provider string, u *url.URL, cred credsvc.BuildGitCredential) (string, error) {
+// The token reaches no refusal and no error: a build's log is read by everyone.
+func servedGitCredential(provider string, u *url.URL, cred credsvc.BuildGitCredential) (user, token string, err error) {
 	if cred.Provider != provider {
-		return "", userErr("the credentials service answered a credential for the provider %s, and this build clones from %s",
+		return "", "", userErr("the credentials service answered a credential for the provider %s, and this build clones from %s",
 			pluginwire.Printable(cred.Provider), provider)
 	}
 	if cred.Host != u.Host {
-		return "", userErr("the credentials service answered a credential for the host %s, and this build clones from %s",
+		return "", "", userErr("the credentials service answered a credential for the host %s, and this build clones from %s",
 			pluginwire.Printable(cred.Host), pluginwire.Printable(u.Host))
 	}
 	if cred.Username == "" || cred.Token == "" {
-		return "", userErr("the credentials service answered an incomplete credential")
+		return "", "", userErr("the credentials service answered an incomplete credential")
 	}
 	// git refuses a credential holding a newline or another control character,
 	// so the clone would run without one.
 	if strings.ContainsFunc(cred.Username+cred.Token, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return "", userErr("the credentials service's credential holds a control character")
+		return "", "", userErr("the credentials service's credential holds a control character")
 	}
-	return "https://" + credEscape(cred.Username) + ":" + credEscape(cred.Token) + "@" + u.Host + "\n", nil
+	return cred.Username, cred.Token, nil
 }
 
 // writeBuildSecrets leaves the workflow secrets the service answered in the
