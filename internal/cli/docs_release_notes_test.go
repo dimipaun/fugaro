@@ -720,6 +720,31 @@ func TestReleaseNotesForTheTypedBitbucketTokens(t *testing.T) {
 	}
 }
 
+// TestReleaseNotesForTheSwitchedModelMounts: B2.7's flip takes the two Claude
+// mounts off a switched `api-key` or `oauth` repository's job, and the plan's
+// release actions require every flip task to carry its release's `### For
+// operators` entry in its own PR (HARD RULE: `fugaro update` is the whole
+// upgrade, and the entry says which command to run). The three facts pinned
+// here are the ones an operator reading only the notes has to be able to act
+// on: the command, the fact that a repository which is NOT switched keeps
+// every mount, and the job image the drop needs — a run of a switched
+// repository on an older one is refused at launch, and nothing else in this
+// release's notes says so.
+func TestReleaseNotesForTheSwitchedModelMounts(t *testing.T) {
+	operators := flattenDoc(docSection(t, typedTokensRelease, readDoc(t, typedTokensRelease), "### For operators"))
+	for _, want := range []string{
+		"**Per repository of an `api-key` or `oauth` workflow whose policy is switched on**",
+		"run `fugaro update --repo <owner/name>` from its checkout",
+		"**a repository that is not switched keeps every mount, before and after this update**",
+		"a job image whose runner reads its model credential from the service — the 0.25.0 base image or newer — and a launch on an older one is refused",
+		"the service serves the Anthropic key and the account's token, never a provider's own key",
+	} {
+		if !strings.Contains(operators, want) {
+			t.Errorf("%s's `### For operators` section does not say %q: B2.7's flip drops a switched repository's two Claude mounts, and the release's own notes are where the operator reads the one command that does it", typedTokensRelease, want)
+		}
+	}
+}
+
 // releaseLinkIsExcused reports whether a line carrying a link is one of the
 // links a published release file is allowed to keep.
 func releaseLinkIsExcused(excused []string, line string) bool {

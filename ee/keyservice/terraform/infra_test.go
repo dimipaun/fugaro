@@ -1412,6 +1412,44 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	}
 }
 
+// TestTheAPIIsOneInstanceBecauseItsMintLimitsAreInMemory is the ceiling the two
+// mint limits depend on, and the review of this branch is why it is pinned here
+// rather than left to the platform's default — the same pin, and for the same
+// reason, as the MCP front door's (the coordinator installation's
+// TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory).
+//
+// A reseller's credit limit (D2189) is checked and spent inside resellerMintMu
+// (ee/keyservice/accrual.go), and operations' per-tier rate (D454) inside
+// operationsMintMu (ee/keyservice/ops.go). Neither reads a counter the store
+// holds: both numbers are counted over the entitlements themselves, by queries
+// of their own, and a query inside a grant's own transaction is a read every
+// concurrent write conflicts with — so the window each lock closes is one
+// instance's, as both comments say. The platform's own ceiling — about a
+// hundred instances, scaled by the traffic in front of them — would make each
+// window a hundred windows, and the shape is what makes that a gap: the caller
+// a mint limit refuses is the one whose traffic buys the instances, so a
+// reseller minting in a burst would get a limit's worth of sales on every
+// replica — and the plan's own constraint, "two concurrent reseller mints cannot
+// pass the credit limit together" (docs/portal/implementation-plan.md's
+// global-constraint row, which is P6.2's), would hold of one process and not of
+// the installation. One instance is what makes both windows the windows, and it
+// costs this API nothing a second instance would serve.
+//
+// The mutation this fails on: the scaling block deleted, a max_instance_count
+// of anything but 1, or a min_instance_count above 0 — the last turning the
+// scale-to-zero the same block asks for into an always-on cost.
+func TestTheAPIIsOneInstanceBecauseItsMintLimitsAreInMemory(t *testing.T) {
+	api := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "api"`)
+	scaling, ok := tfNestedBlock(api, "scaling")
+	if !ok {
+		t.Fatalf("the API service in %s has no scaling block, so the platform's own ceiling of about a hundred instances applies and each of the two in-memory mint limits is a hundred limits:\n%s", servicesRoot, api)
+	}
+	tfAttrsAre(t, scaling, "the API service's scaling block in "+servicesRoot, []struct{ attr, value string }{
+		{"max_instance_count", "1"},
+		{"min_instance_count", "0"},
+	}, "the API is the one process the two mint limits are counted in (accrual.go's resellerMintMu, ops.go's operationsMintMu), so a second instance would let a reseller's burst pass the credit limit once per replica and would make D454's rate a rate per replica as well; the min stays 0 because a public endpoint nobody is calling costs nothing")
+}
+
 // TestTheMinterHasNoPublicInvoker: the minter is not reachable from the
 // internet, and the API is the one caller it has. Two of the three things that
 // decide that are asserted here rather than left to the design's prose: the

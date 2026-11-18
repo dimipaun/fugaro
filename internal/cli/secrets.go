@@ -1134,11 +1134,15 @@ func secretsSetPolicy(cmd *cobra.Command, o secretsOptions, name string) error {
 			return userErr("%s: %v", pluginwire.Printable(key), err)
 		}
 	default:
-		// --proxy=false turns the switch off by taking the key away rather than
-		// by writing `false`: the switch is on or it is not set, and a `false`
-		// left in the file is a second spelling of the same state that every
-		// later read would have to be trusted to read as off. DropEmptyParents,
-		// so an entry whose only member was the switch goes with it.
+		// --proxy=false turns this flag's switch off by taking the key away
+		// rather than by writing `false`: not set is the off state the flag
+		// itself reads and writes. It is not the only state a file can hold —
+		// the field is tri-state (S6's fix, owner ruling 2026-11-18), and the
+		// three are told apart by every later read (ProjectSecret.ProxyStated):
+		// a written `false` is the hold `fugaro update`'s Bitbucket proxy flip
+		// never lifts, while the key's absence is the state that flip turns ON.
+		// DropEmptyParents, so an entry whose only member was the switch goes
+		// with it.
 		if next, err = yamledit.RemoveKeyWithOptions(next, []string{block, name, "proxy"}, yamledit.RemoveOptions{DropEmptyParents: true}); err != nil {
 			return userErr("%s: %v", pluginwire.Printable(key), err)
 		}
@@ -1417,10 +1421,10 @@ func secretsPolicyDryRun(o secretsOptions, block, name string, old, next []byte,
 
 // secretsPolicyValue is one key's own value in a document, rendered the way
 // version 1 renders every value: a list as its members comma-separated, a
-// scalar as itself, and "" when the document holds none. proxy is read as "set
-// or not set" rather than as the two booleans, because the switch's off state
-// is the key's absence — the state --proxy=false writes — and a document that
-// spelled it "false" would describe a key the edit never leaves behind.
+// scalar as itself, and "" when the document holds none. proxy is the one key
+// whose absence and whose false differ (S6's fix): the command's off state is
+// the key's absence — the state --proxy=false writes — but a document that
+// spells it "false" says so, and the dry run shows the file as it is.
 func secretsPolicyValue(data []byte, block, name string, proxy bool) string {
 	lc, err := localcfg.Parse(data)
 	if err != nil {
@@ -1428,10 +1432,10 @@ func secretsPolicyValue(data []byte, block, name string, proxy bool) string {
 	}
 	entry := secretsPolicyEntryOf(lc, block, name)
 	if proxy {
-		if !entry.Proxy {
+		if !entry.ProxyStated() {
 			return ""
 		}
-		return "true"
+		return strconv.FormatBool(*entry.Proxy)
 	}
 	return strings.Join(entry.AllowDataTo, ", ")
 }

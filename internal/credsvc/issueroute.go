@@ -506,7 +506,7 @@ func (s *Server) issuePerform(ctx context.Context, p *github.Provider, req creds
 func issueRead(i github.Issue) creds.Issue {
 	return creds.Issue{
 		Number: i.Number, Title: i.Title, Body: i.Body, URL: i.URL, State: i.State,
-		AuthorLogin: i.AuthorLogin, AuthorID: i.AuthorID, AppSlug: i.AppSlug,
+		AuthorLogin: i.AuthorLogin, AuthorID: i.AuthorID, AppSlug: i.AppSlug, AppID: i.AppID,
 	}
 }
 

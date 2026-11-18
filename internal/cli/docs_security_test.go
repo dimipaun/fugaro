@@ -448,20 +448,22 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"a budget mode of `observe` or `enforce`, because the gateway that reaches the service exists only there",
 		"`anthropic-api-key` for `api-key` and every account's `claude-oauth-token[-<account>]` for `oauth`",
 		"a `vertex` repository is the one `agent.auth` it never admits",
-		// And what the switch does not do for the two auths it now admits: the
-		// mount stays until B2.7's flip (D2072), which is the limit the bullet
-		// below states in full.
-		"the mount drop has not landed",
-		"while its job still declares its model credential, mounts it, and its account still holds `secretAccessor` on it",
+		// And what the switch does for the two auths it now admits: the mount
+		// went with B2.7's flip (D2072), which is the fact the bullet below
+		// states in full, alongside the provider keys the drop leaves alone
+		// (R6, D1634).
+		"the mount drop landed in 0.26.0",
+		"its job now declares neither the Anthropic key nor the Claude OAuth token, its account holding no `secretAccessor` on either",
 		// The job holds nothing — and the one job that is not reached, named
 		// rather than left to be assumed, because a shared project job keeps
 		// its accessors and its token mount. The claim is the cascade job's as
-		// of B2.4: the switch admits api-key and oauth repositories too, and
-		// their jobs keep the mount until the flip, so a sentence that says
-		// "a per-repository job" flat is false for them (B2.3, D2072).
+		// of B2.4 and the two Claude mounts' as of B2.7: a switched `api-key`
+		// or `oauth` repository's job keeps only its provider keys, so a
+		// sentence that says "a per-repository job" flat is false for it
+		// (B2.3, B2.7, D2072; R6, D1634).
 		"a per-repository `cascade` job holds no model credential at all",
-		"an `api-key` or `oauth` one is served by the service while its job still mounts its credential",
-		"the job keeps its model mount and its service account keeps `secretAccessor` on it",
+		"as of 0.26.0 an `api-key` or `oauth` one gives up the two Claude mounts and keeps only its provider keys",
+		"its job mounts neither the Anthropic key nor the Claude OAuth token, its account holding `secretAccessor` on neither",
 		// B5.4. The shared class is a caller the service serves now (B5.1's
 		// pairing, B5.2's address), so the section states what a shared coding
 		// run reaches and what its job keeps, where it used to state the
@@ -641,9 +643,10 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// B2.4 rewrote the half that replaced it again: as of this release the
 		// switch admits `api-key` and `oauth` repositories too (B2.2, B2.3,
 		// D2071), so "the half it does not carry is the other auth modes'" and
-		// the auth-blind drop it named are both false. What has not landed is
-		// the MOUNT: a switched `api-key` or `oauth` repository's job keeps its
-		// credential and its accessor until the flip (B2.7, D2072).
+		// the auth-blind drop it named are both false. The MOUNT half has landed
+		// with the flip (B2.7, D2072), so the bullet this list carries now says
+		// what a switched one gives up and what it keeps, and the two pins below
+		// are those sentences.
 		"the service is wired as of 0.10.1",
 		// The auths the switch admits, named rather than "every `agent.auth`":
 		// `vertex` — the default — is the one it never admits, and the launcher
@@ -654,10 +657,10 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		"every `agent.auth` the switch admits — `cascade`, `api-key` and `oauth` — reaches it",
 		"`vertex` is the one it does not admit at all",
 		"its calls go to Vertex AI on the job's own service account",
-		"what has not landed is the mount drop",
+		"the mount drop reached the other two in 0.26.0 (B2.7)",
 		"FUGARO_CREDENTIALS_SERVICE_URL",
-		"a switched `api-key` or `oauth` repository's job still declares its model credential and its account still holds `secretAccessor` on it",
-		"the credential is the job's own copy until that release and the agent can reach it",
+		"a switched `api-key` or `oauth` repository's job declares neither the Anthropic key nor the Claude OAuth token, and its account holds `secretAccessor` on neither",
+		"every provider key the job mounts stays its own (R6, D1634)",
 		// B5.4 rewrote this limit, deliberately: B5.2 hands a switched
 		// profile's shared job the address on the same switch a repository's
 		// own job is judged with, and B5.1 pairs its account, so "not wired

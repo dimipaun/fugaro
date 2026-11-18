@@ -101,7 +101,8 @@ type bitbucketProxySwitch struct {
 //     nothing to proxy.
 //   - and the switch itself not being there already: an entry that forwards and
 //     already covers every one of them is a project this update leaves exactly
-//     as it is.
+//     as it is, and so is an entry that states the switch as off — the hold an
+//     operator wrote, which this step never lifts (owner ruling 2026-11-18).
 func (e *initEngine) bitbucketProxyFlip() (repos []string, turn bool) {
 	o, lc := e.r.o, e.lc
 	if lc == nil || o == nil || o.doorName() != updateDoor.name || o.planOnly || policyNodeUnreachable(lc) {
@@ -117,8 +118,16 @@ func (e *initEngine) bitbucketProxyFlip() (repos []string, turn bool) {
 	if len(repos) == 0 {
 		return nil, false
 	}
-	if entry, ok := lc.ProjectSecrets[config.BitbucketSecret]; ok && entry.Proxy && bitbucketProxyCovers(entry, repos) {
-		return nil, false
+	// The switch is tri-state, and the two states that are not "on" part company
+	// here (S6's fix, owner ruling 2026-11-18): an entry that WITHHOLDS the
+	// switch — a `proxy: false` the operator wrote, which no command of this
+	// program writes — is their hold on it, and this step never lifts it; an
+	// entry that says nothing about the switch while already naming every one of
+	// the project's Bitbucket repositories is the one this update turns on.
+	if entry, ok := lc.ProjectSecrets[config.BitbucketSecret]; ok && entry.ProxyStated() {
+		if !entry.Proxying() || bitbucketProxyCovers(entry, repos) {
+			return nil, false
+		}
 	}
 	return repos, true
 }
@@ -203,7 +212,8 @@ func (s *policyMigrateStage) proxySwitch(ctx context.Context) (*bitbucketProxySw
 	}
 	workspaces := bitbucketProxyWorkspaces(repos)
 	if len(workspaces) > 1 {
-		return nil, refuseSecondBitbucketWorkspace(s.e.lc, repos, workspaces)
+		s.proxySwitchSays(secondBitbucketWorkspaceSays(s.e.lc, repos, workspaces))
+		return nil, nil
 	}
 	if s.proxySwitchForwardsNothing(ctx, workspaces) {
 		return nil, nil
@@ -309,24 +319,31 @@ func (s *policyMigrateStage) proxySwitchSays(msg string) {
 	s.e.r.warn(msg)
 }
 
-// refuseSecondBitbucketWorkspace is D2314: one Bitbucket access token reaches
-// the repositories of one workspace, and the proxy forwards that one token, so a
+// secondBitbucketWorkspaceSays is D2314: one Bitbucket access token reaches the
+// repositories of one workspace, and the proxy forwards that one token, so a
 // project whose Bitbucket repositories span two workspaces is one the credentials
-// service cannot serve. The refusal names the second workspace and a repository
-// of each, because the fix is the operator's own: a repository in another
-// workspace is another project's, or it runs on the per-repository job the
-// provider admits without the proxy.
+// service cannot serve. The line names the second workspace and a repository of
+// each, because the fix is the operator's own: a repository in another workspace
+// is another project's, or it runs on the per-repository job the provider admits
+// without the proxy.
 //
-// It is the flip's refusal and not a rule over every project: it is raised where
+// It is the flip's warning and not a rule over every project: it is said where
 // this update would turn the switch on or widen it, so a project that is already
 // forwarding for the workspaces it names is left exactly as it is (a project
 // already on it is unchanged), and so is an installation whose credentials
 // service is not deployed or whose runner predates the proxy — neither of those
-// runs the proxy at all, and a refusal there would stop an update over a state
-// this step is not about.
-func refuseSecondBitbucketWorkspace(lc *localcfg.Config, repos, workspaces []string) error {
+// runs the proxy at all, and a line there would be about a state this step is
+// not about.
+//
+// It used to be a refusal of the whole update, and it is a warning that holds
+// the switch back instead (owner ruling 2026-11-18, amending D2314): the update
+// is the one command that brings an installation to this release, and a project
+// with a repository in a second workspace is no reason to leave every other
+// stage of it unapplied. The switch is the one thing held back, the runs of the
+// project keep the mounted credential they have, and the warning names the fix.
+func secondBitbucketWorkspaceSays(lc *localcfg.Config, repos, workspaces []string) string {
 	first, second := workspaces[0], workspaces[1]
-	return userErr("project %s has Bitbucket repositories in two workspaces, %s and %s (%s and %s), and the credentials service's Bitbucket proxy forwards one workspace token per project (D2314): the token it holds reaches %s's repositories alone, so a run of %s would have nothing to fetch its git credential with. Give %s its own project, or leave it on a per-repository job without the proxy; nothing was written",
+	return fmt.Sprintf("this update leaves the Bitbucket proxy switch off: project %s has Bitbucket repositories in two workspaces, %s and %s (%s and %s), and the credentials service's Bitbucket proxy forwards one workspace token per project (D2314) — the token it holds reaches %s's repositories alone, and a run of %s would have nothing to fetch its git credential with. Nothing was written for the switch, and every other step of this update went on. Give %s its own project, or leave it on a per-repository job without the proxy",
 		lc.Name, first, second, bitbucketProxyRepoIn(repos, first), bitbucketProxyRepoIn(repos, second), first, bitbucketProxyRepoIn(repos, second), bitbucketProxyRepoIn(repos, second))
 }
 
@@ -351,13 +368,16 @@ func bitbucketProxyRepoIn(repos []string, workspace string) string {
 //
 // A config with no entry at all gets one: the two states that publish no block
 // are an entry that is absent and one whose list is empty (D493), and the flip
-// is precisely the step that gives the entry both halves.
+// is precisely the step that gives the entry both halves. The switch it writes
+// is the stated on state, spelled through config.ProxyFlag: the field is
+// tri-state, and the absent state — the one this step turns on — is what a nil
+// holds.
 func bitbucketProxyConfig(lc *localcfg.Config, entry config.ProjectSecret, add []string) *localcfg.Config {
 	next := *lc
 	next.ProjectSecrets = make(map[string]config.ProjectSecret, len(lc.ProjectSecrets)+1)
 	maps.Copy(next.ProjectSecrets, lc.ProjectSecrets)
 	entry.AllowDataTo = append(slices.Clone(entry.AllowDataTo), add...)
-	entry.Proxy = true
+	entry.Proxy = config.ProxyFlag(true)
 	next.ProjectSecrets[config.BitbucketSecret] = entry
 	return &next
 }

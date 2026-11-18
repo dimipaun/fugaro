@@ -452,9 +452,11 @@ file, or a repository's fugaro.yaml.
 
 The layers are ` + "`local`" + ` (the local project config), ` + "`project`" + ` (the local
 project layer file) and ` + "`repo`" + ` (a checkout's fugaro.yaml); ` + "`default`" + ` is never
-a target. With no --layer the narrowest layer the key may be set in is the
-target. --layer repo without --repo uses the current directory's checkout and
-refuses when the directory is not one.
+a target. With no --layer a ceiling — a key whose layers tighten each other,
+so the smaller value wins — lands in the project layer when the key may be set
+there and in the local project config when it may not, and every other key
+lands in the narrowest layer it may be set in. --layer repo without --repo uses
+the current directory's checkout and refuses when the directory is not one.
 
 A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries
@@ -846,10 +848,34 @@ func settingsWriteHintRows(list bool) []settings.Row {
 	return out
 }
 
-// settingsDefaultLayer is the target of a write that names no --layer: the
-// narrowest layer the key may be set in, so an edit lands as close to the
-// repository as the key allows and the narrowest layer is the one that decides.
+// settingsDefaultLayer is the target of a write that names no --layer, and it
+// follows the key's merge rule (D2605) rather than only the layers the key has.
+//
+// A Tighten key is a ceiling — the smaller of two values wins — and a ceiling
+// set in a repository's own fugaro.yaml is one the repository that holds the
+// file can lower and no one else can, which is the opposite of what a ceiling
+// is for: the project layer is where a project says what its repositories may
+// not exceed, so a ceiling with no --layer lands there, and in this machine's
+// own config when the project layer is not a layer the key may be set in. A
+// ceiling the project layer may not hold at all — `agent.max_run_tokens` is a
+// repository's own key — keeps the repo default, because the layers it does
+// have decide and the rule above only reorders those. What the rule never does
+// is invent a layer: it answers from the row's own layers or answers nothing,
+// and settingsResolveTarget refuses the nothing.
+//
+// Every other merge rule keeps the narrowest layer the key may be set in, so an
+// edit lands as close to the repository as the key allows — a Replace key
+// (narrowest wins, and the repository is the narrowest of the three) therefore
+// keeps the repo default it always had, and --layer still overrides this whole
+// rule.
 func settingsDefaultLayer(row settings.Row) string {
+	if row.Merge == settings.Tighten {
+		for _, l := range []string{settingsLayerProject, settingsLayerLocal} {
+			if slices.Contains(row.Layers, l) {
+				return l
+			}
+		}
+	}
 	for _, l := range []string{settingsLayerRepo, settingsLayerProject, settingsLayerLocal} {
 		if slices.Contains(row.Layers, l) {
 			return l
@@ -912,6 +938,35 @@ func selectSettingsProject(ctx context.Context, in localcfg.SelectInput) (localc
 	return localcfg.Select(in)
 }
 
+// settingsLayerDefaultsBlocks are the layer file's `defaults:` blocks, by the
+// name a key's own spelling uses for them (config.LayerDefaults' yaml tags).
+// The layer file may set a repository key only inside one of them, so the
+// short spelling a person types — `agent.max_budget_usd`, `rigor.floor` — is
+// one segment shorter than the path it lands on.
+var settingsLayerDefaultsBlocks = []string{"agent", "git", "model_grades", "planning", "rigor"}
+
+// settingsLayerKeyPath is where a key lands in the project layer file, from the
+// spelling the command was given (D2606). The long spelling (`layer.` prefixed)
+// already names the file's own path, and so does a key the file keeps at its
+// top level (governance.*, security.patterns, the profiles a family writes);
+// the short spelling of a repository key names the block its key lives in
+// without saying so, and is mapped into `defaults` here — in the ONE resolver,
+// so `agent.x --layer project` and `layer.defaults.agent.x --layer project`
+// land the same bytes and a reader of the layer file finds one spelling of the
+// key rather than two.
+//
+// The table is a literal and the sweep test (TestSettingsRowsNeverWriteWhere
+// TheLayerRefusesAtReread) is what keeps it complete: a registry row whose key
+// belongs in a block the table does not name is written at the file's top
+// level, which ParseProjectLayer refuses at re-read, and that test fails.
+func settingsLayerKeyPath(key string) []string {
+	path := strings.Split(strings.TrimPrefix(key, "layer."), ".")
+	if strings.HasPrefix(key, "layer.") || !slices.Contains(settingsLayerDefaultsBlocks, path[0]) {
+		return path
+	}
+	return append([]string{"defaults"}, path...)
+}
+
 // settingsResolveTarget turns a key and a layer into the file to edit.
 func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWriteOptions, lc *localcfg.Config, sel localcfg.Selection) (settingsTarget, error) {
 	layer := o.layer
@@ -945,7 +1000,7 @@ func settingsResolveTarget(ctx context.Context, row settings.Row, o settingsWrit
 			layer:   layer,
 			kind:    settingsDocLayer,
 			path:    path,
-			keyPath: strings.Split(strings.TrimPrefix(row.Key, "layer."), "."),
+			keyPath: settingsLayerKeyPath(row.Key),
 			anchor:  config.LayerAnchor{Project: lc.Name, GCPProject: lc.GCPProject},
 			project: lc.Name,
 		}, nil

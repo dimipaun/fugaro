@@ -670,7 +670,7 @@ func ProxiedTokenAccessorAllowDelete(p *tf.Plan, spec RepoSpec) []string {
 			continue
 		}
 		ws, deployed := spec.Workflows[variant]
-		if !deployed || !mountsServiceHeldSecret(ws, key, spec.BitbucketProxied) {
+		if !deployed || !mountsServiceHeldSecret(ws, key, spec.BitbucketProxied, spec.ModelSecretsServed) {
 			continue
 		}
 		out = append(out, rc.Address)

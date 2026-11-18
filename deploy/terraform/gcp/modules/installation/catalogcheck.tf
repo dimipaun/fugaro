@@ -208,6 +208,8 @@ resource "google_service_account_iam_member" "catalog_check_build_identity" {
   service_account_id = "projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = google_service_account.catalog_check[0].member
+
+  depends_on = [google_service_account.build_identity]
 }
 
 # roles/run.invoker holds run.jobs.run, which Scheduler's call needs, on this

@@ -392,7 +392,20 @@ func TestDocsMultiModelDocumentsTheCascadeSwitch(t *testing.T) {
 		"the launch is what tells a job where it is",
 		"a repository's own job, and the shared project job a switched profile sends its runs to",
 		"byte for byte what it was",
-		"the **other `agent.auth` modes'**",
+		// The section said, since B2.3 landed, that "the half this release
+		// does not carry is the other agent.auth modes'" and told the operator
+		// to run such a project's workflows with `agent.auth: cascade`, on the
+		// ground that only a cascade run's calls go through the service. That
+		// was false when it was written: CredentialsServiceServes admits
+		// api-key and oauth under a live budget mode (B2.3, D2071) and the
+		// launch hands them the address (credentialsServiceLaunchEnv), and
+		// SECURITY.md's own section says their runs' calls are the service's
+		// exactly as a cascade's are. From B2.7 the mounts follow: such a job
+		// gives up the two Claude mounts and keeps its provider keys (R6,
+		// D1634), so the advice to run cascade-only is gone with the half it
+		// named.
+		"**no `agent.auth` mode is left out**",
+		"every provider key it mounts stays its own because the service forwards a provider's key rather than attaching it",
 		// What the opt-in does to the job's mounts. The section said an
 		// `oauth` workflow of the same repository "keeps its own mount
 		// unchanged", which is false once the installation opts in:
