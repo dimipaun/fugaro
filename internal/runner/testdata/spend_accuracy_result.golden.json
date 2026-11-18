@@ -106,6 +106,7 @@
   },
   "rigor": {
     "mode": "pro",
+    "level": "pro",
     "from": "default",
     "at": "bootstrap",
     "revision": "origin/main"
