@@ -84,6 +84,12 @@ pr)
   r3-then-merge)
     if [ "$cycles" -ge 5 ]; then cat "$json/pr-merged.json"; else cat "$json/pr-draft.json"; fi
     ;;
+  retry-then-merge)
+    # The same landing, two cycles later than the retry lines the audit log
+    # carries from cycle 3: a walk that stopped on one of those would never see
+    # this merge at all.
+    if [ "$cycles" -ge 5 ]; then cat "$json/pr-merged.json"; else cat "$json/pr-draft.json"; fi
+    ;;
   no-walk) cat "$json/pr-draft.json" ;;
   *)
     if [ "$cycles" -ge 3 ]; then cat "$json/pr-merged.json"; else cat "$json/pr-draft.json"; fi
@@ -185,9 +191,28 @@ orchestrator)
   events)
     # The audit log of the cycles the fake has run: the rung-3 wait line the
     # ladder writes when it stops and asks the owner (the `r3-no-merge` shape),
-    # and an empty log while it is still walking.
+    # the line a wait the ladder RETRIES writes (the `retry-then-merge` shape —
+    # the same line, and no question behind it), and an empty log while it is
+    # still walking.
     cycles=$(cat "$FAKE_LOG_DIR/cycles" 2>/dev/null || echo 0)
-    if [ "$mode" = r3-no-merge ] && [ "$cycles" -ge 3 ]; then cat "$json/events-wait.json"; else cat "$json/events-none.json"; fi
+    if [ "$cycles" -lt 3 ]; then
+      cat "$json/events-none.json"
+    else
+      case "$mode" in
+      r3-no-merge) cat "$json/events-wait.json" ;;
+      retry-then-merge) cat "$json/events-retry.json" ;;
+      *) cat "$json/events-none.json" ;;
+      esac
+    fi
+    ;;
+  state)
+    # The question a rung-3 refusal raises for the owner — `state-waiting` — and
+    # no question at all, which is what a walk on its way to the merge sees:
+    # merge asks the item's question only for a wait it does not retry.
+    case "$mode" in
+    r3-no-merge) cat "$json/state-waiting.json" ;;
+    *) cat "$json/state-none.json" ;;
+    esac
     ;;
   *)
     echo "fugaro: unexpected orchestrator ${2:-}" >&2
@@ -305,6 +330,24 @@ JSON
 {"version":1,"kind":"events","id":"chk540","events":[
   {"id":"e1","at":"2026-11-18T00:03:00Z","subject":"${item}","transition":"R2->R3","text":"escalation: rung R3 (r2_clean), run run-1 wait: draft_held"},
   {"id":"e2","at":"2026-11-18T00:03:00Z","subject":"${item}","transition":"R3","text":"escalation: rung R3 (r2_clean), run run-1 wait: paths_not_routine"}]}
+JSON
+  # The same log for a wait the ladder RETRIES: the gate reads the review run it
+  # launched at rung 3 as movement, so the cycles behind the launch carry
+  # `wait: run_running` — the line a refusal writes too, with no question behind
+  # it. The retry's own stamp line is in the log beside it, as the daemon writes it.
+  cat >"$1/json/events-retry.json" <<JSON
+{"version":1,"kind":"events","id":"chk540","events":[
+  {"id":"e1","at":"2026-11-18T00:03:00Z","subject":"${item}","transition":"ladder-r3-retry","text":"escalation: retry: wait: run_running"},
+  {"id":"e2","at":"2026-11-18T00:03:10Z","subject":"${item}","transition":"R3","text":"escalation: rung R3 (r2_clean), run run-1 wait: run_running"}]}
+JSON
+  # The brief, which is the only surface that prints a decision's waiting_on: the
+  # question a rung-3 refusal raises for the owner, and a node with no question —
+  # which is every cycle of a walk whose merge is still on its way.
+  cat >"$1/json/state-waiting.json" <<JSON
+{"version":1,"kind":"orchestrator-state","id":"chk540","rev":9,"schema_version":1,"brief":"plan chk540\\n  ${item}  approved  running\\n  ${item}-escalation waits on a person since 2026-11-18T00:03:10Z: the ladder will not land ${item} and needs your word\\n"}
+JSON
+  cat >"$1/json/state-none.json" <<JSON
+{"version":1,"kind":"orchestrator-state","id":"chk540","rev":9,"schema_version":1,"brief":"plan chk540\\n  ${item}  approved  running\\n"}
 JSON
 }
 
@@ -658,6 +701,29 @@ test_a_merge_that_comes_after_rung_3_is_not_a_false_finding() {
   expect_contains "$(cat "$dir/logs/fugaro.calls")" $'\t'"orchestrator events --json" "a merge after rung 3: the audit log is what the walk reads each cycle"
 }
 
+test_a_retried_wait_is_not_the_end_of_the_walk() {
+  # The gate retries a wait it reads as movement, and the first of them comes
+  # right after rung 3 launches its review: the cycles behind the launch carry
+  # `wait: run_running`, which is the very line a rung-3 refusal writes. Nothing
+  # is being asked in those cycles — merge asks the item's question only for a
+  # wait it does not retry — so a walk that stopped on the line would report a
+  # ladder that is really merging its own review as one that never merged. This
+  # case is that walk: the retry lines are in the log from cycle 3, no question
+  # is raised, and the merge arrives two cycles later.
+  local dir=$work/retrywait
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=retry-then-merge CHECK540_CYCLES=20
+  expect_status "$status" 0 "a retried wait before the merge"
+  expect_contains "$out" "FACT walk: PASS" "a retried wait: the walk reached the merge rung"
+  expect_contains "$out" "FACT merge: PASS" "a retried wait: the merge is read at the host, past the retry"
+  expect_contains "$out" "FACT time-to-merge: PASS" "a retried wait: the duration is measurable"
+  [ "$(grep -c 'orchestrator run --once' "$dir/logs/fugaro.calls")" -eq 5 ] ||
+    fail "a retried wait: the check drove $(grep -c 'orchestrator run --once' "$dir/logs/fugaro.calls") cycle(s) instead of walking past the retry lines to the merge"
+  # The question behind the line is read before the walk is declared over: it is
+  # what says the ladder has stopped, and only then is the line a refusal.
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" $'\t'"orchestrator state --json" "a retried wait: the question is read while the wait line stands"
+}
+
 test_a_rung_3_that_does_not_merge_is_a_finding() {
   # Rung 3 is the merge rung: a walk that reaches it and leaves the pull request
   # open is the ladder asking the owner something, and the check stops driving
@@ -853,6 +919,7 @@ t test_a_merged_pull_request_is_a_finding
 t test_an_unset_judge_is_a_finding
 t test_a_walk_that_never_enters_the_ladder_is_a_finding
 t test_a_merge_that_comes_after_rung_3_is_not_a_false_finding
+t test_a_retried_wait_is_not_the_end_of_the_walk
 t test_a_rung_3_that_does_not_merge_is_a_finding
 t test_an_approved_follow_up_is_a_finding
 t test_a_clean_landing_cannot_say_whether_a_follow_up_waits

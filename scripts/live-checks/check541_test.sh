@@ -207,15 +207,29 @@ orchestrator)
       case "$mode" in
       no-walk) cat "$json/events-none.json" ;;
       wrong-clause) cat "$json/events-other.json" ;;
+      retry-then-refusal)
+        # The wait the gate RETRIES before it ever reads the path set: the review
+        # run rung 3 launched has not answered, so the cycle behind the launch
+        # writes `wait: run_running` — the same line a refusal writes — and the
+        # refusal itself comes one cycle later.
+        if [ "$cycles" -lt 4 ]; then cat "$json/events-retry.json"; else cat "$json/events-wait.json"; fi
+        ;;
       *) cat "$json/events-wait.json" ;;
       esac
     fi
     ;;
   state)
+    cycles=$(cat "$FAKE_LOG_DIR/cycles" 2>/dev/null || echo 0)
     case "$mode" in
     answered-question) cat "$json/state-answered.json" ;;
     no-question) cat "$json/state-none.json" ;;
     no-walk) cat "$json/state-none.json" ;;
+    retry-then-refusal)
+      # No question while the ladder is retrying: merge asks the item's one
+      # question only for a wait it does not retry, and the retried wait is what
+      # the cycles before the refusal carry.
+      if [ "$cycles" -lt 4 ]; then cat "$json/state-none.json"; else cat "$json/state-waiting.json"; fi
+      ;;
     default | wrong-clause | merged-during-walk | settings-before-set | write-refused | restore-refused) cat "$json/state-waiting.json" ;;
     *) cat "$json/state-none.json" ;;
     esac
@@ -352,6 +366,14 @@ JSON
   cat >"$1/json/events-other.json" <<JSON
 {"version":1,"kind":"events","id":"chk541","events":[
   {"id":"e1","at":"2026-11-18T00:03:10Z","subject":"${item}","transition":"R2->R3","text":"escalation: rung R3 (r2_clean), run run-1 wait: review_spent"}]}
+JSON
+  # The line a wait the ladder RETRIES writes: the very shape a refusal writes,
+  # with the retry's own stamp beside it, and no question behind it — which is
+  # what a walk that read the line alone would take for the refusal it is after.
+  cat >"$1/json/events-retry.json" <<JSON
+{"version":1,"kind":"events","id":"chk541","events":[
+  {"id":"e1","at":"2026-11-18T00:03:05Z","subject":"${item}","transition":"ladder-r3-retry","text":"escalation: retry: wait: run_running"},
+  {"id":"e2","at":"2026-11-18T00:03:10Z","subject":"${item}","transition":"R2->R3","text":"escalation: rung R3 (r2_clean), run run-1 wait: run_running"}]}
 JSON
   # The brief, which is the only surface that prints a decision's waiting_on:
   # the question the refusal raises, the same question already answered, and a
@@ -776,6 +798,27 @@ test_a_walk_that_stops_on_another_clause_is_a_finding() {
   expect_contains "$out" "CHECK541_EXPECT_REFUSAL" "a refusal on another clause: the knob that records the expectation"
 }
 
+test_a_retried_wait_is_not_the_refusal() {
+  # The gate retries a wait it reads as movement, and the first of them comes
+  # before it ever reads the path set: rung 3 launches the review it merges on and
+  # the cycles behind the launch carry `wait: run_running` — the very line a
+  # refusal writes, with no question behind it. A walk that stopped on that line
+  # would read run_running and report a fence this check never measured; the
+  # ladder's own question is what says it has stopped, so the refusal is read on
+  # the cycle the question appears, one cycle after the retry.
+  local dir=$work/retryfirst
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=retry-then-refusal CHECK541_CYCLES=8
+  expect_status "$status" 0 "a retried wait before the refusal"
+  expect_contains "$out" "FACT refusal: PASS" "a retried wait: the refusal is the clause the ladder really stopped on"
+  expect_contains "$out" "wait on paths_not_routine" "a retried wait: the clause"
+  [ "$(grep -c 'orchestrator run --once' "$dir/logs/fugaro.calls")" -eq 4 ] ||
+    fail "a retried wait: the check drove $(grep -c 'orchestrator run --once' "$dir/logs/fugaro.calls") cycle(s) instead of walking past the retry line to the refusal on the fourth"
+  # The question behind the line is read while the wait stands: it is what says
+  # the ladder has stopped, and only then is the line the refusal.
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" $'\t'"orchestrator state --json" "a retried wait: the question is read on the cycles the wait line stands on"
+}
+
 test_a_merge_during_the_walk_is_the_finding() {
   # This check's whole point: the diff tells the judge to merge and the path set
   # is outside the routine allowlist, and nothing may merge. A pull request that
@@ -956,6 +999,7 @@ t test_an_unset_judge_is_a_finding
 t test_a_walk_that_never_enters_the_ladder_is_a_finding
 t test_a_walk_that_stops_on_another_clause_is_a_finding
 t test_a_merge_during_the_walk_is_the_finding
+t test_a_retried_wait_is_not_the_refusal
 t test_an_answered_question_is_a_finding
 t test_no_open_question_is_a_finding
 t test_the_settings_can_be_left_alone

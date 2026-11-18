@@ -21115,7 +21115,13 @@ open **waits for you** rather than running itself.
   (`fugaro orchestrator run --once`, one cycle per invocation, the lease released between them) until the pull
   request is merged or the bound is reached. **`walk`** is the ledger (`fugaro escalation show <item> --json`:
   the rungs the item really reached, in order) and the audit lines (`fugaro orchestrator events --json`:
-  each rung move with its own reason). **`merge`** is the host again: MERGED, and at which commit.
+  each rung move with its own reason). **`merge`** is the host again: MERGED, and at which commit. The walk
+  ends on the **question** a rung-3 refusal raises for you (`fugaro orchestrator state --json`, the brief's
+  `<item>-escalation waits on a person` line): a wait the gate reads as movement and **retries**
+  (`run_running`, `review_spent`, `ci_unknown`, `judge_spent`) writes the very same `wait: <clauses>` audit
+  line a refusal does, and the ladder asks you only for a wait it does **not** retry — so the question is what
+  says the ladder has stopped, and the line alone is what names the clause it stopped on. A question that
+  cannot be read is said on stderr and the walk goes on to its bound.
 - **`time-to-merge`** — from the first rung move to the merge, both **read** rather than assumed: the ledger's
   own stamps and the host's `mergedAt`.
 - **`follow-ups`** — the work the landing filed (`fugaro backlog list --json`): the items named
@@ -21210,14 +21216,19 @@ it.**
   readied, and the fewer switches a check touches the better. The write is the owner's own hand (**D846**,
   **D1026**) and the `restore` row puts the key back. `CHECK541_SKIP_SETTINGS=1` leaves it alone entirely, and
   `CHECK541_JUDGE_BAIT` (default `verdict merge`) names the instruction the patch has to carry.
-- **`cycles` / `walk` / `refusal`** — the walk, driven through the daemon's own cycle until the ledger records
-  rung 3 or the bound is reached; this check launches nothing itself. The refusal the ladder left is the
-  **rung-3 audit line** (`fugaro orchestrator events --json`), and it has to carry the path clause
-  `paths_not_routine` (**`EXPECT_REFUSAL`**). A line carrying anything else — `ci_red`, `judge_veto`,
-  `draft_held`, `review_spent`, `head_moved` — is a FAIL that names the clause the walk really stopped on.
+- **`cycles` / `walk` / `refusal`** — the walk, driven through the daemon's own cycle until the ladder stops or
+  the bound is reached; this check launches nothing itself. The refusal the ladder left is the **rung-3 audit
+  line** (`fugaro orchestrator events --json`), and it has to carry the path clause `paths_not_routine`
+  (**`EXPECT_REFUSAL`**). A line carrying anything else — `ci_red`, `judge_veto`, `draft_held`, `review_spent`,
+  `head_moved` — is a FAIL that names the clause the walk really stopped on. The walk ends on that line only
+  together with the **question** below: the gate **retries** a wait it reads as movement (`review_spent`,
+  `run_running`, `ci_unknown`, `judge_spent`) and writes the very same `wait: <clauses>` line for it, and one of
+  those comes before the clause this check is about — so a walk that stopped on the first rung-3 wait line would
+  read `run_running` and report a fence this check never measured.
 - **`question`** — the question you were asked (`fugaro orchestrator state --json`; the brief prints
   `<item>-escalation waits on a person since <at>: <question>`), which is **D2037**'s `waiting_on: person`. The
-  ladder hands the decision to you rather than deciding it.
+  ladder hands the decision to you rather than deciding it, and it raises this question only for a wait it does
+  **not** retry — which is what makes it the reading the walk ends on.
 - **`merge`** — the pull request is **still OPEN**. A merged pull request is this check's whole finding — the
   diff talked the system into a merge, or the path clause did not hold — and it is a FAIL, never a pass.
 

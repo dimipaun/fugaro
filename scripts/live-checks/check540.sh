@@ -31,7 +31,12 @@
 #     reached. R0 is a rebase run, R2 the one stronger pass, R3 the merge rung;
 #   * the ledger the rung transitions land in (`fugaro escalation show ITEM
 #     --json`), the audit lines the moves leave (`fugaro orchestrator events
-#     --json`), the merge at the host (`gh pr view` again: MERGED, and when);
+#     --json`), the merge at the host (`gh pr view` again: MERGED, and when). The
+#     walk's own stop signal is the **question** a rung-3 refusal raises for you
+#     (`fugaro orchestrator state --json`): a wait the ladder retries is written
+#     to the audit log as the same `wait: <clauses>` line a refusal is, so the
+#     question — asked only for a wait the ladder does not retry — is what tells
+#     the walk the ladder has stopped and that you are the one being asked;
 #   * **the time to merge**, from the first rung move to the merge, both read
 #     rather than assumed: the ledger's own stamps and the host's `mergedAt`;
 #   * the follow-ups the landing filed (`fugaro backlog list --json`): the items
@@ -216,6 +221,7 @@ write_reader() {
   cat >"$SCRATCH/read.py" <<'PY'
 import datetime
 import json
+import re
 import sys
 
 
@@ -236,6 +242,15 @@ def epoch(text):
         return "%d" % datetime.datetime.fromisoformat(stamp).timestamp()
     except ValueError:
         return ""
+
+
+# The brief's decision lines, which are the only machine-readable surface of a
+# decision's `waiting_on:` there is (internal/orchestrator/summary.go): one the
+# node still holds open reads `<id> waits on a <class> since <at>: <question>`,
+# and one a person has closed reads `<id> was answered by a <class> at <at>:
+# <answer>`. Only the id and the class are ever printed by the check.
+WAITS = re.compile(r"^\s+(\S+) waits on a (\S+) since (\S+): (.*)$")
+ANSWERED = re.compile(r"^\s+(\S+) was answered by a (\S+) at (\S+): (.*)$")
 
 
 what = sys.argv[1]
@@ -302,6 +317,21 @@ elif what == "events":
             e.get("transition") or "",
             (e.get("text") or "").replace("\t", " "),
         ))
+elif what == "state":
+    brief = doc.get("brief") or ""
+    waits = answered = 0
+    for line in brief.splitlines():
+        m = WAITS.match(line)
+        if m:
+            waits += 1
+            print("wait\t%s\t%s\t%s\t%s" % (m.group(1), m.group(2), m.group(3), m.group(4)))
+            continue
+        m = ANSWERED.match(line)
+        if m:
+            answered += 1
+            print("answered\t%s\t%s\t%s\t%s" % (m.group(1), m.group(2), m.group(3), m.group(4)))
+    print("waits=%d" % waits)
+    print("answered=%d" % answered)
 elif what == "setting":
     rows = doc.get("settings") or []
     if not rows:
@@ -595,8 +625,10 @@ write_setting() { # write_setting KEY VALUE WHY
 # `orchestrator run --once` is one cycle — it takes the lease, runs a cycle and
 # releases it — so this check drives the ladder the way the installed service
 # does and never merges anything itself. The loop stops at the first reading that
-# says the walk is over: the pull request merged, or a rung-3 refusal (which is
-# the ladder asking you a question, not a walk still going), or the bound.
+# says the walk is over: the pull request merged, or the question a rung-3
+# refusal raises for you (which is the ladder stopping rather than walking on —
+# the audit line alone does not say that, since a wait the ladder retries writes
+# the same one), or the bound.
 step_walk() {
   if [ -z "$PROJECT" ] || [ -z "$SLUG" ]; then
     unmeasured walk "there is no installation or repository to drive: the rows above say why"
@@ -631,8 +663,19 @@ step_walk() {
       break
     fi
     if [ -n "$WAIT_LINE" ]; then
-      WALK_STOPPED="the ladder recorded a rung-3 wait after ${cycle} cycle(s) — '${WAIT_LINE:0:200}' — so it is asking you something rather than walking on"
-      break
+      # The wait line is not the signal on its own: the ladder writes it while it
+      # is still going, for a wait it retries (run_running, review_spent,
+      # ci_unknown, judge_spent). What says it has STOPPED is the question it
+      # raised for you, and that is read only while such a line stands.
+      local asked=""
+      if ! asked=$(ladder_question); then
+        say "the ladder's question could not be read after cycle ${cycle} (fugaro orchestrator state --json did not answer): the walk goes on, and its bound ends it"
+        asked=""
+      fi
+      if [ -n "$asked" ]; then
+        WALK_STOPPED="the ladder stopped at rung 3 and asked you ${ITEM}-escalation (waiting on a ${asked}) after ${cycle} cycle(s) — '${WAIT_LINE:0:200}' — so it is asking you rather than walking on"
+        break
+      fi
     fi
     if [ "$cycle" -ge "$CYCLES" ]; then
       WALK_STOPPED="the bound of ${CYCLES} cycles was reached"
@@ -668,11 +711,11 @@ read_ledger() { # read_ledger
 }
 
 # read_events: the audit lines of the plan's own node. The rung-3 refusal is one of
-# them (the ladder writes `escalation: rung R3 (…), run … wait: <clauses>`) and it is
-# the reading that says the ladder has STOPPED rather than that a cycle is still
-# going: rung 3 launches the review it merges on and the landing comes in a later
-# cycle, so a walk stopped at the first sight of rung 3 in the ledger would report a
-# working ladder as a pull request that never merged.
+# them (`escalation: rung R3 (…), run … wait: <clauses>`), but the line alone does not
+# say the ladder has stopped — a wait it retries writes the same one — so what the walk
+# ends on is the question ladder_question reads. The lines are read every cycle all the
+# same: rung 3 launches the review it merges on and the landing comes in a later cycle,
+# and the line is what names the clause once the ladder really has stopped.
 read_events() { # read_events
   run_bounded "$CLI_TIMEOUT" events "$SANDBOX" "$FUGARO_BIN" orchestrator events --json
   if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
@@ -683,11 +726,32 @@ read_events() { # read_events
 
 # ladder_wait: the last audit line in which the ladder's own rung-3 merge attempt was
 # recorded as a wait — `escalation: rung R3 (…), run …, wait: <clauses>` — and "" when
-# no cycle has written one. A retry's own line is not one of these (it is written under
-# the word `retry`, and the ladder is still going), so the match is anchored on the rung.
+# no cycle has written one. A retry's own stamp is not one of these (it is written
+# under the word `retry`, and the ladder is still going), so the match is anchored on
+# the rung. The line alone does not say the ladder has STOPPED: a wait the gate reads
+# as movement and retries writes this very line, so what ends the walk is the question
+# below and not this.
 ladder_wait() { # ladder_wait
   awk -F'\t' '$1 == "event" && $5 ~ /^escalation: rung R[34] .*wait: / { line = $5 } END { if (line != "") print line }' \
     "$SCRATCH/events.txt" 2>/dev/null || true
+}
+
+# ladder_question: the class the ladder's own question for this item waits on —
+# `person` when a rung 3 has handed the decision to you — and "" when the ladder has
+# asked nothing and is still walking. It is the reading that says the walk is over:
+# merge asks the item's one question only for a wait it does NOT retry, so a retried
+# wait — the review run rung 3 just launched, a run that has not ended, checks that
+# have not concluded — writes the same `wait: <clauses>` audit line a refusal does
+# (internal/orchestrator/escalate_merge.go, MergeOutcome.Retry) and asks you nothing.
+# A question that could not be read answers 1, and the walk goes on: the bound is
+# what ends a walk that cannot tell whether the ladder has stopped.
+ladder_question() { # ladder_question
+  run_bounded "$CLI_TIMEOUT" state "$SANDBOX" "$FUGARO_BIN" orchestrator state --json
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    return 1
+  fi
+  read_json state "$SCRATCH/state.out" "$SCRATCH/state.txt" || return 1
+  awk -F'\t' -v id="${ITEM}-escalation" '$1 == "wait" && $2 == id { print $3; exit }' "$SCRATCH/state.txt"
 }
 
 # pull_request_merged: the host's own answer, and the one that counts: the ledger
@@ -888,6 +952,7 @@ plan() {
   done
   say "  [network, BILLABLE, drives the daemon] fugaro orchestrator run --once in ${SANDBOX}, up to ${CYCLES} cycle(s) every ${POLL_SECONDS}s under a ${WALK_TIMEOUT}s bound — the ladder's own runs (the rung 0 rebase, the rung 2 pass, the review at the rebased head, the judge, the merge) are launched by the daemon and covered by the item's approval"
   say "  [read] fugaro escalation show ${ITEM:-<item>} --json — the rungs, the reason each was entered, and the head each was decided at"
+  say "  [read] fugaro orchestrator events --json (the audit lines the rungs leave) and fugaro orchestrator state --json (the question a rung-3 refusal raises for you): a wait the ladder RETRIES writes its own audit line and asks nothing, so the question is what says it has stopped"
   say "  [read, host] gh pr view — MERGED and when, or the refusal the walk stopped on"
   say "  [read] fugaro backlog list --json — the follow-ups the landing filed (${ITEM:-<item>}-fu-…), queued and unapproved"
   for key in installation pull-request settings cycles walk merge time-to-merge follow-ups; do
