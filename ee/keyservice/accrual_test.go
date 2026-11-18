@@ -257,6 +257,96 @@ func TestRevokedEntitlementStopsAccruing(t *testing.T) {
 	}
 }
 
+// TestAZeroCreditLimitMayNotMintAtAll: `resellers.schema.json`'s own zero — a
+// reseller whose limit is nothing "may not mint at all" — and the reason it is a
+// check of its own rather than one the comparison answers.
+//
+// A row priced at nothing costs nothing, so a sale of any size leaves the sum
+// where it was and a comparison of the sum against the limit admits it: the one
+// sale a limit of nothing exists to refuse is the one sale of a free row. The
+// case is therefore a row priced at zero a day, which is a price operations may
+// set (validResellerTerms admits a rate of zero), and a sale big enough that no
+// reading of it is small.
+func TestAZeroCreditLimitMayNotMintAtAll(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.seed(resellerTermsCollection, resellerID, WireReseller{
+		OrganisationID:    resellerID,
+		CreditLimitMicros: 0,
+		Rates:             []WireResellerRate{{Row: PolicyTeamMonthly, DailyRateMicros: 0}},
+		CreatedAt:         f.now,
+	})
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	bought := f.soldBy("Example Ltd")
+	held := f.soldWorkspace(bought.ID, "ws-no-credit")
+
+	rec := f.mintSale(bought.ID, held, PolicyTeamMonthly, 500, f.now.Add(saleDays*24*time.Hour))
+	if rec.Code != http.StatusConflict || refusal(f, rec) != "over_credit_limit" {
+		t.Errorf("a sale by a reseller whose credit limit is nothing answered %d %s, want 409 over_credit_limit: %s",
+			rec.Code, refusal(f, rec), rec.Body)
+	}
+	if licences := f.entitlementsOfOrganisation(bought.ID); len(licences) != 0 {
+		t.Errorf("the refused sale left %d licence(s), want none: a limit of nothing is a reseller that may not mint at all", len(licences))
+	}
+}
+
+// TestASupersededSaleStopsAccruing: a licence another grant replaces serves no
+// day of the term it was granted for, and its seller is charged for the day it
+// served and not for the overlap — the accrual's own rule (accrual.go), which a
+// revocation's stop alone did not hold for the other way a licence stops
+// serving.
+//
+// The same workspace is sold twice, a day apart, which is the renewal or the
+// upgrade a reseller's customer asks for: the second grant replaces the licence
+// serving there (D2204), so the two figures the case reads are the whole month
+// 600_000 and the day the replaced licence served beside the second term —
+// 20 * 1 * 1000 + 600_000.
+func TestASupersededSaleStopsAccruing(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	bought := f.soldBy("Example Ltd")
+	workspace := f.soldWorkspace(bought.ID, "ws-superseded")
+	first := f.saleOf(bought.ID, workspace, PolicyTeamMonthly, saleSeats, f.now.Add(saleDays*24*time.Hour))
+	if got := f.unpaid(resellerID); got != saleMicros {
+		t.Fatalf("the month's sale accrues %d micros, want the whole term's %d", got, saleMicros)
+	}
+
+	// A day later the same workspace is sold again, and the licence that was
+	// serving there is the one the second sale replaces.
+	f.advance(24 * time.Hour)
+	second := f.saleOf(bought.ID, workspace, PolicyTeamMonthly, saleSeats, f.now.Add(saleDays*24*time.Hour))
+	if second.ID == first.ID {
+		t.Fatalf("the second sale wrote the record the first one did, %s", first.ID)
+	}
+	replaced, found := heldRecord[WireEntitlement](f, entitlementsCollection, first.ID)
+	if !found || replaced.Status != entitlementSuperseded {
+		t.Fatalf("the licence the second sale replaced is %q (%v), want the superseded record", replaced.Status, found)
+	}
+	// The stop is the instant the replacement began, and it is recorded: nothing
+	// else in the store carries the day the replaced licence stopped serving.
+	stopped, err := f.svc.resellerStoppedAt(context.Background(), first.ID)
+	if err != nil {
+		t.Fatalf("reading the stop of %s: %v", first.ID, err)
+	}
+	if stopped == nil || !stopped.Equal(f.now) {
+		t.Fatalf("the stop of the replaced licence is %v, want the instant of the sale that replaced it %s", stopped, f.now)
+	}
+
+	// The day it served, and not the month it was granted for.
+	served := int64(saleSeats) * resellerRate
+	if got := f.unpaid(resellerID); got != served+saleMicros {
+		t.Errorf("the accrual is %d micros, want the day the replaced licence served beside the second sale's term %d",
+			got, served+saleMicros)
+	}
+	// And it stays there as the days go by: the replaced licence is not charged
+	// for the rest of the term nobody served.
+	f.advance(saleDays * 24 * time.Hour)
+	if got := f.unpaid(resellerID); got != served+saleMicros {
+		t.Errorf("the accrual a month later is %d micros, want the frozen %d: a replaced licence serves no further day", got, served+saleMicros)
+	}
+}
+
 // TestConcurrentMintsCannotExceedTheLimit: D2189's ceiling under the one thing
 // that can break it — sales arriving together. The sum is a read and the grant is
 // a write beside it, and without the lock every request of the burst reads a sum

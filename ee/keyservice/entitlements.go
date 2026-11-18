@@ -115,8 +115,9 @@ type entitlementGrant struct {
 //
 // Every read this transaction makes is taken before its first write: the store
 // is read-before-write and refuses a document read after one the same transaction
-// has written (docstore's ErrReadAfterWrite), so the candidates and the workspace
-// are read together and the writes follow them.
+// has written (docstore's ErrReadAfterWrite), so the candidates, the workspace
+// and the stops the superseded licences of a reseller's sales accrue to
+// (accrual.go) are read together and the writes follow them.
 //
 // A grant that names an id the store already holds is **answered** and not
 // rewritten. The id is derived from the merchant's transaction (P4.2's
@@ -153,9 +154,31 @@ func (s *Service) grantEntitlement(ctx context.Context, grant entitlementGrant) 
 		if err != nil {
 			return err
 		}
+		// The instant each superseded licence a reseller sold stops accruing: it
+		// is the instant the grant that replaces it starts, because a licence
+		// another grant replaced serves no day of the term it was granted for,
+		// and its seller is charged for what it served and not for the overlap
+		// (accrual.go's own header). The stops are read with the licences and
+		// before the first write, which is what the store requires of a
+		// transaction (docstore's ErrReadAfterWrite).
+		stops := make([]resellerAccrualStop, 0, len(superseding))
+		for _, held := range superseding {
+			stop, err := accrualStopToWrite(ctx, tx, held, written.entitlement.StartsAt)
+			if err != nil {
+				return err
+			}
+			if stop != nil {
+				stops = append(stops, *stop)
+			}
+		}
 		for _, held := range superseding {
 			held.Status = entitlementSuperseded
 			if err := putRecord(ctx, tx, entitlementsCollection, held.ID, held); err != nil {
+				return err
+			}
+		}
+		for _, stop := range stops {
+			if err := putRecord(ctx, tx, resellerAccrualStopsCollection, stop.EntitlementID, stop); err != nil {
 				return err
 			}
 		}

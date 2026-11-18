@@ -17,18 +17,24 @@ package keyservice
 // read a sum near nothing and pass a limit none of them is near. What a licence
 // commits its seller to is the term it was sold for.
 //
-// **A revoked licence stops at the instant it was revoked** (D2189, and
+// **A licence that stops serving stops being charged for, at the instant it
+// stopped.** A revocation is one way that happens (D2189, and
 // `resellers.schema.json`'s own reading of the rate: "it has to stop the day an
 // entitlement is revoked rather than at the end of a term that was never
-// served"). No record of a licence carries that instant, so it is written where
-// the revocation happens, in the transaction that moves the status
-// (entitlements.go's revokeEntitlement, through accrualStopToWrite): an accrual
-// derived from anything else is a figure a refund leaves too high, and the days
-// a reseller is no longer serving are days it must not be charged for. The stop
-// is a record of its own rather than a field of the licence because the licence
-// is a wire shape every reader of the portal decodes (F20, wire_entitlements.go)
-// and this is a fact no reader outside this service has ever asked for — the
-// same reason the operations queue is not one (ops.go's operationsQueued).
+// served"), and a grant that replaces the licence in its workspace is the other
+// (D2204): the renewal, the upgrade or the customer's own purchase that
+// supersedes a sale is a licence nobody serves from again, and an accrual that
+// ran it to the end of its term would charge the reseller twice for the overlap
+// and spend its limit on days it did not serve. No record of a licence carries
+// that instant, so it is written where the status moves, in the transaction
+// that moves it (entitlements.go's revokeEntitlement and grantEntitlement,
+// through accrualStopToWrite): an accrual derived from anything else is a
+// figure a refund leaves too high, and the days a reseller is no longer serving
+// are days it must not be charged for. The stop is a record of its own rather
+// than a field of the licence because the licence is a wire shape every reader
+// of the portal decodes (F20, wire_entitlements.go) and this is a fact no reader
+// outside this service has ever asked for — the same reason the operations queue
+// is not one (ops.go's operationsQueued).
 //
 // **No total is stored.** The sum is derived from the licences it counts, every
 // time it is asked, so there is no counter to drift from them: a relink moves a
@@ -148,16 +154,18 @@ func resellerAccruedTotal(held, cost int64) int64 {
 	return held + cost
 }
 
-// accrualStopToWrite is the stop a revocation writes, or nil when there is
-// nothing to write: a licence no reseller sold is not one this area charges for,
-// and one that already carries a stop keeps the instant it has — the FIRST
-// instant a licence stopped is the one its days stop at, so a refund that
-// follows an operator's revocation must not move it later and charge for the
-// days between the two.
+// accrualStopToWrite is the stop a licence that stops serving writes, or nil
+// when there is nothing to write: a licence no reseller sold is not one this
+// area charges for, and one that already carries a stop keeps the instant it
+// has — the FIRST instant a licence stopped is the one its days stop at, so a
+// refund that follows an operator's revocation must not move it later and
+// charge for the days between the two.
 //
-// It reads the stop it would write and writes nothing, so that the transaction
-// wrapping it takes this read before its first write, which the deploy's store
-// requires (docstore's ErrReadAfterWrite).
+// Its callers are the two places a licence stops serving: a revocation
+// (revokeEntitlement) and a grant that supersedes the licence in its workspace
+// (grantEntitlement). It reads the stop it would write and writes nothing, and
+// both callers take that read before their first write, which the deploy's
+// store requires (docstore's ErrReadAfterWrite).
 func accrualStopToWrite(ctx context.Context, tx Tx, licence WireEntitlement, at time.Time) (*resellerAccrualStop, error) {
 	if licence.Source != entitlementSourceReseller {
 		return nil, nil
@@ -274,7 +282,10 @@ func (s *Service) resellerUnpaidMicros(ctx context.Context, resellerID string, t
 // two mints in flight together would each read a sum that does not hold the
 // other's sale: the reseller would hold two licences whose terms together pass
 // its limit, which is the one thing the limit is for. The lock is taken before
-// the sum is read and held until the grant has landed.
+// the sum is read and held until the grant has landed. A limit of nothing is
+// answered before it: the schema's own zero is a reseller that may not mint at
+// all, and it is a check of its own because a row priced at nothing would
+// otherwise pass the comparison whatever its seats and term.
 //
 // **No line is written in the log.** The log is the operations team's
 // (audit.go, resellers.go's own header): the three acts of this area that write
@@ -324,6 +335,16 @@ func (s *Service) mintResellerLicence(ctx context.Context, held resellerAccess, 
 	ends := asked.EndsAt.UTC()
 	if !ends.After(now) || ends.After(now.Add(row.Term)) {
 		return WireEntitlement{}, fmt.Errorf("%w: a sale of the %s row runs from %s and at most %s from there", errOperationsBadTerm, row.Name, now, row.Term)
+	}
+	// A limit of nothing is a reseller that may not mint at all
+	// (`resellers.schema.json`), and it is answered here rather than left to the
+	// comparison below: a row priced at nothing costs nothing, and with a limit
+	// of zero and a cost of zero both sides of that comparison are false, so a
+	// sale of any size would be a sale nothing refuses. It is asked before the
+	// lock for the reason it is asked at all — a reseller that may not mint has
+	// no sum to be read.
+	if terms.CreditLimitMicros == 0 {
+		return WireEntitlement{}, fmt.Errorf("%w: this reseller's credit limit is nothing, so it may not mint at all", errResellerNoCredit)
 	}
 	resellerMintMu.Lock()
 	defer resellerMintMu.Unlock()
