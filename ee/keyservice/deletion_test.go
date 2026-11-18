@@ -34,6 +34,7 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -878,21 +879,24 @@ func TestAnOrganisationDeletionRemovesItsRecordsInOneCommit(t *testing.T) {
 // nothing of the organisation has moved and the same request is what finishes
 // the job.
 //
-// What the retry meets is a subscription the merchant holds as cancelled already
-// and a record that does not say so yet, because the cancellation event is what
-// moves the record and it has not been delivered (billing.go's
-// cancelSubscriptionsOf). The merchant's own answer for that state is
-// ErrSubscriptionAlreadyCancelled, and read as a failure it is a deletion that
-// cannot be finished until an event the person asking has no sight of arrives.
+// What the retry meets is a subscription the merchant has ended already, and a
+// merchant that refuses to end it twice. The retry therefore asks it nothing
+// (billing.go's cancelSubscriptionsOf records the cancellation the merchant took
+// as it takes it, and `At` is left to the merchant's own event), which is what
+// leaves the cancellation event's delivery out of the person's way: a retry that
+// asked again would be refused, and until that event arrived the organisation
+// could not be deleted — the deletion asks the merchant before it removes
+// anything, so this is the one window a retry is in.
 func TestARetriedOrganisationDeletionFinishesTheJob(t *testing.T) {
 	store := &deletionStore{Memory: docstore.NewMemory()}
 	f, docs := newDeletionFixtureOverTheStore(t, store)
 	org := f.seededOrganisation("org-dana", "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
 	workspace := f.seedWorkspace("ws-1", org.ID, "Dana's portal")
 	f.subscription("sub-dana", org.ID, workspace.ID, f.now.Add(20*24*time.Hour), false)
-	// The first attempt is the one that ends the subscription; the second meets
-	// the merchant's answer for a subscription it has cancelled already.
-	f.paddle.cancelErrors = []error{nil, ErrSubscriptionAlreadyCancelled}
+	// The first attempt is the one that ends the subscription; the merchant
+	// refuses to end one it has ended already, so a second attempt at it is a
+	// failure and a deletion that is never finished.
+	f.paddle.cancelErrors = []error{nil, errors.New("the merchant of record refuses to cancel a subscription it has ended")}
 	f.actsAs(danaUID, danaEmail, signInGoogle)
 
 	store.refuseRemoval = workspacesCollection + "/" + workspace.ID
@@ -906,7 +910,7 @@ func TestARetriedOrganisationDeletionFinishesTheJob(t *testing.T) {
 
 	second := f.deleteOrg(org.ID)
 	if second.Code != http.StatusNoContent {
-		t.Fatalf("the deletion made again answered %d (%s), want it finished: the merchant's answer for a subscription it holds as cancelled already is the state the first attempt reached and not a refusal", second.Code, second.Body)
+		t.Fatalf("the deletion made again answered %d (%s), want it finished: the retry has nothing to ask the merchant, because the cancellation it made was recorded when the merchant took it", second.Code, second.Body)
 	}
 	if _, held := heldOverTheStore[WireOrganisation](t, docs, organisationsCollection, org.ID); held {
 		t.Error("the organisation stands after the retry went through")
@@ -914,8 +918,11 @@ func TestARetriedOrganisationDeletionFinishesTheJob(t *testing.T) {
 	if _, held := heldOverTheStore[WireMembership](t, docs, membershipsCollection, membershipID(org.ID, danaUID)); held {
 		t.Error("a membership of the deleted organisation stands")
 	}
-	if asked := f.paddle.cancelled; len(asked) != 2 {
-		t.Errorf("the merchant was asked to cancel %v across the two attempts, want one attempt per request", asked)
+	if asked := f.paddle.cancelled; len(asked) != 1 {
+		t.Errorf("the merchant was asked to cancel %v across the two attempts, want the first attempt alone: the retry reads the cancellation off the record it wrote", asked)
+	}
+	if held, present, err := f.store.Subscription(context.Background(), "sub-dana"); err != nil || !present || !held.Cancelled {
+		t.Errorf("the subscription after the deletion is %+v (present %t, %v), want it recorded as the merchant's cancellation left it", held, present, err)
 	}
 }
 

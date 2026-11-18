@@ -62,13 +62,6 @@ const (
 	// are small JSON documents; a bound here is what keeps a failure page or a
 	// runaway body from being buffered by a service a stranger's click reaches.
 	paddleMaxAnswerBytes = 64 << 10
-
-	// paddleAlreadyCancelled is Paddle's own code for a cancellation of a
-	// subscription that is cancelled already. It is the one refusal this client
-	// reads rather than reports (Cancel), and it is matched as Paddle spells it:
-	// the merchant's status vocabulary is American (`canceled`, paddleclient_test.go's
-	// own answer carries it).
-	paddleAlreadyCancelled = "subscription_already_canceled"
 )
 
 // PaddleClient is the merchant of record as this deployment reaches it.
@@ -215,27 +208,12 @@ func (p *PaddleClient) SetSeats(ctx context.Context, subscriptionID string, seat
 // account's deletion (P2.4): a subscription that ran to the end of a period
 // would keep a customer who asked to be gone, and the licence it pays for is
 // already gone with their data.
-//
-// A subscription Paddle refuses to cancel because it is cancelled already is
-// answered as ErrSubscriptionAlreadyCancelled rather than as a failure. That
-// refusal is the merchant's own statement of the state the caller asked for, and
-// the caller is a retried deletion whose first attempt ended the subscription
-// before its cancellation event arrived (billing.go's cancelSubscriptionsOf):
-// read as a failure it is a deletion that can never be finished.
-//
-// The code is what is matched and never the refusal's sentence, which is
-// Paddle's own text and may be reworded.
 func (p *PaddleClient) Cancel(ctx context.Context, subscriptionID string) error {
 	asked := struct {
 		EffectiveFrom string `json:"effective_from"`
 	}{EffectiveFrom: "immediately"}
 	path := "/subscriptions/" + url.PathEscape(subscriptionID) + "/cancel"
-	err := p.call(ctx, http.MethodPost, path, asked, nil)
-	var refused *paddleRefusal
-	if errors.As(err, &refused) && refused.code == paddleAlreadyCancelled {
-		return ErrSubscriptionAlreadyCancelled
-	}
-	return err
+	return p.call(ctx, http.MethodPost, path, asked, nil)
 }
 
 // call is the one request this client makes: one JSON body out, one JSON answer
@@ -271,8 +249,7 @@ func (p *PaddleClient) call(ctx context.Context, method, path string, body, into
 		return fmt.Errorf("the merchant's answer could not be read: %w", err)
 	}
 	if answer.StatusCode/100 != 2 {
-		code, fault := paddleError(raw)
-		return &paddleRefusal{method: method, path: path, status: answer.StatusCode, code: code, fault: fault}
+		return fmt.Errorf("the merchant of record refused %s %s with %d: %s", method, path, answer.StatusCode, paddleFault(raw))
 	}
 	if into == nil {
 		return nil
@@ -283,36 +260,12 @@ func (p *PaddleClient) call(ctx context.Context, method, path string, body, into
 	return nil
 }
 
-// paddleRefusal is one refusal of this client: what was asked, what the merchant
-// answered, and its own error's code and phrase. It is a value and not a
-// formatted string because one caller has to read the CODE — a cancellation of a
-// subscription Paddle holds as cancelled already is an answer and not a failure
-// (Cancel) — and the code is the only part of a refusal that is the merchant's
-// vocabulary rather than a sentence it may reword.
-type paddleRefusal struct {
-	method string
-	path   string
-	status int
-	// code is Paddle's own error code, empty when the body is not its error
-	// shape.
-	code string
-	// fault is what is reported, which is the code and the detail where both are
-	// there (paddleError).
-	fault string
-}
-
-func (r *paddleRefusal) Error() string {
-	return fmt.Sprintf("the merchant of record refused %s %s with %d: %s", r.method, r.path, r.status, r.fault)
-}
-
-// paddleError is Paddle's own error out of one body: its code, which is the
-// merchant's own vocabulary and the thing one caller matches (Cancel), and the
-// phrase this service reports for it. A body that is not Paddle's error shape —
-// a proxy's page, a truncation — answers no code and "no error shape", and that
-// is answered as exactly that and never quoted: what a failure says to whoever
-// reads the API's report is the merchant's own complaint and not a body this
-// service did not write, nor the key it sent with.
-func paddleError(raw []byte) (code, fault string) {
+// paddleFault is Paddle's own error code and detail, for an error's text. A body
+// that is not Paddle's error shape — a proxy's page, a truncation — is answered
+// as exactly that and not quoted, so what a failure says to whoever reads the
+// API's report is the merchant's own complaint and never a body this service did
+// not write, nor the key it sent with.
+func paddleFault(raw []byte) string {
 	var answer struct {
 		Error struct {
 			Code   string `json:"code"`
@@ -320,16 +273,16 @@ func paddleError(raw []byte) (code, fault string) {
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &answer); err != nil {
-		return "", "no error shape"
+		return "no error shape"
 	}
 	switch {
 	case answer.Error.Code == "" && answer.Error.Detail == "":
-		return "", "no error shape"
+		return "no error shape"
 	case answer.Error.Detail == "":
-		return answer.Error.Code, answer.Error.Code
+		return answer.Error.Code
 	case answer.Error.Code == "":
-		return "", answer.Error.Detail
+		return answer.Error.Detail
 	default:
-		return answer.Error.Code, answer.Error.Code + ": " + answer.Error.Detail
+		return answer.Error.Code + ": " + answer.Error.Detail
 	}
 }

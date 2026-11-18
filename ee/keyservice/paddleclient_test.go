@@ -26,7 +26,6 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -330,41 +329,6 @@ func TestPaddleClientCancelsImmediately(t *testing.T) {
 	}
 	if !strings.Contains(calls[0].body, `"effective_from":"immediately"`) {
 		t.Errorf("the cancellation asks for %q, want it effective immediately", calls[0].body)
-	}
-}
-
-// TestPaddleClientReadsAnAlreadyCancelledSubscriptionAsAnAnswer: the one
-// refusal this client does not report. A retried deletion asks the merchant to
-// cancel a subscription an earlier attempt ended, and the answer Paddle gives for
-// that state — its own code, which is what is matched: the sentence around it is
-// Paddle's and may be reworded — is the state the caller wanted
-// (ErrSubscriptionAlreadyCancelled, billing.go's cancelSubscriptionsOf), not a
-// failure that would leave the organisation undeleted until the merchant's
-// cancellation event arrived. Any other refusal is still a refusal.
-func TestPaddleClientReadsAnAlreadyCancelledSubscriptionAsAnAnswer(t *testing.T) {
-	cancelled := &paddleMerchant{status: http.StatusBadRequest, answer: `{"error":{"type":"request_error","code":"subscription_already_canceled","detail":"The subscription is already canceled."}}`}
-	client := cancelled.merchant(t, Production)
-
-	err := client.Cancel(context.Background(), "sub_01")
-	if !errors.Is(err, ErrSubscriptionAlreadyCancelled) {
-		t.Fatalf("cancelling a subscription the merchant holds as cancelled already answered %v, want the answer that it is cancelled", err)
-	}
-	calls := cancelled.saw()
-	if len(calls) != 1 || calls[0].method != http.MethodPost || calls[0].path != "/subscriptions/sub_01/cancel" {
-		t.Fatalf("the merchant was asked %+v, want one cancellation", calls)
-	}
-
-	// The merchant's other refusals are refusals, and the state it names is read
-	// off its code and not off any sentence: a body whose detail says the same
-	// thing under a code this service does not know is a failure.
-	other := &paddleMerchant{status: http.StatusBadRequest, answer: `{"error":{"type":"request_error","code":"subscription_not_found","detail":"The subscription is already canceled."}}`}
-	client = other.merchant(t, Production)
-	err = client.Cancel(context.Background(), "sub_01")
-	if err == nil || errors.Is(err, ErrSubscriptionAlreadyCancelled) {
-		t.Fatalf("a subscription the merchant does not hold answered %v, want its own refusal", err)
-	}
-	if !strings.Contains(err.Error(), "subscription_not_found") {
-		t.Errorf("the refusal is %q, want the merchant's own code in it", err)
 	}
 }
 

@@ -406,9 +406,9 @@ type paddleSpy struct {
 	cancelled   []string
 	// cancelErrors is what the merchant answers each cancellation with, in
 	// order, and `err` stands for every attempt after the list is spent. A case
-	// uses it for the answers that are only true of a later attempt: the
-	// already-cancelled one a retry of a deletion meets, where the first attempt
-	// was the one that ended the subscription.
+	// uses it for an answer that only a later attempt meets: a merchant refuses
+	// to cancel a subscription it has ended already, so a case whose retry asked
+	// it again would be reading that refusal.
 	cancelErrors []error
 }
 
