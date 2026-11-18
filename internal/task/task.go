@@ -1419,7 +1419,20 @@ const (
 var (
 	slugUnsafeRE = regexp.MustCompile(`[^a-z0-9]+`)
 	providerRE   = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	// slugShapeRE is the shape Slug derives: the readable part -- never empty,
+	// and never ending in the "-" that separates it -- then 16 lower-case hex
+	// digits. A value that is not one of these is not a slug this tree made.
+	slugShapeRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{16}$`)
 )
+
+// ValidSlug reports whether slug is a storage slug of the shape Slug derives,
+// the check a reader makes that a value it was handed may be addressed as one
+// (a path segment of a bucket key, a directory of the committed report
+// mirror). It is a shape check and not a proof of origin: only Slug builds one,
+// and what this answers is that a string could have come from it -- a
+// misspelling of the readable part is a slug of another repository and is
+// indistinguishable here, which is what the hash suffix is for.
+func ValidSlug(slug string) bool { return slugShapeRE.MatchString(slug) }
 
 // ValidProvider reports whether kind is a git provider kind ("github",
 // "bitbucket", or "fake" in tests). It is the check Slug applies, exported so
