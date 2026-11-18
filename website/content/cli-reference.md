@@ -98,17 +98,30 @@ same records and verdicts always give the same table. A pair at Critical counts
 only once a judge has decided it (D561), and every other mode shows the judge's
 verdict beside the hard signals it is ranked on.
 
-Rows are one per rigor mode x tier x model pair. A pair the arms do not make --
-a different start commit, mode, tier or recipe, or an arm that never started --
-is in no figure at all. WINS and LOSSES are the challenger's; a TIE decided
-nothing and no figure is drawn from one. HALTS is each arm's halt count: a halt
-is already a loss, and the count says how often a limit rather than the work
-decided a pair. COST is the median pair cost ratio, the challenger's model
-dollars over the champion's. JUDGE FAMILY is the family of the model that judged
-the group's pairs -- a Claude ID is anthropic, a provider model's family is its
-ID's vendor prefix -- and SAME FAMILY says one of them is an arm's own, which
-blindness does not remove (D553). UNJUDGED counts the pairs no judge has decided
-and TRUNCATED those whose patch was cut short and can never be judged.
+Rows are one per rigor mode x tier x slot x model and effort pair. A pair the
+arms do not make -- a different start commit, mode, tier, recipe or slot, or an
+arm that never started -- is in no figure at all. WINS and LOSSES are the
+challenger's; a TIE decided nothing and no figure is drawn from one. HALTS is
+each arm's halt count: a halt is already a loss, and the count says how often a
+limit rather than the work decided a pair. COST is the median pair cost ratio,
+the challenger's over the champion's, of the review level itself for a reviewer
+row. JUDGE FAMILY is the family of the model that judged the group's pairs -- a
+Claude ID is anthropic, a provider model's family is its ID's vendor prefix --
+and SAME FAMILY says one of them is an arm's own, which blindness does not
+remove (D553). UNJUDGED counts the pairs no judge has decided and TRUNCATED
+those whose patch was cut short and can never be judged.
+
+SLOT is what a pair varies: coder for a pair of whole runs, and review level 1,
+2 or 3 for a pair whose challenger replayed the champion's recorded patch at
+that level (D728). Such a row's CHAMPION and CHALLENGER are that level's two
+reviewers and EFFORT is theirs; its signals are the two rounds -- the word each
+answered, and the halt before it -- and not the coder facts a pair of runs is
+ranked on. MISSES and FALSE ALARMS are what a judge matched of the two finding
+sets, - until a judge matches one: nothing here reads a finding's text, and no
+judge run matches two sets yet. MISS RATE is therefore not a figure either,
+and the cell says so rather than printing a number nothing has checked:
+whether the blind judge can match two finding sets reliably is the A5 judge's
+own agreement check (Check 211), which has not been run.
 
 ADVICE is D565's rule at the mode's exchange rate: the challenger is recommended
 when it is clearly better (the lower bound of its win share above a half) and its
@@ -118,17 +131,21 @@ row with fewer than 20 decisive pairs says no conclusion rather than
 approximating one. Nothing here changes a default: this is a report, not a
 switch.
 
-No person, repository or task text reaches the output: a row is a mode, a tier and
-two coder models, with the family of the model that judged them.
+No person, repository or task text reaches the output: a row is a mode, a tier, a
+slot and two models, with the family of the model that judged them.
 
 --since is how far back the read goes (default 30d: a day count, a Go duration,
 or 0 for no bound). --json prints {project, source, since, until, rows[{mode,
-tier, champion, challenger, pairs, wins, losses, ties, champion_halts,
-challenger_halts, champion_follow_ups, judge_families, judge_same_family,
-unjudged, truncated, recommendation{decision, rule, decisive, p, win_share_lo,
-win_share_hi, median_cost_ratio, exchange_rate}}], warnings};
-median_cost_ratio is null when no pair of the group carried both arms' costs,
-and judge_families is empty when no judge has decided a pair of the group.
+tier, slot, champion, challenger, champion_effort, challenger_effort, pairs,
+wins, losses, ties, champion_halts, challenger_halts, champion_follow_ups,
+judge_families, judge_same_family, misses, false_alarms, unjudged, truncated,
+recommendation{decision, rule, decisive, p, win_share_lo, win_share_hi,
+median_cost_ratio, exchange_rate}}], warnings};
+median_cost_ratio, misses and false_alarms are null when no pair of the group
+carried both arms' costs or no judge matched its two finding sets, the two
+efforts are empty for a coder row, and judge_families is empty when no judge
+has decided a pair of the group. A report holding a reviewer row warns that
+the miss rate is not reported as a figure, for the Check 211 reason above.
 
 Usage: `fugaro ab`
 
