@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/spf13/cobra"
@@ -238,5 +239,61 @@ func TestUpdateSaysWhyACatalogRebuildDidNotFinish(t *testing.T) {
 	want := "server (acme/app's checkout): its rebuild did not finish (the catalog entry server: line 31 of its Dockerfile asks for a secret)"
 	if all := out + errOut; !strings.Contains(all, "left for you (images, command): ") || !strings.Contains(all, want) {
 		t.Errorf("the step left for the person does not carry the refusal %q:\n%s", want, all)
+	}
+}
+
+// TestUpdateOffersNoCommandThatWouldRefuse: a rebuild that ends on the entry's
+// OWN definition being refused leaves the refusal and no command.
+//
+// The run has already run the command — `fugaro image build <entry>` IS what
+// the stage submits, and the resolve and the validation of the definition are
+// its first stage — so a definition it watched refuse is one the person's own
+// `fugaro image build server` refuses the same way, on the same bytes at the
+// same pinned ref: offering it is handing the reader a step that fails and
+// says nothing about the line to change. What the step says instead is the
+// refusal's own sentence, which names the line, and the change it asks for.
+//
+// The counterpart is TestUpdateSaysWhyACatalogRebuildDidNotFinish's failure
+// (a rebuild that did not finish and did not refuse): its command IS printed,
+// because that run's failure is this run's (a lease, a quota, a read) and the
+// command may well work where this run's did not.
+func TestUpdateOffersNoCommandThatWouldRefuse(t *testing.T) {
+	const refusal = "the catalog entry server: line 31 of its Dockerfile asks for a secret; a catalog entry carries no secret of its own — the clone step supplies the checkout — so remove it (read from acme/app at legacy)"
+	_, _, _ = catalogStaleRig(t, pinnedRef(config.BaseKind, convergePrev), pinnedRef(config.BaseKind, convergeRelease))
+	catalogRebuild = func(_ *cobra.Command, entry string, _ imageBuildOptions) error {
+		if entry != "server" {
+			t.Fatalf("the run rebuilt %q, want the stale entry of this checkout alone", entry)
+		}
+		return catalog.Refused(errors.New(refusal))
+	}
+
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, "", "update")
+	if err == nil {
+		t.Fatalf("a run whose entry's definition was refused reported success:\n%s", out)
+	}
+	if got := ExitCode(err); got != 1 {
+		t.Errorf("exit %d, want 1: the entry is still on an older base and the step is the person's:\n%s\n%s", got, out, errOut)
+	}
+	all := out + errOut
+	for _, want := range []string{
+		"left for you (images, command): ",
+		"server (acme/app's checkout): " + refusal,
+		"Change what the refusals name, then fugaro update again",
+		// The line in flight carries the refusal too, and no command either.
+		"server: NOT rebuilt: " + refusal,
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("the run does not say %q:\n%s", want, all)
+		}
+	}
+	for _, unwanted := range []string{
+		"image build server",
+		"Run each command below",
+		"its rebuild did not finish",
+	} {
+		if strings.Contains(all, unwanted) {
+			t.Errorf("the run offers %q for a definition its own rebuild watched refuse:\n%s", unwanted, all)
+		}
 	}
 }
