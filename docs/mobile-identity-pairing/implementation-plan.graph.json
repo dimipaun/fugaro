@@ -35,6 +35,21 @@
       }
     },
     {
+      "id": "P0",
+      "title": "credsvc audit purposes for the mobile routes",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/audit.go",
+          "internal/credsvc/audit_mobile_test.go"
+        ]
+      }
+    },
+    {
       "id": "C1",
       "title": "the assertion and pairing wire contract",
       "run": null,
@@ -106,15 +121,16 @@
     },
     {
       "id": "P5",
-      "title": "credsvc grant on the token-signer account (needs O1)",
+      "title": "public mobile service beside credsvc and its signer grant (needs O1, O8)",
       "run": null,
       "version": null,
-      "size": 1.5,
+      "size": 2,
       "tier": "medium",
       "footprint": {
         "prediction": true,
         "paths": [
           "deploy/terraform/gcp/modules/installation/credentials.tf",
+          "deploy/terraform/gcp/modules/installation/mobile_service.tf",
           "internal/infra/tf/cover.go",
           "internal/infra/credentials_mobile_test.go"
         ]
@@ -133,7 +149,8 @@
           "ee/identitysvc/sign.go",
           "ee/identitysvc/idtoken.go",
           "ee/identitysvc/handler.go",
-          "ee/identitysvc/sign_test.go"
+          "ee/identitysvc/sign_test.go",
+          "ee/identitysvc/cmd/identitysvc/main.go"
         ]
       }
     },
@@ -189,7 +206,7 @@
     },
     {
       "id": "P2",
-      "title": "invites and fugaro pair --email --role",
+      "title": "invites through the existing fugaro pair --email --role",
       "run": null,
       "version": null,
       "size": 2,
@@ -200,7 +217,8 @@
           "internal/cli/pair.go",
           "internal/cli/pair_invite.go",
           "internal/mobileauth/invite.go",
-          "internal/cli/pair_invite_test.go"
+          "internal/cli/pair_invite_test.go",
+          "schemas/pair-event.schema.json"
         ]
       }
     },
@@ -216,7 +234,7 @@
         "paths": [
           "internal/credsvc/mobile_pair.go",
           "internal/credsvc/mobile_policy.go",
-          "internal/credsvc/mobile_audit_pair.go",
+          "internal/credsvc/mobile_member.go",
           "internal/credsvc/mobile_pair_test.go"
         ]
       }
@@ -250,7 +268,7 @@
         "paths": [
           "internal/projectpolicy/mobile.go",
           "internal/projectpolicy/version.go",
-          "schemas/projectpolicy.schema.json",
+          "internal/projectpolicy/mobile_test.go",
           "internal/cli/doctor_mobile.go"
         ]
       }
@@ -284,13 +302,14 @@
           "ee/identitysvc/pairedlist.go",
           "ee/identitysvc/pairedlist_test.go",
           "ee/identitysvc/terraform/pairedlist.tf",
-          "ee/identitysvc/rtdb.rules.json"
+          "ee/identitysvc/rtdb.rules.json",
+          "ee/identitysvc/rtdb.rules.json.license"
         ]
       }
     },
     {
       "id": "K2",
-      "title": "credsvc restore: challenge, strict switch, audit per restore",
+      "title": "credsvc restore: challenge, policy, strict switch, audit per restore",
       "run": null,
       "version": null,
       "size": 2,
@@ -299,7 +318,6 @@
         "prediction": true,
         "paths": [
           "internal/credsvc/mobile_restore.go",
-          "internal/credsvc/mobile_restore_audit.go",
           "internal/credsvc/mobile_restore_test.go"
         ]
       }
@@ -375,7 +393,7 @@
     },
     {
       "id": "J1",
-      "title": "device read of run state (rules, only if U9 says no)",
+      "title": "device read of outcomes (rules)",
       "run": null,
       "version": null,
       "size": 1.5,
@@ -408,7 +426,7 @@
     },
     {
       "id": "J3",
-      "title": "confirmation policy: cancel and costly starts",
+      "title": "confirmation policy on both sides: cancel and costly starts",
       "run": null,
       "version": null,
       "size": 1.5,
@@ -418,24 +436,25 @@
         "paths": [
           "shared/confirm/policy.js",
           "shared/confirm/index.js",
+          "shared/confirm/vectors.json",
+          "internal/mailbox/action.go",
           "shared/confirm/policy.test.js"
         ]
       }
     },
     {
       "id": "J4",
-      "title": "start and cancel verbs through the mailbox",
+      "title": "start and cancel from the phone through the mailbox",
       "run": null,
       "version": null,
-      "size": 2,
+      "size": 1.5,
       "tier": "medium",
       "footprint": {
         "prediction": true,
         "paths": [
           "shared/command/verbs.js",
           "mobile/src/mailbox/client.js",
-          "shared/mailbox-schema/vectors.json",
-          "internal/mailbox/verbs.go"
+          "shared/command/verbs.test.js"
         ]
       }
     },
@@ -517,6 +536,7 @@
         "paths": [
           "mobile/src/context/compaction.js",
           "mobile/src/context/compaction.test.js",
+          "mobile/src/context/index.js",
           "internal/projectpolicy/mobile.go"
         ]
       }
@@ -584,7 +604,7 @@
         "paths": [
           "internal/cli/update_mobile.go",
           "internal/cli/update_mobile_test.go",
-          "docs/releases/README.md"
+          "docs/releases/<next version>.md"
         ]
       }
     },
@@ -624,7 +644,7 @@
     },
     {
       "id": "CR2",
-      "title": "C2 amended if J3 finds the costly-mode list missing from the session",
+      "title": "C2 amended if J3 or Z2 finds a policy value the phone needs missing from the session",
       "run": null,
       "version": null,
       "size": 0.5,
@@ -670,6 +690,51 @@
       "reason": "same file, internal/cli/pair.go"
     },
     {
+      "task": "P3",
+      "needs": "P0",
+      "reason": "the shared closed purpose set in internal/credsvc/audit.go"
+    },
+    {
+      "task": "P4",
+      "needs": "P0",
+      "reason": "the shared closed purpose set in internal/credsvc/audit.go"
+    },
+    {
+      "task": "K2",
+      "needs": "P0",
+      "reason": "the shared closed purpose set in internal/credsvc/audit.go"
+    },
+    {
+      "task": "X3",
+      "needs": "Z0",
+      "reason": "whether a phone-injected slash command is honoured is behaviour"
+    },
+    {
+      "task": "Z3",
+      "needs": "Z2",
+      "reason": "context/index.js"
+    },
+    {
+      "task": "CR1",
+      "needs": "C1",
+      "reason": "amends the contract it follows"
+    },
+    {
+      "task": "CR1",
+      "needs": "P3",
+      "reason": "raised by P3 when it finds the contract wrong"
+    },
+    {
+      "task": "CR2",
+      "needs": "C2",
+      "reason": "amends the contract it follows"
+    },
+    {
+      "task": "CR2",
+      "needs": "J3",
+      "reason": "raised by J3 when it finds the contract wrong"
+    },
+    {
       "task": "J1",
       "needs": "P6",
       "reason": "version.go and the policy fields"
@@ -713,11 +778,6 @@
       "task": "Z3",
       "needs": "Z0",
       "reason": "whether the limits can be read is behaviour"
-    },
-    {
-      "task": "Z3",
-      "needs": "Z2",
-      "reason": "context/index.js"
     },
     {
       "task": "I1",
@@ -1016,7 +1076,7 @@
       "change": "CR2",
       "contract": "C2",
       "raised_by": "J3",
-      "reason": "confirmations may need the project's costly-mode list on the session",
+      "reason": "a policy value the phone needs may be missing from the session",
       "affects": [
         "J2",
         "J4",

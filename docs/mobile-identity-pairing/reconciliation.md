@@ -2,7 +2,7 @@
 
 **Where this disagrees with [spec.md](spec.md), this document wins.** The spec was written without the repository in view; this is what the repository holds, what the spec gets wrong or leaves open, and the owner's answers. Checked against `origin/main` at `01fe41f30` on **2026-11-18**. Every citation is by path and symbol, never by line number. Owner: Dimi Paun.
 
-Numbers taken for this folder: decisions **D2780-D2829** (D2780-D2789 asked, D2790-D2798 resolved, the rest reserved), checks **730-739**. Findings are `F1`.. per folder, as in the neighbouring folders.
+Numbers taken for this folder: decisions **D2780-D2799** (D2780-D2789 asked, D2790-D2799 resolved); **D2800-D2829 are not taken**, because open pull request #3195 (workspace-projects-users) uses D2800-D2826; checks **730-739**. Findings are `F1`.. per folder, as in the neighbouring folders.
 
 ## Capability map (approved 2026-11-18)
 
@@ -37,7 +37,7 @@ Build order: assertion, identity, pairing, then continuity, jobs, text and conte
 | Cloud KMS asymmetric signing | `ee/keyservice/kmssigner.go`, `ee/keyservice/terraform/keyring/main.tf` (licence keys) |
 | JWKS fetch and cache | `ee/coordinator/mcpauth/firebase_keys.go`, `internal/credsvc/auth.go` (`GoogleKeysURL`), Google's keys only |
 | Several identities on the phone | `mobile/src/accounts/` (an account is one installation, D114), not an identity |
-| Revocation | `fugaro pair revoke` deletes the device node and the Firebase Auth user |
+| Revocation | `fugaro pair revoke` deletes the device node and the keychain item; the Firebase Auth user is left to the history sweep (`internal/cli/pair.go`) |
 | Text input | `mobile/src/text` (`createTypedInput`, `createTextScreen`), same pipeline as voice |
 | Spoken confirmation | `shared/confirm` (read-back then phrase) |
 | Running jobs | `mobile/src/jobs` (read-only: spend, caps, kill state) |
@@ -48,7 +48,7 @@ Build order: assertion, identity, pairing, then continuity, jobs, text and conte
 - **F1. Wrong** (`mip-identity`). There is no Fugaro-Prod authentication project. `fugaro-prod` exists for the website, the licence key service and mobile telemetry (`docs/design/key-signing-service.md`, D2194); it has no Firebase Auth providers and no `functions/`. Consequence: the identity project is new (D2781).
 - **F2. Rule** (`mip-assertion`). The product never calls `fugaro-prod` at runtime: licence tokens verify offline, and the docs call it "not a phone-home". The spec makes the identity project a runtime dependency of pairing, new-device restore and refresh. Consequence: this is a deliberate new dependency; its outage blocks only new pairings, restores and, after a refresh credential lapses, re-issue (spec's last corner case), and `SECURITY.md` and `website/data/mobile-claims.yaml` say so (D2798).
 - **F3. Wrong** (`mip-pairing`). The "project's security service" does not exist. Device and pairing tokens are minted on the owner's machine by the CLI (`internal/budget/token`, `IAMSigner` calling `signJwt`), and `internal/credsvc` serves runs and holds secrets (`Authenticator.Verify`). Consequence: D2782 chose credsvc; this puts a new signing grant and new endpoints into a service under `.claude/rules/credentials-service.md` (F12, T1).
-- **F4. Wrong** (`mip-pairing`). The spec's QR holds endpoint, email, nonce. Today's `pairQR` carries the project's `database_url`, restricted `api_key` and a one-shot custom token, and the operator types a code back (the phone's X25519 key digest, `pair.go`, `mobile/src/pairing/session.js`). Consequence: the new QR carries endpoint, email, nonce only; the phone gets `database_url` and `api_key` from the service on success; D229 already planned `fugaro pair --email --role` and this builds it.
+- **F4. Wrong** (`mip-pairing`). The spec's QR holds endpoint, email, nonce. Today's `pairQR` carries the project's `database_url`, restricted `api_key` and a one-shot custom token, and the operator types a code back (the phone's X25519 key digest, `pair.go`, `mobile/src/pairing/session.js`). `fugaro pair` already has `--email` and `--role`, but D226 (`pairAdministeredEmail`) admits only the operator's own verified address and `--role` may only lower the resolved role. Consequence: the new QR carries endpoint, email, nonce only and the phone gets `database_url` and `api_key` from the service on success; naming another member's email reverses D226 and amends D229, which D2799 states.
 - **F5. Rule** (`mip-identity`). D221 (no provider session ever reaches a project) holds: the assertion is an identity claim checked once. But D232 (two secure items, no provider credential stored), D234 (no per-project Firebase app on the phone) and D114 (an account is an installation) were written for a phone with no identity of its own. Consequence: D2790.
 - **F6. Rule** (`mip-pairing`). D222/D225: the allowlist is the device node keyed by uid, with email and role as fields, role read by the CLI and consumers, never by the rules. The spec keys members on email plus the provider's stable id. Consequence: the node gains `provider` and `sub` fields (additive) and role enforcement stays out of the rules (D2791).
 - **F7. Gap** (`mip-pairing`). Firebase refresh tokens neither rotate, bind to a device, idle-expire nor call us (`SECURITY.md`, Fugaro workspaces). The spec's 30-day device-bound refresh with re-check on every refresh is not what the app has. Consequence: D2783.
@@ -75,7 +75,21 @@ Build order: assertion, identity, pairing, then continuity, jobs, text and conte
 - **F28. Gap** (`mip-identity`). Provider setup is owner work with no agent path: Google OAuth client, Microsoft app registration, Sign in with Apple service id and key, email templates, and App Store and Play data-safety declarations (Checks 731, 734).
 - **F29. Gap** (`mip-assertion`, `mip-pairing`). Platform limits assumed away at "hundreds of thousands of workspaces": Firebase Auth quotas, Cloud KMS sign requests per minute per key, credsvc cold start on the hourly refresh path. UNVERIFIED (U6).
 
-- **F30. Gap** (`mip-jobs`). "See currently running jobs" needs run state the phone can read. Run records live in the runs bucket, which a Firebase device session cannot read; the RTDB holds per-run counters under `runs/$slug/$run` and the write-once `outcomes` node (`internal/budget/rules/rules.json.tmpl`), and the app's read set was deliberately fenced to spend, caps and kill state (`mobile/src/jobs/scope.test.js`). Consequence: a running run is derived from `runs` without an `outcomes` entry, which needs a device read rule if none exists (U9); a rules change bumps the rules generation and `fugaro update` migrates it (D2797).
+- **F30. Gap** (`mip-jobs`). "See currently running jobs" needs run state the phone can read. Run records live in the runs bucket, which a Firebase device session cannot read. In the rules template `runs/$slug/$run` is readable only by the run's own token and `outcomes` has no device read; a paired device's read is on `spend/$day/runs/$slug/$run`. The app's read set was deliberately fenced to spend, caps and kill state (`mobile/src/jobs/scope.test.js`). Consequence: a running run is a `spend/$day/runs` entry with no `outcomes` entry, which needs a device read of `outcomes`; that is a rules change, the rules generation bumps and `fugaro update` migrates it (D2797).
+
+### Found in review (round 1)
+
+- **F31. Wrong** (`mip-pairing`). credsvc cannot be called from a phone: `deploy/terraform/gcp/modules/installation/credentials.tf` sets `invoker_iam_disabled = false`, grants the invoker per service and never to `allUsers`, with `ingress = "INGRESS_TRAFFIC_ALL"`; `Authenticator.Verify` acts on no call before identity. D2782's premise (endpoints on credsvc) is therefore **amended after review**: credsvc's code, audit and rules, served by a **second Cloud Run service of the same image with a public invoker**, which keeps the model-credentials service private. Consequence: P5 grows a second service; O8 asks the owner to confirm; a cross-class test shows every existing caller class refused on the mobile routes and mobile callers refused on every existing route.
+- **F32. Gap** (`mip-pairing`). A Firebase refresh token obtained from any minted custom token keeps working until the device node is deleted (the device read checks only that the node exists). "The app never keeps it" is a promise, not a control. Consequence: revoking a refresh family, and a failed membership re-check, delete the device node (P4, P7, K2).
+- **F33. Gap** (`mip-pairing`). Every mailbox message needs the per-pairing MAC key (D171), today delivered sealed to the phone and kept in the laptop keychain; the new flow has no source for it. Open: O6.
+- **F34. Gap** (`mip-pairing`). The first-use record of (email, provider, `sub`) sits on the device node, which revoke deletes; the next pairing would trust the first sign-in again. The spec keys members, not devices. Consequence: D2791 is **amended after review**: the record is a member record that outlives a device, removed only by an explicit admin command.
+- **F35. Gap** (`mip-continuity`). Restore as written checked only the challenge and the strict switch. Consequence: restore, refresh and pair share one `Policy` interface in C1 (membership, accepted provider, authentication age, `mobile.enabled`, recorded `sub`).
+- **F36. Gap** (`mip-jobs`). The costly-start read-back lived only in the phone's JS: `internal/mailbox/action.go` (`ConfirmPassThroughVerbs`, launch is a pass-through by D162) and `TestConfirmParityWithShared` (`shared/confirm/vectors.json`) are the enforcing side, and the phone cannot read `config/policy/**` (`rules_test.go`). Consequence: J3 changes both sides, and the session response carries the policy values the phone needs (costly modes, biometric switch, compaction threshold).
+- **F37. Gap** (`mip-pairing`). A Firebase ID token for Microsoft may not carry the tenant-verified flag D2785's default relies on (U10).
+- **F38. Gap** (`mip-assertion`). The real trust root of an assertion is wherever the JWKS is hosted, not the KMS key: whoever can deploy to the identity project can publish other keys. P1 pins `iss` and the JWKS URL; O7 asks whether to pin public keys in the build, as the licence verifiers do.
+- **F39. Gap** (several). `jti` and challenges need a compare-and-set store (credsvc runs several instances); the QR's `aud` must derive from its endpoint (relay); the list ciphertext binds the uid as additional data; refresh needs proof of possession, so C1 carries a device public key; `ee/identitysvc` needs a `main` and an image; the list entry records which identity was used (spec); the synced-keychain backup joins M0's spike.
+- **F40. Rule** (`mip-pairing`). `mobile.enabled` on by default would switch pairing on in every installation at `update`, against the credentials-service rule that deployment alone switches nothing on. Open: O9.
+- **F41. Rule** (all). Open pull request #3195 gives workspaces people and roles applied to GCP IAM, which reverses D1295 on its branch. D2780 rests on `origin/main`'s facts; O5 asks to re-check it if #3195 lands.
 
 ## Decisions
 
@@ -83,7 +97,7 @@ Build order: assertion, identity, pairing, then continuity, jobs, text and conte
 | --- | --- | --- | --- |
 | **D2780** | What does the spec's "workspace" mean? | The project | **2026-11-18: the project (Recommended).** Membership, roles, accepted providers and both switches live per project; the grouping workspace gets no mobile surface. |
 | **D2781** | Where do identity and the signer live? | A dedicated identity project | **2026-11-18: a dedicated identity project (Recommended).** It plays the spec's "Fugaro-Prod" role with its own blast radius, apart from the website deployer and licence keys. |
-| **D2782** | Which component is the security service? | A new small per-installation service | **2026-11-18: add endpoints to credsvc. Not the recommendation**, followed through: F12, T1 and O1 carry its consequences. |
+| **D2782** | Which component is the security service? | A new small per-installation service | **2026-11-18: add endpoints to credsvc. Not the recommendation**, followed through: F12, T1 and O1 carry its consequences. **Amended after review (F31):** the endpoints are credsvc's code served by a second, public Cloud Run service of the same image; the existing service stays private. Confirm in O8. |
 | **D2783** | How is the session built? | Fugaro refresh token, hourly custom token | **2026-11-18: as recommended.** The service issues a rotating, device-key-bound refresh token (hashed at rest, replay revokes the family) and mints a one-hour Firebase custom token per refresh; the app never keeps the Firebase refresh token. |
 | **D2784** | Restore trust, the single point of compromise | As spec plus a per-project strict switch | **2026-11-18: as recommended.** Silent restore by default; a per-project switch requires a fresh QR for a new device; an audit line per restore; the risk stated in `SECURITY.md`. |
 | **D2785** | First pairing trust | Record on first use with accepted-provider policy | **2026-11-18: as recommended.** The first (email, provider id) is recorded on the node; later pairings must match; defaults accept Google, verified email and password, Microsoft only with a tenant-verified email claim, Apple only with a real email; a project can narrow the list. |
@@ -95,13 +109,14 @@ Build order: assertion, identity, pairing, then continuity, jobs, text and conte
 ### Resolutions (one defensible answer, stated)
 
 - **D2790** (F5). An identity is a new layer above accounts: D114 stands (a paired project is an account); D232 is **amended** to add one secure-store item per signed-in identity (its provider session, never a project credential); D221 and D234 stand.
-- **D2791** (F6, F14). The device node gains `provider` and `sub` (additive, no field changes meaning, no rules change). Role stays on the node and is enforced by the consumer; the token's role claim is for display.
+- **D2791** (F6, F14, F34). **Amended after review.** The first-use record of (email, provider, `sub`) is a **member record** that outlives any device and is removed only by an explicit admin command; the device node gains `provider` and `sub` copies (additive, no field changes meaning). Role stays on the node and is enforced by the consumer; the token's role claim is for display.
 - **D2792** (F10, F11). The assertion is an EdDSA JWT with `iss`, `aud` (the project), `sub` (provider stable id), `email`, `email_verified`, `provider`, `auth_time`, `jti`, and the project's challenge (the QR nonce at pairing, a service-issued challenge at restore); signed in Cloud KMS (Ed25519); public keys at a JWKS URL; short lifetime. Signer in `ee/`, verifier in `internal/`.
 - **D2793** (F13). Identities sign in by REST with a provider token; no second Firebase SDK instance.
 - **D2794** (F23). "Sign out everywhere" signs out the identity project and, while the app holds a live session, calls each paired project's revoke-self endpoint for this identity; a lost phone with no other device is revoked by an admin (`fugaro pair revoke` also revokes the refresh family).
 - **D2795** (F25). Existing paired phones keep working untouched (nodes without `sub` stay valid) and are offered identity pairing on their next sign-in; `fugaro update` deploys the new credsvc endpoints and carries the migration with a test of the previous-version installation.
 - **D2796** (F16). The two switches are fields of the published project policy, default on, with admins shown what is stored.
 - **D2797** (F18). The spec amends `mobile/src/jobs/scope.test.js`'s ban on run rows: a running-jobs view is in scope for operators and admins and viewers.
+- **D2799** (F4). D226 and D229 are amended: an admin may name another member's email; the first pairing by that person, checked by D2785's policy, is the verification. D226's rule for one's own address stays the default.
 - **D2798** (F2, F15). `SECURITY.md`, its website mirror and `website/data/mobile-claims.yaml` are updated in the same pull requests as the behaviour.
 
 ## Open tensions
@@ -116,6 +131,11 @@ None between answers. D2782 (credsvc) and `.claude/rules/credentials-service.md`
 - **O2.** Confirm the amended D162 (D2786) and D232 (D2790) wording.
 - **O3.** Confirm D2797's widening of the jobs scope.
 - **O4.** Confirm F24's proposed defaults.
+- **O5.** Open pull request #3195 would give workspaces people and roles on GCP IAM. D2780 (the project) rests on `main`; re-check the membership source and the declined "workspace user directory" note when it lands.
+- **O6.** Where the per-pairing MAC key comes from under identity pairing (F33). Recommended: credsvc generates it at pairing, returns it to the phone over TLS and keeps a copy readable by the project's consumer (the existing Secret Manager copy path in `SECURITY.md`, "The pairing key's cloud copy"); the alternative is a per-message session signature in place of the MAC. Needs the owner's answer before P3 is approved.
+- **O7.** Whether P1 pins the public keys in the build (licence-verifier style, rotation by release) or trusts the pinned JWKS URL (F38). Recommended: pin `iss` and the URL now, add key pinning if the owner wants the stronger root.
+- **O8.** Confirm F31's public second service and its grant (extends O1); it needs the owner's explicit go.
+- **O9.** `mobile.enabled` default (F40): on, as the spec says, or off until an admin sets it. Recommended: on in the policy, but the new endpoints answer only after the project's policy is published at the new version, which `update` does explicitly.
 
 ## UNVERIFIED
 
@@ -126,5 +146,6 @@ None between answers. D2782 (credsvc) and `.claude/rules/credentials-service.md`
 - **U5.** Whether a hardware-backed, non-exportable signing key is available in Expo for the device binding; otherwise the key is software and the plan says so. Mobile spike.
 - **U6.** Firebase Auth, KMS and Cloud Run quotas at the stated scale. Owner reads the quotas pages.
 - **U7.** The share-target mechanics (iOS share extension, Android intent filter) in this Expo setup. Mobile spike; owner runs the store builds (Check 734).
-- **U9.** Whether a paired device's token can already read `runs/$slug/$run` and `outcomes` under the current rules. The first step of task J1 reads the rules and the emulator test, and J1 changes them only if the answer is no.
+- **U10.** Whether a Microsoft ID token carries a tenant-verified email flag through Firebase. Owner, Check 731.
+- **U11.** Whether the synced platform keychain works with the secure-store option the app uses. Mobile spike (M0), Check 733.
 - **U8.** How Firebase treats one email under several providers (account linking setting) in the identity project. Owner, Check 731.

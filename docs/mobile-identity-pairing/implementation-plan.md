@@ -2,7 +2,7 @@
 
 **Status: plan only. Nothing is implemented, and no task is approved.** Each task below needs the owner's own explicit go; an answer in [reconciliation.md](reconciliation.md) settles a question, it does not approve a task. Owner: Dimi Paun. Date: 2026-11-18. Checked against `origin/main` at `01fe41f30`. Decisions are `D#`, findings `F#`, modules `mip-*` ([capability map](reconciliation.md#capability-map-approved-2026-11-18)).
 
-This builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). The shape the owner's answers gave it: the spec's "workspace" is the **project** (D2780); identity and the assertion signer live in a **dedicated identity project** (D2781); the project-side security service is **credsvc** (D2782, not the recommendation); sessions are a **Fugaro refresh token with an hourly custom token** (D2783); restore is silent with a **per-project strict switch** (D2784); the first pairing is **recorded on first use** under an accepted-provider policy (D2785); confirmations **amend D162 for costly modes only** (D2786); start and cancel go **through the mailbox and the P5.1 consumer** (D2787); the text view drives **the operator's own Claude Code session** (D2788); `mip-context` is **spike first** (D2789).
+This builds [spec.md](spec.md) as amended by [reconciliation.md](reconciliation.md). The shape the owner's answers gave it: the spec's "workspace" is the **project** (D2780); identity and the assertion signer live in a **dedicated identity project** (D2781); the project-side security service is **credsvc's code** (D2782, not the recommendation), served by a **second public Cloud Run service** of the same image because the existing one is IAM-only (amended after review, F31, O8); sessions are a **Fugaro refresh token with an hourly custom token** (D2783); restore is silent with a **per-project strict switch** (D2784); the first pairing is **recorded on first use** under an accepted-provider policy (D2785); confirmations **amend D162 for costly modes only** (D2786); start and cancel go **through the mailbox and the P5.1 consumer** (D2787); the text view drives **the operator's own Claude Code session** (D2788); `mip-context` is **spike first** (D2789).
 
 ## Conventions every part follows
 
@@ -11,7 +11,7 @@ Rules files and `CLAUDE.md` are pointed at, not restated: `.claude/rules/credent
 **Boundaries of this work**
 
 - **Always.** A red test first; tests before every commit; `git status --short` and `git diff --stat` before a commit and `git add <paths>`; no secret-shaped literal in a test, doc or fixture (signing tests generate a throwaway key in the test and ship public keys and signature vectors only); every refusal after identity is verified writes exactly one audit line, naming a field and never a value; a wire shape adds fields and never changes one (`shared/mobile-session/vectors.json` and its Go twin change together); each task's pull request names its `T#` and `D#`.
-- **Ask first.** A new dependency in `mobile/package.json` (providers, share target, local authentication: M0 proposes, the owner rules before M1 or X3 starts); any new Terraform resource type or kind of principal (`internal/infra/tf/cover.go` needs a row on purpose); a change to `config.ServiceServedAuths`; a rules-generation bump.
+- **Ask first.** A public invoker on any service (P5, O8); a new dependency in `mobile/package.json` (providers, share target, local authentication: M0 proposes, the owner rules before M1 or X3 starts); any new Terraform resource type or kind of principal (`internal/infra/tf/cover.go` needs a row on purpose); a change to `config.ServiceServedAuths`; a rules-generation bump.
 - **Never.** An agent runs a cloud action, a `terraform apply`, a key ceremony or `fugaro update`; an agent holds, mints with or operates the production signing key (`.claude/rules/ee.md`); a command asks a question or waits for input (no-prompt policy: a phone read-back is the app's, not a CLI prompt); the identity project stores a workspace session token (spec); edit `.github/workflows/`; edit `docs/status.md` from a task's own pull request; touch `spec.md`.
 
 **Defaults the plan uses for the spec's vague figures (O4 asks the owner to confirm):** QR nonce 10 minutes; "recent enough" authentication 24 hours, per project; assertion lifetime 2 minutes; signing key rotation 90 days with 30 days of overlap; access token about one hour; refresh token about 30 days idle; long paste 100000 characters without loss.
@@ -39,6 +39,13 @@ Inputs and failure modes the spec implies; each is pinned by a named task.
 | Long paste of 100000 characters survives a voice-to-text switch and a rotation | X2 |
 | Dense output goes to the screen and voice says so | X2 |
 | A secret never appears in an error, a log line or a screen | P3, P4, M1, M3 |
+| Every existing credsvc caller class is refused on the mobile routes, and a mobile caller is refused on every existing route | P3, P5, I1 |
+| A revoked refresh family or a failed membership re-check leaves no device node, so no Firebase refresh token keeps database access | P4, P7, K2 |
+| `jti`, nonce and challenge are single-use across several credsvc instances | P1, P3, K2 |
+| The QR's `aud` derives from its endpoint (a relayed QR is refused) | P2, P3 |
+| Revoking a device does not erase the member's recorded `sub`; the next pairing must match it | P3 |
+| Restore applies the same policy as pairing (membership, provider, age, `mobile.enabled`, recorded `sub`) | K2 |
+| A modified client launching a costly mode without a read-back is refused at the consumer | J3 |
 | Running jobs: no `outcomes` entry means running; ended jobs drop out; a project that is unreachable shows as such | J1, J2 |
 
 ## Slices and tasks
@@ -74,7 +81,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: standard.
 
 ### C1: the assertion and pairing wire contract
-- Acceptance: a Go package states the assertion claims (`iss`, `aud`, `sub`, `email`, `email_verified`, `provider`, `auth_time`, `jti`, `exp`, challenge), the request and response of pair, refresh, restore challenge, restore and revoke-self, the error codes (`provider_not_accepted` with the list, `auth_too_old`, `not_a_member`, `nonce_expired`, `strict_new_device_needs_qr`, `device_revoked`, `mobile_disabled`), the secure-store item names, and the interfaces `Verifier`, `InviteStore`, `RefreshStore`, `Minter`; a stub that returns fixed shapes and does nothing else; one `vectors.json` both Go and JS read; `contract.md` says what each side may rely on.
+- Acceptance: a Go package states the assertion claims (`iss`, `aud`, `sub`, `email`, `email_verified`, `provider`, `auth_time`, `jti`, `exp`, challenge), the request and response of pair, refresh, restore challenge, restore and revoke-self, the error codes (`provider_not_accepted` with the list, `auth_too_old`, `not_a_member`, `nonce_expired`, `strict_new_device_needs_qr`, `device_revoked`, `mobile_disabled`), the secure-store item names, the interfaces `Verifier`, `Policy` (membership, accepted provider, authentication age, `mobile.enabled`, recorded `sub`), `InviteStore`, `RefreshStore`, `Minter`; a device public key in the pair request for proof of possession; the policy values a session response carries to the phone (costly modes, biometric switch, compaction threshold); a challenge-and-`jti` compare-and-set store interface; a stub that returns fixed shapes and does nothing else; one `vectors.json` both Go and JS read; `contract.md` says what each side may rely on.
 - Files: `internal/mobilesession/contract.go` (new), `internal/mobilesession/stub.go` (new), `shared/mobile-session/vectors.json` (new), `docs/mobile-identity-pairing/contract.md` (new).
 - Interfaces: produces everything the consumers P1, P3, P4, K2, M1, M2, M3, K3 build against. Consumes D2783, D2785, D2791, D2792. These files belong to the contract and its changes alone.
 - Tests: a vector round-trip test in Go and a loader test in JS.
@@ -85,7 +92,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus**, mandatory independent review, strictest rigor, before either side starts.
 
 ### C2: the app session port
-- Acceptance: a JS port states what an app surface may rely on from a paired project's session (project id, endpoint, role, an `idToken()` accessor that refreshes, a `signedOut` event) and a stub that returns a fixed fake session; `session-port.md` says so.
+- Acceptance: a JS port states what an app surface may rely on from a paired project's session (project id, endpoint, role, the policy values C1's session response carries, an `idToken()` accessor that refreshes, a `signedOut` event) and a stub that returns a fixed fake session; `session-port.md` says so.
 - Files: `shared/mobile-session/port.js` (new), `shared/mobile-session/stub.js` (new), `shared/mobile-session/port.test.js` (new), `docs/mobile-identity-pairing/session-port.md` (new).
 - Interfaces: produces the port J2, J3, J4, X1 build against and M3 implements.
 - Tests: the port's shape test; the stub honours it.
@@ -95,8 +102,19 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Commit: `shared: the mobile session port and its stub`
 - Reviewer tier: standard.
 
+### P0: the credsvc audit purposes for mobile
+- Acceptance: `internal/credsvc/audit.go`'s closed purpose set carries the mobile purposes (pair, refresh, restore, revoke) with the run/job pairing rules they need, so P3, P4 and K2 add routes without touching it; the one-line-per-refusal rule holds for them.
+- Files: `internal/credsvc/audit.go`, `internal/credsvc/audit_mobile_test.go` (new).
+- Interfaces: the purposes named in C1's error list.
+- Tests: `TestAuditMobilePurposes*`.
+- Command: `go test ./internal/credsvc/ -run 'TestAuditMobilePurposes|TestAudit' -count=1`
+- Red step: an audit line with a mobile purpose is refused until the set carries it.
+- Depends on: none.
+- Commit: `credsvc: audit purposes for the mobile routes`
+- Reviewer tier: **opus** (credentials-service rules).
+
 ### M0: app spike, owner-run (Check 733)
-- Acceptance: `app-spike.md` records, from a real iPhone and Android phone, whether Google, Microsoft and Apple sign-in yield tokens usable with REST `signInWithIdp` and with two identities at once (U4), whether a non-exportable signing key exists (U5), and the share-extension and intent-filter route and its package (U7); it names the packages the owner approves.
+- Acceptance: `app-spike.md` records, from a real iPhone and Android phone, whether Google, Microsoft and Apple sign-in yield tokens usable with REST `signInWithIdp` and with two identities at once (U4), whether a non-exportable signing key exists (U5), the share-extension and intent-filter route and its package (U7), and whether the synced platform keychain works with the secure-store option the app uses (U11); it names the packages the owner approves.
 - Files: `docs/mobile-identity-pairing/app-spike.md` (new).
 - Interfaces: produces the dependency choice M1, M2 and X3 wait on.
 - Tests: none; the result is the document.
@@ -121,7 +139,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 
 ### A1: the assertion signer
 - Acceptance: a function verifies a Firebase ID token from the identity project (signature, `aud`, `iss`, `exp`, `email_verified` for password sign-in), then signs an EdDSA assertion with the Cloud KMS key for exactly one `aud` project and challenge, with a 2-minute lifetime; it refuses an unverified password email, an `aud` the caller did not name, and a missing challenge; it logs no token.
-- Files: `ee/identitysvc/sign.go`, `ee/identitysvc/idtoken.go`, `ee/identitysvc/handler.go`, `ee/identitysvc/sign_test.go` (all new; SPDX notice per `ee.md`).
+- Files: `ee/identitysvc/sign.go`, `ee/identitysvc/idtoken.go`, `ee/identitysvc/handler.go`, `ee/identitysvc/sign_test.go`, `ee/identitysvc/cmd/identitysvc/main.go` (all new; SPDX notice per `ee.md`; the `main` and image build are part of the task).
 - Interfaces: consumes C1's claim names via the vectors; reuses the pattern of `ee/keyservice/kmssigner.go` and `ee/coordinator/oauth/workspace_assertion.go`.
 - Tests: `TestSign*` with a fake KMS signer and a generated test key.
 - Command: `go test ./ee/identitysvc/ -run 'TestSign' -count=1`
@@ -154,7 +172,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Owner-run: Check 730, the apply and the key ceremony, with a release-actions entry; no agent applies.
 
 ### P1: the assertion verifier
-- Acceptance: `internal/assertion` verifies an assertion: EdDSA only, `kid` from a cached JWKS (with the overlap rule and a bounded stale-serving cache), `aud` equal to this project, challenge equal to the expected one, `jti` unused (single use, remembered for the assertion's lifetime plus skew), `exp`/`iat` with bounded skew; every refusal is a typed error naming the field.
+- Acceptance: `internal/assertion` verifies an assertion: EdDSA only, `iss` equal to the pinned issuer, the JWKS fetched only from the pinned URL (F38, O7), `kid` from a cached JWKS (with the overlap rule and a bounded stale-serving cache), `aud` equal to this project, challenge equal to the expected one, `jti` unused (single use through C1's compare-and-set store, not process memory, remembered for the assertion's lifetime plus skew), `exp`/`iat` with bounded skew; every refusal is a typed error naming the field.
 - Files: `internal/assertion/verify.go`, `internal/assertion/jwks_cache.go`, `internal/assertion/jti.go`, `internal/assertion/verify_test.go` (all new).
 - Interfaces: implements C1's `Verifier`; no `ee/` import.
 - Tests: `TestVerify*` for every row of the global table that names P1.
@@ -164,63 +182,63 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Commit: `assertion: verify identity-project assertions (D2792)`
 - Reviewer tier: **opus**.
 
-### P2: invites and `fugaro pair --email --role`
-- Acceptance: `fugaro pair` takes `--email` and `--role`, writes an invite (nonce, 10-minute expiry, email, role, accepted providers) to a node only IAM can write, and prints a QR carrying the endpoint, email and nonce and no credential; a role is refused rather than defaulted; the command waits for nothing and asks nothing.
-- Files: `internal/cli/pair.go`, `internal/cli/pair_invite.go` (new), `internal/mobileauth/invite.go` (new), `internal/cli/pair_invite_test.go` (new). If a plugin skill names these flags, `plugin/skills/**` changes in the same task.
+### P2: invites through the existing `fugaro pair --email --role`
+- Acceptance: `fugaro pair` keeps its flags and gains the invitation: an admin may name another member's email (amending D226, D2799), the role is refused rather than defaulted for another person, an invite (nonce, 10-minute expiry, email, role, accepted providers) is written to a node only IAM can write, and the QR carries the endpoint, email and nonce and no credential, with `aud` derived from the endpoint; `pairQRVersion` is bumped and `schemas/pair-event.schema.json` carries the new fields; the command waits for nothing and asks nothing.
+- Files: `internal/cli/pair.go`, `internal/cli/pair_invite.go` (new), `internal/mobileauth/invite.go` (new), `internal/cli/pair_invite_test.go` (new), `schemas/pair-event.schema.json`. If a plugin skill names these flags, `plugin/skills/**` changes in the same task.
 - Interfaces: writes the invite P3 reads (C1's `InviteStore`).
-- Tests: `TestPairInvite*`, the plugin flag test if a skill names the flags.
-- Command: `go test ./internal/cli/ -run 'TestPairInvite' -count=1 && go test ./plugin/... -count=1`
-- Red step: `--email` without `--role` must refuse first.
+- Tests: `TestPairInvite*`, the schema test, the plugin flag test if a skill names the flags.
+- Command: `go test ./internal/cli/ -run 'TestPairInvite' -count=1 && go test ./schemas/ ./plugin/... -count=1`
+- Red step: naming another person's email with no `--role` must refuse first.
 - Depends on: none.
-- Commit: `pair: invites for a named person, the QR carries no credential (F4, D229)`
+- Commit: `pair: invite a named person; the QR carries no credential (F4, D2799)`
 - Reviewer tier: **opus**.
 
 ### P3: the credsvc pairing endpoint
-- Acceptance: credsvc verifies the assertion through `Verifier`, consumes the invite nonce once, applies the policy (member, accepted providers, authentication age, `mobile_enabled`), records `provider` and `sub` on first use and refuses a later mismatch, writes the device node, and returns the project config, a refresh token and a first custom token; exactly one audit line per refusal, none containing a token or key; `config.ServiceHeldSecretNames` stays empty.
-- Files: `internal/credsvc/mobile_pair.go`, `internal/credsvc/mobile_policy.go`, `internal/credsvc/mobile_audit_pair.go`, `internal/credsvc/mobile_pair_test.go` (all new).
+- Acceptance: credsvc verifies the assertion through `Verifier`, consumes the invite nonce once, applies the policy (member, accepted providers, authentication age, `mobile_enabled`), records `provider` and `sub` on first use in a **member record that outlives the device** (D2791 amended) and refuses a later mismatch, derives and checks `aud` from the endpoint, generates the per-pairing MAC key as O6 settles, serves from the second public service with a cross-class test (F31), writes the device node, and returns the project config, a refresh token and a first custom token; exactly one audit line per refusal, none containing a token or key; `config.ServiceHeldSecretNames` stays empty.
+- Files: `internal/credsvc/mobile_pair.go`, `internal/credsvc/mobile_policy.go` (implements C1's `Policy`), `internal/credsvc/mobile_member.go`, `internal/credsvc/mobile_pair_test.go` (all new).
 - Interfaces: implements C1's pair handler; consumes `Verifier`, `InviteStore`.
 - Tests: `TestMobilePair*` for each row naming P3.
 - Command: `go test ./internal/credsvc/ -run 'TestMobilePair' -count=1`
 - Red step: an assertion for a reassigned email (different `sub`) must be refused first.
-- Depends on: C1.
+- Depends on: C1, P0 (`audit.go`); **not approvable until O6 and O8 are answered**.
 - Commit: `credsvc: the mobile pairing endpoint (D2782, D2785)`
 - Reviewer tier: **opus**, independent review (credentials-service rules).
 
 ### P4: the credsvc session
-- Acceptance: a refresh endpoint rotates a device-key-bound refresh token (hashed at rest, replay revokes the family, 30-day idle expiry), re-checks membership and role, and mints a one-hour custom token through the token-signer account; revoke-self revokes the caller's family; the Firebase refresh token is never returned.
+- Acceptance: a refresh endpoint rotates a device-key-bound refresh token (hashed at rest, replay revokes the family, 30-day idle expiry), re-checks membership and role, and mints a one-hour custom token through the token-signer account; revoke-self revokes the caller's family; a replayed token, a revoked family or a failed membership re-check **deletes the device node** so no Firebase refresh token keeps database access (F32); refresh needs proof of possession by the device key (C1's public key); the Firebase refresh token is never returned by this service.
 - Files: `internal/credsvc/mobile_session.go`, `internal/credsvc/mobile_refresh_store.go`, `internal/credsvc/mobile_mint.go`, `internal/credsvc/mobile_session_test.go` (all new).
 - Interfaces: implements C1's `RefreshStore`, `Minter`; consumes the device node shape (D2791).
 - Tests: `TestMobileSession*`.
 - Command: `go test ./internal/credsvc/ -run 'TestMobileSession' -count=1`
 - Red step: a replayed refresh token must revoke the family first.
-- Depends on: C1.
+- Depends on: C1, P0.
 - Commit: `credsvc: rotating device-bound refresh and hourly custom tokens (D2783)`
 - Reviewer tier: **opus**, independent review.
 
-### P5: the credsvc grant (needs O1)
-- Acceptance: the installation module grants credsvc's service account exactly the permission to create tokens for the project's token-signer account, on that account and not at project level, with a cover row and a sentence saying why; golden plans regenerate; the project-level custom role is unchanged.
-- Files: `deploy/terraform/gcp/modules/installation/credentials.tf`, `internal/infra/tf/cover.go`, `internal/infra/credentials_mobile_test.go` (new), golden plans under `internal/infra/` from `scripts/gen-golden-plans.sh`.
+### P5: the mobile service and its grant (needs O1 and O8)
+- Acceptance: the installation module adds a second Cloud Run service of the credsvc image with a public invoker and its own service account, whose only extra permission is to create tokens for the project's token-signer account, on that account and not at project level; the existing service stays private and its invoker untouched; a cover row and a sentence say why; golden plans regenerate; the project-level custom role is unchanged.
+- Files: `deploy/terraform/gcp/modules/installation/credentials.tf`, `deploy/terraform/gcp/modules/installation/mobile_service.tf` (new), `internal/infra/tf/cover.go`, `internal/infra/credentials_mobile_test.go` (new), golden plans under `internal/infra/` from `scripts/gen-golden-plans.sh`.
 - Interfaces: none.
 - Tests: `TestCredentialsMobile*`, `terraform fmt`, `init`, `validate`, `terraform test`.
 - Command: `terraform fmt -check -recursive deploy/terraform && go test -tags terraform ./internal/infra/... -run 'TestCredentialsMobile' -count=1`
-- Red step: the test asserts no project-level grant is added; it fails with one.
-- Depends on: none; **not approvable until O1 is answered**.
-- Commit: `terraform: credsvc may mint device tokens for the signer account (D2782, O1)`
+- Red step: the test asserts the private service's invoker has no public member and no project-level grant is added; it fails with either.
+- Depends on: none; **not approvable until O1 and O8 are answered**.
+- Commit: `terraform: a public mobile service beside credsvc, with a narrow signer grant (D2782, F31)`
 - Reviewer tier: **opus**, independent review before any apply.
 
 ### P6: project policy fields
-- Acceptance: the published project policy carries `mobile.enabled` (default on), `mobile.sync` (default on), `mobile.accepted_providers`, `mobile.max_auth_age` (24 hours), `mobile.strict_new_device` (off), `mobile.costly_modes` (`pro`, `critical`), `mobile.biometric_on_costly` (off); the policy version and its migration carry them in place; `fugaro doctor` prints in one line what is stored in the identity project when sync is on.
-- Files: `internal/projectpolicy/mobile.go` (new), `internal/projectpolicy/version.go`, `schemas/projectpolicy.schema.json`, `internal/cli/doctor_mobile.go` (new).
+- Acceptance: the published project policy carries `mobile.enabled` (default on; O9), `mobile.sync` (default on), `mobile.accepted_providers`, `mobile.max_auth_age` (24 hours), `mobile.strict_new_device` (off), `mobile.costly_modes` (`pro`, `critical`), `mobile.biometric_on_costly` (off); the policy version and its migration carry them in place; `fugaro doctor` prints in one line what is stored in the identity project when sync is on.
+- Files: `internal/projectpolicy/mobile.go` (new), `internal/projectpolicy/version.go`, `internal/projectpolicy/mobile_test.go` (new), `internal/cli/doctor_mobile.go` (new); `schemas/project-layer.schema.json` only if the fields belong to the layer it pins.
 - Interfaces: fields P3, K2, J3 and Z2 read.
-- Tests: `TestProjectPolicyMobile*`, the schema test, a previous-version-converges test.
-- Command: `go test ./internal/projectpolicy/ ./schemas/ -run 'Mobile|Schema' -count=1`
-- Red step: a policy at the previous version must fail to decode strictly until the migration exists.
+- Tests: `TestProjectPolicyMobile*`, a previous-version-converges test (the published policy tolerates unknown top-level keys, so the test reads the typed fields, not rejection).
+- Command: `go test ./internal/projectpolicy/ -run 'Mobile' -count=1`
+- Red step: reading `mobile.strict_new_device` from a published policy fails until the typed struct and its migration exist.
 - Depends on: none.
 - Commit: `projectpolicy: the mobile switches and the accepted-provider list (D2784, D2785, D2796)`
 - Reviewer tier: **opus**.
 
 ### P7: admin revoke reaches the refresh family
-- Acceptance: `fugaro pair revoke` also revokes the device's refresh family, so a stolen phone loses its session at its next refresh and cannot refresh again.
+- Acceptance: `fugaro pair revoke` also revokes the device's refresh family and keeps the member record (an explicit flag removes the member), so a stolen phone loses its session at its next refresh and cannot refresh again.
 - Files: `internal/cli/pair.go`, `internal/cli/pair_revoke.go` (new), `internal/cli/pair_revoke_test.go` (new).
 - Interfaces: consumes C1's revoke shape through `RefreshStore`.
 - Tests: `TestPairRevokeFamily*`.
@@ -231,8 +249,8 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus**.
 
 ### K1: the encrypted paired-list store
-- Acceptance: a function stores, per signed-in user, the list of opaque project ids and endpoints, encrypted with a Cloud KMS key in RTDB; only the function decrypts and only for its owner; client rules deny all; a dump of the store shows no endpoint.
-- Files: `ee/identitysvc/pairedlist.go`, `ee/identitysvc/pairedlist_test.go`, `ee/identitysvc/terraform/pairedlist.tf`, `ee/identitysvc/rtdb.rules.json` (all new).
+- Acceptance: a function stores, per signed-in user, the list of opaque project ids and endpoints, encrypted with a Cloud KMS key in RTDB; only the function decrypts and only for its owner, with the uid bound as KMS additional data so one user's ciphertext cannot be copied under another's uid; each entry records which identity was used; client rules deny all; a dump of the store shows no endpoint.
+- Files: `ee/identitysvc/pairedlist.go`, `ee/identitysvc/pairedlist_test.go`, `ee/identitysvc/terraform/pairedlist.tf`, `ee/identitysvc/rtdb.rules.json` with its `.license` sibling (`ee.md`) (all new).
 - Interfaces: C1's list entry shape.
 - Tests: `TestPairedList*`, including another user's token and a raw dump.
 - Command: `go test ./ee/identitysvc/ -run 'TestPairedList' -count=1`
@@ -242,13 +260,13 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus**.
 
 ### K2: credsvc restore
-- Acceptance: a challenge endpoint issues a single-use challenge; restore verifies an assertion bound to it, refuses with `strict_new_device_needs_qr` when the project's strict switch is on, otherwise returns a refresh token and custom token for the new device; one audit line per restore.
+- Acceptance: a challenge endpoint issues a single-use challenge; restore verifies an assertion bound to it, applies C1's `Policy` exactly as pairing does (membership, accepted provider, age, `mobile.enabled`, recorded `sub`), refuses with `strict_new_device_needs_qr` when the project's strict switch is on, otherwise returns a refresh token and custom token for the new device; one audit line per restore.
 - Files: `internal/credsvc/mobile_restore.go`, `internal/credsvc/mobile_restore_audit.go`, `internal/credsvc/mobile_restore_test.go` (all new).
 - Interfaces: implements C1's restore shapes.
 - Tests: `TestMobileRestore*`.
 - Command: `go test ./internal/credsvc/ -run 'TestMobileRestore' -count=1`
 - Red step: strict on must refuse before the allow path exists.
-- Depends on: C1.
+- Depends on: C1, P0.
 - Commit: `credsvc: new-device restore with a strict switch (D2784)`
 - Reviewer tier: **opus**.
 
@@ -296,15 +314,15 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Commit: `mobile: the paired list, restore and keychain backup (D2784, F15)`
 - Reviewer tier: **opus**.
 
-### J1: a device can read run state (only if U9 says no)
-- Acceptance: the first step records whether a paired device's token reads `runs/$slug/$run` and `outcomes` today; if yes this task ends with that note and an emulator test pinning it; if no it adds the narrowest read rule, bumps the rules generation, and `update` migrates it in place.
+### J1: a device can read `outcomes`
+- Acceptance: a paired device's token reads `outcomes` (and keeps its existing read of `spend/$day/runs/$slug/$run`), nothing wider, so the phone derives a running run as a run entry with no outcome; the rules generation bumps and `update` migrates it in place; the emulator test pins that a device still cannot read `runs/$slug/$run` or write either node.
 - Files: `internal/budget/rules/rules.json.tmpl`, `internal/budget/rules/emulator_runs_test.go` (new), `internal/projectpolicy/version.go`.
 - Interfaces: none.
-- Tests: `TestEmulatorRuns*` (the emulator tag as the neighbours use).
+- Tests: `TestEmulatorRuns*` (the emulator tag as the neighbours use), `rules_test.go`.
 - Command: `go test -tags firebase ./internal/budget/rules/ -run 'TestEmulatorRuns' -count=1`
-- Red step: a device reading a run record must be tested first.
+- Red step: a device reading `outcomes` fails first.
 - Depends on: P6 (`version.go`).
-- Commit: `rules: paired devices read run state (U9, D2797)`
+- Commit: `rules: paired devices read outcomes (F30, D2797)`
 - Reviewer tier: **opus**.
 
 ### J2: the running-jobs view
@@ -318,26 +336,26 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Commit: `mobile: the running-jobs view (D2797)`
 - Reviewer tier: standard.
 
-### J3: confirmation policy
-- Acceptance: cancel needs a spoken read-back; a start in a mode named by `mobile.costly_modes` needs a read-back and, with `mobile.biometric_on_costly`, biometric re-auth through P5.1g's path; a plain start needs none; the kill switch and budget writes stay refused.
-- Files: `shared/confirm/policy.js` (new), `shared/confirm/index.js`, `shared/confirm/policy.test.js` (new).
-- Interfaces: the C2 port's role; P6's field names.
-- Tests: `confirm/policy.test.js`.
-- Command: `cd shared && npm test -- confirm`
-- Red step: a costly start with no read-back must fail first.
+### J3: confirmation policy, on both sides
+- Acceptance: cancel needs a spoken read-back; a start in a mode named by the session's `costly_modes` needs a read-back and, with the biometric switch, biometric re-auth through P5.1g's path; a plain start needs none; the kill switch and budget writes stay refused. The Go side changes with the JS: `internal/mailbox/action.go` no longer passes a costly-mode launch through unconfirmed, and `shared/confirm/vectors.json` and `TestConfirmParityWithShared` carry the new rows, so a modified client is refused at the consumer.
+- Files: `shared/confirm/policy.js` (new), `shared/confirm/index.js`, `shared/confirm/vectors.json`, `internal/mailbox/action.go`, `shared/confirm/policy.test.js` (new, with an `index.test.js` case for the new export).
+- Interfaces: the C2 port's session policy values.
+- Tests: `confirm/policy.test.js`, `TestConfirmParityWithShared`.
+- Command: `(cd shared && npm test -- confirm) && go test ./internal/mailbox/ -run 'TestConfirmParityWithShared|Confirm' -count=1`
+- Red step: a costly launch with no confirmation fails first on both sides.
 - Depends on: C2, P6.
-- Commit: `confirm: read-backs for cancel and costly starts (D2786)`
+- Commit: `confirm: read-backs for cancel and costly starts, on both sides (D2786)`
 - Reviewer tier: **opus** (it changes a confirmation ruling).
 
-### J4: start and cancel through the mailbox
-- Acceptance: the mailbox carries `start` and `cancel` verbs on both sides (JS and Go share `vectors.json`), signed as every message is; a viewer's message is refused at the consumer by `internal/access` (`ActionLaunch`, `ActionCancel`); the app's one write path stays the mailbox client.
-- Files: `shared/command/verbs.js` (new), `mobile/src/mailbox/client.js`, `shared/mailbox-schema/vectors.json`, `internal/mailbox/verbs.go` (new).
-- Interfaces: the C2 port; the consumer that runs these is the P5.1 always-on orchestrator, which this plan does not own.
-- Tests: `write-path.test.js`, the vectors in both languages.
-- Command: `(cd mobile && npm test -- src/mailbox) && go test ./internal/mailbox/ -run 'Verbs' -count=1`
-- Red step: `write-path.test.js` must still pass with the new verbs and fail for any second write path.
+### J4: start and cancel from the phone
+- Acceptance: the phone sends the existing mailbox actions: `cancel` (already a verb) and a launch (`ConfirmVerbLaunch`, a pass-through by D162, not a new verb), signed as every message is; the phone hides what the session's role cannot do; the app's one write path stays the mailbox client. The consumer's refusal of a viewer by `internal/access` (`ActionLaunch`, `ActionCancel`) is the P5.1 consumer's, pinned there (see "What this plan does not own"); J4 tests only the phone side.
+- Files: `shared/command/verbs.js` (new), `mobile/src/mailbox/client.js`, `shared/command/verbs.test.js` (new).
+- Interfaces: the C2 port; `internal/mailbox/message.go` `Actions` and `action.go` as they are.
+- Tests: `write-path.test.js`, `command/verbs.test.js`.
+- Command: `cd mobile && npm test -- src/mailbox && cd ../shared && npm test -- command`
+- Red step: `write-path.test.js` must fail for any second write path.
 - Depends on: C2.
-- Commit: `mailbox: start and cancel verbs (D2787)`
+- Commit: `mobile: start and cancel through the mailbox (D2787)`
 - Reviewer tier: **opus** (write path).
 
 ### X1: one transcript for voice and text
@@ -369,14 +387,14 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Tests: `share/*.test.js`; the native config guard tests.
 - Command: `cd mobile && npm test -- src/share native-config-guard`
 - Red step: a share must not send itself; fails first.
-- Depends on: M0 (the package), X2 (the composer).
+- Depends on: M0 (the package), X2 (the composer), Z0 (whether a phone-injected slash command is honoured, U1).
 - Commit: `mobile: the share-sheet target (D2788)`
 - Reviewer tier: standard.
 - Owner-run: Check 734 (the store build and the share extension on a device).
 
 ### Z1-Z3: the context module (waits on Check 732)
 - **Z1 context gauge.** Acceptance: a gauge shows the session's context fullness if Z0 found it observable, and says "unavailable" if not. Files: `mobile/src/context/gauge.js`, `mobile/src/context/index.js`, `mobile/src/context/gauge.test.js`. Command: `cd mobile && npm test -- src/context`. Red step: the "unavailable" state first. Depends on: Z0 (what is observable is data). Commit: `mobile: the context gauge (D2789)`. Reviewer tier: standard.
-- **Z2 compaction.** Acceptance: a compact button and an idle-only auto-compaction at a per-project threshold, if Z0 found injection safe. Files: `mobile/src/context/compaction.js`, `mobile/src/context/compaction.test.js`, `internal/projectpolicy/mobile.go`. Command: `cd mobile && npm test -- src/context && go test ./internal/projectpolicy/ -run Mobile -count=1`. Red step: a send while the agent is busy must be refused first. Depends on: Z0, P6 (the same policy file), Z1 (`context/index.js`). Commit: `mobile: compact and idle auto-compaction (D2789)`. Reviewer tier: standard.
+- **Z2 compaction.** Acceptance: a compact button and an idle-only auto-compaction at a per-project threshold, if Z0 found injection safe. Files: `mobile/src/context/compaction.js`, `mobile/src/context/compaction.test.js`, `mobile/src/context/index.js`, `internal/projectpolicy/mobile.go`. Command: `cd mobile && npm test -- src/context && go test ./internal/projectpolicy/ -run Mobile -count=1`. Red step: a send while the agent is busy must be refused first. Depends on: Z0, P6 (the same policy file), Z1 (`context/index.js`). Commit: `mobile: compact and idle auto-compaction (D2789)`. Reviewer tier: standard.
 - **Z3 usage meter.** Acceptance: five-hour and weekly limits per named token and the active account, if Z0 found them readable within Anthropic's terms. Files: `mobile/src/context/usage.js`, `mobile/src/context/usage.test.js`, `mobile/src/context/index.js`. Command: `cd mobile && npm test -- src/context`. Red step: a token with no readable limit shows "unknown" first. Depends on: Z0, Z2 (`context/index.js`). Commit: `mobile: the usage meter (D2789)`. Reviewer tier: standard.
 
 ### I1: the end-to-end join
@@ -405,8 +423,8 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Acceptance: `SECURITY.md` has a subsection in the existing shape (what is reachable, what a stolen token or phone reaches, what revocation does not do, the single point of compromise of F8, residual risk), mirrored byte for byte into `website/content/security.md` by `go run ./internal/clidoc`; `website/data/mobile-claims.yaml` says the identity project is a runtime dependency of pairing and restore and what the synced list holds (D2798).
 - Files: `SECURITY.md`, `website/content/security.md`, `website/data/mobile-claims.yaml`, `internal/cli/docs_mobile_identity_security_test.go` (new).
 - Interfaces: none.
-- Tests: `TestDocsWebsiteSecurity*`, `TestDocsMobileIdentitySecurity*`, and `npm run check` in `website/`.
-- Command: `go run ./internal/clidoc && go test ./internal/cli/ -run 'DocsWebsiteSecurity|DocsMobileIdentitySecurity|DocsMobileClaims' -count=1`
+- Tests: `TestWebsiteSecurityPage*`, `TestDocsMobileIdentitySecurity*`, and `npm run check` in `website/` (which runs `test/mobile.mjs` over the claims file).
+- Command: `go run ./internal/clidoc && go test ./internal/cli/ -run 'WebsiteSecurityPage|DocsMobileIdentitySecurity' -count=1`
 - Red step: the new pin fails before the subsection exists.
 - Depends on: I1 (it describes what I1 wires).
 - Commit: `security: the identity project, the session and the synced list (D2798, F27)`
@@ -414,12 +432,12 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 
 ### UP1: `fugaro update` converges the previous version
 - Acceptance: after `brew upgrade`, `fugaro update` deploys the credsvc endpoints and the P5 grant, migrates the policy in place, leaves every phone paired the old way working and offers it identity pairing, and says in one line that it waits for no running run and what each step that can reach one does; `TestUpdateLeavesARunInFlightRunning` still passes and a test of an installation at the previous version converges. The pull request carries a `### For operators` entry: run `fugaro update`, after Checks 730 and 731.
-- Files: `internal/cli/update_mobile.go` (new), `internal/cli/update_mobile_test.go` (new), `docs/releases/README.md`'s named release note file.
+- Files: `internal/cli/update_mobile.go` (new), `internal/cli/update_mobile_test.go` (new), the release note file for the next version under `docs/releases/` (named by `docs/releases/README.md`'s process).
 - Interfaces: none.
 - Tests: `TestUpdateMobile*`, `TestUpdateLeavesARunInFlightRunning`.
 - Command: `go test ./internal/cli/ -run 'TestUpdateMobile|TestUpdateLeavesARunInFlightRunning' -count=1`
 - Red step: an installation at the previous version must fail to converge first.
-- Depends on: I1, P5, P6, P7.
+- Depends on: I1, P5, P6, P7; the second service and its grant are applied by `update`.
 - Commit: `update: converge to identity pairing with runs in flight (D2795)`
 - Reviewer tier: **opus**, independent review.
 
@@ -431,22 +449,22 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 
 | Level | Tasks |
 | --- | --- |
-| 0 | DA, T0, C1, C2, M0*, Z0*, P5†, A1, A2, A3, P2, P6, K1 |
+| 0 | DA, T0, P0, C1, C2, M0*, Z0*, P5†, A1, A2, A3, P2, P6, K1 |
 | 1 | P1, P3, P4, K2, P7, M1, M2, J1, J2, J3, J4, X1, Z1 |
 | 2 | M3, X2, Z2 |
 | 3 | K3, X3, Z3, I2 |
 | 4 | I1 |
 | 5 | D1, UP1 |
 
-\* owner-run, on devices. † not approvable until O1 is answered. The graph also lists the anticipated contract changes CR1 and CR2 at level 0; they run only if a consumer finds its contract wrong, and only after it.
+\* owner-run, on devices. † not approvable until O1 and O8 are answered. The graph also lists the anticipated contract changes CR1 and CR2 (level 2, after C1 and P3, after C2 and J3); they run only if a consumer finds its contract wrong, and only after it.
 
 **Critical path (as the read prints it):** `C1 -> M1 -> M3 -> K3 -> I1 -> D1`, bottleneck C1. It is sequential because M1 and M3 share the secure-store files, K3 needs the real refresh loop, and I1 joins everything.
 
-**Estimate, as the read printed it:** `ready in 540–2160 min, no history yet for 38 tasks (38 tasks; seeds for 38; from the seeds: no history is cached on this machine yet)`. This is informational and reserves no budget: it is what the tiers and this machine's history predict, and it moves as runs finish.
+**Estimate, as the read printed it:** `ready in 540–2160 min, no history yet for 39 tasks (39 tasks; seeds for 39; from the seeds: no history is cached on this machine yet)`. This is informational and reserves no budget: it is what the tiers and this machine's history predict, and it moves as runs finish.
 
 ### The dependencies the plan broke (12) and what they were
 
-`fugaro plan graph` reports **12 broken, 19 kept, 6 added; before 8 tasks, weight 17; after 6 tasks, weight 14; improves.** Each is an edge where the dependent needed an interface only:
+`fugaro plan graph` reports **12 broken, 23 kept, 6 added; before 8 tasks, weight 17; after 6 tasks, weight 14; improves.** Each is an edge where the dependent needed an interface only:
 
 | Dependent | Was waiting on | Contract | Integration | Why an interface is enough |
 | --- | --- | --- | --- | --- |
@@ -468,6 +486,7 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 | Edge | Reason |
 | --- | --- |
 | P7 after P2 | the same file, `internal/cli/pair.go` |
+| P3, P4, K2 after P0 | the shared closed purpose set in `internal/credsvc/audit.go`; P0 is small and settles it once |
 | M3 after M1; K3 after M3 | the same secure-store files, and K3 needs M3's real refresh behaviour |
 | M1, M2, X3 after M0; Z1, Z2, Z3 after Z0 | behaviour: which packages work, what the session exposes, are data a spike finds |
 | J1 after P6; J3 after P6; Z2 after P6 | `version.go` and the policy fields it carries |
@@ -478,13 +497,16 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 ### Contract changes anticipated
 
 - **CR1** (amends C1): P3 may find the strict-switch state missing from the pair response. It would reach M2, K3 and K2; launched ones get a follow-up run on their pull request naming `internal/mobilesession/contract.go` by path.
-- **CR2** (amends C2): J3 may find the costly-mode list missing from the session. It would reach J2, J4, X1 and M3.
+- **CR2** (amends C2): J3 or Z2 may find a policy value the phone needs missing from the session. It would reach J2, J4, X1 and M3.
 
 ### Shared-files table (no level holds two writers of one file)
 
 | File | Writers, by level |
 | --- | --- |
 | `internal/cli/pair.go` | P2 (0), P7 (1) |
+| `internal/credsvc/audit.go` | P0 (0) |
+| `shared/confirm/*`, `internal/mailbox/action.go` | J3 (1) |
+| `shared/command/*`, `mobile/src/mailbox/client.js` | J4 (1) |
 | `internal/projectpolicy/version.go` | P6 (0), J1 (1) |
 | `internal/projectpolicy/mobile.go` | P6 (0), Z2 (2) |
 | `mobile/src/accounts/secure-store.js` | M1 (1) |
@@ -522,15 +544,19 @@ Order: Check 730 (apply the identity project), Check 731 (provider consoles), re
 - A new per-installation service for the security role (D2782): the owner chose credsvc instead; its consequences are P3-P5, O1 and T1.
 - Plain Firebase sessions (D2783): the spec's device-bound, idle-expiring, re-checked refresh is not achievable with them.
 - Always requiring a QR for a new device (D2784): drops the spec's continuity; the strict switch offers it per project.
-- A workspace user directory (D2780): reverses D1295.
+- A workspace user directory (D2780): reverses D1295 on `main`; open pull request #3195 proposes workspace people and roles, so O5 re-checks this if it lands.
 - Direct service calls for start and cancel (D2787): a second write path.
 - A cloud interactive session for the text view (D2788): a new product surface.
 - The identity project storing workspace session tokens: the spec forbids it.
 
 ## What this plan does not own
 
-The P5.1 always-on orchestrator that consumes the mailbox, and P5.1g's biometric re-auth: J3 and J4 build against them and I1/I2 do not need them to pass; the end-to-end start and cancel on a real project (Check 735) does.
+The P5.1 always-on orchestrator that consumes the mailbox, and P5.1g's biometric re-auth: J3 and J4 build against them and I1/I2 do not need them to pass; the end-to-end start and cancel on a real project (Check 735) does. **Requirement on that consumer, stated here so its own plan pins it:** it checks the sender's role with `internal/access` (`ActionLaunch`, `ActionCancel`) at consume time against the current device node, never trusting a role carried in the message, and enforces the confirmation J3's Go side defines.
 
 ## Coverage
 
-Every decision and finding lands in a task or in a declined note: D2780 (P3, P6), D2781 (A3), D2782 (P3-P5), D2783 (P4, M3), D2784 (K2, P6, D1), D2785 (P3, P6, M1), D2786 (J3, P6, DA), D2787 (J4), D2788 (X1, X3), D2789 (Z0-Z3), D2790 (M1, DA), D2791 (P2, P3), D2792 (C1, A1, A2, P1), D2793 (M1), D2794 (P4, P7, M3), D2795 (UP1), D2796 (P6), D2797 (J1, J2), D2798 (D1). F1-F30 land in the same tasks; F24 in the conventions; F26 in T0, DA and the task commits; F28, F29 in Checks 731, 734, 736.
+Every decision and finding lands in a task or in a declined note: D2780 (P3, P6), D2781 (A3), D2782 (P0, P3-P5), D2783 (P4, M3), D2784 (K2, P6, D1), D2785 (P3, P6, M1), D2786 (J3, P6, DA), D2787 (J4), D2788 (X1, X3), D2789 (Z0-Z3), D2790 (M1, DA), D2791 (P2, P3), D2792 (C1, A1, A2, P1), D2793 (M1), D2794 (P4, P7, M3), D2795 (UP1), D2796 (P6), D2797 (J1, J2), D2798 (D1), D2799 (P2). F1-F41 land in the same tasks (F31 in P5, F32 in P4, P7, K2, F33 in O6 and P3, F34 in P3, F35 in C1 and K2, F36 in J3, F37 in U10, F38 in P1 and O7, F39 across A1, K1, P1, P3, P4, C1 and M0, F40 in O9, F41 in O5); F24 in the conventions; F26 in T0, DA and the task commits; F28, F29 in Checks 731, 734, 736.
+
+## Open items the plan carries
+
+O1 and O8 (the public second service and its grant, before P5 and P3), O2 (the amended D162, D232 wording), O3 (the jobs scope), O4 (the defaults), O5 (#3195), O6 (the MAC key source, before P3), O7 (key pinning), O9 (the default of `mobile.enabled`). Each is in [reconciliation.md](reconciliation.md).
