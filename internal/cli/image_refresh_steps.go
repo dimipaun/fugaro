@@ -351,6 +351,21 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 // own "built so far" detail, takes precedence over it.
 func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
 	w := r.stageDetail()
+	// M7, D2312 as amended: a repository a deployed profile admits runs on the
+	// project's shared jobs, so the images its workflows need are the
+	// project's — the catalog entries, rebuilt per project — and not derived
+	// images of its own. Nothing of this step is this repository's to do:
+	// there is no per-repository derived image to rebuild, and no per-repository
+	// job for refreshCloneJobs to move. F5's first half, and spec decision 3:
+	// rebuilding images after a Fugaro update happens per project.
+	//
+	// The base step before this one is untouched: the base images are the
+	// installation's, and the project's catalog entries and its check job are
+	// built FROM them whatever a profile admits.
+	if infra.SharedRepo(nodePolicy(ctx, &r.policy, t.lc), t.spec.Provider, t.spec.Name) {
+		fmt.Fprintf(w, "  %s runs on the project's shared jobs, so its workflows' images are the project's catalog entries: this run rebuilds none of them (M7, D2312)\n", oneLineCLI(t.spec.Name))
+		return nil
+	}
 	cloneErr := r.refreshCloneJobs(ctx, p, t)
 	host, err := infra.RegistryHost(t.lc)
 	if err != nil {
