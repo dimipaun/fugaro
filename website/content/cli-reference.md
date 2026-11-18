@@ -4811,6 +4811,20 @@ every pass until an operator removes the node with their own credential.
 Every reply and every heartbeat is signed before it is written, so a value
 the signer refuses is not written at all.
 
+A registration is the app's push token, its platform and its per-category
+switches, and it is written to the sibling node config/admin/push/<uid> —
+never under config/admin/devices/<uid>, which only `fugaro pair` and
+`fugaro pair revoke` write and whose existence is what admits the device. A
+registration whose account has no device node is refused and writes nothing,
+so a revocation is final; a re-registration overwrites the token, the
+platform and the time it was written and leaves the rest of the node alone.
+The write needs roles/firebasedatabase.admin, the role a pairing needs, since
+every node under config/admin is the operator's own credential's and no
+client token's: where the credential does not hold it, or the database cannot
+be reached, the pass stops and says so rather than pretending the phone
+registered — and the delivery is not consumed, so the first pass after the
+role is granted or the outage ends writes the node.
+
 The heartbeat IS the lease, and the loop renews it on every pass: it is
 rewritten with the current instant under the same compare-and-swap a take
 uses, which is what tells the phone this consumer is present and what keeps
@@ -4824,9 +4838,10 @@ do nothing with. The pairing key is read from the OS keychain by item name
 and is never printed; the item's name is not a secret and appears in a
 diagnostic.
 
-The command writes only the outbox and the heartbeat, with the operator's own
-credential, which is what makes that write set a rule in this command's code
-rather than a fence the database enforces.
+The command writes the outbox, the heartbeat and the one push node a
+registration names, with the operator's own credential, which is what makes
+that write set a rule in this command's code rather than a fence the database
+enforces.
 
 Its own state is the ledger at
 $XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json, written 0o600 by
