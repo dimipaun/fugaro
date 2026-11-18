@@ -1009,21 +1009,25 @@ type tcCloud struct {
 	// an empty first one is what says the judgement came before the upload.
 	inputsAtPreflight []string
 	inputsAtLaunch    []string
-	// egressAtLaunch is what the command had printed when the launch was asked.
-	// The egress line is D1606's sentence about what is about to be sent, so it
-	// is only true if it was on the terminal before the evidence went up.
-	egressAtLaunch string
+	// egressAtUpload is what the command had printed when the first object of
+	// the bundle was written. The egress line is D1606's sentence about what is
+	// *about* to be sent, so it is only true if it was already on the terminal
+	// at that instant — the launch is later than the upload, so a snapshot there
+	// would pass just as well with the sentence printed after the evidence was
+	// already in the person's bucket.
+	egressAtUpload string
+	uploads        int
 	// noAnswer is a job that ran and left nothing behind: the read-back finds no
 	// record and no answer, which is the other half of "the job did not answer"
 	// beside a launch that failed.
 	noAnswer bool
 }
 
-// tcSetup installs the cloud tier's seams over the world's own runs bucket and
-// returns them. The plan answers a job of the fixture's own repository, the
-// pre-flight admits everything unless a case says otherwise, and the launch
-// writes the answer into the run's prefix the way the runner leaves it and
-// answers a run reference.
+// tcSetup installs the cloud tier's four seams over the world's own runs bucket
+// and returns them. The plan answers a job of the fixture's own repository, the
+// pre-flight admits everything unless a case says otherwise, the upload is the
+// real one with the terminal read first, and the launch writes the answer into
+// the run's prefix the way the runner leaves it and answers a run reference.
 func tcSetup(t *testing.T, x *tsWorld) *tcCloud {
 	t.Helper()
 	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
@@ -1040,9 +1044,9 @@ func tcSetup(t *testing.T, x *tsWorld) *tcCloud {
 		ref:    appSlug + "/" + tbRunID,
 		answer: diagnoseagent.Answer{Outcome: diagnoseagent.OutcomeConfiguration, Signature: "configuration", Text: "The layer check read the wrong cache.\n"},
 	}
-	wasPlan, wasPreflight, wasLaunch := troubleshootCloudPlan, troubleshootPreflight, troubleshootLaunchCloud
+	wasPlan, wasPreflight, wasUpload, wasLaunch := troubleshootCloudPlan, troubleshootPreflight, troubleshootUpload, troubleshootLaunchCloud
 	t.Cleanup(func() {
-		troubleshootCloudPlan, troubleshootPreflight, troubleshootLaunchCloud = wasPlan, wasPreflight, wasLaunch
+		troubleshootCloudPlan, troubleshootPreflight, troubleshootUpload, troubleshootLaunchCloud = wasPlan, wasPreflight, wasUpload, wasLaunch
 	})
 	troubleshootCloudPlan = func(context.Context, diagnoseagent.Evidence) (troubleshootCloudJob, error) {
 		c.planned++
@@ -1056,10 +1060,14 @@ func tcSetup(t *testing.T, x *tsWorld) *tcCloud {
 		c.inputsAtPreflight = tcInputs(x, tbRunID)
 		return c.preflightErr
 	}
+	troubleshootUpload = func(ctx context.Context, s *runstore.Store, ev diagnoseagent.Evidence, rec srctree.Record) error {
+		c.uploads++
+		c.egressAtUpload = tsPrinted(x)
+		return troubleshootUploadBundle(ctx, s, ev, rec)
+	}
 	troubleshootLaunchCloud = func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, error) {
 		c.launches++
 		c.inputsAtLaunch = tcInputs(x, tbRunID)
-		c.egressAtLaunch = tsPrinted(x)
 		if c.launchErr != nil {
 			return "", c.launchErr
 		}
@@ -1211,8 +1219,8 @@ func TestTroubleshootTierOrder(t *testing.T) {
 		if len(x.reqs) != 0 {
 			t.Errorf("the cloud tier ran the local child %d times", len(x.reqs))
 		}
-		if c.planned != 1 || c.preflights != 1 || c.launches != 1 {
-			t.Errorf("the tier planned %d, judged %d and launched %d times, want one each", c.planned, c.preflights, c.launches)
+		if c.planned != 1 || c.preflights != 1 || c.uploads != 1 || c.launches != 1 {
+			t.Errorf("the tier planned %d, judged %d, uploaded %d and launched %d times, want one each", c.planned, c.preflights, c.uploads, c.launches)
 		}
 		// D2401: the judgement is reads alone, so it comes before the first
 		// object is written.
@@ -1224,9 +1232,12 @@ func TestTroubleshootTierOrder(t *testing.T) {
 		if len(c.inputsAtLaunch) == 0 {
 			t.Error("the launch was asked for before the bundle was up")
 		}
-		// D1606: the sentence about what is sent is printed before it is sent.
-		if !strings.Contains(c.egressAtLaunch, "your own Cloud project") {
-			t.Errorf("the egress line was not printed before the launch:\n%s", c.egressAtLaunch)
+		// D1606: the sentence about what is *about* to be sent is printed before
+		// it is sent, and the upload is the instant that becomes true or false —
+		// a snapshot at the launch would read the same with the sentence printed
+		// after the evidence was already in the person's bucket.
+		if !strings.Contains(c.egressAtUpload, "your own Cloud project") {
+			t.Errorf("the egress line was not printed before the bundle went up:\n%s", c.egressAtUpload)
 		}
 		if strings.Contains(errOut, "your own Claude login") {
 			t.Errorf("the cloud tier's line claims this machine's own login: %q", errOut)

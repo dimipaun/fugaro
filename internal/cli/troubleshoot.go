@@ -364,13 +364,13 @@ type troubleshootCloudJob struct {
 	spec *task.Spec
 }
 
-// This command's cloud tier is three seams, one per call that reaches outside
+// This command's cloud tier is four seams, one per call that reaches outside
 // this process (the header of this file): the plan that resolves what the tier
-// would launch, T-TC1's pre-flight, and the launch itself. The two halves of
-// the launch are the next task's and are declared here, nil, so that this
-// binary compiles and ships without them: troubleshootCloudTier answers what
-// this command answered before the tier existed when either is unset, rather
-// than launching a spec nothing here can build.
+// would launch, T-TC1's pre-flight, T-TC5's upload and the launch itself. The
+// two halves of the launch are the next task's and are declared here, nil, so
+// that this binary compiles and ships without them: troubleshootCloudTier
+// answers what this command answered before the tier existed when either is
+// unset, rather than launching a spec nothing here can build.
 var (
 	// troubleshootCloudPlan resolves the job above from the evidence's own
 	// facts, and declines with D2409's reason when there is no repository to
@@ -385,6 +385,12 @@ var (
 	// and the gates themselves are pinned against the real block in their own
 	// file.
 	troubleshootPreflight = troubleshootLaunchPath
+	// troubleshootUpload is T-TC5's upload, called as the tier's own step. It
+	// is a variable for the same reason the pre-flight is, and it is the one
+	// that makes D1606's sentence testable rather than merely asserted: the
+	// line is about to be true only if it is on the terminal when the first
+	// object is written, and that instant is this call.
+	troubleshootUpload = troubleshootUploadBundle
 )
 
 // troubleshootCloudTier is D2400's third tier: this machine holds no credential
@@ -435,7 +441,7 @@ func troubleshootCloudTier(cmd *cobra.Command, o *troubleshootOptions, ev diagno
 		return troubleshootOffline(cmd, o, ev, d, errors.New(troubleshootDeclineCloud(err)))
 	}
 	troubleshootEgress(cmd, o, d.Model, troubleshootEgressTo{cloud: &job})
-	if err := troubleshootUploadBundle(ctx, s, ev, rec); err != nil {
+	if err := troubleshootUpload(ctx, s, ev, rec); err != nil {
 		return troubleshootOffline(cmd, o, ev, d, err)
 	}
 	ref, err := troubleshootLaunchCloud(ctx, job.env, job.slug, job.spec)
