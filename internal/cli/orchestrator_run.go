@@ -556,9 +556,11 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		// The labels of the pull requests the runs it launched opened (F25, T7):
 		// read back from the runs bucket by run id and written through the
 		// installation's credentials service, which is the one holder of the App
-		// key (D2439). Empty until the installation records a service URL and
-		// this build can mint the daemon's own identity for it
-		// (orchestratorLabelSeams), which is the state this tree is in.
+		// key (D2439). Empty where this installation records no credentials
+		// service, and where it holds no orchestrator block to have a daemon
+		// account from (orchestratorLabelSeams); a daemon that has both and
+		// cannot mint says so through the client's own refusal rather than
+		// labelling nothing quietly.
 		Labels: orchestratorLabelSeams(d),
 		// The audit log the trip writes its refusal line to (O19): the daemon's
 		// own node, under the id the entry derives from the run, which is the

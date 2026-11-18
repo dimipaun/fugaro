@@ -1397,13 +1397,17 @@ func TestMergeMintAnswerIsNotCached(t *testing.T) {
 // serves every route it served before unchanged, and answers the new route with
 // the class's refusal rather than a 404 or a 200.
 //
-// What it does NOT pin is the installation module's half: the grant that makes a
-// daemon's account reachable, and the environment variable that names it, are
-// Terraform and are not carried by this change, so an installation converges by
-// the route being INERT — it exists in the binary, it refuses every caller, and
-// it mints nothing until the installation names its daemon. The PR says so; when
-// the grant lands, the env var is what turns this test's second half from "the
-// route refuses everybody" into "the route admits the daemon".
+// What it does NOT pin is the installation module's half, which landed with
+// this release (F19, O2): credentials.tf renders FUGARO_ORCHESTRATOR_ACCOUNTS
+// from the installation's own orchestrator block on an installation that runs a
+// daemon, and orchestrator.tf grants that same account roles/run.invoker on
+// this service, so an installation that opted in gets a service that admits the
+// daemon the moment the deployment carrying them is applied. The second half
+// below is the OTHER installation: the one whose service this release has not
+// replaced yet, or which runs no daemon at all. It starts and refuses every
+// caller of the class, which is what makes the rendered entry an admission
+// added to a service that serves either way, rather than a switch deciding
+// whether the process serves at all.
 func TestPreviousInstallationConverges(t *testing.T) {
 	// The previous release's configuration, verbatim: newSvc's own fixture is
 	// that configuration, and it names no orchestrator.

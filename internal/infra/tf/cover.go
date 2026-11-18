@@ -545,7 +545,18 @@ var grantRules = map[string]map[string]who{
 	// pinned in TestGrantRulesPinnedCells; the grant itself is inert until
 	// B4.5 reads from the service.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity,
+		// toOrchestrator is Q13's cell, reversed on the owner's approval of
+		// 2026-11-17 (F19 and O2 of docs/forge-labels; E16 of
+		// docs/outer-loop-escalation): Q13's answer of 2026-10-19 kept it out
+		// on the premise that the resident orchestrator never calls the
+		// credentials service at all, and the service's merge mint and label
+		// route are its own caller class (credsvc.OrchestratorAccounts,
+		// D2049) — so the daemon's token is minted, and the front end refuses
+		// it before the container runs without this binding. The grant is on
+		// the ONE service the module deploys for this installation, and what
+		// answers the call after the front end is the class: the account is
+		// named on FUGARO_ORCHESTRATOR_ACCOUNTS and on no other list.
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity | toOrchestrator,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,
@@ -1708,10 +1719,12 @@ var knownCommands = [][2][]string{
 // provider, account} triples, which are the class the service admits a review
 // caller as (C3.9a), — only on one whose roster names a launcher — the
 // addresses the launcher class admits (D1938, F25), which is the class the
-// grant route and the intake answer to, and — only on an installation that
+// grant route and the intake answer to, — only on an installation that
 // runs the service at all — the address of the project's build identity (B5,
 // D2301), which is the class the build route admits and the only list that
-// class is on. No secret ID and no secret value,
+// class is on, and — only on one that runs a resident orchestrator — the
+// daemon's own account (F19, O2), which is the class the label route and the
+// gated merge mint are served to. No secret ID and no secret value,
 // because the loader
 // derives the container from the project name and reads it as the service's own
 // account, and both job sets are derived from their triples rather than
@@ -1730,6 +1743,13 @@ var credentialsServiceEnv = []string{
 	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
 	"FUGARO_LAUNCHER_ACCOUNTS", "FUGARO_SHARED_JOB_ACCOUNTS",
 	"FUGARO_BUILD_ACCOUNTS",
+	// ... and — only on an installation that runs a resident orchestrator —
+	// the account that class admits (F19, O2): the daemon's own identity, as
+	// the JSON array credentials.tf renders from the account its own module
+	// creates. It is the one name this deployment carries that is not read by
+	// the run path at all, and it reaches no model credential: what the
+	// process does with it is match a caller's email claim.
+	"FUGARO_ORCHESTRATOR_ACCOUNTS",
 }
 
 // intakeServiceArgs and intakeServiceEnv are the argv and the environment
