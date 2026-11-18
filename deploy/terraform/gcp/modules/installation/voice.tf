@@ -35,13 +35,17 @@
 # node and internal/voicesvc's own paths are what narrow it: internal/voicesvc/
 # status.go, policy.go). SECURITY.md states it.
 #
-# AND NO PROVIDER KEY, YET. This file sets no secret, grants no accessor and
-# puts no key in the container's environment: at P5.3.3 the hop holds no
-# credential beyond its own identity, so a compromised revision of it brings
-# the database read above and nothing else. P5.3.5's forwarding half is what
-# adds the provider credential — a secret in secrets.tf and an accessor grant
-# beside it, this file's account on both — and that change is the one that has
-# to say what a revision of this process can then reach.
+# THE PROVIDER KEY (P5.3.5). The forwarding half gives this process the one
+# credential it holds: secrets.tf creates the provider-key container and binds
+# roles/secretmanager.secretAccessor on it to the account below, and the third
+# environment name here is the GCP project that container lives in — never the
+# container's ID, which the process reads from its own constant
+# (internal/backend/gcp's VoiceProviderKeysSecret, secrets.tf's literal), so no
+# secret ID is an environment variable of this tree. What a compromised
+# revision reaches is therefore the database read above AND the provider keys,
+# and nothing else: it can spend at the providers the register admits, which is
+# the spend SECURITY.md discloses as outside every cap. It still reaches no
+# bundle, no job account and no operator's credential.
 
 locals {
   # The whole file is gated on the one variable, like credentials.tf's and
@@ -172,14 +176,16 @@ resource "google_cloud_run_v2_service" "voice" {
         }
       }
 
-      # The process's whole configuration, and it is TWO names
+      # The process's whole configuration, and it is THREE names
       # (internal/cli/voice_serve.go reads exactly these and no other): the
       # installation's Firebase project — the audience and the issuer a
       # device's ID token must carry, which is also the project whose database
-      # the two reads are — and that database's URL. They are the same two
-      # facts the credentials service is configured with, under the same names,
-      # and neither is a credential: the process's identity is the account
-      # above, and its only other input is the caller's own token.
+      # the two reads are — that database's URL, and the installation's GCP
+      # project, which is where the provider-key container lives. The first two
+      # are the same facts the credentials service is configured with, under
+      # the same names, and the third is that service's own name too; none is a
+      # credential: the process's identity is the account above, and its only
+      # other input is the caller's own token.
       #
       # A process that does not know which project mints the identities it
       # admits, or which database the device nodes live in, must not serve at
@@ -197,6 +203,17 @@ resource "google_cloud_run_v2_service" "voice" {
       env {
         name  = "FUGARO_RTDB_URL"
         value = local.voice_rtdb_url
+      }
+      # The installation's GCP project, and the one name the forwarding half
+      # adds (P5.3.5): it is the project the provider-key container lives in
+      # (secrets.tf), which the hop names by its own constant and reads as this
+      # account. It is the credentials service's own value under its own name,
+      # and it is NOT the Firebase project above: an installation's database
+      # may belong to another project's Firebase instance, and this service
+      # already carries both for that reason.
+      env {
+        name  = "FUGARO_GCP_PROJECT"
+        value = var.project
       }
     }
   }

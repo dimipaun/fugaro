@@ -351,8 +351,11 @@ const maxKeyDocumentBytes = 64 << 10
 // a member added to a value the operator already sets and not a new resource,
 // a new grant and a new environment name. The container and its one accessor
 // grant are in deploy/terraform/gcp/modules/installation/secrets.tf beside the
-// installation's other secrets; the environment names the container's resource
-// name (internal/cli/voice_serve.go).
+// installation's other secrets; the environment names the PROJECT the container
+// lives in (internal/cli/voice_serve.go reads FUGARO_GCP_PROJECT) and the
+// container's ID is a constant of this binary and of that module
+// (internal/backend/gcp's VoiceProviderKeysSecret), so no secret ID is an
+// environment value of the deployment.
 //
 // It is safe for concurrent use, and it caches the parsed document for TTL: a
 // call reads Secret Manager at most once per TTL, and a read that FAILED is not

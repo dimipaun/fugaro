@@ -1682,13 +1682,36 @@ func TestCoverRefusesAVoiceServiceThatIsNotTheModules(t *testing.T) {
 		}, false},
 		// An environment is the one path a value could reach this process
 		// without a Secret Manager read, and this process is reachable by
-		// anyone.
+		// anyone. The name below is one the process reads NOWHERE (it is the
+		// credentials service's own, and even there it is not a container's
+		// environment): since P5.3.5 the hop's three names are the two the
+		// Firebase reads need and the GCP project the provider-key container
+		// lives in, and voiceServiceEnv is the whole of what a plan may carry.
 		"an environment the module does not set": {func() ResourceChange {
 			r, _ := load()
 			c := container(r)
-			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_GCP_PROJECT", "value": f.Project})
+			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_SERVICE_URL", "value": "https://example.invalid"})
 			return r
 		}, false},
+		// A name DROPPED is covered and deliberately so, which is the split
+		// between this check and the golden's: this file refuses what a
+		// hand-edited plan ADDS, and TestGoldenVoiceHopCarriesItsThreeNamesAndNoOther
+		// is what reads the three names and their values off the module's own
+		// plan — a revision missing one of them is a process that never binds
+		// (internal/cli's voiceServiceConfig) rather than a grant anybody
+		// widened, so it is not a refusal this row could carry.
+		"the project the provider keys live in, dropped": {func() ResourceChange {
+			r, _ := load()
+			c := container(r)
+			kept := []any{}
+			for _, e := range c["env"].([]any) {
+				if str(e.(map[string]any)["name"]) != "FUGARO_GCP_PROJECT" {
+					kept = append(kept, e)
+				}
+			}
+			c["env"] = kept
+			return r
+		}, true},
 		"an environment whose value comes from a source": {func() ResourceChange {
 			r, _ := load()
 			container(r)["env"] = []any{map[string]any{"name": "FUGARO_FIREBASE_PROJECT",

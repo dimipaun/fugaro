@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // voiceFixture is the voice case of the installation golden's tfvars
@@ -115,22 +117,26 @@ func cutDigest(image string) (tag, digest string, ok bool) {
 	return image, "", false
 }
 
-// TestGoldenVoiceHopCarriesItsTwoNamesAndNoOther is C1.14's rule at the hop's
-// scale: the process refuses to bind a port unless the two names it needs are
-// there and well formed (internal/cli's voiceServiceConfig), and the module
-// renders exactly those two — so a name the Go side computes and the module
-// drops is a revision that never serves, and a name the module adds is a value
-// that reached the process without the deployment deciding it.
+// TestGoldenVoiceHopCarriesItsThreeNamesAndNoOther is C1.14's rule at the hop's
+// scale: the process refuses to bind a port unless the names it needs are there
+// and well formed (internal/cli's voiceServiceConfig), and the module renders
+// exactly those — so a name the Go side computes and the module drops is a
+// revision that never serves, and a name the module adds is a value that
+// reached the process without the deployment deciding it.
 //
-// The values are the credentials service's own (voice.tf reads
+// The first two values are the credentials service's own (voice.tf reads
 // var.credentials_service), which is what makes this one fact and not two: the
 // hop verifies ID tokens minted for the installation's Firebase project and
 // reads that project's database, and a second copy of either could be pulled
 // apart from the block the credentials service, the runs and the policy read.
-// The service's own URL is deliberately NOT among them: the hop's callers are
-// phones whose tokens are minted for the Firebase project, so there is no
-// address to read back and no second apply.
-func TestGoldenVoiceHopCarriesItsTwoNamesAndNoOther(t *testing.T) {
+// The third is P5.3.5's: the installation's own project, which is where the
+// provider-key container lives — never the container's ID, which the process
+// reads from its own constant (internal/backend/gcp's VoiceProviderKeysSecret),
+// so no secret ID is an environment value of this tree. The service's own URL
+// is deliberately NOT among them: the hop's callers are phones whose tokens are
+// minted for the Firebase project, so there is no address to read back and no
+// second apply.
+func TestGoldenVoiceHopCarriesItsThreeNamesAndNoOther(t *testing.T) {
 	f := voiceGoldenFixture(t)
 	p := goldenPlan(t, "installation-voice")
 	svc := resource(t, p, "module.installation.google_cloud_run_v2_service.voice[0]")
@@ -146,7 +152,7 @@ func TestGoldenVoiceHopCarriesItsTwoNamesAndNoOther(t *testing.T) {
 	}
 	for _, e := range objects(cs[0]["env"]) {
 		if refs := objects(e["value_source"]); len(refs) > 0 {
-			t.Errorf("%s takes %s from a source rather than from the module: this service's environment is the module's own two values and nothing else", svc.Address, str(e["name"]))
+			t.Errorf("%s takes %s from a source rather than from the module: this service's environment is the module's own three values and nothing else", svc.Address, str(e["name"]))
 			continue
 		}
 		got[str(e["name"])] = str(e["value"])
@@ -154,6 +160,7 @@ func TestGoldenVoiceHopCarriesItsTwoNamesAndNoOther(t *testing.T) {
 	want := map[string]string{
 		"FUGARO_FIREBASE_PROJECT": f.Credentials.FirebaseProject,
 		"FUGARO_RTDB_URL":         f.Credentials.RTDBURL,
+		"FUGARO_GCP_PROJECT":      f.Project,
 	}
 	if len(got) != len(want) {
 		t.Errorf("the hop's revision carries %d environment names (%v), want %d (%v): a name the process does not read is a value the deployment did not decide", len(got), got, len(want), voiceServiceEnv)
@@ -273,6 +280,81 @@ func TestGoldenVoiceHopReadsTheWholeDatabaseThroughOneRole(t *testing.T) {
 	}
 	if got := RolePermissions[MCPStateReadRole]; !slices.Equal(got, MCPStateReadPermissions) {
 		t.Errorf("RolePermissions[%s] = %v, want %v: the hop's whole reach is this role, and a permission added to it is reach added to a public endpoint", MCPStateReadRole, got, MCPStateReadPermissions)
+	}
+}
+
+// TestGoldenVoiceHopHoldsTheProviderKeysAndNoOtherSecret is P5.3.5's grant read
+// as the plan writes it, and the one test in this file that is about a
+// credential rather than an address.
+//
+// The forwarding half gives this process the one secret it holds, and the plan
+// is where the two halves of that statement are visible at once: ONE container,
+// whose ID is the literal internal/backend/gcp's VoiceProviderKeysSecret carries
+// (secrets.tf repeats it because Terraform cannot compute a ProjectSecretID),
+// and ONE accessor on it, the hop's own account and no other member anywhere.
+// A second binding of that account to any other container of this plan is the
+// failure this exists for — the hop is public (the binding below), so a grant
+// that reached, say, the credentials bundle would hand the installation's model
+// keys to anyone who can call a service on the internet.
+//
+// And the container is EMPTY here, which is the other half of the design: a
+// plan creates no version of it, so no provider key ever reaches Terraform, its
+// state or this plan; the value is added by the person who holds it
+// (secrets.tf's `gcloud secrets versions add` line), and until then the hop
+// refuses a call whose key it cannot read rather than making one with an empty
+// credential.
+func TestGoldenVoiceHopHoldsTheProviderKeysAndNoOtherSecret(t *testing.T) {
+	f := voiceGoldenFixture(t)
+	p := goldenPlan(t, "installation-voice")
+	sec := resource(t, p, "module.installation.google_secret_manager_secret.voice_provider_keys[0]")
+	if got := str(sec.Change.After["secret_id"]); got != gcp.VoiceProviderKeysSecret {
+		t.Errorf("the hop's provider-key container is %q, want %q: the process reads it by its own constant (internal/backend/gcp) beside the project its environment names, so the two spellings are one fact", got, gcp.VoiceProviderKeysSecret)
+	}
+	// The marks fugaro's discovery reads, and the one that must be ABSENT:
+	// fugaro_secret is what `fugaro update` and `fugaro secrets ls
+	// --project-wide` read to decide which logical secret of the project's set
+	// a container holds, and this container is not one of those — with it,
+	// discovery would union this very container into repo.project_secrets
+	// beside this resource and the apply would plan the same ID twice.
+	if got := str(at(sec.Change.After, "labels", "fugaro")); got != "managed" {
+		t.Errorf("the hop's provider-key container is labelled fugaro=%q, want managed", got)
+	}
+	if got := str(at(sec.Change.After, "labels", "fugaro_project")); got != f.FugaroProject {
+		t.Errorf("the hop's provider-key container is labelled fugaro_project=%q, want %q", got, f.FugaroProject)
+	}
+	if _, ok := at(sec.Change.After, "labels", "fugaro_secret").(string); ok {
+		t.Errorf("the hop's provider-key container carries the fugaro_secret label: that mark makes discovery read it as one of the project's logical secrets, and the apply would then plan the same container twice (secrets.tf)")
+	}
+
+	account := "serviceAccount:" + f.Voice.AccountID + "@" + f.Project + ".iam.gserviceaccount.com"
+	grant := resource(t, p, "module.installation.google_secret_manager_secret_iam_member.voice_provider_keys[0]")
+	if got := str(grant.Change.After["secret_id"]); got != gcp.VoiceProviderKeysSecret {
+		t.Errorf("the provider-key accessor is bound on %q, want %q", got, gcp.VoiceProviderKeysSecret)
+	}
+	if got := str(grant.Change.After["role"]); got != "roles/secretmanager.secretAccessor" {
+		t.Errorf("the provider-key accessor grants %q, want roles/secretmanager.secretAccessor: the value is the whole of what the forwarding half may read", got)
+	}
+	if got := str(grant.Change.After["member"]); got != account {
+		t.Errorf("the provider-key accessor is bound to %q, want %q: the service's own account and no other principal of this installation", got, account)
+	}
+	if conds := objects(grant.Change.After["condition"]); len(conds) != 0 {
+		t.Errorf("the provider-key accessor carries a condition (%v), want none: Secret Manager scopes a binding per secret, so the container is the fence and a condition would fence nothing (secrets.tf)", conds)
+	}
+
+	// The whole of the account's Secret Manager reach, read off every binding
+	// the plan writes rather than off the one address this test happened to
+	// name: a second container bound to the hop in this plan is a grant nobody
+	// wrote down.
+	for _, rc := range p.ResourceChanges {
+		if rc.Type != "google_secret_manager_secret_iam_member" {
+			continue
+		}
+		if str(rc.Change.After["member"]) != account {
+			continue
+		}
+		if got := str(rc.Change.After["secret_id"]); got != gcp.VoiceProviderKeysSecret {
+			t.Errorf("%s binds the hop's account on the secret %q: those keys are its one credential, and every other container of this plan belongs to another part of the installation", rc.Address, got)
+		}
 	}
 }
 
