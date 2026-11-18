@@ -4269,7 +4269,7 @@ func TestGitHubRepositoryIsNeverJudgedAgainstTheBitbucketEntry(t *testing.T) {
 	in := webappInputs(t)
 	in.Installation.CredentialsService = credentialsService()
 	in.LC.ProjectSecrets = map[string]config.ProjectSecret{
-		config.BitbucketSecret: {AllowDataTo: []string{"acme/webapp"}, Proxy: true},
+		config.BitbucketSecret: {AllowDataTo: []string{"acme/webapp"}, Proxy: config.ProxyFlag(true)},
 	}
 	// The node admits the same owner/name, and only as a bitbucket repository:
 	// MatchRepo compares the provider segment, so this never admits a GitHub

@@ -1351,7 +1351,7 @@ func doctorBitbucketDirect(ctx context.Context, lc *localcfg.Config, repo, provi
 		return nil
 	}
 	entry, ok := lc.ProjectSecrets[config.BitbucketSecret]
-	proxied := ok && entry.Proxy && entry.AllowsData(repo)
+	proxied := ok && entry.Proxying() && entry.AllowsData(repo)
 	if !proxied {
 		return []doctorCheck{{ID: id, Severity: "info",
 			Problem: fmt.Sprintf("%s is a Bitbucket repository that is not proxied: its jobs mount their own %s, so a run of it holds a credential that reaches the repository itself (D462)", printable, config.BitbucketSecret),
@@ -1578,7 +1578,7 @@ func oauthSwitchBundleEntries(cfg *config.Config, lc *localcfg.Config, repo stri
 // among them.
 func proxiedBitbucketRepos(lc *localcfg.Config) []string {
 	entry, ok := lc.ProjectSecrets[config.BitbucketSecret]
-	if !ok || !entry.Proxy {
+	if !ok || !entry.Proxying() {
 		return nil
 	}
 	var out []string
