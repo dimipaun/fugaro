@@ -375,7 +375,8 @@ func (s *Service) revokeLicence(ctx context.Context, entitlement WireEntitlement
 			}
 		}
 	}
-	return s.revokeEntitlement(ctx, entitlement)
+	_, err = s.revokeEntitlement(ctx, entitlement)
+	return err
 }
 
 // deleteOrganisationRecords removes everything one organisation owns that is not
