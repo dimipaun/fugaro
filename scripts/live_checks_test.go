@@ -139,6 +139,24 @@ import (
 // keeps a run in flight until its second poll and writes that run's transcript
 // only where the row turns terminal, so a check that read a run id off the human
 // line or read a transcript before its run ended fails these cases.
+// Check 292 drives a fake `fugaro`, a fake `gcloud`, a fake `docker` and a
+// fake `git` over the catalog build context: the fake `fugaro` answers
+// `version`, `doctor --json`, `image add`, `image ls --json`, `image rm`,
+// `project policy show --json` and `update`, and its `image build` stages the
+// entry's Dockerfile, the commit and a digest of the tree under the entry's
+// context before it prints the submitted line, writes the record the build's
+// own last step writes and stamps the image's revision label -- so the case
+// that cancels a submitted copy can decide whether the record moved with the
+// staged digest or not. The fake `gcloud` serves the runs bucket, the two
+// staged objects, the build's own steps and Cloud Logging (one JSON line per
+// entry, stamped by the case, filtered as the check filters it) and removes
+// what a `storage rm` names -- refusing one when the case asks, so the restore
+// row that names a removal it could not make is pinned too -- the fake
+// `docker` reads the copied file out of the image and the image's
+// `org.opencontainers.image.revision`, and the fake `git` answers the
+// checkout's origin, cuts the branch, commits and pushes what the check
+// writes, logging every call -- so a case says which commit the record and
+// the label name, what a decision carried, and that a refusal pushed nothing.
 // Checks 490 to 492 drive a fake `fugaro` and a fake `gcloud` over the
 // post-review triage work, one per reading an owner takes on a real run: 490
 // launches ONE sandbox run and reads its record's triage block and its
@@ -394,6 +412,7 @@ var liveCheckScripts = []struct {
 	{"check195.sh", "check195_test.sh"},
 	{"check197.sh", "check197_test.sh"},
 	{"check291.sh", "check291_test.sh"},
+	{"check292.sh", "check292_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
 	{"check302.sh", "check302_test.sh"},
