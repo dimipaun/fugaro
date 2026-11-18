@@ -617,8 +617,10 @@ func TestRunLauncherGatesAReIssueOnTheStoredProjectLayer(t *testing.T) {
 	spec := orchestrator.Spec{ItemID: "wi-1", Title: "land the daemon", Repo: "acme/app", Recipe: "standard", Brief: "Start the run this attempt recorded."}
 	const runID = "20261109-101500-abcd"
 
-	// The crash: the task is stored and the start never happened.
-	if _, _, err := l.prepare(ctx, spec, runID); err != nil {
+	// The crash: the task is stored and the start never happened. The brief is
+	// the item's own, which is what this spec carries and what the launcher
+	// builds for an item with no issue behind it (briefFor).
+	if _, _, err := l.prepare(ctx, spec, spec.Brief, runID); err != nil {
 		t.Fatalf("storing the task of the attempt that crashed: %v", err)
 	}
 	stored, err := f.runStore(t, runID).ReadTask(ctx)
