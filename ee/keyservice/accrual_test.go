@@ -347,6 +347,47 @@ func TestASupersededSaleStopsAccruing(t *testing.T) {
 	}
 }
 
+// TestARenewalAtTheLimitIsNotRefused: the sum the limit is checked against is
+// the one the sale leaves, and not the one that stands before it.
+//
+// A reseller's renewal is a sale into a workspace it already holds, and the
+// grant it makes replaces and stops the licence serving there (D2204), so what
+// the renewal really adds is one day of the licence it replaces plus the term it
+// grants. Counted the other way — the whole term of the licence the renewal
+// replaces beside the whole term the renewal grants — a reseller that has run up
+// anything like its limit can never renew in place, which is the sale the
+// renewal is.
+//
+// The figures are the boundary: 160 seats for the row's month is 4_800_000 of
+// the 5_000_000 the reseller may run up, so the renewal a day later is admitted
+// at 4_800_000 + 4_800_000 committed and 4_960_000 owed.
+func TestARenewalAtTheLimitIsNotRefused(t *testing.T) {
+	const renewalSeats = 160
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	bought := f.soldBy("Example Ltd")
+	workspace := f.soldWorkspace(bought.ID, "ws-renewed")
+	committed := int64(renewalSeats) * saleDays * resellerRate
+	if room := resellerLimit - committed; room != 200_000 {
+		t.Fatalf("this case is about a sale that leaves 200_000 micros of the limit, and %d seats leaves %d: the figures moved", renewalSeats, room)
+	}
+	f.saleOf(bought.ID, workspace, PolicyTeamMonthly, renewalSeats, f.now.Add(saleDays*24*time.Hour))
+	if got := f.unpaid(resellerID); got != committed {
+		t.Fatalf("the month's sale accrues %d micros, want the whole term's %d", got, committed)
+	}
+
+	// The renewal, a day into the month: the licence it replaces served a day,
+	// and that day is all it spends beside the term the renewal grants.
+	f.advance(24 * time.Hour)
+	f.saleOf(bought.ID, workspace, PolicyTeamMonthly, renewalSeats, f.now.Add(saleDays*24*time.Hour))
+	served := int64(renewalSeats) * resellerRate
+	if got := f.unpaid(resellerID); got != served+committed {
+		t.Errorf("the accrual after the renewal is %d micros, want the day the replaced licence served beside the renewal's own term %d",
+			got, served+committed)
+	}
+}
+
 // TestConcurrentMintsCannotExceedTheLimit: D2189's ceiling under the one thing
 // that can break it — sales arriving together. The sum is a read and the grant is
 // a write beside it, and without the lock every request of the burst reads a sum

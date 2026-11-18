@@ -225,6 +225,28 @@ func rateFor(terms WireReseller, row string) (int64, bool) {
 // mints without accruing against the very ceiling D2189 puts on it. Which of the
 // two a comp is, is D2190's question and P6.3's ledger to carry.
 func (s *Service) resellerUnpaidMicros(ctx context.Context, resellerID string, terms WireReseller) (int64, error) {
+	return s.resellerUnpaidWith(ctx, resellerID, terms, nil)
+}
+
+// resellerUnpaidWith is that sum with some of the stops not yet written: the
+// licences one sale about to land will replace in its own workspace, at the
+// instant that sale starts.
+//
+// The limit is a ceiling on what a reseller owes, and a sale that replaces a
+// licence in its workspace also ends the licence it replaces (D2204): the check
+// that admits or refuses the sale has to read the sum the sale will leave, and
+// not the sum that stands before it. Counted the other way, a renewal is
+// charged the whole term of the licence it renews beside the whole term it
+// grants — so a reseller that has run up anything like its limit could not
+// renew a workspace it already holds, which is the one sale a renewal is.
+// `replacing` is the licences and the instant; a licence already stopped at an
+// earlier instant keeps that one, as it does everywhere else (the first instant
+// a licence stopped is the one its days stop at).
+//
+// It is the sum's own arithmetic and not a second one: the same query, the same
+// price and the same saturation, so what the limit is checked against and what
+// the store answers afterwards cannot come apart.
+func (s *Service) resellerUnpaidWith(ctx context.Context, resellerID string, terms WireReseller, replacing map[string]time.Time) (int64, error) {
 	links, err := recordsWhere[WireResellerCustomer](ctx, s.docs, resellerCustomersCollection,
 		Where{Field: "reseller_organisation_id", Value: resellerID})
 	if err != nil {
@@ -250,10 +272,41 @@ func (s *Service) resellerUnpaidMicros(ctx context.Context, resellerID string, t
 			if err != nil {
 				return 0, err
 			}
+			if at, replaced := replacing[licence.ID]; replaced && (stopped == nil || at.Before(*stopped)) {
+				stopped = &at
+			}
 			total = resellerAccruedTotal(total, resellerAccrualMicros(licence, rate, stopped))
 		}
 	}
 	return total, nil
+}
+
+// resellerReplacedStops answers the licences one sale will replace, as the stops
+// that sale will write: the reseller's own licences among the grants
+// entitlements.go's supersededBy names for the same grant (D2204), each stopped
+// at the instant the sale starts.
+//
+// It asks `supersededBy` itself rather than a rule of its own, so the set the
+// limit is checked against and the set the grant really supersedes are one
+// reading of one rule. It is asked outside the grant's own transaction, which is
+// the sum's own reading too (resellerUnpaidWith): what this figure does is
+// decide whether the sale may be made at all, and a supersession that lands in
+// the window between the two is a figure that only ever refuses a sale the
+// reseller may make, never admits one it may not — the grant itself decides what
+// it supersedes inside its own transaction.
+func (s *Service) resellerReplacedStops(ctx context.Context, grant entitlementGrant, row Policy, at time.Time) (map[string]time.Time, error) {
+	replaced, err := s.supersededBy(ctx, s.docs, grant, row)
+	if err != nil {
+		return nil, err
+	}
+	stops := map[string]time.Time{}
+	for _, licence := range replaced {
+		if licence.Source != entitlementSourceReseller {
+			continue
+		}
+		stops[licence.ID] = at
+	}
+	return stops, nil
 }
 
 // mintResellerLicence grants one term on a reseller's behalf, inside the credit
@@ -286,6 +339,13 @@ func (s *Service) resellerUnpaidMicros(ctx context.Context, resellerID string, t
 // answered before it: the schema's own zero is a reseller that may not mint at
 // all, and it is a check of its own because a row priced at nothing would
 // otherwise pass the comparison whatever its seats and term.
+//
+// **The sum is the one the sale leaves.** A sale into a workspace replaces the
+// licence serving there (D2204) and stops it, so the licences the grant will
+// replace are counted as the days they served and not as the terms they were
+// granted for (resellerReplacedStops): a renewal is the sale of a licence the
+// reseller already holds, and charged the whole of both terms it would be a
+// sale no reseller anywhere near its limit could make.
 //
 // **No line is written in the log.** The log is the operations team's
 // (audit.go, resellers.go's own header): the three acts of this area that write
@@ -348,10 +408,6 @@ func (s *Service) mintResellerLicence(ctx context.Context, held resellerAccess, 
 	}
 	resellerMintMu.Lock()
 	defer resellerMintMu.Unlock()
-	used, err := s.resellerUnpaidMicros(ctx, held.Organisation.ID, terms)
-	if err != nil {
-		return WireEntitlement{}, err
-	}
 	id, err := newID()
 	if err != nil {
 		return WireEntitlement{}, err
@@ -359,7 +415,11 @@ func (s *Service) mintResellerLicence(ctx context.Context, held resellerAccess, 
 	workspaceID := workspace.ID
 	// One grant, priced and then handed over: the price is taken from the record
 	// this grant makes and the same grant is what is written, so the sale the
-	// limit was checked against and the sale that lands cannot come apart.
+	// limit was checked against and the sale that lands cannot come apart. It is
+	// built before the sum is read because the sum is the one this sale will
+	// leave: the licences it replaces in its workspace are counted as the days
+	// they served and not as the terms they were granted for
+	// (resellerReplacedStops, resellerUnpaidWith).
 	grant := entitlementGrant{
 		ID:             id,
 		At:             now,
@@ -372,6 +432,14 @@ func (s *Service) mintResellerLicence(ctx context.Context, held resellerAccess, 
 		EndsAt:         ends,
 	}
 	candidate, err := entitlementRecord(grant)
+	if err != nil {
+		return WireEntitlement{}, err
+	}
+	replacing, err := s.resellerReplacedStops(ctx, grant, row, now)
+	if err != nil {
+		return WireEntitlement{}, err
+	}
+	used, err := s.resellerUnpaidWith(ctx, held.Organisation.ID, terms, replacing)
 	if err != nil {
 		return WireEntitlement{}, err
 	}
