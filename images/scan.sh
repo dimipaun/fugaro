@@ -174,7 +174,7 @@ leaks() {
   # held to the read is therefore the number of distinct diff IDs -- a layer
   # whose content was read once is read for every step that shares it.
   docker save -o "$work/image.tar" "$image"
-  layers=$(docker inspect --format '{{range .RootFS.Layers}}{{println .}}{{end}}' "$image" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')
+  layers=$(docker inspect --format '{{range .RootFS.Layers}}{{println .}}{{end}}' "$image" | sed '/^$/d' | sort -u | wc -l | LC_ALL=C tr -d ' ')
   tar -tf "$work/image.tar" > "$work/outer"
   read_layers=0
   while IFS= read -r entry; do
@@ -185,7 +185,7 @@ leaks() {
       # beside its layers and which this is not the fence for. Anything else
       # is a layer in a codec this worker cannot decode, and the distinct count
       # alone would let it pass beside a second blob of an already-read diff ID.
-      first=$(head -c 512 "$work/layer" | tr -d ' \t\r\n' | head -c 1)
+      first=$(head -c 512 "$work/layer" | LC_ALL=C tr -d ' \t\r\n' | head -c 1)
       case "$first" in
         '{'|'['|'') continue ;;
       esac

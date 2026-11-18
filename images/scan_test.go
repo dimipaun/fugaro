@@ -445,7 +445,7 @@ func TestScanRefusesALayerItCannotDecodeBesideSharedOnes(t *testing.T) {
 	if err == nil {
 		t.Fatalf("an image with an unreadable layer passed beside shared ones:\n%s", out)
 	}
-	if !strings.Contains(out, "holds 3 distinct layers and this read 2 of them") && !strings.Contains(out, "holds a layer this cannot decode") {
+	if !strings.Contains(out, "holds a layer this cannot decode") {
 		t.Errorf("the refusal does not say which layer went unread: %s", out)
 	}
 }
@@ -470,7 +470,7 @@ func TestScanRefusesALayerItCannotDecode(t *testing.T) {
 	if err == nil {
 		t.Fatalf("an image holding a layer the scan could not read passed:\n%s", out)
 	}
-	if !strings.Contains(out, "holds 2 distinct layers and this read 1 of them") && !strings.Contains(out, "holds a layer this cannot decode") {
+	if !strings.Contains(out, "holds a layer this cannot decode") {
 		t.Errorf("the refusal does not say which layer went unread: %s", out)
 	}
 	if !strings.Contains(log, "save -o") {
