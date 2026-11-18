@@ -2387,6 +2387,14 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.serviceAuthGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// The workflow secrets' gate (B3.8, G17): a run of a switched repository
+	// whose workflow declares secrets holds none of their values in its job, so
+	// the runner fetches them from the service at bootstrap and the image has to
+	// be one that knows the fetch. Judged beside the model credential's gate and
+	// likewise not at all for a launch the flip does not touch.
+	if err := env.vaultGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}

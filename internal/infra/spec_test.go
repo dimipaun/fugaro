@@ -3748,6 +3748,177 @@ func TestFilledServiceServedAuthsKeepsProviderKeys(t *testing.T) {
 	}
 }
 
+// repoRootVaultLC is repoRootLC with the fixture's own workflow secret admitted
+// project-wide for this repository (D1260, D1262, the workflow_secrets block):
+// with no entry there npm-token is a repository-level name D2313 leaves
+// storeless and mounts nowhere, so B3.1's record holds no row for it and no arm
+// of the vault flip could reach it at all. With one, the job mounts the
+// PROJECT's copy and the record names it, which is the state B3.8's flip is
+// about.
+const repoRootVaultLC = repoRootLC + `workflow_secrets:
+  npm-token: { allow_data_to: [acme/webapp] }
+`
+
+// vaultSpecUnswitched plans the vault fixture with no credentials service in
+// the installation at all: the repository the switch cannot serve, whose job
+// must keep every mount whatever the class list says.
+func vaultSpecUnswitched(t *testing.T) RepoSpec {
+	t.Helper()
+	in := repoRootInputs(t, repoRootCascadeAgent)
+	in.LC = parseLC(t, repoRootVaultLC)
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rs
+}
+
+// vaultAccessors are a spec's secretAccessor addresses of one kind ("job" for
+// the job account's own grants, "service" for D2074's), sorted. They are the
+// other half of the flip: an accessor and a mount are one answer, read from one
+// list, so a mount that moved without its accessor is a job Cloud Run refuses
+// to create.
+func vaultAccessors(rs RepoSpec, kind string) []string {
+	var out []string
+	for _, a := range rs.Addresses() {
+		if strings.Contains(a, ".google_secret_manager_secret_iam_member."+kind+"[") {
+			out = append(out, a)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// vaultNaming are the addresses of addrs that name the logical secret.
+func vaultNaming(addrs []string, logical string) []string {
+	return slices.DeleteFunc(slices.Clone(addrs), func(a string) bool {
+		return !strings.Contains(a, `["`+logical+`"]`)
+	})
+}
+
+// TestEmptyVaultListChangesNothing is the vault flip's inert state pinned
+// (B3.8, D2072): while config.VaultFetchedSecretClasses is empty no workflow
+// secret is fetched for any repository, so a switched repository's job mounts
+// exactly what it mounted before — the mount, the redaction list that follows
+// it, its own account's accessor on the container, and the service's own grant
+// on it (D2074), which is one per container the job still mounts.
+//
+// The list is cleared here and restored afterwards rather than assumed empty,
+// so this is the same test in the flip's first commit and its second: it is the
+// counterfactual the filled one below is read against.
+func TestEmptyVaultListChangesNothing(t *testing.T) {
+	saved := config.VaultFetchedSecretClasses
+	config.VaultFetchedSecretClasses = nil
+	t.Cleanup(func() { config.VaultFetchedSecretClasses = saved })
+
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootVaultLC, config.BudgetEnforce)
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
+	}
+	offWS, onWS := off.Workflows["web"], on.Workflows["web"]
+	if _, mounted := offWS.SecretEnv["NPM_TOKEN"]; !mounted {
+		t.Fatalf("the fixture mounts no NPM_TOKEN with no service at all (%v): the test would be vacuous", offWS.SecretEnv)
+	}
+	if !maps.Equal(offWS.SecretEnv, onWS.SecretEnv) {
+		t.Errorf("the switched repository's web job mounts %v, want the unswitched one's %v: with the class list empty no workflow secret is fetched, so no mount moves (D147's shape, D2072)", onWS.SecretEnv, offWS.SecretEnv)
+	}
+	if len(offWS.VaultSecretNames)+len(onWS.VaultSecretNames) != 0 {
+		t.Errorf("the vault class names %v and %v, want none on either side: a list that names nothing the service fetches leaves the job's own list empty, and it is that list the module drops the accessor through", offWS.VaultSecretNames, onWS.VaultSecretNames)
+	}
+	if got := onWS.Env[runner.SecretEnvsVar]; got != redactionEnvs(onWS.SecretEnv) {
+		t.Errorf("%s = %q, want %q: the list follows the mounts, and the flip's inert state must leave it exactly as it found it", runner.SecretEnvsVar, got, redactionEnvs(onWS.SecretEnv))
+	}
+	if got, want := vaultAccessors(on, "job"), vaultAccessors(off, "job"); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's job accessors are %v, want %v: no mount moved, so no accessor does", got, want)
+	}
+	if got := vaultAccessors(on, "service"); len(vaultNaming(got, "npm-token")) == 0 {
+		t.Errorf("the service's own grants are %v and name no container for npm-token: the job still mounts it, and D2074's set is one accessor per container the job mounts (B3.3)", got)
+	}
+}
+
+// TestFilledVaultListDropsWorkflowMountsAndAccessors is B3.8's flip pinned
+// where it holds: the class list is filled, so a repository the credentials
+// service serves plans its workflow's own secrets away from the job — the
+// mount, the redaction entry and the account's accessor — and keeps the
+// container, which is what the service's own grant (D2074) and B3.1's record
+// name as the value's home.
+//
+// It was written red: with config.VaultFetchedSecretClasses still empty the
+// first assertion below fails and every mount is still there, which is the
+// state B3.1-B3.4 shipped and the reason this test exists rather than a
+// comment.
+func TestFilledVaultListDropsWorkflowMountsAndAccessors(t *testing.T) {
+	if !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
+		t.Fatalf("config.VaultFetchedSecretClasses = %v and does not carry %q: B3.8's flip is what makes a switched repository's job give up the mount of its workflow's own secrets and read them from the credentials service instead (D2072, G17)", config.VaultFetchedSecretClasses, config.VaultSecretClassWorkflow)
+	}
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootVaultLC, config.BudgetEnforce)
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
+	}
+	offWS, onWS := off.Workflows["web"], on.Workflows["web"]
+	if _, mounted := offWS.SecretEnv["NPM_TOKEN"]; !mounted {
+		t.Fatalf("the fixture mounts no NPM_TOKEN with no service at all (%v): the test would be vacuous", offWS.SecretEnv)
+	}
+	want := maps.Clone(offWS.SecretEnv)
+	delete(want, "NPM_TOKEN")
+	if !maps.Equal(onWS.SecretEnv, want) {
+		t.Errorf("the switched repository's web job mounts %v, want %v: the workflow's own secrets are the class the flip takes away, and every other mount stays", onWS.SecretEnv, want)
+	}
+	if got, want := onWS.VaultSecretNames, []string{"npm-token"}; !slices.Equal(got, want) {
+		t.Errorf("the switched job carries vault_secret_names = %v, want %v: that list is what the module reads to drop the job's accessor on the container and to keep the service's own grant on it (D2074, B3.8)", got, want)
+	}
+	if !maps.Equal(off.Secrets, on.Secrets) {
+		t.Errorf("the secret containers moved with the flip: %v, want %v — a container carries prevent_destroy, so a dropped one plans a destruction, and the service's fetch reads the very container the job gave up", on.Secrets, off.Secrets)
+	}
+	if got := onWS.Env[runner.SecretEnvsVar]; got != redactionEnvs(onWS.SecretEnv) {
+		t.Errorf("%s = %q, want %q: the list follows the mounts, and a mounted credential left off it is one the runner would print", runner.SecretEnvsVar, got, redactionEnvs(onWS.SecretEnv))
+	}
+	offJob := vaultAccessors(off, "job")
+	if len(vaultNaming(offJob, "npm-token")) == 0 {
+		t.Fatalf("the unswitched fixture's job account holds no accessor on npm-token (%v): the test would be vacuous", offJob)
+	}
+	wantJob := slices.DeleteFunc(slices.Clone(offJob), func(a string) bool { return strings.Contains(a, `["npm-token"]`) })
+	if got := vaultAccessors(on, "job"); !slices.Equal(got, wantJob) {
+		t.Errorf("the switched job's account holds the accessors %v, want %v: the module drops the job's grant on each name of the same list its mount went with, and a job whose environment mounts no container while its account keeps the accessor is one Cloud Run refuses to create", got, wantJob)
+	}
+	if got := vaultAccessors(on, "service"); len(vaultNaming(got, "npm-token")) == 0 {
+		t.Errorf("the service's own grants are %v and name no container for npm-token: the container the job gave up is the one the run's fetch reads, so the service must keep its accessor (D2074, B3.3) — a grant dropped with the mount would leave every fetch refused", got)
+	}
+}
+
+// TestFilledVaultListKeepsAnUnswitchedRepository is the other side of the flip
+// (G9, D147, D2071): a repository the credentials service does not serve keeps
+// every mount whatever the class list says, and the two ways a repository is
+// not served are the two rows here — an installation with no service for it at
+// all, and a switched installation whose published mode holds it off the switch.
+func TestFilledVaultListKeepsAnUnswitchedRepository(t *testing.T) {
+	if !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
+		t.Fatalf("config.VaultFetchedSecretClasses = %v and does not carry %q: this case is about the list being FILLED and the repository still keeping its mounts (D147, G9)", config.VaultFetchedSecretClasses, config.VaultSecretClassWorkflow)
+	}
+	off := vaultSpecUnswitched(t)
+	held := repoRootServed(t, repoRootOAuthAgent, repoRootVaultLC, config.BudgetOff)
+	if off.Installation.CredentialsService != nil {
+		t.Fatal("the fixture carries a credentials service with no installation switch: nothing below would be about an unserved repository")
+	}
+	if held.Installation.CredentialsService != nil {
+		t.Fatalf("the mode-off fixture carries the credentials service (%+v): a mode-off repository is held off the switch entirely (D2071) and the test would be about nothing", held.Installation.CredentialsService)
+	}
+	for _, rs := range []RepoSpec{off, held} {
+		ws := rs.Workflows["web"]
+		if _, mounted := ws.SecretEnv["NPM_TOKEN"]; !mounted {
+			t.Errorf("%s's web job mounts %v and no NPM_TOKEN: a repository the switch does not serve keeps every mount of its workflow's own secrets, before the flip and after (D147, G9)", rs.Name, ws.SecretEnv)
+		}
+		if len(ws.VaultSecretNames) != 0 {
+			t.Errorf("%s's web job carries vault_secret_names = %v, want none: a job with no address fetches nothing, so nothing may leave its mounts (D147)", rs.Name, ws.VaultSecretNames)
+		}
+		if got := ws.Env[runner.SecretEnvsVar]; !strings.Contains(got, "NPM_TOKEN") {
+			t.Errorf("%s's %s = %q does not name NPM_TOKEN: the mount is there, and a mounted secret left off the redaction list is one the run would print", rs.Name, runner.SecretEnvsVar, got)
+		}
+	}
+}
+
 // TestCascadeStillDropsItsMounts is the cascade's arm, unchanged by this task:
 // the one auth whose in-job credential the service replaces whole, so its
 // answer is `all` and every model mount and accessor goes (D143, C1.18/C1.20).

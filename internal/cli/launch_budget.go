@@ -909,6 +909,97 @@ func (e *cloudEnv) switchedServiceAuth(ctx context.Context, spec *task.Spec) str
 	return auth
 }
 
+// vaultGate refuses a launch of a repository whose workflow secrets the
+// credentials service fetches (B3.8's flip) on a job image whose runner
+// predates that fetch (vaultSince): the job such a root deploys mounts none of
+// the workflow's own `secrets:`, so a runner that does not know to fetch them
+// has no value for a declared one and stops at bootstrap, before any stage.
+//
+// The condition is the launch's own (switchedVaultSecrets), read from the same
+// documents and the same functions the launch itself reads: the flip list
+// carries the workflow class, the execution really is handed the service's
+// address, and the repository's own document declares at least one secret for
+// this workflow — the very declaration the drop takes the mount of. It is
+// judged beside the model credential's gate, from the same build record and the
+// same local config, and before the claim and the task like every gate there. A
+// launch the flip does not touch — no service block, a repository whose own
+// switch is off, a repository whose workflow declares no secret at all, a
+// document this launcher cannot read — is not judged.
+func (e *cloudEnv) vaultGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
+	if !e.switchedVaultSecrets(ctx, spec) {
+		return nil
+	}
+	const subject = "a run of a repository whose workflow secrets are brokered (the job mounts none of the workflow's own secrets, and the run fetches each declared one from the installation's credentials service at bootstrap)"
+	const knows = "the credentials service as the source of its workflow's own secrets (the values its job no longer mounts)"
+	if clone {
+		return checkCloneImageSince(e.lc, spec, vaultSince, subject, knows, "", warn)
+	}
+	return checkImageSince(ctx, e, slug, spec, kind, vaultSince, subject, knows, "", warn)
+}
+
+// switchedVaultSecrets is whether this launch starts a run whose job holds no
+// mounted value for its workflow's own secrets, which is the run whose image
+// has to know the fetch: the S3 flip is on (config.VaultFetchesClass, empty
+// until the flip's second commit — so this gate refuses nothing before it), the
+// document declares at least one secret for this workflow, and the execution
+// really is handed the service's address.
+//
+// The address half is credentialsServiceLaunchEnv's own answer, for
+// switchedServiceAuth's reason: asking the function the launch itself asks
+// keeps this gate from disagreeing with the launch it judges. A repository
+// whose root was applied with the switch off, or whose project's mode is off,
+// is handed no address, keeps every mount it has, and would work on the oldest
+// image there is (G17).
+//
+// The declaration half is what tells a repository the flip touches from one it
+// does not: the drop is per repository (Go's dropVaultMounts reads the
+// repository's own document), so a switched repository whose workflow declares
+// no secret loses nothing and is not refused here. It is deliberately the
+// DECLARATION and not a resolution of which of its names the flip really takes:
+// a name D2313 leaves storeless for this repository drops no mount either, and
+// the gate refuses its launch on an old image anyway — the conservative
+// direction, on a run that has no value to fetch under that ruling either way.
+//
+// Two launch shapes are not judged, and neither loses a mount to the flip:
+//
+//   - A REVIEW launch. It runs on the review-only job, whose container mounts
+//     nothing at all (O1, reviewVariant) — so the flip takes nothing away from
+//     it, and it works on the oldest image there is. The plan's own words for
+//     this task are "review runs unchanged".
+//   - A document this launcher cannot read at all (`fugaro run --repo X` from a
+//     directory that holds no checkout of X, and the desktop console's own
+//     launches). The question here is whether the WORKFLOW declares a secret,
+//     and only the repository's document can answer it — the shape
+//     serviceAuthGate accepts for the auth it cannot read either. The launch is
+//     left to the run's own bootstrap, which refuses what it cannot read.
+//
+// A launch that lands on a shared project job is not asked a question of its
+// own here: the flip's drop is the repository's own job's (`internal/infra`'s
+// workflow() builds that spec and no project job's), and a shared job's mounts
+// are its profile's. The address is asked of the repository's own job, as
+// proxiedRepo and switchedServiceAuth ask it.
+func (e *cloudEnv) switchedVaultSecrets(ctx context.Context, spec *task.Spec) bool {
+	if e.lc == nil || e.lc.CredentialsService == nil {
+		return false
+	}
+	if !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
+		return false
+	}
+	if spec.Mode == recipe.ModeReview {
+		return false
+	}
+	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
+	if len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, e.policyMode(ctx), deployed, false)) == 0 {
+		return false
+	}
+	cfg := launchFileConfig(ctx, e, spec)
+	if cfg == nil {
+		return false
+	}
+	_, wf, err := cfg.SelectWorkflow(spec.Workflow)
+	return err == nil && len(wf.Secrets) > 0
+}
+
 // nodeBrokersBitbucket is the published node's own answer to whether this
 // repository's Bitbucket access is brokered: the installation carries the
 // credentials service, the repository is a Bitbucket one, and the node admits

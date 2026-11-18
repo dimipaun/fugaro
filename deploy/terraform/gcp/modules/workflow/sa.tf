@@ -132,6 +132,36 @@ locals {
   # so the accessor and the mount go together with nothing left reading them.
   proxied_git_secret_names = ["bitbucket-token"]
 
+  # The classes of secret the credentials service FETCHES for this job (B3.8,
+  # the S3 flip; D2072's shape, G17): a class named here is served by the
+  # service rather than mounted by the job, so this repository's job gives up
+  # the accessor and the mount of every secret of that class and the service is
+  # given its own accessor on each container instead (service_secret_names).
+  #
+  # The class is config.VaultSecretClassWorkflow — a workflow's OWN `secrets:`,
+  # which is the one class D1267's ruling puts on this path — and this literal
+  # is held to config.VaultFetchedSecretClasses by deploy/terraform's
+  # TestVaultFetchedClassesMatchTheModule, the way the two lists above are.
+  #
+  # It is EMPTY until the flip's second commit fills it with "workflow", and
+  # that is the whole inertness of the state this release ships: with it empty
+  # local.vault_secret_names is the empty list whatever Go wrote, so the two
+  # clauses below drop nothing and service_secret_names is byte for byte the
+  # set B3.3 gave it. Filling it moves nothing on its own either: the names it
+  # moves are Go's per-workflow answer (var.workflow.vault_secret_names, empty
+  # for every repository the switch holds off), so a repository whose own
+  # switch is off keeps every accessor and every mount (G9, D147).
+  vault_fetched_secret_classes = []
+
+  # The workflow's own secrets whose values the credentials service fetches for
+  # THIS job, from Go's own answer (WorkflowSpec.VaultSecretNames, written into
+  # the tfvars as var.workflow.vault_secret_names): the same names Go's
+  # dropVaultMounts took off the job's spec, and no others. Read through the
+  # class list above so that the two halves of the flip — which class is
+  # fetched, and which names of it this workflow declares — are one rule, and
+  # an empty class list leaves this variable unread.
+  vault_secret_names = contains(local.vault_fetched_secret_classes, "workflow") ? var.workflow.vault_secret_names : []
+
   # One entry per mount: this mount is a proxied git credential exactly when
   # the node admits the repository AND its logical name is one the list names.
   # Both halves are needed — the list alone would take the token from a
@@ -222,9 +252,17 @@ locals {
   # credentials, C2.1 mints installation tokens from the App key, and
   # C1.20/C2.2 drop the job's mount of each). One member per mounted secret,
   # never the project's, never another workflow's.
+  #
+  # The fetched class is the third reason a name leaves this set (B3.8), read
+  # off local.vault_secret_names rather than off the mounts: a name the service
+  # fetches is not one this job mounts at all — Go's dropVaultMounts takes it
+  # off the spec the tfvars were built from — so the clause is the rule written
+  # down where the accessor is decided, exactly as job_mounts' App-key clause
+  # is, and a tfvars that still names one of them cannot be applied into a job
+  # that reads it.
   job_secret_names = toset([
     for env, logical in var.workflow.secret_env :
-    logical if var.credentials_service == null || !local.is_service_held[env]
+    logical if var.credentials_service == null || !local.is_service_held[env] && !contains(local.vault_secret_names, logical)
   ])
 
   # The secrets the job's CONTAINER still declares, by the variable each is
@@ -261,18 +299,25 @@ locals {
   # refuses to create (B1.8, G9).
   #
   # The check job is not this module: it runs as the build account, which
-  # keeps its accessor on the App key and clones with it (D148, F3).
+  # keeps its accessor on the App key and clones with it (D148, F3). And the
+  # last clause is the fetched class (B3.8): a mount the service fetches is not
+  # this job's, whatever the tfvars' secret_env still says (Go has already
+  # dropped it from the spec, so the clause bites only on a hand-written
+  # tfvars), because the runner reads that value from the service at bootstrap
+  # (B3.4) rather than from its own environment.
   job_mounts = {
     for env, logical in var.workflow.secret_env :
-    env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env]
+    env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)
   }
 
   # The secrets the CREDENTIALS SERVICE's own account may read, by logical name:
   # one per container the job mounts, which is the set job_mounts above decides
-  # (D2074). The service is what a run asks for a workflow secret at fetch time
-  # (B3.4), so it has to be able to read the container it is asked for — and the
-  # job's own accessor is neither moved nor widened by it: two accounts, two
-  # grants, one container.
+  # (D2074), plus the fetched class's own containers (B3.8) — a name the job no
+  # longer mounts is exactly the container the service has to read, since the
+  # run's fetch is what takes its place. The service is what a run asks for a
+  # workflow secret at fetch time (B3.4), so it has to be able to read the
+  # container it is asked for — and the job's own accessor is neither moved nor
+  # widened by it: two accounts, two grants, one container.
   #
   # EVERY mount, and not only the secrets the repository declares under its own
   # `secrets:` — this job's git credential and, while their mounts last, its
@@ -283,6 +328,14 @@ locals {
   # mounts, which is the drift the guard exists to refuse. What narrows it is
   # the FLIP: the plan that takes a mount away (C2.2's App key, C1.20's model
   # mounts, B1.13's proxied token) empties that entry here in the same apply.
+  #
+  # B3.8's fetched class is the one flip that does NOT narrow it, and the
+  # reason is the direction the value travels: those three credentials are
+  # handed to a run from the service's own bundle, while a workflow secret's
+  # value is read from THIS job's container when the run fetches it (D2074,
+  # B3.4). So the container stays in the set after its mount goes — local
+  # vault_secret_names is added back below, and the two lists together are
+  # still "one grant per container this job's own secrets live in".
   #
   # toset, not the list of mounts: two variables may mount the same logical
   # name, and a repeated name in a for_each is an error rather than a second
@@ -302,7 +355,7 @@ locals {
   # answers "" for a null object and for one that carries no account at all —
   # the second is how deploy/terraform's proxied_git_test evaluates this file
   # with a stub of only name and region.
-  service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))
+  service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(concat(values(local.job_mounts), local.vault_secret_names))
 }
 
 # Each secret the job mounts and may read, at the secret level, never the

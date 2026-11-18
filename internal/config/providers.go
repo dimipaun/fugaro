@@ -717,6 +717,67 @@ func IsServiceHeldSecretName(name string) bool {
 	return slices.Contains(ServiceHeldSecretNames, name)
 }
 
+// VaultSecretClassWorkflow names the class of the secrets a workflow declares
+// for itself under `secrets:` — the workflow's OWN secrets, whatever scope
+// their containers ended up in, and never the platform's (the git credential,
+// the model credentials and a named account's token are classes of their own,
+// decided by ReservedSecrets and the local config rather than by a class list).
+//
+// It is the class VaultFetchedSecretClasses' own member names, and the class
+// modules/workflow/sa.tf's clause reads: one class, because S3 (B3.1–B3.10)
+// fetches exactly these.
+const VaultSecretClassWorkflow = "workflow"
+
+// VaultFetchedSecretClasses are the classes of secret the credentials service
+// FETCHES for the job of a repository it serves (B3.8, the S3 flip; D2072's
+// rollout shape, G17): a class listed here is fetched, so a switched
+// repository's job mounts none of that class's secrets (internal/infra's
+// dropVaultMounts) and the runner asks the installation's credentials service
+// for their values at bootstrap (B3.4's fetchWorkflowSecrets), which is where
+// they come from instead.
+//
+// G22's shape, one list at a time: this is a class list of its own, and it says
+// nothing about ServiceHeldSecretNames (the App key, held for every job of an
+// opted-in installation), ProxiedGitSecretNames (one repository's git
+// credential, held for that repository alone) or ServiceServedAuths (which
+// auths get an arm of the MODEL flip) — three switches that keep their own
+// values and their own conditions whatever this one says. The CLASS is what
+// this one decides, and a class is a property of the secret rather than of a
+// repository: which repositories are switched at all is
+// infra.CredentialsServiceServes' answer, read where the drop happens, and the
+// same answer the runner reads off its own environment.
+//
+// It is a list rather than a boolean so that a class can be added or held back
+// one at a time, and it is EMPTY until the flip's second commit fills it with
+// VaultSecretClassWorkflow: while it is empty nothing is fetched, every job
+// keeps every mount it had, and this release plans and runs exactly what the
+// release before it did (D147's "with it off nothing changes"). What the fill
+// moves is one mount per workflow secret of a SWITCHED repository, and it moves
+// nothing on its own — a repository the switch holds off keeps every mount,
+// before and after (G9, G17).
+//
+// Terraform cannot ask Go, so the same class is a literal in
+// modules/workflow/sa.tf's vault_fetched_secret_classes, held to this list by
+// deploy/terraform's TestVaultFetchedClassesMatchTheModule, and the two are
+// filled in one commit.
+//
+// What keeps the fill from stranding a run is not this list but two other
+// things, both of which have to hold before a run can be launched: `fugaro
+// update` writes the repository's workflow-secrets record (B3.1, D2073) before
+// the root that drops the mount is applied, so the service has something to
+// serve, and the launcher refuses a switched repository's run on a job image
+// older than vaultSince (0.26.0, the release whose runner knows the fetch) so
+// no run reaches a job that mounts nothing without a runner that can fetch it.
+var VaultFetchedSecretClasses = []string{}
+
+// VaultFetchesClass reports whether the credentials service fetches the secrets
+// of this class for the job of a repository it serves. A class this release
+// does not know answers false, which is the same answer an empty list gives:
+// the mount stays and the job reads it itself.
+func VaultFetchesClass(class string) bool {
+	return slices.Contains(VaultFetchedSecretClasses, class)
+}
+
 // ProxiedGitSecretNames are the git credential logical names a job gives up
 // once its repository is a PROXIED one: the published node's block admits the
 // repository with `proxy: true`, the credentials service fetches the
