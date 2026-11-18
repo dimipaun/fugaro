@@ -93,8 +93,13 @@ type orchestratorTriage struct {
 	// host a repository is on, and it is what a test sets to open a fake; open
 	// may ignore it (the file-backed test provider does).
 	kind string
-	open gitprov.Opener
-	warn io.Writer
+	// identity is the daemon's own identity at the installation's credentials
+	// service (F19, O2), installed on every provider this seam opens as its
+	// merge mint (orchestratorUseMergeMint). It is an incomplete identity on
+	// an installation with no service, and the mint is then not installed.
+	identity orchestratorIdentity
+	open     gitprov.Opener
+	warn     io.Writer
 	// opened is one provider per repository, and warned is one warning per
 	// repository about opening it. A cycle runs on one goroutine, so neither
 	// needs a lock.
@@ -126,7 +131,8 @@ func orchestratorTriageSeams(d *orchestratorDaemon) orchestrator.TriageSeams {
 	}
 	return (&orchestratorTriage{
 		bucket: d.env.bucket.Bucket, db: d.db, id: d.id, env: d.env, open: open, warn: d.warn,
-		opened: map[string]gitprov.Provider{}, warned: map[string]bool{},
+		identity: orchestratorIdentityOf(d.lc),
+		opened:   map[string]gitprov.Provider{}, warned: map[string]bool{},
 	}).seams()
 }
 
@@ -295,6 +301,15 @@ func (t *orchestratorTriage) provider(ctx context.Context, repo string) (gitprov
 	if p == nil {
 		return nil, fmt.Errorf("no provider for %s", repo)
 	}
+	// The gated merge mint, installed on the provider before anything is asked
+	// of it (E10b, E16/D2049): a provider's ready and merge calls take the
+	// credential the service mints for one pull request at one head, presented
+	// with this daemon's own identity — the same seam the label hosts present
+	// (orchestratorIdentityToken). A provider that takes no mint is one whose
+	// host has none to gate, or a repository this installation records no App
+	// ID for, and either way its merge refuses rather than reaching for a
+	// credential of its own (orchestratorUseMergeMint).
+	orchestratorUseMergeMint(p, t.env, repo, t.identity)
 	t.opened[repo] = p
 	return p, nil
 }
