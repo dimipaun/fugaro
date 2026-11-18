@@ -22,10 +22,12 @@ package cli
 // Bitbucket sentence has to be the provider's own Supported. A sentence that
 // keeps its words while the code under it moves fails here.
 //
-// What the file does NOT claim is that a pull request carries a label today.
-// The daemon's own half (T4's client, T7's wiring) is not on this tree, and the
-// documents say so: the section, the security bullet and the release note each
-// carry the sentence, and the last test below fails if one of them stops.
+// What the file does NOT claim is that a pull request carries a label today,
+// and the documents say why: the daemon's half is wired in this tree (T7's
+// client and tick, #3096) and the identity the route is gated on landed with
+// F19 and O2, so what is left is an installation's own update naming the
+// account — which is what the release note's known limit states, and the last
+// test below fails if it stops saying so.
 
 import (
 	"strings"
@@ -223,12 +225,17 @@ func TestDocsForgeLabelsReleaseNotes(t *testing.T) {
 	}
 
 	// The known limit, which is the same fact the two other documents state.
+	// It names the identity rather than the client, because the client and the
+	// tick are in the tree this release's notes are written for (T7, #3096):
+	// what is missing on the next release's notes is the half F19 and O2 land,
+	// and until an installation's update carries it nothing labels a pull
+	// request.
 	limits := normSpace(docSection(t, forgeLabelsReleaseNotes, doc, "### Known limits"))
 	if !strings.Contains(limits, "no pull request carries") {
 		t.Errorf("%s's `### Known limits` does not say that no pull request carries these labels yet: the notes must not read as a feature a user can see", forgeLabelsReleaseNotes)
 	}
-	if !strings.Contains(limits, "the client the daemon would ask the route with") {
-		t.Errorf("%s's `### Known limits` does not name the half that is missing: the daemon's client and the tick that computes the difference", forgeLabelsReleaseNotes)
+	if !strings.Contains(limits, "the class the service matches a caller against is empty until an installation's own Terraform names the account the daemon runs as") {
+		t.Errorf("%s's `### Known limits` does not name the half that is missing: the identity the service admits the daemon as (F19, O2), which is the empty orchestrator class and not the client", forgeLabelsReleaseNotes)
 	}
 }
 
