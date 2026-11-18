@@ -1,0 +1,107 @@
+# Console improvements: reconciliation
+
+**Status: plan only; nothing is implemented; no task approved.** Checked against `origin/main` at commit
+`01fe41f30` on 2026-11-18. **Where this document disagrees with [spec.md](spec.md), this document wins.**
+Findings are **F1–F24**, decisions **D2900–D2909** (block **D2900–D2929**), checks **710–712** (block
+**710–719**). Modules (approved 2026-11-18): `live-pane`, `graph-flow`, `settings-meta`, `settings-ui`,
+`manage-objects`, `setup-wizard`, `console-perf`, `console-robust`.
+
+## 1. Assumptions
+
+- **A1.** "The console" is the Electron app in `console/`, and "thin front end" means the existing boundary: it spawns only the exact argv listed in `SPAWN_COMMANDS` (`console/src/main/spawn.ts`) and `CONSOLE_OPERATIONS` (`console/src/main/ipc.ts`).
+- **A2.** "Project" means a Fugaro project (many repositories, one GCP project), not a repository, and "the cross-project overview" means the installation rail and picker (`console/src/main/installations.ts`, `picker.ts`), the only cross-project surface that exists.
+- **A3.** "Fugaro Watch" means `fugaro watch` (`internal/cli/watch.go`, `internal/watch`).
+- **A4.** "Reset to default" means `settings unset` on the key's own target layer.
+- **A5.** The spec's "first pass (expect to iterate)" for section 5 licenses a smaller first pass than its acceptance line "all CLI CRUD operations", and D2903 says how much smaller.
+
+## 2. What the repository already has under another name
+
+| Spec concept | What the repository already has |
+| --- | --- |
+| Live pane modelled on Watch | `console/src/renderer/screens/live.ts` (`buildLiveModel`, `renderLive`), fed by the long-lived `watch --json` child (`live.watch`); row order, short IDs and state words pinned to Watch by `console/test/unit/live-parity.test.ts` and `TestConsoleParityFixtureMatchesWatch` |
+| Pen icon per setting | `settingsPencil` in `console/src/renderer/screens/projects.ts`, on every writable, non-sensitive row |
+| Modal dialog | `console/src/main/confirm.ts`: a main-process modal, but a confirmation of an already typed edit |
+| Reset to default | `settings unset` (`runSettingsUnset`, `internal/cli/settings_set.go`) |
+| Stale-while-revalidate | `resultCache`, `CACHE_FRESH_MS`, `renderStamp` ("as of HH:MM") in `console/src/renderer/section.ts`, one cache per tab |
+| NDJSON | `watch --json`, `logs --json`, `graph --watch --json` (`console/docs/json-contract.md` §2) |
+| Version compatibility | `console/src/shared/version.ts` (`ok`, `reduced`, `refused`, `REDUCED_VIEWS`, `hidesView`) |
+| Roles | `RoleViewer`, `RoleOperator`, `RoleAdmin` in `internal/access/access.go` |
+| Setup questions and flags | `setupQuestions` in `internal/cli/setup.go`, one flag per question |
+| "No project initialised" detection | `firstInstallationState` in `console/src/main/onboarding.ts`, from `config list --json` |
+
+## 3. Findings
+
+- **F1 (Exists).** The Live pane already draws from `watch --json` and follows Watch's ordering, short IDs and state words (`live-parity.test.ts`). Its columns are the Flight Deck's own on purpose (`internal/watch/console_parity_test.go`). There is no table of Watch's fields against Live's, so the spec's "at least what Watch shows" cannot be tested today.
+- **F2 (Wrong).** The spec's "growing row of blue squares" does not match a per-update element: no per-job progress or heartbeat chip exists (`live-run-chip` is one per row, rebuilt each frame). The nearest match is the sparkline bars, `li.live-burn-bar` (`console/src/renderer/theme/screens.css`) and `li.live-hour-bar` (`flight-deck.css`), one `li` per sample per repository, each carrying a percent text, pruned and capped (`LIVE_BURN_MAX_SAMPLES` 1024, `LIVE_HOUR_MAX_SAMPLES` 4096). The burn bar's text is `--text-muted` on `--accent`, which the audit computed at about 1.24:1 (re-measure in LP2). Growth is bounded; "never completes" and "one per job" do not apply to a per-repository sparkline.
+- **F3 (Gap).** Nothing caps the run rows of a repository, and `table.live-table` has `min-width: 1080px` inside an `overflow-x: auto` wrapper. The page itself scrolls vertically (`main.console-page`).
+- **F4 (Rule).** `docs/design/console-styling.md` records "the picture is read left to right" and "no ELK wrapping" (console redesign step 6a); `console/src/renderer/graph/layout.ts` sets `elk.direction: 'RIGHT'`, and `graph.test.ts` and `graph-model.test.ts` pin it and the absence of a `wrapping` key. The spec reverses it without saying so: **D2900**.
+- **F5 (Exists).** The graph already scales to the pane width and scrolls sideways only below `GRAPH_MIN_SCALE` (195 px per card, G1.1 / D735); streams are already stacked as rows.
+- **F6 (Exists).** The pencil is built; the inline edit box the spec complains about is real (`openSettingsEdit` in `console/src/renderer/entry.ts` appends `span.projects-settings-editor` to the row), followed by the main-process confirmation (`settingsedit.ts`, `settingsview.ts`; design rules 11 and 12; D1101, D1109, D1115).
+- **F7 (Gap).** The registry (`internal/settings/registry.go`, `Row`) has about 484 keys and no label, description, group, type, enum, range or format; only about 70 rows carry a `Doc` path. Value validity is the strict re-decode in `settingsReparse` (`internal/cli/settings_set.go`). Only keys under `settingsGenericKeys` and `settingsGenericPrefixes` (`agent.`, `git.`, `followup.`, `governance.`, `watch.`, `layer.defaults.`, `layer.governance.`, `credentials.`, `clone_urls.`, `escalation.`) are editable. `settings --json` is `settingsDoc` version 1, and adding members within a version is allowed (D848); a reused name is not.
+- **F8 (Gap).** "Reset to default" is `unset` from one layer; the dry run's `new` is that layer's own value, not the effective value after fallback, and many `default` entries are a sentence (`default.unset`), not a value. A lower layer can therefore win after a reset.
+- **F9 (Gap).** List, map and entry keys use `--add`, `--remove` and `--add-entry`, which the console's argv forbids on purpose (`spawn.ts`). The spec's input types do not cover them.
+- **F10 (Gap).** There is no validate-only call except `settings set --dry-run --json`, which the console runs after Submit. Validation "before OK is enabled" must come from the metadata of F7 on the client, with the dry run as the authority when OK is pressed.
+- **F11 (Rule).** The spec's writes collide with standing decisions it does not mention: **D2413** (`docs/repos-management`: the console only reads repository state), `NEVER_REACHABLE` in `console/src/main/ipc.ts` (every `project repos add|rm`, `user` writer, `secrets` writer, `models` writer, `image` and `recipes publish`), design rule 2 (the console never sees a secret) and RS7 (`docs/roles-scopes`: Members is a read-only view). **D2903**, **D2905**.
+- **F12 (Wrong).** Objects the spec lists that the CLI does not have: no alert object (only fixed Cloud Billing thresholds), no role object (a role is a grant on a person, `user grant`), no `users` command (it is `user`, a grants roster), no project delete (`setup` only starts fresh). The console has no "overview" tab or "Manage" section; the Project tab is its own screen of independent sections (`PROJECT_PANEL_KEYS`).
+- **F13 (Rule).** The no-prompt policy (CLAUDE.md, `docs/no-prompt-policy`) says no confirmation "for safety". The console's confirmation is a main-process window, the sanctioned exception (rules 11, 12, 14). The CLI's typed-name confirmation (`confirmTyped`, `confirmRemoval`, `confirmRemovalStrict`) is still present, no `--yes` stands in for it, and its removal is T12 of the no-prompt plan (unmerged). So a console-driven `project repos rm` has no terminal-free CLI path today. **D2909** declines it.
+- **F14 (Exists).** `fugaro setup` asks five questions (`setupQuestions`): GCP project ID, region, name, rigor (no suggestion: Enter is not an answer) and the bake switch; each has a flag (`TestEveryWizardQuestionHasAFlag`). There is no answers file. With `--json` the result is one final object and progress is human text on stderr; there is no event stream.
+- **F15 (Rule).** Project creation, the billing link, the Firestore location, the plan confirmation and every secret value are terminal-only steps with no flag, and `setup`, `update` and `init` are on `NEVER_REACHABLE`. The console's onboarding says it "asks the operator for nothing" (owner's ruling of 2026-10-20, header of `console/src/main/onboarding.ts`). The spec's wizard reverses that ruling without saying so, and cannot finish a brand-new cloud project even with every answer: **D2904**.
+- **F16 (Wrong).** "Nothing is cached" is wrong for the console (the table in section 2). What is true: the cache is renderer-only and per session, a first visit is cold, a view is re-read only after five minutes, Live is not cached, and the CLI's own run cache (`internal/runcache`) already serves `runs ls`.
+- **F17 (Gap).** Writes do not invalidate caches: `resultCache.clear()` runs only on an installation switch (`forgetLive`). After `settings.edit`, `roadmap.move` and `run.launch` the affected tab keeps its old figures.
+- **F18 (Exists).** Three commands are already line-delimited, but `watch --json` prints a whole snapshot per line, not one record. Changing any existing `--json` document to NDJSON would retype it (the field-never-changes-meaning rule in CLAUDE.md and `console/docs/json-contract.md`) and break an older console against a newer CLI; a stream must be a new flag.
+- **F19 (Wrong).** "Reuse the data path Watch uses" does not fit the slow reads: Watch uses `rtdb.Stream` (SSE change events), while `runs ls` reads run objects from the bucket (through `runcache`) and `report --json` has taken 20 s or more (`docs/design/desktop-console.md` §6). The spec's premise that every slow read is an RTDB snapshot is wrong in part.
+- **F20 (Exists).** Version compatibility is built: `ok`, `reduced` (a skew card naming both versions, `REDUCED_VIEWS` withheld) and `refused` (no window). `SUPPORTED_CLI_MINORS` stops at 0.13 while floors exist for 0.16 and 0.21: stale or deliberate, **U3**.
+- **F21 (Gap).** A refused or timed-out section shows the CLI's sentence and its own command, with a 15 s "still reading" line and a 90 s timeout (`READ_TIMEOUT_MS`), but no generic Retry control: only "Refresh" on stamped views and "Read again" in the settings editor. Empty-state wording is partial.
+- **F22 (Gap).** The console does not know the user's role. No command reports the caller's own role (`user ls` is the whole roster, `--repo` gives effective roles); RS7 says no role logic in the renderer. The only disabled-with-tooltip control is the static "Not available in this release" (`disabledWrite`, `console/src/renderer/writes.ts`).
+- **F23 (Gap).** Live and Graph screenshot goldens (`console/test/e2e/__screenshots__/`) pin the layouts the spec changes. CI skips them (`FUGARO_CONSOLE_GOLDENS: skip`) and re-recording is the owner's step.
+- **F24 (Gap).** Every new console command, flag or argument is security-sensitive: an independent review, its pinning tests and a matching update of the §5.1 table in `docs/design/desktop-console.md` (`.claude/rules/console.md`). `entry.ts` (about 8,950 lines), `spawn.ts` and `ipc.ts` are shared by almost every console task, which forces the allow-list into a contract and the `entry.ts` writers into separate levels.
+
+## 4. Decisions
+
+All answered by the owner on 2026-11-18.
+
+| # | Question | Recommendation | Alternative and cost | Answer |
+| --- | --- | --- | --- | --- |
+| **D2900** (`graph-flow`) | Reverse step 6a for a top-to-bottom graph? | Yes: `elk.direction` DOWN, wide levels stack or wrap, no horizontal pane scroll | Keep left to right and only remove the 2-D scroll; or a toggle | **Reverse it, top-to-bottom, stack wide levels** (2026-11-18, recommended). Goldens are re-recorded by the owner (**Check 710**); elkjs stays 0.12.1 |
+| **D2901** (`live-pane`) | What are the blue squares, and what is the fix? | Treat the sparkline bars as the blue squares: one fixed-size element per sparkline updated in place, no text per bar, accessible contrast; cap run rows with an inner scroll; add a Watch-versus-Live field table with a test | Remove the sparklines; or redesign Live as a Watch clone | **Fix the bars, keep parity** (2026-11-18, recommended). If the owner meant something else, a screenshot settles it in LP2's review |
+| **D2902** (`settings-ui`) | How do the entry modal and today's confirmation window fit? | One main-process modal does entry, dry-run diff and confirmation, keeping rule 11/12's properties (cancel default, top frame only, ready delay) | A renderer modal then today's window (two dialogs); or drop the window | **One main-process modal does both** (2026-11-18, recommended) |
+| **D2903** (`manage-objects`) | Scope of the first CRUD pass | Lists and the Manage grouping for every object as reads; writes only for non-secret, non-destructive commands with a terminal-free path; the rest show the exact command to copy | Full CRUD (overrules D2413, rule 2, `NEVER_REACHABLE`); or read-only | **Lists for all, writes only where fenced-safe** (2026-11-18, recommended). Candidates in this plan: `models use|add|rm` and `image catalog add|rm`, each its own task and its own go; user grants and revokes are **not** planned (open item O1) |
+| **D2904** (`setup-wizard`) | How far does the wizard go? | Collect the five answers, run `setup --plan-only` then `setup` with flags and a new event stream, and hand every terminal-only step back as "left for you" with its one line; amend the 2026-10-20 ruling | Only build the command line and open a terminal; or full setup (not feasible) | **Collect answers, run what is fenced-safe, hand off the rest** (2026-11-18, recommended). "A fresh install can be fully set up" is relaxed for a brand-new cloud project |
+| **D2905** (`manage-objects`) | API keys and OAuth tokens: write forms? | No: inventory only (the reads that exist) and a Copy-command for add, rotate and remove | Console collects the value and pipes it (reverses rule 2) | **No: inventory only, copy the command** (2026-11-18, recommended) |
+| **D2906** (`console-perf`) | What does Phase 1 do? | Measure first (Check 711); then write invalidation and prewarm in the renderer cache and a new opt-in `--stream` (NDJSON) on `runs ls`, with a decoder and a CLI floor; existing `--json` documents unchanged | Cache work only; or straight to `fugaro serve` | **Measure first; add opt-in streaming to the slow reads** (2026-11-18, recommended). Other commands are added by amendment after Check 711 |
+| **D2907** (`console-robust`) | How is the caller's role known? | A small additive CLI read (`user ls --me --json`); the console only maps it to disabled-with-tooltip and the CLI still refuses server-side | No gating; show the CLI's refusal after the click | **Add a CLI caller-role read** (2026-11-18, recommended). Amends RS7's "no role logic in the renderer" to "no role decision in the renderer beyond mapping the CLI's own read" |
+| **D2908** (`settings-meta`) | How much metadata to backfill? | Add `label`, `description`, `group`, `type`, `enum`, `min`, `max` to the registry; backfill every writable key; a coverage test fails for a writable key without them; other rows fall back to the raw key under "Other" | All 484 keys; or prefix-derived groups only | **All writable keys now, the rest fall back to the key** (2026-11-18, recommended) |
+| **D2909** (`manage-objects`, `console-robust`) | Alerts and project deletion, which have no CLI object | Decline both: Budget shows caps and kill state with the Spend link; no project delete or typed-name dialog; repo removal shows its consequences and the command to copy | Plan CLI tasks for both | **Decline both for now, note the gap** (2026-11-18, recommended) |
+
+## 5. Resolutions (one defensible answer, no question asked)
+
+- **R1 (F21).** A refused or timed-out section gets a Retry control that re-spawns that section's own read, beside the CLI's sentence and command; every empty section gets a plain sentence ("No jobs running"). The sequence token of `sectionRead` still decides which answer stays.
+- **R2 (F17).** A write (`settings.edit`, `roadmap.move`, `run.launch`, and any later write) names the cache scopes it touches and the cache clears those scopes and re-reads them at once, bypassing the freshness rule.
+- **R3 (section 5).** The Manage section is a set of sections inside the Project tab, one read each, painting as its data arrives (the rule in `.claude/rules/console.md`); it is not a new top-level tab.
+- **R4 (section 6).** "Add project" is a button in the installation rail and picker that opens the same wizard; creating a project is `setup`, so it carries the same terminal-only hand-off.
+- **R5 (F10, F9).** The dialog validates on the client from the registry metadata (type, enum, min, max, format) and the dry run is the authority at OK. Keys that take `--add`, `--remove` or `--add-entry` show read-only with the command to copy; supporting them is out of scope.
+- **R6 (F8).** The dialog shows `default.value`, or the `default.unset` sentence, as "the built-in default", and says that a lower layer may take over after a reset.
+- **R7 (section 4).** The search filters the document already read, on label, description and key; `--grep` is not used (the argv list forbids it).
+- **R8 (F18).** Streaming is a new flag, never a change to an existing `--json` document; the console gates it behind a CLI floor that stays unset until the release that carries the CLI half.
+- **R9 (F20).** `SUPPORTED_CLI_MINORS` is audited against the floors in the task AL1.
+- **R10 (spec optional enhancement).** Commands describing their own fields in JSON: **settings** get it through D2908 and nothing else in this pass; the other families keep hand-built list views, which is what D2903's first pass needs.
+
+## 6. Open tensions and open items
+
+No two answers pull against each other. Open items:
+
+- **O1.** User grants and revokes (`user grant|revoke`, role changes) are neither planned nor declined: D2903 says "if you approve each", and each needs its own spawn row, a confirmation window and a security review. Ask before planning them.
+- **O2.** Confirm the amended text of three earlier rulings that this plan changes: the 2026-10-20 "the console asks the operator for nothing" (D2904), RS7's "no role logic in the renderer" (D2907) and console redesign step 6a's left-to-right (D2900).
+- **O3.** After Check 711, which commands besides `runs ls` get `--stream`, by amendment.
+- **O4.** The CLI shape of `models add|rm|use` and `image catalog add|rm` as a terminal-free, non-secret write is unverified (**U5**); MW1 and MW2 open by documenting it and stop if it is not true.
+
+## 7. UNVERIFIED
+
+- **U1.** Whether the percent text inside a 12 px sparkline bar is visible, and the measured contrast ratio. The audit computed it from token values and did not render the app. Settled by LP2's screenshot and its contrast test; the owner can look at Live.
+- **U2.** The duration of `fugaro setup` end to end. No figure is documented. Settled by Check 712.
+- **U3.** Whether `SUPPORTED_CLI_MINORS` stopping at 0.13 is stale. Settled by the task AL1.
+- **U4.** Whether `gcloud` is on the console child's fixed `PATH` (`childPath`, `console/src/main/spawn.ts`). Settled by Check 712.
+- **U5.** Whether `models add|rm|use` and `image catalog add|rm` take their arguments in a form a spawned child can pass without a terminal, and whether they need a role beyond admin. Settled by MW1 and MW2's first step.
+- **U6.** Which renderer file draws the `runs.list` section. Only the spawn and IPC rows were found; RS2's footprint is a prediction.
+- **U7.** Whether `recipes ls` and `image catalog ls` need a floor or an access gate the console must tolerate. Settled by AL1.
+- **U8.** Whether `user ls --me` can be answered offline or needs the same RTDB read as `user ls`. Settled by WH1.

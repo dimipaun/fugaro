@@ -48,6 +48,7 @@ As of 2026-11-18 14:50 UTC (afternoon), read from `main` at `0d2fe54fc` (#3150),
 
 | Spec | State |
 | --- | --- |
+| console-improvements | plan only: 0/34 tasks merged, none approved (docs/console-improvements); owner-run Checks 710 (re-record the Live and Graph goldens), 711 (read timings) and 712 (the wizard on a scratch project) |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 

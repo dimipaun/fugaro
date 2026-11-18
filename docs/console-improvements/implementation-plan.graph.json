@@ -1,0 +1,801 @@
+{
+  "schema_version": 3,
+  "plan": "docs/console-improvements/implementation-plan.md",
+  "stream": "console",
+  "nodes": [
+    {
+      "id": "LP1",
+      "title": "the Watch-versus-Live field table and its test",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/console-improvements/live-watch-fields.md",
+          "console/test/unit/live-watch-fields.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "LP2",
+      "title": "Live sparklines in place, readable, and a bounded run table",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/screens/live.ts",
+          "console/src/renderer/theme/screens.css",
+          "console/src/renderer/theme/flight-deck.css",
+          "console/test/unit/live.test.ts",
+          "console/test/unit/degraded.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "GF1",
+      "title": "the graph lays out top to bottom and stacks wide levels",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/graph/layout.ts",
+          "console/test/unit/graph.test.ts",
+          "console/test/unit/graph-model.test.ts",
+          "docs/design/console-styling.md"
+        ]
+      }
+    },
+    {
+      "id": "GF2",
+      "title": "the graph pane scrolls vertically only",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/theme/flight-deck.css",
+          "console/test/e2e/graph.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "SM0",
+      "title": "the settings metadata type and its table",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta.go",
+          "internal/settings/meta_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SM-E",
+      "title": "settings --json and settings get emit the metadata, and the schema says so",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/settings_render.go",
+          "internal/cli/settings_render_meta_test.go",
+          "schemas/settings.schema.json",
+          "console/test/fixtures/settings.json",
+          "console/docs/json-contract.md"
+        ]
+      }
+    },
+    {
+      "id": "SM1",
+      "title": "labels, descriptions, groups and types for `agent.` and `escalation.`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_agent.go",
+          "internal/settings/meta_agent_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SM2",
+      "title": "labels, descriptions, groups and types for `git.`, `followup.`, `clone_urls.` and `credentials.`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_git.go",
+          "internal/settings/meta_git_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SM3",
+      "title": "labels, descriptions, groups and types for `governance.`, `layer.defaults.`, `layer.governance.`, `watch.`, the `budget.*` generic keys and `bake_repos`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_governance.go",
+          "internal/settings/meta_governance_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SU1",
+      "title": "one main-process modal for entry, validation, diff and confirmation",
+      "run": null,
+      "version": null,
+      "size": 5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/confirm.ts",
+          "console/src/main/settingsedit.ts",
+          "console/src/main/settingsview.ts",
+          "console/src/renderer/confirm.ts",
+          "console/test/unit/settingsview.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "SU2a",
+      "title": "settings in an accordion with search",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/screens/projects.ts",
+          "console/src/renderer/theme/screens.css",
+          "console/test/unit/projects.test.ts",
+          "console/test/e2e/projects.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "SU2b",
+      "title": "the pencil opens the modal and the inline editor is deleted",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/entry.ts",
+          "console/src/renderer/screens/projects.ts",
+          "console/test/unit/entry-wiring.test.ts",
+          "console/test/unit/projects.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "AL1",
+      "title": "the new argv rows and the CLI floors",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/spawn.ts",
+          "console/src/shared/version.ts",
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/version.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "AL2",
+      "title": "the IPC operations, the bridge and the section 5.1 table",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/ipc.ts",
+          "console/src/preload/index.ts",
+          "console/test/unit/ipc.test.ts",
+          "docs/design/desktop-console.md"
+        ]
+      }
+    },
+    {
+      "id": "P1",
+      "title": "the console read timing script",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/console-read-timings.sh",
+          "docs/console-improvements/check-711.md"
+        ]
+      }
+    },
+    {
+      "id": "RS1",
+      "title": "runs ls --stream emits one line per run",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/runs.go",
+          "internal/cli/runs_stream.go",
+          "internal/cli/runs_stream_test.go",
+          "schemas/runs-stream.schema.json",
+          "console/test/fixtures/runs-stream.ndjson"
+        ]
+      }
+    },
+    {
+      "id": "RS2",
+      "title": "the console draws runs as they arrive",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/stream.ts",
+          "console/src/renderer/screens/run.ts",
+          "console/src/renderer/section.ts",
+          "console/test/unit/stream.test.ts",
+          "console/test/e2e/runs-stream.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "RB1",
+      "title": "Retry, empty states and write invalidation",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/section.ts",
+          "console/src/renderer/screens/degraded.ts",
+          "console/src/renderer/cache-invalidate.ts",
+          "console/src/renderer/entry.ts",
+          "console/test/unit/section.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "WH1",
+      "title": "user ls --me --json",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/user_ls.go",
+          "internal/cli/user_ls_me_test.go",
+          "internal/access/resolve.go",
+          "schemas/whoami.schema.json",
+          "console/test/fixtures/whoami.json"
+        ]
+      }
+    },
+    {
+      "id": "RB4",
+      "title": "disable what the caller's role cannot do, with the reason",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/gating.ts",
+          "console/src/renderer/writes.ts",
+          "console/src/renderer/entry.ts",
+          "console/test/unit/gating.test.ts",
+          "console/test/e2e/gating.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "ST1",
+      "title": "fugaro setup --answers-file",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init.go",
+          "internal/cli/setup_answers.go",
+          "internal/cli/setup_answers_test.go",
+          "schemas/setup-answers.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "ST2",
+      "title": "fugaro setup --events",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/init.go",
+          "internal/cli/setup_events.go",
+          "internal/cli/report_step.go",
+          "internal/cli/setup_events_test.go",
+          "schemas/setup-events.schema.json",
+          "console/test/fixtures/setup-events.ndjson"
+        ]
+      }
+    },
+    {
+      "id": "SW3",
+      "title": "the first-run and Add project wizard",
+      "run": null,
+      "version": null,
+      "size": 5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/wizard/wizard.ts",
+          "console/src/main/onboarding.ts",
+          "console/src/main/wizardrun.ts",
+          "console/src/renderer/installations.ts",
+          "console/test/unit/wizard.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "MG0",
+      "title": "the Manage kind descriptor",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/manage/types.ts",
+          "console/test/unit/manage-types.test.ts",
+          "docs/console-improvements/manage-kinds.md"
+        ]
+      }
+    },
+    {
+      "id": "MO-SH",
+      "title": "the Manage section: groups, tables, empty and error states",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/manage/shell.ts",
+          "console/src/renderer/theme/manage.css",
+          "console/test/unit/manage-shell.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "MO-P",
+      "title": "People & access: members, roles and accounts",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/manage/kinds/people.ts",
+          "console/test/unit/manage-people.test.ts",
+          "console/test/fixtures/members.json"
+        ]
+      }
+    },
+    {
+      "id": "MO-K",
+      "title": "Models & keys: models and secrets inventory",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/manage/kinds/models.ts",
+          "console/src/renderer/manage/kinds/keys.ts",
+          "console/test/unit/manage-models.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "MO-B",
+      "title": "Budget: caps, kill state and the Spend link",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/manage/kinds/budget.ts",
+          "console/test/unit/manage-budget.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "MO-C",
+      "title": "Code: repositories, images and recipes",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/manage/kinds/repos.ts",
+          "console/src/renderer/manage/kinds/images.ts",
+          "console/src/renderer/manage/kinds/recipes.ts",
+          "console/test/unit/manage-code.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "I-MG",
+      "title": "mount the Manage section on the real kinds and prove it",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/manage/kinds/index.ts",
+          "console/src/renderer/screens/projects.ts",
+          "console/test/e2e/manage.spec.ts"
+        ]
+      }
+    },
+    {
+      "id": "MW1",
+      "title": "models use, add and remove from the Manage list",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/spawn.ts",
+          "console/src/main/ipc.ts",
+          "console/src/renderer/manage/kinds/models.ts",
+          "docs/design/desktop-console.md",
+          "console/test/unit/spawn.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "MW2",
+      "title": "image catalog add and remove from the Manage list",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/spawn.ts",
+          "console/src/main/ipc.ts",
+          "console/src/renderer/manage/kinds/images.ts",
+          "docs/design/desktop-console.md",
+          "console/test/unit/spawn.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "PL1",
+      "title": "the skills name the new flags",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/setup/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "SMC",
+      "title": "every writable key carries its metadata",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_coverage_test.go"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "GF2",
+      "needs": "GF1",
+      "reason": "the CSS follows the new layout's geometry; one behaviour split in two"
+    },
+    {
+      "task": "GF2",
+      "needs": "LP2",
+      "reason": "both write `flight-deck.css`"
+    },
+    {
+      "task": "SM-E",
+      "needs": "SM0",
+      "reason": "the render is built against `Lookup`'s signature"
+    },
+    {
+      "task": "SM1",
+      "needs": "SM0",
+      "reason": "the entries are built against `Meta` and `Register`"
+    },
+    {
+      "task": "SM2",
+      "needs": "SM0",
+      "reason": "the entries are built against `Meta` and `Register`"
+    },
+    {
+      "task": "SM3",
+      "needs": "SM0",
+      "reason": "the entries are built against `Meta` and `Register`"
+    },
+    {
+      "task": "SU1",
+      "needs": "SM-E",
+      "reason": "the controls are built against the emitted members and the fixture"
+    },
+    {
+      "task": "SU1",
+      "needs": "AL2",
+      "reason": "the window is opened through the listed op"
+    },
+    {
+      "task": "SU2a",
+      "needs": "SM-E",
+      "reason": "the groups and search read the emitted members"
+    },
+    {
+      "task": "SU2b",
+      "needs": "SU1",
+      "reason": "the inline editor is deleted together with the window that replaces it"
+    },
+    {
+      "task": "SU2b",
+      "needs": "SU2a",
+      "reason": "both write `projects.ts`"
+    },
+    {
+      "task": "SU2b",
+      "needs": "I-MG",
+      "reason": "both write `projects.ts`"
+    },
+    {
+      "task": "AL2",
+      "needs": "AL1",
+      "reason": "an operation names a spawn row, so both write the allow-list in order; one change split in two"
+    },
+    {
+      "task": "RS2",
+      "needs": "RS1",
+      "reason": "decodes the fixture and the line shape the CLI task produces"
+    },
+    {
+      "task": "RS2",
+      "needs": "AL2",
+      "reason": "spawns through the listed op"
+    },
+    {
+      "task": "RS2",
+      "needs": "RB1",
+      "reason": "both write `section.ts`"
+    },
+    {
+      "task": "RB4",
+      "needs": "WH1",
+      "reason": "decodes the document and fixture the CLI task produces"
+    },
+    {
+      "task": "RB4",
+      "needs": "AL2",
+      "reason": "spawns through the listed op"
+    },
+    {
+      "task": "ST2",
+      "needs": "ST1",
+      "reason": "both register flags in `init.go`"
+    },
+    {
+      "task": "SW3",
+      "needs": "ST2",
+      "reason": "decodes the events and fixture the CLI task produces (ST1's answers file arrives through it)"
+    },
+    {
+      "task": "SW3",
+      "needs": "AL2",
+      "reason": "spawns through the listed ops"
+    },
+    {
+      "task": "MO-SH",
+      "needs": "MG0",
+      "reason": "built against the descriptor"
+    },
+    {
+      "task": "MO-P",
+      "needs": "MG0",
+      "reason": "built against the descriptor"
+    },
+    {
+      "task": "MO-K",
+      "needs": "MG0",
+      "reason": "built against the descriptor"
+    },
+    {
+      "task": "MO-B",
+      "needs": "MG0",
+      "reason": "built against the descriptor"
+    },
+    {
+      "task": "MO-C",
+      "needs": "MG0",
+      "reason": "built against the descriptor"
+    },
+    {
+      "task": "MO-C",
+      "needs": "AL2",
+      "reason": "spawns through the listed ops"
+    },
+    {
+      "task": "I-MG",
+      "needs": "MG0",
+      "reason": "the index lists kinds typed by the descriptor"
+    },
+    {
+      "task": "I-MG",
+      "needs": "MO-SH",
+      "reason": "mounts the shell"
+    },
+    {
+      "task": "I-MG",
+      "needs": "MO-P",
+      "reason": "lists the kind"
+    },
+    {
+      "task": "I-MG",
+      "needs": "MO-K",
+      "reason": "lists the kinds"
+    },
+    {
+      "task": "I-MG",
+      "needs": "MO-B",
+      "reason": "lists the kind"
+    },
+    {
+      "task": "I-MG",
+      "needs": "MO-C",
+      "reason": "lists the kinds"
+    },
+    {
+      "task": "MW1",
+      "needs": "I-MG",
+      "reason": "adds an action to the list kind the integration wired"
+    },
+    {
+      "task": "MW1",
+      "needs": "SU1",
+      "reason": "confirms through the same window"
+    },
+    {
+      "task": "MW1",
+      "needs": "RB1",
+      "reason": "calls `invalidate`"
+    },
+    {
+      "task": "MW1",
+      "needs": "AL2",
+      "reason": "writes the same allow-list, after it"
+    },
+    {
+      "task": "MW2",
+      "needs": "MW1",
+      "reason": "both write `spawn.ts`, `ipc.ts` and the \u00a75.1 table"
+    },
+    {
+      "task": "PL1",
+      "needs": "RS1",
+      "reason": "names a flag that must exist"
+    },
+    {
+      "task": "PL1",
+      "needs": "WH1",
+      "reason": "names a flag that must exist"
+    },
+    {
+      "task": "PL1",
+      "needs": "ST2",
+      "reason": "names a flag that must exist"
+    },
+    {
+      "task": "SMC",
+      "needs": "SM-E",
+      "reason": "reads the real emission"
+    },
+    {
+      "task": "SMC",
+      "needs": "SM1",
+      "reason": "needs the entries"
+    },
+    {
+      "task": "SMC",
+      "needs": "SM2",
+      "reason": "needs the entries"
+    },
+    {
+      "task": "SMC",
+      "needs": "SM3",
+      "reason": "needs the entries"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}
