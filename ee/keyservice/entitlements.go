@@ -41,6 +41,7 @@ const (
 	entitlementSourceFreeSeat   = "free_seat"
 	entitlementSourceTrial      = "trial"
 	entitlementSourceOperations = "operations"
+	entitlementSourceReseller   = "reseller"
 )
 
 // The statuses this area writes. The wire shape's fourth, `expired`, is a term
@@ -230,7 +231,10 @@ func (s *Service) supersededBy(ctx context.Context, from recordReader, grant ent
 // It is the write half of a refund's revocation and not a grant's: nothing is
 // superseded, which is a grant another grant replaced in its workspace, and
 // nothing expires, which is read from the term. What moves is the status alone,
-// so the licence keeps the term, the seats and the buyer the money was for.
+// so the licence keeps the term, the seats and the buyer the money was for. The
+// one record written beside the status is the stop a licence a reseller sold
+// accrues to (accrual.go): a revocation is what ends the days its seller owes
+// for, and that instant is recorded nowhere else.
 //
 // The status is moved on the record the transaction reads, and the whole record
 // written is that one: the caller's own read is a read from before whatever else
@@ -248,9 +252,25 @@ func (s *Service) revokeEntitlement(ctx context.Context, entitlement WireEntitle
 		if !present {
 			return errNoSuchEntitlement
 		}
+		// The instant a licence a reseller sold stops accruing, read with the
+		// licence and before either write: it is the revocation's own instant,
+		// it is written in the revocation's own transaction so that no accrual
+		// can be read past a stop that has not landed, and the store refuses a
+		// read after a write in one transaction (docstore's ErrReadAfterWrite).
+		// A licence no reseller sold has no stop to write, and one that already
+		// carries a stop keeps it (accrual.go's accrualStopToWrite).
+		stop, err := accrualStopToWrite(ctx, tx, held, s.now())
+		if err != nil {
+			return err
+		}
 		held.Status = entitlementRevoked
 		if err := putRecord(ctx, tx, entitlementsCollection, held.ID, held); err != nil {
 			return err
+		}
+		if stop != nil {
+			if err := putRecord(ctx, tx, resellerAccrualStopsCollection, stop.EntitlementID, *stop); err != nil {
+				return err
+			}
 		}
 		revoked = held
 		return nil
