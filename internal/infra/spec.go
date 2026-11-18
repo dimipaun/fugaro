@@ -991,39 +991,39 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 	return userErr("the local config's project_secrets.%s entry and the project's published policy disagree about %s: the entry %s, and the published node %s. Whether a repository's git credential is brokered has one source, the published node, because that node is what the credentials service reads when the repository's job asks it for the token — so make the two agree: publish this config with 'fugaro project policy publish', which derives the node's bitbucket_token block from this entry, or correct the entry to say what the node says", config.BitbucketSecret, c.in.Repo, says(localProxies), says(nodeProxies))
 }
 
-// sharedRepo is RepoSpec.Shared's answer for this repository: whether a
-// deployed profile of the published node admits it, which its doc comment
-// spells out.
+// sharedRepo is RepoSpec.Shared's answer for this repository, which SharedRepo
+// computes: the node is read through the operator's credentials by the caller
+// and handed in as Inputs.Policy, exactly as the proxy's half is
+// (resolveBitbucketProxied, same reason: internal/infra holds no client that
+// could read one and Repo is a pure function of its Inputs).
+func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
+
+// SharedRepo is RepoSpec.Shared's answer for a repository whose spec a caller
+// does not build: whether a deployed profile of the published node admits it.
+// RepoSpec.Shared's own doc comment is the whole rule; this is that walk for
+// the callers that hold the node and the repository's name but no Inputs to
+// build a spec with — the images stage and the refresh behind it, which decide
+// by it whether a checkout still converges per-repository images (M7,
+// docs/shared-jobs-default).
 //
-// The node is read through the operator's credentials by the caller and handed
-// in as Inputs.Policy, exactly as the proxy's half is (resolveBitbucketProxied,
-// same reason: internal/infra holds no client that could read one and Repo is
-// a pure function of its Inputs), so nil is a caller that read no node and
-// answers "nothing is admitted" rather than an error: a command that does not
-// read the node must not refuse or mark anything over it.
-func (c *repoCtx) sharedRepo() bool {
-	if c.in.Policy == nil {
+// A nil policy marks nothing, exactly as it does there: a caller that read no
+// node has read no profile the repository could be admitted to. An error is
+// never a refusal either, and the two it can carry are both unreachable from
+// the callers here: a name no provider could address (which task.Slug refuses
+// long before) and Admits' own error, which is a name the node itself defines.
+func SharedRepo(p *projectpolicy.Policy, provider, repo string) bool {
+	if p == nil {
 		return false
 	}
-	canonical, err := projectpolicy.Canonical(c.provider, c.in.Repo)
+	canonical, err := projectpolicy.Canonical(provider, repo)
 	if err != nil {
-		// Unreachable: resolve has already put the same pair through
-		// task.Slug, which validates the provider kind and the repository with
-		// these very functions.
 		return false
 	}
-	for _, name := range slices.Sorted(maps.Keys(c.in.Policy.Profiles)) {
-		if !SharedJobProvider(c.in.Policy.Profiles[name].Provider) {
+	for _, name := range slices.Sorted(maps.Keys(p.Profiles)) {
+		if !SharedJobProvider(p.Profiles[name].Provider) {
 			continue
 		}
-		ok, err := c.in.Policy.Admits(name, canonical)
-		if err != nil {
-			// Unreachable for the same reason Admits' own error is never a
-			// refusal: the name is one the node defines, read from the node's
-			// own key.
-			continue
-		}
-		if ok {
+		if ok, err := p.Admits(name, canonical); err == nil && ok {
 			return true
 		}
 	}
