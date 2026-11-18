@@ -182,8 +182,15 @@ leaks() {
     tar -xOf "$work/image.tar" "$entry" > "$work/layer" 2>/dev/null || continue
     if ! tar -tf "$work/layer" > "$work/members" 2>/dev/null; then
       # Not a tar: a manifest or the image's config, which a save carries
-      # beside its layers and which this is not the fence for.
-      continue
+      # beside its layers and which this is not the fence for. Anything else
+      # is a layer in a codec this worker cannot decode, and the distinct count
+      # alone would let it pass beside a second blob of an already-read diff ID.
+      first=$(head -c 512 "$work/layer" | tr -d ' \t\r\n' | head -c 1)
+      case "$first" in
+        '{'|'['|'') continue ;;
+      esac
+      echo "scan.sh: $image holds a layer this cannot decode: $entry" >&2
+      exit 1
     fi
     read_layers=$((read_layers + 1))
     grep -E "$git_config_path" "$work/members" > "$work/configs" || true
