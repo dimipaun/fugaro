@@ -2388,62 +2388,145 @@ func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
 	}
 }
 
-// TestInstallationStringNamedAccountsAreWaitedFor: a resource that names a
-// service account this module creates by a literal path or member string
-// (which the test above requires of every service-account grant) carries no
-// reference to the account resource, so Terraform has no edge between them and
-// applies the two in parallel: the first `fugaro update` of an installation
-// that gains the account fails with "Unknown service account, notFound" on the
-// grants that ran before it existed (0.25.0 -> 0.26.0, the build identity).
-// Every resource whose body spells such an account must therefore name the
-// account resource, in depends_on or otherwise.
-func TestInstallationStringNamedAccountsAreWaitedFor(t *testing.T) {
-	const dir = "gcp/modules/installation/"
-	type account struct{ name, idExpr string }
-	var accounts []account
-	var blocks []block
-	var paths []string
+// TestStringNamedResourcesAreWaitedFor: a resource that names another resource
+// of its own module or root by a string — a literal, or an expression built
+// from the same inputs the named resource is built from — carries no reference
+// to it, so Terraform has no edge between the two and applies them in
+// parallel. Where the naming call's API resolves the name, the resource that
+// runs first fails with notFound: the first `fugaro update` of an installation
+// that gains an account failed exactly that way on the grants that ran before
+// it existed (0.25.0 -> 0.26.0, the build identity — the incident this test
+// grew out of, when it covered the installation module's service accounts
+// alone).
+//
+// Every resource whose body spells such an identity must therefore name the
+// resource it spells, in depends_on or otherwise, in every module and root
+// under this tree. The unit is the DIRECTORY: a module's resource is named by a
+// root that calls the module through an output, which is a reference and not a
+// string, so a resource is held to the resources created beside it.
+//
+// A name a plan can read is why these strings exist at all (the installation
+// module's account grants must be literals — cover.onDeployer refuses a
+// computed one), so the spelling is a deliberate choice and not an oversight;
+// what it must never lose is the edge that the reference would have carried.
+func TestStringNamedResourcesAreWaitedFor(t *testing.T) {
+	type nameable struct {
+		idAttr string   // the attribute holding the created resource's identity
+		named  []string // the attributes a naming resource spells that identity in
+	}
+	nameableByType := map[string]nameable{
+		// A service account is named inside an email address, in whatever
+		// attribute holds one (member, service_account_id,
+		// service_account_email): its two spellings are handled below.
+		"google_service_account":               {idAttr: "account_id"},
+		"google_secret_manager_secret":         {idAttr: "secret_id", named: []string{"secret_id", "secret"}},
+		"google_storage_bucket":                {idAttr: "name", named: []string{"bucket"}},
+		"google_project_iam_custom_role":       {idAttr: "role_id", named: []string{"role"}},
+		"google_artifact_registry_repository":  {idAttr: "repository_id", named: []string{"repository"}},
+		"google_cloud_run_v2_job":              {idAttr: "name", named: []string{"name"}},
+		"google_cloud_run_v2_service":          {idAttr: "name", named: []string{"name"}},
+		"google_logging_project_bucket_config": {idAttr: "bucket_id", named: []string{"bucket"}},
+		"google_logging_log_view":              {idAttr: "name", named: []string{"name"}},
+		"google_firebase_database_instance":    {idAttr: "instance_id", named: []string{"instance", "name"}},
+		"google_apikeys_key":                   {idAttr: "name", named: []string{"name"}},
+	}
+	type unit struct {
+		path  string
+		block block
+	}
+	byDir := map[string][]unit{}
+	seen := map[string]bool{}
+	var dirs []string
 	walk(t, func(path string, b []byte) {
-		if !strings.HasPrefix(path, dir) || !strings.HasSuffix(path, ".tf") {
+		if !strings.HasSuffix(path, ".tf") {
 			return
 		}
+		dir := filepath.Dir(path)
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
 		for _, blk := range allResourceBlocks(t, path, b) {
-			blocks = append(blocks, blk)
-			paths = append(paths, path)
-			if blk.typ == "google_service_account" {
-				accounts = append(accounts, account{blk.name, firstAttr(blk.body, "account_id")})
-			}
+			byDir[dir] = append(byDir[dir], unit{path, blk})
 		}
 	})
-	if len(accounts) < 5 {
-		t.Fatalf("found only %d service accounts in %s: the scan is not seeing the module's own accounts", len(accounts), dir)
-	}
-	spelled := 0
-	for _, a := range accounts {
-		// The ID as it reads inside a "${...}" string: a literal stays itself,
-		// an expression (var.x.account_id) is interpolated.
-		id := strings.Trim(a.idExpr, `"`)
-		if strings.HasPrefix(a.idExpr, `"`) {
-			// literal
-		} else {
-			id = "${" + id + "}"
-		}
-		for i, blk := range blocks {
-			if blk.name == a.name {
+	slices.Sort(dirs)
+
+	created, spelled := 0, 0
+	for _, dir := range dirs {
+		units := byDir[dir]
+		for _, u := range units {
+			spec, ok := nameableByType[u.block.typ]
+			if !ok {
 				continue
 			}
-			if !strings.Contains(blk.body, "/"+id+"@") && !strings.Contains(blk.body, ":"+id+"@") {
+			idExpr := firstAttr(u.block.body, spec.idAttr)
+			// A resource created per instance of a set spells itself
+			// each.value: there is no one address a sibling could name, and a
+			// sibling that reaches one of them does it through the collection.
+			if idExpr == "" || strings.HasPrefix(idExpr, "each.") || strings.HasPrefix(idExpr, "count.") {
 				continue
 			}
-			spelled++
-			if !strings.Contains(blk.body, a.name) {
-				t.Errorf("%s: %s names the account %s by its ID string (%s@...) and never references the resource, so Terraform applies it in parallel with the account's creation and it fails with notFound; add depends_on = [%s]", paths[i], blk.name, a.name, id, a.name)
+			created++
+			// The identity as it reads inside a "${...}" string: a literal
+			// stays itself, an expression (var.x.account_id) is interpolated.
+			id := strings.Trim(idExpr, `"`)
+			if !strings.HasPrefix(idExpr, `"`) {
+				id = "${" + id + "}"
+			}
+			for _, u2 := range units {
+				if u2.block.name == u.block.name {
+					continue
+				}
+				if !namesByIdentity(u.block.typ, spec.named, idExpr, id, u2.block.body) {
+					continue
+				}
+				spelled++
+				if strings.Contains(u2.block.body, u.block.name) {
+					continue
+				}
+				t.Errorf("%s: %s names %s by the string %s and never references it, so Terraform applies the two in parallel and this one fails with notFound when it runs before the resource exists; add depends_on = [%s]", u2.path, u2.block.name, u.block.name, id, u.block.name)
 			}
 		}
 	}
-	if spelled < 4 {
-		t.Errorf("found only %d resources that spell a module-created account by string: the scan is not seeing the grants it exists for", spelled)
+	if created < 40 {
+		t.Errorf("found only %d resources a string can name across %d directories: the scan is not seeing the tree", created, len(dirs))
 	}
+	if spelled < 15 {
+		t.Errorf("found only %d resources that spell a module-created resource by string: the scan is not seeing the grants it exists for", spelled)
+	}
+}
+
+// namesByIdentity reports whether body names a resource of typ whose identity
+// attribute reads idExpr (its raw text, quotes and all), the way a string names
+// it: inside the path or address form the named resource's own API spells it
+// with, or as the whole value of one of the attributes that carry its identity.
+func namesByIdentity(typ string, named []string, idExpr, id, body string) bool {
+	switch typ {
+	// A service account is named inside an email address, in whatever
+	// attribute holds one (member, service_account_id, service_account_email),
+	// as serviceAccount:<id>@, <path>/serviceAccounts/<id>@ or the bare
+	// address.
+	case "google_service_account":
+		return strings.Contains(body, ":"+id+"@") || strings.Contains(body, "/"+id+"@") || strings.Contains(body, `"`+id+"@")
+	// A secret and a custom role are named by the path their API takes as
+	// well as by the bare id: projects/<p>/secrets/<id> and
+	// projects/<p>/roles/<id>.
+	case "google_secret_manager_secret":
+		if strings.Contains(body, "secrets/"+id+`"`) {
+			return true
+		}
+	case "google_project_iam_custom_role":
+		if strings.Contains(body, "roles/"+id+`"`) {
+			return true
+		}
+	}
+	for _, attr := range named {
+		if firstAttr(body, attr) == idExpr {
+			return true
+		}
+	}
+	return false
 }
 
 // REGRESSION (same-project layout): the project-level roles any job, build or
