@@ -207,8 +207,8 @@ type CatalogCheckRepoSpec struct {
 // build for an entry nobody pushed by hand, so the installation either deploys
 // this job (and its schedule) or leaves every entry of the project's catalog
 // exactly as it is.
-func CatalogCheck(lc *localcfg.Config, bucket string, paused bool) (*CatalogCheckSpec, error) {
-	cat, repos, err := catalogCheckFor(lc)
+func CatalogCheck(lc *localcfg.Config, bucket string, paused bool, containers map[string]string) (*CatalogCheckSpec, error) {
+	cat, repos, err := catalogCheckFor(lc, containers)
 	if err != nil {
 		return nil, err
 	}
@@ -307,16 +307,33 @@ func CatalogCheck(lc *localcfg.Config, bucket string, paused bool) (*CatalogChec
 	return out, nil
 }
 
+// WithPlannedProjectSecrets rebuilds the spec's catalog check job against the
+// project containers the installation root actually plans (spec.ProjectSecrets,
+// once discovery has unioned the live ones in), so the git credential each
+// repository's build reads is a container that exists. The job's paused state
+// is the spec's own; a spec with no job is returned as it is.
+func (s InstallationSpec) WithPlannedProjectSecrets(lc *localcfg.Config) (InstallationSpec, error) {
+	if s.CatalogCheck == nil {
+		return s, nil
+	}
+	cc, err := CatalogCheck(lc, s.RunsBucket, s.CatalogCheck.Paused, s.ProjectSecrets)
+	if err != nil {
+		return s, err
+	}
+	s.CatalogCheck = cc
+	return s, nil
+}
+
 // catalogCheckFor is CatalogCheck's own head: the effective catalog and the
 // repositories its entries build in, both nil for a project with nothing to
 // check. CatalogBuilds asks it too, so the two can never disagree about
 // whether this installation's catalog is one it builds.
-func catalogCheckFor(lc *localcfg.Config) (*config.Catalog, []CatalogCheckRepoSpec, error) {
+func catalogCheckFor(lc *localcfg.Config, containers map[string]string) (*config.Catalog, []CatalogCheckRepoSpec, error) {
 	cat := lc.ImageCatalogEffective(nil)
 	if cat == nil {
 		return nil, nil, nil
 	}
-	repos, err := catalogCheckRepos(lc, cat)
+	repos, err := catalogCheckRepos(lc, cat, containers)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -339,7 +356,7 @@ func catalogCheckFor(lc *localcfg.Config) (*config.Catalog, []CatalogCheckRepoSp
 // refusal already, with the sentence that belongs to it, in the spec the run
 // builds before its first apply (CatalogCheck).
 func CatalogBuilds(lc *localcfg.Config) bool {
-	_, repos, err := catalogCheckFor(lc)
+	_, repos, err := catalogCheckFor(lc, nil)
 	return err == nil && len(repos) > 0
 }
 
@@ -353,7 +370,7 @@ func CatalogBuilds(lc *localcfg.Config) bool {
 // names the rest), so the two can never disagree about whose build account an
 // entry's build runs as.
 func CatalogRepos(lc *localcfg.Config) ([]CatalogCheckRepoSpec, error) {
-	_, repos, err := catalogCheckFor(lc)
+	_, repos, err := catalogCheckFor(lc, nil)
 	return repos, err
 }
 
@@ -373,7 +390,7 @@ func CatalogRepos(lc *localcfg.Config) ([]CatalogCheckRepoSpec, error) {
 // skips for: no provider kind the config names, no workflow to render the
 // smoke's spec for, no git credential for its provider, a GitHub repository
 // with no App ID, or a name no provider could address.
-func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog) ([]CatalogCheckRepoSpec, error) {
+func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog, containers map[string]string) ([]CatalogCheckRepoSpec, error) {
 	var out []CatalogCheckRepoSpec
 	// at resolves a canonical repository name to the repository that answers for
 	// it: the first of the sorted keys naming it that this installation can build
@@ -388,7 +405,7 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog) ([]CatalogCheck
 		if err != nil {
 			continue
 		}
-		r, ok, err := catalogCheckRepo(lc, name)
+		r, ok, err := catalogCheckRepo(lc, name, containers)
 		if err != nil {
 			return nil, err
 		}
@@ -479,7 +496,7 @@ func catalogCheckRepos(lc *localcfg.Config, cat *config.Catalog) ([]CatalogCheck
 
 // catalogCheckRepo is one repository's part of the assignment, and whether this
 // installation can build its entries at all.
-func catalogCheckRepo(lc *localcfg.Config, name string) (CatalogCheckRepoSpec, bool, error) {
+func catalogCheckRepo(lc *localcfg.Config, name string, containers map[string]string) (CatalogCheckRepoSpec, bool, error) {
 	r := lc.Repos[name]
 	if !slices.Contains(config.Providers, r.Provider) || len(r.Workflows) == 0 {
 		return CatalogCheckRepoSpec{}, false, nil
@@ -517,13 +534,17 @@ func catalogCheckRepo(lc *localcfg.Config, name string) (CatalogCheckRepoSpec, b
 	// name is project-scoped for this repository, the repository's own
 	// container otherwise (infra.ProjectSecretCandidate, RepoSpec.MountSecretID).
 	//
-	// The project's copy only when the installation creates its container
-	// (projectSecretContainers, the set modules/installation's secrets.tf
-	// makes): the candidate predicate says a name is eligible, not that a
+	// The project's copy only when the installation's plan holds its
+	// container: the candidate predicate says a name is eligible, not that a
 	// container exists, and a grant on one that does not fails the whole apply
-	// with a 404 — an installation whose config records no GitHub provider has
-	// no github-app-key container, and its repositories mount their own.
-	if projectID, ok := ProjectSecretCandidate(lc, logical, name); ok && projectSecretContainers(lc)[logical] == projectID {
+	// with a 404. containers is the set the installation root plans (the
+	// config's own names unioned with the live ones, spec.ProjectSecrets), so a
+	// copy `fugaro secrets set` made live counts; nil is the config's names
+	// alone, which is all a caller without discovery knows.
+	if containers == nil {
+		containers = projectSecretContainers(lc)
+	}
+	if projectID, ok := ProjectSecretCandidate(lc, logical, name); ok && containers[logical] == projectID {
 		id = projectID
 	} else {
 		id = gcp.SecretID(slug, logical)

@@ -2,7 +2,6 @@ package infra
 
 import (
 	"encoding/json"
-	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -58,7 +57,7 @@ image_catalog:
 func catalogCheckJob(t *testing.T, yaml string) (*CatalogCheckSpec, CatalogCheckJobSpec) {
 	t.Helper()
 	lc := parseLC(t, yaml)
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil)
 	if err != nil {
 		t.Fatalf("CatalogCheck: %v", err)
 	}
@@ -266,55 +265,81 @@ func TestCatalogCheckUsesTheProjectCopyOfAProjectScopedCredential(t *testing.T) 
 	lc := parseLC(t, catalogCheckLocal+`project_secrets:
   bitbucket-token: { allow_data_to: [acme/app] }
 `)
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
-	if err != nil {
-		t.Fatalf("CatalogCheck: %v", err)
-	}
-	if cc == nil {
-		t.Fatal("CatalogCheck planned no job")
-	}
-	var spec CatalogCheckJobSpec
-	if err := json.Unmarshal([]byte(cc.Env[CatalogCheckSpecEnv]), &spec); err != nil {
-		t.Fatalf("%s: %v", CatalogCheckSpecEnv, err)
-	}
+	// The planned set: the config's container and the GitHub App key's, which
+	// `fugaro secrets set github-app-key` created live with no config entry.
+	planned := projectSecretContainers(lc)
+	planned[config.GitHubAppKeySecret] = gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)
+	spec := catalogJobSpec(t, lc, planned)
 	app := repoOf(t, spec, "acme/app")
 	if want := gcp.ProjectSecretID("aurora", config.BitbucketSecret); app.GitSecretID != want {
 		t.Errorf("acme/app's git credential is %s, want the project's copy %s", app.GitSecretID, want)
 	}
-	// ... and the GitHub App key, which is project-scoped by default but has
-	// no container unless the config makes one (projectSecretContainers), is
-	// the repository's own: a grant on a container the installation never
-	// creates is the 404 that stopped fugaro update 0.25.0 -> 0.26.0.
-	other := repoOf(t, spec, "acme/other")
-	if want := gcp.SecretID(other.Slug, config.GitHubAppKeySecret); other.GitSecretID != want {
-		t.Errorf("acme/other's git credential is %s, want its own %s: no project container for %s exists", other.GitSecretID, want, config.GitHubAppKeySecret)
+	// ... and the GitHub App key is the same answer with no entry at all: a
+	// provider key is project-scoped by default (config.ProjectScopeByDefault),
+	// so both repositories mount the project's copy.
+	if other := repoOf(t, spec, "acme/other"); other.GitSecretID != gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret) {
+		t.Errorf("acme/other's git credential is %s, want the project's copy of %s", other.GitSecretID, config.GitHubAppKeySecret)
 	}
 }
 
-// TestCatalogCheckNamesOnlyAProjectContainerTheInstallationCreates: whatever
-// git credential the spec names, the installation creates its container —
-// the project's copy exactly when projectSecretContainers includes it.
-func TestCatalogCheckNamesOnlyAProjectContainerTheInstallationCreates(t *testing.T) {
-	lc := parseLC(t, catalogCheckLocal+`project_secrets:
-  github-app-key: { allow_data_to: [acme/other] }
-`)
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+// TestCatalogCheckNamesNoProjectContainerThePlanLacks: a GitHub repository
+// with no project_secrets entry and no live github-app-key container names its
+// own credential. The project's copy there is a grant on a secret that does
+// not exist, the 404 that stopped fugaro update 0.25.0 -> 0.26.0; and
+// spec.ProjectSecrets (config plus discovery) is what decides it, through
+// WithPlannedProjectSecrets.
+func TestCatalogCheckNamesNoProjectContainerThePlanLacks(t *testing.T) {
+	lc := parseLC(t, catalogCheckLocal)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil)
+	if err != nil || cc == nil {
+		t.Fatalf("CatalogCheck: %v, %v", cc, err)
+	}
+	spec := InstallationSpec{RunsBucket: "fugaro-runs-proj-1234", CatalogCheck: cc}
+	for _, tc := range []struct {
+		name    string
+		planned map[string]string
+		project bool
+	}{
+		{"no container", map[string]string{}, false},
+		{"live container", map[string]string{config.GitHubAppKeySecret: gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)}, true},
+	} {
+		s := spec
+		s.ProjectSecrets = tc.planned
+		s, err := s.WithPlannedProjectSecrets(lc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var job CatalogCheckJobSpec
+		if err := json.Unmarshal([]byte(s.CatalogCheck.Env[CatalogCheckSpecEnv]), &job); err != nil {
+			t.Fatal(err)
+		}
+		other := repoOf(t, job, "acme/other")
+		want := gcp.SecretID(other.Slug, config.GitHubAppKeySecret)
+		if tc.project {
+			want = gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret)
+		}
+		if other.GitSecretID != want {
+			t.Errorf("%s: env spec names %s, want %s", tc.name, other.GitSecretID, want)
+		}
+		for _, r := range s.CatalogCheck.Repositories {
+			if r.Slug == other.Slug && r.GitSecretID != want {
+				t.Errorf("%s: tfvars row names %s, want %s", tc.name, r.GitSecretID, want)
+			}
+		}
+	}
+}
+
+func catalogJobSpec(t *testing.T, lc *localcfg.Config, planned map[string]string) CatalogCheckJobSpec {
+	t.Helper()
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, planned)
 	if err != nil || cc == nil {
 		t.Fatalf("CatalogCheck: %v, %v", cc, err)
 	}
 	var spec CatalogCheckJobSpec
 	if err := json.Unmarshal([]byte(cc.Env[CatalogCheckSpecEnv]), &spec); err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s: %v", CatalogCheckSpecEnv, err)
 	}
-	containers := projectSecretContainers(lc)
-	for _, r := range spec.Repositories {
-		if strings.Contains(r.GitSecretID, "-project-") && !slices.Contains(slices.Collect(maps.Values(containers)), r.GitSecretID) {
-			t.Errorf("%s's git credential %s is a project container nothing creates (%v)", r.Repo, r.GitSecretID, containers)
-		}
-	}
-	if got, want := repoOf(t, spec, "acme/other").GitSecretID, gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret); got != want {
-		t.Errorf("with the container configured acme/other's credential is %s, want %s", got, want)
-	}
+	return spec
 }
 
 // TestCatalogCheckIsNilWhenThereIsNothingToCheck: an installation whose project
@@ -335,7 +360,7 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 	} {
 		t.Run(tc.what, func(t *testing.T) {
 			lc := parseLC(t, m4LocalConfig+m5Additions+tc.yaml)
-			cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+			cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil)
 			if err != nil {
 				t.Fatalf("CatalogCheck: %v", err)
 			}
@@ -368,7 +393,7 @@ func TestCatalogCheckIsNilWhenThereIsNothingToCheck(t *testing.T) {
 func TestCatalogCheckHasNoJobWithoutABaseImage(t *testing.T) {
 	lc := parseLC(t, strings.Replace(catalogCheckLocal,
 		"base_images: { base: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-abc }\n", "", 1))
-	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil)
 	if err != nil || cc != nil {
 		t.Fatalf("CatalogCheck with the project's catalog and no base image = %+v, %v, want no job and no error", cc, err)
 	}
@@ -386,13 +411,13 @@ func TestCatalogCheckHasNoJobWithoutABaseImage(t *testing.T) {
 	// The base image is the job's own need: with one recorded, the same catalog
 	// gets the job, so the two readings above are not a job that nothing
 	// deploys at all.
-	cc, err = CatalogCheck(parseLC(t, catalogCheckLocal), "fugaro-runs-proj-1234", true)
+	cc, err = CatalogCheck(parseLC(t, catalogCheckLocal), "fugaro-runs-proj-1234", true, nil)
 	if err != nil || cc == nil {
 		t.Fatalf("CatalogCheck with a base image = %+v, %v, want the job", cc, err)
 	}
 	// ... and with no catalog to build, no job and no error: the same nil.
 	lc = parseLC(t, m4LocalConfig)
-	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true); err != nil || cc != nil {
+	if cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil); err != nil || cc != nil {
 		t.Fatalf("CatalogCheck with no catalog = %+v, %v, want no job and no error", cc, err)
 	}
 }
@@ -428,7 +453,7 @@ func TestCatalogCheckWritesNoBuildBound(t *testing.T) {
 	// variable, and the job's own lease reads it.
 	lc := parseLC(t, catalogCheckLocal)
 	lc.Budget = &localcfg.Budget{RTDBURL: "https://init-project.firebaseio.com"}
-	with, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	with, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil)
 	if err != nil {
 		t.Fatalf("CatalogCheck with a budget backend: %v", err)
 	}
@@ -436,7 +461,7 @@ func TestCatalogCheckWritesNoBuildBound(t *testing.T) {
 		t.Errorf("the job's %s is %q, want the installation's %q: a build of this job leases nothing without it", RTDBURLEnv, got, lc.Budget.RTDBURL)
 	}
 
-	if _, err := CatalogCheck(parseLC(t, catalogCheckLocal), "Fugaro Runs", true); err == nil {
+	if _, err := CatalogCheck(parseLC(t, catalogCheckLocal), "Fugaro Runs", true, nil); err == nil {
 		t.Fatal("a runs bucket outside [a-z0-9._-] was accepted: the condition built from it would be one no comparison expects")
 	}
 }
@@ -473,7 +498,7 @@ func TestCatalogCheckCarriesTheFirebaseProjectItsLeaseIsWrittenIn(t *testing.T) 
 
 	lc := parseLC(t, catalogCheckLocal)
 	lc.Budget = &localcfg.Budget{RTDBURL: "https://aurora-fp-default-rtdb.firebaseio.com", FirebaseProject: "aurora-fp"}
-	with, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	with, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true, nil)
 	if err != nil {
 		t.Fatalf("CatalogCheck with a budget backend: %v", err)
 	}

@@ -3090,6 +3090,11 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 	// own eligible names unioned with every one discovery found live, so a
 	// config edit can never shrink the module's for_each (N3).
 	spec.ProjectSecrets = im.ProjectSecrets
+	// The catalog check's git credentials name a project container only when
+	// the plan holds it, which is known only now.
+	if spec, err = spec.WithPlannedProjectSecrets(lc); err != nil {
+		return outs, false, err
+	}
 	// Whether this installation uses managed projects, which is what the
 	// module's managed_deployer_scoped turns on: the deployer's seven scoped
 	// roles and their seven conditioned bindings (managedDeployerShipped,

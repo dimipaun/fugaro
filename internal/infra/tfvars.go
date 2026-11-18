@@ -2180,7 +2180,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectReviewJobs = review
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
-	cc, err := CatalogCheck(lc, bucket, jobPaused(o.CatalogCheckPaused))
+	cc, err := CatalogCheck(lc, bucket, jobPaused(o.CatalogCheckPaused), s.ProjectSecrets)
 	if err != nil {
 		return InstallationSpec{}, err
 	}
