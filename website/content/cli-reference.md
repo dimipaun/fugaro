@@ -7937,8 +7937,9 @@ Launch a task in the cloud. The task is TEXT or --task-file (- for stdin).
 A repeated --run-id reports the existing launch instead of starting another, so
 a caller that is unsure whether its launch went through can simply repeat it.
 --retry RUN launches a run whose task was stored but never started: a run that
-already started is refused with nothing launched — continue the pull request it
-left with fugaro run --pr N, or launch the task again as a new run.
+already started is refused with nothing launched, which names the way on from
+the run's own record — continue the pull request it left with fugaro run --pr N,
+launch a new run once it has ended without one, or wait while it is still going.
 
 --pr N continues Fugaro's pull request N: the run acts on the PR's review comments
 by the authors fugaro.yaml's followup.trusted lists, on the PR's own branch, with
@@ -8039,7 +8040,7 @@ Flags:
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | stringArray | `[]` | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin); repeatable only with --change-set, which launches one run per repository named, 2 to 5 |
-| `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run that already started is refused with nothing launched, naming the pull request to continue or a new run; a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
+| `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run that already started is refused with nothing launched, which names the way on from the run's own record — the pull request to continue, a new run once it has ended without one, or the wait while it is still going; a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--security` | bool | `false` | no | ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone |

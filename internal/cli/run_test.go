@@ -560,13 +560,13 @@ func TestRunRetryUnlaunched(t *testing.T) {
 }
 
 // A --retry that finds its run already started starts nothing and says so: the
-// command exits non-zero with "nothing launched" and the ways out named, where
-// it used to print "launched already", cut the branch line and exit 0 — which a
-// caller read as a launch that went, and lost an overnight session to a run
-// that never started.
+// command exits non-zero with "nothing launched" and the way on its own record
+// supports named, where it used to print "launched already", cut the branch
+// line and exit 0 — which a caller read as a launch that went, and lost an
+// overnight session to a run that never started.
 //
 // Mutation (drop the o.retry != "" && res.Status == "already-launched" check
-// from runRun): both retries below exit 0 and this test fails.
+// from runRun): all three retries below exit 0 and this test fails.
 func TestRunRetryRefusesAStartedRun(t *testing.T) {
 	f := newCloudFixture(t)
 	t.Chdir(t.TempDir())
@@ -619,6 +619,27 @@ func TestRunRetryRefusesAStartedRun(t *testing.T) {
 	_, _, err = execute(t, "run", "--retry", plain)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing launched") || !strings.Contains(err.Error(), "left no pull request") {
 		t.Fatalf("retry of a run with no pull request: %v", err)
+	}
+
+	// A run whose record says it has not ended is still going, and the retry
+	// says so instead of past-tensing what the run has not done yet: the
+	// ambiguous-launch message is what sends callers here, and "a new run"
+	// would be a second container for the task the first one is working on.
+	// Mutation (drop the !rec.Status.Terminal() case from retryStartedRefusal):
+	// this retry advises a new run and the two assertions below fail.
+	live := wallRunIDAt(1, "120000", "eeee")
+	liveExec := seedSpec(t, f, firstRunSpec(live), true)
+	writeRecord(t, f, live, &runstore.Record{Version: 1, RunID: live, Repo: "acme/app", Workflow: "web",
+		Execution: liveExec, Status: runstore.StatusRunning, Stage: "implement"})
+	_, _, err = execute(t, "run", "--retry", live)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "still going") {
+		t.Fatalf("retry of a run still going: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro diagnose "+task.ShortRun(live)) {
+		t.Fatalf("the refusal does not point at the run's own state: %v", err)
+	}
+	if strings.Contains(err.Error(), "a new run") {
+		t.Fatalf("the refusal sends the caller to a new run while the run it names is still going: %v", err)
 	}
 }
 
@@ -832,17 +853,22 @@ func TestLaunchStaleTakeoverOnGCSMatchesGeneration(t *testing.T) {
 	})
 }
 
-// --retry of a run that did launch refuses with nothing launched and the ways
-// out, and starts nothing: the exit is non-zero, so a caller cannot read it as
-// a launch that went.
+// --retry of a run that did launch refuses with nothing launched and the read
+// that says where it stands, and starts nothing: the exit is non-zero, so a
+// caller cannot read it as a launch that went. This run's record cannot be read
+// at all (nothing wrote one), which is the one answer this refusal withholds a
+// way on from: it points at the run's own state instead of guessing whether it
+// is still going.
 func TestRunRetryOfALaunchedRunHints(t *testing.T) {
 	f := newCloudFixture(t)
 	t.Chdir(t.TempDir())
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature"); err != nil {
+	const id = "20260927-100000-abcd"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "Add a feature"); err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, err := execute(t, "run", "--retry", "20260927-100000-abcd")
-	if ExitCode(err) != ExitUserError || !strings.Contains(out+errOut, "nothing launched") || !strings.Contains(out+errOut, "fugaro run") {
+	out, errOut, err := execute(t, "run", "--retry", id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out+errOut, "nothing launched") ||
+		!strings.Contains(out+errOut, "fugaro diagnose "+task.ShortRun(id)) {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
 	}
 	if n := len(f.run.Executions()); n != 1 {
