@@ -430,7 +430,7 @@ func TestResetToDiscardsACommitMadeAfterRef(t *testing.T) {
 // own agent can write into the checkout's .git, and which git otherwise
 // honours when it looks an object up -- must not decide what ResetTo puts the
 // working tree at. ResetTo is the runner putting the branch back to a commit
-// it made itself (gate.go's runAutofix, digest.go's digestFinalize), and that
+// it made itself (gate.go's runAutofix, digest.go's deterministicFinalize), and that
 // commit's own tree is the whole point of it.
 //
 // Mutation (run the reset without --no-replace-objects): the working tree is

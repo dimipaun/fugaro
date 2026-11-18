@@ -139,8 +139,9 @@ func (r *run) verifiedHead(ctx context.Context) (string, bool) {
 // on a clean tree, pushes later verified tips, and keeps the status section
 // current. A report run pushes nothing here: a fix stage's commit is a
 // stage's, and the bytes a report run's pull request carries must be the
-// generator's (digest.go, T3.3), so its branch reaches the remote at finalize
-// and nowhere else. Nothing here fails the run.
+// step's own — the digest generator's (digest.go, T3.3), the store's for a
+// commit run (reports_commit.go, R9) — so its branch reaches the remote at
+// finalize and nowhere else. Nothing here fails the run.
 func (r *run) afterStage(ctx context.Context, stage string) {
 	defer func() {
 		// Whatever goes wrong here must not fail the run: finalize still
@@ -155,8 +156,10 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 	}
 	if r.follow == nil {
 		// A report run's only push is finalize's: checkpointsOn() is false
-		// for it, so the boundary checkpoint below pushes nothing.
-		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && (stage == "implement" || stage == "fix") {
+		// for it, so the boundary checkpoint below pushes nothing, and no
+		// draft is opened on a stage's commit either -- the pull request
+		// carries the step's bytes and nothing else.
+		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && !r.commitReports && (stage == "implement" || stage == "fix") {
 			if sha, ok := r.verifiedHead(ctx); ok {
 				if r.rec.PR == nil {
 					r.openDraft(ctx, sha, stage)

@@ -146,6 +146,13 @@ func (r *run) reportsCommitStep(ctx context.Context) error {
 		// and without it every commit run's pull request would be a draft whose
 		// reason names a test run no step of the recipe was asked for.
 		r.verifyOnce(ctx, verify.KindTest, "the commit-reports step's reports")
+		// The commit this step just made is the one the pull request must carry
+		// and nothing else: it is recorded here, before the recipe's review
+		// runs, so finalize can put the branch back to it and refuse a branch
+		// that moved (digest.go's deterministicFinalize).
+		if err := r.rememberDeterministicStep(ctx); err != nil {
+			return err
+		}
 	}
 	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{
 		Name: reportsCommitStage, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds(),

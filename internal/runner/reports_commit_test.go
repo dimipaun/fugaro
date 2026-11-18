@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -108,6 +109,50 @@ func commitReportsRun(t *testing.T, policy string, reports map[string]string) *b
 	}
 	b.setSpec(t, commitReportsSpec(files...))
 	return b
+}
+
+// commitReportsRoundsRun is commitReportsRun with the recipe's review rounds
+// overridden: a commit run's recipe carries one senior round, and a test that
+// wants a fix stage to run in needs a second. The override is the task's own,
+// the way a report run's tests set it (digestSpecRounds).
+func commitReportsRoundsRun(t *testing.T, rounds int, reports map[string]string) *bk {
+	t.Helper()
+	b := policyRun(t, gwConfig(t, ""), "off", "", commitReportsPolicy("acme/app", ""))
+	files := make([]task.InputFile, 0, len(reports))
+	for _, name := range slices.Sorted(maps.Keys(reports)) {
+		files = append(files, commitReportsObject(t, b.harness, name, reports[name]))
+	}
+	spec := commitReportsSpec(files...)
+	spec.Overrides.ReviewRounds = &rounds
+	b.setSpec(t, spec)
+	return b
+}
+
+// commitReportsAssertStepOnly is what a commit run's pull request must be: the
+// files the commit-reports step wrote -- each handed-in report at the bytes the
+// store holds, and the folder's own index -- and no other path, byte for byte.
+// The bytes wanted are the test's own constants and not the branch's, so a
+// branch a stage moved is held to them rather than agreeing with itself.
+func commitReportsAssertStepOnly(t *testing.T, b *bk, branch string, reports map[string]string) {
+	t.Helper()
+	want := map[string]string{digest.Dir + "/" + digest.IndexName: commitReportsIndex(t, slices.Sorted(maps.Keys(reports))...)}
+	for name, body := range reports {
+		want[digest.Dir+"/"+name] = body
+	}
+	changed := digestChanged(t, b.harness, branch)
+	gotPaths, wantPaths := slices.Sorted(maps.Keys(changed)), slices.Sorted(maps.Keys(want))
+	if !slices.Equal(gotPaths, wantPaths) {
+		t.Errorf("the pull request changes %v; want the reports the step committed and the folder's index (%v)", gotPaths, wantPaths)
+	}
+	for rel, body := range want {
+		if !fileInTree(t, b.remote, branch, rel) {
+			t.Errorf("%s is not in the pull request", rel)
+			continue
+		}
+		if got := commitReportsBytesAt(t, b.remote, branch, rel); got != body {
+			t.Errorf("%s in the pull request holds %q, want the bytes the step committed %q", rel, got, body)
+		}
+	}
 }
 
 // commitReportsIndex is the index the step regenerates over the names it is
@@ -441,6 +486,156 @@ func TestCommitReportsEndsWithoutAPullRequestWhenNothingIsHandedIn(t *testing.T)
 			}
 		})
 	}
+}
+
+// TestCommitReportsFilesEditedByFixAreRestored: a review round that edits a
+// committed report -- the one file a review's findings must never change, since
+// the pull request is the store's bytes of it -- leaves the pull request
+// carrying those bytes and not the fix's. The step's bytes are its own commit
+// and nowhere else, and they cannot be written over at finalize: they are the
+// store's objects, which only the launcher read (D2754), so the branch is put
+// back to the step's commit instead. The step is also the run's only push
+// (checkpointsOn, the early draft), so a fix's commit never reaches the remote
+// while the round runs.
+//
+// Red step (R9): the fix's edit survives into the pull request, which is a
+// repository the project designated for its reports and may be public -- a
+// review agent publishing its own content under the user's identity.
+func TestCommitReportsFilesEditedByFixAreRestored(t *testing.T) {
+	name := repoSlug + "/2026/2026-10-20.md"
+	const body = "# acme/app's report\n"
+	rel := digest.Dir + "/" + name
+	b := commitReportsRoundsRun(t, 2, map[string]string{name: body})
+
+	rec, err := b.run(t,
+		review("changes", 1),
+		fixRoundStep("printf 'edited by the fix stage\\n' >> "+rel+" && git commit -qam 'Address review'"),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	branch := "fugaro/" + runID
+	if got := commitReportsBytesAt(t, b.remote, branch, rel); got != body {
+		t.Errorf("%s in the pull request holds %q, want the store's own bytes %q", rel, got, body)
+	}
+	commitReportsAssertStepOnly(t, b, branch, map[string]string{name: body})
+}
+
+// TestCommitReportsRunAddsNoOtherFile: a fix stage that writes a CLAUDE.md and
+// a skill file -- files a repository would keep, and a review agent's own text
+// -- leaves neither in the pull request, and the report it edited is the step's
+// bytes again. The run's diff against its base is exactly the files the
+// commit-reports step wrote under the designated folder, byte for byte.
+//
+// Mutation (let the stages' work stand): the run pushes the fix's commit, and
+// the pull request adds CLAUDE.md and the skill file into a repository the
+// project designated for its reports.
+func TestCommitReportsRunAddsNoOtherFile(t *testing.T) {
+	const notes = "CLAUDE.md"
+	const skill = "plugin/skills/working/SKILL.md"
+	name := repoSlug + "/2026/2026-10-20.md"
+	const body = "# acme/app's report\n"
+	rel := digest.Dir + "/" + name
+	b := commitReportsRoundsRun(t, 2, map[string]string{name: body})
+
+	rec, err := b.run(t,
+		review("changes", 1),
+		fixRoundStep("mkdir -p plugin/skills/working && printf '# what the fix stage wrote\\n' > "+notes+
+			" && printf '# a skill the fix stage wrote\\n' > "+skill+
+			" && printf 'edited by the fix stage\\n' >> "+rel+
+			" && git add -A && git commit -qm 'Address review'"),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	branch := "fugaro/" + runID
+	commitReportsAssertStepOnly(t, b, branch, map[string]string{name: body})
+	for _, path := range []string{notes, skill} {
+		if fileInTree(t, b.remote, branch, path) {
+			t.Errorf("%s is in the pull request; a commit run writes only %s/", path, digest.Dir)
+		}
+	}
+}
+
+// TestCommitReportsRunPushesNoCheckpoint: a commit run pushes no checkpoint,
+// for the reason a report run does not: what a stage leaves on the branch is
+// discarded at finalize (deterministicFinalize), so a tip pushed while a stage
+// runs would publish a commit of the agent's that no run of this recipe meant
+// to -- into the repository the project designated for its reports, under the
+// user's identity, whatever finalize pushes after it. The stage here commits a
+// file, which is what a boundary checkpoint would push.
+//
+// Mutation (checkpoint as any other run does): the stage's commit reaches the
+// remote at the stage boundary.
+func TestCommitReportsRunPushesNoCheckpoint(t *testing.T) {
+	name := repoSlug + "/2026/2026-10-20.md"
+	const body = "# acme/app's report\n"
+	b := commitReportsRoundsRun(t, 2, map[string]string{name: body})
+
+	var pushed int
+	runner.SetCheckpointPushedSeam(t, func() { pushed++ })
+
+	rec, err := b.run(t,
+		review("changes", 1),
+		fixRoundStep("printf 'a stage wrote this\\n' > notes.md && git add -A && git commit -qm 'a stage commit'"),
+		review("ship", 0),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	if pushed != 0 {
+		t.Errorf("the commit run pushed %d checkpoint(s); its branch must hold only the commit the commit-reports step made", pushed)
+	}
+	commitReportsAssertStepOnly(t, b, "fugaro/"+runID, map[string]string{name: body})
+}
+
+// TestCommitReportsPushesNothingBeforeFinalize: the early draft's push at a
+// stage boundary is off for a commit run too, not only the checkpoint. A fix
+// stage's HEAD can be verified (the stage ran the tests itself), which is all
+// afterStage asks before it opens the draft and pushes the verified tip, and a
+// commit-reports recipe with a review-rounds override above 1 has fix stages.
+// The push it would carry is a commit of the stage's -- the branch a commit run
+// publishes is the store's bytes and nothing else (R9) -- so the remote sees the
+// branch at finalize and at no earlier point.
+//
+// Mutation (leave the early-draft push ungated): the fix stage's commit is on
+// the remote before finalize, with the report as the stage edited it.
+func TestCommitReportsPushesNothingBeforeFinalize(t *testing.T) {
+	name := repoSlug + "/2026/2026-10-20.md"
+	const body = "# acme/app's report\n"
+	rel := digest.Dir + "/" + name
+	b := commitReportsRoundsRun(t, 2, map[string]string{name: body})
+
+	rec, err := b.run(t,
+		review("changes", 1),
+		fixRoundStep("printf 'edited by the fix stage\\n' >> "+rel+" && git commit -qam 'Address review'"),
+		probe(func(t *testing.T) {
+			if remoteHasBranch(t, b.harness) {
+				t.Error("the commit run pushed its branch at a stage boundary, before finalize")
+			}
+			if n := len(b.provider.State.PRs); n != 0 {
+				t.Errorf("the commit run opened %d pull request(s) at a stage boundary, want none", n)
+			}
+		}, review("ship", 0)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+	}
+	commitReportsAssertStepOnly(t, b, "fugaro/"+runID, map[string]string{name: body})
 }
 
 // TestCommitReportsRefusesAByteWhoseHashDisagrees: the step holds every object

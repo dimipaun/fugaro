@@ -6146,11 +6146,12 @@ func (r *run) finalize(ctx context.Context) error {
 		return r.shadowFinalize(ctx)
 	}
 	// A report run's last word before anything is pushed: the files it commits
-	// under docs/fugaro-reviews/ are the runner's own, byte for byte
-	// (digest.go, T3.2's call, which T3.3 fills). The commit it put the branch
-	// back to is held to once more after the leftover commit below, because
-	// that is the last moment before the push.
-	step, err := r.digestFinalize(ctx)
+	// -- the digest step's generated reports (digest.go, T3.2's call, which
+	// T3.3 fills) or the commit-reports step's stored ones (reports_commit.go,
+	// periodic-reviews R9) -- are the runner's own, byte for byte. The commit it
+	// put the branch back to is held to once more after the leftover commit
+	// below, because that is the last moment before the push.
+	step, err := r.deterministicFinalize(ctx)
 	if err != nil {
 		return err
 	}
@@ -6217,10 +6218,10 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
-	// A report run's branch must still be the commit the digest step made, and
-	// nothing committed on top of it: what finalize commits is what the pull
-	// request carries (digest.go's digestRefuseChangedBranch).
-	r.digestRefuseChangedBranch(ctx, step, committed)
+	// A report run's branch must still be the commit its own first step made,
+	// and nothing committed on top of it: what finalize commits is what the pull
+	// request carries (digest.go's deterministicRefuseChangedBranch).
+	r.deterministicRefuseChangedBranch(ctx, step, committed)
 	if r.follow == nil {
 		// A follow-up's branch is already ahead of its base: when its
 		// agent adds nothing, the report says so rather than an empty
