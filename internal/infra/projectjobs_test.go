@@ -1905,6 +1905,22 @@ profiles:
 // SECURITY.md, D111 and Global Constraint 4 carry the note that records the
 // widening in the same change.
 //
+// The fifth is a provider's key rather than a credential of this tree's own
+// (mobile plan tasks P5.3.3/P5.3.5, the voice design's section 4.4 point 4):
+// `internal/voicesvc/provider.go` reads the installation's provider-key
+// container, because the voice hop is what presents the key at a third party
+// when it forwards a phone's utterance — that is the whole point of the hop
+// (the device holds no provider credential, the owner's ruling of 2026-10-19).
+// The document is one JSON object of register names to keys, cached for five
+// minutes (providerKeyTTL), and the container is the hop's own: not the
+// credentials bundle, not a repository's or a job's secret. It is read by the
+// ONE Fugaro process behind an endpoint anyone on the internet may call, so
+// the file's own rule is stricter than the list's: no value of it reaches a
+// log line, an error, a refusal or a response, and what a call is logged as is
+// internal/voicesvc's callLog shape — no byte of any header but the two Claude
+// Code IDs, and no byte of any body. SECURITY.md's voice section states the
+// container, the grant and the blast radius this read creates.
+//
 // Mutation (run, restore): read the account's token in the deployer or the
 // launcher (any `sm.Access(...)` outside the files below) — the scan fails
 // with the file that did it. The other spellings a read can take are held by
@@ -1929,6 +1945,7 @@ var secretValueReadAllowed = map[string]string{
 	"credsvc/bundle.go":         "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
 	"credsvc/dynamicsecrets.go": "the per-secret containers of the dynamic-delivery grammar (D1931): a credential a person rotated is read ahead of the bundle's entry for it (R6), by exact name and never by listing, and a read that fails refuses the call rather than serving the bundle's older value (D143)",
 	"mailbox/keychain/cloud.go": "the installation's own pairing-key container (mobile plan task P5.1e, the mobile orchestrator design's section 4.2): a paired phone's tag is a symmetric HMAC, so the consumer that verifies one holds the key the phone signs with, and the version's own payload carries which device it is for (P5.1e's third copy, revoked by `fugaro pair revoke` destroying the version)",
+	"voicesvc/provider.go":      "the installation's provider-key container (mobile plan tasks P5.3.3/P5.3.5, the voice design's section 4.4 point 4): the hop presents a provider's key at the provider when it forwards a phone's utterance, one JSON object of register names to keys cached for five minutes (providerKeyTTL). That container is the hop's own and never the credentials bundle's, a job's or a repository's, and the process behind it is the one endpoint anyone on the internet may call, so no value of it reaches a log, an error, a refusal or a response, and a read that fails refuses the call rather than presenting an empty key (ErrKeyUnavailable)",
 }
 
 // secretValueReadNames are the reads, by the API each one is spelled with: the
