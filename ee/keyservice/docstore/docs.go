@@ -104,6 +104,17 @@ type Store interface {
 type Transaction interface {
 	Get(ctx context.Context, collection, id string, out any) (bool, error)
 	Put(ctx context.Context, collection, id string, doc any) error
+	// Delete stages one document's removal. It lands with the transaction's
+	// writes or not at all, which is what makes a group of removals one act:
+	// the portal's own deletion removes an organisation with its memberships,
+	// its invitations and its workspaces, and a removal swept one document at a
+	// time after the commit would leave the records half gone and the record
+	// that names them behind (ee/keyservice/deletion.go).
+	//
+	// It counts as a write for the rule above, so a read after it is
+	// ErrReadAfterWrite, and as Store.Delete does it answers a document the
+	// store does not hold without an error: the caller is asking for a state.
+	Delete(ctx context.Context, collection, id string) error
 	// Query reads a collection inside the transaction. The documents it
 	// answers are the read set the commit is validated against, so a write to
 	// that collection landing in between is a conflict rather than a state the

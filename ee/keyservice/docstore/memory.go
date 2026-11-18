@@ -96,16 +96,7 @@ func (m *Memory) Delete(_ context.Context, collection, id string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	coll := m.colls[collection]
-	if coll == nil {
-		return nil
-	}
-	if _, held := coll.docs[id]; !held {
-		return nil
-	}
-	delete(coll.docs, id)
-	m.version++
-	coll.epoch = m.version
+	m.unwrite(collection, id)
 	return nil
 }
 
@@ -168,6 +159,25 @@ func (m *Memory) write(collection, id string, fields map[string]any) {
 	coll.docs[id] = memDocument{fields: fields, version: m.version}
 }
 
+// unwrite is one document's removal, named to sit beside write: the map entry
+// goes and the collection's epoch moves exactly as a write moves it, because a
+// document that goes is as much a change to what a query of that collection
+// answers. A document the store does not hold — or a collection it has never
+// been given — is the state the caller asked for and not a change, so nothing
+// moves. The caller holds the lock.
+func (m *Memory) unwrite(collection, id string) {
+	coll := m.colls[collection]
+	if coll == nil {
+		return
+	}
+	if _, held := coll.docs[id]; !held {
+		return
+	}
+	delete(coll.docs, id)
+	m.version++
+	coll.epoch = m.version
+}
+
 func (m *Memory) RunTransaction(ctx context.Context, fn func(ctx context.Context, tx Transaction) error) error {
 	if ctx.Value(txInProgressKey{}) != nil {
 		return errNestedTransaction
@@ -176,7 +186,7 @@ func (m *Memory) RunTransaction(ctx context.Context, fn func(ctx context.Context
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		tx := &memTx{store: m, writes: map[string]map[string]map[string]any{}}
+		tx := &memTx{store: m}
 		if err := fn(context.WithValue(ctx, txInProgressKey{}, true), tx); err != nil {
 			return err
 		}
@@ -205,8 +215,20 @@ type memRead struct {
 type memTx struct {
 	store   *Memory
 	read    []memRead
-	writes  map[string]map[string]map[string]any
+	staged  []memOp
 	written bool
+}
+
+// memOp is one write of an attempt, in the order the function made it. A
+// removal is a write like any other and shares the list, so that a transaction
+// that writes a document and then removes it — or the other way round — lands
+// the way the backend the deploy names applies its own writes, in order, rather
+// than by which map happened to be read first.
+type memOp struct {
+	collection string
+	id         string
+	fields     map[string]any
+	remove     bool
 }
 
 func (tx *memTx) Get(_ context.Context, collection, id string, out any) (bool, error) {
@@ -238,10 +260,22 @@ func (tx *memTx) Put(_ context.Context, collection, id string, doc any) error {
 	if err != nil {
 		return err
 	}
-	if tx.writes[collection] == nil {
-		tx.writes[collection] = map[string]map[string]any{}
+	tx.staged = append(tx.staged, memOp{collection: collection, id: id, fields: fields})
+	tx.written = true
+	return nil
+}
+
+// Delete stages one document's removal, which commits with the attempt's writes
+// or not at all. It is a write of the attempt — a read that follows it in the
+// same function is refused as one after a Put — and it stages no read, so it
+// neither needs nor is given the version of what it removes: a caller removing
+// two of a collection's documents at the same instant as another caller is
+// asking for the same state, and the two agreeing is the answer both wanted.
+func (tx *memTx) Delete(_ context.Context, collection, id string) error {
+	if err := named(collection, id); err != nil {
+		return err
 	}
-	tx.writes[collection][id] = fields
+	tx.staged = append(tx.staged, memOp{collection: collection, id: id, remove: true})
 	tx.written = true
 	return nil
 }
@@ -288,10 +322,12 @@ func (tx *memTx) commit() (bool, error) {
 			return false, nil
 		}
 	}
-	for collection, docs := range tx.writes {
-		for id, fields := range docs {
-			m.write(collection, id, fields)
+	for _, op := range tx.staged {
+		if op.remove {
+			m.unwrite(op.collection, op.id)
+			continue
 		}
+		m.write(op.collection, op.id, op.fields)
 	}
 	return true, nil
 }

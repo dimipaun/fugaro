@@ -559,6 +559,11 @@ func (t *txWatchTx) Put(ctx context.Context, collection, id string, doc any) err
 	return t.tx.Put(ctx, collection, id, doc)
 }
 
+func (t *txWatchTx) Delete(ctx context.Context, collection, id string) error {
+	t.watch.through++
+	return t.tx.Delete(ctx, collection, id)
+}
+
 func (t *txWatchTx) Query(ctx context.Context, collection string, q docstore.Query) ([]docstore.Document, error) {
 	t.watch.through++
 	return t.tx.Query(ctx, collection, q)
