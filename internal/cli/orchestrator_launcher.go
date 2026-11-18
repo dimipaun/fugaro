@@ -124,11 +124,24 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 	if err := residentRunIsTheItems(spec, slug, ts); err != nil {
 		return "", err
 	}
-	// The run's document, at the ref the task names, for every reader below
-	// that asks for it (launchRun's job decision among them). finishLaunch
-	// installs it in the same place and for the same reason; retrySpec's own
-	// install is its own reader's and does not outlive it.
-	ctx = withLaunchDocument(ctx, ts.Repo, ts.Ref)
+	// The repository's document is deliberately NOT installed here, and the
+	// call the command and the daemon make is absent because it would be a
+	// no-op that reads as an effect: withLaunchDocument answers a launch
+	// whose working tree cannot give a fugaro.yaml out of the checkout's own
+	// OBJECTS, and a container has no checkout — with withoutCheckout above,
+	// checkoutRoot is "" for every repository, and that function's own rule
+	// leaves such a launch alone (its doc says the same for the daemon, whose
+	// launches are this shape). What reads a document below is therefore the
+	// job decision, and it reads the repository's at the ref over the
+	// installation's credentials service (launchProjectJobFor ->
+	// launchConfigWhereTheTreeGivesNone -> repoConfigAtTheRef, spec.md's
+	// source 3, D902) — a service this account never calls (Q13, section
+	// 4.3). A project that published no profile decides the per-repository
+	// job from that same function's (nil, nil) without a document at all,
+	// which is the case a launch of this deployment can serve; a repository
+	// whose document has to be read at the ref is refused, every tick, with
+	// the command's own refusal (orchestrator_serve.go's header is where the
+	// gap is named).
 	// The identity this launch mints the run's budget token under, and the
 	// one name a container cannot answer for itself. `Me` would reach for git
 	// config in a container that has neither a person nor a checkout, and a
