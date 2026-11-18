@@ -4,7 +4,7 @@
 
 What it builds: the orchestrator daemon puts `fugaro:running`, `fugaro:failed` and `spec:<name>` labels on the pull requests of the runs it launched. The daemon asks the credentials service to perform each label read and write; the service enforces the namespaces and corroborates the pull request, and no token leaves it (D2439). Answers that shaped the plan: GitHub only (D2431), orchestrator-launched tasks only (D2432), `failed` cleared on the next job or on merge/close (D2433), tick-driven with one bulk read per repository per tick (D2434, D2435), a `spec` field set in the work item's patch (D2438), the service creating labels on first use (D2440), colours (D2437).
 
-**Prerequisite outside this plan (F19, O2).** The daemon has no identity to the credentials service today: the daemon account, the invoker grant (Terraform), the variable naming the service and the daemon's ID-token plumbing are the merge mint's unfinished wiring (E10b, `docs/outer-loop-escalation`). T7's live path and Check 640 cannot pass until it lands (T7's own tests run against a fake service); T1-T6, T8 and T9 do not need it. If the owner wants it built here, it is a task added to this plan (O2).
+**Prerequisite outside this plan (F19, O2) — landed 2026-11-18.** The daemon has its own identity to the credentials service: the installation module creates the daemon's account, grants it `run.invoker` on the service and renders its address into `AuthConfig.OrchestratorAccounts`, the operators may impersonate that account, and the daemon mints its ID token for the service's own URL as that account through one seam both of the service's clients take (`internal/cli/orchestrator_identity.go`); a mint that cannot happen is a named refusal, never a silent skip. It is built under its own plan — `docs/mobile/design/always-on-orchestrator.md` §4.3, and `docs/outer-loop-escalation` E10b for the merge half — and `fugaro update` is the whole of what carries it. So T7's live path and Check 640 are unblocked and wait only on an owner-run check; T7's own tests still run against a fake service, and T1-T6, T8 and T9 never needed this.
 
 ## Contract-first pass
 
@@ -137,7 +137,7 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - Tests: `TestTickLabelsOnce`, `TestTickLabelsFailedThenRetry`, `TestPRReaderCachesPerRun`.
 - Command: `go test ./internal/cli/ -run 'TestTickLabels|TestPRReaderCachesPerRun' -count=1`
 - Red step: the daemon's tick has no `LabelSeams`, so the test sees no label write.
-- Depends on: T2 (the fake provider), T3, T4, T5, T8, and the prerequisite above (the daemon's identity to the service; until it lands the end-to-end test runs against a fake service and only the live path stays unproven).
+- Depends on: T2 (the fake provider), T3, T4, T5, T8, and the prerequisite above (the daemon's identity to the service, **landed 2026-11-18**; the end-to-end test still runs against a fake service, and the live path is Check 640's).
 - Commit: `cli: the orchestrator daemon labels pull requests`.
 - Reviewer tier: opus with an independent security review.
 
@@ -150,7 +150,7 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 - Depends on: T7 (the check runs the real path).
 - Commit: `checks: Check 640, the status labels on a real pull request`.
 - Reviewer tier: standard.
-- Owner-run: `bash scripts/live-checks/check640.sh --installation fugaro` after the release carrying T7 is installed and the prerequisite has landed. No agent performs it.
+- Owner-run: `bash scripts/live-checks/check640.sh --installation fugaro` after the release carrying T7 is installed and the prerequisite (landed 2026-11-18) has reached the installation through `fugaro update`. No agent performs it.
 
 ## Parallel execution
 
@@ -198,4 +198,4 @@ The repository's rigor default is `startup` and `planning.decoupling` is on, so 
 
 ## After-deploy steps
 
-For a person, only `fugaro update`, which already redeploys the credentials service and re-renders the daemon's unit; the release's `### For operators` says exactly that (T6). The prerequisite (the daemon's identity to the service, Terraform) is carried by `fugaro update` when it lands, under its own plan; this plan adds no operator step. **One conditional owner step:** if Check 640 shows the GitHub App lacks `pull_requests: write` (U1), the owner raises it on the App's settings page; an agent cannot.
+For a person, only `fugaro update`, which already redeploys the credentials service and re-renders the daemon's unit; the release's `### For operators` says exactly that (T6). The prerequisite (the daemon's identity to the service, Terraform) **landed 2026-11-18** and is carried by `fugaro update` like everything else: the account, the invoker grant, the class the service admits and the daemon's own mint all arrive with that one command, and this plan adds no operator step. **One conditional owner step:** if Check 640 shows the GitHub App lacks `pull_requests: write` (U1), the owner raises it on the App's settings page; an agent cannot.
