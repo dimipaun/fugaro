@@ -1638,9 +1638,9 @@ var defaultValues = map[string]Default{
 	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
 	// The ladder's own two (E3): the scale a critical-path item's times are
 	// multiplied by, and the switch that decides whether the orchestrator may
-	// ready a stalled draft itself (off, D2046).
+	// ready a stalled draft itself (on, D2046).
 	"escalation.critical_path_factor": value("0.5", "localcfg.DefaultEscalationCriticalPathFactor"),
-	"escalation.ready_drafts":         value("false", "localcfg.DefaultEscalationReadyDrafts"),
+	"escalation.ready_drafts":         value("true", "localcfg.DefaultEscalationReadyDrafts"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

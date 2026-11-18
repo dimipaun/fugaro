@@ -700,7 +700,7 @@
         },
         "escalation.ready_drafts": {
           "$comment": "localcfg.DefaultEscalationReadyDrafts",
-          "default": "false"
+          "default": "true"
         },
         "followup.allow_public": {
           "default": "unset = false"
