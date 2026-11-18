@@ -376,6 +376,73 @@ func TestCommitReportsEndsWithoutADRWhenNothingDiffers(t *testing.T) {
 	}
 }
 
+// TestCommitReportsEndsWithoutAPullRequestWhenNothingIsHandedIn: a launch that
+// hands in no report at all is the nothing-to-commit case and not a refusal.
+// That is what the launcher produces on a checkout whose folder already holds
+// every stored report (R16 hands in every report the folder lacks), so a second
+// run of a caught-up project -- and the store is still one writer's, so the run
+// has no list of its own to compare against -- has to end with no pull request
+// rather than as an infrastructure failure. The folder that holds no report is
+// the same case: the step writes nothing, and in particular no index into a
+// repository it was handed nothing for, which is what would open the pull
+// request this case exists to avoid.
+//
+// Mutation (return the refusal this case used to return, or regenerate the
+// index over the folder here): the first fails the run as an infrastructure
+// error, and the second pushes a branch holding an index the step was handed
+// nothing for.
+func TestCommitReportsEndsWithoutAPullRequestWhenNothingIsHandedIn(t *testing.T) {
+	repo, agg := repoSlug+"/2026/2026-10-20.md", "2026/2026-10-19.md"
+	bodies := map[string]string{repo: "# acme/app's report\n", agg: "# the project's report\n"}
+	held := map[string]string{digest.Dir + "/" + digest.IndexName: commitReportsIndex(t, repo, agg)}
+	for name, body := range bodies {
+		held[digest.Dir+"/"+name] = body
+	}
+	for _, tc := range []struct {
+		name  string
+		files map[string]string // what the checkout's folder holds, nil for a folder that holds nothing
+	}{
+		{"an up-to-date folder", held},
+		{"a folder with no report in it", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := commitReportsRun(t, commitReportsPolicy("acme/app", ""), nil)
+			// The store holds both reports and the launch handed in neither,
+			// which is the launcher's own answer for a folder that already has
+			// them: the step has no bytes to fetch and none to fetch them for.
+			for _, name := range slices.Sorted(maps.Keys(bodies)) {
+				commitReportsObject(t, b.harness, name, bodies[name])
+			}
+			if tc.files != nil {
+				advanceBranch(t, b.remote, "main", tc.files)
+			}
+
+			rec, err := b.run(t, review("ship", 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeNone {
+				t.Fatalf("record = status %s, outcome %s, reason %q", rec.Status, rec.Outcome, rec.Reason)
+			}
+			if !strings.Contains(rec.Reason, "every stored report is already in the folder") {
+				t.Errorf("reason = %q, want it to say every stored report is already in the folder", rec.Reason)
+			}
+			if got := stageNames(rec); len(got) != 1 || got[0] != "commit_reports" {
+				t.Errorf("stages = %v, want the commit-reports step alone", got)
+			}
+			if len(b.agent.calls) != 0 {
+				t.Errorf("the run made %d model calls with nothing handed in", len(b.agent.calls))
+			}
+			if hasBranch(t, b.remote, "fugaro/"+runID) {
+				t.Error("the run pushed a branch with nothing handed in")
+			}
+			if len(b.provider.State.PRs) != 0 {
+				t.Errorf("the run opened %+v with nothing handed in", b.provider.State.PRs)
+			}
+		})
+	}
+}
+
 // TestCommitReportsRefusesAByteWhoseHashDisagrees: the step holds every object
 // it downloads to the size and the sha256 the task declares, and a mismatch is
 // a refusal -- the run fails and commits nothing, so no byte that is not the

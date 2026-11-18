@@ -181,7 +181,20 @@ func (r *run) reportsCommitStep(ctx context.Context) error {
 // rather than what this run happened to write.
 func (r *run) writeCommitReports(ctx context.Context) ([]string, error) {
 	if len(r.spec.Reports) == 0 {
-		return nil, errors.New("this task carries no reports, so the commit step has nothing to commit: a commit run is launched on the designated repository's checkout with a recipe whose first step is commit_reports, and its launcher hands the stored reports in")
+		// Nothing was handed in, and that is the launcher's ordinary answer on a
+		// checkout that already holds everything: the launcher hands in every
+		// stored report the folder lacks (R16), so an empty list is a launch
+		// that found nothing to transfer -- an up-to-date checkout, which is
+		// what a second run of a caught-up project is. It is the
+		// nothing-to-commit case rather than a refusal: the step writes
+		// nothing, downloads nothing and commits nothing, and the run ends the
+		// way a caught-up digest run does, with no pull request to open.
+		// Nothing is compared against the folder here either, because the run
+		// has no list of its own to compare with -- only the store's writer
+		// reads reports/ (D2754) -- and a step that wrote an index into a
+		// repository it was handed nothing for would open the very pull request
+		// this case exists to avoid.
+		return nil, nil
 	}
 	if r.d.Bucket == nil {
 		return nil, errors.New("the task carries stored reports, and this run has no runs bucket to download them from")
