@@ -1713,7 +1713,7 @@ plan() {
   say "  [read] gcloud storage — the entry's record, and the three objects the copy staged under the entry's own prefix"
   say "  [local, pulls when needed] docker run --entrypoint cat <image>@<digest> <the copied file>, and docker inspect of the revision label"
   say "  [network, BILLABLE] two more Cloud Builds, each submitted with --no-wait and cancelled before its record step, so the staged digest is ahead of the record"
-  say "  [cloud write] two runs of the catalog check job (gcloud run jobs execute ${CHECK_JOB:-the catalog check job of this installation} --wait) and the decision each prints, read back from Cloud Logging"
+  say "  [cloud write] three runs of the catalog check job (gcloud run jobs execute ${CHECK_JOB:-the catalog check job of this installation} --wait) and the decision each prints, read back from Cloud Logging: the night after a commit outside the context, the night a commit under it lands, and the night after the rebuild"
   say "  [network, BILLABLE] the rebuild the decision submits, followed with gcloud builds describe, and the record and label it writes"
   say "  [local write, undone] one throwaway branch, three commits pushed to it, and an entry added to and removed from the project config"
   say "  [cloud write, undone] the entry's staged objects, its record and its check state removed with gcloud storage rm, and the node republished without it"
