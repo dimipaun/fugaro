@@ -670,11 +670,14 @@ func TestBlocksStayInTheRunsOwnNode(t *testing.T) {
 		// The run's item stands for no plan task, so the entry names its target
 		// by path, and the two candidates are the same file's footprint in two
 		// repositories: what a path like go.mod may reach is the run's own
-		// repository and nothing else (D2709, F51).
+		// repository and nothing else (D2709, F51). The other repository's item
+		// is put first, so the filter is what keeps it out: a fold that took the
+		// first match would take that one, and the case would fail rather than
+		// pass on the order alone.
 		w, it := foldRun("wi-a", runID, approvedAt, now.Add(-30*time.Minute))
-		same := foldItem("wi-same", orchestrator.PhaseQueued, approvedAt)
 		other := foldItem("wi-diff", orchestrator.PhaseQueued, approvedAt, inRepo("owner/other"))
-		h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{w, same, other}, []orchestrator.Intent{it}), now)
+		same := foldItem("wi-same", orchestrator.PhaseQueued, approvedAt)
+		h := newHarness(t, tickState(t, now, []orchestrator.WorkItem{w, other, same}, []orchestrator.Intent{it}), now)
 		foldOnly(h)
 		h.tick.Footprints = orchestrator.Footprints{
 			"wi-same": plan.NewFootprint([]string{"go.mod"}),

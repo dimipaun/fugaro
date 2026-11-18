@@ -1248,6 +1248,18 @@ func (v *orchestratorRunView) Runs(ctx context.Context, runIDs []string) ([]orch
 		case err != nil:
 			return nil, err
 		}
+		if rec != nil {
+			// What the run reported about the graph travels whole and unjudged:
+			// the blocks its own agent discovered and the conflict paths it met
+			// are what the fold acts on (E3), and the fold bounds both again on
+			// the way in (runstore.Discovered.Bounded, BoundedConflictPaths) —
+			// a view that trimmed or filtered them here would be the second
+			// place that rule lives, and a view that dropped them leaves the
+			// fold with nothing to fold in an installation whose tests all
+			// pass.
+			rep.Discovered = rec.Discovered
+			rep.ConflictPaths = rec.ConflictPaths
+		}
 		if rec != nil && rec.Halt != nil {
 			// The halt travels whole, and the marker with it: the fold asks the
 			// build's seam whether this is a refusal a workspace's credentials
