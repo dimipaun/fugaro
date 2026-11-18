@@ -22,6 +22,20 @@ package infra
 // MCPServerAccountID.
 const OrchestratorAccountID = "fugaro-orch"
 
+// OrchestratorAccountEmail is that account's address in a project. It is one
+// function because two readers have to agree on the address and neither can
+// read the other's: the installation module creates the account under this ID
+// and the credentials service's own environment names it as the daemon class
+// (deploy/terraform/gcp/modules/installation/credentials.tf), while `fugaro
+// doctor` reads the account back and the daemon mints a token as it
+// (internal/cli's doctor_orchestrator_identity.go and orchestrator_identity.go).
+// A second spelling of "@<project>.iam.gserviceaccount.com" is a second answer
+// to "which account is the daemon", and the one that drifts is the one that
+// names somebody else's account.
+func OrchestratorAccountEmail(project string) string {
+	return OrchestratorAccountID + "@" + project + ".iam.gserviceaccount.com"
+}
+
 // OrchestratorPairingSecretID is the Secret Manager container holding the
 // installation's copy of every pairing's MAC key (mobile plan task P5.1e; the
 // design's section 4.2 and its section 4.7 step 2b): ONE container per

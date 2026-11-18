@@ -2222,25 +2222,29 @@ func TestAllUsersIsRefusedOnEveryOtherResource(t *testing.T) {
 // the deployer's impersonation grant is allowed at all, and an exemption
 // cannot tell an operator impersonating the deployer from the same role on a
 // job account, which is a credential that runs as that account. A literal
-// token-creator grant is therefore allowed in exactly two places, and they are
-// the two impersonations this installation deliberately has (CSR14): the
-// deployer's own block — the deployer account, written as a literal path, for
-// var.operators — and the verifier account's, iam.tf, the same shape on the
-// installation's own verifier account, which is the one caller the credentials
-// service's verify route admits. Each is written the way the other is: a
-// literal account path of this project, for var.operators, member = each.value.
+// token-creator grant is therefore allowed in exactly three places, and they
+// are the three impersonations this installation deliberately has: the
+// deployer's own block (D75) — the deployer account, written as a literal
+// path, for var.operators — the verifier account's (iam.tf, CSR14), the same
+// shape on the installation's own verifier account, which is the one caller
+// the credentials service's verify route admits, and the resident
+// orchestrator's own account's (iam.tf, F19 and O2), the same shape again on
+// the account the daemon presents as, which is the one caller that service's
+// orchestrator class admits. Each is written the way the others are: a literal
+// account path of this project, for var.operators, member = each.value.
 //
 // Its members are people on the review screen (internal/infra/tf's grantRules)
 // and the plan itself is screened again by Cover.deployerTokenCreator, so what
-// this test is the file-level half of is: no third block anywhere grants the
-// role, none of the two reads its account from a resource, and each is the one
-// its site describes.
+// this test is the file-level half of is: no fourth block anywhere grants the
+// role, none of the three reads its account from a resource, and each is the
+// one its site describes.
 func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T) {
 	const role = "roles/iam.serviceAccountTokenCreator"
-	// The two sites, in walk order. The verifier's grant is gated on the
+	// The three sites, in walk order. The verifier's grant is gated on the
 	// credentials service: with the service off the account is not created,
 	// and a grant on an account that does not exist would be a plan of its
-	// own.
+	// own. The orchestrator's is gated on the orchestrator's own switch, for
+	// that reason exactly.
 	sites := []struct {
 		file    string
 		block   string
@@ -2258,6 +2262,12 @@ func TestServiceAccountTokenCreatorIsTheDeployersImpersonationGrant(t *testing.T
 			block:   "google_service_account_iam_member.fugaro_verifier_token_creator",
 			account: `"projects/${var.project}/serviceAccounts/fugaro-verifier@${var.project}.iam.gserviceaccount.com"`,
 			forEach: "local.credentials_service_on ? toset(var.operators) : toset([])",
+		},
+		{
+			file:    "gcp/modules/installation/iam.tf",
+			block:   "google_service_account_iam_member.orchestrator_token_creator",
+			account: `"projects/${var.project}/serviceAccounts/${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"`,
+			forEach: "local.orchestrator_on ? toset(var.operators) : toset([])",
 		},
 	}
 	want := make([]string, 0, len(sites))

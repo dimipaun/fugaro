@@ -29,41 +29,19 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// orchestratorLabelIdentity mints the daemon's own Google ID token for the
-// installation's credentials service: the identity the service's orchestrator
-// class is gated on (credsvc's AuthConfig.OrchestratorAccounts) and the one
-// thing this file cannot build.
-//
-// It is nil on this tree, and that is the whole of what is missing: the daemon
-// account the service's list names, the invoker grant that lets that account
-// call the service and the mint that turns the account into a token are one
-// piece of work this plan does not carry (F19, O2: the prerequisite outside
-// docs/forge-labels, shared with the merge mint; SECURITY.md's "the route ships
-// inert on this tree"). T7 wires the path and leaves the live half unproven, as
-// the plan says it must.
-//
-// A daemon with no identity builds no label seams at all rather than seams that
-// cannot present one: every call of the syncer's would refuse, and the daemon
-// would leave a line in the log each cycle for a capability the installation
-// does not have yet — which is the direction R7 gives a host with no labels at
-// all.
-//
-// It is a variable so that a test replaces it, which is how T7's own end-to-end
-// test drives the whole path against a fake service (the plan: "until it lands
-// the end-to-end test runs against a fake service and only the live path stays
-// unproven").
-var orchestratorLabelIdentity func(ctx context.Context) (string, error)
-
 // orchestratorLabelSeams is the label seams this daemon's tick carries: the
 // hosts each repository's labels are kept through, the reader of the pull
 // request behind a run, and the daemon's own warning stream. All three or none,
 // as LabelSeams.Set asks.
 //
 // None is the answer where the installation has nothing to reach the route
-// with: no credentials service URL in the installation's own configuration, or
-// no identity to present (orchestratorLabelIdentity). A tick with no seams
-// labels nothing at all and says nothing about it, which is the state this tree
-// is in and the state a project on a host without labels is in for ever (R7).
+// with: no credentials service URL in the installation's own configuration,
+// which is the state a project on a host without labels is in for ever (R7). It
+// is NOT the answer to "no identity to present" — the daemon has its own
+// identity once the installation has a service to present it to, and a mint that
+// fails says so in one line rather than leaving the seams out: a silent skip is
+// a label sync that claims to have run (orchestrator_identity.go's account and
+// the refusal it names).
 //
 // The URL is read from the installation's own records rather than from the
 // environment, the way every other reader of it does (serviceReadTarget): the
@@ -75,12 +53,19 @@ func orchestratorLabelSeams(d *orchestratorDaemon) orchestrator.LabelSeams {
 	if d.lc != nil && d.lc.CredentialsService != nil {
 		url = d.lc.CredentialsService.URL
 	}
-	if url == "" || orchestratorLabelIdentity == nil {
+	if url == "" {
 		return orchestrator.LabelSeams{}
 	}
+	// The daemon's own identity, built once here and handed to every client this
+	// tick opens (orchestrator_identity.go). An account that cannot be composed
+	// is not a reason to build no seams: the seam is what reports it, in the
+	// line the syncer writes for whatever failed, and the ticket the plan's
+	// "never a silent skip" asks for is exactly this — the daemon must not look
+	// like one that labelled and did not.
+	account, _ := orchestratorDaemonAccount(d.lc)
 	return orchestrator.LabelSeams{
 		Labelers: &orchestratorLabelHosts{
-			env: d.env, url: url, identity: orchestratorLabelIdentity,
+			env: d.env, url: url, identity: orchestratorIdentityMint(account, url),
 			opened: map[string]gitprov.Labeler{},
 		},
 		PRs: &orchestratorLabelPRs{bucket: d.env.bucket.Bucket, numbers: map[string]int{}},

@@ -3531,11 +3531,15 @@ func TestDeployerDesignDirectionalReferencesPointTheRightWay(t *testing.T) {
 // that the address is computable from the configuration rather than read from
 // the apply.
 //
-// Both halves are asserted: the second site is covered, and the fence is
-// NARROWED to two accounts rather than opened. A token-creator grant on a
-// third account is still refused, and so is one whose account is not this
+// Both halves are asserted: the site is covered, and the fence is NARROWED to
+// the accounts the design names rather than opened. A token-creator grant on
+// any other account is still refused, and so is one whose account is not this
 // run's — the verifier account is the installation's own, in the installation
 // project, and a lookalike address or another project's account is not it.
+//
+// The same two halves are asserted for the third site, the resident
+// orchestrator's own account (iam.tf, F19 and O2), which arrived later and for
+// the verifier's reason exactly.
 func TestVerifierTokenCreatorIsCoveredByOneUpdate(t *testing.T) {
 	const verifier = "fugaro-verifier@proj-1.iam.gserviceaccount.com"
 	// The module's own grant (iam.tf): the operators, and nobody else, may
@@ -3555,6 +3559,18 @@ func TestVerifierTokenCreatorIsCoveredByOneUpdate(t *testing.T) {
 		t.Errorf("the operators' %s grant on the deployer account is not covered: %q", DeployerTokenCreatorRole, got)
 	}
 
+	// ... and the resident orchestrator's account, the third site of this
+	// role (iam.tf, F19 and O2). It is the installation's own daemon the
+	// operators may become, and the mint they make for it is the whole of how
+	// that daemon presents the credentials service's orchestrator class — so
+	// the update that turns the orchestrator on would refuse its own plan
+	// without this row.
+	ch = grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole,
+		"projects/proj-1/serviceAccounts/"+OrchestratorAccountID+"@proj-1.iam.gserviceaccount.com")
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) != 0 {
+		t.Errorf("the operators' %s grant on the resident orchestrator's account is not covered by one update: %q — the update that creates the account would refuse its own plan, and the daemon would have no identity to present", DeployerTokenCreatorRole, got)
+	}
+
 	for _, account := range []string{
 		// A third account of this project.
 		"projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com",
@@ -3564,10 +3580,17 @@ func TestVerifierTokenCreatorIsCoveredByOneUpdate(t *testing.T) {
 		"projects/fp-2/serviceAccounts/" + verifier,
 		// A lookalike: a job account whose name starts with the verifier's.
 		"projects/proj-1/serviceAccounts/fugaro-verifier-0123abcd@proj-1.iam.gserviceaccount.com",
+		// ... and the same lookalike one ID over: the orchestrator account's
+		// own ID with a job account's hex suffix, which is the shape the
+		// per-repository job accounts have (internal/infra's JobAccountID).
+		"projects/proj-1/serviceAccounts/" + OrchestratorAccountID + "-0123abcd@proj-1.iam.gserviceaccount.com",
+		// The orchestrator account of another project: one project, one
+		// account, and this run's installation is Projects[0].
+		"projects/fp-2/serviceAccounts/" + OrchestratorAccountID + "@fp-2.iam.gserviceaccount.com",
 	} {
 		ch := grantOnAccount("google_service_account_iam_member", "user:me@example.com", DeployerTokenCreatorRole, account)
 		if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
-			t.Errorf("%s: the %s grant is covered: the impersonation is on the deployer account and the verifier account of this installation, and on nothing else", account, DeployerTokenCreatorRole)
+			t.Errorf("%s: the %s grant is covered: the impersonation is on the deployer account, the verifier account and the resident orchestrator's account of this installation, and on nothing else", account, DeployerTokenCreatorRole)
 		}
 	}
 }

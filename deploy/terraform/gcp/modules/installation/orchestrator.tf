@@ -93,6 +93,28 @@ locals {
   # because the URI is composed from the service's own URL, and it is pinned in
   # internal/infra/tf's cover_test.go against the route the case accepts.
   orchestrator_tick_path = "/tick"
+
+  # The account's own address, and the one the credentials service is told to
+  # admit (credentials.tf's FUGARO_ORCHESTRATOR_ACCOUNTS, F19): the class's
+  # members, which an installation that has not opted in renders as the EMPTY
+  # list rather than as an absent name. The service reads either as the empty
+  # class (internal/cli's credentialsServiceOrchestratorAccounts), and a name
+  # that is always set is one the cover's allow-list and the installation's own
+  # plan can both pin.
+  #
+  # It is a local rather than the account resource's `.email` for this file's
+  # own reason one paragraph up: that attribute is computed, so it would reach
+  # the plan unknown. It is not a second literal either — every member below is
+  # still written out, because the cover reads a principal's KIND off a member's
+  # address and a member hidden behind a local is one it cannot read, but the
+  # ADDRESS itself is composed once here and once nowhere else.
+  # try() is belt and braces around the block itself: a local is evaluated
+  # whether or not a resource reads it, and an attribute read on a null object
+  # would be a plan error on every installation that has never asked for a
+  # resident orchestrator — the one state this file may not break.
+  orchestrator_accounts = var.orchestrator == null ? [] : [
+    "${try(var.orchestrator.account_id, "")}@${var.project}.iam.gserviceaccount.com"
+  ]
 }
 
 # The identity itself. Nothing is granted actAs on it: executing the service
@@ -412,6 +434,47 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
   name     = var.orchestrator.service
   role     = "roles/run.invoker"
   member   = google_service_account.scheduler.member
+
+  depends_on = [google_service_account.orchestrator]
+}
+
+# The daemon's own reach to the installation's credentials service (F19, O2;
+# E16, D2049): the class that service's merge mint and label route are gated on
+# is this account's address (credentials.tf names it in the service's
+# environment), and Cloud Run decides admission per SERVICE rather than per
+# route — so without this row the token this account mints is refused by the
+# front end before the container runs, and the whole class would be one nothing
+# could reach whatever the service's own lists say.
+#
+# It is `roles/run.invoker` and nothing beside it: the one permission that says
+# "may knock", which is what every other caller of that service holds too
+# (iam.tf's credentials_invoker for the roster's launchers, credentials_
+# coordinator for the sweep, credentials_verifier for the verify route). What
+# the caller may then DO is the process's own class check, and this account's
+# class is the narrowest of the four: the merge mint for a repository the
+# installation holds, and the label route. It grants the service nothing and
+# reads nothing of it.
+#
+# The member is written out, like every member in this file, and not read off
+# the account's `.member`: that attribute is computed and would reach the plan
+# unknown, and the cover reads a principal's kind off its address
+# (`toOrchestrator`) — which is the whole reason this account's reach is
+# reviewable at all. The account side of the grant is the credentials service
+# itself and needs no such care: `var.credentials_service.service` is a name
+# `fugaro update` writes, not a value Cloud Run assigns.
+#
+# It is counted on BOTH switches, and that is the one thing here a reader has to
+# check twice: an installation that turned the resident orchestrator on and never
+# turned the credentials service on has nothing to reach, and a grant on a
+# service that does not exist would be a plan failure rather than an opt-in.
+resource "google_cloud_run_v2_service_iam_member" "orchestrator_credentials_invoker" {
+  count = local.orchestrator_on && local.credentials_service_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.credentials_service.service
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
   depends_on = [google_service_account.orchestrator]
 }

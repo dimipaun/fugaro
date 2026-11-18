@@ -1714,7 +1714,7 @@ var credentialsServiceEnv = []string{
 	"FUGARO_VERIFIER_ACCOUNTS", "FUGARO_PERSON_ACCOUNTS",
 	"FUGARO_COORDINATOR_ACCOUNT", "FUGARO_REVIEW_JOB_ACCOUNTS",
 	"FUGARO_LAUNCHER_ACCOUNTS", "FUGARO_SHARED_JOB_ACCOUNTS",
-	"FUGARO_BUILD_ACCOUNTS",
+	"FUGARO_BUILD_ACCOUNTS", "FUGARO_ORCHESTRATOR_ACCOUNTS",
 }
 
 // intakeServiceArgs and intakeServiceEnv are the argv and the environment
@@ -2900,12 +2900,13 @@ func (c Cover) onDeployer(ch Change, createsDeployer bool) string {
 
 // deployerTokenCreator says why a token-creator grant is not the operators'
 // one-time impersonation setup (Task 1.5 step 2), "" when it is and "" for
-// every other grant on that type. The role is granted on the deployer account
-// and, since CSR14, on the installation's own verifier account, and on nothing
-// else; grantRules has already checked that the member is a person on the
-// review screen, so what is left is which account.
+// every other grant on that type. The role is granted on the deployer account,
+// on the installation's own verifier account (CSR14) and — since F19, O2 — on
+// the resident orchestrator's own account, and on nothing else; grantRules has
+// already checked that the member is a person on the review screen, so what is
+// left is which account.
 //
-// The account has to be named, and named as one of those two, in this run's
+// The account has to be named, and named as one of those three, in this run's
 // installation project (Projects[0]), never in a verified Firebase project the
 // installation module is not applied to: a plan that says "an account, decided
 // during apply" is a plan whose account nobody can check, and the account this
@@ -2919,7 +2920,14 @@ func (c Cover) onDeployer(ch Change, createsDeployer bool) string {
 // the one caller that route admits. Without the second site here the plan that
 // creates the account — the same `fugaro update` that turns the service on —
 // would be refused, which is the non-converging update CLAUDE.md's HARD RULE
-// is about.
+// is about. The orchestrator account is the third, one account over and for the
+// verifier's reason exactly: the resident orchestrator's daemon runs on the
+// operator's machine, its class in the credentials service is a service account
+// (credsvc's AuthConfig.OrchestratorAccounts) whose token is minted for the
+// service's own URL as its audience, and a user account cannot be the subject
+// of that mint at all — so this one grant is the whole of how the installation
+// admits its own daemon, and the update that turns the orchestrator on has to
+// carry the plan that creates it.
 func (c Cover) deployerTokenCreator(ch Change) string {
 	if str(ch.After["role"]) != DeployerTokenCreatorRole {
 		return ""
@@ -2933,14 +2941,14 @@ func (c Cover) deployerTokenCreator(ch Change) string {
 	}
 	m := saName.FindStringSubmatch(id)
 	dp := c.deployerProject()
-	if m != nil && dp != "" && m[1] == dp && m[3] == dp && (m[2] == DeployerAccountID || m[2] == VerifierAccountID) {
+	if m != nil && dp != "" && m[1] == dp && m[3] == dp && (m[2] == DeployerAccountID || m[2] == VerifierAccountID || m[2] == OrchestratorAccountID) {
 		return ""
 	}
 	want := "the deployer account of this run"
 	if dp != "" {
-		want = DeployerAccount(dp) + " or the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com"
+		want = DeployerAccount(dp) + ", the verifier account " + VerifierAccountID + "@" + dp + ".iam.gserviceaccount.com or the resident orchestrator's account " + OrchestratorAccountID + "@" + dp + ".iam.gserviceaccount.com"
 	}
-	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those two accounts alone", DeployerTokenCreatorRole, id, want)
+	return fmt.Sprintf("grants %s on %s, which is not %s: the operators' impersonation is on those three accounts alone", DeployerTokenCreatorRole, id, want)
 }
 
 // orchestratorMinterGrant says why a token-minter grant to the resident

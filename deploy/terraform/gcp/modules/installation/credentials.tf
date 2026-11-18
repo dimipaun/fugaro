@@ -690,6 +690,38 @@ resource "google_cloud_run_v2_service" "credentials" {
           value = env.value
         }
       }
+      # The resident orchestrator's own class (E16, D2049; the forge-labels
+      # plan's F19 and O2): the addresses that may call the daemon's two routes
+      # — the label route and the merge mint — as the installation's own
+      # orchestrator, which is the whole of what credsvc's
+      # AuthConfig.OrchestratorAccounts admits under that name and the only
+      # list that class is on. Nothing else is admitted as it: the operator
+      # running the daemon is not the class (a person's token is matched
+      # against the person class and refused here), and neither is any run's
+      # job account, whatever the run is doing.
+      #
+      # It is rendered ALWAYS, which no other entry here does, and the
+      # difference is deliberate rather than an oversight: every name above is
+      # absent on an installation where it does not apply, and the process
+      # reads an absent one as the empty class, which is fine for a class the
+      # installation may not have. This one is the class the daemon's OWN
+      # identity is admitted under, and the value the module can render without
+      # the orchestrator on is the empty list — the truth, since there is then
+      # no account — while an absent name is a second spelling of the same
+      # fact. Rendering it always is what lets the plan pin it once, on the
+      # fixtures that exist, rather than only on an installation that has opted
+      # in.
+      #
+      # The value is the account THIS module creates for the resident
+      # orchestrator (orchestrator.tf's google_service_account.orchestrator,
+      # local.orchestrator_accounts), and it is a JSON ARRAY because
+      # internal/cli's credentialsServiceOrchestratorAccounts decodes it with
+      # json.Unmarshal and refuses anything that is not a list: a bare address
+      # here would be a service that will not bind a port.
+      env {
+        name  = "FUGARO_ORCHESTRATOR_ACCOUNTS"
+        value = jsonencode(local.orchestrator_accounts)
+      }
     }
   }
 

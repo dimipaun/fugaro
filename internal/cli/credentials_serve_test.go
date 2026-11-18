@@ -538,6 +538,91 @@ func TestLauncherAccountsReadFromEnv(t *testing.T) {
 	}
 }
 
+// TestOrchestratorAccountsReadFromEnv is the wiring of the daemon's own class
+// (E16, D2049; docs/forge-labels' F19): FUGARO_ORCHESTRATOR_ACCOUNTS is the
+// name credentials.tf renders from the one service account the installation
+// module creates for the resident orchestrator, and it is read exactly the way
+// FUGARO_LAUNCHER_ACCOUNTS and FUGARO_BUILD_ACCOUNTS are -- as an OPTIONAL
+// value, because the module renders the entry only on an installation that
+// carries the orchestrator block, so one that never opted in must start with a
+// class that admits nobody rather than a process that will not bind a port.
+//
+// The first half is the mutation check the class's admission is owed, and it is
+// the launcher test's own trick: the entry is one credsvc's own orchestrator
+// fold refuses by a sentence no other class writes, so that refusal is
+// reachable ONLY if the value arrived at AuthConfig. An empty list and a list
+// quietly dropped on the way there look identical from outside -- the merge
+// mint and the label route answer every caller with the class's refusal either
+// way -- so nothing but this can tell them apart. Mutation (verified, run and
+// restored): dropping OrchestratorAccounts from the AuthConfig literal in
+// credentialsServiceConfig -- this test fails, the process starting with the
+// daemon's class dropped.
+//
+// The second half is the shape rule and the process's own no-echo rule: a value
+// that is present and is not the array the module renders is refused by the
+// variable's name and never by an entry.
+func TestOrchestratorAccountsReadFromEnv(t *testing.T) {
+	// One entry of each kind this test needs: the address the module renders,
+	// and one the authenticator's own fold refuses (an account is an email
+	// address, and this one is not printable ASCII).
+	const entry = "fugaro-orch@proj-1234.iam.gserviceaccount.com"
+	const unfolded = "orch-é@example.invalid"
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envOrchestratorAccounts, `["`+unfolded+`"]`)
+	fakeCredentialsService(t)
+
+	_, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an entry the orchestrator class cannot fold must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") || !strings.Contains(err.Error(), "an orchestrator account is not a printable") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers because an orchestrator account is not a printable ASCII email address, which is reachable only if %s reached the authenticator", err, envOrchestratorAccounts)
+	}
+	if strings.Contains(err.Error(), unfolded) {
+		t.Errorf("err = %v, which carries the orchestrator entry itself: the refusal names the variable and never an account", err)
+	}
+	t.Setenv(envOrchestratorAccounts, `["`+entry+`"]`)
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with %s = the installation's own account: %v", envOrchestratorAccounts, err)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer with %s = the installation's own account: %v (the class the module renders must be a class the service starts with)", envOrchestratorAccounts, err)
+	}
+
+	// A value that is not the array the module renders is a deployment that is
+	// wrong, refused by name.
+	for _, raw := range []string{`"` + entry + `"`, `[{"email":"` + entry + `"}]`, `["ok@example.invalid",3]`, "not json", `{"` + entry + `":true}`} {
+		got, err := credentialsServiceOrchestratorAccounts(raw)
+		if err == nil {
+			t.Errorf("credentialsServiceOrchestratorAccounts(%q) = %v, want a refusal: the value is the document the module renders or nothing", raw, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), envOrchestratorAccounts) {
+			t.Errorf("the refusal for %q is %q, want it to name %s", raw, err, envOrchestratorAccounts)
+		}
+		if strings.Contains(err.Error(), entry) {
+			t.Errorf("the refusal for %q carries an entry: %q", raw, err)
+		}
+	}
+
+	// The optional half: absent and empty are the empty class, and the service
+	// starts with a daemon class that admits nobody -- the state every
+	// installation that never opted into a resident orchestrator is in.
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envOrchestratorAccounts, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s = %q: %v (the entry is rendered only on an installation that carries the orchestrator block, so one that never opted in must start the same service it always did)", envOrchestratorAccounts, raw, err)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with %s = %q: %v", envOrchestratorAccounts, raw, err)
+		}
+	}
+}
+
 // TestBuildAccountsReadFromEnv is the wiring of the build class's own list (B5,
 // D2301): FUGARO_BUILD_ACCOUNTS is the name credentials.tf renders from the
 // account the installation module creates beside the service, so the identity a
@@ -1088,7 +1173,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 		inModule[m[1]] = true
 	}
 	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
-	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts)
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envOrchestratorAccounts, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts)
 	for _, n := range read {
 		if slices.Contains(pending, n) {
 			if inModule[n] {

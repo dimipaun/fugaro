@@ -33,11 +33,12 @@ import (
 // a retry's first pull request left as it ended, and a cycle with nothing to
 // change writing nothing at all.
 //
-// The service is a fake because this tree has no identity to reach the real one
-// with (orchestratorLabelIdentity, F19 and O2 of the plan): what a fake service
-// cannot prove is that the installation's daemon account is admitted by the
-// service's own orchestrator class, which is the half the plan leaves to the
-// prerequisite outside it.
+// The service is a fake because a test cannot stand up the installation's own
+// Cloud Run revision: what a fake service cannot prove is that the
+// installation's daemon account is admitted by the service's own orchestrator
+// class, which is the live half of F19 and O2 — the class itself, its env
+// plumbing and the Terraform that renders it are pinned in internal/credsvc,
+// internal/cli's credentials_serve_test.go and internal/infra/tf.
 
 // The three runs these tests work with, and the label names they are about.
 // The names are the syncer's own (internal/orchestrator's labelRunning and
@@ -67,17 +68,18 @@ const (
 // one is not running here.
 const labelIdentity = "the-daemon-own-identity"
 
-// withLabelIdentity stands in for the one piece of this path this tree does not
-// have: the daemon's own identity to the credentials service, which is the
-// prerequisite outside the plan (F19, O2). It is what lets the whole path run
-// against a fake service, as the plan says T7's test does — "until it lands the
-// end-to-end test runs against a fake service and only the live path stays
-// unproven".
+// withLabelIdentity stands in for the one process this path reaches that a test
+// must not run: `gcloud auth print-identity-token`, which is how the daemon
+// obtains its own identity by impersonating the installation's orchestrator
+// account (orchestrator_identity.go). Everything else of that seam is real — the
+// argv it builds, the account it composes and the refusal it writes — so what a
+// test replaces is the child process and not the identity (orchestrator_
+// identity_test.go pins the rest).
 func withLabelIdentity(t *testing.T) {
 	t.Helper()
-	prev := orchestratorLabelIdentity
-	orchestratorLabelIdentity = func(context.Context) (string, error) { return labelIdentity, nil }
-	t.Cleanup(func() { orchestratorLabelIdentity = prev })
+	prev := orchestratorServiceIdentity
+	orchestratorServiceIdentity = func(context.Context, string, string) (string, error) { return labelIdentity, nil }
+	t.Cleanup(func() { orchestratorServiceIdentity = prev })
 }
 
 // labelService is the installation's credentials service as a daemon reaches

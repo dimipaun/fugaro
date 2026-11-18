@@ -267,6 +267,40 @@ resource "google_service_account_iam_member" "fugaro_verifier_token_creator" {
   depends_on = [google_service_account.fugaro_verifier]
 }
 
+# ... and the resident orchestrator account's own half of the impersonation its
+# daemon is run with (F19, O2; E16, D2049). It is the verifier's grant above in
+# every respect, one account over, and it is the third literal site of this role
+# in the tree (the deployer's, deployer.tf; the verifier's; this one).
+#
+# Why the daemon needs it at all, since the account is not the operator's. The
+# daemon runs on the operator's own machine as a login unit (D1241), and the
+# credentials service admits its caller class on the tokens's own terms: the
+# class is a service account (credsvc's AuthConfig.OrchestratorAccounts) and the
+# audience is the service's own URL, so `gcloud auth print-identity-token`
+# refuses a user account outright — "Invalid account type for --audiences" — and
+# the operator's ambient credential cannot be the daemon's identity whatever
+# list it were matched against. The one way to mint that token is to impersonate
+# the account this row names, on purpose, and this row is what makes "on
+# purpose" possible for the people the installation already trusts: the same
+# var.operators the deployer account's own impersonation is for (D75).
+#
+# The account is a literal path of this project like the two above and for the
+# same reason (a resource attribute is unknown at plan time, and a grant whose
+# account nobody can name is one nobody can check — TestInstallationService
+# AccountGrantsNameTheirAccount holds the whole module to it). It is gated on
+# the orchestrator switch: with no orchestrator block the account is not
+# created, and a grant on an account that does not exist would be a plan of its
+# own.
+resource "google_service_account_iam_member" "orchestrator_token_creator" {
+  for_each = local.orchestrator_on ? toset(var.operators) : toset([])
+
+  service_account_id = "projects/${var.project}/serviceAccounts/${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = each.value
+
+  depends_on = [google_service_account.orchestrator]
+}
+
 # The runs bucket (design bucket-iam.md §3). Operators read and write all of
 # it: fugaro/ (the project layer, the shared config, recipes, the marker),
 # builds/, cache/, locks/ and runs/.

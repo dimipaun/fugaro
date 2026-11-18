@@ -62,7 +62,7 @@ func doctorOrchestratorIdentity(ctx context.Context, lc *localcfg.Config, c *crm
 	if lc.Endpoints.NoAuth && lc.Endpoints.IAM == "" {
 		return nil
 	}
-	account := infra.OrchestratorAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
+	account := infra.OrchestratorAccountEmail(lc.GCPProject)
 	psa := pluginwire.Printable(account)
 	unread := func(what string, err error) []doctorCheck {
 		return []doctorCheck{{ID: id, Severity: "warning", unread: true,

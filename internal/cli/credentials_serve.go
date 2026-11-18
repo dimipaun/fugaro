@@ -251,6 +251,25 @@ const (
 	// value that is present and is not one address is a deployment that is
 	// wrong (F24).
 	envCoordinatorAccount = "FUGARO_COORDINATOR_ACCOUNT"
+	// envOrchestratorAccounts is the installation's own resident orchestrator
+	// (E16, D2049; docs/forge-labels' F19): a JSON array of bare addresses --
+	// the one service account the installation module creates for it
+	// (internal/infra's OrchestratorAccountID) -- which is the whole of the
+	// class the merge mint and the label route are gated on. Like the
+	// coordinator's name and the lists above it is read as OPTIONAL and lives
+	// outside credentialsServiceEnvNames: the module renders the entry only on
+	// an installation that carries the orchestrator block, and one that never
+	// opted in must still start, with a class that admits nobody rather than a
+	// service that will not bind a port. Absent or empty is that state.
+	//
+	// What the class is worth is the token, and the token is one the operator
+	// has to obtain ON PURPOSE by impersonating the account this list names
+	// (credsvc's VerifyOrchestrator states the check): a plain `gcloud auth
+	// print-identity-token` cannot mint for a custom audience, so a person's
+	// ambient credential is refused here whatever list it would have been
+	// matched against, and a run's own token is refused by the same audience
+	// before any list is read.
+	envOrchestratorAccounts = "FUGARO_ORCHESTRATOR_ACCOUNTS"
 	// envLauncherAccounts is the identities that may ask this service for a
 	// slip and reach the intake (D1938, F25, F36): a JSON array of bare
 	// addresses, which is what the module renders from the installation's
@@ -321,10 +340,10 @@ const (
 // serving. The class-specific entries it reads beside them are OPTIONAL and
 // live outside this list, because the module renders each of those only where
 // it applies (envReviewJobAccounts, envSharedJobAccounts, envVerifierAccounts,
-// envPersonAccounts, envCoordinatorAccount, envLauncherAccounts and
-// envBuildAccounts).
+// envPersonAccounts, envCoordinatorAccount, envOrchestratorAccounts,
+// envLauncherAccounts and envBuildAccounts).
 // internal/infra/tf's credentialsServiceEnv is init's cover's allow-list, which
-// is these seven plus those seven: a name outside it is a container the cover
+// is these seven plus those eight: a name outside it is a container the cover
 // refuses, which is what makes the module's list a boundary rather than a
 // convention. The lists are held together by tests
 // rather than by this comment: TestCredentialsServiceEnvIsTheDeploymentsOwn
@@ -532,6 +551,17 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The resident orchestrator's own class (E16, D2049; docs/forge-labels'
+	// F19), read by the verifier list's own rule and for the same reason: the
+	// entry arrives with the installation module's orchestrator block, so an
+	// installation that never opted into a resident orchestrator starts with an
+	// empty class and refuses every caller of the merge mint and the label
+	// route rather than refusing to bind a port (`envOrchestratorAccounts`
+	// states the direction and why it matters).
+	orchestrators, err := credentialsServiceOrchestratorAccounts(getenv(envOrchestratorAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
 	// names another installation's database.
@@ -628,9 +658,16 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// rendered the entry starts in, and the route then answers every caller
 		// with the class's refusal.
 		BuildAccounts: builds,
-		Keys:          credsvc.NewGoogleKeys(),
-		JobKeys:       credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:      credsvc.RTDBOutcomes{DB: db},
+		// The resident orchestrator daemon (E16, D2049; docs/forge-labels'
+		// F19): the merge mint's and the label route's own class, which the
+		// installation module names and nothing else is admitted to. Empty is
+		// the state an installation that never opted into a resident
+		// orchestrator starts in, and both routes then answer every caller
+		// with the class's refusal rather than a caller being served.
+		OrchestratorAccounts: orchestrators,
+		Keys:                 credsvc.NewGoogleKeys(),
+		JobKeys:              credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:             credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -781,6 +818,31 @@ func credentialsServiceVerifiers(raw string) ([]string, error) {
 		return nil, fmt.Errorf("%s is not the installation's verifier list: it must be a JSON array of the bare email addresses a Google ID token carries, one per identity that may ask the service to verify a signature. Nothing was started and no credential was issued", envVerifierAccounts)
 	}
 	return verifiers, nil
+}
+
+// credentialsServiceOrchestratorAccounts turns FUGARO_ORCHESTRATOR_ACCOUNTS
+// into the daemon's own class (E16, D2049; docs/forge-labels' F19): a JSON
+// array of bare addresses, which is what the installation module renders from
+// the one service account it creates for the resident orchestrator.
+//
+// It is credentialsServiceVerifiers' rule word for word, and for the same two
+// reasons: an absent or empty value is an EMPTY list and not a refusal, because
+// the module renders the entry only on an installation that carries the
+// orchestrator block, while a value that is present and is not that array is a
+// deployment that is wrong. An empty list is this class's own fail-closed
+// statement rather than a gap -- the merge mint and the label route answer
+// every caller with the class's refusal, which is the state every installation
+// that has not opted into a resident orchestrator is in, and the state this
+// tree was in for every installation before the module rendered the entry.
+func credentialsServiceOrchestratorAccounts(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var orchestrators []string
+	if err := json.Unmarshal([]byte(raw), &orchestrators); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's orchestrator list: it must be a JSON array of the bare email addresses a Google ID token carries, naming the service account the resident orchestrator daemon runs as and nothing else. Nothing was started and no credential was issued", envOrchestratorAccounts)
+	}
+	return orchestrators, nil
 }
 
 // credentialsServicePersons turns FUGARO_PERSON_ACCOUNTS into the read mint's

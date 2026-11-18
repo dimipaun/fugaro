@@ -66,6 +66,17 @@ type credentialsFixture struct {
 	// would put the project jobs' launcher grants, whose role is the
 	// installation's computed custom role, into this plan.
 	LauncherAccounts []string `json:"launcher_accounts"`
+	// Orchestrator is the resident orchestrator's own opt-in (mobile plan task
+	// P5.1b). This fixture does NOT name it, and that is what makes the golden
+	// plan this test reads the plan of an installation that has not opted in:
+	// the module then renders FUGARO_ORCHESTRATOR_ACCOUNTS as the empty list,
+	// which is what the test's own `want` asserts. An installation that HAS
+	// opted in plans a great deal more than that golden holds — the account,
+	// the service, the tick and every grant of the design's table — so a
+	// fixture that began naming one here is a different plan rather than a
+	// wider one, and the fatal this field feeds is what says so instead of a
+	// diff nobody can read.
+	Orchestrator any `json:"orchestrator"`
 }
 
 // credentialsReadPeople is the admitted people as the module derives them from
@@ -141,7 +152,12 @@ func credentialsServiceEnvOf(t *testing.T, rc ResourceChange) (plain map[string]
 // launcher class (D1938, F25; DS2.2), which arrives with the roster's own
 // people, and the thirteenth, the project's build identity (B5, D2301), which
 // arrives with the account the module creates beside the service and is the
-// build route's one caller class. So a variable the Go side
+// build route's one caller class, and the fourteenth, the resident
+// orchestrator's own class (E16, D2049; F19 and O2), which is the ONE entry
+// the module renders on every installation — the empty list where the
+// orchestrator is off, since there is then no account to admit — because it is
+// the class the daemon's own identity is admitted under and an absent name
+// would be a second spelling of "nobody". So a variable the Go side
 // computes and the module drops — or one the module sets from a value the
 // fixture does not carry — is a service that never answers a job, or a verify
 // route that admits nobody, on an installation whose init reports success.
@@ -207,6 +223,18 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if f.Orchestrator != nil {
+		t.Fatalf("the credentials fixture names a resident orchestrator: this golden is the plan of an installation that has NOT opted in, and the module renders FUGARO_ORCHESTRATOR_ACCOUNTS as the empty list on it (%v)", f.Orchestrator)
+	}
+	// The resident orchestrator's class on this fixture: nobody, because the
+	// module renders the account of an installation that opted in and this one
+	// did not. It is a JSON array in that state as in every other, which is
+	// what internal/cli's credentialsServiceOrchestratorAccounts requires of
+	// the name.
+	orchestratorAccounts, err := json.Marshal([]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := map[string]string{
 		"FUGARO_PROJECT":                 f.FugaroProject,
 		"FUGARO_GCP_PROJECT":             f.Project,
@@ -221,6 +249,16 @@ func TestGoldenCredentialsServiceCarriesItsNames(t *testing.T) {
 		"FUGARO_COORDINATOR_ACCOUNT":     coordinator,
 		"FUGARO_LAUNCHER_ACCOUNTS":       string(launchers),
 		"FUGARO_BUILD_ACCOUNTS":          string(builds),
+		// The resident orchestrator's own class, which this fixture renders as
+		// the empty list: var.orchestrator is null on an installation that has
+		// not opted in, so local.orchestrator_accounts is [] and the module
+		// renders "[]" — the class admits nobody, which is the truth, rather
+		// than a name the process would have to read as absent. The non-empty
+		// case is pinned where it can be: the module's own plan for an
+		// installation that HAS opted in (internal/infra's
+		// orchestrator_terraform_test.go, which plans one and reads this entry
+		// back as the account the module creates).
+		"FUGARO_ORCHESTRATOR_ACCOUNTS": string(orchestratorAccounts),
 	}
 	// The map's keys are the allow-list the cover holds the service to, and the
 	// two are equal rather than nested: a name here that the allow-list does not
