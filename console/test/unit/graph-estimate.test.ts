@@ -5,7 +5,7 @@
 // `internal/cli/plan_status.go`'s additive `estimate` block and
 // `internal/plan/estimate.go`).
 //
-// Three things are pinned here, and the third is the one a console-vs-CLI
+// Four things are pinned here, and the last two are the ones a console-vs-CLI
 // misunderstanding would break:
 //
 //   - **the model carries the block**: `buildGraphModel` hands the screen the
@@ -20,6 +20,13 @@
 //   - **nothing is drawn where the block is absent**, which is what an older CLI
 //     writes: the key is additive, so a console newer than the CLI that drives it
 //     finds no estimate and draws no line rather than a zero-valued figure.
+//
+// A fourth is what the **reduced mode** does with the block, and it belongs to
+// this file rather than to the drawing's because the money it takes out arrives
+// with the readable one: the cost half is withheld where the console cannot
+// vouch for the CLI's money fields (`spend` is a view of `REDUCED_VIEWS`,
+// `shared/version.ts`), so the ready-by range is drawn alone and the withheld
+// figure reads the console's `n/a` with its reason in the line's `title`.
 //
 // The document is `test/fixtures/plan-status.json` through the real decoder, and
 // every patch is a **raw** edit that goes through it too: the fixture's own plans
@@ -38,18 +45,20 @@ import type { PlanStatusView } from '../../src/shared/schema'
 import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import type { Sanitized } from '../../src/shared/sanitize'
 import { buildGraphModel } from '../../src/renderer/graph/model'
-import type { GraphPlan } from '../../src/renderer/graph/model'
+import type { GraphModel, GraphPlan } from '../../src/renderer/graph/model'
 import {
+  GRAPH_ESTIMATE_COST_HIDDEN_WORD,
   GRAPH_ESTIMATE_MINUTES,
   GRAPH_ESTIMATE_NO_HISTORY,
   GRAPH_ESTIMATE_READY,
   GRAPH_INITIAL_STATE,
   GraphLayoutClient,
   GraphScreen,
+  estimateCostsWithheld,
   renderGraph,
 } from '../../src/renderer/screens/graph'
 import type { GraphState, GraphTheme, ScreenElement } from '../../src/renderer/screens/graph'
-import { FakeDocument, everyNode } from '../support/fakeDom'
+import { FakeDocument, everyNode, textOf } from '../support/fakeDom'
 import type { FakeNode } from '../support/fakeDom'
 import { FakeWorker, NodeSurface, Surface, decoded } from '../support/graphHarness'
 
@@ -113,9 +122,14 @@ function estimated(value: unknown, plan = 0): PlanStatusView {
   return patched(['plans', plan, 'estimate'], value)
 }
 
-/** planOf is one plan of the model, by id. */
+/** planOf is one plan of the model a document builds, by id. */
 function planOf(document: PlanStatusView, id: string): GraphPlan {
-  const model = buildGraphModel({ document, tab: null })
+  return planIn(buildGraphModel({ document, tab: null }), id)
+}
+
+/** planIn is one plan of a model, by id -- the same walk for a model that was
+ * built from a document and one the console withheld the cost of. */
+function planIn(model: GraphModel, id: string): GraphPlan {
   for (const column of model.columns) {
     for (const plan of column.plans) if (plan.id === id) return plan
   }
@@ -143,9 +157,13 @@ function mounted(element: ScreenElement): FakeNode {
 }
 
 /** listed is the model drawn as a list -- where a plan has a heading of its own
- * -- with no positions: the list needs none. */
-function listed(document: PlanStatusView, state: GraphState = GRAPH_INITIAL_STATE): FakeNode {
-  const model = buildGraphModel({ document, tab: null })
+ * -- with no positions: the list needs none. `costWithheld` is the gate's
+ * answer, applied to the model the way the screen applies it
+ * (`estimateCostsWithheld`), so a case about the reduced mode draws the model
+ * the entry's own screen draws. */
+function listed(document: PlanStatusView, state: GraphState = GRAPH_INITIAL_STATE, costWithheld = false): FakeNode {
+  const built = buildGraphModel({ document, tab: null })
+  const model = costWithheld ? estimateCostsWithheld(built) : built
   const element = renderGraph(
     new Surface(new FakeDocument()),
     { model, positions: null, state: { ...state, view: 'list' }, runs: [], notice: null },
@@ -291,5 +309,76 @@ describe('the estimate line the list draws (S4)', () => {
     // The same read as a list carries the line, so the two drawings differ by
     // the line alone and not by the estimate being lost between them.
     expect(classedIn(listed(estimated(ESTIMATE)), 'graph-list-estimate')).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The reduced mode
+// ---------------------------------------------------------------------------
+
+describe('the estimate in a reduced console (S4)', () => {
+  it('draws the ready-by range and no money at all, with the console\'s reason for the cost', () => {
+    // `spend` is one view of `REDUCED_VIEWS`, and this line carries the plan's
+    // money: the entry asks `hidesView` and hands the answer to the screen, the
+    // model the drawing is made from holds no cost, and what is left is the
+    // ready-by range -- minutes are not money -- beside the console's `n/a`,
+    // whose reason is in the line's `title`.
+    const root = listed(estimated(ESTIMATE), GRAPH_INITIAL_STATE, true)
+    const line = classedIn(root, 'graph-list-estimate')[0]
+    expect(line?.textContent).toBe(`${GRAPH_ESTIMATE_READY} ${READY_RANGE} ${GRAPH_ESTIMATE_MINUTES}, n/a–n/a`)
+    expect(line?.getAttribute('title')).toBe(GRAPH_ESTIMATE_COST_HIDDEN_WORD)
+    // Not vacuous, and the point of the case: the dollar sign is nowhere in the
+    // reduced drawing, and the very same drawing ungated reads `$3.00–$5.00`.
+    expect(textOf(root)).not.toContain('$')
+    expect(textOf(listed(estimated(ESTIMATE)))).toContain(COST_RANGE)
+  })
+
+  it('leaves alone the plan whose money the CLI could not compute, and asks nothing of a range the document left open', () => {
+    // D2723's sentence is not money: a plan with no cost range has no dollar
+    // figure to withhold, so the reduced drawing is the ungated one and the
+    // count of tasks it is unknown for is still drawn.
+    const unknown = { ready_in_minutes: { low: 40, high: 70 }, cost_unknown_tasks: 3 }
+    expect(textOf(listed(estimated(unknown), GRAPH_INITIAL_STATE, true))).toBe(
+      textOf(listed(estimated(unknown))),
+    )
+    // A range end the **document** did not carry is `n/a` too, and that one is
+    // not the console's withholding: ungated, the line draws the figure it has
+    // beside the mark and carries no `title`, because the reason for that `n/a`
+    // is the document's and not this console's sentence.
+    const half = listed(estimated({ ready_in_minutes: { high: 70 }, cost_usd: { low: 3 } }))
+    const line = classedIn(half, 'graph-list-estimate')[0]
+    expect(line?.textContent).toBe(`${GRAPH_ESTIMATE_READY} n/a–70 ${GRAPH_ESTIMATE_MINUTES}, $3.00–n/a`)
+    expect(line?.getAttribute('title')).toBeNull()
+  })
+
+  it('takes the cost out at the door the entry builds its screen through', async () => {
+    // The gate is asked by the caller (`graphScreen`'s third argument,
+    // `hidesView(compatibility, 'spend')`), so the model the drawing would be
+    // made from is the one the screen holds -- which is what this case reads.
+    const screen = new GraphScreen({
+      factory: new Surface(new FakeDocument()),
+      client: new GraphLayoutClient(() => new FakeWorker()),
+      theme: 'light',
+      costWithheld: true,
+    })
+    await screen.load(estimated(ESTIMATE), [])
+    const model = screen.lastModel
+    if (model === null) throw new Error('the read drew nothing')
+    const withheld = planIn(model, PLAN).estimate
+    expect(withheld?.readyIn.low.value).toBe(40)
+    expect(withheld?.readyIn.high.value).toBe(70)
+    expect(withheld?.cost?.low.value).toBeNull()
+    expect(withheld?.cost?.high.value).toBeNull()
+    // And a screen with no gate in front of it -- a test, a golden, a screen
+    // built by hand -- holds the figures the document carried.
+    const open = new GraphScreen({
+      factory: new Surface(new FakeDocument()),
+      client: new GraphLayoutClient(() => new FakeWorker()),
+      theme: 'light',
+    })
+    await open.load(estimated(ESTIMATE), [])
+    const drawn = open.lastModel === null ? null : planIn(open.lastModel, PLAN).estimate
+    expect(drawn?.cost?.low.value).toBe(3)
+    expect(drawn?.cost?.high.value).toBe(5)
   })
 })

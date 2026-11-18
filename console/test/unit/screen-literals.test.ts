@@ -783,6 +783,11 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     "node.words[0] ?? ''": 'the node\'s first `StateWord`, the model\'s own vocabulary, as the `data-state` hook a rule colours; the empty string is a node the model gave no word, which is a state no colour applies to',
     'door.run': 'the run id this console\'s own run list resolved the node\'s suffix to (`doorFor`), which is what `data-run-id` carries and what the entry opens -- a node whose suffix no run ends with, or one two runs end with, carries no attribute at all',
     'door.because': { within: 'listRow', reason: '`doorFor`\'s own sentence for a gesture that opens nothing, in the `title` an HTML element keeps a tooltip in' },
+    why: {
+      within: 'list',
+      reason:
+        '`withheldCost(plan.estimate)`, which answers `GRAPH_ESTIMATE_COST_HIDDEN_WORD` or `null`: a cost the **console itself** withheld (`estimateCostsWithheld`, the reduced mode) is `n/a` with the reason in the `title`, the rule `drawInto` keeps for a reading, and a range end the *document* left open answers `null` and gets no sentence from this file',
+    },
     "door.run !== null ? 'button' : 'group'":
       'a card\'s role as one of two literals: where a run resolved the card is the `button` Enter and Space open, and where none did it is the `group` no key touches -- the same shape as `live.ts`\'s `repo.kill === null ? \'false\' : \'true\'`',
     'cardLabel(node)': {

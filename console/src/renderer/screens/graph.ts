@@ -58,7 +58,7 @@
 // guessing. `GRAPH_PR_NO_LINK_REASON` is the same sentence `live.ts` and `run.ts`
 // draw, and `graph.test.ts` holds the three equal.
 
-import { UNAVAILABLE_MARK, formatReading } from '../../shared/availability'
+import { UNAVAILABLE_MARK, formatReading, unavailable } from '../../shared/availability'
 import type { Reading, Unit } from '../../shared/availability'
 import { BUSY_SLOT_CLASS } from '../section'
 import { sanitizeText } from '../../shared/sanitize'
@@ -228,6 +228,26 @@ export const GRAPH_ESTIMATE_TASKS = 'tasks'
  * gap -- a range and a stopped series are two different facts, and one mark for
  * both would read a range as a gap. */
 const GRAPH_ESTIMATE_RANGE = '–'
+
+/**
+ * GRAPH_ESTIMATE_COST_HIDDEN_WORD is what the cost half of a plan's estimate
+ * says in a console's **reduced mode**: this line carries the plan's money, and
+ * `spend` is one view of `REDUCED_VIEWS` (`shared/version.ts`), so a console
+ * that cannot vouch for the CLI's money fields withholds the figure rather than
+ * draw one it cannot stand behind. The gate is asked by the caller --
+ * `entry.ts`, exactly as it asks it for the Live screen's caps.
+ *
+ * It is the family's own sentence, the one `live.ts`'s `LIVE_CAPS_HIDDEN_WORD`
+ * and `coordinator.ts`'s `COORDINATOR_WINDOW_HIDDEN_WORD` end with: one console
+ * with one reduced mode withholding figures in three places under three shapes
+ * would read as three modes. It is a second copy rather than an import for the
+ * reason those two are: the screens are siblings and none owns the others.
+ *
+ * **The ready-by range is not withheld.** Minutes are not money and no mode
+ * hides them, so a reduced console still says when the plan's work is ready.
+ */
+export const GRAPH_ESTIMATE_COST_HIDDEN_WORD =
+  'the plan’s cost is withheld for the installation this console is driving'
 
 /** GRAPH_NO_RUN is a node the plan gave no run: the join `plan status` makes
  * found none, so there is nothing to open. */
@@ -2076,6 +2096,56 @@ function unknownCostText(tasks: Reading): string {
 }
 
 /**
+ * withheldCost is why the cost half of this plan's line is not drawn, or `null`
+ * when it is: the console's own word, where the figure is one **this console
+ * withheld** (`estimateCostsWithheld` below, the reduced mode).
+ *
+ * A cost range the *document* did not carry is `n/a` too, and that one is not
+ * this console's doing: it is a reading of its own with its own reason, and it
+ * needs no word from here. The two are told apart by the reason on the reading,
+ * which is what keeps this from putting the console's sentence on a gap the CLI
+ * left.
+ */
+function withheldCost(estimate: PlanEstimateView): string | null {
+  if (estimate.cost === null) return null
+  for (const end of [estimate.cost.low, estimate.cost.high]) {
+    if (end.because === GRAPH_ESTIMATE_COST_HIDDEN_WORD) return end.because
+  }
+  return null
+}
+
+/**
+ * estimateCostsWithheld is the picture with every plan's **cost** taken out, for
+ * a console in the reduced mode (`hidesView(compatibility, 'spend')`).
+ *
+ * **It is a value rather than a flag threaded through the drawing**, exactly as
+ * `live.ts`'s `capsWithheld` is: each end of the range becomes an `unavailable`
+ * carrying `GRAPH_ESTIMATE_COST_HIDDEN_WORD`, so the line is composed from
+ * figures that are not there -- `ready in 40–70 min, n/a–n/a`, the console's
+ * unavailable mark with the reason in the line's `title` -- and no drawing
+ * written later can reach a number this model does not hold.
+ *
+ * **What is deliberately left alone.** The ready-by range (minutes are not money
+ * and no mode hides them) and D2723's `no history yet for N task(s)`: a plan
+ * with no cost range at all has no money in its line to begin with, and the
+ * count of tasks it is unknown for is a count.
+ */
+export function estimateCostsWithheld(model: GraphModel): GraphModel {
+  return {
+    ...model,
+    columns: model.columns.map((column) => ({ ...column, plans: column.plans.map(costWithheld) })),
+  }
+}
+
+/** costWithheld is one plan with its cost range replaced by the withheld word,
+ * and every other field of the model copied. */
+function costWithheld(plan: GraphPlan): GraphPlan {
+  if (plan.estimate === null || plan.estimate.cost === null) return plan
+  const hidden = unavailable(GRAPH_ESTIMATE_COST_HIDDEN_WORD)
+  return { ...plan, estimate: { ...plan.estimate, cost: { low: hidden, high: hidden } } }
+}
+
+/**
  * list is the same model as a list: one section per plan, one heading per
  * release with the same "n of m done" bar, and one row per task -- carrying
  * everything the card carries and the whole title with it (F25: the picture's
@@ -2098,7 +2168,14 @@ function list(factory: ScreenFactory, picture: GraphPicture): ScreenElement {
       const section = cell(element, factory, 'section', 'graph-list-plan')
       drawn(section, factory, 'h2', plan.title, 'graph-list-title')
       if (plan.estimate !== null) {
-        literal(cell(section, factory, 'p', 'graph-list-estimate'), estimateText(plan.estimate))
+        const line = cell(section, factory, 'p', 'graph-list-estimate')
+        literal(line, estimateText(plan.estimate))
+        // A figure this console withheld is `n/a` with the reason in the
+        // `title`, which is the rule `drawInto` keeps for a reading: this line
+        // is composed of readings rather than drawn from one, so it carries it
+        // itself.
+        const why = withheldCost(plan.estimate)
+        if (why !== null) line.setAttribute('title', why)
       }
       for (const release of releasesOf(picture, plan).values()) {
         section.append(listRelease(factory, release))
@@ -2583,6 +2660,23 @@ export interface GraphScreenDeps {
   readonly factory: GraphFactory
   readonly client: LayoutClient
   readonly theme: GraphTheme
+  /**
+   * costWithheld is the gate's answer for the `spend` view
+   * (`hidesView(compatibility, 'spend')`, `shared/version.ts`): the plan's
+   * estimate carries its cost, and a console that cannot vouch for the CLI's
+   * money fields draws no dollar figure.
+   *
+   * **The caller asks and hands the answer in**, exactly as the Live screen's
+   * fourth argument is the answer for the `caps` (`entry.ts`); a screen that
+   * asked the gate itself would be a second place the question is answered. It
+   * is read once, where the model is built, and the model it produces has no
+   * money in it at all (`estimateCostsWithheld`).
+   *
+   * Absent means **no gate is in front of this drawing** -- a test, a golden, a
+   * screen built by hand -- and the plans are drawn as the document carries
+   * them, which is what `renderLive`'s `withheld` default does.
+   */
+  readonly costWithheld?: boolean
 }
 
 /**
@@ -2862,7 +2956,8 @@ export class GraphScreen {
 
   private async build(): Promise<ScreenElement | null> {
     if (this.disposed || this.document === null) return null
-    const model = buildGraphModel({ document: withFeedStages(this.document, this.feed), tab: this.state.tab })
+    const built = buildGraphModel({ document: withFeedStages(this.document, this.feed), tab: this.state.tab })
+    const model = this.deps.costWithheld === true ? estimateCostsWithheld(built) : built
     const ticket = (this.asked += 1)
     let positions: Positions
     try {
@@ -2938,7 +3033,9 @@ export function graphLayoutClient(): LayoutClient {
 }
 
 /** graphScreen is the screen the entry mounts: the real cache over the real
- * worker, in the theme the console draws. */
-export function graphScreen(factory: GraphFactory, theme: GraphTheme): GraphScreen {
-  return new GraphScreen({ factory, client: graphLayoutClient(), theme })
+ * worker, in the theme the console draws, with the gate's answer for the
+ * `spend` view -- asked by the caller, which is the only place the question is
+ * answered. */
+export function graphScreen(factory: GraphFactory, theme: GraphTheme, costWithheld = false): GraphScreen {
+  return new GraphScreen({ factory, client: graphLayoutClient(), theme, costWithheld })
 }
