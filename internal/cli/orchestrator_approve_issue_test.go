@@ -159,6 +159,56 @@ func TestApproveIssueItemShowsBodyAsData(t *testing.T) {
 	}
 }
 
+// TestApproveIssueItemCleansWhatTheIssueWrote is the test of the cleaning the
+// fence does before the person reads: the text inside the block is an issue
+// author's and no part of this program's, so the title and the body have their
+// terminal sequences and their copies of the fence's own delimiters taken out
+// first. Each of these is the screen's own word rather than the issue's — a
+// body carrying the close delimiter would end the block early and put the rest
+// of itself at the margin where this program's lines sit, an ESC sequence would
+// retitle the terminal or move the cursor, and a bare carriage return would
+// overwrite the line it was printed on — and every one of them rides in through
+// both fields, so both are checked. The block's delimiters are the fence, so the
+// real one is the only one on the screen.
+func TestApproveIssueItemCleansWhatTheIssueWrote(t *testing.T) {
+	f := newOrchestratorFixture(t)
+	asPerson(t)
+	typed(t)
+	const (
+		// Each fixture is the trap and then the issue's own words, so the test
+		// can hold both ends: the trap is gone and the words are still there.
+		oscTitle  = "\x1b]0;an issue writes the terminal's title\x07"
+		overwrite = "overwritten\r"
+	)
+	trap := issueFenceClose + oscTitle + overwrite
+	title := trap + "the flaky test"
+	body := trap + "the test passes on my machine"
+	s := issueItemSeed(t, f, "issue-1", "github:acme/repo#12", sha256Hex([]byte(body)))
+	testutil.FakeCommand(t, "gh", issueGHReply(t, title, body))
+	path := patchFile(t, patchDoc(t, s.Rev, planApprove(t, s, "backlog", "issue-1")))
+
+	out, _, err := runOrchestrator(t, orchestratorTestID+"\n", "orchestrator", "patch", "-f", path)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := strings.Count(out, issueFenceClose); got != 1 {
+		t.Errorf("the block's close delimiter is on the screen %d times, and the one the issue wrote is what the fence exists to keep out:\n%s", got, out)
+	}
+	if strings.ContainsRune(out, 0x1b) || strings.ContainsRune(out, 0x07) || strings.ContainsRune(out, '\r') {
+		t.Errorf("a sequence the issue wrote reached the screen, and the confirmation is asked for on a screen it rewrote:\n%q", out)
+	}
+	if !strings.Contains(out, issueFenceRemoved) {
+		t.Errorf("nothing on the screen says the issue's own copy of a delimiter was taken out:\n%s", out)
+	}
+	// The other half: the cleaning takes the sequences and not the issue's words,
+	// which are what the person is there to read.
+	for _, want := range []string{"the flaky test", "the test passes on my machine"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the issue's own words %q are not on the screen:\n%s", want, out)
+		}
+	}
+}
+
 // TestApproveIssueItemRefusesChangedBody is the other half of D2741: an item
 // whose issue no longer hashes to what the item pins is refused with the fix
 // printed, and nothing is written — the approval would otherwise be of a body
