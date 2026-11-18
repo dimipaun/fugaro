@@ -663,9 +663,8 @@ type RepoSpec struct {
 	// profile's own provider, the project's allow_repos and the profile's own
 	// list, all three. A repository no profile admits is unmarked, and so is
 	// one whose provider no profile of the node serves. The profiles are
-	// asked in name order and the first admission answers, so two nodes that
-	// admit the repository answer the same way whatever order the node lists
-	// them in.
+	// walked in name order and the first admission answers, so a node answers
+	// the same way on every read.
 	//
 	// The admission is the whole rule, deliberately: this is a record of what
 	// the project's policy says about the repository, not a second copy of the
