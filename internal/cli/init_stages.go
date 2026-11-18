@@ -584,11 +584,21 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
-	// And T-RU5's, the fifth and last: what this release fixes about the
+	// And D2716's: the checkout's docs/backlog/ folder, folded into the
+	// project's standing backlog once (update_backlog.go). It is here for the
+	// reason the four above are — the converge has applied everything it had, so
+	// the installation it writes into is the one this run leaves behind — and it
+	// returns no error either: the folder is history the moment it is folded, and
+	// a checkout whose folder could not be folded is a warning on a run that
+	// otherwise converged, never a reason to fail one (the HARD RULE). It is the
+	// one step here that reads the checkout this run was started in, and the one
+	// that does nothing at all outside one.
+	e.foldBacklog(ctx)
+	// And T-RU5's, the sixth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed
-	// on the next line. It is reached on the same path the four above are —
-	// the converge applied everything it had — and it is the one of the five
+	// on the next line. It is reached on the same path the five above are —
+	// the converge applied everything it had — and it is the one of the six
 	// that no mode has to exclude twice: what it writes to the shared store is
 	// the store's own guarded write, and what it prints is a line nobody has
 	// to act on.
