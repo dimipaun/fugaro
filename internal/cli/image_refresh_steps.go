@@ -362,7 +362,12 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	// The base step before this one is untouched: the base images are the
 	// installation's, and the project's catalog entries and its check job are
 	// built FROM them whatever a profile admits.
-	if infra.SharedRepo(nodePolicy(ctx, &r.policy, t.lc), t.spec.Provider, t.spec.Name) {
+	//
+	// The provider is the checkout's own rather than the spec's, and the two
+	// are one value in a run (infra.Repo builds the spec's from this one): the
+	// mark is a question about the repository this checkout is, and the config
+	// is where that is stated, whatever a caller assembled the spec out of.
+	if infra.SharedRepo(nodePolicy(ctx, &r.policy, t.lc), t.cfg.Git.Provider, t.spec.Name) {
 		fmt.Fprintf(w, "  %s runs on the project's shared jobs, so its workflows' images are the project's catalog entries: this run rebuilds none of them (M7, D2312)\n", oneLineCLI(t.spec.Name))
 		return nil
 	}
