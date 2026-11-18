@@ -1123,6 +1123,7 @@ probe account carries predefined grants only).
 | 581 | A multi-repository catalog build and the leak scan ([`docs/shared-jobs-default/`](shared-jobs-default/implementation-plan.md), its **Check 581** and task **B4**; **D2301** for a build baking every repository the project's map puts on the entry, and **B3**/**R2** for the scan that stands before the promote): one catalog entry the project's image map puts two repositories on is built through Cloud Build, from the checkout its Dockerfile belongs to — the CLI refuses a build from any other repository by name — and the build's own record is read back: its note names every repository the map puts on the entry, its steps carry `catalog-scan` with SUCCESS before `promote`, the build itself ends SUCCESS, and the entry records the digest that build reported it made | See "Check 581" below; `bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-581_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call) | **One billable Cloud Build**, of an entry the catalog already lists, which promotes that entry's image; the check writes no entry, no mapping and no switch, launches no run and opens no pull request. **OWNER-RUN, NOT RUN.** |
 | 590 | The three Bitbucket token types, and what the verifier says for each ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; **U1**, **U2** and **U5** are the open questions it answers, and **R14** with **O7** — the repository token's 403 at `/user`, confirmed 2026-11-13 — is the row the other two are read against): a **repository**, a **project** and a **workspace** access token are each added to the sandbox installation through the release's own add path (`fugaro creds set bitbucket-token--<name> --type … --coverage …`, whose check runs **before** anything is written, **D2352**) — and each one is then asked Bitbucket itself: what `GET /2.0/user` answers and what its `kind` says there (**U1**), which scopes Bitbucket reports for it (**U2**), and whether a project token is accepted as `x-token-auth` for git over HTTPS and as `Bearer` for REST (**U5**). **U6** — whether a project token covers a repository moved into its project later — is **not** this check's: it is Check 180's, which moves the repository, and this check records no row for it | See "Check 590" below; `bash scripts/live-checks/check590.sh --repo <workspace>/<sandbox repo> --token-file <path> --project-token-file <path> --workspace-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check590_test.sh` drives it against fake `fugaro` and `git` beside a fake Bitbucket Cloud on a loopback port (the `curl` is the real one, and it has nowhere else to go) only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev` and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as the repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | Three `creds set` writes into the sandbox installation (three bundle keys and three records), a handful of Bitbucket API calls and three git reads: **no run is launched, no model call is made and nothing is built**. The published policy node is untouched, so nothing this check writes is visible to a run until you republish (`fugaro update --repo`) — which the check deliberately does not do. Each token file is read once, at mode 0600, and no value is printed or put on a command line; the Restore removes the scratch directory and every file a value was written into, and what stays is the three bundle keys and the three records the `verifier-*` rows name (`fugaro creds rm bitbucket-token--<name>`). **USER-RUN, NOT RUN.** |
 | 591 | Which of the installation's Bitbucket tokens serves **which** repository, and the one 403 a caller at your terminal can force ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; the selection rules **R2**, **R9**, **R12** and **C1.13**, the plan's **D2355**, and the service's own refusal **`unverified_run_identity`** for a caller that is not a run): with a **repository** token recorded for one sandbox repository and a **project** token recorded for the other — two repositories of **one** Bitbucket project, so two repositories, two tokens and one installation make the choice a real one — two runs (one per repository, because the released CLI has **no change-set launch**: `fugaro run --change-set` is Subscription Edition and not available in any build) are launched, waited for and read: the credentials service's **own audit lines** name the credential that served each run's git and Bitbucket-API calls, and the two must be **different** tokens. One call of the check's own, made on the route a run's git traffic takes with an identity token and **no** run identity, must be answered **403 `unverified_run_identity`** — the service refuses a caller that is not a run of the installation before any route and therefore before any token is chosen, which is the only 403 a check at your terminal can force (a coverage refusal is HTTP 400 with its class on the audit line) | See "Check 591" below; `bash scripts/live-checks/check591.sh --repo <workspace>/<first repo> --other-repo <workspace>/<second repo> --token-file <path> --project-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check591_test.sh` drives it against fake `gcloud`, `fugaro`, `git` and one loopback server answering both faces of the service only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev`, region `us-east5`, and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as either repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | **TWO full runs**: each clones, implements, reviews and opens a pull request, so two runs' worth of model spend, two branches and two pull requests on the two sandbox repositories — the block names each one and the Restore is to decline them. Both repositories must be **on the credentials-service switch** (`agent.auth: cascade`), which the audit rows are where you read. Beyond the runs: a handful of read-only Bitbucket API calls, two `fugaro creds ls` reads, one `gcloud logging read` per run (retried while Cloud Logging catches up, which lags the request by seconds), and ONE request that is refused. **No write to the installation**: no `creds set`, no policy publish and no `fugaro update` — every call of the check's own is a read, plus the one that is refused. Each token file is read once, at mode 0600, and no value is printed or put on a command line — the identity token it mints is written into a 0600 file and from there into a 0600 curl config. **USER-RUN, NOT RUN.** |
+| 611 | The implicit **Bitbucket** review-only job, end to end ([`docs/review-job/`](review-job/implementation-plan.md), its task **RJ10**, approved 2026-11-18, and its "Checks the plan takes"; **RJ8** read by its behaviour, and the reconciliation's UNVERIFIED items **U1**, **U2**, **U3** and **U4**): one `fugaro review --pr N` of a **sandbox Bitbucket** pull request resolves onto the installation's implicit review-only job for provider `bitbucket` — the name this release derives for (profile `standard`, provider `bitbucket`, account `default` + the review variant), and **not** a per-repository job and not a profile's variant — the run it starts ends `succeeded` with outcome `reviewed`, its verdict reads back naming the repository, the pull request and the head it read, and the job it ran on mounts **no credential of any kind** (no `FUGARO_BITBUCKET_TOKEN`, no `FUGARO_SECRET_ENVS`, no secret reference), so its clone of the head can only have been the credentials service's own **git route**: the check reads the service's **own audit lines** for that run and holds at least one of purpose `git` with status `ok`, naming a credential and **never a value**. What only a live installation answers is which job a launch resolves, whether the run it starts records a verdict, what the deployed job mounts and what the service served | See "Check 611" below; `bash scripts/live-checks/check611.sh --sandbox <a sandbox Bitbucket repository checkout> --pr <N>` is the whole of it, its sibling test `scripts/live-checks/check611_test.sh` drives it against fake `fugaro`, `gh`, `curl` and `gcloud` only (no network, no cloud), and **you** run it, at your own terminal, **after Check 191's open state is closed**, on the **sandbox** only, **never `belong`** (refused by name as a value this check was given or read — the installation, the repository, the project, the region, the account and the path — and a checkout whose origin is GitHub is refused too, this being the Bitbucket half), and so is a coding agent's session or a traced shell; **no agent runs any step of it**, and it asks you nothing | **ONE billable review run** of the sandbox repository — a review is shorter than a coding run but its model calls are real, on the sandbox's budget — plus the verdict objects it writes into that run's own record. It pushes nothing, opens no pull request and writes no comment (**spec §5**: a review never touches the repository), so there is **no branch and no pull request to decline**: what a coding check leaves behind, this one does not, and its `restore` row says so. Everything else the check does is a **read** — the checkout's own `origin`, `fugaro doctor --json`, `fugaro project policy show --json`, `gcloud run jobs list`, `fugaro runs ls`, `fugaro review show --json` and the service's own audit lines — and **no write is made to the installation**: no `creds set`, no policy publish and no `fugaro update`. On disk it is one scratch directory, removed from the exit trap whatever happened. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -21083,3 +21084,131 @@ row names what to remove by hand). What is left is what the runs made: **two bra
 on the two sandbox repositories**, which the block names — decline each pull request and delete its branch,
 and the runs' own records stay, which is what `fugaro runs ls` shows. **USER-RUN, NOT RUN: no agent runs
 any step of it.**
+
+## Check 611: the implicit Bitbucket review-only job, end to end (a sandbox Bitbucket repository and its own installation only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **RJ10** of
+[docs/review-job/implementation-plan.md](review-job/implementation-plan.md) (its "Checks the plan takes"),
+which the owner approved on **2026-11-18**; its **RJ9** is the same check on a GitHub repository (**Check
+610**). It is **run by you**, at your own terminal, **after Check 191's open state is closed**, and nothing
+below is a claim that a review runs on the implicit Bitbucket job: what it measures is one real review of one
+sandbox pull request, read back from the outside. The check is `scripts/live-checks/check611.sh` and its
+sibling test is `scripts/live-checks/check611_test.sh` (which drives it against fake `fugaro`, `gh`, `curl`
+and `gcloud` only, and is what `go test ./scripts` runs). **No agent runs any step of it**, and none has; it
+asks you nothing, and it prints one `CHECK 611 RESULT` block for you to paste back into this section.
+
+**What the check settles.** Five things the tree can only claim offline, all read from outside:
+
+- **RJ8, by its behaviour.** With the credentials service on and a Bitbucket repository recorded, an
+  installation with **no profiles** deploys ONE implicit review-only job for provider `bitbucket`,
+  `fugaro review --pr N` resolves a review onto it — and **not** onto a per-repository job, which a review
+  must never run on — the run finishes with its review recorded, and the job it ran on carries **no
+  credential at all**. That last reading is the one that matters: a job that mounts no Bitbucket token can
+  only have cloned the pull request's head through the service's own git route.
+- **U1, the base-image review path.** The job an implicit review runs on is deployed with the installation's
+  **base image** (`infra`'s `implicitReviewVariant` takes it from `lc.BaseImage`), and this is the review of
+  a repository that carries an image of its own: the two readings are the doctor's `base_images.base` and
+  the job's own container image, and they have to be the same name.
+- **U2, a project with no profiles admits the default account to a repository** (F4). The published policy
+  defines **no profile at all**, and its `accounts` block carries the default account with this repository
+  in its list, so the set the service admits for the repository is not empty.
+- **U3, the default account, whatever the project's model auth is** (an API key, or Vertex). The account the
+  review runs as is the default one — the implicit job's account segment is fixed where it was deployed —
+  and the credential that answered its **first** model call is read off the service's own `forward` line: an
+  account the node admits for this repository, or one of the two names this release uses for the project's
+  own key (`anthropic-api-key--project`, `provider-key--project`), which are not admitted per repository.
+- **U4, a live `terraform apply` with no project jobs.** The installation holds project jobs, and **every
+  one** of them is a job name this release's own derivation produces, while the published policy defines no
+  profile a coding job could have been built from. The golden plan test is the offline half; this is the
+  live one.
+
+**The readings it takes.** Each of these is a command of its own, and the row it produces says which one it
+read:
+
+- **The sandbox checkout is the repository and the installation.** It is a Fugaro repository's checkout
+  (`fugaro.yaml` present) whose own `origin` is a **Bitbucket** repository, and the sandbox is passed in
+  (`--sandbox`/`CHECK611_SANDBOX`): the repository this check reviews is the one that origin names, and the
+  installation, project, region and base image are read **from that checkout** (`fugaro doctor --json`), so
+  the check measures the installation you work in rather than one it guessed. A GitHub or GitLab checkout,
+  an origin naming no repository, a checkout that is not a Fugaro repository, and an origin carrying a
+  credential in its userinfo are each a refusal by name — the last one before the URL is matched, recorded
+  or printed.
+- **The published policy** (`fugaro project policy show --json`): the **project** admits the repository,
+  **no profile** of the document admits it (a profile that did would give the repository a shared project
+  job, and *its* review variant is what a review of it would run on — not the implicit job this check is
+  about), the budget mode is not `off` (the gateway is what reaches the service, and it exists only in
+  `observe` and `enforce`), and the node's `bitbucket_token` block admits the repository with
+  **`proxy: true`**. That last one is the launcher's own gate (`nodeBrokersBitbucket`) and the only way a
+  job that mounts no token reaches `bitbucket.org` at all.
+- **The one review**, launched with `fugaro review --pr <N> --project <the installation> --json` from the checkout. The launch document
+  is held to three things: it answered `launched`, its own `job` is the installation's implicit review-only
+  job of provider `bitbucket` — the name this release derives for (`config.DefaultJobProfile`, provider,
+  `config.ReviewVariantAccount` + `config.ReviewVariantSuffix`) — and its `account` is the default one,
+  which is the only account that job serves.
+- **The run's own row**, polled out of `fugaro runs ls --repo <R> --pr <N> --project <the installation> --no-cache --json` until it is terminal:
+  the run ended `succeeded` with outcome `reviewed`, it pushed nothing, and it names the pull request it
+  reviewed. A launch refused, a row that never appears or never ends is **not measured** (exit 2) with the
+  command to read that run yourself.
+- **The job itself**, out of `gcloud run jobs list`: the job the launch named carries
+  `FUGARO_CREDENTIALS_SERVICE_URL` and carries **no** `FUGARO_BITBUCKET_TOKEN`, no `FUGARO_SECRET_ENVS` and
+  no secret reference of any kind (**RJ8**, **CSR7**: the review-only variant mounts nothing at all). The
+  same document is where the installation's project jobs are read for U4 and where the job's container image
+  is read for U1.
+- **The verdict**, read back with `fugaro review show <slug>/<run-id> --json`: the artifact is there, and it
+  names the repository, the pull request, the head it read, and the account and model of the reviewer. A
+  review run that ended `succeeded` with no artifact is a review that recorded nothing.
+- **The credentials service's own lines for that run** (`gcloud logging read` over `credsvc: audit`,
+  filtered by the run id, oldest-first because the run's **first** model call is what U3 is read from): at
+  least one line of purpose **`git`** with status **`ok`** — the clone and the fetch of the head arriving at
+  the service rather than at a token the job holds, naming a credential and never a value, with no tier (the
+  purpose does not tell a fetch from a push, and a review pushes nothing) — and the earliest line of purpose
+  **`forward`** with status `ok`, whose credential name is U3's model half. A read that did not answer is
+  **not** the service having written no line: the rows say which it was and are left **unmeasured** (exit 2)
+  when the read failed.
+
+**What it costs, and what it leaves.** **One billable review run** of the sandbox repository: a review is
+shorter than a coding run and it touches nothing, but its model calls are real, on the sandbox's own budget
+(`CHECK611_RUN_SECONDS`, 2400, is how long it is waited for). What is left behind is that run's own record
+and its verdict objects, which stay in the installation exactly as every run's do — and **nothing on the
+repository**: a review pushes no branch, opens no pull request and writes no comment (**spec §5**), so
+unlike a coding check there is no branch to delete and no pull request to decline. Everything else is a
+**read** — the checkout's own `origin`, the doctor document, the published policy, the project's job list,
+the run's own row, the verdict and the service's own lines — and the check writes no cloud resource, no
+record, no object and no node: no `creds set`, no policy publish and no `fugaro update`. Each write it does
+make is the launcher's own (the task record and the run's record), under your own `fugaro`. On disk it is one
+scratch directory, removed from its exit trap whatever happened.
+
+**The commands.**
+
+```sh
+bash scripts/live-checks/check611.sh --sandbox <a sandbox Bitbucket repository checkout> --pr <N> --dry-run
+bash scripts/live-checks/check611.sh --sandbox <a sandbox Bitbucket repository checkout> --pr <N>
+```
+
+The dry run prints the plan and calls nothing. The real run needs `fugaro` **on PATH** (the review it drives
+is the one you have), `gcloud` authenticated as **you** (it is your credential that lists the jobs and reads
+the service's own lines), `git` for the one remote read that names the repository, `python3` for every
+`--json` document and `mktemp`. Progress goes to stderr and one `CHECK 611 RESULT` block goes to stdout at
+the end: paste that block here and nothing else. **Exit `0`** is every criterion that was measured holding;
+**`1`** is a measured criterion that did not hold, or a guard that stopped the check — a value naming
+`belong`, a checkout that is not a Fugaro repository, an origin that names no repository or names a host
+that is not Bitbucket, a repository admitted to a profile, a budget mode of `off`, a
+`bitbucket_token` block that does not admit the repository with `proxy: true`, a launch that resolved
+another job or another account, a run that did not end `succeeded`/`reviewed`, a job that carries any
+credential, a verdict about another repository or another pull request, no served `git` line, or a first
+`forward` line naming a credential outside what the node admits; **`2`** is the check not being able to
+measure (no `--sandbox` or no `--pr`, a tool missing, a sandbox that is not a directory, a repository the
+published project does not admit — a launch of it would be refused, so there is nothing to measure — and a
+doctor, policy, job-list, launch, listing, verdict or log read that did not answer). A key the run never reached reads
+`FAIL — not reached`. The knobs are `CHECK611_SANDBOX` (or `--sandbox`), `CHECK611_PR` (or `--pr`),
+`CHECK611_DRY_RUN`, `CHECK611_KEEP_SCRATCH`, `CHECK611_RUN_SECONDS` (2400), `CHECK611_POLL_SECONDS` (20),
+`CHECK611_LOG_AGE` (`1h`), `CHECK611_LOG_LIMIT` (200), `CHECK611_LOG_WAIT_SECONDS` (120),
+`CHECK611_LOG_POLL_SECONDS` (5), `CHECK611_DOCTOR_TIMEOUT_SECONDS` (180) and
+`CHECK611_CLI_TIMEOUT_SECONDS` (180). None of them can point the check at another installation: the project
+and the region are read from the checkout.
+
+**Restore.** The scratch directory, including from the exit trap on a `Ctrl-C` — the `scratch-removed` row
+is that reading, and a FAILed row names what to remove by hand. What is left is the review run's own record
+and its verdict objects, which the block names and which stay as every run's do; **nothing is left on the
+repository**, because a review pushes nothing, opens nothing and comments on nothing. **USER-RUN, NOT RUN:
+no agent runs any step of it.**
