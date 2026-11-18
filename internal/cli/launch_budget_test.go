@@ -1676,6 +1676,41 @@ func TestProxySinceHasAReleaseBullet(t *testing.T) {
 	}
 }
 
+// TestServiceAuthSinceHasAReleaseBullet: serviceAuthSince names 0.25.0, the
+// release that carries the runner half — B2.2's gatewayUpstream and
+// ServiceSwitchedAuth — and NOT the release the flip itself ships in
+// (0.26.0, B2.7), which is the pair D2072 splits across two releases. The
+// number is one release off from the obvious answer, so docs/release.md's
+// Before-you-tag list is the only thing that holds it to the release actually
+// cut and stops it sliding onto the flip's own release, which would refuse a
+// 0.25.0 image whose runner serves such a run correctly. Nothing in the code
+// ties the number the gate refuses on to the release whose runner reads the
+// service.
+//
+// The pinned phrases are that account: the runner half by name, the release
+// the flip ships in, and the "refuses too late" failure a value below 0.25.0
+// buys.
+func TestServiceAuthSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `serviceAuthSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no serviceAuthSince bullet: the checklist is where a release verifies the constant, and this constant is one release off from the flip it is for")
+	}
+	if !strings.Contains(bullet, "currently `\""+serviceAuthSince+"\"`") {
+		t.Errorf("docs/release.md's serviceAuthSince bullet does not carry the constant's release (%q)", serviceAuthSince)
+	}
+	for _, want := range []string{"gatewayUpstream", "ServiceSwitchedAuth", "not the release the flip ships in", "0.25.0 image is the oldest one that can carry both halves", "refuses too late"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's serviceAuthSince bullet does not say %q", want)
+		}
+	}
+}
+
 // imageGateOnly reports whether err is policyImageGate's refusal of a node
 // the image at base is older than, with none of the proxy refusal's words.
 func imageGateOnly(err error, base string) bool {
