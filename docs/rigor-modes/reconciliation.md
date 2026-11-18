@@ -918,7 +918,10 @@ moved the table's row from 141 to 142; `internal/cli/docs_mobile_orchestrator_te
 (Amended 2026-11-16: `internal/cli/docs_update_in_flight_test.go`, the pin over
 `docs/design/update-in-flight.md`'s installation row — the resident
 orchestrator's account and section 4.3's bindings ride that step, mobile plan
-task P5.1b — moved the table's row from 144 to 145.) (Amended 2026-11-18:
+task P5.1b — moved the table's row from 144 to 145.)
+
+(Amended 2026-11-17: `internal/cli/docs_repos_management_test.go`, the repos-management folder's
+pin, moved the table's row from 148 to 149.) (Amended 2026-11-18:
 `internal/cli/docs_check640_test.go`, the forge-labels plan's pin over its
 owner-run Check 640 in the register — the status labels on a real pull request,
 with its row and its section, the sibling test `scripts/live_checks_test.go`

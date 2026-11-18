@@ -70,7 +70,7 @@ const consoleExists = loadSite().facts.features.consoleDownloads
 
 /** The command and the plugin skill's own line about it (held to the skill below). */
 const WATCH = 'fugaro watch'
-const WATCH_TAIL = 'is the live screen of spend, repositories and running agents.'
+const WATCH_TAIL = 'is the live screen of spend, repositories and running agents'
 {
   const skill = readFileSync(path.join(REPO_ROOT, 'plugin/skills/working/SKILL.md'), 'utf8').replace(/[`*]/g, '').replace(/\s+/g, ' ')
   if (!skill.includes(`${WATCH} ${WATCH_TAIL}`)) {

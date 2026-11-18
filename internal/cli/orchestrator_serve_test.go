@@ -302,7 +302,9 @@ func (f *fakeOrchestratorStore) PutIfMatch(_ context.Context, path, _ string, _ 
 // tickForTest serves one tick against the store and returns the recorder and
 // what the pass logged. It goes through ServeHTTP and not through tick, because
 // the route is part of what is pinned: a pass that wrote nothing but answered
-// the wrong request would still be a service.
+// the wrong request would still be a service. P5.1d's half of the pass — the
+// launch requests the node holds, which this deployment reads and starts none of
+// — is driven in orchestrator_serve_launch_test.go.
 func tickForTest(t *testing.T, store *fakeOrchestratorStore, id string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	var log bytes.Buffer

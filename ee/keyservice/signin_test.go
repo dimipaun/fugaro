@@ -1038,11 +1038,12 @@ func TestDeviceCodeExpiresAndIsRateLimited(t *testing.T) {
 
 // TestDeviceCodePollsForItsWholeLife: the start's answer tells the CLI to ask
 // every five seconds for ten minutes, and the poll is not on the intake's own
-// rate — that bucket is the mail forms' (the fixture's is fifty an hour), and
+// rate — that bucket is the intake's own (the fixture's is fifty an hour), and
 // one sign-in's polls would empty it, ending the flow in the intake's uniform
-// refusal and locking every caller behind the same address out of the forms.
+// refusal and locking every caller behind the same address out of every door.
 // What bounds the poll is the interval it keeps per code, so the whole life of
-// one code is answered `pending` and the forms still answer beside it.
+// one code is answered `pending` and the intake's other doors still answer
+// beside it.
 func TestDeviceCodePollsForItsWholeLife(t *testing.T) {
 	f, _ := subscribed(t)
 	start := f.startDevice(t, "acme-laptop")
@@ -1056,9 +1057,12 @@ func TestDeviceCodePollsForItsWholeLife(t *testing.T) {
 		}
 	}
 	// The same address, still inside the intake's window: a sign-in must not
-	// cost the person signing in — or anyone sharing their address — the forms.
-	if rec := f.apply("someone@acme.example"); rec.Code != http.StatusOK {
-		t.Errorf("the free-seat form answered %d after a sign-in's polls, want %d: the poll is spending the intake's own rate", rec.Code, http.StatusOK)
+	// cost the person signing in — or anyone sharing their address — the
+	// routes the intake's own rate bounds. A renewal naming no key is refused
+	// on its shape (403), which is the answer the address's own bucket leaves
+	// it; a spent bucket would be 429 before the body was read.
+	if rec := f.raw(RouteRenew, "{}"); rec.Code != http.StatusForbidden {
+		t.Errorf("a renewal from this address answered %d (%s) after a sign-in's polls, want 403: the poll is spending the intake's own rate", rec.Code, rec.Body.String())
 	}
 }
 
@@ -1069,7 +1073,7 @@ func TestDeviceCodePollsForItsWholeLife(t *testing.T) {
 // recorded nowhere, so the poll table holds one row per code the start route
 // issued, and a caller above the poll's own rate is turned away before it reaches
 // that table — and a flood of guesses must therefore leave every table exactly as
-// it was, with the forms beside it still answering.
+// it was, with the intake's own doors beside it still answering.
 func TestDeviceCodePollsAreBounded(t *testing.T) {
 	f, _ := subscribed(t)
 	start := f.startDevice(t, "acme-laptop")
@@ -1095,9 +1099,11 @@ func TestDeviceCodePollsAreBounded(t *testing.T) {
 		t.Errorf("a flood of %d polls left the flow holding %+v, want %+v: an unauthenticated poll is growing what every route of the flow locks", at, after, before)
 	}
 	// The poll's rate is its own bucket and not the intake's, so the flood above
-	// must not have spent the forms' allowance for the address it came from.
-	if rec := f.apply("someone@acme.example"); rec.Code != http.StatusOK {
-		t.Errorf("the free-seat form answered %d after a flood of polls, want %d: the poll is spending the intake's own rate", rec.Code, http.StatusOK)
+	// must not have spent the allowance the address it came from shares with
+	// every other door: a renewal from it is refused on its shape and not with
+	// the limiter's answer.
+	if rec := f.raw(RouteRenew, "{}"); rec.Code != http.StatusForbidden {
+		t.Errorf("a renewal from this address answered %d (%s) after a flood of polls, want 403: the poll is spending the intake's own rate", rec.Code, rec.Body.String())
 	}
 }
 

@@ -233,6 +233,13 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		mode    string
 		managed bool
 		retire  bool
+		// extra is what a row adds to the fixture's local config and release
+		// what it makes this binary read as: only the Bitbucket proxy switch's
+		// row needs either of them, the flip being gated on the credentials
+		// service's block and on the release that carries the runner half
+		// (bitbucketProxyFlip).
+		extra   string
+		release string
 		want    []string
 		notWant []string
 	}{
@@ -277,10 +284,25 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			want:    []string{"1 run in flight", "retirement:", "orphaned job"},
 			notWant: []string{"budget mode", "policy:"},
 		},
+		{
+			// The Bitbucket proxy switch (S6, D2306), and the step whose reach
+			// is the one this row is the mutation check of: the policy stage
+			// writes it at the operator's own machine and publishes the block
+			// it implies, and this row's project has a Bitbucket repository and
+			// a deployed service, so the flip turns.
+			name: "the Bitbucket proxy switch this update turns on", mode: budget.ModeEnforce,
+			extra:   "credentials_service: { url: " + credentialsServiceURL + " }\n",
+			release: proxySince,
+			want:    []string{"1 run in flight", "bitbucket proxy switch", "next launch"},
+			notWant: []string{"budget mode", "policy:", "retirement"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newProjectFixture(t, "")
+			f := newProjectFixture(t, tc.extra)
 			f.db.Set(budget.PathMode, tc.mode)
+			if tc.release != "" {
+				useVersion(t, tc.release)
+			}
 			if tc.node != nil {
 				f.db.Set(projectpolicy.PathShared(), tc.node)
 			}

@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/plan"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 const (
@@ -38,13 +39,30 @@ const (
 // the parallelism skill. routing's own pointer is pinned the same way
 // (TestLaunchPointsAtRoutingSkill); without this one an edit could drop the
 // pointer and leave every other test green.
+//
+// The second pointer is the daemon's (R6, D2703): the Monitor section is where
+// a session goes to launch, watch and cancel, and with the project's daemon
+// live none of that is its to do — the work is queued and the `orchestrator`
+// skill governs it. A section that lists the commands without saying so is the
+// one an agent reads as a licence to keep launching while two orchestrators
+// work the same graph.
 func TestWorkingSkillPointsAtJobMax(t *testing.T) {
 	skill, err := os.ReadFile(workingSkillPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "the `parallelism` skill, which defines job max"; !strings.Contains(string(skill), want) {
+	text := string(skill)
+	if want := "the `parallelism` skill, which defines job max"; !strings.Contains(text, want) {
 		t.Errorf("%s never says %q", workingSkillPath, want)
+	}
+	monitor := skillSection(t, text, "Monitor")
+	for _, want := range []string{
+		"the `orchestrator` skill governs launching",
+		"never launch, sweep or watch runs yourself",
+	} {
+		if !strings.Contains(monitor, want) {
+			t.Errorf("%s's Monitor section never says %q, so a session is left driving runs the daemon is already driving:\n%s", workingSkillPath, want, monitor)
+		}
 	}
 }
 
@@ -275,6 +293,125 @@ func TestParallelismSkillDefinesJobMax(t *testing.T) {
 		if !strings.Contains(text, technique) {
 			t.Errorf("%s does not name the planning technique %q", parallelismSkillPath, technique)
 		}
+	}
+}
+
+// TestParallelismExampleGraphReads (R6): the example the skill shows carries
+// `tier` beside `size` and is still a document this build reads, which is what
+// S0 added the field for (D2711). The two keys are read off the parsed document
+// rather than matched as text — the parser is what says which key is which, and
+// a tier outside the vocabulary is a refusal rather than something a string
+// search finds — and the four names are read off internal/tier rather than
+// typed twice, so a vocabulary that grows or renames fails here as well as in
+// the read.
+//
+// The example shows both, which is the point of the line beside it: a node with
+// no `tier` is a task the planner did not size, so an example in which every
+// node carries one would teach the field as compulsory, and a plan written from
+// it would invent a tier for every task rather than leave the ones it cannot
+// size alone.
+func TestParallelismExampleGraphReads(t *testing.T) {
+	skill, err := os.ReadFile(parallelismSkillPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(skill)
+	doc, err := plan.Parse(parallelismSkillPath, []byte(firstJSONBlock(t, text)))
+	if err != nil {
+		t.Fatalf("the graph example in %s is not a document this build reads: %v", parallelismSkillPath, err)
+	}
+	tiered, untiered := 0, 0
+	for _, n := range doc.Nodes {
+		switch {
+		case n.Tier == nil:
+			untiered++
+		case !tier.Known(*n.Tier):
+			t.Errorf("the example's node %q carries the tier %q, which is not one of %s", n.ID, *n.Tier, tier.List())
+		default:
+			tiered++
+		}
+	}
+	if tiered == 0 {
+		t.Errorf("no node of the example in %s carries a tier, so the example shows nothing of the field the section beside it teaches", parallelismSkillPath)
+	}
+	if untiered == 0 {
+		t.Errorf("every node of the example in %s carries a tier, and a node with none is a task the planner did not size: an example that sizes them all teaches the field as compulsory", parallelismSkillPath)
+	}
+
+	// The line about the field: the four names, and what makes the tier a
+	// different statement from the size beside it — the one thing a planner
+	// copying the example has to know not to conflate.
+	var bullet string
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "- **`tier`**") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatalf("%s has no bullet about the tier field", parallelismSkillPath)
+	}
+	for _, v := range tier.Tiers {
+		if !strings.Contains(bullet, "`"+string(v)+"`") {
+			t.Errorf("the tier bullet does not name the tier %q, and it has to name every one the read accepts:\n%s", v, bullet)
+		}
+	}
+	if !strings.Contains(bullet, "not `size`") {
+		t.Errorf("the tier bullet never says how the tier differs from `size`, and the two are the pair a planner is likeliest to read as one:\n%s", bullet)
+	}
+}
+
+// TestParallelismNamesOnlyRealFlags (R6): the two commands this section sends a
+// planner to — the read that checks a graph, and the import that queues one —
+// are commands the released CLI answers to, resolved against the real tree with
+// their flags. The plugin's own lint checks every skill's commands and flags
+// (TestPluginSkillsLintClean); what this adds is that these two are still found
+// in this file's text, because a parser that stopped finding commands would
+// make that lint pass by checking nothing, and a planner left with no command
+// to check or queue a graph with is the failure the section exists to prevent.
+func TestParallelismNamesOnlyRealFlags(t *testing.T) {
+	files, err := loadSkillFiles(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ci := newCommandIndex()
+	var (
+		named []string
+		found *skillFile
+	)
+	for _, f := range files {
+		if f.skill != "parallelism" {
+			continue
+		}
+		found = f
+		for _, u := range f.units {
+			if u.userRuns || strings.Contains(u.info, "fugaro.yaml") {
+				continue
+			}
+			for _, c := range ci.commands(u.text) {
+				if len(c.args) == 0 || strings.ContainsAny(c.args[0], "<[…") {
+					continue // a mention of the program, or a placeholder
+				}
+				for _, v := range ci.checkCommand(f, u.line, u.text, c) {
+					t.Error(v)
+				}
+				named = append(named, c.path)
+			}
+		}
+	}
+	if found == nil {
+		t.Fatalf("no file of the parallelism skill was loaded")
+	}
+	for _, want := range []string{"fugaro plan graph", "fugaro orchestrator import"} {
+		if !slices.Contains(named, want) {
+			t.Errorf("the parallelism skill never names %q, which is one of the commands its graph section sends a planner to (named: %v)", want, named)
+		}
+	}
+	// And the check bites: a flag the command does not carry is refused, so the
+	// pass above is the tree's answer rather than an empty loop.
+	bad := ci.commands("fugaro orchestrator import --plan-not")
+	if len(bad) != 1 || len(ci.checkCommand(found, 1, "fugaro orchestrator import --plan-not", bad[0])) == 0 {
+		t.Errorf("`fugaro orchestrator import --plan-not` was accepted against the real tree, and `import` carries no such flag")
 	}
 }
 

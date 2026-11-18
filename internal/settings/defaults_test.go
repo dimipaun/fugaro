@@ -95,7 +95,7 @@ func TestRegistryDefaultsMatchApplyDefaults(t *testing.T) {
 		},
 		// The ladder's own two (E3): the minimal local file states no
 		// escalation: block, so each reader reads the loader's own answer back
-		// out — the shipped scale, and the switch that ships off (D2046).
+		// out — the shipped scale, and the switch that ships on (D2046).
 		"escalation.critical_path_factor": func() string {
 			return strconv.FormatFloat((&localcfg.Config{}).EscalationThresholds().CriticalPathFactor, 'f', -1, 64)
 		},

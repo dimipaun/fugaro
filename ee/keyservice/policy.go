@@ -17,7 +17,7 @@ package keyservice
 // The table is a value and not a set of constants on the claim set because a
 // key's policy is data: ee/licence's Claims carries each of these fields into
 // the key at issue, and this is the only place the server decides what a fresh
-// key of a tier says. Overriding a row for one deal is the admin page's (K2.6)
+// key of a tier says. Overriding a row for one deal is a hand-minted key's (K2.6)
 // and is not read here.
 //
 // Alongside the table are the two things a minted key carries that belong to the
@@ -171,7 +171,7 @@ type Policy struct {
 	// Kind is one of licence's three: `paid` for every row that is sold, `trial`
 	// for the trial, and `comped` for the free seat, which is the one comped row
 	// this table carries (D2199, D2184). The founder's own comped key is the
-	// admin page's and carries no row here (K2.6).
+	// hand-minted and carries no row here (K2.6).
 	Kind string
 	// Term is the row's lifetime, and it is what a mint request that names no
 	// term of its own is minted for: a first purchase is the plan's own period.
