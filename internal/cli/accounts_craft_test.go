@@ -230,6 +230,45 @@ func TestCraftAccessRefusesAnUnknownCredentialNamingTheKnown(t *testing.T) {
 	}
 }
 
+// TestAccessWithoutTheFlagNamesWhereToLook: --access is the whole of what
+// `craft set` and `grade set` write, so an invocation that carries none is
+// refused by the flag's own sentence — and that sentence says where the names are
+// read (the accounts listing, the pools listing, the built-in vertex) rather than
+// claiming this installation defines none. A sentence built from no config at all
+// said exactly that beside a file that declares two credentials, which sends the
+// owner looking for a lost `credentials:` block instead of at the flag they left
+// out. Nothing is written either way.
+func TestAccessWithoutTheFlagNamesWhereToLook(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"craft set", []string{"accounts", "craft", "set", "coder"}},
+		{"grade set", []string{"accounts", "grade", "set", "strong"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := accountsCraftHome(t, "")
+			before := readFileString(t, path)
+
+			_, _, err := execute(t, tc.args...)
+			if err == nil {
+				t.Fatal("a write ran with no --access at all")
+			}
+			for _, want := range []string{"--access", "accounts ls", "accounts pool ls", config.CredentialVertex} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q: %v", want, err)
+				}
+			}
+			if strings.Contains(err.Error(), "defines no credential") {
+				t.Errorf("the refusal says this installation defines nothing, which is false for this fixture: %v", err)
+			}
+			if got := readFileString(t, path); got != before {
+				t.Errorf("the refused write changed the file:\n%s", got)
+			}
+		})
+	}
+}
+
 // TestGradeAccessRefusesAGradeWithNoModel: a grade states the model its rung
 // runs as well as the credential its calls go out on, and one written with an
 // access and no model is a document no reader loads

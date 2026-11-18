@@ -123,7 +123,12 @@ func runAccountsCraftSet(cmd *cobra.Command, name string, o accountsAccessOption
 		return userErr("%s: a craft is one of %s", oneLine(name), strings.Join(config.CraftNames, ", "))
 	}
 	if o.access == "" {
-		return userErr("--access names the credential or pool the %s craft's calls go out on; this installation defines %s", name, accountsAccessKnown(nil))
+		// The flag is the whole of what this command writes, so its absence is
+		// answered by the flag's own sentence and not by an inventory: a list built
+		// from no config at all would read "this installation defines no credential
+		// and no pool" beside one that defines both, which is a false statement
+		// about the owner's file in place of the one fact that is missing.
+		return userErr("--access names the credential or pool the %s craft's calls go out on: `fugaro accounts ls` lists the accounts this installation defines, `fugaro accounts pool ls` the pools, and %s is built in", name, config.CredentialVertex)
 	}
 	sel, lc, err := settingsSelection()
 	if err != nil {
@@ -357,7 +362,10 @@ func runAccountsGradeSet(cmd *cobra.Command, grade string, o accountsAccessOptio
 		return userErr("%s: a grade is one of %s", oneLine(grade), strings.Join(config.GradeNames, ", "))
 	}
 	if o.access == "" {
-		return userErr("--access names the credential or pool the %s grade's calls go out on; this installation defines %s", grade, accountsAccessKnown(nil))
+		// The sentence `craft set` prints, for the same reason: what is missing is
+		// the flag, and no inventory read off no config can say anything true about
+		// the file this command would have written.
+		return userErr("--access names the credential or pool the %s grade's calls go out on: `fugaro accounts ls` lists the accounts this installation defines, `fugaro accounts pool ls` the pools, and %s is built in", grade, config.CredentialVertex)
 	}
 	sel, lc, err := settingsSelection()
 	if err != nil {
