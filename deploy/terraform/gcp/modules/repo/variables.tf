@@ -53,7 +53,9 @@ variable "installation" {
     # own account, which the workflow module turns into each job account's
     # roles/run.invoker grant, the drop of that job's model-secret accessors,
     # and the service account's own secretAccessor on each secret the job mounts
-    # (D2074, from `account`).
+    # (D2074, from `account`). This module reads the first two for the build
+    # account's own invoker grant (B4.4): one switch, so a build is admitted to
+    # the service on exactly the installations whose jobs are.
     credentials_service = optional(object({
       name    = string
       region  = string

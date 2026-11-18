@@ -365,6 +365,11 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 	// one project-level role its own step logs need (B6), and no role of any
 	// other row.
 	const buildIdentity = "serviceAccount:" + BuildIdentityAccountID + "@proj-1.iam.gserviceaccount.com"
+	// One repository's build account (B4.4, the member
+	// TestBuildAccountInvokesOnlyTheService reads out of the repo module): the
+	// shape a job account's member has under the same regex, which is why its
+	// cell below is an account's and not a kind of its own.
+	const buildAccount = "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com"
 	for _, c := range []struct {
 		typ, role, member string
 		covered           bool
@@ -402,6 +407,15 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		// the reader on the base and ghcr registries a build's own steps pull
 		// through — the whole of what the account may hold.
 		{runsvc, "roles/run.invoker", buildIdentity, true},
+		// The build account's one cell of its own (B4.4): the same invoker
+		// bit, on the same service, held by a repository's build account
+		// rather than by the project's build identity. It is an account's cell
+		// and not a kind's, and this is where that is pinned: the member is
+		// fugaro-b-<readable>-<8 hex>, which the table reads as one of
+		// Fugaro's accounts (jobAccountID), so a change that took toAccounts
+		// off this row would take the reach away from both kinds of account
+		// and fail here first.
+		{runsvc, "roles/run.invoker", buildAccount, true},
 		{repo, "roles/artifactregistry.writer", buildIdentity, true},
 		{repo, "projects/proj-1/roles/fugaroTagMover", buildIdentity, true},
 		// The reader is not a fifth cell of its own: this type's row carries

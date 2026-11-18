@@ -2251,6 +2251,14 @@ func (rs RepoSpec) Addresses() []string {
 	add(root + `google_project_iam_member.build["log_writer"]`)
 	add(root + `google_project_iam_member.build["build_submitter"]`)
 	add(root + "google_service_account_iam_member.build_self")
+	// The build account's own roles/run.invoker on the installation's
+	// credentials service (B4.4, modules/repo/build.tf), on the same switch
+	// the workflow module's job invoker grants read (D135): an installation
+	// that has not opted in plans no resource, so its address is not one this
+	// spec has.
+	if rs.Installation.CredentialsService != nil {
+		add(root + "google_cloud_run_v2_service_iam_member.build_credentials[0]")
+	}
 	for _, member := range operators {
 		add(root + "google_service_account_iam_member.operator_build[" + q(member) + "]")
 	}

@@ -1995,6 +1995,18 @@ var runAccountGrants = setOf(
 	// carries no storage permission, no permission to grant a role, no actAs and
 	// no token minting; the target is that one Cloud Run service.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.build_identity[0].member | for_each= | perms=`,
+	// Reviewed for B4.4: a repository's build account invokes the service too,
+	// on the same switch the job rows above read (modules/repo/build.tf, which
+	// reads var.installation.credentials_service where the workflow module
+	// reads its own var.credentials_service). It is the same row once more —
+	// the same role on the same service, to an account the repository's root
+	// creates — and roles/run.invoker carries no storage permission, no
+	// permission to grant a role, no actAs and no token minting; the target is
+	// that one Cloud Run service, not a job and not the runs bucket. Inert
+	// until B4.5 points the build's clone and its secret fetch at the service:
+	// today the build reads its credential exactly as it did before, and this
+	// row is the grant that makes the move possible.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.installation.credentials_service.name | google_service_account.build.member | for_each= | perms=`,
 	// Reviewed for B6: the identity's other reach, and the whole of it — the
 	// writer and the installation's tag mover on the ONE shared registry every
 	// catalog image is pushed into, which are the two roles the per-repository
