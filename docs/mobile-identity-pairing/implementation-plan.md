@@ -51,15 +51,18 @@ Inputs and failure modes the spec implies; each is pinned by a named task.
 | Removing a member deletes the member record, every device node of that email and every refresh family; restore after that is refused and role comes from the member record | P3, P4, P7, K2 |
 | The public service mounts only the mobile routes from a fail-closed allowlist and the private service mounts none of them | P5, I1 |
 | Restore applies the same policy as pairing (membership, provider, age, `mobile.enabled`, recorded `sub`) | K2 |
-| A costly start asks the phone's read-back; a modified client launching a costly mode without one is refused at the consumer; a message signed by another device's key is refused | J3, J5 |
+| A costly start asks the phone's read-back; a modified client launching a costly mode without one is refused by the mailbox gate | J3, J5a |
+| A device node with a public key accepts signatures only and refuses a MAC; a node without one accepts a MAC only; a message signed by another device's key is refused | J5b |
+| A newly paired phone verifies replies and heartbeats with the pinned consumer key; re-pairing deletes the old MAC key from the keychain, the Secret Manager copy and the local config | J5c |
+| A policy published before the `mobile` key existed reads `mobile.enabled` as off (`mobile_disabled`), never as the default on | P3, K2, P6 |
 | Running jobs: no `outcomes` entry means running within a bounded window; a run past the repository's total timeout or from an earlier day shows as stale, not running; an unreachable project shows as such | J1, J2 |
 
 ## Slices and tasks
 
 **Slice 1, ground and contracts.** DA, T0, C1, C2, owner-run M0 and Z0. Inert: documents, a pin test, two contracts with stubs.
 **Slice 2, the signer.** A1-A3, K1. Agent-written code and Terraform in `ee/`; the owner deploys (Check 730).
-**Slice 3, the project side.** P1-P7, K2, UP1.
-**Slice 4, the app.** M1-M3, K3, J1-J4, X1-X3, Z1-Z3.
+**Slice 3, the project side.** P0-P7, K2, UP1.
+**Slice 4, the app and the mailbox.** M1-M3, K3, J1-J4, J5a-J5c, X1-X3, Z1-Z3.
 **Slice 5, joins.** I1, I2, D1.
 
 Every task touches about five files or fewer. The Reviewer tier is the mode the task's own review runs at: `standard`, or `opus` with a mandatory independent review (`fugaro review --pr N`) for credentials, authentication, IAM, a write guard or a wire format. A contract over authentication is reviewed at the strictest rigor of its consumers before either side is written against it.
@@ -72,7 +75,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Command: `go test ./internal/cli/ -run 'Docs.*Mobile' -count=1`
 - Red step: add the pin for the amendment sentence; it fails until the README carries it.
 - Depends on: none; 
-- Commit: `docs(mobile): amendment notes for D114, D162, D226, D229 and D232 (D2786, D2790, D2799)`
+- Commit: `docs(mobile): amendment notes for D114, D162, D171, D226, D229 and D232 (D2786, D2790, D2799, O6)`
 - Reviewer tier: standard.
 
 ### T0: the pin test and the live checks
@@ -87,7 +90,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: standard.
 
 ### C1: the assertion and pairing wire contract
-- Acceptance: a Go package states the assertion claims (`iss`, `aud`, `sub`, `email`, `email_verified`, `provider`, `auth_time`, `jti`, `exp`, challenge), the request and response of pair, refresh, restore challenge, restore and revoke-self, the error codes (`provider_not_accepted` with the list, `auth_too_old`, `not_a_member`, `nonce_expired`, `strict_new_device_needs_qr`, `device_revoked`, `mobile_disabled`), the secure-store item names, the invite and member-record shapes and a `MemberStore` interface, the paired-list entry shape (opaque project id, endpoint, identity used), the interfaces `Verifier`, `Policy` (membership, accepted provider, authentication age, `mobile.enabled`, recorded `sub`), `InviteStore`, `RefreshStore`, `Minter`; a device public key in the pair request for proof of possession; the policy values a session response carries to the phone (costly modes, biometric switch, compaction threshold); a challenge-and-`jti` compare-and-set store interface; a stub that returns fixed shapes and does nothing else; one `vectors.json` both Go and JS read; `contract.md` says what each side may rely on.
+- Acceptance: a Go package states the assertion claims (`iss`, `aud`, `sub`, `email`, `email_verified`, `provider`, `auth_time`, `jti`, `exp`, challenge), the request and response of pair, refresh, restore challenge, restore and revoke-self, the error codes (`provider_not_accepted` with the list, `auth_too_old`, `not_a_member`, `nonce_expired`, `strict_new_device_needs_qr`, `device_revoked`, `mobile_disabled`), the secure-store item names, the invite and member-record shapes and a `MemberStore` interface, the paired-list entry shape (opaque project id, endpoint, identity used), the interfaces `Verifier`, `Policy` (membership, accepted provider, authentication age, `mobile.enabled`, recorded `sub`), `InviteStore`, `RefreshStore`, `Minter`; a device public key in the pair request for proof of possession and message signatures; the consumer's public key in the pair response (O12); the policy values a session response carries to the phone (costly modes, biometric switch, compaction threshold); a challenge-and-`jti` compare-and-set store interface; a stub that returns fixed shapes and does nothing else; one `vectors.json` both Go and JS read; `contract.md` says what each side may rely on.
 - Files: `internal/mobilesession/contract.go` (new), `internal/mobilesession/stub.go` (new), `shared/mobile-session/vectors.json` (new), `docs/mobile-identity-pairing/contract.md` (new).
 - Interfaces: produces everything the consumers P1, P3, P4, P7, K2, M1, M2, M3, K3 build against; the provider-side tasks A1, A2, K1 and P2 write to the shapes it fixes. Consumes D2783, D2785, D2791, D2792. These files belong to the contract and its changes alone.
 - Tests: a vector round-trip test in Go and a loader test in JS.
@@ -211,7 +214,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus**, independent review (credentials-service rules).
 
 ### P4: the credsvc session
-- Acceptance: a refresh endpoint rotates a device-key-bound refresh token (hashed at rest, replay revokes the family, 30-day idle expiry), re-checks membership and role, and mints a one-hour custom token through the token-signer account; revoke-self revokes the caller's family; a replayed token, a revoked family or a failed membership re-check **deletes the device node** so no Firebase refresh token keeps database access (F32); refresh needs proof of possession by the device key (C1's public key); the Firebase refresh token is never returned by this service.
+- Acceptance: a refresh endpoint rotates a device-key-bound refresh token (hashed at rest, replay revokes the family, 30-day idle expiry), re-checks membership and role, and mints a one-hour custom token through the separate device-only signer account (O8); revoke-self revokes the caller's family; a replayed token, a revoked family or a failed membership re-check **deletes the device node** so no Firebase refresh token keeps database access (F32); refresh needs proof of possession by the device key (C1's public key); the Firebase refresh token is never returned by this service.
 - Files: `internal/credsvc/mobile_session.go`, `internal/credsvc/mobile_refresh_store.go`, `internal/credsvc/mobile_mint.go`, `internal/credsvc/mobile_session_test.go` (all new).
 - Interfaces: implements C1's `RefreshStore`, `Minter`; consumes the device node shape (D2791).
 - Tests: `TestMobileSession*`.
@@ -221,24 +224,24 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Commit: `credsvc: rotating device-bound refresh and hourly custom tokens (D2783)`
 - Reviewer tier: **opus**, independent review.
 
-### P5: the mobile service and its grant (O1 and O8 answered)
-- Acceptance: the installation module adds a second Cloud Run service of the credsvc image with a public invoker and its own service account, mounting only the mobile routes from a fail-closed allowlist (the private service mounts none of them); its signing grant is `signJwt` on a **separate device-only signer account** (O8), not the existing budget signer, and the task states what that does and does not do: it can be disabled alone and audited alone, but IAM cannot limit the claims it signs (`orchestrator.tf` calls `signJwt` the widest grant in its table), so the restriction is the service's route allowlist and tests, and `SECURITY.md` says so; the database binding the mobile routes need (the custom role `fugaroCredentialsDatabase`, `firebasedatabase.instances.get` and `.update`: whole instance, rules bypassed; O8 asks for it); the service starts in `mobile` mode (I1 owns what that mode mounts); the existing service stays private and its invoker untouched; a cover row and a sentence say why; golden plans regenerate; the project-level custom role is unchanged.
-- Files: `deploy/terraform/gcp/modules/installation/credentials.tf`, `deploy/terraform/gcp/modules/installation/mobile_service.tf` (new), `internal/infra/tf/cover.go`, `internal/infra/credentials_mobile_test.go` (new), golden plans under `internal/infra/` from `scripts/gen-golden-plans.sh`.
+### P5: the mobile service, its signer account and its grants (O1 and O8 answered)
+- Acceptance: a second Cloud Run service of the credsvc image with a public invoker and its own runtime service account, started in `mobile` mode (I1 owns what that mode mounts); a **separate device-only signer account created in the Firebase project**, beside the existing `google_service_account.signer`, because Firebase accepts custom tokens only from an account of the Firebase project and an installation can span two projects; the runtime account holds `signJwt` on that signer account only; the one project-level binding added is the unchanged custom role `fugaroCredentialsDatabase` to the runtime account (whole instance, rules bypassed; O1); the existing service stays private and its invoker untouched; the task states that IAM cannot limit the claims the signer signs (`orchestrator.tf` calls `signJwt` the widest grant in its table) and that the route allowlist and tests are the control; a cover row with a sentence saying why; golden plans regenerate.
+- Files: `deploy/terraform/gcp/modules/installation/credentials.tf`, `deploy/terraform/gcp/modules/installation/mobile_service.tf` (new), `deploy/terraform/gcp/modules/firebase/iam.tf`, `internal/infra/tf/cover.go`, `internal/infra/credentials_mobile_test.go` (new), golden plans under `internal/infra/` from `scripts/gen-golden-plans.sh`.
 - Interfaces: none.
 - Tests: `TestCredentialsMobile*`, `terraform fmt`, `init`, `validate`, `terraform test`.
 - Command: `terraform fmt -check -recursive deploy/terraform && go test -tags terraform ./internal/infra/... -run 'TestCredentialsMobile' -count=1`
-- Red step: the test asserts the private service's invoker has no public member and no project-level grant is added; it fails with either.
+- Red step: the test asserts the private service's invoker has no public member, the signer is in the Firebase project, and the only project-level binding added is `fugaroCredentialsDatabase` to the new runtime account; it fails with any other.
 - Depends on: none; its grants have the owner's go in the plan (O1, 2026-11-18), and the task still needs its own go and an independent review before any apply.
-- Commit: `terraform: a public mobile service beside credsvc and its own signer account (D2782, F31)`
+- Commit: `terraform: a public mobile service beside credsvc with its own signer account (D2782, F31)`
 - Reviewer tier: **opus**, independent review before any apply.
 
 ### P6: project policy fields
-- Acceptance: the published project policy carries `mobile.enabled` (default on, answering only after `update` publishes the policy; O9 answered), `mobile.sync` (default on), `mobile.accepted_providers`, `mobile.max_auth_age` (24 hours), `mobile.strict_new_device` (off), `mobile.costly_modes` (`pro`, `critical`), `mobile.biometric_on_costly` (off); the fields are a tolerated top-level `mobile` key with **no `Version` bump**, because `version.go` says only `Version` can make a node refused and a bump would make runners on the previous image refuse it while `update` must be safe with runs in flight (`docs/design/update-in-flight.md`); the default of `mobile.enabled` waits on O9; `fugaro doctor` prints in one line what is stored in the identity project when sync is on.
-- Files: `internal/projectpolicy/mobile.go` (new), `internal/projectpolicy/version.go`, `internal/projectpolicy/mobile_test.go` (new), `internal/cli/doctor_mobile.go` (new); `schemas/project-layer.schema.json` only if the fields belong to the layer it pins.
+- Acceptance: the published project policy carries `mobile.enabled` (default on, answering only after `update` publishes the policy; O9 answered), `mobile.sync` (default on), `mobile.accepted_providers`, `mobile.max_auth_age` (24 hours), `mobile.strict_new_device` (off), `mobile.costly_modes` (`pro`, `critical`), `mobile.biometric_on_costly` (off); the fields are a tolerated top-level `mobile` key with **no `Version` bump**, because `version.go` says only `Version` can make a node refused and a bump would make runners on the previous image refuse it while `update` must be safe with runs in flight (`docs/design/update-in-flight.md`); a policy with no `mobile` key reads `mobile.enabled` as off, and the default on is what `update` writes when it publishes (O9); `fugaro doctor` prints in one line what is stored in the identity project when sync is on.
+- Files: `internal/projectpolicy/mobile.go` (new), `internal/projectpolicy/mobile_test.go` (new), `internal/cli/doctor_mobile.go` (new); `schemas/project-layer.schema.json` only if the fields belong to the layer it pins.
 - Interfaces: fields P3, K2, J3 and Z2 read.
 - Tests: `TestProjectPolicyMobile*`, a previous-version-converges test (the published policy tolerates unknown top-level keys, so the test reads the typed fields, not rejection).
 - Command: `go test ./internal/projectpolicy/ -run 'Mobile' -count=1`
-- Red step: reading `mobile.strict_new_device` from a published policy fails until the typed struct and its migration exist.
+- Red step: reading `mobile.strict_new_device` from a published policy fails until the typed struct exists; a policy with no `mobile` key must read as disabled.
 - Depends on: none.
 - Commit: `projectpolicy: the mobile switches and the accepted-provider list (D2784, D2785, D2796)`
 - Reviewer tier: **opus**.
@@ -327,7 +330,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Tests: `TestEmulatorRuns*` (the emulator tag as the neighbours use), `rules_test.go`.
 - Command: `go test -tags firebase ./internal/budget/rules/ -run 'TestEmulatorRuns' -count=1`
 - Red step: a device reading `outcomes` fails first.
-- Depends on: P6 (`version.go`). The read shows every run's `requestedBy` to viewers; the owner accepted that for all roles (O3).
+- Depends on: none (`RulesVersion` in `version.go` is J1's alone). The read shows every run's `requestedBy` to viewers; the owner accepted that for all roles (O3).
 - Commit: `rules: paired devices read outcomes (F30, D2797)`
 - Reviewer tier: **opus**.
 
@@ -343,7 +346,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: standard.
 
 ### J3: confirmation policy
-- Acceptance: cancel needs a spoken read-back; a start in a mode named by the session's `costly_modes` needs a read-back and, with the biometric switch, biometric re-auth through P5.1g's path; a plain start needs none; the kill switch and budget writes stay refused. The confirm machine and its Go mirror change in parity (`internal/mailbox/action.go`, `shared/confirm/vectors.json`, `TestConfirmParityWithShared`). **Enforcement at the consumer is J5's:** a launch is not a mailbox action today, so refusing a modified client waits on J5's typed launch action (O10); until J5 merges the read-back is the phone's and the caps bound the cost.
+- Acceptance: cancel needs a spoken read-back; a start in a mode named by the session's `costly_modes` needs a read-back and, with the biometric switch, biometric re-auth through P5.1g's path; a plain start needs none; the kill switch and budget writes stay refused. The confirm machine and its Go mirror change in parity (`internal/mailbox/action.go`, `shared/confirm/vectors.json`, `TestConfirmParityWithShared`). **The gate's refusal is J5a's:** a launch is not a mailbox action today, so refusing a modified client comes with J5a's typed launch action (O10); until J5a merges the read-back is the phone's and the caps bound the cost.
 - Files: `shared/confirm/policy.js` (new), `shared/confirm/index.js`, `shared/confirm/vectors.json`, `internal/mailbox/action.go`, `shared/confirm/policy.test.js` (new; it also covers the new export).
 - Interfaces: the C2 port's session policy values.
 - Tests: `confirm/policy.test.js`, `TestConfirmParityWithShared`.
@@ -354,7 +357,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus** (it changes a confirmation ruling).
 
 ### J4: start and cancel from the phone
-- Acceptance: the phone sends the existing `cancel` mailbox action and a start as a signed message to the orchestrator, as D162 and `shared/mailbox-schema/README.md` have it (a launch is a message, not an action; a typed launch action is O10); the phone hides what the session's role cannot do; the app's one write path stays the mailbox client. The consumer's refusal of a viewer by `internal/access` (`ActionLaunch`, `ActionCancel`) is the P5.1 consumer's, pinned there (see "What this plan does not own"); J4 tests only the phone side.
+- Acceptance: the phone sends the existing `cancel` mailbox action and a start as a signed message to the orchestrator, as D162 and `shared/mailbox-schema/README.md` have it (a launch is a message, not an action, until J5a adds the typed launch action and J5b switches the phone to it); the phone hides what the session's role cannot do; the app's one write path stays the mailbox client. The consumer's refusal of a viewer by `internal/access` (`ActionLaunch`, `ActionCancel`) is the P5.1 consumer's, pinned there (see "What this plan does not own"); J4 tests only the phone side.
 - Files: `shared/command/verbs.js` (new), `shared/command/index.js` (the module's sole entry point; it holds the closed command set), `shared/command/index.test.js`, `mobile/src/mailbox/client.js`.
 - Interfaces: the C2 port; `internal/mailbox/message.go` `Actions` as it is.
 - Tests: `write-path.test.js`, `command/index.test.js`.
@@ -364,16 +367,38 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Commit: `mobile: start and cancel through the mailbox (D2787)`
 - Reviewer tier: **opus** (write path).
 
-### J5: per-message signatures and a typed launch action (O6, O10)
-- Acceptance: every mailbox message is signed with the device's key (O6) and the consumer verifies it against the public key on the device node, so deleting the node ends acceptance at once; the schema gains a typed `launch` action with a `mode` field and a version bump, and the consumer refuses a launch in a `costly_modes` mode without a confirmation (the Go side of J3); phones paired the old way keep their D171 MAC until re-paired and the consumer accepts both during the transition; the phone's start becomes the typed launch.
-- Files: `internal/mailbox/message.go`, `internal/mailbox/verify.go` (new), `shared/mailbox-schema/vectors.json`, `mobile/src/mailbox/client.js`, `internal/mailbox/verify_test.go` (new).
-- Interfaces: the C2 port's `signMessage`; the device public key C1 carries; amends D171 and D162. The consumer that runs on the verified messages is the P5.1 orchestrator, not owned here.
-- Tests: `TestMessageSignature*`, the vectors in both languages, `write-path.test.js` still green.
+### J5a: the typed launch action (O10)
+- Acceptance: the mailbox field set gains a `launch` action with a `mode` field in both validators (Go `Actions` and the JS `ACTIONS`); there is no version field, the field set is the version, so readers that predate it refuse it fail-closed; the mailbox gate, as a library check this task owns and tests, refuses a launch in a costly mode that carries no confirmation. Wiring that check into the running consumer is the P5.1 orchestrator's (see "What this plan does not own").
+- Files: `internal/mailbox/message.go`, `internal/mailbox/action.go`, `shared/mailbox-schema/index.js`, `shared/mailbox-schema/vectors.generate.mjs` (which generates `vectors.json`), `internal/mailbox/action_test.go`.
+- Interfaces: amends D162 for costly modes; J3's confirm machine.
+- Tests: `TestAction*Launch*`, the generated vectors in both languages, `TestConfirmParityWithShared`.
+- Command: `go test ./internal/mailbox/ -count=1 && go test ./internal/cli/ -run 'TestConfirmParityWithShared' -count=1 && (cd shared && npm test)`
+- Red step: a costly launch with no confirmation is accepted by the gate first.
+- Depends on: J3 (the same file, `internal/mailbox/action.go`).
+- Commit: `mailbox: a typed launch action with a mode (D162, O10)`
+- Reviewer tier: **opus**, independent review (wire format).
+
+### J5b: device signatures on inbound messages (O6)
+- Acceptance: a phone paired the new way signs every mailbox message with its device key through the session port, and the gate verifies it against the public key on the device node; **the device node chooses the scheme**: a node with a public key accepts signatures only and refuses a MAC-tagged message, a node without one accepts a MAC only; a message signed by another device's key is refused; deleting the node ends acceptance at once; the phone's start becomes the typed launch.
+- Files: `internal/mailbox/mac.go`, `internal/mailbox/verify.go` (new), `shared/mailbox-schema/index.js`, `mobile/src/mailbox/mac.js`, `mobile/src/mailbox/client.js`.
+- Interfaces: the C2 port's `signMessage`; the device public key C1 carries; amends D171.
+- Tests: `TestGateSignature*` (including the downgrade case), `mailbox/mac.test.js`, `write-path.test.js` still green.
 - Command: `go test ./internal/mailbox/ -count=1 && (cd mobile && npm test -- src/mailbox)`
-- Red step: a message signed by another device's key, and a costly launch with no confirmation, are refused first.
-- Depends on: C2 (replaces the edge to M3), J3 and J4 (the same files: `internal/mailbox/action.go` is J3's, `mobile/src/mailbox/client.js` is J4's).
-- Commit: `mailbox: per-message device signatures and a typed launch action (D171, D162, O6, O10)`
-- Reviewer tier: **opus**, independent review (wire format over authentication).
+- Red step: a MAC-tagged message for a node that has a public key is accepted first.
+- Depends on: C2 (replaces the edge to M3), J5a (the same file, `shared/mailbox-schema/index.js`), J4 (the same file, `mobile/src/mailbox/client.js`).
+- Commit: `mailbox: device signatures chosen by the device node (D171, O6)`
+- Reviewer tier: **opus**, independent review (authentication).
+
+### J5c: the consumer's signing key and retiring the MAC key (O12)
+- Acceptance: the consumer signs outbox replies and heartbeats with its own key pair for phones paired the new way (the MAC signers stay for the others); its public key is published where the pairing endpoint can return it and the phone pins it and verifies with it; re-pairing a phone deletes its old MAC key from all three homes: the laptop keychain (`pairStoreMACKey`), the Secret Manager copy (`pairWriteCloudCopy`, `internal/mailbox/keychain/cloud.go`) and the local config item; a new pairing produces no MAC key and no `Delivery.MACKey`.
+- Files: `internal/mailbox/mac.go`, `internal/cli/pair.go`, `internal/mailbox/keychain/cloud.go`, `internal/localcfg/localcfg.go`, `mobile/src/mailbox/client.js`.
+- Interfaces: the consumer public key in C1's pair response; `NewOutboxSigner`, `NewHeartbeatSigner`.
+- Tests: `TestOutboxSignature*`, `TestPairRetiresMACKey*`, `mailbox/client.test.js`.
+- Command: `go test ./internal/mailbox/ ./internal/cli/ -run 'OutboxSignature|PairRetiresMACKey' -count=1 && (cd mobile && npm test -- src/mailbox)`
+- Red step: after re-pairing, the old MAC key is still in the keychain first.
+- Depends on: J5b (the same files, `internal/mailbox/mac.go` and `mobile/src/mailbox/client.js`), P7 (the same file, `internal/cli/pair.go`).
+- Commit: `mailbox: a pinned consumer key for replies; re-pairing retires the MAC key (D171, O12)`
+- Reviewer tier: **opus**, independent review (credentials).
 
 ### X1: one transcript for voice and text
 - Acceptance: voice and text are two views of one conversation with the operator's session; switching loses nothing; replies arrive through the mailbox outbox.
@@ -432,18 +457,18 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Tests: `session/surfaces.test.js`.
 - Command: `cd mobile && npm test -- src/session/surfaces`
 - Red step: with the stub mounted, the sign-out case must fail.
-- Depends on: J2, J3, J4, J5, X1, X2 (the same file, `mobile/src/text/index.js`), M3.
+- Depends on: J2, J3, J4, J5b, J5c, X1, X2 (the same file, `mobile/src/text/index.js`), M3.
 - Commit: `mobile: surfaces on the real session port`
 - Reviewer tier: standard.
 
 ### D1: SECURITY.md, its mirror and the claims
-- Acceptance: `SECURITY.md` has a subsection in the existing shape (what is reachable, what a stolen token or phone reaches, what revocation does not do, the single point of compromise of F8, the reach of the public service's signer account, which IAM cannot limit to device claims (O8), residual risk), mirrored byte for byte into `website/content/security.md` by `go run ./internal/clidoc`; `website/data/mobile-claims.yaml` says the identity project is a runtime dependency of pairing and restore and what the synced list holds (D2798).
+- Acceptance: `SECURITY.md` has a subsection in the existing shape (what is reachable, what a stolen token or phone reaches, what revocation does not do, the single point of compromise of F8, the reach of the public service's signer account, which IAM cannot limit to device claims (O8), the mailbox authority a compromise of that service gains by planting a device key (O13), residual risk); the existing paragraph on the pairing key's cloud copy is amended for phones that no longer have one (O6), mirrored byte for byte into `website/content/security.md` by `go run ./internal/clidoc`; `website/data/mobile-claims.yaml` says the identity project is a runtime dependency of pairing and restore and what the synced list holds (D2798).
 - Files: `SECURITY.md`, `website/content/security.md`, `website/data/mobile-claims.yaml`, `internal/cli/docs_mobile_identity_security_test.go` (new).
 - Interfaces: none.
 - Tests: `TestWebsiteSecurityPage*`, `TestDocsMobileIdentitySecurity*`, and `npm run check` in `website/` (which runs `test/mobile.mjs` over the claims file).
 - Command: `go run ./internal/clidoc && go test ./internal/cli/ -run 'WebsiteSecurityPage|DocsMobileIdentitySecurity' -count=1`
 - Red step: the new pin fails before the subsection exists.
-- Depends on: I1 (it describes what I1 wires).
+- Depends on: I1 (it describes what I1 wires), J5c (it describes the mailbox keys as they end up).
 - Commit: `security: the identity project, the session and the synced list (D2798, F27)`
 - Reviewer tier: **opus**.
 
@@ -466,22 +491,22 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 
 | Level | Tasks |
 | --- | --- |
-| 0 | DA, T0, P0, C1, C2, M0*, Z0*, P5†, A1, A2, A3, P2, P6, K1 |
-| 1 | P1, P3, P4, K2, P7, M1, M2, J1, J2, J3, J4, X1, Z1 |
-| 2 | M3, X2, Z2, J5 |
-| 3 | K3, X3, Z3, I2 |
-| 4 | I1 |
-| 5 | D1, UP1 |
+| 0 | DA, T0, P0, C1, C2, M0*, Z0*, P5†, A1, A2, A3, P2, P6, K1, J1 |
+| 1 | P1, P3, P4, K2, P7, M1, M2, J2, J3, J4, X1, Z1 |
+| 2 | M3, X2, Z2, J5a |
+| 3 | K3, X3, Z3, J5b |
+| 4 | I1, J5c |
+| 5 | D1, UP1, I2 |
 
 \* owner-run, on devices. † grants given in the plan (O1, O8); the task still needs its own go. The graph also lists the anticipated contract changes CR1 and CR2 (level 2 after C1 and P3; level 3 after C2, J3 and Z2); they run only if a consumer finds its contract wrong, and only after it.
 
 **Critical path (as the read prints it):** `C1 -> M1 -> M3 -> K3 -> I1 -> D1`, bottleneck C1. It is sequential because M3 builds on M1's identity records, K3 needs M3's real storing and refresh behaviour, and I1 joins everything.
 
-**Estimate, as the read printed it:** `ready in 540–2160 min, no history yet for 40 tasks (40 tasks; seeds for 40; from the seeds: no history is cached on this machine yet)`. This is informational and reserves no budget: it is what the tiers and this machine's history predict, and it moves as runs finish.
+**Estimate, as the read printed it:** `ready in 540–2160 min, no history yet for 42 tasks (42 tasks; seeds for 42; from the seeds: no history is cached on this machine yet)`. This is informational and reserves no budget: it is what the tiers and this machine's history predict, and it moves as runs finish.
 
 ### The dependencies the plan broke (14) and what they were
 
-`fugaro plan graph` reports **14 broken, 28 kept, 6 added; before 8 tasks, weight 17; after 6 tasks, weight 14; improves.** Each is an edge where the dependent needed an interface only:
+`fugaro plan graph` reports **14 broken, 31 kept, 6 added; before 10 tasks, weight 20; after 6 tasks, weight 14; improves.** Each is an edge where the dependent needed an interface only:
 
 | Dependent | Was waiting on | Contract | Integration | Why an interface is enough |
 | --- | --- | --- | --- | --- |
@@ -498,7 +523,7 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 | J3 | M3 | C2 | I2 | the policy needs the session's role |
 | J4 | M3 | C2 | I2 | the verbs send through the session port |
 | X1 | M3 | C2 | I2 | the transcript runs over the session port |
-| J5 | M3 | C2 | I2 | message signing goes through the port's `signMessage`, not M3's key code |
+| J5b | M3 | C2 | I2 | message signing goes through the port's `signMessage`, not M3's key code |
 
 ### The edges kept, and why a contract would not do
 
@@ -512,8 +537,10 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 | M3 after M1 | M3 attaches each session's refresh state to the identity records M1 defines, an identity id keying the per-identity items: M1's store behaviour, not only a shape |
 | K3 after M3 | restore hands each project's first session to M3's store and loop, so K3 needs M3's real storing behaviour |
 | M1, M2, X3 after M0; Z1, Z2, Z3 after Z0 | behaviour: which packages work, what the session exposes, are data a spike finds |
-| J1 after P6; J3 after P6; Z2 after P6 | `version.go` and the policy fields it carries |
-| J5 after J3 and J4 | `internal/mailbox/action.go` is J3's and `mobile/src/mailbox/client.js` is J4's |
+| J3 after P6; Z2 after P6 | the policy fields P6 defines |
+| J5a after J3 | the same file, `internal/mailbox/action.go` |
+| J5b after J5a and J4 | `shared/mailbox-schema/index.js` and `mobile/src/mailbox/client.js` |
+| J5c after J5b and P7 | `internal/mailbox/mac.go`, `mobile/src/mailbox/client.js` and `internal/cli/pair.go` |
 | X2 after X1; X3 after X2 | `text/index.js`; the share lands in X2's composer |
 | Z2 after Z1; Z3 after Z2 | `context/index.js` |
 | I1, I2, D1, UP1 after what they join or describe | the integration runs both sides; the documents and the update describe behaviour I1 wires |
@@ -527,23 +554,25 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 
 | File | Writers, by level |
 | --- | --- |
-| `internal/cli/pair.go` | P2 (0), P7 (1) |
+| `internal/cli/pair.go` | P2 (0), P7 (1), J5c (4) |
 | `internal/credsvc/audit.go` | P0 (0) |
 | `shared/confirm/*`, `internal/mailbox/action.go` | J3 (1) |
 | `shared/command/*` | J4 (1) |
-| `mobile/src/mailbox/client.js` | J4 (1), J5 (2) |
-| `internal/mailbox/*`, `shared/mailbox-schema/vectors.json` | J3 (1, `action.go`), J5 (2) |
-| `internal/projectpolicy/version.go` | P6 (0), J1 (1) |
+| `mobile/src/mailbox/client.js` | J4 (1), J5b (3), J5c (4) |
+| `internal/mailbox/action.go` | J3 (1), J5a (2) |
+| `internal/mailbox/mac.go` | J5b (3), J5c (4) |
+| `shared/mailbox-schema/index.js` | J5a (2), J5b (3) |
+| `internal/projectpolicy/version.go` | J1 (0) |
 | `internal/projectpolicy/mobile.go` | P6 (0), Z2 (2) |
 | `mobile/src/accounts/secure-store.js` | M1 (1) |
 | `mobile/src/accounts/secret.js` | M3 (2) |
 | `mobile/src/accounts/expo-secure-store.js` | K3 (3) |
 | `mobile/package.json` | M1 (1), X3 (3) |
 | `internal/cli/pair_events.go` | P2 (0) |
-| `mobile/src/text/index.js` | X1 (1), X2 (2), I2 (3) |
-| `mobile/src/jobs/index.js` | J2 (1), I2 (3) |
+| `mobile/src/text/index.js` | X1 (1), X2 (2), I2 (5) |
+| `mobile/src/jobs/index.js` | J2 (1), I2 (5) |
 | `mobile/src/context/index.js` | Z1 (1), Z2 (2), Z3 (3) |
-| `shared/mobile-session/stub.js` | C2 (0), I2 (3, deletes it) |
+| `shared/mobile-session/stub.js` | C2 (0), I2 (5, deletes it) |
 | `internal/mobilesession/stub.go` | C1 (0), I1 (4, deletes it) |
 | `ee/identitysvc/terraform/*` | A3 and K1 write different files |
 | `docs/gcp-live-checklist.md` | T0 (0) |
@@ -568,7 +597,7 @@ Order: Check 730 (apply the identity project), Check 731 (provider consoles), re
 ## Considered and declined
 
 - Putting identity in the existing `fugaro-prod` (D2781): one boundary for website deploys, licence signing and every customer's pairing.
-- A new per-installation service for the security role (D2782): the owner chose credsvc instead; its consequences are P0, P3-P5, O1, O8 and T1. The second public Cloud Run service of the credsvc image (F31) is close to this declined option in substance; O8 asks the owner to confirm it.
+- A new per-installation service for the security role (D2782): the owner chose credsvc instead; its consequences are P0, P3-P5, O1, O8 and T1. The second public Cloud Run service of the credsvc image (F31) is close to this declined option in substance; the owner confirmed it, and reconfirmed it after the signer correction (O8).
 - Plain Firebase sessions (D2783): the spec's device-bound, idle-expiring, re-checked refresh is not achievable with them.
 - Always requiring a QR for a new device (D2784): drops the spec's continuity; the strict switch offers it per project.
 - A workspace user directory (D2780): reverses D1295 on `main`; open pull request #3195 proposes workspace people and roles, so O5 re-checks this if it lands.
@@ -582,8 +611,8 @@ The P5.1 always-on orchestrator that consumes the mailbox, and P5.1g's biometric
 
 ## Coverage
 
-Every decision and finding lands in a task or in a declined note: D2780 (P3, P6), D2781 (A3), D2782 (P0, P3-P5), D2783 (P4, M3), D2784 (K2, P6, D1), D2785 (P3, P6, M1), D2786 (J3, P6, DA), D2787 (J4), D2788 (X1, X3), D2789 (Z0-Z3), D2790 (M1, DA), D2791 (P2, P3), D2792 (C1, A1, A2, P1), D2793 (M1), D2794 (P4, P7, M3), D2795 (UP1), D2796 (P6), D2797 (J1, J2), D2798 (D1), D2799 (P2). F1-F41 land in the same tasks (F31 in P5, F32 in P4, P7, K2, F33 in O6 and P3, F34 in P3, F35 in C1 and K2, F36 in J3, F37 in U9, F38 in P1 and O7, F39 across A1, K1, P1, P3, P4, C1 and M0, F40 in O9, F41 in O5); F24 in the conventions; F26 in T0, DA and the task commits; F28, F29 in Checks 731, 734, 736.
+Every decision and finding lands in a task or in a declined note: D2780 (P3, P6), D2781 (A3), D2782 (P0, P3-P5), D2783 (P4, M3), D2784 (K2, P6, D1), D2785 (P3, P6, M1), D2786 (J3, J5a, P6, DA), D2787 (J4), D2788 (X1, X3), D2789 (Z0-Z3), D2790 (M1, DA), D2791 (P2, P3), D2792 (C1, A1, A2, P1), D2793 (M1), D2794 (P4, P7, M3), D2795 (UP1), D2796 (P6), D2797 (J1, J2), D2798 (D1), D2799 (P2). F1-F41 land in the same tasks (F31 in P5, F32 in P4, P7, K2, F33 in O6, O12, J5b and J5c, F34 in P3, F35 in C1 and K2, F36 in J3, F37 in U9, F38 in P1 and O7, F39 across A1, K1, P1, P3, P4, C1 and M0, F40 in O9, F41 in O5); F24 in the conventions; F26 in T0, DA and the task commits; F28, F29 in Checks 731, 734, 736.
 
 ## Open items the plan carries
 
-**Answered 2026-11-18:** O6 (a per-message session signature in place of the MAC: J5, not the recommendation), O8 (a public second service with a separate signer account; the owner reconfirmed the corrected consequence, that IAM cannot limit its claims and the route allowlist, tests and review are the control), O10 (a typed launch action: J5), O11 (D2799 confirmed), O1 (the signer account's grants, the database role and the cover row: the owner's go in the plan), O3 (the `outcomes` read for all roles) and O9 (`mobile.enabled` on in policy, the routes answering only after `update` publishes it). **Still open:** O2 (the amended D162 and D232 wording), O4 (the defaults), O5 (#3195), O7 (key pinning). Each is in [reconciliation.md](reconciliation.md).
+**Answered 2026-11-18:** O6 (a per-message session signature in place of the MAC: J5b and J5c, not the recommendation), O8 (a public second service with a separate signer account; the owner reconfirmed the corrected consequence, that IAM cannot limit its claims and the route allowlist, tests and review are the control), O10 (a typed launch action: J5a), O11 (D2799 confirmed), O12 (a consumer signing key the phone pins: J5c), O13 (the public service's mailbox reach accepted and stated in `SECURITY.md`: D1), O1 (the signer account's grants, the database role and the cover row: the owner's go in the plan), O3 (the `outcomes` read for all roles) and O9 (`mobile.enabled` on in policy, the routes answering only after `update` publishes it). **Still open:** O2 (the amended D162 and D232 wording), O4 (the defaults), O5 (#3195), O7 (key pinning). Each is in [reconciliation.md](reconciliation.md).

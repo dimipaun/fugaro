@@ -20,7 +20,7 @@
     },
     {
       "id": "DA",
-      "title": "amendment notes in the mobile-auth and mobile folders (D114, D162, D232)",
+      "title": "amendment notes in the mobile-auth and mobile folders (D114, D162, D171, D226, D229, D232)",
       "run": null,
       "version": null,
       "size": 1,
@@ -121,7 +121,7 @@
     },
     {
       "id": "P5",
-      "title": "public mobile service beside credsvc and its signer grant (needs O1, O6, O8)",
+      "title": "public mobile service beside credsvc with its own signer account",
       "run": null,
       "version": null,
       "size": 2,
@@ -131,6 +131,7 @@
         "paths": [
           "deploy/terraform/gcp/modules/installation/credentials.tf",
           "deploy/terraform/gcp/modules/installation/mobile_service.tf",
+          "deploy/terraform/gcp/modules/firebase/iam.tf",
           "internal/infra/tf/cover.go",
           "internal/infra/credentials_mobile_test.go"
         ]
@@ -267,7 +268,6 @@
         "prediction": true,
         "paths": [
           "internal/projectpolicy/mobile.go",
-          "internal/projectpolicy/version.go",
           "internal/projectpolicy/mobile_test.go",
           "internal/cli/doctor_mobile.go"
         ]
@@ -460,8 +460,26 @@
       }
     },
     {
-      "id": "J5",
-      "title": "per-message device signatures and a typed launch action",
+      "id": "J5a",
+      "title": "the typed launch action",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/mailbox/message.go",
+          "internal/mailbox/action.go",
+          "shared/mailbox-schema/index.js",
+          "shared/mailbox-schema/vectors.generate.mjs",
+          "internal/mailbox/action_test.go"
+        ]
+      }
+    },
+    {
+      "id": "J5b",
+      "title": "device signatures on inbound messages, chosen by the device node",
       "run": null,
       "version": null,
       "size": 2,
@@ -469,10 +487,28 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/mailbox/message.go",
+          "internal/mailbox/mac.go",
           "internal/mailbox/verify.go",
-          "internal/mailbox/verify_test.go",
-          "shared/mailbox-schema/vectors.json",
+          "shared/mailbox-schema/index.js",
+          "mobile/src/mailbox/mac.js",
+          "mobile/src/mailbox/client.js"
+        ]
+      }
+    },
+    {
+      "id": "J5c",
+      "title": "the consumer signing key and retiring the MAC key",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/mailbox/mac.go",
+          "internal/cli/pair.go",
+          "internal/mailbox/keychain/cloud.go",
+          "internal/localcfg/localcfg.go",
           "mobile/src/mailbox/client.js"
         ]
       }
@@ -710,14 +746,39 @@
       "reason": "same file, internal/cli/pair.go"
     },
     {
-      "task": "J5",
+      "task": "J5a",
       "needs": "J3",
-      "reason": "internal/mailbox/action.go is J3's and mobile/src/mailbox/client.js is J4's"
+      "reason": "the same file, internal/mailbox/action.go"
     },
     {
-      "task": "J5",
+      "task": "J5b",
+      "needs": "J5a",
+      "reason": "the same file, shared/mailbox-schema/index.js"
+    },
+    {
+      "task": "J5b",
       "needs": "J4",
-      "reason": "internal/mailbox/action.go is J3's and mobile/src/mailbox/client.js is J4's"
+      "reason": "the same file, mobile/src/mailbox/client.js"
+    },
+    {
+      "task": "J5c",
+      "needs": "J5b",
+      "reason": "the same files, internal/mailbox/mac.go and mobile/src/mailbox/client.js"
+    },
+    {
+      "task": "J5c",
+      "needs": "P7",
+      "reason": "the same file, internal/cli/pair.go"
+    },
+    {
+      "task": "I2",
+      "needs": "J5c",
+      "reason": "the surfaces run on the final mailbox keys"
+    },
+    {
+      "task": "D1",
+      "needs": "J5c",
+      "reason": "it describes the mailbox keys as they end up"
     },
     {
       "task": "P3",
@@ -788,11 +849,6 @@
       "task": "CR2",
       "needs": "J3",
       "reason": "raised by J3 when it finds the contract wrong"
-    },
-    {
-      "task": "J1",
-      "needs": "P6",
-      "reason": "version.go and the policy fields"
     },
     {
       "task": "J3",
@@ -1000,7 +1056,7 @@
       "reason": "built against the contract's shapes and stub, not the provider's behaviour"
     },
     {
-      "task": "J5",
+      "task": "J5b",
       "needs": "C2",
       "reason": "built against the contract's shapes and stub, not the provider's behaviour"
     },
@@ -1021,7 +1077,7 @@
     },
     {
       "task": "I2",
-      "needs": "J5",
+      "needs": "J5b",
       "reason": "wires the sides the contract separated"
     }
   ],
@@ -1119,7 +1175,7 @@
     {
       "contract": "C2",
       "was": {
-        "task": "J5",
+        "task": "J5b",
         "needs": "M3"
       },
       "integration": "I2",
