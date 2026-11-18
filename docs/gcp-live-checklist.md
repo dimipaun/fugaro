@@ -21141,10 +21141,11 @@ read:
   **`proxy: true`**. That last one is the launcher's own gate (`nodeBrokersBitbucket`) and the only way a
   job that mounts no token reaches `bitbucket.org` at all.
 - **The one review**, launched with `fugaro review --pr <N> --project <the installation> --json` from the checkout. The launch document
-  is held to three things: it answered `launched`, its own `job` is the installation's implicit review-only
+  is held to four things: it answered `launched`, its own `job` is the installation's implicit review-only
   job of provider `bitbucket` — the name this release derives for (`config.DefaultJobProfile`, provider,
-  `config.ReviewVariantAccount` + `config.ReviewVariantSuffix`) — and its `account` is the default one,
-  which is the only account that job serves.
+  `config.ReviewVariantAccount` + `config.ReviewVariantSuffix`) — its `account` is the default one, which is
+  the only account that job serves, and the pull request the document is about is the one this check asked for
+  (the rows below are read by the run id it names all the same, so a mismatch is a finding and not a stop).
 - **The run's own row**, polled out of `fugaro runs ls --repo <R> --pr <N> --project <the installation> --no-cache --json` until it is terminal:
   the run ended `succeeded` with outcome `reviewed`, it pushed nothing, and it names the pull request it
   reviewed. A launch refused, a row that never appears or never ends is **not measured** (exit 2) with the
@@ -21196,7 +21197,8 @@ that is not Bitbucket, a repository admitted to a profile, a budget mode of `off
 `bitbucket_token` block that does not admit the repository with `proxy: true`, a launch that resolved
 another job or another account, a run that did not end `succeeded`/`reviewed`, a job that carries any
 credential, a verdict about another repository or another pull request, no served `git` line, or a first
-`forward` line naming a credential outside what the node admits; **`2`** is the check not being able to
+`forward` line naming a credential outside what the node admits, or a launch
+document about another pull request; **`2`** is the check not being able to
 measure (no `--sandbox` or no `--pr`, a tool missing, a sandbox that is not a directory, a repository the
 published project does not admit — a launch of it would be refused, so there is nothing to measure — and a
 doctor, policy, job-list, launch, listing, verdict or log read that did not answer). A key the run never reached reads

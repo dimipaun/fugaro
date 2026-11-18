@@ -64,8 +64,11 @@
 #     What the launch document is held to: it answered `launched`, its own `job`
 #     is the installation's implicit review-only job of provider bitbucket — the
 #     name this release derives for (config.DefaultJobProfile, provider,
-#     config.ReviewVariantAccount + config.ReviewVariantSuffix) — and its
-#     `account` is the default one, which is the only account that job serves;
+#     config.ReviewVariantAccount + config.ReviewVariantSuffix) — its `account` is
+#     the default one, which is the only account that job serves, and the pull
+#     request it is about is the one this check asked for (every row below is read
+#     by the run id the document names, so a document about another pull request
+#     is a launch this check cannot say it asked for);
 #   * the run's own row, polled out of `fugaro runs ls --pr N --json` until it is
 #     terminal: it ended `succeeded` with outcome `reviewed`, it pushed nothing
 #     and it names the pull request it reviewed;
@@ -1106,6 +1109,7 @@ step_launch() {
   LAUNCH_JOB=$(printf '%s\n' "$got" | sed -n 's/^job=//p')
   LAUNCH_ACCOUNT=$(printf '%s\n' "$got" | sed -n 's/^account=//p')
   LAUNCH_PR=$(printf '%s\n' "$got" | sed -n 's/^pr=//p')
+  LAUNCH_REPO=$(printf '%s\n' "$got" | sed -n 's/^repo=//p')
   case "$LAUNCH_STATUS" in
   launched | already-launched) ;;
   *)
@@ -1122,6 +1126,10 @@ step_launch() {
   expected=$(reader jobname standard bitbucket default-review | sed -n 's/^name=//p')
   if [ "$LAUNCH_JOB" != "$expected" ]; then
     fact launch FAIL "the launch resolved the job '${LAUNCH_JOB:-<none>}' for the review of ${REPO}#${PR}, and the installation's IMPLICIT review-only job of provider bitbucket is named '${expected:-<none>}' (the name this release derives for the default profile, provider bitbucket and the default account's review variant — ImplicitReviewJobName over DefaultProfileName, ReviewVariantAccount and ReviewVariantSuffix — computed here from the same rule rather than read back). A review that resolved another job ran on a per-repository job or on a profile's variant: this check is about the implicit job, and every row below would be about something else. Deploy it ('fugaro update') and check that no profile of the published policy admits ${REPO}, then run this check again"
+    return 0
+  fi
+  if [ -n "$LAUNCH_PR" ] && [ "$LAUNCH_PR" != "$PR" ]; then
+    fact launch FAIL "the launch document is about ${LAUNCH_REPO:-${REPO}}#${LAUNCH_PR}, and this check asked for a review of ${REPO}#${PR}: every row below is read by the run id this document names, so a document whose own pull request is another one is a launch this check cannot say it asked for — the review may be a review of the other pull request, or the launch may have echoed it wrongly. The rows below are read all the same, because a review that exists is worth reading; read 'fugaro runs show ${LAUNCH_RID} --repo ${REPO}' yourself and run this check again with the pull request you mean"
     return 0
   fi
   if [ "$LAUNCH_ACCOUNT" != default ]; then

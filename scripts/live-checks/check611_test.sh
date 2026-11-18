@@ -484,6 +484,7 @@ out("launch-other-job.json", lambda x: x.__setitem__("job", other))
 out("launch-other-account.json", lambda x: x.__setitem__("account", "spare"))
 out("launch-already.json", lambda x: x.__setitem__("status", "already-launched"))
 out("launch-odd-status.json", lambda x: x.__setitem__("status", "refused"))
+out("launch-other-pr.json", lambda x: x.__setitem__("pr", 7))
 out("launch-no-run.json", lambda x: (x.pop("run_id"), x.pop("run")))
 PY
   # The run's own row: it ended succeeded with outcome reviewed, pushed nothing
@@ -1171,6 +1172,16 @@ test_a_launch_document_that_is_not_one_is_not_measured() {
   expect_contains "$out" "a document it cannot read as one is nothing about that review" "a launch document with an odd status: why it is not a finding"
 }
 
+test_a_launch_document_about_another_pull_request_is_a_finding() {
+  local dir=$work/launch-other-pr
+  prepare "$dir"
+  run_check "$dir" FAKE_LAUNCH_FILE=launch-other-pr.json
+  expect_status "$status" 1 "a launch document about another pull request"
+  expect_contains "$out" "FACT launch: FAIL — the launch document is about $repo#7, and this check asked for a review of $repo#$pr" "a launch document about another pull request: the row"
+  expect_contains "$out" "a launch this check cannot say it asked for" "a launch document about another pull request: why"
+  expect_contains "$out" "FACT job: PASS" "a launch document about another pull request: the rows below are still read, by the run id the document names"
+}
+
 test_a_launch_document_with_no_run_id_is_not_measured() {
   local dir=$work/no-run-id
   prepare "$dir"
@@ -1562,8 +1573,9 @@ test_every_row_the_register_quotes_is_in_the_block() {
 # exit status really does differ from what the case above expects. A suite of
 # mutations is what says those assertions are load-bearing.
 mutate() { # mutate DIR SED... > the copy's path on stdout
-  local dir=$1 copy=$dir/mutated611.sh
+  local dir=$1
   shift
+  local copy=$dir/mutated611.sh
   sed "$@" "$script" >"$copy"
   printf '%s' "$copy"
 }
@@ -1659,6 +1671,7 @@ t test_a_launch_on_another_job_is_a_finding
 t test_a_launch_as_another_account_is_a_finding
 t test_a_launch_that_is_already_launched_reads_the_same_run
 t test_a_launch_document_that_is_not_one_is_not_measured
+t test_a_launch_document_about_another_pull_request_is_a_finding
 t test_a_launch_document_with_no_run_id_is_not_measured
 t test_a_listing_that_could_not_be_read_leaves_the_rows_unmeasured
 t test_a_run_the_listing_never_names_is_not_measured
