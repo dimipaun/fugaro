@@ -617,7 +617,7 @@ func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
 	if rg.At != runstore.RigorAtRound {
 		t.Errorf("the block was decided at %q; want %q — a mode a run's own diff reached must not wait for finalize (D22)", rg.At, runstore.RigorAtRound)
 	}
-	want := []runstore.RigorArea{{Name: "app", Level: rigor.Critical, At: runstore.RigorAtRound}}
+	want := []runstore.RigorArea{{Name: "app", Mode: rigor.Critical, Level: rigor.Critical, At: runstore.RigorAtRound}}
 	if !slices.Equal(rg.Areas, want) {
 		t.Errorf("the areas = %+v; want %+v", rg.Areas, want)
 	}
