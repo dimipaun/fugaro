@@ -597,17 +597,28 @@ var ServiceHeldSecretNames = []string{}
 // the switch admits `api-key` and `oauth` from the release that hands them the
 // service's address (B2.3), and this list is what decides whether their jobs
 // still MOUNT the model credential the service now serves them
-// (infra.ModelSecretsServed, dropModelMounts). It is EMPTY until B2.7, so
-// every mount stays for every auth but the cascade, which is G17's rule: a job
-// never loses a mount before the service serves that credential to the image
-// it runs.
+// (infra.ModelSecretsServed, dropModelMounts).
+//
+// IT IS FILLED BY B2.7'S FLIP — the owner's go of 2026-11-18, with Check 193's
+// before-flip half and its PASS waived and the check's own runs moved after
+// this release (implementation-plan.md, B2.7/B2.8). A switched `api-key` or
+// `oauth` repository's job therefore mounts no `ANTHROPIC_API_KEY` and no
+// `CLAUDE_CODE_OAUTH_TOKEN` from the release that carries this value, and
+// reaches the service for both; the mounts come back for a repository the
+// switch does not serve, and a provider's key (`FUGARO_PROVIDER_KEY_*`) is a
+// mount no arm of this list ever takes away (R6, D1634: the route that spends
+// it forwards the value rather than attaching it). G17's rule is the order
+// that made this a list rather than a condition of the switch: a job never
+// loses a mount before the service serves that credential to the image it
+// runs, which the address hand-out (B2.3) and the launcher's image gate
+// (internal/cli's serviceAuthSince) are the two halves of.
 //
 // A name in it is a name the credentials service can serve a model call under,
-// and the two that belong here — "api-key" and "oauth" (B2.7) — are the two
-// whose runs the service's cascade and pool serve. `vertex` is not one of
-// them: a Vertex workflow's calls go to Vertex AI on the job's own service
-// account, which is not a credential this service holds. `cascade` is not one
-// either, and never will be: a cascade job has no model mount at all
+// and the two that belong here — "api-key" and "oauth" — are the two whose
+// runs the service's cascade and pool serve. `vertex` is not one of them: a
+// Vertex workflow's calls go to Vertex AI on the job's own service account,
+// which is not a credential this service holds. `cascade` is not one either,
+// and never will be: a cascade job has no model mount at all
 // (ModelSecretsServed answers `all` for it), so there is no mount for a flip
 // to take away.
 //
@@ -615,7 +626,7 @@ var ServiceHeldSecretNames = []string{}
 // this one has no Terraform literal to be held to, because the value it feeds
 // is the per-repository model_secrets_served input Go writes into the tfvars,
 // whose three values ARE held to Go by TestModelSecretsServedValidationMatchesGo.
-var ServiceServedAuths = []string{}
+var ServiceServedAuths = []string{"api-key", "oauth"}
 
 // The three values of the repository root's model_secrets_served input — which
 // model secrets the credentials service serves to a job, and therefore which
