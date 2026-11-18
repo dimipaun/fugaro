@@ -1234,13 +1234,18 @@ step_pull() {
     return 0
   fi
   run_bounded "$CLI_TIMEOUT" ghprview gh pr view "$BRANCH" --repo "$REPO" --json number -q .number
-  PR=$(tr -d '\r\n' <"$SCRATCH/ghprview.out" 2>/dev/null || true)
-  case "$PR" in
+  # The number is held aside until it has been read as one: PR is what the launch
+  # is given, and a value that reached it unread would be a review of whatever
+  # `--pr` made of it.
+  local got
+  got=$(tr -d '\r\n' <"$SCRATCH/ghprview.out" 2>/dev/null || true)
+  case "$got" in
   '' | *[!0-9]*)
-    unmeasured pull "gh opened the pull request for ${BRANCH} but could not read its number back (exit ${BOUNDED_STATUS}, it printed '${PR}'): the review is launched with --pr, and a number this check guessed at is a review of another pull request. Read it yourself ('gh pr list --repo ${REPO} --head ${BRANCH}')"
+    unmeasured pull "gh opened the pull request for ${BRANCH} but could not read its number back (exit ${BOUNDED_STATUS}, it printed '${got}'): the review is launched with --pr, and a number this check guessed at is a review of another pull request. Read it yourself ('gh pr list --repo ${REPO} --head ${BRANCH}')"
     return 0
     ;;
   esac
+  PR=$got
   fact pull PASS "a throwaway pull request of ${REPO} was opened by this check: #${PR}, branch ${BRANCH} (base ${BASE_BRANCH}, one file, CHK610.md), and the checkout ${SANDBOX} is back on ${ORIG_BRANCH:-the branch it was on}. A review reviews a PULL REQUEST, so the check has to leave one behind; it is not removed — this check holds no credential of its own"
 }
 

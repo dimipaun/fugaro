@@ -705,11 +705,17 @@ assert_one_launch() { # dir what
 # Every refusal and the dry run: nothing was launched at all, and no pull request
 # was opened — the check stops before the two writes it makes.
 assert_no_launch() { # dir what
+  assert_no_review "$1" "$2"
+  expect_absent "$(cat "$1/logs/gh.calls")" "pr create" "$2: no pull request is opened"
+}
+
+# The pull request was attempted, so one `gh pr create` is expected — but nothing
+# may be launched on its back.
+assert_no_review() { # dir what
   local calls
   calls=$(cat "$1/logs/fugaro.calls")
   expect_absent "$calls" "review --pr " "$2: no review is launched"
   expect_absent "$calls" "fugaro run " "$2: no coding run is launched"
-  expect_absent "$(cat "$1/logs/gh.calls")" "pr create" "$2: no pull request is opened"
 }
 
 # The checkout was found clean and has to be left as it was found: the check's own
@@ -1178,6 +1184,229 @@ test_a_jobs_list_that_is_not_a_document_is_not_measured() {
   assert_no_launch "$dir" "a job list that is not a document"
 }
 
+test_gh_cannot_read_the_default_branch_is_not_measured() {
+  local dir=$work/no-base-branch
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=gh-base-fails
+  expect_status "$status" 2 "a default branch that could not be read"
+  expect_row pull "FAIL — gh could not read $repo's default branch (exit 1)" "a default branch that could not be read: the row"
+  expect_row pull "a base branch it guessed at is a pull request against the wrong branch" "a default branch that could not be read: why it stops"
+  expect_row pull "gh says: gh: could not resolve to a Repository" "a default branch that could not be read: gh's own words"
+  assert_no_launch "$dir" "a default branch that could not be read"
+}
+
+test_a_fetch_that_failed_is_not_measured() {
+  local dir=$work/fetch-failed
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=git-fetch-fails
+  expect_status "$status" 2 "a fetch that failed"
+  expect_row pull "FAIL — git could not fetch $base_branch from $repo's origin (exit 128)" "a fetch that failed: the row"
+  expect_row pull "one cut from a guess is a pull request nobody asked for" "a fetch that failed: why it stops"
+  assert_no_launch "$dir" "a fetch that failed"
+}
+
+test_a_branch_that_could_not_be_cut_is_not_measured() {
+  local dir=$work/branch-failed
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=git-branch-fails
+  expect_status "$status" 2 "a branch that could not be cut"
+  expect_row pull "FAIL — git could not cut the throwaway branch $branch in $dir/sandbox (exit 128)" "a branch that could not be cut: the row"
+  assert_no_launch "$dir" "a branch that could not be cut"
+}
+
+test_a_commit_that_failed_is_not_measured() {
+  local dir=$work/commit-failed
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=git-commit-fails
+  expect_status "$status" 2 "a commit that failed"
+  expect_row pull "FAIL — git could not commit the throwaway file in $dir/sandbox (exit 1)" "a commit that failed: the row"
+  expect_row pull "The checkout is back on $base_branch" "a commit that failed: the checkout is put back"
+  assert_checkout_left_clean "$dir" "a commit that failed"
+  assert_no_launch "$dir" "a commit that failed"
+}
+
+test_a_push_that_failed_is_not_measured() {
+  local dir=$work/push-failed
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=git-push-fails
+  expect_status "$status" 2 "a push that failed"
+  expect_row pull "FAIL — git could not push the throwaway branch $branch to $repo (exit 1)" "a push that failed: the row"
+  expect_row pull "Nothing is reviewed on a branch that is not there. The checkout is back on $base_branch" "a push that failed: the checkout is put back"
+  assert_checkout_left_clean "$dir" "a push that failed"
+  assert_no_launch "$dir" "a push that failed"
+}
+
+test_a_pull_request_that_could_not_be_opened_is_not_measured() {
+  local dir=$work/pr-failed
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=gh-pr-fails
+  expect_status "$status" 2 "a pull request that could not be opened"
+  expect_row pull "FAIL — gh could not open the pull request for $branch (exit 1)" "a pull request that could not be opened: the row"
+  expect_row pull "The branch IS on $repo — delete it" "a pull request that could not be opened: the branch is named, since it is there"
+  assert_checkout_left_clean "$dir" "a pull request that could not be opened"
+  assert_no_review "$dir" "a pull request that could not be opened"
+}
+
+test_a_pull_request_number_that_could_not_be_read_is_not_measured() {
+  local dir=$work/pr-unread
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=gh-pr-nonumber
+  expect_status "$status" 2 "a pull request number that could not be read"
+  expect_row pull "FAIL — gh opened the pull request for $branch but could not read its number back (exit 0, it printed 'not-a-number')" "a pull request number that could not be read: the row"
+  expect_row pull "a number this check guessed at is a review of another pull request" "a pull request number that could not be read: why it stops"
+  assert_no_review "$dir" "a pull request number that could not be read"
+}
+
+test_a_launch_that_was_refused_is_not_measured() {
+  local dir=$work/launch-refused
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=review-fails
+  expect_status "$status" 2 "a launch that was refused"
+  expect_row launch "FAIL — fugaro review --pr $pr exited 1 and launched nothing" "a launch that was refused: the row"
+  expect_row launch "resolves a review-only variant of a shared project job, and this repository has none" "a launch that was refused: the launcher's own sentence"
+  expect_row launch "the refusal the plan's option C removes" "a launch that was refused: why the row carries it"
+  assert_one_launch "$dir" "a launch that was refused"
+}
+
+test_a_launch_that_never_answers_is_not_measured() {
+  local dir=$work/launch-hangs
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=review-hangs CHECK610_CLI_TIMEOUT_SECONDS=1
+  expect_status "$status" 2 "a launch that never answered"
+  expect_row launch "FAIL — fugaro review did not answer inside 1s and was ended" "a launch that never answered: the row"
+  expect_row launch "it may or may not have launched a review" "a launch that never answered: why nothing is read"
+  assert_one_launch "$dir" "a launch that never answered"
+}
+
+test_a_launch_that_names_no_run_is_not_measured() {
+  local dir=$work/launch-no-run
+  prepare "$dir"
+  run_check "$dir" FAKE_LAUNCH_FILE=launch-no-run.json
+  expect_status "$status" 2 "a launch that names no run"
+  expect_row launch "FAIL — fugaro review --pr $pr answered without naming the run it launched" "a launch that names no run: the row"
+  assert_one_launch "$dir" "a launch that names no run"
+}
+
+test_a_launch_that_names_no_job_is_not_measured() {
+  local dir=$work/launch-no-job
+  prepare "$dir"
+  run_check "$dir" FAKE_LAUNCH_FILE=launch-no-job.json
+  expect_status "$status" 2 "a launch that names no job"
+  expect_row launch "FAIL — the launch of the review run ($run_id) names no job in its own document" "a launch that names no job: the row"
+  assert_one_launch "$dir" "a launch that names no job"
+}
+
+test_a_launch_on_another_job_is_a_finding() {
+  local dir=$work/launch-other-job
+  prepare "$dir"
+  run_check "$dir" FAKE_LAUNCH_FILE=launch-other-job.json
+  expect_status "$status" 1 "a review that landed on a coding job"
+  expect_row launch "FAIL — fugaro review --pr $pr launched the run $run_id on '$coding_job', which is NOT the installation's implicit review-only job '$job'" "a review on another job: the row names both"
+  expect_row launch "the launch selecting a CODING job or a profile's job" "a review on another job: why it is a finding"
+  assert_one_launch "$dir" "a review that landed on a coding job"
+}
+
+test_a_launch_as_another_account_is_a_finding() {
+  local dir=$work/launch-other-account
+  prepare "$dir"
+  run_check "$dir" FAKE_LAUNCH_FILE=launch-named-account.json
+  expect_status "$status" 1 "a review that ran as another account"
+  expect_row launch "FAIL — fugaro review --pr $pr launched the run $run_id on the review-only job '$job' as the account 'work'" "a review as another account: the row"
+  expect_row launch "the implicit job serves the DEFAULT account only" "a review as another account: why it is a finding"
+  assert_one_launch "$dir" "a review that ran as another account"
+}
+
+test_a_listing_that_could_not_be_read_is_not_measured() {
+  local dir=$work/listing-refused
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=listing-fails CHECK610_RUN_SECONDS=2
+  expect_status "$status" 2 "a listing that could not be read"
+  expect_row run "FAIL — the review run ($run_id) does not appear in 'fugaro runs ls --repo $repo --pr $pr'" "a listing that could not be read: the row"
+  expect_row run "so nothing about it is read" "a listing that could not be read: why it is not a finding"
+  assert_one_launch "$dir" "a listing that could not be read"
+}
+
+test_a_run_the_listing_never_names_is_not_measured() {
+  local dir=$work/other-run
+  prepare "$dir"
+  run_check "$dir" FAKE_ROW_FILE=row-other-run.json CHECK610_RUN_SECONDS=2
+  expect_status "$status" 2 "a listing that holds another run's row"
+  expect_row run "FAIL — the review run ($run_id) does not appear in 'fugaro runs ls" "a listing that holds another run's row: the row"
+  expect_row run "Read 'fugaro runs show $run_id --repo $repo' yourself" "a listing that holds another run's row: what to read instead"
+  assert_one_launch "$dir" "a listing that holds another run's row"
+}
+
+test_a_run_that_had_not_finished_is_not_measured() {
+  local dir=$work/run-inflight
+  prepare "$dir"
+  run_check "$dir" FAKE_ROW_FILE=row-inflight.json CHECK610_RUN_SECONDS=2
+  expect_status "$status" 2 "a run that had not finished"
+  expect_row run "FAIL — the review run ($run_id) had not reached a final status after 2s: status=running" "a run that had not finished: the row"
+  expect_row run "A run still in flight is not an answer about the review-only job" "a run that had not finished: why it is not measured"
+  assert_one_launch "$dir" "a run that had not finished"
+}
+
+test_a_run_that_failed_is_a_finding() {
+  local dir=$work/run-failed
+  prepare "$dir"
+  run_check "$dir" FAKE_ROW_FILE=row-failed.json
+  expect_status "$status" 1 "a run that failed"
+  expect_row run "FAIL — the review run ($run_id) of $repo did not end as a review: status=failed, outcome=draft, pr=$pr" "a run that failed: the row says how it ended"
+  expect_row run "halt: the review stopped at its first model call" "a run that failed: the run's own reason"
+  expect_row run "A review reaches 'succeeded' with outcome 'reviewed'" "a run that failed: what a review has to reach"
+}
+
+test_a_run_about_another_pull_request_is_a_finding() {
+  local dir=$work/run-other-pr
+  prepare "$dir"
+  run_check "$dir" FAKE_ROW_FILE=row-other-pr.json
+  expect_status "$status" 1 "a run about another pull request"
+  expect_row run "FAIL — the review run ($run_id) of $repo ended 'succeeded' (outcome=reviewed) and its own row names pull request 9 rather than the #$pr this check opened" "a run about another pull request: the row"
+}
+
+test_a_review_that_could_not_be_read_is_a_finding() {
+  local dir=$work/show-failed
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=show-fails
+  expect_status "$status" 1 "a review that could not be read back"
+  expect_row review "FAIL — fugaro review show $run_slug --json did not answer (exit 1) although the run ended 'succeeded' with outcome 'reviewed'" "a review that could not be read back: the row"
+  expect_row review "which is the review NOT being recorded" "a review that could not be read back: why it is a finding"
+  assert_one_launch "$dir" "a review that could not be read back"
+}
+
+test_a_review_show_that_prints_no_artifact_is_a_finding() {
+  local dir=$work/no-artifact
+  prepare "$dir"
+  run_check "$dir" FAKE_ARTIFACT_FILE=artifact-no-artifact.json
+  expect_status "$status" 1 "a review show with no artifact"
+  expect_row review "FAIL — fugaro review show $run_slug --json printed no artifact" "a review show with no artifact: the row"
+  expect_row review "the review the run recorded is one this installation cannot read back" "a review show with no artifact: why it is a finding"
+}
+
+test_an_artifact_about_another_run_is_a_finding() {
+  local dir=$work/artifact-other-run
+  prepare "$dir"
+  run_check "$dir" FAKE_ARTIFACT_FILE=artifact-other-run.json
+  expect_status "$status" 1 "an artifact about another run"
+  expect_row review "FAIL — the artifact of the review run ($run_id) does not state this review: review_run matches the run 'no'" "an artifact about another run: the row"
+}
+
+test_an_artifact_about_another_pull_request_is_a_finding() {
+  local dir=$work/artifact-other-pr
+  prepare "$dir"
+  run_check "$dir" FAKE_ARTIFACT_FILE=artifact-other-pr.json
+  expect_status "$status" 1 "an artifact about another pull request"
+  expect_row review "FAIL — the artifact of the review run ($run_id) does not state this review: review_run matches the run 'yes', pr matches #$pr 'no'" "an artifact about another pull request: the row"
+}
+
+test_an_artifact_with_no_verdict_is_a_finding() {
+  local dir=$work/artifact-no-verdict
+  prepare "$dir"
+  run_check "$dir" FAKE_ARTIFACT_FILE=artifact-no-verdict.json
+  expect_status "$status" 1 "an artifact with no verdict"
+  expect_row review "does not state this review: review_run matches the run 'yes', pr matches #$pr 'yes', head_sha '$head_sha', verdict '-'" "an artifact with no verdict: the row names what is missing"
+}
+
 # ------------------------------------------------------------------- the run
 # CHECK_TEST_ONLY names one case; CHECK_TEST_SHARD=i/n runs every case whose index
 # is congruent to i modulo n. scripts/live_checks_test.go splits the suite across
@@ -1232,6 +1461,29 @@ t test_an_implicit_job_that_names_the_secret_env_is_a_finding
 t test_an_implicit_job_that_mounts_a_secret_volume_is_a_finding
 t test_a_jobs_list_that_could_not_be_read_is_not_measured
 t test_a_jobs_list_that_is_not_a_document_is_not_measured
+t test_gh_cannot_read_the_default_branch_is_not_measured
+t test_a_fetch_that_failed_is_not_measured
+t test_a_branch_that_could_not_be_cut_is_not_measured
+t test_a_commit_that_failed_is_not_measured
+t test_a_push_that_failed_is_not_measured
+t test_a_pull_request_that_could_not_be_opened_is_not_measured
+t test_a_pull_request_number_that_could_not_be_read_is_not_measured
+t test_a_launch_that_was_refused_is_not_measured
+t test_a_launch_that_never_answers_is_not_measured
+t test_a_launch_that_names_no_run_is_not_measured
+t test_a_launch_that_names_no_job_is_not_measured
+t test_a_launch_on_another_job_is_a_finding
+t test_a_launch_as_another_account_is_a_finding
+t test_a_listing_that_could_not_be_read_is_not_measured
+t test_a_run_the_listing_never_names_is_not_measured
+t test_a_run_that_had_not_finished_is_not_measured
+t test_a_run_that_failed_is_a_finding
+t test_a_run_about_another_pull_request_is_a_finding
+t test_a_review_that_could_not_be_read_is_a_finding
+t test_a_review_show_that_prints_no_artifact_is_a_finding
+t test_an_artifact_about_another_run_is_a_finding
+t test_an_artifact_about_another_pull_request_is_a_finding
+t test_an_artifact_with_no_verdict_is_a_finding
 
 if [ "$failures" -ne 0 ]; then
   echo "check610_test.sh: $failures failure(s)" >&2
