@@ -217,6 +217,16 @@ type CatalogBuildSpec struct {
 	GitSecretID string
 	GitUser     string
 	GitHubAppID string
+	// CredentialsServiceURL is the installation's credentials service, "" for
+	// every catalog build there is (B4.5): the credential step of a catalog
+	// build runs as the project's build identity (BuildIdentityEmail), which
+	// the service's build route does not admit — that route serves one
+	// repository to the account bound to it (D2076) — so a catalog build has
+	// nothing to fetch there and keeps the credential its request mounts. It is
+	// the derived build's field reached from this path, tested as BuildSpec's
+	// is, and a caller that set it would submit a build whose credential step
+	// the service refuses.
+	CredentialsServiceURL string
 	// Base is the fugaro base image the entry's image is built FROM. A
 	// prebuilt entry is built from nothing, so it names none.
 	Base string
@@ -466,6 +476,13 @@ func CatalogBuildRequest(project string, s CatalogBuildSpec) (*cloudbuild.Build,
 		"_BASE_BRANCH": s.BaseBranch,
 		"_FUGARO_BASE": s.Base,
 		"_IMAGE":       s.Image,
+		// The credential step's own three, empty: the step a catalog build
+		// reuses reads the workflow it would fetch at the service and the
+		// address it would fetch from, and this build fetches neither — its
+		// identity is not one the route admits — so what it sends is the empty
+		// value the step reads as "there is no service here" (CredentialsServiceURL).
+		"_WORKFLOW":                "",
+		"_CREDENTIALS_SERVICE_URL": s.CredentialsServiceURL,
 		// Empty, always: the template's build step mounts the variables this
 		// names as BuildKit file secrets, and it names none for a catalog
 		// entry. The repository's own workflow secrets reached a catalog
