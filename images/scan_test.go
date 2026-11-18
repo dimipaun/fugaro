@@ -35,6 +35,11 @@ type scanFixture struct {
 	// for. The daemon counts them among its layers, which is what turns a skip
 	// into a refusal -- the scan holds what it read to that count.
 	undecodable int
+	// repeated is how many extra steps of the image's history made a layer
+	// another step already made: BuildKit's empty layer for a RUN that changed
+	// nothing. The daemon lists each of them under the same diff ID, and a save
+	// stores the content once.
+	repeated int
 }
 
 // saveLayers is the fixture's layers as docker save hands them over.
@@ -79,7 +84,7 @@ case "$1" in
   export) cat "$FAKE_ROOTFS" ;;
   inspect)
     case "$*" in
-      *RootFS.Layers*) echo "${FAKE_LAYERS:?}" ;;
+      *RootFS.Layers*) cat "${FAKE_LAYERS:?}" ;;
       *) cat "$FAKE_ENV" ;;
     esac ;;
   cp) member=${2#*:}; tar -xOf "$FAKE_ROOTFS" "${member#/}" > "${3:?}" ;;
@@ -109,7 +114,17 @@ func runScan(t *testing.T, f scanFixture, exit string, args ...string) (string, 
 	}
 	// The layer count the daemon reports, which the scan holds its own read to:
 	// every layer the save carries, the ones it cannot decode among them.
-	layers := fmt.Sprint(len(f.saveLayers()) + f.undecodable)
+	var diffIDs strings.Builder
+	for i := 0; i < len(f.saveLayers())+f.undecodable; i++ {
+		fmt.Fprintf(&diffIDs, "sha256:%064x\n", i+1)
+	}
+	for i := 0; i < f.repeated; i++ {
+		fmt.Fprintf(&diffIDs, "sha256:%064x\n", 1)
+	}
+	layers := filepath.Join(dir, "layers")
+	if err := os.WriteFile(layers, []byte(diffIDs.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("sh", append([]string{"scan.sh"}, args...)...)
 	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "FAKE_LOG="+log, "FAKE_EXIT="+exit,
 		"FAKE_ROOTFS="+rootfs, "FAKE_SAVE="+save, "FAKE_ENV="+env, "FAKE_LAYERS="+layers,
@@ -396,6 +411,45 @@ func TestScanPassesACleanLayer(t *testing.T) {
 	}
 }
 
+// TestScanPassesLayersThatShareContent: an image whose history lists the same
+// empty layer twice -- two RUNs that changed nothing -- holds one blob in a
+// save, and the daemon's twenty layers read as nineteen. It is a clean image
+// and passes; counting the daemon's list with its repeats refused it.
+func TestScanPassesLayersThatShareContent(t *testing.T) {
+	f := cleanFixture
+	f.files = map[string]string{"etc/os-release": "ID=debian\n"}
+	f.layers = []map[string]string{
+		{"src/README": "kept\n"},
+		{},
+	}
+	f.repeated = 1
+	out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+	if err != nil {
+		t.Fatalf("an image whose layers share content was refused: %v\n%s", err, out)
+	}
+}
+
+// TestScanRefusesALayerItCannotDecodeBesideSharedOnes: sharing does not loosen
+// the fence. The same image with a layer in a codec this worker cannot read is
+// still refused, whatever the repeats do to the count.
+func TestScanRefusesALayerItCannotDecodeBesideSharedOnes(t *testing.T) {
+	f := cleanFixture
+	f.files = map[string]string{"etc/os-release": "ID=debian\n"}
+	f.layers = []map[string]string{
+		{"src/README": "kept\n"},
+		{},
+	}
+	f.repeated = 1
+	f.undecodable = 1
+	out, _, err := runScan(t, f, "0", "--secrets", "fugaro-base:ci")
+	if err == nil {
+		t.Fatalf("an image with an unreadable layer passed beside shared ones:\n%s", out)
+	}
+	if !strings.Contains(out, "holds 3 distinct layers and this read 2 of them") {
+		t.Errorf("the refusal does not say which layer went unread: %s", out)
+	}
+}
+
 // TestScanRefusesALayerItCannotDecode: a layer the scan cannot read is a layer
 // it cannot clear, so an image it read only in part is refused rather than
 // promoted. The fixture's image holds two layers and one of them is in a
@@ -416,7 +470,7 @@ func TestScanRefusesALayerItCannotDecode(t *testing.T) {
 	if err == nil {
 		t.Fatalf("an image holding a layer the scan could not read passed:\n%s", out)
 	}
-	if !strings.Contains(out, "holds 2 layers and this read 1 of them") {
+	if !strings.Contains(out, "holds 2 distinct layers and this read 1 of them") {
 		t.Errorf("the refusal does not say which layer went unread: %s", out)
 	}
 	if !strings.Contains(log, "save -o") {
