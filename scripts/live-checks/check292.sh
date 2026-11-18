@@ -267,6 +267,10 @@ LOG_POLL=${CHECK292_LOG_POLL_SECONDS:-10}
 # has to land before the build's record step, and a build whose status never
 # comes back is a race this check cannot read either way.
 STAGE_WAIT=${CHECK292_STAGE_WAIT_SECONDS:-90}
+# The path the entry's Dockerfile COPYs the marker to, inside the image: one
+# value, so the Dockerfile this check writes and the path it reads back cannot
+# drift. It is deliberately not a path a real image is likely to hold.
+MARKER_DEST=/opt/team/scripts/marker.sh
 BUILD_ID=""
 REBUILD_ID=""
 REBUILD_STAGED=""
@@ -717,21 +721,25 @@ step_sandbox() {
   local rc=0 url=""
   url=$(git -C "$SANDBOX" remote get-url origin 2>"$SCRATCH/origin.err") || rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$url" ]; then
-    stop "the checkout at $SANDBOX names no origin this check could read (git exited ${rc}): the entry this check adds reads its Dockerfile out of that repository, and the commits it pushes go to it. Point the checkout at the sandbox repository's remote"
+    fact sandbox FAIL "the checkout at $SANDBOX names no origin this check could read (git exited ${rc}): the entry this check adds reads its Dockerfile out of that repository, and the commits it pushes go to it. Point the checkout at the sandbox repository's remote"
+    stop "the checkout at $SANDBOX names no origin this check could read (git exited ${rc}). Point it at the sandbox repository's remote"
   fi
   REPO=$(repo_from_origin "$url")
   guard_belong "$REPO" "the checkout's origin" belong
   if [ -z "$REPO" ]; then
-    stop "the origin of $SANDBOX is '$url', which names no repository this check could read: the entry it adds has to name one"
+    fact sandbox FAIL "the origin of $SANDBOX is '$url', which names no repository this check could read: the entry it adds reads its Dockerfile out of that repository by owner and name, so an origin this check cannot read is one it will not guess at"
+    stop "the origin of $SANDBOX is '$url', which names no repository this check could read. Point it at the sandbox repository"
   fi
   local dirty
   dirty=$(git -C "$SANDBOX" status --porcelain 2>/dev/null || true)
   if [ -n "$dirty" ]; then
-    stop "the checkout at $SANDBOX has uncommitted changes ('$(flat "$(printf '%s' "$dirty" | head -n 1)")'): this check cuts a throwaway branch, commits two files into it and pushes them, so your own work would ride along in its commits. Commit or stash them and run the check again"
+    fact sandbox FAIL "the checkout at $SANDBOX has uncommitted changes ('$(flat "$(printf '%s' "$dirty" | head -n 1)")'): this check cuts a throwaway branch, commits into it and pushes them, so your own work would ride along. Commit or stash them and run the check again"
+    stop "the checkout at $SANDBOX has uncommitted changes. Commit or stash them and run the check again"
   fi
   ORIG_REF=$(git -C "$SANDBOX" symbolic-ref --short -q HEAD 2>/dev/null || true)
   if [ -z "$ORIG_REF" ]; then
-    stop "the checkout at $SANDBOX is on no branch (a detached HEAD): this check leaves the checkout on the branch it found it on, and there is none to return to"
+    fact sandbox FAIL "the checkout at $SANDBOX is on no branch (a detached HEAD): this check leaves the checkout on the branch it found it on, and there is none to return to"
+    stop "the checkout at $SANDBOX is on no branch (a detached HEAD). Check out a branch and run the check again"
   fi
   say "reading the installation: fugaro doctor --json, in ${SANDBOX}"
   run_bounded "$DOCTOR_TIMEOUT" doctor "$SANDBOX" "$FUGARO_BIN" doctor --json
@@ -820,7 +828,7 @@ step_entry() {
     unmeasured entry "cannot write ${CONTEXT}/ in $SANDBOX"
     return 0
   }
-  printf 'FROM %s\nCOPY scripts/marker.sh /opt/team/scripts/marker.sh\n' "$BASE" >"$SANDBOX/$CONTEXT/Dockerfile"
+  printf 'FROM %s\nCOPY scripts/marker.sh %s\n' "$BASE" "$MARKER_DEST" >"$SANDBOX/$CONTEXT/Dockerfile"
   printf 'check 292 marker\n' >"$SANDBOX/$CONTEXT/scripts/marker.sh"
   cp "$SANDBOX/$CONTEXT/scripts/marker.sh" "$SCRATCH/marker.a"
   local commit_a
@@ -954,7 +962,7 @@ step_build() {
   text=$(cat "$SCRATCH/build.out" "$SCRATCH/build.err" 2>/dev/null || true)
   BUILD_ID=$(printf '%s\n' "$text" | grep -o 'Cloud Build build [A-Za-z0-9._-]*' | head -n 1 | awk '{print $4}' || true)
   local made
-  made=$(printf '%s\n' "$text" | sed -n 's/^.*[[:space:]]built \([^[:space:]]*\)@\([^[:space:]]*\).*$/\1 \2/p' | head -n 1 || true)
+  made=$(printf '%s\n' "$text" | sed -n 's/^.*built \([^[:space:]]*\)@\([^[:space:]]*\) (Cloud Build build .*$/\1 \2/p' | head -n 1 || true)
   if [ "$BOUNDED_TIMED_OUT" = yes ]; then
     unmeasured build "the build of ${ENTRY} did not finish inside ${BUILD_TIMEOUT}s and was ended: a Cloud Build that hangs is a longer look than a check should take, and this check cannot say whether the entry builds. The build it submitted is ${BUILD_ID:-not named in its output}, and its output is in $SCRATCH/build.out and $SCRATCH/build.err"
     return 0
@@ -970,6 +978,12 @@ step_build() {
     return 0
   fi
   if [ -z "$made" ]; then
+    case "$text" in
+    *"digest unknown"*)
+      fact build FAIL "the build of ${ENTRY} finished and reported no pushed image: '$(flat "$(printf '%s\n' "$text" | grep -m 1 'digest unknown' || true)")'. Cloud Build reported a SUCCESS without a digest for the image, which is what the promotion step of the build writes, so there is no image for this check to look inside — and the record the build's own last step wrote names one. Read the build with 'gcloud builds log ${BUILD_ID:-<the build it named>} --region=${REGION} --project=${PROJECT}'; its output is in $SCRATCH/build.out and $SCRATCH/build.err"
+      return 0
+      ;;
+    esac
     unmeasured build "the build of ${ENTRY} exited 0 but its output names no 'built <image>@<digest>' line: the image this check reads the copied file and the label out of is the one the build says it made, and without it the rows below have nothing to look at. What it printed is in $SCRATCH/build.out and $SCRATCH/build.err"
     return 0
   fi
