@@ -141,14 +141,20 @@ func TestABScoreReviewerSlot(t *testing.T) {
 	t.Run("an arm whose round answered nothing loses", func(t *testing.T) {
 		champion := reviewerArm("run-champion", "", "l3", task.ABArmChampion)
 		challenger := reviewerArm("run-challenger", "run-champion", "l3", task.ABArmChallenger)
-		challenger.Reviews[0].Verdict = ""
+		// The word the runner writes for a round whose call died or whose reply
+		// could not be read after its retry — never the empty string, which no
+		// written review carries (runner.go's seniorLoop, abreplay.go).
+		challenger.Reviews[0].Verdict = "none"
 
 		p := reviewerPair(t, champion, challenger)
 		if got := ScoreReviewer(p, task.ABSlotL3, Verdict{}).Winner; got != WinChampion {
 			t.Errorf("winner = %q, want %q: the challenger's round answered nothing, so it has no finding set in the pair", got, WinChampion)
 		}
+		if got := reviewerSignals(challenger, task.ABSlotL3); got.Answered {
+			t.Errorf("a round recorded as %q reads Answered = true: that word is not a verdict about the change at all", got.Verdict)
+		}
 
-		champion.Reviews[0].Verdict = ""
+		champion.Reviews[0].Verdict = "none"
 		if got := ScoreReviewer(p, task.ABSlotL3, Verdict{}).Winner; got != WinTie {
 			t.Errorf("winner = %q, want %q: two rounds that answered nothing draw, as two arms that both halted do", got, WinTie)
 		}

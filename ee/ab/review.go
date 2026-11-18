@@ -246,12 +246,14 @@ func reviewerSignals(rec runstore.Record, slot task.ABSlot) ReviewerSignals {
 	}
 	s.Findings = round.Findings
 	s.Verdict = round.Verdict
-	// The record's own words for a review that answered: "none" is a review that
-	// approved and raised nothing, which is an answer, and every other word it
-	// may carry is one too. What is not an answer is an empty verdict, which is
-	// a round that recorded none (the field has no omitempty because every
-	// written review carries it).
-	s.Answered = round.Verdict != ""
+	// A round answered only when it answered one of the two words a review
+	// answers with (verdictShip, verdictChanges). A review whose call died, or
+	// whose reply could not be read after the retry the loop gives it, is
+	// recorded as Verdict "none" — not an empty string, which no written review
+	// carries — and "none" is not a verdict about the change at all (outcome.go
+	// reads it as a round nobody read), so it is the answer this file ranks and
+	// not an approval.
+	s.Answered = round.Verdict == verdictShip || round.Verdict == verdictChanges
 	s.Model = round.Model
 	s.Effort = round.Effort
 	return s
