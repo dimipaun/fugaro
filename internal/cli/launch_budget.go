@@ -939,8 +939,9 @@ func (e *cloudEnv) vaultGate(ctx context.Context, slug string, spec *task.Spec, 
 
 // switchedVaultSecrets is whether this launch starts a run whose job holds no
 // mounted value for its workflow's own secrets, which is the run whose image
-// has to know the fetch: the S3 flip is on (config.VaultFetchesClass, empty
-// until the flip's second commit — so this gate refuses nothing before it), the
+// has to know the fetch: the S3 flip is on (config.VaultFetchesClass, which the
+// list has answered true for since the flip's second commit filled it — an
+// empty list makes this gate refuse nothing), the
 // document declares at least one secret for this workflow, and the execution
 // really is handed the service's address.
 //

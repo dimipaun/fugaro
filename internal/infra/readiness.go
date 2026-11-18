@@ -175,8 +175,8 @@ func dropModelMounts(ws *WorkflowSpec, served string) {
 // (B3.8, S3; D2072's shape, G17) — the repository is one the switch serves
 // (the caller's own condition, CredentialsServiceServes) and
 // config.VaultFetchedSecretClasses names the class secrets of this kind belong
-// to (config.VaultSecretClassWorkflow; empty until the flip's second commit,
-// when the call is then a no-op).
+// to (config.VaultSecretClassWorkflow, which the list has carried since the
+// flip's second commit; with the list empty this call is a no-op).
 //
 // The names go into ws.VaultSecretNames, which is the half the tfvars carry to
 // the module: it drops the job's accessor on each of them and keeps the

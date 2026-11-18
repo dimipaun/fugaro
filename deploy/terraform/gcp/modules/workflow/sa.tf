@@ -143,15 +143,15 @@ locals {
   # is held to config.VaultFetchedSecretClasses by deploy/terraform's
   # TestVaultFetchedClassesMatchTheModule, the way the two lists above are.
   #
-  # It is EMPTY until the flip's second commit fills it with "workflow", and
-  # that is the whole inertness of the state this release ships: with it empty
-  # local.vault_secret_names is the empty list whatever Go wrote, so the two
-  # clauses below drop nothing and service_secret_names is byte for byte the
-  # set B3.3 gave it. Filling it moves nothing on its own either: the names it
-  # moves are Go's per-workflow answer (var.workflow.vault_secret_names, empty
-  # for every repository the switch holds off), so a repository whose own
-  # switch is off keeps every accessor and every mount (G9, D147).
-  vault_fetched_secret_classes = []
+  # It carries "workflow" since the flip's second commit filled it, and the
+  # inert state is the empty list: with it empty local.vault_secret_names is the
+  # empty list whatever Go wrote, so the two clauses below drop nothing and
+  # service_secret_names is byte for byte the set B3.3 gave it. Filling it moves
+  # nothing on its own either: the names it moves are Go's per-workflow answer
+  # (var.workflow.vault_secret_names, empty for every repository the switch
+  # holds off), so a repository whose own switch is off keeps every accessor and
+  # every mount (G9, D147).
+  vault_fetched_secret_classes = ["workflow"]
 
   # The workflow's own secrets whose values the credentials service fetches for
   # THIS job, from Go's own answer (WorkflowSpec.VaultSecretNames, written into

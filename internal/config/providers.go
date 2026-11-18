@@ -748,13 +748,15 @@ const VaultSecretClassWorkflow = "workflow"
 // same answer the runner reads off its own environment.
 //
 // It is a list rather than a boolean so that a class can be added or held back
-// one at a time, and it is EMPTY until the flip's second commit fills it with
-// VaultSecretClassWorkflow: while it is empty nothing is fetched, every job
-// keeps every mount it had, and this release plans and runs exactly what the
-// release before it did (D147's "with it off nothing changes"). What the fill
-// moves is one mount per workflow secret of a SWITCHED repository, and it moves
-// nothing on its own — a repository the switch holds off keeps every mount,
-// before and after (G9, G17).
+// one at a time, and it carries VaultSecretClassWorkflow alone since the flip's
+// second commit filled it — the state this release ships, with the runner half
+// (B3.4) a release behind it. The inert state is the empty list and it is what
+// the release before this one planned: with it empty nothing is fetched, every
+// job keeps every mount it had, and the tree plans and runs exactly what that
+// release did (D147's "with it off nothing changes"). Filled, what it moves is
+// one mount per workflow secret of a SWITCHED repository, and it moves nothing
+// on its own — a repository the switch holds off keeps every mount, before and
+// after (G9, G17).
 //
 // Terraform cannot ask Go, so the same class is a literal in
 // modules/workflow/sa.tf's vault_fetched_secret_classes, held to this list by
@@ -768,7 +770,7 @@ const VaultSecretClassWorkflow = "workflow"
 // serve, and the launcher refuses a switched repository's run on a job image
 // older than vaultSince (0.26.0, the release whose runner knows the fetch) so
 // no run reaches a job that mounts nothing without a runner that can fetch it.
-var VaultFetchedSecretClasses = []string{}
+var VaultFetchedSecretClasses = []string{VaultSecretClassWorkflow}
 
 // VaultFetchesClass reports whether the credentials service fetches the secrets
 // of this class for the job of a repository it serves. A class this release

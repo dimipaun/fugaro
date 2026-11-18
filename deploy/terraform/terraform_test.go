@@ -5875,7 +5875,7 @@ func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
 	// require 1.9 (versions.tf), so the `||` form reads an attribute of a null
 	// value and fails the plan of every repository root whose switch is off.
 	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(concat(values(local.job_mounts), local.vault_secret_names))`) {
-		t.Errorf("%s: service_secret_names must be the mounts' own values, plus local.vault_secret_names (empty until B3.8's fill), behind a `try(...) == \"\"` gate — a set built any other way can drift from the containers it has to cover (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
+		t.Errorf("%s: service_secret_names must be the mounts' own values, plus local.vault_secret_names (empty only while the class list is), behind a `try(...) == \"\"` gate — a set built any other way can drift from the containers it has to cover (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
 	}
 
 	grants := workflowSecretGrants(t)
@@ -6215,8 +6215,8 @@ func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
 //
 // The empty list is a state of its own and it is asserted as one: with it empty
 // the module's local reads nothing, so the two clauses it feeds cannot drop
-// anything — that is the inertness this release ships, and the reason a reader
-// may apply this module before the flip's second commit.
+// anything — that is the inertness the release before the flip plans, and the
+// reason a reader may apply this module before the flip's second commit.
 func TestVaultFetchedClassesMatchTheModule(t *testing.T) {
 	const path = "gcp/modules/workflow/sa.tf"
 	b, err := fs.ReadFile(FS, path)

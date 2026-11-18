@@ -1748,8 +1748,9 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// declared, because the service is what reads them now (D2074's grant,
 	// B3.1's record, dropVaultMounts).
 	//
-	// The class list is the switch (config.VaultFetchedSecretClasses: empty
-	// until this task's second commit fills it), and it is the same list
+	// The class list is the switch (config.VaultFetchedSecretClasses, which has
+	// carried VaultSecretClassWorkflow since the flip's second commit; with it
+	// empty this call is a no-op), and it is the same list
 	// modules/workflow/sa.tf's own clause reads, held to it by that module's
 	// guard test. Read beside dropModelMounts because it is the same rule — a
 	// mount and an accessor are one answer — for a second class of secret.

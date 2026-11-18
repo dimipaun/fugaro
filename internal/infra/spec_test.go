@@ -3100,9 +3100,17 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		wantAddAppKey []string
 	}{
 		{
-			name:          "cascade, the auth the service serves",
-			in:            repoRootInputs(t, repoRootCascadeAgent),
-			lc:            parseLC(t, repoRootLC),
+			name: "cascade, the auth the service serves",
+			in:   repoRootInputs(t, repoRootCascadeAgent),
+			lc:   parseLC(t, repoRootLC),
+			// The switch's own delta and B3.8's fill meet in this row, and
+			// both are job accessors: the credential the job reads stops being
+			// handed over by its own account and starts being fetched for it
+			// (config.VaultFetchedSecretClasses, npm-token here), while the
+			// service keeps its own accessor on that container — that is the
+			// one D2074 grant the fill does not narrow, and it is what lets
+			// the service hand the value over at all.
+			wantGone:      []string{accessor("web", "npm-token")},
 			wantAdd:       slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
 			wantAddAppKey: slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "npm-token")}),
 			wantAppKey:    appKey("web"),
@@ -4112,6 +4120,22 @@ func proxiedGitList(t *testing.T, names ...string) {
 // it (D493).
 const proxiedLocalEntry = "project_secrets:\n  bitbucket-token:\n    allow_data_to: [\"acme/sandbox\"]\n    proxy: true\n"
 
+// proxiedProviderEntry is repoRootAPIKeyLC's block for the sandbox: one model
+// provider allowed to send this repository's code, so an `api-key` job mounts
+// its key beside the model credentials. Its own key is the one name of such a
+// job the credentials service does not hold (R6, D1634), which is what the
+// proxied flip's negative row needs now that B3.8's flip fetches a workflow's
+// own secrets.
+const proxiedProviderEntry = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/sandbox"]
+`
+
 // publishedNode is a published policy node whose bitbucket_token block admits
 // repos with proxy: proxy — the one source of whether a repository is proxied
 // (G15). The repositories are given as owner/name and qualified the way
@@ -4586,8 +4610,23 @@ func TestTheFlipConvergesThroughTheUpdatesOwnRetirement(t *testing.T) {
 // are not. The two clauses after the table are the guard's own inputs: a spec
 // that drops nothing admits nothing, and neither does a plan the run could not
 // read.
+//
+// The fixture is the sandbox as an `api-key` repository with one provider
+// allowed to send its code, which is what gives the kept row an address to be
+// about: B3.8's flip fetches the workflow's OWN secret (sandbox-probe, so its
+// accessor is one this tree no longer produces either), and the two model
+// credentials go with the arm, so a PROVIDER's key — mounted for a run whose
+// route forwards the value rather than attaching it (R6, D1634) — is the one
+// name of this job the credentials service does not hold.
 func TestProxiedTokenAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
-	spec, err := Repo(proxiedSandboxInputs(t, proxiedLocalEntry, publishedNode(t, true, "acme/sandbox")))
+	in := sandboxInputs(t, m5Additions+proxiedLocalEntry+proxiedProviderEntry)
+	in.Cfg.Agent.Auth = config.AuthAPIKey
+	serviceReady(t, in.LC, in.Repo)
+	in.Installation.CredentialsService = credentialsService()
+	node := publishedNode(t, true, "acme/sandbox")
+	node.Budget = projectpolicy.Budget{Mode: config.BudgetEnforce}
+	in.Policy = node
+	spec, err := Repo(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4597,12 +4636,9 @@ func TestProxiedTokenAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 	if produced := spec.Addresses(); slices.Contains(produced, bitbucketTokenAccessor) {
 		t.Fatalf("this tree's spec still produces %s, so the positive row below would admit an address the plan has no reason to delete", bitbucketTokenAccessor)
 	}
-	// The mount the workflow keeps whatever the flip does: its own secret, which
-	// the credentials service has no business holding and the address mirror
-	// still writes.
-	kept := `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["sandbox-probe"]`
+	kept := `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["openrouter-api-key"]`
 	if !slices.Contains(spec.Addresses(), kept) {
-		t.Fatal("the fixture's web workflow does not mount sandbox-probe, so the row about a name the service does not hold would pass for the wrong reason")
+		t.Fatal("the fixture's web workflow produces no accessor for the provider key, so the row about a name the service does not hold would pass for the wrong reason")
 	}
 	gone := strings.Replace(bitbucketTokenAccessor, `module.workflow["web"]`, `module.workflow["gone"]`, 1)
 	installation := strings.Replace(bitbucketTokenAccessor, "module.repo.", "module.installation.", 1)
@@ -4639,6 +4675,96 @@ func TestProxiedTokenAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
 		t.Errorf("the allow-list for a repository that loses no accessor = %v, want none: admitting an address the plan's own spec still produces is how a real delete of somebody else's grant would slip through", got)
 	}
 	if got := ProxiedTokenAccessorAllowDelete(nil, spec); len(got) != 0 {
+		t.Errorf("the allow-list for a run that read no plan = %v, want none", got)
+	}
+}
+
+// TestVaultAccessorAllowDeleteIsTheFlipsOwn is B3.8's own half of the test
+// above: the guard's allow-list for the class of secret the credentials service
+// FETCHES, on a project that is not managed, which is the ordinary plan. Its
+// fixture is deliberately NOT a proxied repository — the two flips are separate
+// (G22) and the fetched class is the one that has nothing to do with the
+// Bitbucket token, so a list that only answered next to the proxy would leave
+// every other switched repository's update owed a flag for the workspace
+// secret's own accessor (CLAUDE.md's HARD RULE).
+//
+// The rows are that filter's whole surface: the accessor this spec stopped
+// producing (sandbox-probe, which the flip fetches and the job no longer
+// mounts) is admitted; a name the service does not fetch, a variant the
+// configuration has left, a create rather than a delete and an address outside
+// the repository root's module are not. The clauses after the table are the
+// guard's own inputs (an unfilled class list admits nothing, so does an
+// unswitched repository, and so does a plan the run could not read), and the
+// last one is the flip-back the class list's comment describes.
+func TestVaultAccessorAllowDeleteIsTheFlipsOwn(t *testing.T) {
+	if !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
+		t.Fatalf("config.VaultFetchedSecretClasses = %v and does not carry %q: every row below is about the flip being filled (D2072, G17)", config.VaultFetchedSecretClasses, config.VaultSecretClassWorkflow)
+	}
+	switched, err := Repo(proxiedSandboxInputs(t, "", publishedNode(t, true, "workspace-b/other")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if switched.BitbucketProxied {
+		t.Fatalf("the fixture is proxied, so its rows would be about the other flip's list as well: this one's has to answer without it (G22)")
+	}
+	if switched.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not switched: nothing below would be about a repository whose job fetches its secrets")
+	}
+	// The name the flip fetches: the workflow's own secret, which the drop took
+	// off the job and the module's job_secret_names clause drops the accessor
+	// of in the same plan.
+	fetched := `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["sandbox-probe"]`
+	if got := switched.Workflows["web"].VaultSecretNames; !slices.Contains(got, "sandbox-probe") {
+		t.Fatalf("the fixture's web workflow does not fetch sandbox-probe (%v): the test would be vacuous", got)
+	}
+	if slices.Contains(switched.Addresses(), fetched) {
+		t.Fatalf("this tree's spec still produces %s, so the positive row below would admit an address the plan has no reason to delete", fetched)
+	}
+	// A name the service does not fetch for this workflow: the job's own
+	// Bitbucket token, which on a repository the node does not proxy stays
+	// mounted with its accessor.
+	kept := `module.repo.module.workflow["web"].google_secret_manager_secret_iam_member.job["bitbucket-token"]`
+	if !slices.Contains(switched.Addresses(), kept) {
+		t.Fatalf("the fixture's spec produces no %s, so the row about a name the service does not fetch would pass for the wrong reason", kept)
+	}
+	gone := strings.Replace(fetched, `module.workflow["web"]`, `module.workflow["gone"]`, 1)
+	installation := strings.Replace(fetched, "module.repo.", "module.installation.", 1)
+	for _, tc := range []struct {
+		what string
+		plan *tf.Plan
+		addr string
+		want bool
+	}{
+		{"the accessor this spec stopped producing", planDeleting(fetched), fetched, true},
+		{"a name the service does not fetch", planDeleting(kept), kept, false},
+		{"a variant the configuration no longer deploys", planDeleting(gone), gone, false},
+		{"the same address created, not deleted", &tf.Plan{ResourceChanges: []tf.ResourceChange{change(fetched, "create")}}, fetched, false},
+		{"an address outside the repository root's module", planDeleting(installation), installation, false},
+	} {
+		got := VaultAccessorAllowDelete(tc.plan, switched)
+		if slices.Contains(got, tc.addr) != tc.want {
+			t.Errorf("%s: admitted = %v, want %v (allow-list %v)", tc.what, !tc.want, tc.want, got)
+		}
+	}
+
+	// The flip's inert state, read where the cli reads it: with the class list
+	// empty this tree fetches nothing for anybody, so no plan's delete of an
+	// accessor is the flip's own.
+	off := vaultSpecUnswitched(t)
+	if off.Installation.CredentialsService != nil {
+		t.Fatal("the unswitched fixture carries a credentials service: nothing below would be about a repository the switch holds off")
+	}
+	if got := VaultAccessorAllowDelete(planDeleting(fetched), off); len(got) != 0 {
+		t.Errorf("the allow-list for a repository the switch holds off = %v, want none: a job with no address fetches nothing, so a delete of this address is somebody's real change and the guard judges it as before", got)
+	}
+	old := config.VaultFetchedSecretClasses
+	config.VaultFetchedSecretClasses = nil
+	t.Cleanup(func() { config.VaultFetchedSecretClasses = old })
+	if got := VaultAccessorAllowDelete(planDeleting(fetched), switched); len(got) != 0 {
+		t.Errorf("the allow-list with the class list empty = %v, want none: this is the state the release before the flip ran, and an allow-list that still admitted its delete would be one that admits a delete no plan of this tree makes", got)
+	}
+	config.VaultFetchedSecretClasses = old
+	if got := VaultAccessorAllowDelete(nil, switched); len(got) != 0 {
 		t.Errorf("the allow-list for a run that read no plan = %v, want none", got)
 	}
 }

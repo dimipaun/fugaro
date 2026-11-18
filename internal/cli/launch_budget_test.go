@@ -1764,7 +1764,7 @@ func TestVaultGateLeavesAReviewLaunchAlone(t *testing.T) {
 	env := fileEnv(t, f.cloudFixture)
 	slug, spec := appSlug, &task.Spec{Version: 1, RunID: budgetRun, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature"}
 	if err := env.vaultGate(context.Background(), slug, spec, "", false, io.Discard); err == nil {
-		t.Fatal("the ordinary launch of a switched repository declaring a secret was admitted on an image below the fetch: this is the red state of B3.8's first commit, whose flip list is still empty (config.VaultFetchedSecretClasses), and the review half below proves nothing until the second commit fills it")
+		t.Fatal("the ordinary launch of a switched repository declaring a secret was admitted on an image below the fetch: the flip is filled (config.VaultFetchedSecretClasses carries workflow) and the run's job mounts none of the workflow's own secrets, so the image has to know the fetch — and the review half below only means anything because this half refuses first")
 	}
 	spec.Mode = recipe.ModeReview
 	if err := env.vaultGate(context.Background(), slug, spec, "", false, io.Discard); err != nil {
