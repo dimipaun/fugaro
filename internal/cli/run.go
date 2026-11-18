@@ -6229,7 +6229,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// execution may exist. Keep the claim, and the token object: an
 		// execution that did start needs it (a --retry mints another); the runner's result.json tells
 		// the truth, and --retry reads it.
-		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s then reports the execution if it started, or launches it",
+		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
 	// The backend the launch actually used, from the seam, as above: the
