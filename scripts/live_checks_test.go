@@ -149,7 +149,9 @@ import (
 // that cancels a submitted copy can decide whether the record moved with the
 // staged digest or not. The fake `gcloud` serves the runs bucket, the two
 // staged objects, the build's own steps and Cloud Logging (one JSON line per
-// entry, stamped by the case, filtered as the check filters it), the fake
+// entry, stamped by the case, filtered as the check filters it) and removes
+// what a `storage rm` names -- refusing one when the case asks, so the restore
+// row that names a removal it could not make is pinned too -- the fake
 // `docker` reads the copied file out of the image and the image's
 // `org.opencontainers.image.revision`, and the fake `git` answers the
 // checkout's origin, cuts the branch, commits and pushes what the check
