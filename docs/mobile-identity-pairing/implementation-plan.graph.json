@@ -460,6 +460,24 @@
       }
     },
     {
+      "id": "J5",
+      "title": "per-message device signatures and a typed launch action",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/mailbox/message.go",
+          "internal/mailbox/verify.go",
+          "internal/mailbox/verify_test.go",
+          "shared/mailbox-schema/vectors.json",
+          "mobile/src/mailbox/client.js"
+        ]
+      }
+    },
+    {
       "id": "X1",
       "title": "one transcript for voice and text",
       "run": null,
@@ -690,6 +708,16 @@
       "task": "P7",
       "needs": "P2",
       "reason": "same file, internal/cli/pair.go"
+    },
+    {
+      "task": "J5",
+      "needs": "J3",
+      "reason": "internal/mailbox/action.go is J3's and mobile/src/mailbox/client.js is J4's"
+    },
+    {
+      "task": "J5",
+      "needs": "J4",
+      "reason": "internal/mailbox/action.go is J3's and mobile/src/mailbox/client.js is J4's"
     },
     {
       "task": "P3",
@@ -972,6 +1000,11 @@
       "reason": "built against the contract's shapes and stub, not the provider's behaviour"
     },
     {
+      "task": "J5",
+      "needs": "C2",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
       "task": "X1",
       "needs": "C2",
       "reason": "built against the contract's shapes and stub, not the provider's behaviour"
@@ -985,6 +1018,11 @@
       "task": "K3",
       "needs": "C1",
       "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "I2",
+      "needs": "J5",
+      "reason": "wires the sides the contract separated"
     }
   ],
   "decoupling": [
@@ -1077,6 +1115,15 @@
       },
       "integration": "I2",
       "reason": "the verbs send through the session port"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "J5",
+        "needs": "M3"
+      },
+      "integration": "I2",
+      "reason": "message signing goes through the port's signMessage, not the key code"
     },
     {
       "contract": "C2",
