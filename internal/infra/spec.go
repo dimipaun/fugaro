@@ -1170,10 +1170,7 @@ func (c *repoCtx) registryPath() string { return c.registryHost + "/" + gcp.Regi
 // (PIC4), which does not exist yet; when it lands, this is the reader the two
 // halves must agree through, so the name is written once.
 func (c *repoCtx) catalogImage(e config.Entry) string {
-	if e.Source.Kind == config.SourceImage {
-		return e.Source.Image
-	}
-	return c.registryHost + "/" + c.inst.SharedRegistry + "/" + catalogImagePrefix + e.Name + ":latest"
+	return catalogEntryImage(c.registryHost, c.inst.SharedRegistry, e)
 }
 
 // effectiveCatalog is the catalog the repository's specs are computed from:

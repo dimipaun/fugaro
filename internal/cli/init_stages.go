@@ -450,7 +450,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// providers in use, and before the loop for the reason syncAccess is
 	// below it: the config every stage of this run reads is the one this run
 	// writes.
-	e.createDefaultProfiles()
+	e.createDefaultProfiles(ctx)
 	// The managed project's read, once for the whole run: it is what the run's
 	// one confirmation and the steps the gate does not judge ask about
 	// (update_managed.go's gateRun), and it is made before the first stage so
@@ -1766,9 +1766,10 @@ func newFirebaseStage(e *initEngine) *engineStage {
 
 // newInstallation2Stage is stage 6: the installation root once more, deploying
 // what only the images stage's own work makes deployable — the history job,
-// whose image that stage mirrors, and the installation's two scheduled jobs,
-// which run FROM the base image it pins: the catalog check job (#1843) and the
-// reports job (R7).
+// whose image that stage mirrors, the installation's two scheduled jobs, which
+// run FROM the base image it pins: the catalog check job (#1843) and the
+// reports job (R7) — and the shared project jobs, whose image is the project's
+// catalog default and so the same base image (S10, D2305).
 func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
@@ -1794,12 +1795,21 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// the reason the repository stage reads it that way too: a config
 			// this run cannot compose the default profile's job from must not
 			// stop a stage of a converging update.
+			//
+			// The shared project jobs are read again with them (S10): their
+			// image is the project's catalog default, and the images stage is
+			// what moves that — the entry is written on the base image the run
+			// started with, before the stage that pins this release's, so the
+			// first apply's jobs carry the image the run started with. The same
+			// lag, and the same apply to close it, as the scheduled jobs beside
+			// them.
 			next, err := installSpec(e.r.o, e.lc, e.r.warn)
 			if err != nil {
 				return err
 			}
 			e.spec.CatalogCheck = next.CatalogCheck
 			e.spec.Reports = next.Reports
+			e.spec.ProjectJobs = next.ProjectJobs
 			if e.r.o.firebase != "" {
 				return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 			}
