@@ -317,18 +317,20 @@ func oneLine(s string) string {
 	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "\\"))
 }
 
-func (l *loop) left(stage string, lf Left) Left {
+// left is one step a stage leaves for the person, as the run records it: the
+// stage's name, a kind and a first line that are always there, and the reason
+// the step was not done — the stage's own detail, when the step carries none of
+// its own (a stage that only said "run this in your own terminal" has said what
+// it owes and not why).
+func (l *loop) left(stage string, lf Left, why string) Left {
 	lf.Stage = stage
 	if lf.Kind == "" {
 		lf.Kind = LeftCommand
 	}
-	lf.Text = l.redact(oneLine(lf.Text))
-	if len(lf.Commands) > 0 {
-		lf.Commands = l.redactAll(lf.Commands)
-		for i, c := range lf.Commands {
-			lf.Commands[i] = oneLine(c)
-		}
+	if len(lf.Why) == 0 {
+		lf.Why = why
 	}
+	lf.one(l.redact, l.redactAll)
 	return lf
 }
 
@@ -367,7 +369,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			if st.Left != nil {
 				lf = *st.Left
 			}
-			l.res.Left = append(l.res.Left, l.left(name, lf))
+			l.res.Left = append(l.res.Left, l.left(name, lf, st.Detail))
 			if st.State == BillingPending {
 				// Not a stop, and not what the stages after it wait for:
 				// converge pauses there and lets the stages billing does not
@@ -716,7 +718,7 @@ func (l *loop) applied(stage string, out Outcome) {
 	// stage applied what this session may do and left the rest (G3), and the
 	// line prints the moment it is recorded.
 	if out.Left != nil {
-		l.res.Left = append(l.res.Left, l.left(stage, *out.Left))
+		l.res.Left = append(l.res.Left, l.left(stage, *out.Left, out.Detail))
 	}
 	l.record(r)
 }
@@ -822,12 +824,12 @@ func (l *loop) agentApplied(ctx context.Context, s Stage) (done bool, err error)
 // billingPending records a stage that paused for billing: its Left is the
 // step left for you, and it is not a failure.
 func (l *loop) billingPending(stage, detail string, lf Left) {
-	l.res.Left = append(l.res.Left, l.left(stage, lf))
+	l.res.Left = append(l.res.Left, l.left(stage, lf, detail))
 	l.record(StageResult{Name: stage, State: BillingPending, Detail: l.redact(oneLine(detail))})
 }
 
 func (l *loop) needsYou(stage, detail string, lf Left) {
-	l.res.Left = append(l.res.Left, l.left(stage, lf))
+	l.res.Left = append(l.res.Left, l.left(stage, lf, detail))
 	l.record(StageResult{Name: stage, State: NeedsYou, Detail: detail})
 }
 
@@ -1137,13 +1139,23 @@ func (l *loop) finish() {
 		// screen can be given (G5). The loop's own account — no reporter at all,
 		// a caller that has not moved onto one — prints the block, which is what
 		// it printed before.
+		brief := len(lf.Brief) > 0 && (l.o.Report == nil || l.o.Report.KeepsLog())
 		lines := []string{lf.Text}
-		if len(lf.Brief) > 0 && (l.o.Report == nil || l.o.Report.KeepsLog()) {
+		if brief {
 			lines = lf.Brief
 		}
 		fmt.Fprintf(l.o.Out, "left for you (%s, %s): %s\n", lf.Stage, lf.Kind, lines[0])
 		for _, extra := range lines[1:] {
 			fmt.Fprintf(l.o.Out, "    %s\n", extra)
+		}
+		// The reason the step was not done, under the step: a person reads
+		// what the run leaves them and, on the next line, why it is theirs
+		// rather than the run's — the line the stage printed in flight is
+		// gone from the view a reader of the log or of `--json` has. A
+		// refusal's own three lines (Brief) already are that reason and are
+		// not said twice.
+		if lf.Why != "" && !brief {
+			fmt.Fprintf(l.o.Out, "    %s\n", lf.Why)
 		}
 		for _, c := range lf.Commands {
 			fmt.Fprintf(l.o.Out, "    %s\n", c)

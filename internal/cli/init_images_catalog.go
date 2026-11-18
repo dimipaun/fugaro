@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -31,6 +32,17 @@ import (
 // secrets, so this run cannot submit it — it prints one line per such entry
 // naming the command to run in that checkout and ends not covered, and the
 // stage never prints "No changes" while one of them is stale.
+//
+// A rebuild this run submits can also end on the entry's own definition being
+// refused — a pinned branch whose Dockerfile mounts a secret, a definition
+// over the ceiling — and such an entry is not handed a command: the run
+// watched `fugaro image build <entry>` refuse those bytes once, so the step
+// prints the refusal, which names the line and the change, instead of a
+// command that would fail the same way and say nothing (the owner's 0.26.0
+// update, where the images step ended on exactly that command). It is the
+// refusal and not a reading of the file this run makes a second time: the
+// rebuild IS the command, its first stage the resolve and the validation, so
+// what the step prints is what the person would have watched happen.
 //
 // The rule is offline and record-only: it reads the base reference the
 // entry's own record carries and compares its release with this binary's,
@@ -157,11 +169,25 @@ func catalogBaseStale(ref string) bool {
 // entry's name.
 var catalogRebuild = runImageBuildCatalogOrDerived
 
-// catalogLeft is one stale entry this run did not rebuild, with the reason:
-// the command that rebuilds it is the same one either way.
+// catalogLeft is one stale entry this run did not rebuild, with the reason it
+// was not: where the command that rebuilds it is printed, it is the same one
+// either way.
 type catalogLeft struct {
 	entry catalogStaleEntry
 	why   string
+	// refused is the entry's own definition refused where this run watched it
+	// happen: the rebuild of this checkout's entry read and validated the
+	// definition — the first thing `fugaro image build <entry>` does — and
+	// refused it on its text, so that command refuses the same bytes the same
+	// way and is not a command to hand anyone. The step prints the refusal
+	// instead (catalogLeftFor), which is the one thing the reader can act on.
+	//
+	// Only an entry of THIS checkout is ever refused here, because only its
+	// rebuild runs here. An entry another checkout builds has its command
+	// offered unread: reading that definition is what that repository's
+	// credential is for, and this run does not hold it — the same fact that
+	// leaves the build to that checkout in the first place.
+	refused bool
 }
 
 // catalogPlanDetail is the catalog half of a plan line: what the run will
@@ -247,8 +273,16 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) 
 	var built []string
 	var missed []catalogLeft
 	for _, se := range set.here {
+		// The rebuild's own failure is read before it is described: the one
+		// failure `fugaro image build <entry>` could not answer differently on
+		// the same bytes is the entry's own definition being refused
+		// (catalog.Refused), and an entry refused there is one this run must
+		// not hand the person a command for. Every other failure — a lease
+		// with no room, a quota, a read that did not come back — leaves the
+		// command offered, because the command may well work where this run's
+		// did not.
 		if err := s.rebuildCatalogEntry(se); err != nil {
-			missed = append(missed, catalogLeft{entry: se, why: "its rebuild did not finish (" + oneLine(err.Error()) + ")"})
+			missed = append(missed, catalogLeft{entry: se, why: catalogRebuildWhy(err), refused: catalog.IsRefused(err)})
 			continue
 		}
 		built = append(built, pluginwire.Printable(se.entry.Name))
@@ -262,10 +296,17 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) 
 	}
 	if len(missed) > 0 {
 		for _, m := range missed {
+			if m.refused {
+				// No command on the line, because there is none to give: the
+				// entry's own definition is what has to change, and the
+				// refusal just said so.
+				fmt.Fprintf(w, "  %s: NOT rebuilt: %s\n", pluginwire.Printable(m.entry.entry.Name), m.why)
+				continue
+			}
 			fmt.Fprintf(w, "  %s: NOT rebuilt: %s; run %s in %s's checkout\n",
 				pluginwire.Printable(m.entry.entry.Name), m.why, catalogBuildCommand(m.entry.entry.Name), pluginwire.Printable(m.entry.repo.Repo))
 		}
-		fmt.Fprintf(w, "  not covered: %d catalog image(s) of this installation are on a base older than this release's and this run did not rebuild them — the lines above name each one and the command that does\n", len(missed))
+		fmt.Fprintf(w, "  not covered: %d catalog image(s) of this installation are on a base older than this release's and this run did not rebuild them — the lines above name each one and what rebuilding it takes\n", len(missed))
 		parts = append(parts, fmt.Sprintf("not covered: %d catalog image(s) are on a base older than this release's and this run did not rebuild them", len(missed)))
 	}
 	if set.unread != "" {
@@ -279,26 +320,64 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) 
 }
 
 // catalogLeftFor is the step this run leaves for the person when a stale
-// catalog image is not rebuilt here: one command per entry, each run in the
+// catalog image is not rebuilt here: one line per entry naming it and why it
+// was not, and one command per entry whose command can run, each in the
 // checkout whose build account that entry's build runs as. It is what makes
 // the run end not finished (exit 1) rather than reporting a stage that
 // skipped half of itself as done.
+//
+// An entry this run watched its own definition refuse gets its refusal in the
+// line and no command under it: `fugaro image build <entry>` reads the same
+// bytes and refuses them the same way, so printing it would be handing the
+// reader a step that fails and says nothing about what to change. What does
+// change the entry is the definition the refusal names — the run cannot edit
+// a file in another repository, and an edit here is not what the entry's
+// build reads — so the command stays in the sentence the reader acts on:
+// change the definition, then `fugaro update` again, which is the step this
+// run is.
 func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 	if len(missed) == 0 {
 		return nil
 	}
-	cmds := make([]string, len(missed))
-	names := make([]string, len(missed))
-	for i, m := range missed {
-		cmds[i] = catalogBuildCommand(m.entry.entry.Name)
-		names[i] = fmt.Sprintf("%s (%s's checkout): %s", pluginwire.Printable(m.entry.entry.Name), pluginwire.Printable(m.entry.repo.Repo), m.why)
+	var cmds, names []string
+	for _, m := range missed {
+		names = append(names, fmt.Sprintf("%s (%s's checkout): %s", pluginwire.Printable(m.entry.entry.Name), pluginwire.Printable(m.entry.repo.Repo), m.why))
+		if !m.refused {
+			cmds = append(cmds, catalogBuildCommand(m.entry.entry.Name))
+		}
+	}
+	text := fmt.Sprintf("this run did not rebuild %d catalog image(s) that are on a base older than this release's: %s. ", len(missed), strings.Join(names, ", "))
+	if len(cmds) == 0 {
+		// Nothing below to run: every entry left is one whose own definition
+		// is refused, and each refusal says what about it has to change.
+		text += "Change what the refusals name, then fugaro update again"
+	} else {
+		text += "Run each command below in the checkout it names, then fugaro update again"
 	}
 	return &initflow.Left{
 		Stage:    initflow.Images,
 		Kind:     initflow.LeftCommand,
-		Text:     fmt.Sprintf("this run did not rebuild %d catalog image(s) that are on a base older than this release's: %s. Run each command below in the checkout it names, then fugaro update again", len(missed), strings.Join(names, ", ")),
+		Text:     text,
 		Commands: cmds,
 	}
+}
+
+// catalogRebuildWhy is why one of this checkout's entries was not rebuilt, in
+// the words its reader acts on. A refusal of the entry's own definition is the
+// refusal itself and nothing else: it is about the entry, it names the line
+// and the change, and the run adds no frame of its own to it — that is the
+// sentence the step prints instead of the command. Any other failure is this
+// run's own (a lease with no room, a quota, a read that did not come back) and
+// is said as such, because the same command run by the person may well answer
+// differently.
+//
+// Both are one line: a failure that reaches this point can carry a provider's
+// whole answer, and the step is what the run ends on.
+func catalogRebuildWhy(err error) string {
+	if catalog.IsRefused(err) {
+		return oneLine(err.Error())
+	}
+	return "its rebuild did not finish (" + oneLine(err.Error()) + ")"
 }
 
 // catalogBuildCommand is the command that rebuilds one catalog entry from the

@@ -423,12 +423,25 @@ const (
 // continued or multi-line command and never a secret's value. When there are
 // commands to paste, each is one complete line of its own in Commands, run in
 // order, never joined by && or ;, and Text is the sentence that introduces
-// them. A LeftCommand with no Commands is itself the one command.
+// them. A LeftCommand with no Commands is itself the one command — unless its
+// Text is a refusal rather than a command, which is a step whose command would
+// refuse where it stands (internal/cli's catalog step, an entry whose own
+// definition its build refused): the run prints what refused it and nothing
+// the reader can run, because there is nothing to run until the refusal is
+// acted on.
 type Left struct {
 	Stage    string   `json:"stage"`
 	Kind     LeftKind `json:"kind"`
 	Text     string   `json:"text"`
 	Commands []string `json:"commands,omitempty"`
+	// Why is the reason this step was not done, one line, in the refusal's own
+	// words: what the run reads under the step it leaves, and the fact a reader
+	// who was not at the terminal has no other way to get. The loop fills it
+	// from the stage's own result when the stage set none — a stage that only
+	// said "run this in your own terminal" has said what it owes and not why —
+	// so a step left for a person always prints one, for every stage and not
+	// only the ones whose own text happens to argue the case.
+	Why string `json:"why,omitempty"`
 	// Brief is a refusal's account as the terminal prints it, one part per
 	// line: what was refused, why in a clause, what to do (the owner's
 	// feedback of 2026-11-09). A refusal's Text argues the case at paragraph
@@ -437,6 +450,21 @@ type Left struct {
 	// this never reaches the wire (json:"-"): the two fields say the same
 	// thing at two lengths and not two things.
 	Brief []string `json:"-"`
+}
+
+// one makes the step's one-line fields one line wherever they are printed and
+// takes the run's redactions over them: a value the process holds must not
+// reach the screen through a stage's own sentence or through the reason it
+// gives for the step, and the two are normalised the same way for that reason.
+func (lf *Left) one(redact func(string) string, redactAll func([]string) []string) {
+	lf.Text = redact(oneLine(lf.Text))
+	lf.Why = redact(oneLine(lf.Why))
+	if len(lf.Commands) > 0 {
+		lf.Commands = redactAll(lf.Commands)
+		for i, c := range lf.Commands {
+			lf.Commands[i] = oneLine(c)
+		}
+	}
 }
 
 // PrintedCommands is every command line the Left asks the user to run.

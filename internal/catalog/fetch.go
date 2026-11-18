@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
@@ -284,12 +285,49 @@ func resolveRef(ctx context.Context, p gitprov.Provider, e config.Entry) (string
 func definition(e config.Entry, data []byte) ([]byte, error) {
 	data, err := bounded(e, data)
 	if err != nil {
-		return nil, err
+		return nil, Refused(err)
 	}
 	if err := refuseCredentialIn(e, data); err != nil {
-		return nil, err
+		return nil, Refused(err)
 	}
 	return data, nil
+}
+
+// Refused marks err as this package's refusal of a definition's own text: a
+// secret a RUN asks for, a credential-shaped ARG or ENV, a URL with a
+// credential in its userinfo, a definition over the ceiling a build may read.
+//
+// The mark is what tells a read that repeats from one that may not: these
+// bytes answer the same way every time, where a read that failed — a provider
+// this run could not open, a network error, a context the caller cancelled —
+// may answer differently on the next run. It is a mark and not a second
+// sentence (Error and Unwrap hand the caller exactly the refusal the guard
+// wrote), because what a person reads has to stay the refusal that names the
+// line and the fix.
+//
+// What reads it is a caller that has to decide whether to hand its reader a
+// command it has already watched refuse: internal/cli's catalog step, where
+// the owner's 0.26.0 update offered `fugaro image build go` for an entry whose
+// pinned branch mounted a secret, a command that fails the same way and says
+// nothing about what to change.
+func Refused(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &refusedError{err: err}
+}
+
+// refusedError is Refused's mark, carrying the refusal it was given.
+type refusedError struct{ err error }
+
+func (e *refusedError) Error() string { return e.err.Error() }
+func (e *refusedError) Unwrap() error { return e.err }
+
+// IsRefused reports whether err is a refusal this package made of a
+// definition's own text, at any depth.
+func IsRefused(err error) bool {
+	var r *refusedError
+	return errors.As(err, &r)
 }
 
 // refuseCredentialIn refuses a definition whose own text carries a credential:
