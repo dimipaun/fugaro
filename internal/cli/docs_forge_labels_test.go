@@ -47,11 +47,13 @@ const (
 	forgeLabelsReleaseNotes = "docs/releases/v0.26.0.md"
 	// forgeLabelsSection is the heading T6 adds to docs/git-providers.md.
 	forgeLabelsSection = "## Status labels on Fugaro's pull requests"
-	// forgeLabelsNotWired is the one sentence all three documents carry about
-	// the half of the feature that is not on this tree: the daemon's own
-	// client and the tick that would compute the difference. It is written
-	// the same way in each, so the three move together.
-	forgeLabelsNotWired = "the daemon holds no client for the route"
+	// forgeLabelsAdmitsTheDaemon is the one sentence all three documents carry
+	// about the daemon's half of the feature having arrived: until F19 and O2
+	// (2026-11-18) each of them said the daemon held no client for the route
+	// and no installation named it, and the wiring that landed moved the three
+	// together. It is written the same way in each, so they move together
+	// again.
+	forgeLabelsAdmitsTheDaemon = "the service admits the daemon as the installation's own orchestrator account"
 )
 
 // TestDocsForgeLabelsStatusSection: docs/git-providers.md carries the
@@ -100,10 +102,10 @@ func TestDocsForgeLabelsStatusSection(t *testing.T) {
 		// The labels are created on first use, so no second command
 		// pre-creates them (D2440, F11).
 		"The service creates its labels on first use, so nothing pre-creates them",
-		// And the half that is not here.
-		"**The daemon's half is not on this tree.**",
-		forgeLabelsNotWired,
-		"no pull request carries these labels yet",
+		// And the daemon's half, which arrived with F19 and O2.
+		"**The daemon's half is wired, and the installation is what admits it.**",
+		forgeLabelsAdmitsTheDaemon,
+		"the daemon holds a client for the route",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s's %q does not say %q: this is the section an operator reads to find out what the labels are and what writes them", forgeLabelsProviders, forgeLabelsSection, want)
@@ -160,8 +162,9 @@ func TestDocsForgeLabelsSecurityStatesTheRoutesReach(t *testing.T) {
 		"relabel **Fugaro's own pull requests**",
 		"cannot write label text",
 		"cannot reach a pull request Fugaro did not open",
-		// And the half that is not here.
-		forgeLabelsNotWired,
+		// And the daemon's half: the installation names it, the daemon mints
+		// its own identity and the route is reached (F19, O2).
+		forgeLabelsAdmitsTheDaemon,
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s's credentials-service section does not say %q: the label route is a write path on the App key, and its reach is what a reader of this document has to be able to check", forgeLabelsSecurity, want)
