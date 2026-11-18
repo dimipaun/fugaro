@@ -108,6 +108,41 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 	}
 }
 
+// TestRecipesGuideNamesCommitReports: the commit run's row in
+// docs/recipes.md, which is the one place a person reads what designating a
+// repository commits -- the closed list of what a committed report holds and
+// what it never holds (D2753, D969), and the two keys the designation is
+// written with (R14's member). It is a test of its own rather than a clause
+// of TestRecipesGuideMatchesTheCLI because that test's name does not match the
+// Docs filter the rest of the page's pins are run under.
+func TestRecipesGuideNamesCommitReports(t *testing.T) {
+	data, err := os.ReadFile("../../docs/recipes.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	text, ok := recipe.CatalogText("commit-reports")
+	if !ok {
+		t.Fatal("the catalog has no commit-reports recipe")
+	}
+	if !strings.Contains(string(text), string(recipe.StepCommitReports)) {
+		t.Errorf("the catalog's commit-reports recipe no longer carries a commit_reports step:\n%s", text)
+	}
+	for _, want := range []string{
+		"`commit-reports`",
+		"commit_reports: {}",
+		"`reports_commit.repo`",
+		"`reports_commit.dir`",
+		"`docs/fugaro-reviews`",
+		"the run ids a flagged row is actionable by",
+		"no person, no address, no task text, no log line and no credential",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("docs/recipes.md never says %q: the commit run's row is where a person reads what designating a repository commits, and what a committed report holds and never holds (D2753, D969)", want)
+		}
+	}
+}
+
 // TestLaunchSkillAllowsReviewModeTaskText: the working skill's launch.md
 // guides the agent's own `fugaro run` invocations, so a wrong claim there
 // about review-only/pick taking "never a task description" (true once,

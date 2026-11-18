@@ -908,10 +908,10 @@ var previewStageKinds = [...]string{"implement", "review_first", "fix", "review"
 // run over buys no fix round: the run ends at that review with its verdict
 // recorded, so its rounds are the review alone (the escalation's `escalate`).
 // A mode:
-// review recipe runs the senior review alone, and a digest recipe has no
-// implement stage at all:
-// its first step is the runner's own work, which writes the run reports with
-// no model call (run-digest).
+// review recipe runs the senior review alone, and a digest recipe and a
+// commit-reports one have no implement stage at all: either's first step is
+// the runner's own work, which writes the run reports with no model call
+// (run-digest, commit-reports).
 //
 // first, rounds and level3 are the rounds of the three levels (a step's own
 // max_rounds overriding its knob or its default, as recipe.StageBound takes
@@ -965,7 +965,7 @@ func previewTypicalCounts(rp *recipe.Recipe, first, rounds, level3 int) map[stri
 		"review":       n + adv,                                // the senior round and level 3's
 		"fix":          f + reviewFix + adv + cheap + advCheap, // each review's demands answered
 	}
-	if !recipe.UsesDigest(rp) {
+	if !recipe.UsesDigest(rp) && !recipe.UsesCommitReports(rp) {
 		counts["implement"] = 1 // the first_line step's first stage
 	}
 	return counts
