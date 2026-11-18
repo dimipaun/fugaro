@@ -196,6 +196,18 @@ func routeAct(path string) (purpose, credential string) {
 		// (checked), and the two purposes are the only ones a build's line
 		// carries.
 		return PurposeBuildToken, ""
+	case BuildCredentialsPath:
+		// A repository's build asks for its credentials under ONE purpose, and
+		// the credential that purpose's line names is the GIT credential the
+		// provider's answer selected — the App key for a GitHub repository, the
+		// bundle's bitbucket-token for a Bitbucket one (B4.3). This rule cannot
+		// read the provider off the path, and here it does not have to wait for
+		// the body either: the provider is the CALLER's own row (the class list
+		// the route verifies against), so it is known the moment the caller is,
+		// which is before any refusal that writes a line. The handler fills it
+		// in there (build.go) and names it on every line it writes, the way the
+		// proxy route names the bundle's token on every line of its own.
+		return PurposeBuild, ""
 	}
 	if strings.HasPrefix(path, BitbucketProxyPrefix) {
 		// The Bitbucket proxy route (B1.5), and the ONE route whose two facts
@@ -250,7 +262,7 @@ func servedRoute(r *http.Request) bool {
 		return false
 	}
 	switch r.URL.Path {
-	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath:
+	case MessagesPath, CountTokensPath, MintPath, ContextTokenPath, SignPath, VerifyPath, BitbucketReadPath, GitHubReadPath, MergeMintPath, LabelPath, IssuePath, SlipPath, SlipClaimPath, WorkflowSecretsPath, BuildTokenPath, BuildCredentialsPath:
 		return true
 	}
 	return false
@@ -333,9 +345,12 @@ type RepoJob struct {
 // being taken as arguments, because a table an operator typed is a table that
 // can disagree with the accounts that exist.
 //
-// The build account is deliberately not in the table: it never calls the
-// service. A caller whose email is in no row is refused, so an installation
-// that passes nothing here serves nobody (NewServer refuses the empty table).
+// A repository's BUILD account is deliberately not in this table: it is a
+// caller of the build-credentials route alone and never of a run route, and its
+// binding is its own row (RepoBuildAccount), which names a repository and no
+// workflow and is read by VerifyRepoBuild and by nothing here. A caller whose
+// email is in no row is refused, so an installation that passes nothing here
+// serves nobody (NewServer refuses the empty table).
 func JobAccountsFor(fugaroProject, gcpProject, provider string, jobs []RepoJob) ([]JobAccount, error) {
 	out := make([]JobAccount, 0, len(jobs))
 	for _, j := range jobs {
@@ -355,6 +370,85 @@ func JobAccountsFor(fugaroProject, gcpProject, provider string, jobs []RepoJob) 
 			Slug:     slug,
 			Repo:     canonical,
 			Workflow: j.Workflow,
+		})
+	}
+	return out, nil
+}
+
+// RepoBuildAccount is one REPOSITORY's build service account and the binding
+// that account is (B4.3, R5, D2076, D2077): the account a repository's image
+// build and daily check run as, and the one repository whose credentials it is
+// served.
+//
+// It is the caller class of the build-credentials route and of nothing else,
+// and it is the whole of that route's admission: a call presents a Google ID
+// token, the verified email claim is looked up here, and the row it lands on is
+// the repository, the slug and the provider the call is answered about. No
+// field of the call can reach any of the three (G20).
+//
+// It is not JobAccount, and the difference is the point rather than a shape: a
+// job account names a workflow and is a run's, while a build account names a
+// repository and runs the build that bakes it. The two are different accounts
+// of different derivations (gcp.ServiceAccountID against
+// gcp.BuildServiceAccountID), and a service that read one as the other would
+// serve a build a run's credentials.
+type RepoBuildAccount struct {
+	// Email is the service account's address, as a Google ID token's verified
+	// email claim spells it.
+	Email string
+	// Slug is the repository's slug (task.Slug): the key a run's nodes are
+	// written under, the key the workflow-secrets record is written under
+	// (creds.PathWorkflowSecrets), and what every audit line of this service is
+	// keyed by.
+	Slug string
+	// Repo is the canonical repository name (projectpolicy.Canonical) the
+	// published policy speaks.
+	Repo string
+	// Provider is the provider the repository is held at (gitprov.KindGitHub
+	// or gitprov.KindBitbucket). It is the DEPLOYMENT's answer and never a
+	// call's: which credential the route issues from and which host its answer
+	// names are decided by it, so a caller that could name its own provider
+	// would be choosing what it is served.
+	Provider string
+}
+
+// RepoBuildAccountsFor computes the rows of an installation's repositories'
+// builds: one per repository, derived exactly as the repository root deploys
+// them (gcp.BuildServiceAccountID over task.Slug, the two functions the
+// deployer and the launcher share), each bound to the one repository it bakes
+// and to the provider it is held at.
+//
+// Its input is the same per-provider job list JobAccountsFor takes, and that is
+// deliberate: a repository's build exists exactly where its jobs do, so the
+// repositories this table names are the repositories the deployment holds and
+// not a second list an operator could let drift. Two jobs of one repository
+// (one per workflow) yield ONE row: the build account is per repository and
+// carries no workflow, which is what makes it a build's and not a job's.
+//
+// TestBuildAccountsAreTheNamesTheRepoRootDeploys builds one installation both
+// ways and requires the two sets to be equal, which is what makes the claim a
+// test rather than a comment.
+func RepoBuildAccountsFor(gcpProject, provider string, jobs []RepoJob) ([]RepoBuildAccount, error) {
+	seen := make(map[string]bool, len(jobs))
+	out := make([]RepoBuildAccount, 0, len(jobs))
+	for _, j := range jobs {
+		slug, err := task.Slug(provider, j.Repo)
+		if err != nil {
+			return nil, fmt.Errorf("credsvc: build accounts for %q: %w", j.Repo, err)
+		}
+		if seen[slug] {
+			continue
+		}
+		seen[slug] = true
+		canonical, err := projectpolicy.Canonical(provider, j.Repo)
+		if err != nil {
+			return nil, fmt.Errorf("credsvc: build accounts for %q: %w", j.Repo, err)
+		}
+		out = append(out, RepoBuildAccount{
+			Email:    serviceAccountEmail(gcp.BuildServiceAccountID(slug), gcpProject),
+			Slug:     slug,
+			Repo:     canonical,
+			Provider: provider,
 		})
 	}
 	return out, nil
@@ -654,6 +748,19 @@ type Verifier interface {
 	// repository, so the route it serves is answered ahead of RequestFromHTTP
 	// and the class is all it has.
 	VerifyBuildCaller(ctx context.Context, tok string) (string, error)
+	// VerifyRepoBuild admits the caller of the build-credentials route
+	// (build.go, B4.3): the installation's repositories' build accounts, and
+	// nothing else. It is a class of its own against one more list — the
+	// per-repository build service accounts — and its audience is this
+	// service's own URL alone, like every class whose caller is not a person.
+	//
+	// It answers the ROW the address matched rather than the address, because
+	// the route's whole binding is that row: the repository, the slug and the
+	// provider a build is served are the row's and never a call's (G20). A
+	// build holds no run identity and is a job of no repository, so the route
+	// it serves is answered ahead of RequestFromHTTP and the class is all it
+	// has.
+	VerifyRepoBuild(ctx context.Context, tok string) (RepoBuildAccount, error)
 }
 
 // PolicyReader is the published policy as the service reads it: the project's
@@ -1049,7 +1156,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// "no admin endpoint" is kept by there being nothing to reach rather
 		// than by a check inside a handler.
 		s.refuse(w, http.StatusNotFound, "not_found",
-			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+" and "+BuildTokenPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
+			"this service serves POST "+MessagesPath+", "+CountTokensPath+", "+MintPath+", "+ContextTokenPath+", "+SignPath+", "+VerifyPath+", "+BitbucketReadPath+", "+GitHubReadPath+", "+MergeMintPath+", "+LabelPath+", "+IssuePath+", "+SlipPath+", "+SlipClaimPath+", "+WorkflowSecretsPath+", "+BuildTokenPath+" and "+BuildCredentialsPath+", and the run's own Bitbucket traffic under "+BitbucketProxyPrefix)
 		return
 	}
 	if r.URL.Path == VerifyPath {
@@ -1112,6 +1219,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// (readBuildRequest below), and the run-identity headers are refused by
 		// name inside the handler.
 		s.buildToken(ctx, w, r)
+		return
+	}
+	if r.URL.Path == BuildCredentialsPath {
+		// The ninth route answered before the shared parse, and a repository's
+		// build's reason is the other eight's (B4.3): a build holds no run
+		// identity and is a job of no repository — it is the service account
+		// its repository's image build and daily check run as — so
+		// RequestFromHTTP would refuse the call for the missing identity
+		// headers before the class ever read the token. What replaces the parse
+		// is this route's own read of the body (readBuildCredentialsRequest),
+		// and the run-identity headers are refused by name inside the handler.
+		//
+		// It is a route of its own rather than a branch of the build route
+		// above, and the two are different classes: that one's caller is the
+		// installation's catalog-build identity, which names no repository and
+		// is answered the repositories its own entry's map puts on it, while
+		// this one's is a repository's build, which is served that repository
+		// and no other (G20).
+		s.buildCredentials(ctx, w, r)
 		return
 	}
 	if r.URL.Path == IssuePath {

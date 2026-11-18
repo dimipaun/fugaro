@@ -53,7 +53,9 @@ variable "installation" {
     # own account, which the workflow module turns into each job account's
     # roles/run.invoker grant, the drop of that job's model-secret accessors,
     # and the service account's own secretAccessor on each secret the job mounts
-    # (D2074, from `account`).
+    # (D2074, from `account`). This module reads the first two for the build
+    # account's own invoker grant (B4.4): one switch, so a build is admitted to
+    # the service on exactly the installations whose jobs are.
     credentials_service = optional(object({
       name    = string
       region  = string
@@ -176,6 +178,13 @@ variable "repo" {
       })
       vertex     = bool
       deploy_job = bool
+      # Whether this is a mixed stage account's own variant job (B0's one mix,
+      # docs/design/mixed-credentials.md §11): Go's WorkflowSpec.StageAccount,
+      # which the workflow module reads as local.is_stage_account_token to
+      # leave this job's Claude OAuth mount where B2.7's flip takes the model
+      # mounts away. Optional and false, so a tfvars written before the fact
+      # existed plans exactly what it planned.
+      stage_account = optional(bool, false)
     }))
   })
 

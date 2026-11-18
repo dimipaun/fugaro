@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -176,6 +178,87 @@ func TestRunInFlightSurvivesPolicyBump(t *testing.T) {
 	run.laterWrites(t, r)
 }
 
+// TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch is S6's converge
+// case (the review of 2026-11-18 found the family had none): an installation one
+// release behind, a run of the project's repository in flight, the credentials
+// service deployed with a workspace token in its bundle, and the S6 flip really
+// turning — the bundle is R7's gate, so a fixture without a token in it would
+// name a step that then held itself back.
+//
+// The claim is the owner's requirement of 2026-11-09 read over the step that
+// moves the credential: the update converges, the switch and the block it
+// implies land in the same run, and every write the run in flight makes
+// afterwards still lands — its lease, the ledger and counters, and its record in
+// the runs bucket. The run computed proxiedness once, at bootstrap, so nothing
+// of it moves; what this step changes is where the repository's jobs are
+// admitted by (the address), and the mount comes off on a later update.
+func TestUpdateLeavesARunInFlightRunningThroughTheProxySwitch(t *testing.T) {
+	r := newConvergeRig(t, v7Node())
+	// The credentials service, as the release behind deployed it — the flip
+	// needs a service to forward from, and turns nothing on without one — and
+	// the workspace token its bundle holds, which R7's gate reads. The block goes
+	// in before the copy the doors read is taken: the rig cleared FUGARO_CONFIG,
+	// so the config they read and write is the installation's own file in the XDG
+	// projects directory, and registerInstallation is what puts this one there.
+	r.appendConfig(t, "credentials_service: { url: "+credentialsServiceURL+" }\n")
+	registerInstallation(t, r.initRig)
+	// The service itself, as the release behind deployed it: the tfvars entry it
+	// holds, this release's image in the fake source so the credentials-service
+	// stage has a move to make, and the installation's own outputs, which is what
+	// the installation stage writes the config's block from and what the
+	// repository stage reads the installation's facts from. A service the release
+	// cannot resolve an image for is one the update takes off the config, and with
+	// it the flip's own precondition — the state this fixture is not about
+	// (TestUpdateMigratesTheNodeBeforeItReplacesTheCredentialsService is its own).
+	publishCredentialsImage(t, r.imagesRig, convergeRelease)
+	seedCredentialsService(t, r.imagesRig, oldCredentialsRef(convergePrev))
+	r.script["show -json"] = r.script["show"]
+	r.script["plan@installation"] = map[string]any{"exit": 2}
+	r.setPlanAt(t, "installation", change("module.installation.google_cloud_run_v2_service.credentials", "update"))
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{
+		"credentials_service": credentialsServiceOutput(),
+		"intake":              intakeServiceOutput(),
+	})}
+	r.save(t)
+	putSwitchBundle(t, r.initRig, []byte(config.BitbucketSecret+": "+credsValue(t, "bb")+"\n"))
+	run := startRunInFlight(t, r)
+
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+
+	// The switch turned, in this run and in this file, and the node carries the
+	// block derived from the same entry: the pair resolveBitbucketProxied reads.
+	entry, ok := updatedConfig(t).ProjectSecrets[config.BitbucketSecret]
+	if !ok || !entry.Proxying() {
+		t.Fatalf("the local config's %s entry is %+v (present %v) after the update, want the switch the flip turns on (S6, D2306)\n%s", config.BitbucketSecret, entry, ok, out)
+	}
+	if !slices.Contains(entry.AllowDataTo, "acme/sandbox") {
+		t.Errorf("the entry reaches %v, want the project's Bitbucket repository acme/sandbox among them\n%s", entry.AllowDataTo, out)
+	}
+	bt := convergeNode(t, r).BitbucketToken
+	if bt == nil || !bt.Proxy {
+		t.Fatalf("the published node carries bitbucket_token = %+v, want the block the entry the same run wrote implies\n%s", bt, out)
+	}
+	// The door named the step, and said what it leaves: the address, and the
+	// mount still on the job (update_in_flight.go's line).
+	line := inFlightLine(t, out)
+	if !strings.Contains(line, "bitbucket proxy switch") || !strings.Contains(line, "the address is set") {
+		t.Errorf("the note does not name the switch's own line:\n%s", line)
+	}
+
+	// And the run in flight goes on: every write it makes after this update
+	// still lands.
+	ctx := context.Background()
+	rec, err := run.store.ReadRecord(ctx)
+	if err != nil {
+		t.Fatalf("the run's record could not be read after the update: %v", err)
+	}
+	if rec.Status != runstore.StatusRunning || rec.Stage != "implement" {
+		t.Errorf("the run's record reads status %q stage %q after the update, want the running/implement it bootstrapped with: the proxy switch rewrote a record a run holds", rec.Status, rec.Stage)
+	}
+
+	run.laterWrites(t, r)
+}
+
 // TestUpdateSaysNothingWhenNothingRuns: the line is about runs in flight, so an
 // installation with none gets the update's ordinary transcript and nothing
 // about runs. The converse of the test above, and the reason the line is not
@@ -233,6 +316,13 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 		mode    string
 		managed bool
 		retire  bool
+		// extra is what a row adds to the fixture's local config and release
+		// what it makes this binary read as: only the Bitbucket proxy switch's
+		// row needs either of them, the flip being gated on the credentials
+		// service's block and on the release that carries the runner half
+		// (bitbucketProxyFlip).
+		extra   string
+		release string
 		want    []string
 		notWant []string
 	}{
@@ -277,10 +367,30 @@ func TestUpdateInFlightLineNamesEveryStepThatCanReachARun(t *testing.T) {
 			want:    []string{"1 run in flight", "retirement:", "orphaned job"},
 			notWant: []string{"budget mode", "policy:"},
 		},
+		{
+			// The Bitbucket proxy switch (S6, D2306), and the step whose reach
+			// is the one this row is the mutation check of: the policy stage
+			// writes it at the operator's own machine and publishes the block
+			// it implies, and this row's project has a Bitbucket repository and
+			// a deployed service, so the flip turns. What the line says is the
+			// state this run leaves: the address the repository's jobs are
+			// admitted by, and the mount still on the job until the next
+			// update's repository stage takes it off (S6's fix, 2026-11-18 —
+			// the line used to say the next launch fetches its credential from
+			// the service, which is the launch after that update).
+			name: "the Bitbucket proxy switch this update turns on", mode: budget.ModeEnforce,
+			extra:   "credentials_service: { url: " + credentialsServiceURL + " }\n",
+			release: proxySince,
+			want:    []string{"1 run in flight", "bitbucket proxy switch", "the address is set", "mount drops next update"},
+			notWant: []string{"budget mode", "policy:", "retirement"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newProjectFixture(t, "")
+			f := newProjectFixture(t, tc.extra)
 			f.db.Set(budget.PathMode, tc.mode)
+			if tc.release != "" {
+				useVersion(t, tc.release)
+			}
 			if tc.node != nil {
 				f.db.Set(projectpolicy.PathShared(), tc.node)
 			}

@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
@@ -31,6 +32,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -547,34 +549,48 @@ func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, 
 // jobGitEnv is git's environment in the check job: the job's own, less
 // the provider secret, plus a credential for the repository's host only.
 // A GitHub App mints a token that can only read the repository.
+//
+// A repository the installation's credentials service serves fetches that
+// credential the same way its build does (B4.5, checkGitCredential): the check
+// job runs as the same build account, so the service binds it to the same one
+// repository and answers it the same credential a build of it clones with.
+// Without the service's address in the job's environment, nothing changes.
 func jobGitEnv(ctx context.Context, s infra.CheckJobSpec) ([]string, error) {
 	if err := gcp.CheckRepoURL(s.Provider, s.RepoURL); err != nil {
 		return nil, err
 	}
 	var user, token string
-	switch s.Provider {
-	case gitprov.KindBitbucket:
-		user, token = bitbucket.GitUsername, os.Getenv(providers.EnvBitbucketToken)
-		if token == "" {
-			return nil, fmt.Errorf("%s is not set: the job's bitbucket-token secret isn't mounted (does it have a version?)", providers.EnvBitbucketToken)
-		}
-	case gitprov.KindGitHub:
-		owner, repo, ok := gitprov.SplitRepo(s.Repo)
-		appID, pemKey := os.Getenv(providers.EnvGitHubAppID), os.Getenv(providers.EnvGitHubAppKey)
-		if !ok || appID == "" || pemKey == "" {
-			return nil, fmt.Errorf("%s and %s must both be set: the job's github-app-key secret isn't mounted (does it have a version?)", providers.EnvGitHubAppID, providers.EnvGitHubAppKey)
-		}
-		key, err := github.ParsePrivateKey([]byte(pemKey))
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", providers.EnvGitHubAppKey, err)
-		}
-		if token, _, err = github.MintInstallationToken(ctx, github.Options{Owner: owner, Repo: repo, AppID: appID, PrivateKey: key, BaseURL: gitCredGitHubAPI},
-			github.BuildTokenPermissions()); err != nil {
+	if service, ok, err := checkServiceURL(); err != nil {
+		return nil, err
+	} else if ok {
+		if user, token, err = checkGitCredential(ctx, service, s); err != nil {
 			return nil, err
 		}
-		user = github.GitUsername
-	default:
-		return nil, fmt.Errorf("the git provider %q is not %s or %s", s.Provider, gitprov.KindBitbucket, gitprov.KindGitHub)
+	} else {
+		switch s.Provider {
+		case gitprov.KindBitbucket:
+			user, token = bitbucket.GitUsername, os.Getenv(providers.EnvBitbucketToken)
+			if token == "" {
+				return nil, fmt.Errorf("%s is not set: the job's bitbucket-token secret isn't mounted (does it have a version?)", providers.EnvBitbucketToken)
+			}
+		case gitprov.KindGitHub:
+			owner, repo, ok := gitprov.SplitRepo(s.Repo)
+			appID, pemKey := os.Getenv(providers.EnvGitHubAppID), os.Getenv(providers.EnvGitHubAppKey)
+			if !ok || appID == "" || pemKey == "" {
+				return nil, fmt.Errorf("%s and %s must both be set: the job's github-app-key secret isn't mounted (does it have a version?)", providers.EnvGitHubAppID, providers.EnvGitHubAppKey)
+			}
+			key, err := github.ParsePrivateKey([]byte(pemKey))
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", providers.EnvGitHubAppKey, err)
+			}
+			if token, _, err = github.MintInstallationToken(ctx, github.Options{Owner: owner, Repo: repo, AppID: appID, PrivateKey: key, BaseURL: gitCredGitHubAPI},
+				github.BuildTokenPermissions()); err != nil {
+				return nil, err
+			}
+			user = github.GitUsername
+		default:
+			return nil, fmt.Errorf("the git provider %q is not %s or %s", s.Provider, gitprov.KindBitbucket, gitprov.KindGitHub)
+		}
 	}
 	vars, err := gitops.CredentialVars(gitops.CredentialURL(s.RepoURL), user, token)
 	if err != nil {
@@ -586,6 +602,60 @@ func jobGitEnv(ctx context.Context, s infra.CheckJobSpec) ([]string, error) {
 		return k == providers.EnvBitbucketToken || k == providers.EnvGitHubAppKey
 	})
 	return gitops.WithVars(env, vars), nil
+}
+
+// checkServiceURL is the installation's credentials service as the check job's
+// own environment names it, and whether it names one. The address is held to the
+// shape an identity token may be sent to (checkBuildServiceURL) here rather than
+// at the call, so a job whose environment names something else fails before it
+// asks for a credential.
+func checkServiceURL() (service string, on bool, err error) {
+	raw := os.Getenv(providers.EnvCredentialsServiceURL)
+	if raw == "" {
+		return "", false, nil
+	}
+	if service, err = checkBuildServiceURL(raw); err != nil {
+		return "", false, fmt.Errorf("%s: %w", providers.EnvCredentialsServiceURL, err)
+	}
+	return service, true, nil
+}
+
+// checkGitCredential is the credential the check job clones the repository with
+// where the installation's credentials service serves it (B4.5): the one
+// repository's, asked of B4.3's build route with the job's own identity, which
+// is the build account the route binds to that repository.
+//
+// The route is a build's, so the call names a workflow. This one wants no
+// workflow's secrets — it clones to read fugaro.yaml, and the build secrets
+// belong to the rebuilds it submits — so it names the first workflow the job
+// checks and asks for no secret at all: the name is the selector the route
+// insists on, and the empty list is what keeps it a name it never reads.
+func checkGitCredential(ctx context.Context, service string, s infra.CheckJobSpec) (user, token string, err error) {
+	if len(s.Workflows) == 0 {
+		return "", "", fmt.Errorf("the installed check job checks no workflow: %s", notInstalledReason)
+	}
+	workflow := s.Workflows[0]
+	if !config.WorkflowNameRE.MatchString(workflow) {
+		return "", "", fmt.Errorf("the installed check job names the workflow %q, which this fugaro does not read as one: %s",
+			pluginwire.Printable(workflow), notInstalledReason)
+	}
+	u, err := url.Parse(s.RepoURL)
+	if err != nil {
+		return "", "", fmt.Errorf("the repository URL %s does not parse", gcp.RedactURL(s.RepoURL))
+	}
+	var appID string
+	if s.Provider == gitprov.KindGitHub {
+		// The App's id is the one thing the job holds and the service does not,
+		// and the installation token is minted as that App.
+		if appID = os.Getenv(providers.EnvGitHubAppID); appID == "" {
+			return "", "", fmt.Errorf("%s must be set: the GitHub installation token this job clones with is minted as the App", providers.EnvGitHubAppID)
+		}
+	}
+	ans, err := askBuildCredentials(ctx, service, credsvc.BuildCredentialsRequest{Workflow: workflow, AppID: appID})
+	if err != nil {
+		return "", "", err
+	}
+	return servedGitCredential(s.Provider, u, ans.Git)
 }
 
 // refuseJobSubmission is the guard both check jobs answer to, before either
@@ -789,6 +859,16 @@ func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra
 	spec, err := cloudBuildSpec(rs, cfg, name, base, s.MachineType, recordBucket, gitID)
 	if err != nil {
 		return "", "", err
+	}
+	// A repository the installation's credentials service serves: the rebuild's
+	// credential step fetches its credentials there, exactly as this job's own
+	// clone does above (B4.5). The request carries the address and nothing else;
+	// what the step is served is the service's decision, and the build's mounts
+	// stay until B4.9 takes them off.
+	if service, on, err := checkServiceURL(); err != nil {
+		return "", "", err
+	} else if on {
+		spec.CredentialsServiceURL = service
 	}
 	req, err := gcp.BuildRequest(project, spec)
 	if err != nil {

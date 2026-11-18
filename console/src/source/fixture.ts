@@ -623,6 +623,14 @@ export class FixtureSource implements FugaroSource {
     return this.#document('policy.show', args)
   }
 
+  listRepos(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('repos.ls', args)
+  }
+
+  reposStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#document('repos.status', args)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#document('run.diagnose', args)
   }

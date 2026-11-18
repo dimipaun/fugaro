@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strconv"
 )
 
 // Issue is one issue of this repository, as this adapter reads and opens it.
@@ -37,14 +38,17 @@ type Issue struct {
 	// reading "the read worked" as "the issue is still open".
 	State string
 	// AuthorLogin and AuthorID name the account the issue was opened with,
-	// and AppSlug is the slug of the GitHub App the action was performed
+	// and AppSlug and AppID are the GitHub App the action was performed
 	// through, empty when it was performed by a person. D2728 reads the
 	// mirror marker only on an issue this installation's own App opened, so
-	// the sync has to tell such an issue from a stranger's: its two signals
-	// are the App's own bot login (AppIdentity) and this slug.
+	// the sync has to tell such an issue from a stranger's: its signals are
+	// the App's own bot login (AppIdentity), the slug, and the id — which is
+	// the one that says WHICH App, since the slug names an App within the
+	// host and not within an installation (localcfg records the App by id).
 	AuthorLogin string
 	AuthorID    string
 	AppSlug     string
+	AppID       string
 }
 
 // issue is the REST issue object, in the fields above. Both the listing and
@@ -64,9 +68,28 @@ type issue struct {
 	} `json:"pull_request"`
 	// PerformedViaGitHubApp names the App an action was performed through,
 	// null for an action somebody took with their own account.
-	PerformedViaGitHubApp *struct {
-		Slug string `json:"slug"`
-	} `json:"performed_via_github_app"`
+	PerformedViaGitHubApp *performedApp `json:"performed_via_github_app"`
+}
+
+// performedApp is the App an action was performed through, as GitHub's
+// `performed_via_github_app` carries it: the App's own id and its slug. The id
+// is what tells THIS installation's App from any other App the repository has
+// installed — a workflow's own App opens issues too, and its bot login looks
+// exactly like ours — and it is the spelling the installation records
+// (localcfg's github_app_id) and the one the sync compares an issue against
+// (D2728).
+type performedApp struct {
+	ID   int64  `json:"id"`
+	Slug string `json:"slug"`
+}
+
+// id is the App's id as the string a config and a route carry, empty for an
+// App GitHub answered without one.
+func (a *performedApp) id() string {
+	if a == nil || a.ID == 0 {
+		return ""
+	}
+	return strconv.FormatInt(a.ID, 10)
 }
 
 func (i issue) isPullRequest() bool { return i.PullRequest != nil }
@@ -76,7 +99,7 @@ func (i issue) read() Issue {
 	out := Issue{Number: i.Number, Title: i.Title, Body: i.Body, URL: i.HTMLURL, State: i.State,
 		AuthorLogin: i.User.login(), AuthorID: i.User.id()}
 	if app := i.PerformedViaGitHubApp; app != nil {
-		out.AppSlug = app.Slug
+		out.AppSlug, out.AppID = app.Slug, app.id()
 	}
 	return out
 }

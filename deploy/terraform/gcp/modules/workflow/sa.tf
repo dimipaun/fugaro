@@ -89,6 +89,14 @@ locals {
   model_secret_env_names  = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]
   model_secret_env_prefix = "FUGARO_PROVIDER_KEY_"
 
+  # The Claude account token's variable, named a second time because the one
+  # exemption in the model clauses below (is_stage_account_token) has to read
+  # it: Go exempts the mount by that variable too (dropModelMounts' anthropic
+  # arm), and the guard test holds this literal to
+  # config.ReservedSecrets[config.ClaudeOAuthToken] so the two spellings of it
+  # cannot drift.
+  claude_oauth_token_env = "CLAUDE_CODE_OAUTH_TOKEN"
+
   # The App key's name, and it is EMPTY until the release that also stops the
   # job reading the key (C2.2, review finding F1): config.ServiceHeldSecretNames
   # is the switch, this literal is held to it by the guard test, and Go's
@@ -135,6 +143,35 @@ locals {
     env => var.bitbucket_proxied && contains(local.proxied_git_secret_names, logical)
   }
 
+  # One entry per mount: this mount is the Claude account token on a mixed STAGE
+  # ACCOUNT's own variant job — the one mount B2.7's flip leaves standing. An
+  # api-key repository may declare stage keys (B0's ruling of 2026-11-04,
+  # docs/design/mixed-credentials.md §11), and its `review`, `adversarial` and
+  # `triage` stages then go out on a job of that account's own, mounting
+  # CLAUDE_CODE_OAUTH_TOKEN so the RUNNER can hand the account's token straight
+  # to Anthropic. The run's gateway never sees those calls, so the credentials
+  # service has no call of theirs to serve, and taking the mount would leave the
+  # stage with a variable nothing mounted — Check 290's failure. The fact comes
+  # from Go (var.workflow.stage_account, WorkflowSpec.StageAccount), which is
+  # also what exempts the mount there: the two halves are ONE rule, because a
+  # job whose account keeps an accessor the mount no longer has — or the
+  # reverse — is a job Cloud Run refuses to create (C1.20). Every other job of
+  # the repository, the base variant included, carries false and gives the
+  # token up.
+  is_stage_account_token = {
+    for env, logical in var.workflow.secret_env :
+    env => var.workflow.stage_account && env == local.claude_oauth_token_env
+  }
+
+  # The named model credentials the input says the service serves THIS workflow
+  # (the Claude account token and the Anthropic key), with the one exception
+  # above. Read apart from the provider-key clause so that the exception has one
+  # place to live and the arms below read one answer per mount.
+  is_run_model_secret = {
+    for env, logical in var.workflow.secret_env :
+    env => var.model_secrets_served != "none" && contains(local.model_secret_env_names, env) && !(var.model_secrets_served == "anthropic" && local.is_stage_account_token[env])
+  }
+
   # One entry per mount: this mount is a MODEL credential the credentials
   # service serves — the first of the three families above — exactly when the
   # input says so. The input is Go's answer for this repository
@@ -147,23 +184,28 @@ locals {
   #     before B2.3, and the arms a tfvars written then means by saying
   #     nothing (the variable's own default).
   #   * `anthropic` — an `api-key` or `oauth` repository the switch admits
-  #     (B2.3): the service serves its runs the Anthropic key or the account's
-  #     token, and it serves them NOTHING else — the run may still reach a
-  #     provider of its own on a FUGARO_PROVIDER_KEY_ the job mounts, so that
-  #     accessor stays with the job. It is the arm B2.7's flip turns on, and
-  #     config.ServiceServedAuths is the list that decides which auths get it;
-  #     the input is empty of it until that flip, so every mount stays.
-  #   * `none` — an `api-key` or `oauth` repository whose credential the
-  #     service does NOT hold yet: every mount stays, and with it every
-  #     accessor, which is what makes this release inert for the repositories
-  #     it switches on.
+  #     AND config.ServiceServedAuths carries (B2.3's switch, B2.7's flip):
+  #     the service serves its runs the Anthropic key or the account's token,
+  #     and it serves them NOTHING else — the run may still reach a provider of
+  #     its own on a FUGARO_PROVIDER_KEY_ the job mounts, so that accessor
+  #     stays with the job (R6, D1634). config.ServiceServedAuths is the list
+  #     that decides which auths get it, and a name in it is a name the
+  #     service's own cascade and pool serve a model call under. Its one
+  #     exception is a mixed stage account's own job, whose Claude OAuth mount
+  #     is the STAGE's credential and not the run's (is_run_model_secret,
+  #     is_stage_account_token): that mount, and only it, stays.
+  #   * `none` — a repository the switch holds off: every mount stays, and with
+  #     it every accessor. That is an `api-key` or `oauth` repository on a
+  #     project whose mode is off or whose root was applied while its record
+  #     said so, a `vertex` repository, and a root whose tfvars was written
+  #     before B2.7's flip — the state this arm leaves untouched.
   #
   # A repository the switch does not admit is `none` by the same input, and so
   # the model clauses of the drop below never fire for it — its job keeps the
   # mounts an earlier release gave it (D147's "with it off nothing changes").
   is_served_model_secret = {
     for env, logical in var.workflow.secret_env :
-    env => var.model_secrets_served != "none" && (contains(local.model_secret_env_names, env) || (var.model_secrets_served == "all" && startswith(env, local.model_secret_env_prefix)))
+    env => local.is_run_model_secret[env] || (var.model_secrets_served == "all" && startswith(env, local.model_secret_env_prefix))
   }
 
   # One entry per mount, so the drop below is per mount and never per name.

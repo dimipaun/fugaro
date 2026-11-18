@@ -245,6 +245,14 @@ export function feedSilence(
 export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
 
 /**
+ * USER_ERROR_EXIT is `ExitUserError` (`internal/cli/root.go`): the code the CLI
+ * exits with when it refused something the operator can act on. One read of this
+ * surface prints its answer and *then* exits with it (`repos.status`), so the
+ * number is named here rather than written as a bare `1` at that one call site.
+ */
+const USER_ERROR_EXIT = 1
+
+/**
  * NoInstallationState is the console's state when there is no `fugaro` to read:
  * everything design section 6.3's first screen needs, with no document in it.
  * `renderer/screens/degraded.ts` draws it, and `degraded.spec.ts` holds one
@@ -544,17 +552,36 @@ export class CliSource implements FugaroSource {
     })
   }
 
-  /** readDocument runs one one-shot read and returns the document it printed. */
-  async #readDocument(operation: OperationName, args: ValidatedArguments): Promise<Snapshot> {
+  /** readDocument runs one one-shot read and returns the document it printed.
+   *
+   * `documentBeatsExit` is the one exit code a read may fail with **and still
+   * have answered** (`repos.status` alone, and `USER_ERROR_EXIT` is the code):
+   * that command writes its document and then exits 1 when a row that blocks a
+   * launch failed (`reposStatusPrint`, `internal/cli/project_status.go`), so the
+   * failing rows and the fix each one names are exactly what the read is for,
+   * and a console that refused them would refuse the one case it exists to draw
+   * (`docs/design/desktop-console.md` §5.1: "this operation's answer is the
+   * document rather than the status").
+   *
+   * stdout is read first and the code is only a refusal when there is no
+   * document to hand back: a tolerated code with nothing parseable beside it is a
+   * refusal, and any other code is a refusal whatever the bytes are. Every read
+   * that leaves it out keeps the contract it had, where a nonzero exit is the
+   * CLI's own sentence: the default is 0, and a code of 0 was never one. */
+  async #readDocument(
+    operation: OperationName,
+    args: ValidatedArguments,
+    documentBeatsExit = 0,
+  ): Promise<Snapshot> {
     const plan = this.#plan(operation, args)
     const result = await runToCompletion(plan, {
       log: this.#log,
       ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
     })
-    if (result.code !== 0) {
+    const read = parseStdout(result.stdout, this.#stamp())
+    if (result.code !== 0 && result.code !== documentBeatsExit) {
       throw refusalFrom(operation, cliSentence(result.stderr))
     }
-    const read = parseStdout(result.stdout, this.#stamp())
     if (read.document === null) {
       throw refusalFrom(operation, cliSentence(result.stderr) ?? `${operation} printed no JSON document`)
     }
@@ -879,6 +906,35 @@ export class CliSource implements FugaroSource {
    * nor the state file, and it involves no host credential. */
   policyShow(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('policy.show', args)
+  }
+
+  /** listRepos reads `project repos ls --json`: the project's repositories as
+   * data -- the published allow-list with each entry's source, this machine's
+   * copies and the repositories that have run here (the repos-management plan's
+   * RE5, D2413). The argv is the spawn row's own four words and the
+   * installation's `--project`, because the operation takes no argument at all.
+   * It writes nothing: the allow-list node and the history are listed and this
+   * machine's config is read, with the caller's own credential. */
+  listRepos(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('repos.ls', args)
+  }
+
+  /** reposStatus reads `project repos status --json`: each repository's
+   * enrolment as a doctor, one row per fact that decides whether a run of it can
+   * start, with the one command each failing row wants (the same plan, D2413).
+   * The argv is the spawn row's own five words and the installation's
+   * `--project`: the optional positional repository is deliberately not an
+   * argument of the operation, so no caller aims the child at one. It writes
+   * nothing on any path and never fetches a secret's value -- the credential row
+   * carries a container's name, whether it holds an enabled version and that
+   * version's age -- so this child stores nothing and sends nothing.
+   *
+   * **The document is the answer even when the child exits 1**, which is the one
+   * place on this surface where a nonzero exit is not a refusal: the command
+   * exits `USER_ERROR_EXIT` when a row that blocks a launch failed, and those
+   * rows and the fix each names are the whole reason the read exists. */
+  reposStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('repos.status', args, USER_ERROR_EXIT)
   }
 
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
@@ -2008,6 +2064,21 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * published node is replaced in place when a policy is published, so a floor
      * between two calls would draw a stale one. */
     policyShow: (args) => read('policy.show', (source) => source.policyShow(args)),
+    /** listRepos has no precondition and no cadence, for policyShow's reason:
+     * the read is the allow-list node, this machine's own config and the
+     * installation's history with the caller's own credential, and no checkout
+     * stands behind it -- so a console with an installation and no checkout
+     * still answers. A floor between two calls would hold an enrolment an
+     * operator has just made behind a minute-old listing. */
+    listRepos: (args) => read('repos.ls', (source) => source.listRepos(args)),
+    /** reposStatus has no precondition and no cadence either, and the second
+     * half is the deliberate one: its answer is the state of an enrolment an
+     * operator may be changing right now -- a job being deployed, a secret
+     * version being stored -- so a minute-old "everything is in place" in front
+     * of a row that has just started failing is exactly the misreading the
+     * command exists to prevent. It needs no directory: the read is the jobs,
+     * the containers' metadata and this machine's config, never a checkout. */
+    reposStatus: (args) => read('repos.status', (source) => source.reposStatus(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),

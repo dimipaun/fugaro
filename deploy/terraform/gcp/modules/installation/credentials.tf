@@ -690,6 +690,36 @@ resource "google_cloud_run_v2_service" "credentials" {
           value = env.value
         }
       }
+      # The orchestrator daemon's own class (F19 and O2 of docs/forge-labels;
+      # E16 of docs/outer-loop-escalation, D2049): the accounts that may ask
+      # this service for a label write and for the gated merge mint, and the
+      # daemon's own identity rather than a person's. It is what
+      # OrchestratorAccounts is set from, and before this entry nothing in
+      # production set it — the class admitted nobody and both routes were
+      # inert on every installation (SECURITY.md, "the route ships inert").
+      #
+      # The value is the account orchestrator.tf creates, and it is the same
+      # account that file grants roles/run.invoker to ON THIS SERVICE: the
+      # identity that may knock and the identity that may be served are one
+      # value read twice, the property every class list here has.
+      #
+      # It is a JSON ARRAY holding that one address, which is the shape
+      # internal/cli's credentialsServiceOrchestrators decodes with
+      # json.Unmarshal and refuses anything that is not a list (the build
+      # class's rule one block up); and it is rendered only on an installation
+      # that runs a resident orchestrator, for the reason the four lists above
+      # are rendered conditionally: the process reads the name as an OPTIONAL
+      # value, so a service deployed by a release before this one — or one on
+      # an installation that never opted in — starts with an EMPTY class and
+      # answers every caller of it with the class's own refusal, which is the
+      # fail-closed state rather than a service that will not bind a port.
+      dynamic "env" {
+        for_each = local.orchestrator_on ? [jsonencode([google_service_account.orchestrator[0].email])] : []
+        content {
+          name  = "FUGARO_ORCHESTRATOR_ACCOUNTS"
+          value = env.value
+        }
+      }
     }
   }
 

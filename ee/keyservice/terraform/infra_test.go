@@ -1181,6 +1181,8 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the API's one grant on the handover ring, which is not the ring the signer role is on",
 		tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the API's reach of the portal's document store, which holds no key",
 		tfNames(servicesRoot, `resource "google_secret_manager_secret_iam_member" "api_reads"`):         "the API's read of the portal's own secrets, which the minter holds none of",
+		tfNames(servicesRoot, `resource "google_project_iam_custom_role" "deletes_signins"`):            "the sign-in deleter, one permission, which holds no key, reads no other user and touches no sign-in setting",
+		tfNames(servicesRoot, `resource "google_project_iam_member" "api_deletes_signins"`):             "the API's deletion of a sign-in for a person who deleted their own account (D2195), which holds no key either",
 	}
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
@@ -1252,19 +1254,21 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 	}
 
 	// The other half of the same boundary, over every grant in the tree rather
-	// than the signer one: the API's account is granted exactly four things and
+	// than the signer one: the API's account is granted exactly five things and
 	// no more — the invoker role on the minter, the sealer role on the handover
-	// ring, the document store, and the portal's own secrets. A fifth grant is a
-	// reach nothing else here would say out loud — a KMS role that signs, or the
+	// ring, the document store, the portal's own secrets, and the deletion of a
+	// sign-in for a person who deleted their own account (D2195). A sixth grant is
+	// a reach nothing else here would say out loud — a KMS role that signs, or the
 	// signer's key ring, to the internet-facing account above all — and the
 	// keyring root is as good a place to write one as this one. Every one of the
-	// four is written by a block listed here, so the account's whole reach is the
+	// five is written by a block listed here, so the account's whole reach is the
 	// plan's (Check 571, Check 174).
 	allowedAPI := map[string]string{
 		`resource "google_cloud_run_v2_service_iam_member" "api_invokes_minter"`: "the authenticated call to the minter, which is what signs",
 		`resource "google_kms_key_ring_iam_member" "api_seals"`:                  "the handover ring, to encrypt and decrypt with and nothing else",
 		`resource "google_project_iam_member" "api_datastore"`:                   "the portal's own documents, which hold no key",
 		`resource "google_secret_manager_secret_iam_member" "api_reads"`:         "the portal's own secrets, which the merchant's keys are in and the minter reads none of",
+		`resource "google_project_iam_member" "api_deletes_signins"`:             "the sign-in directory, to delete the user of an account that deleted itself (D2195), which is no key and no document",
 	}
 	uses := 0
 	for _, rel := range tfFiles(t) {
@@ -1274,12 +1278,12 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 			}
 			uses++
 			if _, ok := allowedAPI[tfHeader(block)]; !ok {
-				t.Errorf("%s grants the API's account something besides its three reaches:\n%s\nthe API holds nothing that signs and nothing that reaches a signing key: its account is the minter's only invoker, the handover ring's only decrypter and the document store's reader (Check 174, Check 571)", rel, strings.TrimSpace(block))
+				t.Errorf("%s grants the API's account something besides its five reaches:\n%s\nthe API holds nothing that signs and nothing that reaches a signing key: its account is the minter's only invoker, the handover ring's only decrypter, the document store's reader and the deleter of a sign-in no key is behind (Check 174, Check 571)", rel, strings.TrimSpace(block))
 			}
 		}
 	}
 	if uses != len(allowedAPI) {
-		t.Errorf("this tree grants the API's account %d times, want exactly %d: its whole reach is the authenticated call to the minter, the handover ring's sealer role, the document store and the portal's own secrets (Check 571)", uses, len(allowedAPI))
+		t.Errorf("this tree grants the API's account %d times, want exactly %d: its whole reach is the authenticated call to the minter, the handover ring's sealer role, the document store, the portal's own secrets and the deletion of a sign-in (Check 571)", uses, len(allowedAPI))
 	}
 
 	// And the secrets themselves, which are the API's to read and no other
@@ -1324,6 +1328,39 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 		{"member", "google_service_account.api.member"},
 	}, "the API is what writes every organisation's records, billing and reveal bundles, and it does so through the one predefined role that reads and writes documents: a broader predefined role here — the token creator above all, which would let the API's account mint an ID token as the minter, and run.admin, which would let it deploy a revision running as the minter — is a signing reach granted at the project (Check 571)")
 
+	// And the sign-in directory's, which is the one of the API's reaches a
+	// deletion needs and the one whose absence is invisible here: a route that
+	// asked the Identity Toolkit to delete a user and was answered 403 has
+	// already removed that person's memberships and invitations, so the grant is
+	// the difference between a deletion and an account nobody can reach. It is
+	// pinned the same way, for the same reason: the role is the whole of what the
+	// call is granted by.
+	signins := tfRootBlock(t, servicesRoot, `resource "google_project_iam_member" "api_deletes_signins"`)
+	tfAttrsAre(t, signins, "the sign-in deletion grant in "+servicesRoot, []struct{ attr, value string }{
+		{"project", "var.project"},
+		{"role", `"projects/${var.project}/roles/${var.deletes_signins_role}"`},
+		{"member", "google_service_account.api.member"},
+	}, "deleting a person's Firebase Auth user is an admin call on the Identity Toolkit (accounts:delete), made by the API through the account it already runs as (D2195): the member is the API's own account and not a second identity, and the role is this root's own, holding the one permission that call needs. The predefined role carrying that permission, firebaseauth.admin, also lists and reads every user in the project, creates and updates users and changes the project's sign-in settings, none of which an internet-facing account is given (Check 571). Dropping the grant answers the call 403, which is the difference between a deletion and an account nobody can reach")
+
+	// And the role that grant names, whose permissions are the other half of the
+	// same pair: `accounts:delete` is granted by firebaseauth.users.delete and by
+	// nothing wider, so the custom role holds that one permission — a second one
+	// here is a reach of every user's record or of the project's sign-in settings
+	// handed to the account the internet calls.
+	deleter := tfRootBlock(t, servicesRoot, `resource "google_project_iam_custom_role" "deletes_signins"`)
+	tfAttrsAre(t, deleter, "the sign-in deleter role in "+servicesRoot, []struct{ attr, value string }{
+		{"role_id", "var.deletes_signins_role"},
+		{"permissions", `["firebaseauth.users.delete"]`},
+	}, "the API deletes a sign-in and does nothing else to the directory (D2195): the permission is the one the accounts:delete call needs, and the role id is the variable this root's grant names")
+
+	// And what that grant REACHES: its role is `var.deletes_signins_role`'s
+	// default, which the sweeps above read as text and never pin, so without this
+	// a default naming one of the project's other custom roles hands the API that
+	// role with every block above still reading as written.
+	if got := tfDefaultLiteral(tfVarBlock(t, servicesRoot, "deletes_signins_role")); got != `"fugaroDeletesSignins"` {
+		t.Errorf("services/'s deletes_signins_role default reads as %s, want %s:\nthe deletion grant names the variable, so a default changed here moves the API to another custom role in the project — the handover sealer among them — with the role's one permission and the grant alike still reading as written (D2195, Check 571)", got, `"fugaroDeletesSignins"`)
+	}
+
 	// And the identity each service RUNS as, which is the half a grant sweep
 	// cannot see: a service that runs as another account IS that account, so an
 	// API whose template names the minter's would hold the signer role from
@@ -1357,6 +1394,7 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 			tfNames(servicesRoot, `resource "google_kms_key_ring_iam_member" "api_seals"`):                  "the one identity allowed to decrypt a handover",
 			tfNames(servicesRoot, `resource "google_project_iam_member" "api_datastore"`):                   "the one identity allowed to read the portal's documents",
 			tfNames(servicesRoot, `resource "google_secret_manager_secret_iam_member" "api_reads"`):         "the one identity allowed to read the portal's secrets",
+			tfNames(servicesRoot, `resource "google_project_iam_member" "api_deletes_signins"`):             "the one identity allowed to delete a sign-in, which it does only for the account that asked for its own deletion (D2195)",
 		},
 	}
 	for _, rel := range tfFiles(t) {
@@ -1372,6 +1410,44 @@ func TestOnlyTheMinterHoldsTheSignerRole(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestTheAPIIsOneInstanceBecauseItsMintLimitsAreInMemory is the ceiling the two
+// mint limits depend on, and the review of this branch is why it is pinned here
+// rather than left to the platform's default — the same pin, and for the same
+// reason, as the MCP front door's (the coordinator installation's
+// TestTheFrontDoorIsOneInstanceBecauseItsBoundsAreInMemory).
+//
+// A reseller's credit limit (D2189) is checked and spent inside resellerMintMu
+// (ee/keyservice/accrual.go), and operations' per-tier rate (D454) inside
+// operationsMintMu (ee/keyservice/ops.go). Neither reads a counter the store
+// holds: both numbers are counted over the entitlements themselves, by queries
+// of their own, and a query inside a grant's own transaction is a read every
+// concurrent write conflicts with — so the window each lock closes is one
+// instance's, as both comments say. The platform's own ceiling — about a
+// hundred instances, scaled by the traffic in front of them — would make each
+// window a hundred windows, and the shape is what makes that a gap: the caller
+// a mint limit refuses is the one whose traffic buys the instances, so a
+// reseller minting in a burst would get a limit's worth of sales on every
+// replica — and the plan's own constraint, "two concurrent reseller mints cannot
+// pass the credit limit together" (docs/portal/implementation-plan.md's
+// global-constraint row, which is P6.2's), would hold of one process and not of
+// the installation. One instance is what makes both windows the windows, and it
+// costs this API nothing a second instance would serve.
+//
+// The mutation this fails on: the scaling block deleted, a max_instance_count
+// of anything but 1, or a min_instance_count above 0 — the last turning the
+// scale-to-zero the same block asks for into an always-on cost.
+func TestTheAPIIsOneInstanceBecauseItsMintLimitsAreInMemory(t *testing.T) {
+	api := tfRootBlock(t, servicesRoot, `resource "google_cloud_run_v2_service" "api"`)
+	scaling, ok := tfNestedBlock(api, "scaling")
+	if !ok {
+		t.Fatalf("the API service in %s has no scaling block, so the platform's own ceiling of about a hundred instances applies and each of the two in-memory mint limits is a hundred limits:\n%s", servicesRoot, api)
+	}
+	tfAttrsAre(t, scaling, "the API service's scaling block in "+servicesRoot, []struct{ attr, value string }{
+		{"max_instance_count", "1"},
+		{"min_instance_count", "0"},
+	}, "the API is the one process the two mint limits are counted in (accrual.go's resellerMintMu, ops.go's operationsMintMu), so a second instance would let a reseller's burst pass the credit limit once per replica and would make D454's rate a rate per replica as well; the min stays 0 because a public endpoint nobody is calling costs nothing")
 }
 
 // TestTheMinterHasNoPublicInvoker: the minter is not reachable from the
@@ -1970,7 +2046,7 @@ func TestRingHoldsOneEnvironmentsKey(t *testing.T) {
 // directly. D2188 fixes the SPA's data path as the API and only the API, so the
 // Firestore rules the database is deployed with deny every client read and every
 // client write — the store is reachable through the API's account (which
-// TestOnlyTheMinterHoldsTheSignerRole holds to three reaches) and through
+// TestOnlyTheMinterHoldsTheSignerRole holds to five reaches) and through
 // nothing else.
 //
 // The mutations this fails on: any rule in the file that is not the denial (an

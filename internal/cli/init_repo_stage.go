@@ -44,6 +44,14 @@ func newRepositoryStage(e *initEngine) *repositoryStage {
 			}
 			return e.r.repoEngine(ctx, ".", e.bin, true)
 		},
+		// A repository a deployed profile admits is enrolled with no
+		// repository-level Terraform (M7, D2312), and the engine records that
+		// as its own line: without this the stage would report "No changes"
+		// for a run that wrote the local config and the project's records,
+		// which is exactly what the installation stage's new-machine run uses
+		// this hook for. Empty on every path that applied a root, where the
+		// stage's own outcome is the apply's.
+		did:  func() string { return e.r.enrolmentNote },
 		left: promptLeft(initflow.Repository, "in the checkout, run the command below: it asks you nothing and each apply goes ahead", e.r.o.doorName()),
 	}
 	return s
@@ -158,6 +166,13 @@ func (s *repositoryStage) Plan(ctx context.Context, env initflow.Env) (initflow.
 	p, err := s.engineStage.Plan(ctx, env)
 	if err != nil {
 		return p, err
+	}
+	// A repository a deployed profile admits has no Terraform plan to report
+	// (M7): what the apply would do is the enrolment the engine recorded, and
+	// a plan line that said nothing would leave the run's own review screen
+	// showing no change for the repository it is about to enrol.
+	if p.Detail == "" && s.e.r.enrolmentNote != "" {
+		p.Detail = s.e.r.enrolmentNote
 	}
 	// What the checkout's gcp_project: line would be, printed and not written.
 	if err := s.anchor(ctx, env, true); err != nil {

@@ -2378,6 +2378,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
+	// The model credential's gate (B2.7, G17): a run of a repository whose
+	// model calls the credentials service serves holds no Anthropic key and
+	// no Claude OAuth token of its own, so the job image has to be one whose
+	// runner knows to call the service for them. Judged from the same build
+	// record and the same local config as the gate above, and like it not at
+	// all for a launch the service does not serve.
+	if err := env.serviceAuthGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
 	if err := checkMaxParallel(ctx, env); err != nil {
 		return config.Inputs{}, err
 	}
@@ -5868,7 +5877,15 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// shared job itself, which mounts the App key the review container exists
 	// to be without, and always marked, so the run records its verdict in the
 	// artifact instead of writing a comment on the pull request it read.
-	reviewJob := spec.Mode == recipe.ModeReview
+	//
+	// The class marker is the same decision (T-TC12, D2411): the launcher
+	// writes it on the runs that are a review class without being a review
+	// recipe — a cloud diagnosis is one, and reads a bundle rather than a pull
+	// request — and the runner takes the variant from the same field
+	// (projectjob.go's runClass reads Mode == review || ReviewClass). A
+	// launcher that read the mode alone would start such a run on the job that
+	// mounts the App key and halt it at bootstrap for a marker it wrote.
+	reviewJob := spec.Mode == recipe.ModeReview || spec.ReviewClass
 	if reviewJob {
 		if job, err = env.reviewJobFor(ctx, job, spec, slug); err != nil {
 			return res, err
@@ -6434,7 +6451,7 @@ var slipGrant = slipGrantOverService
 // slipIdentity mints the launcher's own Google ID token for serviceURL, which
 // is the identity the service's launcher class verifies (DS1.2, D1938).
 //
-// It is the PLAIN mint the read path presents (reviewReadIdentity), for the
+// It is the PLAIN mint the read path presents (serviceReadIdentity), for the
 // audience rather than for the token: a plain mint's audience is gcloud's own
 // client id (credsvc.GcloudAudience), which the launcher class admits and which
 // is the only one a person's account can mint — gcloud refuses --audiences for

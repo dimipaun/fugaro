@@ -33,11 +33,14 @@ import (
 // a retry's first pull request left as it ended, and a cycle with nothing to
 // change writing nothing at all.
 //
-// The service is a fake because this tree has no identity to reach the real one
-// with (orchestratorLabelIdentity, F19 and O2 of the plan): what a fake service
-// cannot prove is that the installation's daemon account is admitted by the
-// service's own orchestrator class, which is the half the plan leaves to the
-// prerequisite outside it.
+// The service is a fake because a test mints no real credential
+// (orchestratorIDToken, F19 and O2): what a fake service cannot prove is that
+// the installation's daemon account is admitted by the service's own
+// orchestrator class, which is the half the plan leaves to the live path
+// (Check 640). What it does prove is the half that is the daemon's: the token
+// the mint hands back is the one presented on every call of the route, and a
+// mint that refuses is a refusal the daemon reports rather than a label it
+// silently does not write (TestLabelRouteRefusesWhenTheMintRefuses).
 
 // The three runs these tests work with, and the label names they are about.
 // The names are the syncer's own (internal/orchestrator's labelRunning and
@@ -67,17 +70,39 @@ const (
 // one is not running here.
 const labelIdentity = "the-daemon-own-identity"
 
-// withLabelIdentity stands in for the one piece of this path this tree does not
-// have: the daemon's own identity to the credentials service, which is the
-// prerequisite outside the plan (F19, O2). It is what lets the whole path run
-// against a fake service, as the plan says T7's test does — "until it lands the
-// end-to-end test runs against a fake service and only the live path stays
-// unproven".
-func withLabelIdentity(t *testing.T) {
+// withLabelIdentity stands in for the one piece of this path no test may run: a
+// real gcloud mint for the daemon's account (orchestratorIDToken). It is what
+// lets the whole path run against a fake service, and the identity it answers
+// with is what every assertion about the presented token reads.
+//
+// It records the identity the daemon minted FOR, which is the other half of
+// what the seam decides: a mint asked for another account's token, or for
+// another URL's audience, is a token the service's class refuses whoever
+// presents it (TestTheDaemonMintsForItsOwnAccountAndAudience).
+func withLabelIdentity(t *testing.T) *orchestratorIdentityMint {
 	t.Helper()
-	prev := orchestratorLabelIdentity
-	orchestratorLabelIdentity = func(context.Context) (string, error) { return labelIdentity, nil }
-	t.Cleanup(func() { orchestratorLabelIdentity = prev })
+	rec := &orchestratorIdentityMint{token: labelIdentity}
+	prev := orchestratorIDToken
+	orchestratorIDToken = rec.mint
+	t.Cleanup(func() { orchestratorIDToken = prev })
+	return rec
+}
+
+// orchestratorIdentityMint is that stand-in: it answers with a fixed token and
+// remembers what it was asked for.
+type orchestratorIdentityMint struct {
+	token string
+	err   error
+	// asked is every identity the mint was called with, in order.
+	asked []orchestratorIdentity
+}
+
+func (m *orchestratorIdentityMint) mint(_ context.Context, id orchestratorIdentity) (string, error) {
+	m.asked = append(m.asked, id)
+	if m.err != nil {
+		return "", m.err
+	}
+	return m.token, nil
 }
 
 // labelService is the installation's credentials service as a daemon reaches
@@ -206,16 +231,20 @@ type labelFixture struct {
 	*daemonFixture
 	service *labelService
 	host    *fake.Provider
+	// mint is the stand-in for the daemon's own gcloud mint
+	// (orchestratorIdentityMint): what it answered with, and the identity it was
+	// asked for, which is what a test about the daemon's identity reads.
+	mint *orchestratorIdentityMint
 }
 
 func newLabelFixture(t *testing.T, prs ...fake.PRState) *labelFixture {
 	t.Helper()
 	host := &fake.Provider{Repo: labelRepo, State: fake.State{PRs: prs}}
-	withLabelIdentity(t)
 	return &labelFixture{
 		daemonFixture: newDaemonFixture(t),
 		service:       newLabelService(t, host),
 		host:          host,
+		mint:          withLabelIdentity(t),
 	}
 }
 
@@ -232,6 +261,11 @@ func (f *labelFixture) daemon(t *testing.T) (*orchestratorDaemon, *strings.Build
 	repo := d.lc.Repos[labelRepo]
 	repo.GitHubAppID = labelAppID
 	d.lc.Repos[labelRepo] = repo
+	// The installation this daemon runs in has opted in: its workdir holds the
+	// orchestrator block, which is the record of the account the daemon mints as
+	// (F19, O2). A test about the installation that has NOT opted in rewrites it
+	// without the block (holdOrchestratorWorkdir).
+	holdOrchestratorWorkdir(t, d.lc.GCPProject, true)
 	return d, out
 }
 

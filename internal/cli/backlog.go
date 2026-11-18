@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,8 +14,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backlog"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/tier"
 )
@@ -177,27 +180,8 @@ func runBacklogAdd(cmd *cobra.Command, o *backlogAddOptions) error {
 		return failStep(rep, step, userErr("the database answered without its own clock, and the day an item is filed is read from it (D1230)"))
 	}
 	id := backlogItemID(s, now.UTC().Format("20060102"))
-	// The recipe and the tier the run is dispatched with are not the flags this
-	// command takes and are not the command's to invent silently: the state model
-	// requires both of every item, so the item carries the recipe a project has
-	// without configuring one and the smallest tier, and the person's approval is
-	// what changes either (fugaro orchestrator patch).
-	recipeName, tierName := recipe.DefaultName, string(tier.Small)
-	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{{
-		Op: orchestrator.OpWorkItemUpsert,
-		WorkItem: &orchestrator.WorkItemOp{
-			ID: id, Title: &title, Repo: &repo, Recipe: &recipeName,
-			RigorTier: &tierName, Brief: &brief,
-		},
-	}}}, orchestrator.Actor{Class: orchestrator.Session, Now: now})
-	if err != nil {
-		return failStep(rep, step, userErr("%v: nothing was written", err))
-	}
-	if err := node.Save(ctx, next, etag); err != nil {
-		if errors.Is(err, orchestrator.ErrStateMoved) {
-			return failStep(rep, step, userErr("the backlog node moved since this run read it (rev %d), so the item was not written: run the command again", s.Rev))
-		}
-		return failStep(rep, step, dbErr(lc, err, true))
+	if _, err := backlogUpsert(ctx, node, db, s, etag, []backlogItem{{ID: id, Title: title, Repo: repo, Brief: brief}}); err != nil {
+		return failStep(rep, step, backlogWriteErr(lc, s, err))
 	}
 	step.Done(id)
 	// The id is what the command prints, and the line under the step says what the
@@ -251,6 +235,101 @@ func backlogItemID(s orchestrator.State, day string) string {
 			return id
 		}
 	}
+}
+
+// backlogItem is one item a writer files into the project's backlog node: the
+// id it is written under, the one line it is about, the repository it is about
+// and the brief a run of it is launched with.
+type backlogItem struct {
+	ID    string
+	Title string
+	Repo  string
+	Brief string
+}
+
+// backlogUpsert writes items into the backlog node, skipping every id the node
+// already knows, and reports the ids it wrote.
+//
+// It is the one writer both `fugaro backlog add` (B1) and the fold of
+// docs/backlog/ `fugaro update` runs (B2, D2716) go through, because an item is
+// one shape whoever files it: a work item with NO spec (D2715), queued and
+// unapproved (D2717), in the project's own backlog node (D2735). What the skip
+// is for is the fold's "once": an id the node already knows is an item already
+// filed, so a second update over the same checkout does not file it again.
+//
+// "Knows" is the work list AND the archive, and the archive half is what makes
+// the "once" hold: an item leaves the work list through OpWorkItemArchive —
+// which is how a folded item ends, archived by a person or by the daemon once
+// it has finished — and the file it was folded from is still in the checkout, so
+// a skip that read the work list alone would refile it the first time it
+// finished. The archive is bounded history rather than a record (state.go's
+// keptArchived, and shrink drops its oldest entry first when a node is over its
+// target), so the ids the skip recognises are the ones the node still remembers,
+// and the oldest id it has forgotten is one the fold files a second time.
+//
+// The recipe and the tier the run is dispatched with are not a filer's to
+// invent silently: the state model requires both of every item, so what is
+// written is the recipe a project has without configuring one and the smallest
+// tier, and the person's approval is what changes either (fugaro orchestrator
+// patch).
+//
+// Every stamp in the document comes from the server's clock (D1230), the whole
+// list goes in one patch because that is what the node's conditional write
+// takes, and a node that moved under the caller is returned as
+// orchestrator.ErrStateMoved rather than as a lost item.
+func backlogUpsert(ctx context.Context, node *orchestrator.Node, db *rtdb.Client, s orchestrator.State, etag orchestrator.ETag, items []backlogItem) ([]string, error) {
+	// The work list and the archive both: an item that has finished is one the
+	// node has already filed, and the file it came from is still in the
+	// checkout, so a skip that read the work list alone would file it again.
+	have := make(map[string]bool, len(s.WorkItems)+len(s.Archived))
+	for _, w := range s.WorkItems {
+		have[w.ID] = true
+	}
+	for _, a := range s.Archived {
+		have[a.ID] = true
+	}
+	var ops []orchestrator.Op
+	var wrote []string
+	recipeName, tierName := recipe.DefaultName, string(tier.Small)
+	for _, it := range items {
+		if have[it.ID] {
+			continue
+		}
+		title, repo, brief := it.Title, it.Repo, it.Brief
+		ops = append(ops, orchestrator.Op{
+			Op: orchestrator.OpWorkItemUpsert,
+			WorkItem: &orchestrator.WorkItemOp{
+				ID: it.ID, Title: &title, Repo: &repo, Recipe: &recipeName,
+				RigorTier: &tierName, Brief: &brief,
+			},
+		})
+		wrote = append(wrote, it.ID)
+	}
+	if len(ops) == 0 {
+		return nil, nil
+	}
+	now, ok := db.ServerNow()
+	if !ok {
+		return nil, userErr("the database answered without its own clock, and the stamp an item carries is read from it (D1230)")
+	}
+	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: ops}, orchestrator.Actor{Class: orchestrator.Session, Now: now})
+	if err != nil {
+		return nil, userErr("%v: nothing was written", err)
+	}
+	if err := node.Save(ctx, next, etag); err != nil {
+		return nil, err
+	}
+	return wrote, nil
+}
+
+// backlogWriteErr is what a command says about a failed backlogUpsert: a node
+// that moved under the run is the conditional write's own refusal, and anything
+// else is the database's, with the exit code a cloud failure carries.
+func backlogWriteErr(lc *localcfg.Config, s orchestrator.State, err error) error {
+	if errors.Is(err, orchestrator.ErrStateMoved) {
+		return userErr("the backlog node moved since this run read it (rev %d), so the item was not written: run the command again", s.Rev)
+	}
+	return dbErr(lc, err, true)
 }
 
 // newBacklogIndexCmd builds `fugaro backlog index`: it writes the folder's

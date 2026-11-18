@@ -2630,9 +2630,15 @@ export const VIEWS: readonly {
   readonly view: ReducedView | null
 }[] = Object.freeze([
   { id: 'live', label: 'Live', view: null },
-  // The graph is never withheld either, and for the same reason the Live screen
-  // is not: GV2.1 decided `plan.status` shows no spend and no cap, so a reduced
-  // console has nothing to hide in it. It is `null` here rather than a fourth
+  // The graph is never withheld either, and for the reason the Live screen's tab
+  // is not: what is behind it is repository state (`plan.status`), and the read
+  // is not a spend read (`REDUCED_VIEW_OPERATIONS` names none of the graph's
+  // commands), so a reduced console still draws the plan, its tasks and its
+  // stages. Since S4 the plan's estimate carries one money figure, and that
+  // figure is withheld **inside the drawing** rather than with the tab: the
+  // entry asks `hidesView` for `spend` and hands the answer to the screen, which
+  // draws the ready-by range and `n/a` where the cost was -- the same shape as
+  // the Live screen's caps. It is `null` here rather than a fourth
   // `ReducedView`, which would be a mode that hides a view no mode hides.
   { id: 'graph', label: 'Graph', view: null },
   { id: 'spend', label: 'Spend', view: 'spend' },
@@ -3976,9 +3982,16 @@ async function mountDashboard(deps: DashboardDeps): Promise<void> {
   }
 
   /** graphScreenNow is the screen, built on first use. The worker is started
-   * here and nowhere else, and `forgetLive` disposes of it. */
+   * here and nowhere else, and `forgetLive` disposes of it.
+   *
+   * The gate is asked here, as it is for the Live screen's caps: the plan's
+   * estimate carries its cost (S4), and a reduced console draws the ready-by
+   * range with the cost withheld rather than a dollar figure it cannot vouch
+   * for. The answer is handed in at construction because the screen holds no
+   * compatibility of its own -- `gate.compatibility` is fixed for the session,
+   * so a screen built once is asked once. */
   const graphScreenNow = (): GraphScreen => {
-    if (graph.screen === null) graph.screen = graphScreen(factory, theme)
+    if (graph.screen === null) graph.screen = graphScreen(factory, theme, hidesView(gate.compatibility, 'spend'))
     return graph.screen
   }
 

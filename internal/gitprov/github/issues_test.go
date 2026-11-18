@@ -180,7 +180,7 @@ func TestGitHubReadIssue(t *testing.T) {
 	}
 	want := Issue{Number: 7, Title: "Backlog: mirror items", Body: "Open an issue for every item that has none.",
 		URL: "https://github.com/acme/web/issues/7", State: "open",
-		AuthorLogin: "fugaro-app[bot]", AuthorID: "900001", AppSlug: "fugaro-app"}
+		AuthorLogin: "fugaro-app[bot]", AuthorID: "900001", AppSlug: "fugaro-app", AppID: "42"}
 	if got != want {
 		t.Fatalf("ReadIssue = %+v, want %+v", got, want)
 	}
@@ -277,7 +277,7 @@ func TestGitHubOpenIssue(t *testing.T) {
 	}
 	want := Issue{Number: 42, Title: "Mirror: Add search", Body: body,
 		URL: "https://github.com/acme/web/issues/42", State: "open",
-		AuthorLogin: "fugaro-app[bot]", AuthorID: "900001", AppSlug: "fugaro-app"}
+		AuthorLogin: "fugaro-app[bot]", AuthorID: "900001", AppSlug: "fugaro-app", AppID: "42"}
 	if got != want {
 		t.Fatalf("OpenIssue = %+v, want %+v", got, want)
 	}

@@ -123,7 +123,7 @@ func TestDeriveBitbucketTokenQualifiesTheSlugs(t *testing.T) {
 // unless some profile mounts the token.
 func TestDeriveBitbucketTokenWithoutAProfile(t *testing.T) {
 	secrets := map[string]config.ProjectSecret{
-		config.BitbucketSecret: {AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: true},
+		config.BitbucketSecret: {AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: config.ProxyFlag(true)},
 	}
 	bn, err := DeriveBitbucketToken(map[string]Profile{}, secrets)
 	if err != nil {
@@ -168,7 +168,7 @@ func TestBitbucketTokenBlockCarriesProxy(t *testing.T) {
 	profiles := map[string]Profile{DefaultProfileName: {bitbucketProfile()}}
 	for _, proxy := range []bool{false, true} {
 		bn, err := DeriveBitbucketToken(profiles, map[string]config.ProjectSecret{
-			config.BitbucketSecret: {AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: proxy},
+			config.BitbucketSecret: {AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: config.ProxyFlag(proxy)},
 		})
 		if err != nil {
 			t.Fatalf("proxy %v: DeriveBitbucketToken = %v", proxy, err)

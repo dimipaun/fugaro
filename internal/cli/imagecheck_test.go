@@ -18,7 +18,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -327,6 +330,80 @@ func TestSubmitRebuildFallsBackOnEmptyGitSecretID(t *testing.T) {
 	}
 	if got := availableGitSecret(t, f.fb); got != gitSecretVersionName(f.rs.Secrets["bitbucket-token"]) {
 		t.Fatalf("the rebuild names %q, want the repository's own %q", got, f.rs.Secrets["bitbucket-token"])
+	}
+}
+
+// TestImageCheckFetchesFromTheService: a repository the installation's
+// credentials service serves (B4.5) makes the check job fetch the credential
+// its clone is handed from B4.3's build route, presenting the job's own
+// identity token, and makes the rebuild it submits carry the address, so the
+// build's own credential step fetches its credentials there too. The
+// provider secret the job is still mounted is a decoy the served credential
+// has to beat: a job that reads its environment is a job that did not fetch,
+// and the mount stays until B4.9 takes it off.
+//
+// The clone itself is against a local repository (checkFixture), so the
+// credential is never spent: what is pinned is the fetch, the identity it
+// presents and the request the rebuild carries.
+//
+// Mutation (verified, run and restored): make jobGitEnv ignore the address —
+// the fetch branch in jobGitEnv — and this fails on the mounted decoy.
+func TestImageCheckFetchesFromTheService(t *testing.T) {
+	const (
+		served  = "service-token-not-a-real-credential"
+		mounted = "mounted-token-not-a-real-credential"
+	)
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	meta := buildCallMetadata(t)
+	svc := &buildCredentialsService{answer: credsvc.BuildCredentialsResponse{
+		Git: credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: served, Host: "bitbucket.org"},
+	}}
+	srv := svc.start(t)
+	t.Setenv(providers.EnvCredentialsServiceURL, srv.URL)
+	t.Setenv(providers.EnvBitbucketToken, mounted)
+
+	// The clone's own environment, made from the spec the installed job holds.
+	var spec infra.CheckJobSpec
+	if err := json.Unmarshal([]byte(os.Getenv(infra.CheckSpecEnv)), &spec); err != nil {
+		t.Fatalf("%s: %v", infra.CheckSpecEnv, err)
+	}
+	env, err := jobGitEnv(t.Context(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := envValue(env, "FUGARO_GIT_TOKEN"); got != served {
+		t.Errorf("the job clones with FUGARO_GIT_TOKEN = %q, want the served credential and not the mounted one", got)
+	}
+	if got := envValue(env, "FUGARO_GIT_USERNAME"); got != "x-token-auth" {
+		t.Errorf("the job clones as %q, want the served username", got)
+	}
+	if got, ok := envHas(env, providers.EnvBitbucketToken); ok {
+		t.Errorf("the clone's environment still carries %s = %q", providers.EnvBitbucketToken, got)
+	}
+	asked := svc.asked()
+	if len(asked) != 1 {
+		t.Fatalf("the job asked the service %d times, want the one call its clone makes", len(asked))
+	}
+	if asked[0].Workflow != "app" || len(asked[0].Secrets) != 0 || asked[0].AppID != "" {
+		t.Errorf("the job asked %+v, want the workflow it checks named as the route's selector and no secret at all", asked[0])
+	}
+	if bears := svc.presented(); len(bears) != 1 || bears[0] != "Bearer "+buildE2EIdentityToken {
+		t.Errorf("the job presented %q, want its own identity token under Bearer", bears)
+	}
+	if got := meta.count(); got != 1 {
+		t.Errorf("the metadata server was read %d times, want the one mint this call makes", got)
+	}
+
+	lines, err := runCheckJob(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 || lines[0].Decision != imagecheck.Rebuild || buildPosts(f.fb) != 1 {
+		t.Fatalf("lines = %+v, builds = %d", lines, buildPosts(f.fb))
+	}
+	subs, _ := f.fb.Last()["substitutions"].(map[string]any)
+	if got := subs["_CREDENTIALS_SERVICE_URL"]; got != srv.URL {
+		t.Errorf("the rebuild's substitutions name %v, want the service %q: its credential step fetches there too", got, srv.URL)
 	}
 }
 

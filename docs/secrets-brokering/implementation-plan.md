@@ -24,6 +24,18 @@ spec, the reconciliation wins.
   (`b6e53acd0`, #2091) and B1.11 (`efbe928c8`, #2096) have merged; B1.13 part two is #2166, held on
   Check 191, whose first run on 2026-11-10 found the sandbox repository off the switch (`6e319b650`,
   #2284; reconciliation F29).
+- **2026-11-18: the owner launched the flip chain, with the owner-run checks moved behind it.** The
+  owner ruled that the four flips of the four slices — **B2.7**, **B3.8**, **B4.9** and **B5.7** —
+  launch now, each keeping its own security review, and that the owner-run checks beside them move to
+  **after-flip** runs: **B2.6** (Check 193) is waived as a gate on B2.7, and both it and **B2.8**
+  (`--after-flip`) are run by the owner on the release that carries the flip, in one sitting, which is
+  what **B2.9** records afterwards. So **B2.7 is not gated on B2.6's PASS**: the gate the owner kept is
+  D2072's own (a flip ships only with an owner go), and the check the plan put in front of it is the
+  one the owner moved behind it. **G17 is unchanged by the move**, and that is why the move is safe: a
+  flipped repository's runs reach the service through the address the release BEFORE the flip already
+  handed out (B2.3, and its image half is `serviceAuthSince`), so the flip takes a mount away only
+  where the serving is already in place, and the check the owner now runs afterwards is what proves it
+  on a real installation. B2.7 ships in **0.26.0**.
 - **The owner's answers of 2026-10-27 that shape the plan** (reconciliation §5):
   - **D490:** S0 in **0.13.0**; the Bitbucket proxy (S1) in **0.14.0** — the owner moved S1's proxy
     chain to **0.15.0** on 2026-10-30 (below), so 0.14.0 carries only S1's inert and data-only
@@ -136,7 +148,7 @@ not one whose branch fails `task.BranchRE` (G6).
 | --- | --- | --- | --- |
 | **S0** | **0.13.0** | The secret-reader audit as a tested doc, the guard, doctor's Secret Manager sweep and deployer read, Check 190 written and run | Yes: no behaviour change except doctor findings |
 | **S1** | **0.15.0**, then the flip after it (O7) | The Bitbucket proxy for per-repository jobs of opted-in installations and the re-planned Bitbucket S2 tasks ship in 0.15.0 (owner, 2026-10-30); 0.14.0 ships only the inert and data-only pieces — policy v4 with the block and the `proxy` switch (BW-T2.1, BW-T2.3), the API-root pin (BW-T2.8), the bundle's Bitbucket token (B1.2), the proxy's parser and rules (B1.3, B1.4), the empty flip list (B1.8) and the operator draft (B1.13 part one); Check 191 runs against the released 0.15.0; the flip (B1.13 part two) and Check 192 follow in the next release | Inert on upgrade: a repository is proxied only when the owner publishes `proxy: true` (B1.7); the mount stays until the flip list is filled (B1.13); in 0.14.0 no run is proxied at all, whatever the node says. The policy v4 bump itself is a lockstep upgrade (D477) |
-| **S2** | unscheduled | Every `agent.auth` mode through the service (D498): `api-key` and `oauth` on the switch, then their mounts dropped (B2.1–B2.9; D2070–D2072 answered) | Until B2.7's flip: every mount stays |
+| **S2** | **0.26.0** (the flip, B2.7; the tasks before it landed as they were merged, B2.2's runner half in 0.25.0) | Every `agent.auth` mode through the service (D498): `api-key` and `oauth` on the switch, then their mounts dropped (B2.1–B2.9; D2070–D2072 answered). The owner launched the chain on 2026-11-18, with the owner-run checks (B2.6, B2.8) moved to after the flip | The flip landed (B2.7, D2072): a SWITCHED `api-key` or `oauth` repository's job gives up the two Claude mounts — the Anthropic key and the Claude OAuth token — and keeps every provider key it mounts (R6, D1634); a repository the switch holds off keeps every mount |
 | **S3** | unscheduled | Workflow `secrets:` through a vault fetch (D491, D1267): the record, the route, the grant, the runner's fetch, then the flip (B3.1–B3.10; D2073–D2075 answered) | Until B3.8's flip: a mounted value always wins |
 | **S4** | unscheduled | The build exception's exit: builds and the image check through the service (D491, U4), gated on Check 195 (B4.1–B4.11; D2076, D2077 answered) | Until B4.9's flip |
 | **S5** | unscheduled | Shared project jobs at the service (the credentials plan's C3.9 general half), then Bitbucket shared jobs (D505) (B5.1–B5.9; D2078, D2079 answered) | Until B5.7's flip |
@@ -803,8 +815,8 @@ name any repository its identity names (G21 binds it to the profile; D475 is the
 
 ##### B2.6: Check 193 — OWNER-RUN
 
-- **The owner types,** on the released build that carries B2.1–B2.5 (`brew upgrade dimipaun/tap/fugaro`), installation `fugaro` only: `fugaro update` (and `fugaro update --repo` from each sandbox checkout), then `CHECK193_REPOS=<api-key repo>,<oauth repo> bash scripts/live-checks/check193.sh --dry-run`, the same without `--dry-run`, and pastes the `CHECK 193 RESULT` block back. No agent runs any step.
-- **Depends on:** B2.5 and a release carrying it.
+- **The owner types,** on the released build that carries B2.1–B2.5 **and B2.7's flip** (`brew upgrade dimipaun/tap/fugaro`; the owner's 2026-11-18 ruling moved this run behind the flip), installation `fugaro` only: `fugaro update` (and `fugaro update --repo` from each sandbox checkout), then `CHECK193_REPOS=<api-key repo>,<oauth repo> bash scripts/live-checks/check193.sh --dry-run`, the same without `--dry-run`, and pastes the `CHECK 193 RESULT` block back. No agent runs any step.
+- **Depends on:** B2.5, and on the release carrying B2.7. **The PASS this task was to give B2.7 is waived by the owner's 2026-11-18 ruling**: the check is run after the flip, in the same sitting as B2.8, and B2.9 records both.
 
 ##### B2.7: The S2 flip (D2072, G17) — SECURITY-SENSITIVE, owner-gated
 
@@ -812,13 +824,14 @@ name any repository its identity names (G21 binds it to the profile; D475 is the
 - **Tests:** `TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly`, `TestFilledServiceServedAuthsKeepsProviderKeys` (R6), `TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage`, `TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched`, `TestModelSecretsServedValidationMatchesGo`; `TestUpdateLeavesARunInFlightRunning`.
 - **Command:** B2.3's command, plus `GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestLaunchRefusesASwitched|TestPolicyPublishRefusesModeOff' -count=1`
 - **Red step:** a copy of `TestFilledServiceServedAuthsDropsTheAnthropicMountsOnly` on the real list fails while it is empty.
-- **Depends on:** B2.6 PASS and the owner's go; ships in the release after the one B2.6 ran on. **Reviewer tier:** opus + mandatory independent review.
+- **The owner's go:** **given, 2026-11-18**, together with the launch of the other three flips (B3.8, B4.9, B5.7) and the move of the owner-run checks (B2.6, B2.8) to after the flip — so this task is not gated on B2.6's PASS. It ships in **0.26.0**, and the release's `### For operators` is the one line the flip owes an operator: run `fugaro update`, and a repository drops its model mounts only once it is switched — one that is not switched keeps every mount, before and after.
+- **Depends on:** the owner's go (given) and B2.3, whose address is what the drop is safe behind (G17). **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `config, terraform: switched api-key and oauth repositories give up their model mounts`
 
 ##### B2.8: Check 193 `--after-flip` — OWNER-RUN
 
 - **The owner types,** on the release carrying B2.7: `fugaro update`, `fugaro update --repo` from each sandbox checkout with a run of that repository in flight, then `bash scripts/live-checks/check193.sh --after-flip`, and pastes the block back.
-- **Depends on:** B2.7 on a release.
+- **Depends on:** B2.7 on a release; **run in the same sitting as B2.6**, which the owner's 2026-11-18 ruling moved behind the flip, and followed by B2.9's two commits.
 
 ##### B2.9: Check 193's runs recorded
 
@@ -1070,7 +1083,8 @@ D1982's one sentence; **T2.6**'s phase-3 half and **T2.7** (Check 181) follow T2
 
 #### Levels, edges and shared files for S2–S5
 
-**Edges:** B2.1→B2.2; {B2.2, B2.3}→B2.4; {B2.3, B2.4}→B2.5→B2.6→B2.7→B2.8; {B2.6, B2.8}→B2.9.
+**Edges:** B2.1→B2.2; {B2.2, B2.3}→B2.4; {B2.3, B2.4}→B2.5; B2.5→B2.7 (the owner's go of 2026-11-18
+waived B2.6's PASS as a gate, so B2.6 runs after the flip); B2.7→B2.6→B2.8, and {B2.6, B2.8}→B2.9.
 B3.1→B3.2→B3.4; {B3.3, B3.4}→B3.5; {B3.4, B3.5}→B3.6→B3.7→B3.8→B3.9; {B3.7, B3.9}→B3.10.
 B4.1→B4.2→{B4.3, B4.4}; B3.2→B4.3; {B4.3, B4.4}→B4.5→B4.6; {B4.5, B4.6}→B4.7→B4.8→B4.9→B4.10;
 {B4.2, B4.8, B4.10}→B4.11. B5.1→B5.2→B5.3→B5.4; {B5.3, B5.4}→B5.5→B5.6→B5.7→B5.8; {B5.6, B5.8}→B5.9.
@@ -1084,9 +1098,9 @@ B5.1}; #2274, #2275→B2.2; #2166→{B2.3, B2.4, B3.3, B4.4}.
 | S2 | 1 | B2.2 |
 | S2 | 2 | B2.4 |
 | S2 | 3 | B2.5 |
-| S2 | 4 | B2.6 (OWNER-RUN, on a release) |
-| S2 | 5 | B2.7, B2.9 (first commit) |
-| S2 | 6 | B2.8 (OWNER-RUN, on the next release) |
+| S2 | 4 | B2.7, B2.9 (first commit) |
+| S2 | 5 | B2.6 (OWNER-RUN, on the release the flip ships in) |
+| S2 | 6 | B2.8 (OWNER-RUN, the same sitting) |
 | S2 | 7 | B2.9 (second commit) |
 | S3 | 0 | B3.1, B3.3 |
 | S3 | 1 | B3.2 |
@@ -1118,8 +1132,9 @@ The levels are **within** a slice. Across slices they run in D2080's order, and 
 only where the shared-files table below has no file written by both at the same time; where it does,
 the earlier slice's task goes first.
 
-**Critical path (D2080's order):** MC6 → B2.1 → B2.2 → B2.4 → B2.5 → B2.6 (owner) → B2.7 → B2.8
-(owner) → B2.9; then B5.1 → B5.2 → B5.3 → B5.4 → B5.5 → B5.6 (owner) → B5.7 → B5.8 (owner); then
+**Critical path (D2080's order):** MC6 → B2.1 → B2.2 → B2.4 → B2.5 → B2.7 → B2.6 (owner, on the
+release the flip ships in) → B2.8 (owner, the same sitting) → B2.9; then B5.1 → B5.2 → B5.3 → B5.4 →
+B5.5 → B5.6 (owner) → B5.7 → B5.8 (owner); then
 docs/bitbucket-workspace-token's T2.2. S3 (B3.1 → B3.2 → B3.4 → B3.5 → B3.6 → owner → B3.8 → owner)
 and S4 (B4.1 → owner gate → B4.3 → B4.5 → B4.6 → B4.7 → owner → B4.9 → owner) hang off it, with B4.3
 waiting on B3.2. Each slice is sequential where an interface forces it (a route before its caller, a

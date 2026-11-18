@@ -129,7 +129,7 @@ func DeriveBitbucketToken(profiles map[string]Profile, secrets map[string]config
 		}
 	}
 	slices.Sort(list)
-	return &BitbucketToken{AllowRepos: list, Proxy: entry.Proxy}, nil
+	return &BitbucketToken{AllowRepos: list, Proxy: entry.Proxying()}, nil
 }
 
 // decodeBitbucketTokenBlock reads the block off the node, refusing a member

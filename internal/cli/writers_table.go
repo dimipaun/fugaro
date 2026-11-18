@@ -88,9 +88,10 @@ const writersValueWord = "<value>"
 // column names this path, the key is one spec §4.4 hands it, and a sensitive
 // value never travels through this command).
 //
-// The layer is the row's narrowest — settingsDefaultLayer's own rule — and it
-// is written into the argv rather than left to the command's default, so the
-// line a refusal prints says where the value lands. A row whose layers are
+// The layer is the row's own default — settingsDefaultLayer's rule, which
+// follows the key's merge rule (D2605) — and it is written into the argv rather
+// than left to the command's default, so the line a refusal prints says where
+// the value lands. A row whose layers are
 // none of `--layer`'s three (a `profile` row, a cloud `caps` row) is not this
 // path's to write at all: no layer word would make the command line work.
 func writersTableGeneric(row settings.Row) (settings.Writer, bool) {

@@ -375,17 +375,25 @@ exit %d
 // TestCloudBuildCredentialOnlyInVolume: the git credential lives only in
 // the fugaro-creds volume, which the steps that clone mount and render
 // (which runs the repository's fugaro.yaml through the base image) does
-// not. Only the credential step sees the provider secret itself, and no
-// step writes a credential under /workspace or /builder/home, which every
-// later step can read.
+// not. The workflow secrets the credential step fetched from the
+// installation's credentials service live beside it in fugaro-secrets,
+// which only the steps that prepare the volume, write the secrets into it
+// and read them out of it mount: source, which clones with the git
+// credential, sees no workflow secret. Only the
+// credential step sees the provider secret itself, and no step writes a
+// credential under /workspace or /builder/home, which every later step can
+// read.
 func TestCloudBuildCredentialOnlyInVolume(t *testing.T) {
 	_, cb := loadCloudBuild(t)
-	mounts := map[string]bool{}
+	creds, secrets := map[string]bool{}, map[string]bool{}
 	for _, s := range cb.Steps {
 		for _, v := range s.Volumes {
-			if v.Name == "fugaro-creds" && v.Path == "/creds" {
-				mounts[s.ID] = true
-			} else {
+			switch {
+			case v.Name == "fugaro-creds" && v.Path == "/creds":
+				creds[s.ID] = true
+			case v.Name == "fugaro-secrets" && v.Path == "/secrets":
+				secrets[s.ID] = true
+			default:
 				t.Errorf("step %s mounts %s at %s", s.ID, v.Name, v.Path)
 			}
 		}
@@ -408,12 +416,27 @@ func TestCloudBuildCredentialOnlyInVolume(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"prep", "credential", "source", "build"} {
-		if !mounts[id] {
+		if !creds[id] {
 			t.Errorf("step %s does not mount fugaro-creds at /creds", id)
 		}
 	}
-	if mounts["render"] || len(cb.Steps[cb.step(t, "render")].Volumes) != 0 {
+	if creds["render"] || len(cb.Steps[cb.step(t, "render")].Volumes) != 0 {
 		t.Error("the render step mounts a volume")
+	}
+	// The workflow secrets are the credential step's and the build step's
+	// alone: the credential step writes them into the volume, the build step
+	// reads them out of it, and prep makes it private to the image's user
+	// before either. Source clones with the git credential and reads none of
+	// them, and no other step mounts the volume at all.
+	for _, id := range []string{"prep", "credential", "build"} {
+		if !secrets[id] {
+			t.Errorf("step %s does not mount fugaro-secrets at /secrets", id)
+		}
+	}
+	for id := range secrets {
+		if id != "prep" && id != "credential" && id != "build" {
+			t.Errorf("step %s mounts fugaro-secrets at /secrets", id)
+		}
 	}
 	if cred := cb.Steps[cb.step(t, "credential")]; !slices.Equal(cred.SecretEnv, []string{"GIT_TOKEN"}) {
 		t.Errorf("credential secretEnv = %v", cred.SecretEnv)
