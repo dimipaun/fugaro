@@ -121,7 +121,7 @@
     },
     {
       "id": "P5",
-      "title": "public mobile service beside credsvc and its signer grant (needs O1, O8)",
+      "title": "public mobile service beside credsvc and its signer grant (needs O1, O6, O8)",
       "run": null,
       "version": null,
       "size": 2,
@@ -215,8 +215,8 @@
         "prediction": true,
         "paths": [
           "internal/cli/pair.go",
+          "internal/cli/pair_events.go",
           "internal/cli/pair_invite.go",
-          "internal/mobileauth/invite.go",
           "internal/cli/pair_invite_test.go",
           "schemas/pair-event.schema.json"
         ]
@@ -426,7 +426,7 @@
     },
     {
       "id": "J3",
-      "title": "confirmation policy on both sides: cancel and costly starts",
+      "title": "confirmation policy: cancel and costly starts, machine and Go mirror",
       "run": null,
       "version": null,
       "size": 1.5,
@@ -677,17 +677,42 @@
     {
       "task": "M3",
       "needs": "M1",
-      "reason": "both write mobile/src/accounts secure-store files"
+      "reason": "M3 attaches refresh state to the identity records M1 defines: its store behaviour, not only a shape"
     },
     {
       "task": "K3",
       "needs": "M3",
-      "reason": "real refresh loop and the shared secure-store file"
+      "reason": "restore hands each first session to M3's store and loop: its real storing behaviour"
     },
     {
       "task": "P7",
       "needs": "P2",
       "reason": "same file, internal/cli/pair.go"
+    },
+    {
+      "task": "P3",
+      "needs": "P6",
+      "reason": "Policy reads the mobile.* fields P6 defines"
+    },
+    {
+      "task": "K2",
+      "needs": "P6",
+      "reason": "Policy reads the mobile.* fields P6 defines"
+    },
+    {
+      "task": "X3",
+      "needs": "M1",
+      "reason": "the same file, mobile/package.json"
+    },
+    {
+      "task": "I2",
+      "needs": "X2",
+      "reason": "the same file, mobile/src/text/index.js"
+    },
+    {
+      "task": "CR2",
+      "needs": "Z2",
+      "reason": "raised by Z2 when it finds a policy value missing"
     },
     {
       "task": "P3",
@@ -840,6 +865,11 @@
       "reason": "wires the sides the contract separated"
     },
     {
+      "task": "I1",
+      "needs": "P7",
+      "reason": "wires the sides the contract separated"
+    },
+    {
       "task": "I2",
       "needs": "J2",
       "reason": "wires the sides the contract separated"
@@ -942,6 +972,11 @@
     {
       "task": "X1",
       "needs": "C2",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "P7",
+      "needs": "C1",
       "reason": "built against the contract's shapes and stub, not the provider's behaviour"
     },
     {
@@ -1049,6 +1084,15 @@
       },
       "integration": "I2",
       "reason": "the transcript runs over the session port"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "P7",
+        "needs": "P4"
+      },
+      "integration": "I1",
+      "reason": "revoke needs the RefreshStore shape, not the session code"
     },
     {
       "contract": "C1",
