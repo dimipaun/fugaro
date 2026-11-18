@@ -1123,6 +1123,7 @@ probe account carries predefined grants only).
 | 581 | A multi-repository catalog build and the leak scan ([`docs/shared-jobs-default/`](shared-jobs-default/implementation-plan.md), its **Check 581** and task **B4**; **D2301** for a build baking every repository the project's map puts on the entry, and **B3**/**R2** for the scan that stands before the promote): one catalog entry the project's image map puts two repositories on is built through Cloud Build, from the checkout its Dockerfile belongs to — the CLI refuses a build from any other repository by name — and the build's own record is read back: its note names every repository the map puts on the entry, its steps carry `catalog-scan` with SUCCESS before `promote`, the build itself ends SUCCESS, and the entry records the digest that build reported it made | See "Check 581" below; `bash scripts/live-checks/check-581.sh --sandbox <a sandbox repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check-581_test.sh` drives it against fake tools only, and **you** run it, on the **sandbox project** (`fugaro-dev`) and the sandbox repository only, **never `belong`** (a project or region naming that installation is refused before a single call) | **One billable Cloud Build**, of an entry the catalog already lists, which promotes that entry's image; the check writes no entry, no mapping and no switch, launches no run and opens no pull request. **OWNER-RUN, NOT RUN.** |
 | 590 | The three Bitbucket token types, and what the verifier says for each ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; **U1**, **U2** and **U5** are the open questions it answers, and **R14** with **O7** — the repository token's 403 at `/user`, confirmed 2026-11-13 — is the row the other two are read against): a **repository**, a **project** and a **workspace** access token are each added to the sandbox installation through the release's own add path (`fugaro creds set bitbucket-token--<name> --type … --coverage …`, whose check runs **before** anything is written, **D2352**) — and each one is then asked Bitbucket itself: what `GET /2.0/user` answers and what its `kind` says there (**U1**), which scopes Bitbucket reports for it (**U2**), and whether a project token is accepted as `x-token-auth` for git over HTTPS and as `Bearer` for REST (**U5**). **U6** — whether a project token covers a repository moved into its project later — is **not** this check's: it is Check 180's, which moves the repository, and this check records no row for it | See "Check 590" below; `bash scripts/live-checks/check590.sh --repo <workspace>/<sandbox repo> --token-file <path> --project-token-file <path> --workspace-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check590_test.sh` drives it against fake `fugaro` and `git` beside a fake Bitbucket Cloud on a loopback port (the `curl` is the real one, and it has nowhere else to go) only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev` and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as the repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | Three `creds set` writes into the sandbox installation (three bundle keys and three records), a handful of Bitbucket API calls and three git reads: **no run is launched, no model call is made and nothing is built**. The published policy node is untouched, so nothing this check writes is visible to a run until you republish (`fugaro update --repo`) — which the check deliberately does not do. Each token file is read once, at mode 0600, and no value is printed or put on a command line; the Restore removes the scratch directory and every file a value was written into, and what stays is the three bundle keys and the three records the `verifier-*` rows name (`fugaro creds rm bitbucket-token--<name>`). **USER-RUN, NOT RUN.** |
 | 591 | Which of the installation's Bitbucket tokens serves **which** repository, and the one 403 a caller at your terminal can force ([`docs/bitbucket-token-types/`](bitbucket-token-types/implementation-plan.md), its task **CK** and its "Checks 590 and 591"; the selection rules **R2**, **R9**, **R12** and **C1.13**, the plan's **D2355**, and the service's own refusal **`unverified_run_identity`** for a caller that is not a run): with a **repository** token recorded for one sandbox repository and a **project** token recorded for the other — two repositories of **one** Bitbucket project, so two repositories, two tokens and one installation make the choice a real one — two runs (one per repository, because the released CLI has **no change-set launch**: `fugaro run --change-set` is Subscription Edition and not available in any build) are launched, waited for and read: the credentials service's **own audit lines** name the credential that served each run's git and Bitbucket-API calls, and the two must be **different** tokens. One call of the check's own, made on the route a run's git traffic takes with an identity token and **no** run identity, must be answered **403 `unverified_run_identity`** — the service refuses a caller that is not a run of the installation before any route and therefore before any token is chosen, which is the only 403 a check at your terminal can force (a coverage refusal is HTTP 400 with its class on the audit line) | See "Check 591" below; `bash scripts/live-checks/check591.sh --repo <workspace>/<first repo> --other-repo <workspace>/<second repo> --token-file <path> --project-token-file <path> (--project-uuid <uuid> \| --project-key <key>)` is the whole of it, its sibling test `scripts/live-checks/check591_test.sh` drives it against fake `gcloud`, `fugaro`, `git` and one loopback server answering both faces of the service only, and **you** run it, at your own terminal, on installation `fugaro` with GCP project `fugaro-dev`, region `us-east5`, and the sandbox workspace `dimi_bmb`, sandbox repositories only, **never `belong`** (refused as the installation, as the workspace and as either repository's workspace, and so is a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | **TWO full runs**: each clones, implements, reviews and opens a pull request, so two runs' worth of model spend, two branches and two pull requests on the two sandbox repositories — the block names each one and the Restore is to decline them. Both repositories must be **on the credentials-service switch** (`agent.auth: cascade`), which the audit rows are where you read. Beyond the runs: a handful of read-only Bitbucket API calls, two `fugaro creds ls` reads, one `gcloud logging read` per run (retried while Cloud Logging catches up, which lags the request by seconds), and ONE request that is refused. **No write to the installation**: no `creds set`, no policy publish and no `fugaro update` — every call of the check's own is a read, plus the one that is refused. Each token file is read once, at mode 0600, and no value is printed or put on a command line — the identity token it mints is written into a 0600 file and from there into a 0600 curl config. **USER-RUN, NOT RUN.** |
+| 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -21083,3 +21084,139 @@ row names what to remove by hand). What is left is what the runs made: **two bra
 on the two sandbox repositories**, which the block names — decline each pull request and delete its branch,
 and the runs' own records stay, which is what `fugaro runs ls` shows. **USER-RUN, NOT RUN: no agent runs
 any step of it.**
+## Check 640: the status labels on a real pull request (installation `fugaro` only, region `us-east5`, never `belong`; run by you, while one approved task is going; NOT RUN)
+
+**NOT RUN.** Written by task **CK** of the forge-labels plan
+([forge-labels/implementation-plan.md](forge-labels/implementation-plan.md), its "### CK: Check 640"), and
+**run by the owner** at their own terminal, on the dogfood installation, **while the daemon is carrying one
+approved task**. The script is `scripts/live-checks/check640.sh`, with the test that drives it against fakes
+(`scripts/live-checks/check640_test.sh`, run by `go test ./scripts`). **No agent runs any step of it** — the
+script refuses a coding agent's session by name (`CLAUDECODE` and the four other markers that say an agent,
+and not a person, is driving the shell; the editor extension's own marker is dropped rather than refused) —
+and the whole of its registration is this one command:
+
+```sh
+bash scripts/live-checks/check640.sh --installation fugaro
+```
+
+**What the check settles.** The labels an orchestrator run's pull request carries are written by the
+**daemon** at its ticks, through the **credentials service's label route**, with a token the service mints
+for itself (**D2439**: `{pull_requests: write, metadata: read}`, and nothing wider). T1 to T9 are merged, so
+that path is on main and every offline test of it runs against a fake provider or a fake service. What only
+the live installation settles is the two questions the plan names, plus the three readings that depend on
+them:
+
+- **U1 — does the installation's GitHub App really hold `pull_requests: write`?** Nothing in this
+  repository can read an App's permissions, and a run's own report of what it did is not evidence: the one
+  record of the act is the **credentials service's own audit line** (`internal/credsvc`'s audit writer,
+  read with `gcloud logging read` and `jsonPayload.purpose="label"`), which carries the caller, the
+  repository and the status of every act. An act the service performed is `ok`; anything else is a refusal,
+  and `state_unavailable` is the one U1 turns on — GitHub refusing the App's token for that repository. The
+  conditional owner step is the plan's: **if the check shows the permission is missing, you raise it on the
+  App's settings page**, which an agent cannot.
+- **U3 — what does GitHub do with a label name that carries a colon?** The `spec:<name>` label is named for
+  a plan folder (**R3**, **D2438**), and a name with a colon in it is the one thing about it nothing
+  offline can answer: the repository's own label table (`gh label list`) is where the answer is, and the
+  row reads whether the label is there and what colour it carries.
+- **The running label.** While the run is in flight its pull request must carry **`fugaro:running`**: the
+  daemon writes it from the item's phase, so its presence is the daemon having reached the route as itself
+  and the write having landed (**R4**, **R8**). The check reads the pull request repeatedly while it waits
+  for the run's row to turn terminal, so this is a reading of the run and not of a moment after it.
+- **The settled label.** Once the run has ended the pull request is left with **no** status label when the
+  run's record ended `succeeded` or `cancelled`, and with **`fugaro:failed`** for every other ending. That
+  expectation is the design's own composition and not this check's taste: `orchestratorOutcome` folds the
+  run's record, `foldPhase` turns the outcome into the item's phase, and `phaseToLabels` turns the phase
+  into the label — success is signalled by the pull request becoming ready, not by a label.
+- **The spec label.** The item's spec, folded to lower case and prefixed, in **D2437**'s grey: the check
+  reads the spec from the daemon's own state for the item and requires the pull request to carry it.
+
+**D2437's table is the whole of the colours**, and the check reads each one against the repository's own
+table: `fugaro:running` `1d76db` (blue), `fugaro:failed` `d73a4a` (red), `spec:<name>` `6e7781` (grey). A
+label the repository does not hold, or holds in another colour, is a FAIL naming which of the three it is —
+and a label the daemon creates on first use is **never repainted** (**D2440**), so a colour that is already
+there in another shade is a finding about the label and not about the run.
+
+**The premise it reads first, and why it stops.** The daemon reaches the label route only when it has an
+identity the service's verifier admits (**F19**): the installation's orchestrator account
+(`fugaro-orch@<project>.iam.gserviceaccount.com`) holding `roles/run.invoker` on the credentials service,
+and the service's own revision naming that account in the orchestrator class. **That prerequisite is not
+this check's to fix and may not have landed when you run it**, so the check reads it FIRST: with either half
+missing it writes **ONE** row — *"the daemon cannot reach the label route: F19"* — and **stops** (exit 2),
+rather than failing every row below it for a reason that is not about the labels. A daemon with no identity
+builds no seams at all, which is a silent no-op (**R7**), and a check that went on would report the daemon's
+silence as a label defect.
+
+**Prerequisites.** Installation `fugaro` in GCP project `fugaro-dev`, region `us-east5` — hard-coded and
+overridable by `CHECK640_INSTALLATION`, `CHECK640_GCP_PROJECT` and `CHECK640_REGION`; `belong` is refused by
+name as the installation and as the project, both as a value you typed and as one the doctor reports. The
+orchestrator daemon running **on this machine** (`fugaro orchestrator ls` must show the installation as a
+local orchestrator whose cached brief is not stale and whose lease a holder holds), **one approved task in
+flight** — an item whose phase is `running` and which carries the run id of the run whose pull request is
+read. `fugaro` and `gh` on PATH, `gh` authenticated for the repository with pull-request read access, and
+`gcloud` authenticated with permission to read the service's IAM policy, its revision and its log entries
+(`roles/logging.viewer` or a role holding `logging.views.access`). The run is the one **you** launched: the
+check launches nothing, and a run the daemon did not launch has no item and is never labelled.
+
+**What a failure means, row by row.** Each row says what it read and where to look next, and the F19 row
+above is the only one that stops the run:
+
+- `installation` / `belong` — the installation read is not the one you named, or names `belong`: nothing was
+  measured on any installation.
+- `identity` — F19: the daemon's identity to the service is not in place, and no label can be written.
+- `daemon` — the daemon is not one this machine runs and is beating, its cached brief is stale, or no lease
+  holder holds it: a daemon that is not ticking holds the labels where they were, which is a finding about
+  the daemon and not about the label.
+- `item` / `run` — no item is in flight with a run id, more than one is (use `--run-id`), or the run's own
+  row is not in `fugaro runs ls`: the pull request number and the repository are read from that row.
+- `running` — the pull request never carried `fugaro:running` while the check watched it live: read the
+  daemon row, the audit row, and the item's phase — a run the daemon did not launch is never labelled.
+- `settled` — the label the pull request is left with is not the one this run's ending wants: read the
+  item's phase against the run's record, then the audit row for a refused write.
+- `spec-label` — the label the item's spec asks for is not on the pull request: read the colours row (does
+  the repository hold it, and in which colour?), the audit row (a refused `ensure` is written there), and
+  the item's spec — a spec whose name is not a shape Fugaro builds is skipped with one line in the daemon's
+  own log.
+- `colours` — a label the repository does not hold, or holds in another shade than D2437's table.
+- `audit` — the service's own lines for this repository carry a **refused** act: `state_unavailable` is
+  GitHub refusing the App's token (U1: raise `pull_requests: write` on the App's settings page), a bundle
+  holding no App key, a provider that could not be built, or the route's own rate limit; `request_refused`
+  is the call itself — a write whose pull request is not corroborated (its head branch is not exactly
+  `fugaro/<run id>`, or its author is not Fugaro's own App identity).
+
+**The knobs.** Every one of them is read from the environment and none of them is asked for:
+`CHECK640_INSTALLATION`, `CHECK640_GCP_PROJECT`, `CHECK640_REGION`, `CHECK640_SERVICE_NAME`,
+`CHECK640_ORCH_ACCOUNT`, `CHECK640_RUN_ID` (the run to read when more than one item is in flight),
+`CHECK640_COLOUR_RUNNING`, `CHECK640_COLOUR_FAILED`, `CHECK640_COLOUR_SPEC` (D2437's table, so a repaint can
+be read against what the table says today), `CHECK640_CALL_SECONDS`, `CHECK640_RUN_SECONDS`,
+`CHECK640_RUN_POLL_SECONDS`, `CHECK640_SETTLE_SECONDS`, `CHECK640_SETTLE_POLL_SECONDS`,
+`CHECK640_AUDIT_WAIT_SECONDS` (Cloud Logging lags the request by seconds, so the audit read is retried),
+`CHECK640_AUDIT_POLL_SECONDS`, `CHECK640_AUDIT_AGE`, `CHECK640_AUDIT_LIMIT`, `CHECK640_RUNS_LIMIT`,
+`CHECK640_LABEL_LIMIT` and `CHECK640_DRY_RUN`. The command line itself takes `--installation`, `--run-id`,
+`--gcp-project`, `--region`, `--service`, `--dry-run` and `--help`; `--dry-run` prints the plan, makes no
+call at all and touches nothing.
+
+**Reading the `CHECK 640 RESULT` block.** One block of `FACT <key>: PASS|FAIL|UNVERIFIED — <what it read>`
+lines, in this order, and the same block is what you paste back: `xtrace` (the shell was not started with
+`-x`), `agent-session` (no coding agent's marker is set), `installation`, `belong`, `identity` (F19),
+`daemon`, `item`, `run`, `running`, `settled`, `spec-label`, `colours`, `audit`, `restore` (the scratch
+directory is gone). A row reading **UNVERIFIED** is a criterion that could **not** be measured — a reading
+taken after the run had already ended, an item carrying no spec, a `gh` that never answered — and a row
+reading **FAIL — not reached** is one the run stopped before. The exit status is **0** for an all-PASS
+block, **1** for a measured criterion that failed, **2** for a run that could not measure (the F19 premise,
+an installation that is not the one you named, a tool that is missing) and **3** for a run that reached the
+end with at least one row reading UNVERIFIED. A block that carries an extra `aborted` row is one that ended
+on an error rather than on an answer, and its FAIL rows say so.
+
+**What it costs, and what it leaves.** **Nothing billable and nothing written.** The run the check reads is
+the one **you** launched: the check launches no run, writes no label, creates no label, changes no policy
+and publishes nothing. Every call it makes is a read — `fugaro doctor`, `fugaro orchestrator ls`, `fugaro
+orchestrator state`, `fugaro runs ls`, `gh pr view`, `gh label list`, `gcloud run services get-iam-policy`,
+`gcloud run services describe` and `gcloud logging read` — and the only write anywhere is its own scratch
+directory, under `$TMPDIR`, mode 0700.
+
+**Restore.** The scratch directory — the doctor's answer, the service's policy and revision, the daemon's
+listing and state, the run's row, the pull request's labels, the repository's label list and the service's
+audit lines — is removed on the way out, from the exit trap on a Ctrl-C as well, and the `restore` row is
+that reading (a FAILed row names the directory to remove by hand). Nothing else is left, because nothing
+else was made: the pull request, its branch and the run's record are the run's own, and the check neither
+closes, edits nor deletes any of them. **OWNER-RUN, NOT RUN: no agent runs any step of it.**
