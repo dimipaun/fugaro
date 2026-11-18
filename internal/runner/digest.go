@@ -567,20 +567,26 @@ func (r *run) digestReport(p digest.Period, recs []runstore.Record, rows []diges
 	return digest.FileBody(digest.Markdown(d), rows, p, cur), cur, true, nil
 }
 
-// digestPath is one of this step's own paths under the checkout, with every
-// component of it checked for a symbolic link first.
+// reportTreePath is one of a report step's own paths under the checkout, with
+// every component of it checked for a symbolic link first. Both steps that
+// write into the report folder walk it through here -- the digest step, under
+// digest.Dir and the layout inside it, and the commit-reports step, under the
+// project's designated folder and the mirror's layout inside it -- so the two
+// share one rule rather than two that drift.
 //
-// The path is the step's own (digest.Dir and the layout inside it), but the
-// tree it sits in is the base branch's, and anyone who can commit to that
-// branch chooses what the components are: a docs/fugaro-reviews that is a link
-// to the repository root, or a README.md inside it that is a link to the root
-// README, would make a write land outside the report folder -- on a file the
-// pull request then shows as changed, and over a file no report run may touch.
-// A component that is a link is refused, and the step fails rather than writing
-// anywhere else. The last component is what the caller's own open refuses with
-// O_NOFOLLOW (writeDigestFile), so a link planted between this check and that
-// open is caught too; the components above it are what only this walk sees.
-func (r *run) digestPath(rel string) (string, error) {
+// The path is the step's own (a folder the layout or the owner fixed, and a
+// name of the step's own shape inside it), but the tree it sits in is the base
+// branch's, and anyone who can commit to that branch chooses what the
+// components are: a docs/fugaro-reviews that is a link to the repository root,
+// or a README.md inside it that is a link to the root README, would make a
+// write land outside the report folder -- on a file the pull request then shows
+// as changed, and over a file no report run may touch. A component that is a
+// link is refused, and the step fails rather than writing anywhere else. The
+// last component is what the caller's own open refuses with O_NOFOLLOW
+// (writeDigestFile, writeMirrorFile), so a link planted between this check and
+// that open is caught too; the components above it are what only this walk
+// sees.
+func (r *run) reportTreePath(rel string) (string, error) {
 	path := r.d.WorkDir
 	for _, part := range strings.Split(rel, "/") {
 		if part == "" || part == "." {
@@ -595,7 +601,7 @@ func (r *run) digestPath(rel string) (string, error) {
 		case err != nil:
 			return "", fmt.Errorf("reading %s: %w", rel, err)
 		case fi.Mode()&os.ModeSymlink != 0:
-			return "", fmt.Errorf("%s is a symbolic link, and the digest step neither reads nor writes through one: the report folder is the repository's to shape, but a link there would put a generated report somewhere no report run may write", rel)
+			return "", fmt.Errorf("%s is a symbolic link, and a report step neither reads nor writes through one: the report folder is the repository's to shape, but a link there would put a generated report somewhere no report run may write", rel)
 		}
 	}
 	return filepath.Join(r.d.WorkDir, filepath.FromSlash(rel)), nil
@@ -604,7 +610,7 @@ func (r *run) digestPath(rel string) (string, error) {
 // writeDigestFile writes one generated file into the checkout. rel is one of
 // this file's own paths, never a name a record or a file chose.
 func (r *run) writeDigestFile(rel string, body []byte) error {
-	path, err := r.digestPath(rel)
+	path, err := r.reportTreePath(rel)
 	if err != nil {
 		return err
 	}
@@ -634,7 +640,7 @@ func (r *run) writeDigestFile(rel string, body []byte) error {
 // D321's is a report renamed out of the layout: no row at all, logged the same
 // way, so a report does not leave the index without a word.
 func (r *run) digestRows() ([]digest.Row, error) {
-	dir, err := r.digestPath(digest.Dir)
+	dir, err := r.reportTreePath(digest.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -680,7 +686,7 @@ func (r *run) digestRows() ([]digest.Row, error) {
 			continue
 		}
 		row := digest.Row{Dim: dim, Key: key, Rel: rel}
-		path, err := r.digestPath(digest.Dir + "/" + rel)
+		path, err := r.reportTreePath(digest.Dir + "/" + rel)
 		if err != nil {
 			return nil, err
 		}
