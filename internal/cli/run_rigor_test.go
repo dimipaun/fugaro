@@ -182,23 +182,31 @@ func TestRunTakesHotfixInAnAgentSession(t *testing.T) {
 // sorted. It is read from the schema rather than from a list here because the
 // claim it serves is "no opt-in key exists anywhere": a key added to the
 // document a repository's fugaro.yaml is validated against would be the gate
-// the 2026-11-13 ruling dropped.
+// the 2026-11-13 ruling dropped. The block is an `anyOf` of the level alone
+// (`rigor: critical`, the owner's ruling of 2026-11-18) and its mapping, so the
+// keys are the mapping branch's.
 func repoRigorKeys(t *testing.T) []string {
 	t.Helper()
 	var doc struct {
 		Properties struct {
 			Rigor struct {
-				Properties map[string]any `json:"properties"`
+				AnyOf []struct {
+					Type       string         `json:"type"`
+					Properties map[string]any `json:"properties"`
+				} `json:"anyOf"`
 			} `json:"rigor"`
 		} `json:"properties"`
 	}
 	if err := json.Unmarshal([]byte(readDoc(t, "schemas/fugaro.schema.json")), &doc); err != nil {
 		t.Fatal(err)
 	}
-	if len(doc.Properties.Rigor.Properties) == 0 {
-		t.Fatal("schemas/fugaro.schema.json has no rigor block")
+	for _, branch := range doc.Properties.Rigor.AnyOf {
+		if len(branch.Properties) > 0 {
+			return slices.Sorted(maps.Keys(branch.Properties))
+		}
 	}
-	return slices.Sorted(maps.Keys(doc.Properties.Rigor.Properties))
+	t.Fatal("schemas/fugaro.schema.json has no rigor block: its `rigor` key is neither a level nor a mapping of keys")
+	return nil
 }
 
 // TestRunRefusesTooManyDeclaredPaths: the list is bounded (task.
