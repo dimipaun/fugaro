@@ -106,6 +106,15 @@ type resellerAccrualStop struct {
 // and it is the thing the store cannot do here, because the sum is taken over
 // the licences by queries of their own and a query inside a transaction is a
 // read every concurrent write conflicts with.
+//
+// The other half of that bound is the deployment's and not this file's: the API
+// service runs one instance (`ee/keyservice/terraform/services/main.tf`, its
+// `scaling` block, pinned by
+// `TestTheAPIIsOneInstanceBecauseItsMintLimitsAreInMemory`), which is what makes
+// this process's sales the installation's — for D454's cap as much as for this
+// limit, since the two are read under one lock apiece in the same process. Under
+// the platform's own ceiling of about a hundred instances the second replica
+// this comment worries about is the caller's traffic away.
 var resellerMintMu sync.Mutex
 
 // resellerAccrualMicros is one licence's accrual in micro-dollars: whole days
