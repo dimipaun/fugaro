@@ -456,6 +456,7 @@ func TestGitCredentialNeverPrintsTheValue(t *testing.T) {
 	}
 	testutil.IsolateGit(t)
 	gitCredentialEnv(t)
+	buildCallMetadata(t)
 	for _, c := range []struct {
 		name   string
 		answer credsvc.BuildCredentialsResponse
@@ -489,7 +490,7 @@ func TestGitCredentialNeverPrintsTheValue(t *testing.T) {
 				t.Fatalf("the step wrote a credential out of %s", c.name)
 			}
 			if got := len(svc.asked()); got != 1 {
-				t.Fatalf("the step asked the service %d times, want the one call whose answer it refused", got)
+				t.Fatalf("the step asked the service %d times, want the one call whose answer it refused (err: %v)", got, err)
 			}
 			for _, value := range []string{token, secret} {
 				if strings.Contains(err.Error(), value) {
