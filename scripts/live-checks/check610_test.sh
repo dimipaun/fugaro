@@ -1,0 +1,822 @@
+#!/usr/bin/env bash
+# Tests for scripts/live-checks/check610.sh, with fake `fugaro`, `gh`, `gcloud`
+# and `git` on PATH: NOTHING here reaches a cloud, a project, a repository or a
+# run, no agent runs a live command, and the fakes record every call they are
+# given — with the directory it was made in — so a case can assert what the check
+# did and what it did NOT do. The check opens ONE throwaway pull request and
+# launches ONE review; both are writes to a real repository, which is why every
+# refusal below is measured here rather than by running the check for real.
+#
+# The fakes are a small model of one installation and its sandbox: the fake `git`
+# answers the checkout's origin, its status, its branch and the fetch, branch,
+# commit and push the check makes in it; the fake `gh` answers the default branch,
+# the pull request it opens and the number read back; the fake `fugaro` answers
+# version, doctor, config, the published policy, the launch, the listing polled
+# and the review artifact; and the fake `gcloud` serves the account, the job list
+# and the credentials service's own lines.
+#
+# Every document a case bends is a file the case wrote: a doctor whose project is
+# another installation or carries no base image; a config with no workflow, a
+# cloned one or a second non-baked one, or no auth at all; a policy with no
+# profiles block, with one, one that does not admit the repository, or a budget
+# mode of off or none; a job list with no implicit review-only job, two of them,
+# one without the service URL or with a secret, one on another image, or one with
+# a coding project job beside it; a launch on another job, as another account or
+# with no run named; a row that had not finished, failed, or names another pull
+# request; an artifact about another run, another pull request, another account or
+# no verdict; and a log whose first served model call is another credential, of
+# another run, or absent.
+#
+# Usage: bash scripts/live-checks/check610_test.sh
+#        CHECK_TEST_ONLY=test_happy_path bash scripts/live-checks/check610_test.sh
+#        CHECK_TEST_SHARD=0/3 bash scripts/live-checks/check610_test.sh
+set -euo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+script=$here/check610.sh
+work=$(mktemp -d)
+cleanup_all() {
+  if [ -n "${CHECK610_TEST_KEEP:-}" ]; then echo "kept: $work" >&2; else rm -rf "$work"; fi
+}
+trap cleanup_all EXIT
+
+failures=0
+fail() {
+  echo "FAIL: $*" >&2
+  failures=$((failures + 1))
+}
+expect_contains() { # haystack needle what
+  case "$1" in
+  *"$2"*) ;;
+  *) fail "$3: expected to contain '$2'; got: $(printf '%s' "$1" | head -c "${CHECK610_TEST_HEAD:-1400}")" ;;
+  esac
+}
+expect_absent() {
+  case "$1" in
+  *"$2"*) fail "$3: found '$2' where it must never appear" ;;
+  esac
+}
+expect_status() { # status want what
+  [ "$1" = "$2" ] || fail "$3: expected exit $2, got $1"
+}
+
+# One installation the cases read and bend: the names are what the rows quote.
+install=chk610-test
+gcp_project=chk610-test-proj
+region=us-east5
+repo=acme-owner/chk610-sandbox
+origin=https://github.com/acme-owner/chk610-sandbox.git
+base_image="us-east5-docker.pkg.dev/$gcp_project/fugaro/base@sha256:aa11bb22cc33dd44"
+other_image="us-east5-docker.pkg.dev/$gcp_project/fugaro/other@sha256:dd44ee55ff66aa77"
+job="fugaro-p-standard-github-default-review-6f2c1a"
+coding_job="fugaro-p-standard-github-9f8e7d"
+per_repo_job="fugaro-chk610-sandbox-chk-abc123"
+base_branch=main
+run_base=20261118-120000
+run_id=$run_base-0610
+run_slug=chk610-sandbox/$run_id
+branch=chk610-$run_base
+pr=7
+head_sha=abc1234def5678
+# credential_origin is the origin a token-based clone leaves behind: a GitHub URL
+# whose userinfo carries a credential, split by a `/`, which is where a strip that
+# cannot cross one would leave it in place. What it holds is not a credential and
+# opens nothing: it is the word the case below asserts never reaches the output,
+# so one that appears was printed by this check and by nothing else.
+credential_origin='https://x-access-token:LEAK-CANARY/with-a-slash@github.com/acme-owner/chk610-sandbox.git'
+credential_words='x-access-token LEAK-CANARY with-a-slash'
+
+# --------------------------------------------------------------------- fakes
+write_fake_git() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/git" <<'GIT_EOF'
+#!/usr/bin/env bash
+# A stand-in for `git`, for scripts/live-checks/check610_test.sh only: it answers
+# the checkout's origin and status, the branch it is on, and the fetch, branch,
+# commit, push and pull-back the check makes in that checkout. It touches no
+# repository: what it "pushes" goes nowhere. Every call is logged with the
+# directory it was made in, so a case can assert both what the check ran and that
+# the checkout was left back on the branch it was found on.
+set -euo pipefail
+printf 'git %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/git.calls"
+mode=${FAKE_MODE:-default}
+while [ $# -gt 0 ]; do
+  case "$1" in
+  -C | -c) shift 2 ;;
+  *) break ;;
+  esac
+done
+case "${1:-}" in
+remote)
+  case "$mode" in
+  git-no-origin)
+    echo "error: No such remote 'origin'" >&2
+    exit 2
+    ;;
+  esac
+  printf '%s\n' "${FAKE_ORIGIN:-}"
+  ;;
+status) printf '%s' "${FAKE_DIRTY:-}" ;;
+symbolic-ref)
+  case "$mode" in
+  git-nobranch) exit 1 ;;
+  esac
+  printf '%s\n' "${FAKE_BRANCH:-main}"
+  ;;
+rev-parse) printf 'abc1234\n' ;;
+fetch)
+  case "$mode" in
+  git-fetch-fails)
+    echo "fatal: could not fetch the branch" >&2
+    exit 128
+    ;;
+  esac
+  ;;
+checkout)
+  case "$mode" in
+  git-branch-fails)
+    echo "fatal: a branch named 'chk610' already exists" >&2
+    exit 128
+    ;;
+  esac
+  ;;
+add) ;;
+commit)
+  case "$mode" in
+  git-commit-fails)
+    echo "fatal: nothing to commit" >&2
+    exit 1
+    ;;
+  esac
+  ;;
+push)
+  case "$mode" in
+  git-push-fails)
+    echo "fatal: the remote rejected the push" >&2
+    exit 1
+    ;;
+  esac
+  ;;
+*)
+  echo "git: unexpected ${1:-}" >&2
+  exit 1
+  ;;
+esac
+GIT_EOF
+  chmod +x "$1/bin/git"
+}
+
+write_fake_gh() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/gh" <<'GH_EOF'
+#!/usr/bin/env bash
+# A stand-in for `gh`, for scripts/live-checks/check610_test.sh only: the default
+# branch of the repository, the throwaway pull request the check opens and the
+# number it reads back. It opens nothing.
+set -euo pipefail
+printf 'gh %s\n' "$*" >>"$FAKE_LOG_DIR/gh.calls"
+mode=${FAKE_MODE:-default}
+case "${1:-} ${2:-}" in
+"repo view")
+  case "$mode" in
+  gh-base-fails)
+    echo "gh: could not resolve to a Repository" >&2
+    exit 1
+    ;;
+  esac
+  printf '%s\n' "${FAKE_BASE_BRANCH:-main}"
+  ;;
+"pr create")
+  case "$mode" in
+  gh-pr-fails)
+    echo "gh: could not create pull request" >&2
+    exit 1
+    ;;
+  esac
+  printf 'https://github.com/%s/pull/%s\n' "${FAKE_REPO:-acme-owner/chk610-sandbox}" "${FAKE_PR:-7}"
+  ;;
+"pr view")
+  case "$mode" in
+  gh-pr-nonumber)
+    printf 'not-a-number\n'
+    exit 0
+    ;;
+  esac
+  printf '%s\n' "${FAKE_PR:-7}"
+  ;;
+*)
+  echo "gh: unexpected ${1:-}" >&2
+  exit 1
+  ;;
+esac
+GH_EOF
+  chmod +x "$1/bin/gh"
+}
+
+write_fake_gcloud() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/gcloud" <<'GCLOUD_EOF'
+#!/usr/bin/env bash
+# A stand-in for `gcloud`, for scripts/live-checks/check610_test.sh only. Three
+# reads and no write: the account, the job list, and the credentials service's own
+# lines. The lines are served as the fixture wrote them — the run's own id is
+# substituted for @RID@ and the newest lines are cut to the --limit asked for, the
+# way `--order=asc` answers — so the FILTERING by run is the reader's and a case
+# can prove the reader did it.
+set -euo pipefail
+printf 'gcloud %s\n' "$*" >>"$FAKE_LOG_DIR/gcloud.calls"
+mode=${FAKE_MODE:-default}
+case "${1:-} ${2:-}" in
+"config get-value")
+  printf '%s\n' "${FAKE_ACCOUNT:-}"
+  ;;
+"run jobs")
+  case "$mode" in
+  jobs-fails)
+    echo "ERROR: (gcloud.run.jobs.list) PERMISSION_DENIED" >&2
+    exit 1
+    ;;
+  jobs-garbage)
+    printf 'this is not a document\n'
+    exit 0
+    ;;
+  esac
+  cat "$FAKE_JSON_DIR/${FAKE_JOBS_FILE:-jobs.json}"
+  ;;
+"logging read")
+  case "$mode" in
+  log-fails)
+    echo "ERROR: (gcloud.logging.read) the log could not be read" >&2
+    exit 1
+    ;;
+  esac
+  limit=""
+  for a in "$@"; do
+    case "$a" in
+    --limit=*) limit=${a#--limit=} ;;
+    esac
+  done
+  sed "s|@RID@|${FAKE_RUN_ID:-}|g" "$FAKE_JSON_DIR/${FAKE_LOG_FILE:-log.json}" >"$FAKE_STATE_DIR/log.served"
+  python3 - "$FAKE_STATE_DIR/log.served" "$limit" <<'PY'
+import json, sys
+path, limit = sys.argv[1], sys.argv[2]
+doc = json.load(open(path))
+if limit.isdigit():
+    doc = doc[: int(limit)]
+json.dump(doc, sys.stdout)
+PY
+  ;;
+*)
+  echo "gcloud: unexpected ${1:-}" >&2
+  exit 1
+  ;;
+esac
+GCLOUD_EOF
+  chmod +x "$1/bin/gcloud"
+}
+
+write_fake_fugaro() { # dir
+  mkdir -p "$1/bin"
+  cat >"$1/bin/fugaro" <<'FUGARO_EOF'
+#!/usr/bin/env bash
+# A stand-in for `fugaro`, for scripts/live-checks/check610_test.sh only. The
+# reads answer the case's fixture, and the ONE write — `review --pr N` — records
+# the run id it "launched" so the listing polled afterwards can hold that run's
+# own row, and prints the launch document the case wrote. Nothing here reaches a
+# cloud: no execution exists and no review runs.
+set -euo pipefail
+printf 'fugaro %s (in %s)\n' "$*" "$PWD" >>"$FAKE_LOG_DIR/fugaro.calls"
+mode=${FAKE_MODE:-default}
+case "${1:-}" in
+version) printf 'fugaro version 9.9.9 (test)\n' ;;
+doctor)
+  case "$mode" in
+  doctor-hangs) sleep 300 ;;
+  esac
+  cat "$FAKE_JSON_DIR/${FAKE_DOCTOR_FILE:-doctor.json}"
+  exit "${FAKE_DOCTOR_STATUS:-0}"
+  ;;
+config)
+  case "$mode" in
+  config-fails)
+    echo "fugaro: the checkout's config could not be resolved" >&2
+    exit 1
+    ;;
+  esac
+  cat "$FAKE_JSON_DIR/${FAKE_CONFIG_FILE:-config.json}"
+  ;;
+project)
+  case "$mode" in
+  policy-fails)
+    echo "fugaro: the published policy could not be read" >&2
+    exit 1
+    ;;
+  esac
+  cat "$FAKE_JSON_DIR/${FAKE_POLICY_FILE:-policy.json}"
+  ;;
+review)
+  if [ "${2:-}" = show ]; then
+    case "$mode" in
+    show-fails)
+      echo "fugaro: no review was recorded for that run" >&2
+      exit 1
+      ;;
+    esac
+    sed "s|@RID@|${FAKE_RUN_ID:-}|g" "$FAKE_JSON_DIR/${FAKE_ARTIFACT_FILE:-artifact.json}"
+    exit 0
+  fi
+  case "$mode" in
+  review-hangs) sleep 300 ;;
+  review-fails)
+    echo "fugaro: this repository resolves a review-only variant of a shared project job, and this repository has none" >&2
+    exit 1
+    ;;
+  esac
+  printf '%s' "${FAKE_RUN_ID:-}" >"$FAKE_STATE_DIR/run-id"
+  sed "s|@RID@|${FAKE_RUN_ID:-}|g" "$FAKE_JSON_DIR/${FAKE_LAUNCH_FILE:-launch.json}"
+  ;;
+runs)
+  case "$mode" in
+  listing-fails)
+    echo "fugaro: the listing could not be read" >&2
+    exit 1
+    ;;
+  esac
+  rid=$(cat "$FAKE_STATE_DIR/run-id" 2>/dev/null || true)
+  sed "s|@RID@|${rid:-}|g" "$FAKE_JSON_DIR/${FAKE_ROW_FILE:-row.json}"
+  ;;
+*)
+  echo "fugaro: unexpected ${1:-}" >&2
+  exit 1
+  ;;
+esac
+FUGARO_EOF
+  chmod +x "$1/bin/fugaro"
+}
+# ------------------------------------------------------------------ fixtures
+# Every document a case bends is written here, from one model of the installation:
+# a doctor naming the project and its base image, a config resolving agent.auth
+# and one baked workflow, a profile-less policy admitting the repository to the
+# project and to the default account, a job list whose only project job is the
+# implicit review-only job, a launch document, a listing with the run's own row,
+# the review artifact of that run, and the credentials service's lines for it.
+write_json() { # dir
+  mkdir -p "$1/json"
+  python3 - "$1/json" "$base_image" "$other_image" "$run_slug" "$head_sha" <<'PY'
+import copy, json, os, sys
+
+out_dir, base_image, other_image, run_slug, head_sha = sys.argv[1:6]
+implicit = "fugaro-p-standard-github-default-review-6f2c1a"
+coding = "fugaro-p-standard-github-9f8e7d"
+per_repo = "fugaro-chk610-sandbox-chk-abc123"
+
+
+def out(name, obj):
+    with open(os.path.join(out_dir, name), "w") as fh:
+        json.dump(obj, fh, indent=1)
+        fh.write("\n")
+
+
+def clone(obj):
+    return copy.deepcopy(obj)
+
+
+def configure(*pairs):
+    return {"values": [{"path": p, "value": v} for p, v in pairs]}
+
+
+def envs(*names):
+    return [{"name": n, "value": "placeholder"} for n in names]
+
+
+def job(name, image, env, volumes=None):
+    """One `gcloud run jobs list` entry, in the shape gcloud answers with."""
+    return {"metadata": {"name": name},
+            "spec": {"template": {"spec": {"template": {"spec": {
+                "containers": [{"image": image, "env": env}],
+                "volumes": volumes or []}}}}}}
+
+
+def line(run, timestamp, credential, purpose="forward", status="ok", tier="standard"):
+    return {"timestamp": timestamp,
+            "jsonPayload": {"run": run, "msg": "credsvc: audit", "status": status,
+                            "credential": credential, "tier": tier, "purpose": purpose,
+                            "job": implicit, "caller": implicit}}
+
+
+def row(status="succeeded", terminal=True, outcome="reviewed", **extra):
+    r = {"run_id": "@RID@", "repo": "acme-owner/chk610-sandbox", "workflow": "chk",
+         "recipe": "review", "status": status, "terminal": terminal, "outcome": outcome,
+         "pushed": False, "pr": 7,
+         "pr_url": "https://github.com/acme-owner/chk610-sandbox/pull/7",
+         "execution": "projects/chk610-test-proj/locations/us-east5/jobs/%s/executions/chk610-run" % implicit}
+    r.update(extra)
+    return [r]
+
+
+# ------------------------------------------------------------------- doctor
+doctor = {"project": {"name": "chk610-test", "gcp_project": "chk610-test-proj",
+                      "region": "us-east5",
+                      "base_images": {"base": base_image}}}
+out("doctor.json", doctor)
+d = clone(doctor)
+d["project"]["base_images"] = {}
+out("doctor-nobase.json", d)
+d = clone(doctor)
+d["project"] = {}
+out("doctor-noproject.json", d)
+d = clone(doctor)
+d["project"]["name"] = "belong"
+out("doctor-belong.json", d)
+
+# ------------------------------------------------------------------- config
+config = configure(
+                   ("agent.auth", "vertex"),
+                   ("agent.model", "claude-sonnet-5"),
+                   ("workflows.chk.checkout", "baked"),
+                   ("timeouts.total", "3h"))
+out("config.json", config)
+out("config-no-workflow.json", configure(("agent.auth", "vertex")))
+out("config-clone.json", configure(("agent.auth", "vertex"),
+                                   ("workflows.chk.checkout", "clone")))
+out("config-nonbaked-two.json", configure(("agent.auth", "vertex"),
+                                          ("workflows.chk.checkout", "baked"),
+                                          ("workflows.other.checkout", "shared")))
+out("config-no-auth.json", configure(("workflows.chk.checkout", "baked")))
+out("config-cascade.json", configure(("agent.auth", "cascade"),
+                                     ("workflows.chk.checkout", "baked")))
+
+# ------------------------------------------------------------------- policy
+policy = {"policy": {"allow_repos": ["github/acme-owner/chk610-sandbox"],
+                     "accounts": {"default": {"allow_repos": ["github/acme-owner/chk610-sandbox"]}},
+                     "budget": {"mode": "observe"}}}
+out("policy.json", policy)
+p = clone(policy)
+p["policy"]["profiles"] = {"shared": {"provider": "github",
+                                      "allow_repos": ["github/acme-owner/chk610-sandbox"]}}
+out("policy-profiles.json", p)
+p = clone(policy)
+p["policy"]["budget"] = {"mode": "off"}
+out("policy-mode-off.json", p)
+p = clone(policy)
+del p["policy"]["budget"]
+out("policy-no-mode.json", p)
+p = clone(policy)
+p["policy"]["allow_repos"] = []
+out("policy-not-admitted.json", p)
+p = clone(policy)
+p["policy"]["accounts"]["default"]["allow_repos"] = []
+out("policy-default-not-admitted.json", p)
+
+# --------------------------------------------------------------------- jobs
+review_job = job(implicit, base_image, envs("FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_GITHUB_APP_ID"))
+coding_job = job(coding, base_image, envs("FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_SECRET_ENVS"))
+out("jobs.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS")), review_job])
+out("jobs-coding.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS")), review_job, coding_job])
+out("jobs-no-implicit.json", [job(per_repo, other_image, envs("FUGARO_SECRET_ENVS"))])
+out("jobs-two-implicit.json", [review_job,
+                               job("fugaro-p-standard-github-default-review-111111", base_image,
+                                   envs("FUGARO_CREDENTIALS_SERVICE_URL"))])
+out("jobs-no-url.json", [job(implicit, base_image, envs("FUGARO_GITHUB_APP_ID"))])
+out("jobs-secrets.json", [job(implicit, base_image,
+                              envs("FUGARO_CREDENTIALS_SERVICE_URL", "FUGARO_SECRET_ENVS"))])
+out("jobs-secretvolume.json", [job(implicit, base_image,
+                                   envs("FUGARO_CREDENTIALS_SERVICE_URL"),
+                                   volumes=[{"name": "creds", "secret": {"secret": "claude"}}])])
+out("jobs-other-image.json", [job(implicit, other_image, envs("FUGARO_CREDENTIALS_SERVICE_URL"))])
+
+# ------------------------------------------------------------------- launch
+launch = {"run": run_slug, "run_id": "@RID@", "repo": "acme-owner/chk610-sandbox",
+          "status": "launched", "job": implicit, "account": "default",
+          "execution": "projects/chk610-test-proj/locations/us-east5/jobs/%s/executions/chk610-run" % implicit,
+          "pr": 7}
+out("launch.json", launch)
+d = clone(launch)
+d["job"] = coding
+out("launch-other-job.json", d)
+d = clone(launch)
+d["account"] = "work"
+out("launch-named-account.json", d)
+d = clone(launch)
+d["job"] = None
+out("launch-no-job.json", d)
+d = clone(launch)
+d["run"] = None
+d["run_id"] = None
+out("launch-no-run.json", d)
+
+# ---------------------------------------------------------------------- row
+out("row.json", row())
+out("row-inflight.json", row(status="running", terminal=False, outcome=None))
+out("row-failed.json", row(status="failed", outcome="draft",
+                           halt={"detail": "the review stopped at its first model call"}))
+out("row-other-pr.json", row(pr=9, pr_url="https://github.com/acme-owner/chk610-sandbox/pull/9"))
+out("row-other-run.json", [dict(row()[0], run_id="20261118-115959-0000")])
+
+# ----------------------------------------------------------------- artifact
+artifact = {"schema_version": "1", "review_run": "@RID@", "repository": run_slug,
+            "pr": 7, "head_sha": head_sha, "base": "main", "verdict": "comment",
+            "reviewer": {"account": "default", "model": "claude-sonnet-5"},
+            "issues": ["one finding"]}
+out("artifact.json", artifact)
+d = clone(artifact)
+d["review_run"] = "20261118-115959-0000"
+out("artifact-other-run.json", d)
+d = clone(artifact)
+d["pr"] = 9
+out("artifact-other-pr.json", d)
+d = clone(artifact)
+d["reviewer"]["account"] = "work"
+out("artifact-other-account.json", d)
+d = clone(artifact)
+d["verdict"] = None
+out("artifact-no-verdict.json", d)
+out("artifact-no-artifact.json", [])
+
+# ---------------------------------------------------------------------- log
+out("log.json", [line("@RID@", "2026-11-18T12:00:10Z", "default"),
+                 line("@RID@", "2026-11-18T12:00:40Z", "github-app", purpose="git")])
+out("log-no-forward.json", [line("@RID@", "2026-11-18T12:00:40Z", "github-app", purpose="git")])
+out("log-other-credential.json", [line("@RID@", "2026-11-18T12:00:10Z", "work"),
+                                  line("@RID@", "2026-11-18T12:00:40Z", "default")])
+# Two served model calls, and the earliest by ITS OWN TIMESTAMP is the default
+# account's: a read that took the document's first forward line would take the
+# later switch's credential instead.
+out("log-two-forwards.json", [line("@RID@", "2026-11-18T12:00:30Z", "work"),
+                              line("@RID@", "2026-11-18T12:00:10Z", "default")])
+out("log-other-run.json", [line("20261118-115959-0000", "2026-11-18T12:00:10Z", "work")])
+PY
+}
+write_checkout() { # dir
+  mkdir -p "$1"
+  cat >"$1/fugaro.yaml" <<'YAML_EOF'
+project: chk610-test
+workflows:
+  chk:
+    checkout: baked
+YAML_EOF
+}
+
+# The one mutation of the checkout this check reads literally: a repository whose
+# own fugaro.yaml carries the key, which is never the sandbox RJ9 names.
+write_checkout_with_profiles() { # dir
+  write_checkout "$1"
+  cat >>"$1/fugaro.yaml" <<'YAML_EOF'
+profiles:
+  shared:
+    provider: github
+YAML_EOF
+}
+
+prepare() { # dir
+  mkdir -p "$1/home" "$1/state" "$1/logs" "$1/tmp"
+  write_fake_git "$1"
+  write_fake_gh "$1"
+  write_fake_gcloud "$1"
+  write_fake_fugaro "$1"
+  write_json "$1"
+  # Every document a case bends has to still be a document: a template this file
+  # broke would otherwise read as an installation that wrote nothing, which is a
+  # confusing way to learn that the fixture is wrong.
+  local f
+  for f in "$1"/json/*.json; do
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$f" || fail "prepare: $(basename "$f") is not a valid document"
+  done
+  write_checkout "$1/sandbox"
+}
+
+run_check() { # run_check DIR ENV... [-- ARGS...]
+  local dir=$1
+  shift
+  local args=() cli=()
+  while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+    args+=("$1")
+    shift
+  done
+  if [ "${1:-}" = "--" ]; then
+    shift
+    cli=("$@")
+  fi
+  mkdir -p "$dir/state" "$dir/logs" "$dir/home" "$dir/tmp"
+  : >"$dir/logs/gcloud.calls"
+  : >"$dir/logs/fugaro.calls"
+  : >"$dir/logs/git.calls"
+  : >"$dir/logs/gh.calls"
+  : >"$dir/state/run-id"
+  status=0
+  # `-x` is bash's own flag, so it goes BEFORE the script: the check refuses an
+  # argument it does not know, and the case that measures that refusal is the
+  # only way to trace a run that is refusing to be traced.
+  local bashargs=()
+  case "${cli[0]:-}" in
+  -x | --xtrace)
+    bashargs=(-x)
+    cli=("${cli[@]:1}")
+    ;;
+  esac
+  # The agent markers are dropped from this test's own environment: the check
+  # refuses a coding agent's session by name, and the suite that runs this file
+  # may itself be started from one. The case that measures that refusal sets the
+  # marker again, and a variable given as an argument wins over `env -u`.
+  env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
+    PATH="$dir/bin:$PATH" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_MODE="${FAKE_MODE:-default}" \
+    FAKE_JSON_DIR="$dir/json" FAKE_STATE_DIR="$dir/state" \
+    FAKE_ORIGIN="${FAKE_ORIGIN:-$origin}" FAKE_DIRTY="${FAKE_DIRTY:-}" \
+    FAKE_BRANCH="${FAKE_BRANCH:-$base_branch}" FAKE_ACCOUNT="${FAKE_ACCOUNT:-}" \
+    FAKE_REPO="${FAKE_REPO:-$repo}" FAKE_PR="${FAKE_PR:-$pr}" \
+    FAKE_BASE_BRANCH="${FAKE_BASE_BRANCH:-$base_branch}" FAKE_RUN_ID="${FAKE_RUN_ID:-$run_id}" \
+    FAKE_DOCTOR_STATUS="${FAKE_DOCTOR_STATUS:-0}" \
+    FAKE_DOCTOR_FILE="${FAKE_DOCTOR_FILE:-doctor.json}" \
+    FAKE_CONFIG_FILE="${FAKE_CONFIG_FILE:-config.json}" \
+    FAKE_POLICY_FILE="${FAKE_POLICY_FILE:-policy.json}" \
+    FAKE_JOBS_FILE="${FAKE_JOBS_FILE:-jobs.json}" FAKE_LOG_FILE="${FAKE_LOG_FILE:-log.json}" \
+    FAKE_ROW_FILE="${FAKE_ROW_FILE:-row.json}" FAKE_LAUNCH_FILE="${FAKE_LAUNCH_FILE:-launch.json}" \
+    FAKE_ARTIFACT_FILE="${FAKE_ARTIFACT_FILE:-artifact.json}" \
+    CHECK610_SANDBOX="$dir/sandbox" \
+    CHECK610_RUN_ID="$run_base" \
+    CHECK610_RUN_SECONDS="${CHECK610_RUN_SECONDS:-20}" \
+    CHECK610_POLL_SECONDS="${CHECK610_POLL_SECONDS:-1}" \
+    CHECK610_LOG_WAIT_SECONDS="${CHECK610_LOG_WAIT_SECONDS:-2}" \
+    CHECK610_LOG_POLL_SECONDS="${CHECK610_LOG_POLL_SECONDS:-1}" \
+    CHECK610_DOCTOR_TIMEOUT_SECONDS="${CHECK610_DOCTOR_TIMEOUT_SECONDS:-20}" \
+    CHECK610_CLI_TIMEOUT_SECONDS="${CHECK610_CLI_TIMEOUT_SECONDS:-20}" \
+    CHECK610_KEEP_SCRATCH="${CHECK610_KEEP_SCRATCH:-}" \
+    ${args[@]+"${args[@]}"} \
+    bash ${bashargs[@]+"${bashargs[@]}"} "$script" ${cli[@]+"${cli[@]}"} >"$dir/out" 2>"$dir/err" || status=$?
+  out=$(cat "$dir/out")
+  err=$(cat "$dir/err")
+  scratch=$(sed -n 's/^.*scratch directory: \([^ ]*\).*/\1/p' "$dir/err" | head -n 1)
+}
+
+# ------------------------------------------------------------------ assertions
+assert_scratch_removed() { # dir what
+  [ -n "$scratch" ] || {
+    fail "$2: the check named no scratch directory"
+    return 0
+  }
+  [ ! -e "$scratch" ] || fail "$2: the scratch directory $scratch is still there"
+}
+
+# This check WRITES exactly twice — one branch on the sandbox repository and one
+# review run — and every other command it gives fugaro or gcloud is a read. This
+# is the assertion that would catch a diff that made it write anything else.
+assert_reads_only() { # dir what
+  local fugaro gcloud
+  fugaro=$(cat "$1/logs/fugaro.calls")
+  gcloud=$(cat "$1/logs/gcloud.calls")
+  local word
+  for word in "project policy publish" "project repos add" "project repos rm" "update" "setup" "runs rm" "creds set" "creds rm" "image build" "runs show"; do
+    expect_absent "$fugaro" "$word" "$2: fugaro '$word' is never run"
+  done
+  for word in "jobs create" "jobs update" "jobs delete" "jobs deploy" "run deploy" "services deploy" "logging write" "secrets" "projects delete"; do
+    expect_absent "$gcloud" "$word" "$2: gcloud '$word' is never run"
+  done
+}
+
+# One launch and one only: `fugaro review --pr N` is the single billable command
+# this check gives, and a second one would be a second review nobody asked for.
+# It never runs `fugaro run` either: a review is not a coding run, and the plan's
+# option C is about the launcher choosing the review job itself.
+assert_one_launch() { # dir what
+  local calls n
+  calls=$(cat "$1/logs/fugaro.calls")
+  n=$(printf '%s\n' "$calls" | grep -c 'review --pr ' || true)
+  [ "${n:-0}" -eq 1 ] || fail "$2: expected exactly one 'review --pr' call, found ${n:-0}"
+  expect_absent "$calls" "fugaro run " "$2: no coding run is launched"
+}
+
+# Every refusal and the dry run: nothing was launched at all, and no pull request
+# was opened — the check stops before the two writes it makes.
+assert_no_launch() { # dir what
+  local calls
+  calls=$(cat "$1/logs/fugaro.calls")
+  expect_absent "$calls" "review --pr " "$2: no review is launched"
+  expect_absent "$calls" "fugaro run " "$2: no coding run is launched"
+  expect_absent "$(cat "$1/logs/gh.calls")" "pr create" "$2: no pull request is opened"
+}
+
+# The checkout was found clean and has to be left as it was found: the check's own
+# branch and file must be gone from the working tree, which is the pull-back's
+# `checkout --force` being the last thing it did in it.
+assert_checkout_left_clean() { # dir what
+  local calls last
+  calls=$(cat "$1/logs/git.calls")
+  last=$(printf '%s\n' "$calls" | tail -n 1)
+  expect_contains "$last" "checkout --quiet --force $base_branch" "$2: the checkout is back on the branch it was found on"
+  expect_absent "$calls" "push origin --delete" "$2: no branch of the repository is deleted"
+  expect_absent "$calls" "reset --hard" "$2: nothing in the checkout is reset"
+}
+
+# --------------------------------------------------------------- the test cases
+test_help() {
+  local dir=$work/help
+  prepare "$dir"
+  run_check "$dir" -- --help
+  expect_status "$status" 0 "--help"
+  expect_contains "$out" "Usage:" "--help: the usage line"
+  expect_contains "$out" "bash scripts/live-checks/check610.sh --sandbox <a sandbox GitHub repository checkout>" "--help: the command it documents"
+  expect_absent "$out" "FACT " "--help: no block is printed"
+  assert_no_launch "$dir" "--help"
+  # The header is what a person reads before running it: it has to say, where they
+  # will see it, that the review is billable, that the run is theirs, and that the
+  # pull request and the run it leaves behind are not removed.
+  expect_contains "$out" "by YOU. No agent runs any step of it" "--help: who runs it"
+  expect_contains "$out" "gcloud logging read" "--help: how the service's lines are read back"
+  expect_contains "$out" "pull request" "--help: what it creates and does not remove"
+}
+
+test_dry_run() {
+  local dir=$work/dry
+  prepare "$dir"
+  run_check "$dir" CHECK610_DRY_RUN=1
+  expect_status "$status" 0 "dry run"
+  expect_contains "$out" "CHECK 610 RESULT" "dry run: the block"
+  expect_contains "$out" "FACT dry-run: PASS" "dry run: the row that says nothing was run"
+  expect_contains "$out" "FACT sandbox: INFO — planned" "dry run: the rows are planned, not measured"
+  expect_contains "$out" "FACT u4: INFO — planned" "dry run: all four UNVERIFIED rows are planned"
+  expect_contains "$out" "CHECK 610 RESULT END (exit 0)" "dry run: the end line"
+  expect_absent "$out" "FAIL" "dry run: nothing is measured, so nothing fails"
+  # A dry run touches nothing at all: not the cloud, not the repository, not even
+  # the checkout's own config.
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "doctor" "dry run: no read is made"
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "run jobs" "dry run: the cloud is not read"
+  assert_no_launch "$dir" "dry run"
+  assert_scratch_removed "$dir" "dry run"
+}
+
+test_happy_path() {
+  local dir=$work/happy
+  prepare "$dir"
+  run_check "$dir"
+  expect_status "$status" 0 "the happy path"
+  expect_contains "$out" "FACT sandbox: PASS — $dir/sandbox is a Fugaro repository's checkout of the GITHUB repository $repo with a clean working tree, and it belongs to the $install installation ($gcp_project, region $region)" "the happy path: the sandbox row"
+  expect_contains "$out" "FACT config: PASS — $repo's own fugaro.yaml carries no \`profiles:\` key and every one of its 1 workflow(s) resolves checkout 'baked' (chk=baked)" "the happy path: the config row"
+  expect_contains "$out" "resolves 'vertex' (U3's first reading)" "the happy path: the auth it read"
+  expect_contains "$out" "FACT policy: PASS — $install's published policy carries NO profiles block and admits $repo to the project (its budget mode is 'observe'), and its accounts block names 1 account(s) (default), the one(s) admitting this repository reading 'default'" "the happy path: the policy row"
+  expect_contains "$out" "FACT job: PASS — the installation's implicit review-only job '$job' is deployed and carries FUGARO_CREDENTIALS_SERVICE_URL" "the happy path: the job row"
+  expect_contains "$out" "FACT pull: PASS — a throwaway pull request of $repo was opened by this check: #$pr, branch $branch (base $base_branch, one file, CHK610.md), and the checkout $dir/sandbox is back on $base_branch" "the happy path: the pull request row"
+  expect_contains "$out" "FACT launch: PASS — fugaro review --pr $pr launched ONE review run of $repo ($run_id, status 'launched') on '$job'" "the happy path: the launch row"
+  expect_contains "$out" "FACT run: PASS — the review run ($run_id) of $repo ended 'succeeded' with outcome 'reviewed' on the pull request this check opened (#$pr, recipe 'review')" "the happy path: the run row"
+  expect_contains "$out" "FACT review: PASS — the review recorded its artifact for the run $run_id and the pull request #$pr" "the happy path: the review row"
+  expect_contains "$out" "the head commit $head_sha and the verdict 'comment'" "the happy path: what the artifact states"
+  expect_contains "$out" "FACT u1: PASS — U1: $repo's workflow is BAKED" "the happy path: U1"
+  expect_contains "$out" "whose container image is the installation's own base image '$base_image'" "the happy path: U1 compares the two images"
+  expect_contains "$out" "FACT u2: PASS — U2: $install's published policy carries no profiles block and its accounts block admits the DEFAULT account" "the happy path: U2"
+  expect_contains "$out" "FACT u3: PASS — U3: the checkout resolves agent.auth 'vertex' and the review's model calls were served by the installation's credentials service as the credential 'default'" "the happy path: U3"
+  expect_contains "$out" "FACT u4: PASS — U4: $install ($gcp_project, region $region) deploys 1 project job(s) and EVERY one of them is a review variant — $job — with no coding project job at all" "the happy path: U4"
+  expect_contains "$out" "FACT restore: PASS — pull request #$pr of $repo was opened by this check" "the happy path: the restore row"
+  expect_contains "$out" "FACT scratch-removed: PASS" "the happy path: the scratch row"
+  expect_contains "$out" "CHECK 610 RESULT END (exit 0)" "the happy path: the end line"
+  expect_absent "$out" "FAIL" "the happy path: no row fails"
+  assert_scratch_removed "$dir" "the happy path"
+  assert_reads_only "$dir" "the happy path"
+  assert_one_launch "$dir" "the happy path"
+  assert_checkout_left_clean "$dir" "the happy path"
+  local fugaro gcloud gitcalls ghcalls
+  fugaro=$(cat "$dir/logs/fugaro.calls")
+  gcloud=$(cat "$dir/logs/gcloud.calls")
+  gitcalls=$(cat "$dir/logs/git.calls")
+  ghcalls=$(cat "$dir/logs/gh.calls")
+  # The reads are made in the checkout, and the launch is the plan's one command.
+  expect_contains "$fugaro" "doctor --json (in $dir/sandbox)" "the happy path: the reads are made in the checkout"
+  expect_contains "$fugaro" "review --pr $pr --project $install --json" "the happy path: the launch"
+  expect_contains "$fugaro" "runs ls --repo $repo --pr $pr --project $install --no-cache --json" "the happy path: the listing it polled"
+  expect_contains "$fugaro" "review show $run_slug --project $install --json" "the happy path: the artifact it read back"
+  expect_contains "$gcloud" "run jobs list --project=$gcp_project --region=$region --format=json" "the happy path: the job list"
+  expect_contains "$gcloud" "jsonPayload.run=\"$run_id\"" "the happy path: the service's lines are read for the run's own id"
+  expect_contains "$gcloud" "--limit=200 --order=asc" "the happy path: the lines are read oldest-first"
+  expect_contains "$gcloud" "--freshness=2h" "the happy path: the window is the knob when the run did not outlast it"
+  # One file on a branch cut from the base branch, pushed, and the checkout back.
+  expect_contains "$gitcalls" "fetch --quiet origin $base_branch" "the happy path: the base branch is fetched"
+  expect_contains "$gitcalls" "checkout --quiet -B $branch FETCH_HEAD" "the happy path: the throwaway branch is cut"
+  expect_contains "$gitcalls" "push --quiet origin HEAD:refs/heads/$branch" "the happy path: the branch is pushed"
+  expect_contains "$ghcalls" "pr create --repo $repo --base $base_branch --head $branch --title Check 610: a throwaway pull request to review" "the happy path: the pull request it opened"
+  expect_contains "$ghcalls" "pr view $branch --repo $repo --json number -q .number" "the happy path: the number it read back"
+}
+# ------------------------------------------------------------------- the run
+# CHECK_TEST_ONLY names one case; CHECK_TEST_SHARD=i/n runs every case whose index
+# is congruent to i modulo n. scripts/live_checks_test.go splits the suite across
+# workers that way, so a case added above needs its `t` line below or CI never
+# runs it at all.
+test_index=0
+t() {
+  local i=$test_index
+  test_index=$((test_index + 1))
+  if [ -n "${CHECK_TEST_ONLY:-}" ]; then
+    [ "$1" = "$CHECK_TEST_ONLY" ] || return 0
+  elif [ -n "${CHECK_TEST_SHARD:-}" ]; then
+    [ $((i % ${CHECK_TEST_SHARD#*/})) -eq "${CHECK_TEST_SHARD%/*}" ] || return 0
+  fi
+  "$1"
+}
+
+t test_help
+t test_dry_run
+t test_happy_path
+
+if [ "$failures" -ne 0 ]; then
+  echo "check610_test.sh: $failures failure(s)" >&2
+  exit 1
+fi
+echo "check610_test.sh: ok"
