@@ -86,6 +86,16 @@ locals {
   # it.
   orchestrator_on = var.orchestrator != null
 
+  # The credentials-service invoker grant below needs BOTH switches, and it is
+  # the one resource in this file that does. The account is this file's
+  # (orchestrator_on), and the service it may call is credentials.tf's
+  # (credentials_service_on): an installation whose credentials service is off
+  # has no service to bind anything on, exactly as every grant in iam.tf and
+  # build_identity.tf reads it. With either switch off the grant is not made,
+  # which is the same no-op the whole file is (an installation that has not
+  # opted in plans what it planned before this file existed).
+  orchestrator_credentials_on = local.orchestrator_on && local.credentials_service_on
+
   # The route the tick calls, which is the process's ONLY route
   # (internal/cli/orchestrator_serve.go): the service answers POST /tick, 405 to
   # another method on it and 404 to anything else — so a tick pointed anywhere
@@ -412,6 +422,42 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
   name     = var.orchestrator.service
   role     = "roles/run.invoker"
   member   = google_service_account.scheduler.member
+
+  depends_on = [google_service_account.orchestrator]
+}
+
+# The account's way INTO the credentials service (F19, O2 of
+# docs/forge-labels and docs/outer-loop-escalation's E16): it is the one caller
+# class of the service's label route and of its gated merge mint
+# (credsvc.AuthConfig.OrchestratorAccounts, D2049), and Cloud Run's front end
+# refuses a caller without roles/run.invoker before the container runs — so
+# without this binding the daemon's token is minted and never served, which is
+# the state that left both routes inert on every installation.
+#
+# It is a row section 4.3's table does not have, and it is added knowingly. The
+# table is what this account may do on THIS installation's resources, and the
+# design's twelfth envelope (section 6: no model credential, no second
+# installation) is not touched by it: the service the grant names is the
+# installation's own, its own container holds no credential in its environment,
+# and what answers a call is the caller class — this account is named on
+# FUGARO_ORCHESTRATOR_ACCOUNTS (credentials.tf) and on nothing else, so a caller
+# whose token is not this account's is refused after the front end by
+# credsvc's own class check. internal/infra/tf's cover reads the member as
+# toOrchestrator and admits the cell on purpose (grantRules' run.invoker row);
+# before this task Q13's answer of 2026-10-19 kept it out, on the premise that
+# the orchestrator never calls the service at all.
+#
+# The member is written out rather than read off the account, like every other
+# binding in this file (the header says why): a computed member reaches the plan
+# as an unknown principal, which the cover reads as an ordinary account.
+resource "google_cloud_run_v2_service_iam_member" "orchestrator_credentials_invoker" {
+  count = local.orchestrator_credentials_on ? 1 : 0
+
+  project  = var.project
+  location = var.region
+  name     = var.credentials_service.service
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
   depends_on = [google_service_account.orchestrator]
 }

@@ -67,17 +67,29 @@ func newABCmd(d Deps) *cobra.Command {
 			"same records and verdicts always give the same table. A pair at Critical counts\n" +
 			"only once a judge has decided it (D561), and every other mode shows the judge's\n" +
 			"verdict beside the hard signals it is ranked on.\n\n" +
-			"Rows are one per rigor mode x tier x model pair. A pair the arms do not make --\n" +
-			"a different start commit, mode, tier or recipe, or an arm that never started --\n" +
-			"is in no figure at all. WINS and LOSSES are the challenger's; a TIE decided\n" +
-			"nothing and no figure is drawn from one. HALTS is each arm's halt count: a halt\n" +
-			"is already a loss, and the count says how often a limit rather than the work\n" +
-			"decided a pair. COST is the median pair cost ratio, the challenger's model\n" +
-			"dollars over the champion's. JUDGE FAMILY is the family of the model that judged\n" +
-			"the group's pairs -- a Claude ID is anthropic, a provider model's family is its\n" +
-			"ID's vendor prefix -- and SAME FAMILY says one of them is an arm's own, which\n" +
-			"blindness does not remove (D553). UNJUDGED counts the pairs no judge has decided\n" +
-			"and TRUNCATED those whose patch was cut short and can never be judged.\n\n" +
+			"Rows are one per rigor mode x tier x slot x model and effort pair. A pair the\n" +
+			"arms do not make -- a different start commit, mode, tier, recipe or slot, or an\n" +
+			"arm that never started -- is in no figure at all. WINS and LOSSES are the\n" +
+			"challenger's; a TIE decided nothing and no figure is drawn from one. HALTS is\n" +
+			"each arm's halt count: a halt is already a loss, and the count says how often a\n" +
+			"limit rather than the work decided a pair. COST is the median pair cost ratio,\n" +
+			"the challenger's over the champion's, of the review level itself for a reviewer\n" +
+			"row. JUDGE FAMILY is the family of the model that judged the group's pairs -- a\n" +
+			"Claude ID is anthropic, a provider model's family is its ID's vendor prefix --\n" +
+			"and SAME FAMILY says one of them is an arm's own, which blindness does not\n" +
+			"remove (D553). UNJUDGED counts the pairs no judge has decided and TRUNCATED\n" +
+			"those whose patch was cut short and can never be judged.\n\n" +
+			"SLOT is what a pair varies: coder for a pair of whole runs, and review level 1,\n" +
+			"2 or 3 for a pair whose challenger replayed the champion's recorded patch at\n" +
+			"that level (D728). Such a row's CHAMPION and CHALLENGER are that level's two\n" +
+			"reviewers and EFFORT is theirs; its signals are the two rounds -- the word each\n" +
+			"answered, and the halt before it -- and not the coder facts a pair of runs is\n" +
+			"ranked on. MISSES and FALSE ALARMS are what a judge matched of the two finding\n" +
+			"sets, - until a judge matches one: nothing here reads a finding's text, and no\n" +
+			"judge run matches two sets yet. MISS RATE is therefore not a figure either,\n" +
+			"and the cell says so rather than printing a number nothing has checked:\n" +
+			"whether the blind judge can match two finding sets reliably is the A5 judge's\n" +
+			"own agreement check (Check 211), which has not been run.\n\n" +
 			"ADVICE is D565's rule at the mode's exchange rate: the challenger is recommended\n" +
 			"when it is clearly better (the lower bound of its win share above a half) and its\n" +
 			"median cost ratio is within the mode's rate, or when it is not worse (the upper\n" +
@@ -85,16 +97,20 @@ func newABCmd(d Deps) *cobra.Command {
 			fmt.Sprintf("row with fewer than %d decisive pairs says no conclusion rather than\n", ab.MinRuns) +
 			"approximating one. Nothing here changes a default: this is a report, not a\n" +
 			"switch.\n\n" +
-			"No person, repository or task text reaches the output: a row is a mode, a tier and\n" +
-			"two coder models, with the family of the model that judged them.\n\n" +
+			"No person, repository or task text reaches the output: a row is a mode, a tier, a\n" +
+			"slot and two models, with the family of the model that judged them.\n\n" +
 			"--since is how far back the read goes (default 30d: a day count, a Go duration,\n" +
 			"or 0 for no bound). --json prints {project, source, since, until, rows[{mode,\n" +
-			"tier, champion, challenger, pairs, wins, losses, ties, champion_halts,\n" +
-			"challenger_halts, champion_follow_ups, judge_families, judge_same_family,\n" +
-			"unjudged, truncated, recommendation{decision, rule, decisive, p, win_share_lo,\n" +
-			"win_share_hi, median_cost_ratio, exchange_rate}}], warnings};\n" +
-			"median_cost_ratio is null when no pair of the group carried both arms' costs,\n" +
-			"and judge_families is empty when no judge has decided a pair of the group.",
+			"tier, slot, champion, challenger, champion_effort, challenger_effort, pairs,\n" +
+			"wins, losses, ties, champion_halts, challenger_halts, champion_follow_ups,\n" +
+			"judge_families, judge_same_family, misses, false_alarms, unjudged, truncated,\n" +
+			"recommendation{decision, rule, decisive, p, win_share_lo, win_share_hi,\n" +
+			"median_cost_ratio, exchange_rate}}], warnings};\n" +
+			"median_cost_ratio, misses and false_alarms are null when no pair of the group\n" +
+			"carried both arms' costs or no judge matched its two finding sets, the two\n" +
+			"efforts are empty for a coder row, and judge_families is empty when no judge\n" +
+			"has decided a pair of the group. A report holding a reviewer row warns that\n" +
+			"the miss rate is not reported as a figure, for the Check 211 reason above.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runAB(cmd, &o, d) },
 	}

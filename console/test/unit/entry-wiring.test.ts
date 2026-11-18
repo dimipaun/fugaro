@@ -108,6 +108,7 @@ import {
   tabTarget,
 } from '../../src/renderer/entry'
 import { GRAPH_DOCUMENT_VERSION, decodeSnapshot } from '../../src/shared/schema'
+import { UNAVAILABLE_MARK } from '../../src/shared/availability'
 import { ADDRESS_PLACEHOLDER } from '../../src/shared/sanitize'
 import { NO_PLAN_CHECKOUT } from '../../src/source/source'
 import { READING_STILL, READING_STILL_MS, READING_WORDS } from '../../src/renderer/screens/reading'
@@ -123,7 +124,13 @@ import {
 } from '../../src/renderer/screens/nocheckout'
 import { CHECKOUT_SELECT_CLASS, checkoutLabel } from '../../src/renderer/checkout'
 import { LIVE_CAPS_HIDDEN_WORD } from '../../src/renderer/screens/live'
-import { GRAPH_SCOPE_ALL, GRAPH_SCOPE_PLAN } from '../../src/renderer/screens/graph'
+import {
+  GRAPH_ESTIMATE_COST_HIDDEN_WORD,
+  GRAPH_ESTIMATE_MINUTES,
+  GRAPH_ESTIMATE_READY,
+  GRAPH_SCOPE_ALL,
+  GRAPH_SCOPE_PLAN,
+} from '../../src/renderer/screens/graph'
 import {
   BUSY_ATTRIBUTE,
   BUSY_BUSY_ATTRIBUTE,
@@ -452,10 +459,15 @@ describe('the dashboard the entry mounts', () => {
     // Coordinator: `spend` is withheld and `projects` is the `caps` view, which
     // a reduced mode withholds with it. A Spend entry here would be a door to a
     // screen that cannot read. The Graph is offered because `plan.status` is not
-    // a view this mode withholds (GV2.1's decision, and `VIEWS`' own `null`): it
-    // draws no spend and no caps. `coordinator` is offered because the project
-    // view is repository state rather than money, so the mode withholds no
-    // figure of it (Bitbucket credentials T1.2).
+    // a view this mode withholds (GV2.1's decision, and `VIEWS`' own `null`): the
+    // read is repository state and none of its operations is a `spend` read, so
+    // the plan, its tasks and its stages are drawn -- and the one money figure
+    // the screen draws since S4, the plan's estimate cost, is withheld **inside
+    // the drawing** rather than with the tab (`graphScreen`'s third argument;
+    // `the graph’s estimate in a reduced console` below is the case that holds
+    // it). `coordinator` is offered because the project view is repository state
+    // rather than money, so the mode withholds no figure of it (Bitbucket
+    // credentials T1.2).
     expect(document.body.children[0]?.attributes.get('data-mode')).toBe('reduced')
     expect(navButtons(document).map((button) => button.attributes.get('data-view'))).toEqual([
       'live',
@@ -2975,13 +2987,17 @@ function runsReply(): Record<string, unknown> {
 /** graphBridge is the fake bridge with the graph's two reads answered, and the
  * layout worker stubbed in: the two things a case that wants a drawn graph needs
  * and nothing else. `worker` is the layout protocol a case wants held -- see
- * `HeldWorker` -- and the default is the one that answers at once. */
+ * `HeldWorker` -- and the default is the one that answers at once;
+ * `compatibility` is the handshake a case wants the gate to have answered, and
+ * the default is the mode that withholds nothing. */
 function graphBridge(
   replies: Readonly<Record<string, AReply>> = {},
   worker: typeof FakeWorker = FakeWorker,
+  compatibility?: Record<string, unknown>,
 ): FakeBridge {
   vi.stubGlobal('Worker', worker)
   return fakeBridge({
+    compatibility,
     replies: { planStatus: () => planStatusReply(), listRuns: () => runsReply(), ...replies },
   })
 }
@@ -3493,6 +3509,69 @@ describe('the graph’s plan read when it refuses', () => {
     await flush()
     expect(panelOf(document).children[0], 'a frame drew the plan the refusal replaced').toBe(refusal)
     expect(classed(panelOf(document), 'graph-canvas')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The plan's estimate in a reduced console (the estimates plan's S4)
+// ---------------------------------------------------------------------------
+
+/**
+ * withEstimate is the fixture plan with one plan's estimate block on it: the
+ * block `plan status --json` writes since S3, which the fixture itself does not
+ * carry (it is a document from before that release, which is what
+ * `graph-estimate.test.ts`'s absent-block case is about).
+ */
+function withEstimate(): unknown {
+  const document = JSON.parse(JSON.stringify(PLAN_STATUS)) as { plans: { estimate?: unknown }[] }
+  const plan = document.plans[0]
+  if (plan === undefined) throw new Error('the fixture has no plan to estimate')
+  plan.estimate = { ready_in_minutes: { low: 40, high: 70 }, cost_usd: { low: 3, high: 5 }, cost_unknown_tasks: 0 }
+  return document
+}
+
+describe('the graph’s estimate in a reduced console (S4)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** estimateLine opens the Graph on a plan that carries an estimate, switches
+   * to the drawing that has a heading per plan (the list -- the canvas gives a
+   * plan no text of its own), and answers the estimate line it drew. */
+  async function estimateLine(compatibility: Record<string, unknown>): Promise<FakeNode | undefined> {
+    const { bridge } = graphBridge({ planStatus: () => planStatusReply(withEstimate()) }, FakeWorker, compatibility)
+    const document = await openGraph(bridge)
+    const view = classed(panelOf(document), 'graph-view')[0]
+    if (view === undefined) throw new Error('the graph drew no view switch')
+    view.click()
+    await flush()
+    expect(classed(panelOf(document), 'graph-list'), 'the list was not drawn').not.toEqual([])
+    return classed(panelOf(document), 'graph-list-estimate')[0]
+  }
+
+  it('hands the screen the gate’s verdict for the spend view, and draws the money only where the mode allows it', async () => {
+    // **The call site is the thing this case is for.** The screen's own default
+    // is to draw what the document carried (`GraphScreenDeps.costWithheld` is
+    // optional and absent means "no gate in front of this drawing"), so a call
+    // site that dropped the argument would draw `$3.00–$5.00` on a console whose
+    // handshake says it cannot vouch for the CLI's money fields -- silently, and
+    // with every other case in this suite still green. What holds it is the two
+    // modes below, drawn through the entry: the same plan, the same read, and
+    // the gate's answer the only difference.
+    const ok = await estimateLine(anOkCompatibility())
+    expect(ok?.textContent, 'the ok mode drew no cost').toContain('$3.00–$5.00')
+    expect(ok?.attributes.get('title'), 'the ok mode gave a drawn figure a reason').toBeUndefined()
+
+    const reduced = await estimateLine(aReducedCompatibility())
+    expect(reduced?.textContent, 'the reduced mode drew a dollar figure').not.toContain('$')
+    // The ready-by range stays -- minutes are not money -- and the withheld cost
+    // reads the console's unavailable mark with its reason in the `title`.
+    expect(reduced?.textContent).toBe(
+      `${GRAPH_ESTIMATE_READY} 40–70 ${GRAPH_ESTIMATE_MINUTES}, ${UNAVAILABLE_MARK}–${UNAVAILABLE_MARK}`,
+    )
+    expect(reduced?.attributes.get('title'), 'the withheld cost lost its reason').toBe(
+      GRAPH_ESTIMATE_COST_HIDDEN_WORD,
+    )
   })
 })
 

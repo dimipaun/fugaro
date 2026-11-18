@@ -74,6 +74,28 @@ resource "google_project_iam_member" "build" {
   member  = google_service_account.build.member
 }
 
+# The installation's credentials service, once it has one (D2076, D2077): the
+# build account may invoke it, and this module's own files give no other Cloud
+# Run service a member — one member, the build account, roles/run.invoker, on
+# that one service. B4.5 moves the build's git credential and its secret fetch
+# there, and an account that cannot invoke the service is a build whose clone
+# step has no credential left at all.
+#
+# Inert until B4.5 reads from it: today the credential comes from the secret
+# accessor above and from the request's own secrets, so this grant changes
+# nothing a build does. Which of the accounts allowed to call the service are
+# served, and with what, is the service's own ID-token check (Q6): IAM says who
+# may call it, the service says who is answered.
+resource "google_cloud_run_v2_service_iam_member" "build_credentials" {
+  count = var.installation.credentials_service == null ? 0 : 1
+
+  project  = var.project
+  location = var.installation.credentials_service.region
+  name     = var.installation.credentials_service.name
+  role     = "roles/run.invoker"
+  member   = google_service_account.build.member
+}
+
 # A build that names this account needs actAs on it, and on nothing else.
 resource "google_service_account_iam_member" "build_self" {
   service_account_id = google_service_account.build.name

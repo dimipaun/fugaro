@@ -700,7 +700,7 @@
         },
         "escalation.ready_drafts": {
           "$comment": "localcfg.DefaultEscalationReadyDrafts",
-          "default": "false"
+          "default": "true"
         },
         "followup.allow_public": {
           "default": "unset = false"
@@ -1365,7 +1365,7 @@
           "default": "unset = nobody"
         },
         "project_secrets.*.proxy": {
-          "default": "unset = none"
+          "default": "unset = none: an entry that says nothing about the switch is the state `fugaro update` turns on, and a written false is a hold it never lifts"
         },
         "providers.*.allow_data_to": {
           "default": "unset = nobody"

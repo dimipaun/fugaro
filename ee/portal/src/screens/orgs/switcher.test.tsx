@@ -4,8 +4,8 @@
 // The switcher and the screen that mounts it (portal plan P2.3; spec §Tenancy).
 //
 // **Two shapes of case, because the switcher has two jobs.** Rendered with the
-// organisations it is given, it is the list: one link per organisation, into
-// that organisation's own screens, with the one the person is in marked. MOUNTED
+// organisations it is given, it is the list: an organisation's own screens are
+// its links, with the one the person is in marked. MOUNTED
 // by the organisations screen, it is the answer to "which organisation am I
 // working in", and the screen is what reads the API: it marks the head of the
 // list the API answered, which P2.1 ordered by last use, and a new organisation
@@ -170,6 +170,13 @@ describe('the organisation switcher', () => {
     expect(
       screen.getByRole('link', { name: `Settings for ${EXAMPLE.name}` }).getAttribute('href'),
     ).toBe(`/settings?org=${EXAMPLE.id}`)
+    // The account screen is a person's and the organisation in its URL is the
+    // one whose deletion it offers, so `?org=` is built here and nowhere else
+    // (P2.4): a link that dropped it would leave the page unable to name the
+    // organisation it is about.
+    expect(
+      screen.getByRole('link', { name: `Account for ${EXAMPLE.name}` }).getAttribute('href'),
+    ).toBe(`/account?org=${EXAMPLE.id}`)
   })
 
   it('marks the organisation the person is in, and no other', () => {

@@ -3,6 +3,7 @@ package infra
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,48 @@ func TestCarriedOrchestratorCarriesTheBlockAHandOptedInstallationHolds(t *testin
 		}
 		if string(got2) != fresh {
 			t.Errorf("%s: the document changed: %s", name, got2)
+		}
+	}
+}
+
+// The block's presence is the installation's own statement that it opted in,
+// and it is the answer everything that reads the account's existence reads: the
+// module creates the account, its five bindings, the credentials service's
+// caller class and the invoker grant from this one variable and nulls them all
+// without it, so a reader that took the block's absence for a block would be
+// reading an installation into having an identity it does not.
+//
+// Mutation (run, restore): answer `ok` alone where the two are compared and the
+// null row reports an installation that wrote the key to say no as one that
+// opted in — the address a daemon would then mint as belongs to no project.
+func TestOrchestratorRecordedReadsTheInstallationsOwnSwitch(t *testing.T) {
+	for name, tc := range map[string]struct {
+		vars []byte
+		want bool
+	}{
+		"the block":                 {[]byte(`{"project": "proj-1234", "orchestrator": {"account_id": "fugaro-orch"}}`), true},
+		"the key and nothing in it": {[]byte(`{"orchestrator": {}}`), true},
+		"no key":                    {[]byte(`{"project": "proj-1234", "region": "us-east5"}`), false},
+		"the key is null":           {[]byte(`{"project": "proj-1234", "orchestrator": null}`), false},
+		"no document at all":        {nil, false},
+		"a document with nothing":   {[]byte(`{}`), false},
+	} {
+		got, err := OrchestratorRecorded(tc.vars)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got != tc.want {
+			t.Errorf("%s: OrchestratorRecorded(%s) = %v, want %v", name, tc.vars, got, tc.want)
+		}
+	}
+	for _, vars := range [][]byte{[]byte("not json"), []byte(""), []byte("[1,2]"), []byte(`{"orchestrator": {`)} {
+		got, err := OrchestratorRecorded(vars)
+		if err == nil {
+			t.Errorf("OrchestratorRecorded(%q) = %v, nil error, want a refusal: a document this program cannot read is not one that has not opted in", vars, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), VarsFile) {
+			t.Errorf("OrchestratorRecorded(%q) refused with %q, want the file named (%s)", vars, err, VarsFile)
 		}
 	}
 }

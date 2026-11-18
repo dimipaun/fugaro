@@ -1,32 +1,26 @@
-// website/test/keys.mjs — the key request page (subscriptions plan, Task S3.3).
+// website/test/keys.mjs — the key request page (portal plan, Task P9.3; it was S3.3's).
 //
-// `/keys/` is the page a person asks for a licence key on, and it is the one page of this site
-// that ASKS A READER FOR SOMETHING: the privacy statement says the site has no account and no
-// comment box and that this is the one page carrying a form, and the statement's own copy for
-// the key sign-up is S7.3's and the owner's (the design's §7.3) — which is why the page was held
-// out of the deploy until S7.3 wrote that copy and took the hold off. So this file holds the
-// page to the things the task names, read off the BUILT artifact, because what a browser gets is
-// what the page is:
+// `/keys/` is where a reader is sent for a licence key, and the page no longer ASKS for anything
+// itself: a key — the free evaluation seat, the open-source year, a paid seat — is asked for in
+// the portal, Fugaro's own signed-in service, so this page points a reader there and carries no
+// form and no field. The privacy statement says the site has no account, no comment box and no
+// form, and that is now true of every page of the site, this one included; `website/test/consent.mjs`
+// holds the statement to the built pages, and `website/test/privacy.mjs` rule 9 holds the
+// statement's key sign-up card to this page. So this file holds the page to the things the task
+// names, read off the BUILT artifact, because what a browser gets is what the page is:
 //
-//   1. **The three forms, and where they post.** `free-seat`, `open-source` and `request` (the
-//      design's §4.1, §4.4 and §4.5): one form each, POST, and each action is the key service's
-//      intake origin plus that request's own route. The origin is not typed here or on the page
-//      — it is `src/lib/keys-intake.mjs`'s `keysIntakeOrigin`, derived from site.yaml's
-//      canonical URL, and that is the same function the page builds its actions from, so the
-//      check and the page cannot drift (`formFailures`).
-//   2. **The fields belong to the forms.** Every field sits inside one of the three forms,
-//      carries a name, and has a label of its own: a field outside them is the site asking a
-//      reader for something nothing submits, and an unnamed or unlabelled field is one the
-//      applicant cannot fill (`fieldFailures`).
-//   3. **No third-party load, and the one off-site address the site posts to.** The page
-//      fetches nothing from another origin, and the only address it carries outside this site
-//      is the intake's, as a form's action (`fetchFailures`). `origins.mjs` is the gate that
-//      holds every page to the full origin contract and the deployed policy with it (D106,
-//      W3.2); this case reads the page's own fetch set, so the keys page's one off-site address
-//      is named where the page is rather than inferred from the policy.
-//   4. **The privacy link.** The page points at `/privacy/` (`privacyLinkFailures`), which is
-//      where S7.3 writes what the intake collects and how long it keeps it — the card
-//      `website/test/privacy.mjs` rule 9 reads against these forms' own fields.
+//   1. **No form, and no field.** The page carries no `<form>` and no `input`, `textarea` or
+//      `select` at all (`formFreeFailures`): the site collects nothing, and a control here would
+//      be a thing nothing submits on the one page a reader was told asks for nothing.
+//   2. **The portal link.** The page links to the portal, `app.` plus the site's canonical host
+//      (`src/lib/portal.mjs`) — the same derived origin the deployed policy and the tests hold,
+//      so the page and the checks cannot point at two different hosts (`portalLinkFailures`).
+//   3. **The privacy link.** The page keeps its pointer at `/privacy/`
+//      (`privacyLinkFailures`), which is where what the service keeps is stated.
+//   4. **The deployed policy admits no form host.** The page carries no form, and `firebase.json`
+//      says the site may post nowhere but itself: `form-action 'self'` alone, the S3.3 widening to
+//      the key service's intake having come off with the forms (`website/test/origins.mjs` reads
+//      the whole policy; this case reads the one directive this page's history touched).
 //
 // It reads `dist/`, which `npm run check` builds before it runs this file. Standard library
 // only, no network (Global Constraint 4). Red step: this file fails against a build with no
@@ -34,30 +28,18 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DIST, builtPages, find, parse, siteFacts, textOf, walk } from './lib/html.mjs'
-import { keysIntakeOrigin } from '../src/lib/keys-intake.mjs'
+import { DIST, builtPages, deployedCSP, find, parse, siteFacts, walk } from './lib/html.mjs'
+import { portalOrigin } from '../src/lib/portal.mjs'
 
 /** The page this file is about. */
 export const KEYS_URL = '/keys/'
-
-/**
- * The three requests the page carries, in the order it lays them out: the route each form posts
- * to and the id of the section and form it sits in. The routes are the site's half of the
- * intake's contract — the intake "serves the forms' endpoints" (the design's §3.1) — and the
- * service that answers them is S3.2's, deployed by the owner in S3.7.
- */
-export const FORMS = Object.freeze([
-  { id: 'free-seat', route: '/free-seat' },
-  { id: 'open-source', route: '/open-source' },
-  { id: 'request', route: '/request' },
-])
 
 /** The built key request page, or a failure that says the build is missing it. */
 function keysPage(dist = DIST) {
   const page = builtPages(dist).find((p) => p.url === KEYS_URL)
   assert.ok(
     page,
-    `the build carries no ${KEYS_URL} page: this file holds the key request page to the intake's contract, and \`npm run check\` builds the artifact it reads first`,
+    `the build carries no ${KEYS_URL} page: this file holds the key request page to the portal contract, and \`npm run check\` builds the artifact it reads first`,
   )
   return page
 }
@@ -69,223 +51,65 @@ function mainOf(html) {
   return main
 }
 
-/** Whether `el` is `ancestor` or sits inside it. */
-function within(el, ancestor) {
-  for (let n = el; n; n = n.parent) if (n === ancestor) return true
-  return false
-}
-
 const FIELDS = Object.freeze(['input', 'textarea', 'select'])
 
-/** Every form of the page, in document order. */
-const formsOf = (main) => [...walk(main)].filter((el) => el.name === 'form')
-
-/** Every field of the page, in document order. */
-const fieldsOf = (main) => [...walk(main)].filter((el) => FIELDS.includes(el.name))
-
-/** The element's text as one line, for a failure line about it. */
-const textOn = (el) => JSON.stringify(textOf(el).replace(/\s+/g, ' ').trim())
-
-// ---- 1. the three forms, and where they post ----------------------------------------------
+// ---- 1. no form, and no field -------------------------------------------------------------
 
 /**
- * Every way the page's forms depart from the intake's contract, or [].
+ * Every way the page asks a reader for something, or [].
  *
- * `intake` is the origin the page posts to, derived from site.yaml's canonical URL by
- * `src/lib/keys-intake.mjs` — the same function the page builds its actions from. What is held
- * is the exact set: one form per request, POST, and an action that is the intake's origin plus
- * that request's route and nothing else. A form posting to this site would collect nothing (the
- * site is static), and a fourth form would be a request the service has no route for.
+ * The page carries no `<form>` and no field: the site collects nothing, and a form here would be
+ * a control the statement's "this site has no form" would be made false by — and a form that
+ * posts off-site would be a host the deployed policy's `form-action 'self'` blocks anyway. A
+ * field outside a form is the same defect: a reader asked for something nothing submits.
  */
-export function formFailures(main, intake) {
+export function formFreeFailures(main) {
   const out = []
-  const forms = formsOf(main)
-  if (forms.length !== FORMS.length) {
-    out.push(
-      `the key request page carries ${forms.length} form(s) and the page is the ${FORMS.length} ways to ask for a key — the free seat, the open-source programme and the requests a person reads (the design's §4.1, §4.4, §4.5)`,
-    )
-  }
-  const seen = new Set()
-  forms.forEach((form, at) => {
-    const where = `the key request page's ${at + 1}. form`
-    const method = (form.attrs.get('method') ?? '').toLowerCase()
-    if (method !== 'post') {
-      out.push(
-        `${where} submits with method=${JSON.stringify(method || '(none)')}: an application carries an address the reader typed, and a GET would put it in the URL, in the host's logs and in the browser's history — the intake takes the three requests as POSTs`,
-      )
-    }
-    const action = form.attrs.get('action')
-    if (action === undefined) {
-      out.push(`${where} carries no action: it would submit to this page, which is a static file and collects nothing (the design's §3.1)`)
-      return
-    }
-    let url
-    try {
-      url = new URL(action)
-    } catch {
-      out.push(
-        `${where}'s action ${JSON.stringify(action)} is not an absolute URL: the intake is a service of its own, so a relative action posts to this site and nowhere near the service (the design's §3.1)`,
-      )
-      return
-    }
-    if (url.origin !== intake) {
-      out.push(
-        `${where}'s action ${JSON.stringify(action)} is not on the intake (${intake}): the key request page posts to the key service's intake and to nothing else, and the origin is derived from site.yaml's canonical URL rather than written anywhere (src/lib/keys-intake.mjs)`,
-      )
-      return
-    }
-    if (url.search || url.hash) {
-      out.push(
-        `${where}'s action ${JSON.stringify(action)} carries a query or a fragment: the request is the route and nothing else, and a parameter the service does not read is one nobody sees (the intakes' routes are the site's half of its contract)`,
-      )
-      return
-    }
-    const match = FORMS.find((one) => one.route === url.pathname)
-    if (!match) {
-      out.push(
-        `${where}'s action reaches ${JSON.stringify(url.pathname)} on the intake, which is not one of the requests this page carries (${FORMS.map((one) => one.route).join(', ')}): the route set is the site's half of the intake's contract, and a route nothing answers is a form that collects an application and drops it`,
-      )
-      return
-    }
-    if (seen.has(match.route)) out.push(`${where} posts to ${match.route} and the page carries that request twice: one route per request`)
-    seen.add(match.route)
-    // Each form sits in the section that names its request, so `/keys/#open-source` is the one
-    // anchor a reader can be sent — and the id is on the section rather than on the form, because
-    // one id in a document names one thing (the anchor and the form sharing it would be a
-    // duplicate, and duplicate ids are what `linkcheck.mjs` resolves fragments against).
-    let anchored = false
-    for (let node = form.parent; node; node = node.parent) if (node.attrs?.get('id') === match.id) anchored = true
-    if (!anchored) {
-      out.push(
-        `${where} posting to ${match.route} sits in no section carrying id=${JSON.stringify(match.id)}: each request is a section named after it, so a reader, this case and the service name the three the same way and a link to one of them is an anchor the page has`,
-      )
-    }
-  })
-  for (const one of FORMS) {
-    if (!seen.has(one.route)) {
-      out.push(
-        `the key request page carries no form posting to ${one.route}: ${JSON.stringify(one.id)} is one of the three ways to ask for a key (the design's §4.1, §4.4, §4.5), and a page that lost one of them sends that applicant to the other two, where the checks do not fit their case`,
-      )
-    }
-  }
-  return out
-}
-
-// ---- 2. the fields belong to the forms ----------------------------------------------------
-
-/**
- * Every way the page's fields depart from "the site asks for what it collects", or [].
- *
- * Each field sits inside one of the three forms, carries a `name` (so the control reaches the
- * intake as a field and not as nothing — which names the intake reads is S3.2's contract and
- * not this page's), and has a
- * label of its own — resolved through `for`/`id` or by being wrapped in one — because a field a
- * screen-reader user cannot name is a field they cannot fill (WCAG 3.3.2; `a11y.mjs` holds the
- * same pair on every page, and this case reads the three forms together, so a field the three
- * forms do not own is refused rather than counted as the page's own).
- */
-export function fieldFailures(main) {
-  const out = []
-  const forms = formsOf(main)
-  const fields = fieldsOf(main)
-  const labelled = new Set()
-  for (const label of [...walk(main)].filter((el) => el.name === 'label')) {
-    if (label.attrs.has('for')) labelled.add(label.attrs.get('for'))
-    for (const field of fields) if (field.attrs?.has('id') && within(field, label)) labelled.add(field.attrs.get('id'))
-  }
-  for (const field of fields) {
-    const where = `the key request page's <${field.name} ${field.attrs.get('name') ?? '(no name)'}>`
-    if (!forms.some((form) => within(field, form))) {
-      out.push(
-        `${where} sits outside the three forms: a field on this page is a field of one of the three requests, and one anywhere else is the site asking a reader for something no form submits`,
-      )
-    }
-    if (!field.attrs.has('name')) {
-      out.push(`${where} carries no name: a control with no name reaches the intake as nothing, so the application would arrive empty`)
-    }
-    if (!labelled.has(field.attrs.get('id') ?? '')) {
-      out.push(
-        `${where} has no label pointing at it: every field of the three forms is named by a <label for> (or sits inside one), because a reader told ${textOn(field)} beside the field and a reader whose screen reader announces only the control are owed the same field`,
-      )
-    }
-  }
-  return out
-}
-
-// ---- 3. no third-party load, and the one off-site address the site posts to ---------------
-
-// The attributes a browser fetches from on load, by element: the site loads nothing from another
-// origin (D106), and this is what the keys page's fetch set is read off.
-const FETCHING = Object.freeze({
-  script: ['src'],
-  link: ['href'],
-  iframe: ['src'],
-  frame: ['src'],
-  embed: ['src'],
-  object: ['data'],
-  img: ['src', 'srcset'],
-  source: ['src', 'srcset'],
-  video: ['src', 'poster'],
-  audio: ['src'],
-  track: ['src'],
-  input: ['src'],
-})
-
-/** The URLs of a `srcset` value. */
-const srcsetURLs = (value) => value.split(',').map((part) => part.trim().split(/\s+/)[0]).filter(Boolean)
-
-/**
- * Every way the page loads something from another origin, or posts anywhere but the intake, or [].
- *
- * A URL with no scheme is this site's. An absolute one is this site's when it is http(s) on the
- * canonical host — over https, so a plain-http address is refused rather than counted as this
- * site's — and the intake's when the element is a submit target (`form action`, `formaction`) —
- * the page's one off-site address, and the reason the deployed policy's `form-action` carries
- * the intake's token (`origins.mjs` holds the policy to it; the widening is D451, option (a),
- * with the owner's approval). Anything else is a third party, which is what this case refuses.
- */
-export function fetchFailures(main, facts, intake) {
-  const out = []
-  const check = (el, attr) => {
-    const value = el.attrs.get(attr)
-    if (value === undefined || value === '') return
-    for (const raw of attr === 'srcset' ? srcsetURLs(value) : [value]) {
-      const url = raw.trim().replace(/[\t\n\r]/g, '')
-      if (url.startsWith('#')) continue // a fragment names this page
-      // A URL that names no scheme is this site's own file. The test is "carries a scheme",
-      // not "carries `//`": `//evil.example.net/x` is another host, and so is
-      // `http:evil.example.net/x` — a scheme-only URL in a scheme other than this page's is
-      // still an authority, where the same scheme (`https:evil.example.net/x` on an https
-      // page) is a path on this site, which is what the browser does with it too.
-      if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !url.startsWith('//')) continue
-      let parsed
-      try {
-        parsed = new URL(url, `https://${facts.canonicalHost}/`)
-      } catch {
-        out.push(`the key request page's <${el.name} ${attr}=${JSON.stringify(raw)}> is not a URL`)
-        continue
-      }
-      // This site's own file: https on the canonical host. A plain-http one is not, and
-      // `origins.mjs` refuses it too.
-      if (parsed.origin === `https://${facts.canonicalHost}`) continue
-      const submits = (el.name === 'form' && attr === 'action') || (['button', 'input'].includes(el.name) && attr === 'formaction')
-      if (submits && parsed.origin === intake) continue
-      out.push(
-        submits
-          ? `the key request page's <${el.name} ${attr}=${JSON.stringify(raw)}> posts to ${parsed.host}, and the page posts to the intake (${intake}) and to nothing else: the one service this site sends a request to is the key service, and a form elsewhere is an application nobody receives`
-          : `the key request page's <${el.name} ${attr}=${JSON.stringify(raw)}> loads from ${parsed.host}: the page loads nothing from another origin (D106), and the intake is reached by posting a form to it and never by fetching from it`,
-      )
-    }
-  }
   for (const el of walk(main)) {
-    for (const attr of FETCHING[el.name] ?? []) check(el, attr)
-    if (el.name === 'form') check(el, 'action')
-    if (['button', 'input'].includes(el.name)) check(el, 'formaction')
+    if (el.name === 'form') {
+      out.push(
+        `the key request page carries a <form> (action ${JSON.stringify(el.attrs.get('action') ?? '(none)')}): the site collects nothing, and a licence key is asked for in the portal, which the page links to rather than posting to — the policy's form-action is 'self' alone`,
+      )
+      continue
+    }
+    if (FIELDS.includes(el.name)) {
+      out.push(
+        `the key request page carries a <${el.name}>: the site asks a reader for nothing on this page, and a control here is one the built pages are held against (website/test/consent.mjs)`,
+      )
+    }
   }
   return out
 }
 
-// ---- 4. the privacy link ------------------------------------------------------------------
+// ---- 2. the portal link -------------------------------------------------------------------
+
+/**
+ * Every way the page's pointer at the portal departs from the task, or [].
+ *
+ * The portal is Fugaro's own service on `app.` plus the site's canonical host, derived by
+ * `src/lib/portal.mjs` — the same function the deployed policy and the other checks derive it
+ * from, so the page, the `allowed_hosts` entry the link check resolves it against and the policy
+ * are one host rather than three copies of it. The link is absolute (the portal is another
+ * origin), so a relative href is not it.
+ */
+export function portalLinkFailures(main, portal) {
+  const hrefs = [...walk(main)].filter((el) => el.name === 'a' && el.attrs.has('href')).map((el) => el.attrs.get('href'))
+  const isPortal = (href) => {
+    try {
+      return new URL(href).origin === portal
+    } catch {
+      return false
+    }
+  }
+  if (!hrefs.some(isPortal)) {
+    return [
+      `the key request page carries no link to the portal (${portal}): a licence key is asked for in Fugaro's own signed-in service now, so the page's whole job is to send a reader there (the portal plan's P9.3; src/lib/portal.mjs)`,
+    ]
+  }
+  return []
+}
+
+// ---- 3. the privacy link ------------------------------------------------------------------
 
 /**
  * Every way the page's pointer at the privacy statement departs from the task, or [].
@@ -307,7 +131,7 @@ export function privacyLinkFailures(main, facts) {
   }
   if (!hrefs.some(isStatement)) {
     return [
-      "the key request page carries no link to /privacy/: the intake collects an applicant's address and the repositories they name, and the statement that says what is collected, how long it is kept and who receives it is the one a reader filling a form has to be able to read first (the design's §7.3, S7.3)",
+      "the key request page carries no link to /privacy/: what the service keeps, and for how long, is stated there, so a reader sent to the portal is owed the route back to it",
     ]
   }
   return []
@@ -316,77 +140,64 @@ export function privacyLinkFailures(main, facts) {
 // ---- the gate -----------------------------------------------------------------------------
 
 const FACTS = siteFacts()
-const INTAKE = keysIntakeOrigin(FACTS.canonicalURL)
+const PORTAL = portalOrigin(FACTS.canonicalURL)
 
-test('the key request page posts its three requests to the intake, and to nothing else', () => {
+test('the key request page carries no form, and points a reader at the portal', () => {
   const main = mainOf(keysPage().html)
-  for (const failures of [formFailures(main, INTAKE), fieldFailures(main), fetchFailures(main, FACTS, INTAKE), privacyLinkFailures(main, FACTS)]) {
+  for (const failures of [formFreeFailures(main), portalLinkFailures(main, PORTAL), privacyLinkFailures(main, FACTS)]) {
     assert.deepEqual(failures, [], failures.join('\n'))
   }
+
+  // The deployed policy's half, read where the page's history touched it: the site may post
+  // nowhere but itself, because it carries no form at all.
+  const formAction = new Map(
+    deployedCSP()
+      .split(';')
+      .map((part) => part.trim().split(/\s+/).filter(Boolean))
+      .filter((t) => t.length)
+      .map(([name, ...values]) => [name, values]),
+  ).get('form-action')
+  assert.deepEqual(formAction, ["'self'"], `firebase.json's form-action is ${JSON.stringify(formAction)}: the site carries no form, so the key request page's forms' intake widening came off with them (S3.3)`)
 })
 
 // ---- the refusals, kept -------------------------------------------------------------------
 
-const SHELL = (body) => `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Get a key</h1>${body}</main></body></html>`
+const SHELL = (body) =>
+  `<!DOCTYPE html><html lang="en"><head><title>t</title></head><body><main><h1>Get a key</h1>${body}</main></body></html>`
 
-/** The page's three forms, as the page writes them: a labelled field each. */
-const THREE_FORMS = FORMS.map(
-  (one) =>
-    `<section id="${one.id}"><h2>${one.id}</h2><form method="post" action="${INTAKE}${one.route}">` +
-    `<label for="${one.id}-email">Email address</label><input id="${one.id}-email" name="email" type="email"></form></section>`,
-).join('')
+/** The shipped shape of the page: the portal link, the privacy link, and no control. */
+const shipped = (body = `<a href="${PORTAL}" rel="noopener">Go to the portal</a><p><a href="/privacy/">privacy statement</a></p>`) => SHELL(body)
 
-/** The shipped shape of the page, with `body` standing in for the three forms. */
-const shipped = (body = THREE_FORMS) => SHELL(`${body}<p><a href="/privacy/">privacy statement</a></p>`)
+test('a form or a field on the key request page is refused', () => {
+  assert.deepEqual(formFreeFailures(mainOf(shipped())), [], 'the shipped shape of the page is refused, so this case proves nothing')
 
-test('a form posting anywhere but the intake, a wrong method, a wrong route and a missing form are refused', () => {
-  assert.deepEqual(formFailures(mainOf(shipped()), INTAKE), [], 'the shipped shape of the three forms is refused, so this case proves nothing')
-
-  const cases = [
-    ['a form posting elsewhere', THREE_FORMS.replace(`${INTAKE}/request`, 'https://collect.example.net/request'), /is not on the intake/],
-    ['a GET', THREE_FORMS.replace('method="post"', 'method="get"'), /submits with method="get"/],
-    ['a relative action', THREE_FORMS.replace(`${INTAKE}/free-seat`, '/free-seat'), /is not an absolute URL/],
-    ['a route the service does not answer', THREE_FORMS.replace(`${INTAKE}/open-source`, `${INTAKE}/purchase`), /not one of the requests this page carries/],
-    ['a route with a query on it', THREE_FORMS.replace(`${INTAKE}/request`, `${INTAKE}/request?utm=1`), /carries a query or a fragment/],
-    ['a form outside the section that names its request', THREE_FORMS.replace('<section id="request">', '<section id="other">'), /sits in no section carrying id="request"/],
-    ['a missing request', THREE_FORMS.replace(/<section id="request">.*?<\/section>/, ''), /carries no form posting to \/request/],
-  ]
-  for (const [what, body, expected] of cases) {
-    assert.match(formFailures(mainOf(shipped(body)), INTAKE).join('\n'), expected, `${what} was not refused as expected (${expected})`)
-  }
-  assert.match(formFailures(mainOf(shipped(THREE_FORMS.replace(/<section id="request">.*?<\/section>/, ''))), INTAKE).join('\n'), /carries 2 form/)
-})
-
-test('a field outside the forms, a field with no name and an unlabelled field are refused', () => {
-  assert.deepEqual(fieldFailures(mainOf(shipped())), [], 'the shipped shape of the three forms is refused, so this case proves nothing')
-
-  const cases = [
-    ['a field outside the forms', `${THREE_FORMS}<label for="extra">Age</label><input id="extra" name="age">`, /sits outside the three forms/],
-    ['a field with no name', THREE_FORMS.replace(' name="email"', ''), /carries no name/],
-    ['an unlabelled field', THREE_FORMS.replace('<label for="free-seat-email">Email address</label>', ''), /has no label pointing at it/],
-  ]
-  for (const [what, body, expected] of cases) {
-    assert.match(fieldFailures(mainOf(shipped(body))).join('\n'), expected, `${what} was not refused as expected (${expected})`)
+  for (const [what, body, expected] of [
+    ['a form', `<form method="post" action="/free-seat"><button>go</button></form>`, /carries a <form>/],
+    ['a form posting to another host', `<form method="post" action="https://keys.example.net/free-seat"><button>go</button></form>`, /carries a <form>/],
+    ['an input', `<input name="email" type="email">`, /carries a <input>/],
+    ['a textarea', `<textarea name="request"></textarea>`, /carries a <textarea>/],
+    ['a select', `<select name="plan"><option>x</option></select>`, /carries a <select>/],
+  ]) {
+    assert.match(formFreeFailures(mainOf(SHELL(body))).join('\n'), expected, `${what} was not refused as expected (${expected})`)
   }
 })
 
-test('a third-party fetch, a post off the intake and a protocol-relative fetch are refused', () => {
-  assert.deepEqual(fetchFailures(mainOf(shipped()), FACTS, INTAKE), [], 'the shipped page fetches something this case refuses, so it proves nothing')
-
-  const cases = [
-    ['an image from a third party', '<img src="https://pixel.example.net/p.gif" alt="">', /loads from pixel\.example\.net/],
-    ['a scheme-only image URL in another scheme, which a browser reads as another host', '<img src="http:pixel.example.net/p.gif" alt="">', /loads from pixel\.example\.net/],
-    ['an image this site serves over plain http', '<img src="http://site.example/a.png" alt="">', /loads from site\.example/],
-    ['an image in srcset', '<img src="/a.png" srcset="/a.png 1x, https://img.example.net/a@2x.png 2x" alt="">', /loads from img\.example\.net/],
-    ['a protocol-relative image', '<img src="//pixel.example.net/p.gif" alt="">', /loads from pixel\.example\.net/],
-    ['a stylesheet from another host', '<link rel="stylesheet" href="https://cdn.example.net/x.css">', /loads from cdn\.example\.net/],
-    ['a frame', '<iframe src="https://embed.example.net/x" title="e"></iframe>', /loads from embed\.example\.net/],
-  ]
-  for (const [what, body, expected] of cases) {
-    assert.match(fetchFailures(mainOf(shipped(body)), FACTS, INTAKE).join('\n'), expected, `${what} was not refused as expected (${expected})`)
+test('a page with no portal link, or one pointing elsewhere, is refused', () => {
+  assert.deepEqual(portalLinkFailures(mainOf(shipped()), PORTAL), [], 'the shipped page carries the link this case refuses, so it proves nothing')
+  assert.match(
+    portalLinkFailures(mainOf(SHELL('<h1>t</h1>')), PORTAL).join('\n'),
+    /carries no link to the portal/,
+    'a page with no portal link was not refused',
+  )
+  // A host that merely starts with the portal's, and a relative link, are not the portal: the
+  // comparison is the origin, and the portal is another origin, so its link is absolute.
+  for (const href of [`${PORTAL}.attacker.example/`, '/portal/', 'https://elsewhere.example/']) {
+    assert.match(
+      portalLinkFailures(mainOf(SHELL(`<a href="${href}">portal-ish</a>`)), PORTAL).join('\n'),
+      /carries no link to the portal/,
+      `${href} was taken for the portal`,
+    )
   }
-  const elsewhere = THREE_FORMS.replace(`${INTAKE}/request`, 'https://collect.example.net/')
-  assert.match(fetchFailures(mainOf(shipped(elsewhere)), FACTS, INTAKE).join('\n'), /posts to collect\.example\.net/)
 })
 
 test('a page with no pointer at the privacy statement is refused', () => {

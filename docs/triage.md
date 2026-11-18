@@ -228,6 +228,22 @@ carries:
   follow-up inherits;
 - the finding's text and the judge's reason, **fenced as data** in the brief.
 
+Where the command runs is where `fugaro run` runs: your own terminal, and a
+coding agent's session, with no difference between the two and no prompt either
+way. The parent pull request is read with whatever credential is there. At your
+terminal that is the repository's own — the App ID the local config records,
+with `FUGARO_GITHUB_APP_ID` only the fallback when the config holds none, and
+the App's private key, or the project's `bitbucket-token` secret — read through
+the same seam, behind the same one-line notice and the same refusals, that
+`fugaro image build` copies a catalog entry's Dockerfile with
+([git-providers.md](git-providers.md)). A coding agent's session holds no key
+and reads none of it: where the installation publishes a credentials service
+the read is the service's own read mint, one read-only token scoped to the
+repository (`contents`, `pull_requests` and `metadata`, all read), the same read
+`fugaro review verify` makes of a pull request's head; where it publishes none
+the session is refused — the refusal names `fugaro followups` — and the command
+is one to run at your terminal.
+
 `--max` caps the tasks one call files (10 by default), `--json` prints the same
 plan as a versioned document, and a group that already has a run is skipped — a
 second call after a partial launch therefore files nothing twice. Nothing is

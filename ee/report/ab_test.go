@@ -261,6 +261,12 @@ func TestABReportHasNoPerson(t *testing.T) {
 		abModelAlpha, abModelBeta, abModelGamma, "poc", "pro", "small", ABTierNone, ModeNone,
 		string(ab.DecisionChallenger), string(ab.DecisionKeep), string(ab.DecisionNoConclusion),
 		string(ab.RuleCheaperNotWorse), string(ab.RuleBetterWithinRate), string(ab.RuleKeep), string(ab.RuleBelowMinimum),
+		// The slot a coder pair varies (B1.3), and the two effort fields a coder
+		// row leaves empty: only a review round records an effort, so a coder
+		// pair records none, and the empty spelling is that fact rather than a
+		// word. Both are listed rather than skipped, so an empty string field
+		// added to a row later is still something this test makes a reader read.
+		string(task.ABSlotCoder), "",
 	}
 	for _, s := range abRowStrings(row) {
 		if !slices.Contains(vocabulary, s) {

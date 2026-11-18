@@ -2894,6 +2894,10 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 	serviceAccessor := func(workflow, logical string) string {
 		return `module.repo.module.workflow["` + workflow + `"].google_secret_manager_secret_iam_member.service["` + logical + `"]`
 	}
+	// buildInvoker is B4.4's grant: the repository's build account may invoke
+	// the service too, and it is one address for the module rather than one
+	// per workflow, because a repository has one build account.
+	buildInvoker := []string{"module.repo.google_cloud_run_v2_service_iam_member.build_credentials[0]"}
 	for _, tc := range []struct {
 		name string
 		in   Inputs
@@ -2907,9 +2911,11 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 		wantGone   []string
 		wantAppKey []string
 		// wantAdd is what the switch ARRIVES with in each of those two states,
-		// and it is two sets of grants, not one: the job's invoker grant on the
-		// service (D135), and the service's own accessor on each container the
-		// job still mounts (D2074) — which is one fewer under C2.2's release,
+		// and it is three sets of grants, not one: the job's invoker grant on
+		// the service (D135), the build account's own invoker grant on it
+		// (B4.4 — one address for the module, since a repository has one build
+		// account), and the service's own accessor on each container the job
+		// still mounts (D2074) — which is one fewer under C2.2's release,
 		// because the App key's mount goes with its accessor (F1).
 		wantAdd       []string
 		wantAddAppKey []string
@@ -2918,8 +2924,8 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 			name:          "cascade, the auth the service serves",
 			in:            repoRootInputs(t, repoRootCascadeAgent),
 			lc:            parseLC(t, repoRootLC),
-			wantAdd:       slices.Concat(invoker("web"), []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
-			wantAddAppKey: slices.Concat(invoker("web"), []string{serviceAccessor("web", "npm-token")}),
+			wantAdd:       slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "github-app-key"), serviceAccessor("web", "npm-token")}),
+			wantAddAppKey: slices.Concat(invoker("web"), buildInvoker, []string{serviceAccessor("web", "npm-token")}),
 			wantAppKey:    appKey("web"),
 		},
 		{
@@ -2982,7 +2988,7 @@ func TestRepoAddressesFollowTheSwitch(t *testing.T) {
 					t.Errorf("with the credentials service deployed (%s), Addresses() drops %v, want exactly %v: the module's gate is auth-blind (modules/workflow/sa.tf's var.credentials_service), so the repository root's own block — CredentialsServiceServes — is what decides a job may give an accessor up, and only a cascade job of a ready installation may", well, gone, wantGone)
 				}
 				if !slices.Equal(added, wantAdd) {
-					t.Errorf("with the credentials service deployed (%s), Addresses() adds %v, want exactly %v: the job's one invoker grant on the service (D135), and nothing else", well, added, wantAdd)
+					t.Errorf("with the credentials service deployed (%s), Addresses() adds %v, want exactly %v: the job's invoker grant and the build account's own on the service (D135, B4.4), the service's accessor per mounted container (D2074), and nothing else", well, added, wantAdd)
 				}
 				// The retirement directions: what an installation that applied
 				// with the service off must be told to retire when the switch
@@ -4263,7 +4269,7 @@ func TestGitHubRepositoryIsNeverJudgedAgainstTheBitbucketEntry(t *testing.T) {
 	in := webappInputs(t)
 	in.Installation.CredentialsService = credentialsService()
 	in.LC.ProjectSecrets = map[string]config.ProjectSecret{
-		config.BitbucketSecret: {AllowDataTo: []string{"acme/webapp"}, Proxy: true},
+		config.BitbucketSecret: {AllowDataTo: []string{"acme/webapp"}, Proxy: config.ProxyFlag(true)},
 	}
 	// The node admits the same owner/name, and only as a bitbucket repository:
 	// MatchRepo compares the provider segment, so this never admits a GitHub
@@ -4823,4 +4829,123 @@ func TestProjectSecretCandidateFromNode(t *testing.T) {
 			t.Error("a workspace pattern the owner published did not admit a repository of it")
 		}
 	})
+}
+
+// sharedSandboxPolicy is the published node of a project whose Bitbucket
+// default profile serves the sandbox fixture, with both allow_repos lists —
+// the project's and the profile's, which projectpolicy.Admits reads together —
+// admitting exactly repos, spelled the one way a policy spells a repository
+// (projectpolicy.Canonical: "bitbucket/acme/sandbox").
+func sharedSandboxPolicy(repos ...string) *projectpolicy.Policy {
+	return &projectpolicy.Policy{
+		Version:    projectpolicy.Version,
+		AllowRepos: repos,
+		Profiles: map[string]projectpolicy.Profile{
+			projectpolicy.DefaultProfileName: {JobProfile: config.JobProfile{Provider: "bitbucket", AllowRepos: repos}},
+		},
+	}
+}
+
+// TestSpecMarksASharedRepo is M6's mark: a repository a deployed profile
+// admits is shared, which is the fact M7 reads to stop applying its
+// repository-level root and the structural precondition D2303 puts in place of
+// a retire gate.
+func TestSpecMarksASharedRepo(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	in.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rs.Shared {
+		t.Errorf("a repository the deployed %s profile admits is not marked shared, so `fugaro update` keeps applying its repository root (M6, D2303): policy %+v",
+			projectpolicy.DefaultProfileName, in.Policy)
+	}
+}
+
+// TestTheSharedMarkChangesNoTerraformInput is the half of M6's acceptance that
+// lets it merge before M7 and M2: the mark is a fact this process holds and
+// never a Terraform input, so a repository root plans what it planned before
+// the field existed and no root applies differently on the strength of the
+// mark alone.
+func TestTheSharedMarkChangesNoTerraformInput(t *testing.T) {
+	marked := sandboxInputs(t, m5Additions)
+	marked.Policy = sharedSandboxPolicy("bitbucket/acme/sandbox")
+	unmarked := sandboxInputs(t, m5Additions)
+	unmarked.Policy = sharedSandboxPolicy("bitbucket/acme/other")
+
+	ms, err := Repo(marked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	us, err := Repo(unmarked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without this the test would pass on two specs that both carry no mark,
+	// which is the state the field was added to change.
+	if !ms.Shared || us.Shared {
+		t.Fatalf("the fixture does not show the mark: marked.Shared = %v, unmarked.Shared = %v", ms.Shared, us.Shared)
+	}
+	mv, err := RepoVars(ms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uv, err := RepoVars(us)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(mv, uv) {
+		t.Errorf("the mark moved the repository root's tfvars, so a root applies differently for a shared repository (M6):\n%s\n%s", mv, uv)
+	}
+	var doc struct {
+		Repo map[string]json.RawMessage `json:"repo"`
+	}
+	if err := json.Unmarshal(mv, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc.Repo["shared"]; ok {
+		t.Errorf("the mark reached the tfvars as repo.shared: it is a fact of this process and not a Terraform input (M6)\n%s", mv)
+	}
+}
+
+// TestARepoNoProfileAdmitsIsUnmarked is the other half of the mark's rule: the
+// answer is a deployed profile's admission and nothing else, so every way a
+// profile can fail to admit the repository leaves it on its own job — which is
+// what M7's "a repository no profile admits keeps the existing path" reads.
+func TestARepoNoProfileAdmitsIsUnmarked(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy *projectpolicy.Policy
+	}{
+		{"no node was read", nil},
+		{"the node defines no profile", &projectpolicy.Policy{
+			Version: projectpolicy.Version, AllowRepos: []string{"bitbucket/acme/sandbox"}}},
+		{"the project's list does not admit it", sharedSandboxPolicy("bitbucket/acme/other")},
+		{"the profile's list does not admit it", func() *projectpolicy.Policy {
+			p := sharedSandboxPolicy("bitbucket/acme/sandbox", "bitbucket/acme/other")
+			p.Profiles[projectpolicy.DefaultProfileName] = projectpolicy.Profile{
+				JobProfile: config.JobProfile{Provider: "bitbucket", AllowRepos: []string{"bitbucket/acme/other"}}}
+			return p
+		}()},
+		{"the profile serves another provider", func() *projectpolicy.Policy {
+			p := sharedSandboxPolicy("bitbucket/acme/sandbox")
+			p.Profiles[projectpolicy.DefaultProfileName] = projectpolicy.Profile{
+				JobProfile: config.JobProfile{Provider: "github", AllowRepos: []string{"bitbucket/acme/sandbox"}}}
+			return p
+		}()},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := sandboxInputs(t, m5Additions)
+			in.Policy = tc.policy
+			rs, err := Repo(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if rs.Shared {
+				t.Errorf("the repository is marked shared, but no deployed profile admits it (M6): policy %+v", tc.policy)
+			}
+		})
+	}
 }

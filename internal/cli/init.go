@@ -801,12 +801,16 @@ type initRun struct {
 	// credsBitbucket is the same reading's other answer, whether the bundle
 	// holds the upstream Bitbucket token, which the gate on the flip's drop
 	// reads before it applies a proxied repository's root
-	// (bundleBitbucketToken, update_proxied.go).
-	credsRead      bool
-	credsNames     map[string]bool
-	credsAppKey    bool
-	credsRecord    bool
-	credsBitbucket bool
+	// (bundleBitbucketToken, update_proxied.go). credsBitbucketTyped is the
+	// same question about the named token family (D2350), which the proxy
+	// serves as readily (T15): S6's flip asks the two together
+	// (bundleHoldsBitbucketToken).
+	credsRead           bool
+	credsNames          map[string]bool
+	credsAppKey         bool
+	credsRecord         bool
+	credsBitbucket      bool
+	credsBitbucketTyped bool
 
 	// credsUnreadMarker is the marker of a session whose own rule kept the
 	// bundle unopened — a coding agent's session or a Fugaro run's own process

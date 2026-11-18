@@ -21,7 +21,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/diagnoseagent"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/srctree"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // troubleshoot is the local diagnosis of a command that failed on this machine
@@ -96,6 +99,23 @@ type troubleshootOptions struct {
 	maxBudgetUSD float64
 }
 
+// D2400's four tiers as the document's tier field spells them. Three are
+// written here, beside the document that carries them; the fourth, evidence, is
+// the pre-flight file's own (troubleshootTierEvidence, T-TC2), where the
+// decline that reaches it is written. Each is one word a reader outside this
+// binary consumes (`fugaro troubleshoot --json`, the history, the console), so
+// each is written once rather than spelled again at every reader.
+const (
+	// rules is the log answering by itself, with no model call and nothing sent
+	// anywhere (D1614).
+	troubleshootTierRules = "rules"
+	// local is the read-only child on this machine's own login (D1601).
+	troubleshootTierLocal = "local"
+	// cloud is the diagnosis job, which runs when this machine holds no
+	// credential at all (D2400).
+	troubleshootTierCloud = "cloud"
+)
+
 // troubleshootDoc is `fugaro troubleshoot --json`. It is one shape for both
 // answers the command gives: a diagnosis, and the offline path's evidence
 // (D1608), which is told apart by Offline.
@@ -113,12 +133,29 @@ type troubleshootDoc struct {
 	// be read against.
 	SourceNote string `json:"source_note,omitempty"`
 
-	Outcome    string            `json:"outcome,omitempty"`
-	Signature  string            `json:"signature,omitempty"`
-	Answer     string            `json:"answer,omitempty"`
-	Fixes      []troubleshootFix `json:"fixes,omitempty"`
-	CostUSD    float64           `json:"cost_usd,omitempty"`
-	ReportPath string            `json:"report_path,omitempty"`
+	// Tier is which of D2400's tiers answered. It is additive to the shape, and
+	// it is the field a reader outside this binary tells the tiers apart by: a
+	// console that showed a local answer as a cloud one, or a machine that
+	// answered from the evidence as if a model had, would be reporting a
+	// diagnosis nobody made.
+	Tier string `json:"tier,omitempty"`
+
+	Outcome   string            `json:"outcome,omitempty"`
+	Signature string            `json:"signature,omitempty"`
+	Answer    string            `json:"answer,omitempty"`
+	Fixes     []troubleshootFix `json:"fixes,omitempty"`
+	// CostUSD is the local child's own account of itself, and CloudCostUSD is
+	// the cloud run's record (D2407): two fields rather than one, because they
+	// are two different figures from two different measurers, and a reader that
+	// read the run's under the local one's name would draw a wrong number with
+	// no error (the field-meaning rule).
+	CostUSD      float64 `json:"cost_usd,omitempty"`
+	CloudCostUSD float64 `json:"cloud_cost_usd,omitempty"`
+	// CloudRun is the diagnosis run the cloud tier launched, in the reference
+	// every other command takes (`fugaro diagnose <ref>`): the answer's own run,
+	// which a person reads before deciding whether to keep the record.
+	CloudRun   string `json:"cloud_run,omitempty"`
+	ReportPath string `json:"report_path,omitempty"`
 
 	// Cause, Fix and LogLine are the answer the evidence gave by itself, with
 	// no model: Cause is the class of failure the log named, Fix is the one
@@ -269,11 +306,19 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 		fmt.Fprintf(cmd.ErrOrStderr(), "note: the changes since your version were not written: %v\n", oneLine(err.Error()))
 	}
 
+	// No credential of this machine's at all: D2400's third tier is the one
+	// that answers, and the local child is never reached (F2). This is the only
+	// branch the cloud tier hangs off — a person who holds a login keeps the
+	// local answer.
 	if credErr != nil {
-		return troubleshootOffline(cmd, o, ev, d, credErr)
+		return troubleshootCloudTier(cmd, o, ev, d, rec, credErr)
 	}
+	// A credential is here, so this is the tier that runs: the cloud job is not
+	// asked, and a local diagnosis that fails reaches the offline path, which is
+	// what a person is left with either way.
+	d.Tier = troubleshootTierLocal
 	ev.Nonce = diagnoseagent.NewNonce()
-	troubleshootEgress(cmd, o, d.Model, cred.handle)
+	troubleshootEgress(cmd, o, d.Model, troubleshootEgressTo{handle: cred.handle})
 	diag, err := troubleshootRun(ctx, diagnoseagent.Request{
 		Handle:      cred.handle,
 		Bin:         cred.bin,
@@ -299,6 +344,127 @@ func runTroubleshoot(cmd *cobra.Command, o *troubleshootOptions, ref string) err
 		d.Fixes = append(d.Fixes, troubleshootFix{Command: f.Command, Argv: f.Argv, Checked: f.Checked, Reason: f.Reason})
 	}
 	if troubleshootCarriesReport(diag.Outcome) {
+		path, err := troubleshootWriteReport(ev, d)
+		if err != nil {
+			return userErr("%v", err)
+		}
+		d.ReportPath = path
+	}
+	return printTroubleshoot(cmd.OutOrStdout(), d, o.asJSON)
+}
+
+// troubleshootCloudJob is what the cloud tier would launch: the environment the
+// run lives in, the slug it is stored under, and the task the launch writes.
+// The plan that resolves it is the launch's own half (D2409's scope, the
+// catalog recipe, the review-only class marker, the tier's bounds and its
+// timeout) and is left as the seam below.
+type troubleshootCloudJob struct {
+	env  *cloudEnv
+	slug string
+	spec *task.Spec
+}
+
+// This command's cloud tier is four seams, one per call that reaches outside
+// this process (the header of this file): the plan that resolves what the tier
+// would launch, T-TC1's pre-flight, T-TC5's upload and the launch itself. The
+// two halves of the launch are the next task's and are declared here, nil, so
+// that this binary compiles and ships without them: troubleshootCloudTier
+// answers what this command answered before the tier existed when either is
+// unset, rather than launching a spec nothing here can build.
+var (
+	// troubleshootCloudPlan resolves the job above from the evidence's own
+	// facts, and declines with D2409's reason when there is no repository to
+	// scope a run to.
+	troubleshootCloudPlan func(ctx context.Context, ev diagnoseagent.Evidence) (troubleshootCloudJob, error)
+	// troubleshootLaunchCloud is the launch, in the interface the plan names:
+	// one execution, no retry, and the run reference a person reads.
+	troubleshootLaunchCloud func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, error)
+	// troubleshootPreflight is T-TC1's judgement of the spec, made without
+	// launching any of it. It is a variable for the same reason the launch is:
+	// a test drives the tier's order and its answer with a verdict of its own,
+	// and the gates themselves are pinned against the real block in their own
+	// file.
+	troubleshootPreflight = troubleshootLaunchPath
+	// troubleshootUpload is T-TC5's upload, called as the tier's own step. It
+	// is a variable for the same reason the pre-flight is, and it is the one
+	// that makes D1606's sentence testable rather than merely asserted: the
+	// line is about to be true only if it is on the terminal when the first
+	// object is written, and that instant is this call.
+	troubleshootUpload = troubleshootUploadBundle
+)
+
+// troubleshootCloudTier is D2400's third tier: this machine holds no credential
+// of its own, so the diagnosis runs as a job in the person's own project, on
+// the project's account (D2403) — the local child is never reached on the
+// person's credential, and the person's credential never enters the container.
+//
+// The order is the tier's whole design, and every step of it is a refusal that
+// must come before the next:
+//
+//   - the plan first, so a failure outside any checkout declines (D2409) before
+//     anything exists;
+//   - T-TC1's pre-flight next, calling the launch path's own gate block without
+//     launching (D2401): a gate that refuses reaches the offline path with the
+//     gate's own sentence, which names the command that fixes it — the tier
+//     exists so that a person is not told a second failure by a job that met
+//     the same gate;
+//   - the egress line before the upload, because it says what is about to
+//     leave the machine (D1606, F4);
+//   - the bundle, then the launch, then the answer read back out of the run's
+//     own prefix (D2404, D2405);
+//   - the bundle deleted, and only once the answer is in hand: a job that did
+//     not answer may still be reading its inputs, and the objects expire with
+//     the run anyway.
+//
+// Its answer is the local tier's answer in everything a person reads (D2410):
+// the same check of every command against this CLI's own command tree, the same
+// report file for an outcome that carries one, and the cost the run's record
+// holds rather than a figure of the job's own.
+func troubleshootCloudTier(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, rec srctree.Record, credErr error) error {
+	ctx := cmd.Context()
+	if troubleshootCloudPlan == nil || troubleshootLaunchCloud == nil {
+		// The launch is the next task's, and this binary does not carry it yet:
+		// what it answers is what it answered before this tier existed — the
+		// evidence, with the reason the credential was refused — rather than a
+		// refusal of a tier nobody asked for or a job launched from a spec no
+		// code here can build.
+		return troubleshootOffline(cmd, o, ev, d, credErr)
+	}
+	job, err := troubleshootCloudPlan(ctx, ev)
+	if err != nil {
+		return troubleshootOffline(cmd, o, ev, d, err)
+	}
+	s := runstore.Open(job.env.bucket.Bucket, job.slug, job.spec.RunID)
+	// The spec is judged before anything of it exists: no task, no token, no
+	// object, no execution.
+	if err := troubleshootPreflight(ctx, job.env, &runOptions{repo: job.spec.Repo}, job.slug, s, job.spec); err != nil {
+		return troubleshootOffline(cmd, o, ev, d, errors.New(troubleshootDeclineCloud(err)))
+	}
+	troubleshootEgress(cmd, o, d.Model, troubleshootEgressTo{cloud: &job})
+	if err := troubleshootUpload(ctx, s, ev, rec); err != nil {
+		return troubleshootOffline(cmd, o, ev, d, err)
+	}
+	ref, err := troubleshootLaunchCloud(ctx, job.env, job.slug, job.spec)
+	if err != nil {
+		return troubleshootOffline(cmd, o, ev, d, err)
+	}
+	ans, err := troubleshootReadAnswer(ctx, s)
+	if err != nil {
+		return troubleshootOffline(cmd, o, ev, d, err)
+	}
+	troubleshootDeleteBundle(ctx, s, cmd.ErrOrStderr())
+	d.Tier, d.CloudRun, d.CloudCostUSD = troubleshootTierCloud, ref, ans.CostUSD
+	d.Outcome, d.Signature = ans.Outcome, ans.Signature
+	// The job wrote this text, and this machine's own values are the ones the
+	// read-back redacted it against (F20): what is left is model output about
+	// text nobody here wrote, and the check below is the same one the local
+	// answer passes (D2410).
+	check := troubleshootChecker(cmd.Root())
+	d.Answer = diagnoseagent.FixText(ans.Text, check)
+	for _, f := range diagnoseagent.Fixes(ans.Text, check) {
+		d.Fixes = append(d.Fixes, troubleshootFix{Command: f.Command, Argv: f.Argv, Checked: f.Checked, Reason: f.Reason})
+	}
+	if troubleshootCarriesReport(ans.Outcome) {
 		path, err := troubleshootWriteReport(ev, d)
 		if err != nil {
 			return userErr("%v", err)
@@ -522,6 +688,21 @@ func troubleshootSourceNote(rec srctree.Record) string {
 	return fmt.Sprintf("this is a %s build of fugaro with no release tag, so the source tree is the newest release (%s) and may not be the code that failed", Version, rec.Version)
 }
 
+// troubleshootEgressTo is where one tier's evidence goes, and it is the whole
+// difference between the two lines below: the local tier's own credential, or
+// the cloud job whose project receives the bundle and whose account signs the
+// model call. It is a value rather than a second function because the line must
+// stay one place — which stream it goes to is a property of --json and of no
+// tier.
+type troubleshootEgressTo struct {
+	// handle is the local tier's credential (D1601): a variable of this
+	// environment, or the login claude already holds on this machine.
+	handle diagnoseagent.Handle
+	// cloud is the job the cloud tier is about to upload for (D2404), nil on
+	// every other tier.
+	cloud *troubleshootCloudJob
+}
+
 // troubleshootEgress is D1606's one line, printed before anything is sent and
 // asking nothing: the typed command is the consent (F13). It names the
 // provider, which account pays, and what class of data goes.
@@ -529,20 +710,37 @@ func troubleshootSourceNote(rec srctree.Record) string {
 // In --json mode it goes to stderr, so that the document on stdout stays one
 // document; the same sentence is what a person reads either way.
 //
-// The credential is always this machine's own — a variable of the environment,
-// or the login claude already holds here — because this command reads no
-// project account. The one that is the machine's own login says so in as many
-// words, and says that Fugaro sends no token with it: what goes to the provider
-// there is the login the person already has, and nothing of Fugaro's.
-func troubleshootEgress(cmd *cobra.Command, o *troubleshootOptions, model string, h diagnoseagent.Handle) {
-	account := "your own Claude login"
-	switch {
-	case h.Local():
-		account += " on this machine, the one claude already holds here, and Fugaro sends no token with it"
-	case !h.Own():
-		account = "the project's Claude account " + h.Account()
+// The local tier's credential is always this machine's own — a variable of the
+// environment, or the login claude already holds here — because this command
+// reads no project account. The one that is the machine's own login says so in
+// as many words, and says that Fugaro sends no token with it: what goes to the
+// provider there is the login the person already has, and nothing of Fugaro's.
+//
+// The cloud tier is F4's fourth case, and it is the one sentence that must be
+// right: nothing leaves this machine on the person's own credential there at
+// all, and the evidence does not go straight to the provider either (D2403). It
+// goes to the person's own project first — the runs bucket the bundle is
+// written into, and the job that reads it — and only from there to Anthropic,
+// on the account the project's job is signed for. Both are named, the project
+// first, in the order the data travels: a line that named Anthropic alone would
+// say the evidence went to the provider when it had not been sent anywhere yet,
+// and a line that named the person's own login would be describing a credential
+// this tier never touches.
+func troubleshootEgress(cmd *cobra.Command, o *troubleshootOptions, model string, to troubleshootEgressTo) {
+	var line string
+	if job := to.cloud; job != nil {
+		line = fmt.Sprintf("Sending to your own Cloud project %s first, which runs the diagnosis job and holds its evidence, and from there to Anthropic on the project's Claude account %s: the redacted log, fugaro doctor's output, the effective configuration and the Fugaro source at this version, read by the model %s.\n",
+			oneLine(job.env.lc.GCPProject), pluginwire.Printable(reviewAccount(job.spec)), oneLine(model))
+	} else {
+		account := "your own Claude login"
+		switch {
+		case to.handle.Local():
+			account += " on this machine, the one claude already holds here, and Fugaro sends no token with it"
+		case !to.handle.Own():
+			account = "the project's Claude account " + to.handle.Account()
+		}
+		line = fmt.Sprintf("Sending to Anthropic on %s: the redacted log, fugaro doctor's output, the effective configuration and the Fugaro source at this version, read by the model %s.\n", account, oneLine(model))
 	}
-	line := fmt.Sprintf("Sending to Anthropic on %s: the redacted log, fugaro doctor's output, the effective configuration and the Fugaro source at this version, read by the model %s.\n", account, oneLine(model))
 	if o.asJSON {
 		fmt.Fprint(cmd.ErrOrStderr(), line)
 		return
@@ -591,6 +789,10 @@ func troubleshootWriteReport(ev diagnoseagent.Evidence, d troubleshootDoc) (stri
 // rather than a failure line and nothing else.
 func troubleshootOffline(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, reason error) error {
 	d.Offline, d.Reason = true, oneLine(reason.Error())
+	// Whatever tier ran and did not answer, what a person is left with is the
+	// evidence where it already is (D2400), and the tier field says so: a
+	// reader outside this binary must not be told a diagnosis happened.
+	d.Tier = troubleshootTierEvidence
 	d.LogTail, d.logTailSkipped = troubleshootLogTail(ev)
 	d.Doctor = troubleshootEvidenceFile(ev, "doctor.txt")
 	// The model is printed with the rest of the header and no answer is: no
@@ -723,6 +925,7 @@ func troubleshootLogCause(ev diagnoseagent.Evidence) (c troubleshootCause, line 
 // something, which is what exit 0 means here (D1608 exits non-zero only because
 // that path explains nothing).
 func troubleshootExplained(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, c troubleshootCause, line string) error {
+	d.Tier = troubleshootTierRules
 	d.Cause, d.Fix, d.LogLine = c.cause, c.fix, line
 	d.LogTail, d.logTailSkipped = troubleshootLogTail(ev)
 	d.Doctor = troubleshootEvidenceFile(ev, "doctor.txt")
@@ -955,9 +1158,22 @@ func printTroubleshoot(w io.Writer, d troubleshootDoc, asJSON bool) error {
 	if d.Signature != "" {
 		fmt.Fprintf(&b, "Signature: %s\n", oneLine(d.Signature))
 	}
+	// The run the cloud tier launched, so that the person can read the record
+	// this answer came out of (`fugaro diagnose`, `fugaro runs show`) — and
+	// nothing else is printed about it: the cost below is the record's, and the
+	// artifact the answer was read from is the record's own row.
+	if d.CloudRun != "" {
+		fmt.Fprintf(&b, "Cloud run: %s\n", oneLine(d.CloudRun))
+	}
 	fmt.Fprintf(&b, "\n%s\n", multiLine(strings.TrimRight(d.Answer, "\n")))
 	if d.CostUSD > 0 {
 		fmt.Fprintf(&b, "\nCost:      $%.4f (the model this diagnosis ran on)\n", d.CostUSD)
+	}
+	if d.CloudCostUSD > 0 {
+		// Said to be the record's and not the meter's (D2407): a job killed at
+		// its timeout may have spent without recording, and this figure is the
+		// one `fugaro runs show` and the budget ledger carry.
+		fmt.Fprintf(&b, "\nCost:      $%.4f (what the diagnosis run's record holds)\n", d.CloudCostUSD)
 	}
 	if d.ReportPath != "" {
 		fmt.Fprintf(&b, "Report:    %s\n", oneLine(d.ReportPath))

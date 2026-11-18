@@ -139,7 +139,9 @@ func TestOpenSourceRequestQueuesForOperations(t *testing.T) {
 	if alerts[0].Subject != queueSubject {
 		t.Errorf("the notification's subject is %q, want the service's own (%q)", alerts[0].Subject, queueSubject)
 	}
-	for _, wanted := range []string{danaEmail, openPlanName, openSourceOrg, repositoryURL, RouteAdmin} {
+	// The link is the portal's own page for the queue (P5.1), which is where the
+	// owner decides it since P9.3 retired this service's admin page.
+	for _, wanted := range []string{danaEmail, openPlanName, openSourceOrg, repositoryURL, routeOps} {
 		if !strings.Contains(alerts[0].Body, wanted) {
 			t.Errorf("the notification does not carry %q, and the owner decides the request off it: %q", wanted, alerts[0].Body)
 		}

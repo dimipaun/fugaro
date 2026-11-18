@@ -28,8 +28,6 @@ agent.models.diagnose
 agent.models.reviewer
 agent.models.vision
 agent.recipe
-binaries.allow
-binaries.max_bytes
 bitbucket_api_roots
 bitbucket_tokens.conformance.coverage
 bitbucket_tokens.conformance.expires

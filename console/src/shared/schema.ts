@@ -1765,6 +1765,37 @@ export interface PlanReleaseView {
   readonly open: Reading
 }
 
+/** PlanRangeView is one end of an estimate: the low and the high of the sample
+ * the plan's figures were taken at, each a `Reading` like every other number a
+ * screen draws. */
+export interface PlanRangeView {
+  readonly low: Reading
+  readonly high: Reading
+}
+
+/**
+ * PlanEstimateView is one plan's estimate -- the additive `estimate` block
+ * `plan status --json` carries (the orchestrator graph estimates plan's S3,
+ * D2714; `internal/plan/estimate.go`, `Estimate`), which is what the Graph
+ * screen's plan scope draws beside a plan.
+ *
+ * **`cost` is absent when the plan's money cannot be stated at all**, and then
+ * `unknownTasks` says how many tasks it could not be computed for (D2723): the
+ * two are one answer, never both and never neither, so a screen shows the
+ * count rather than a range that added up the tasks it happened to know.
+ * `readyInMinutes` has no such case -- a tier always has seed minutes to be
+ * estimated at (D2712).
+ *
+ * The block's own `nodes`, `max_running` and `computed_at` are not read: the
+ * console draws the two ranges and the count, and a key it draws nothing from
+ * is not decoded (the rule the document's other readers keep).
+ */
+export interface PlanEstimateView {
+  readonly readyIn: PlanRangeView
+  readonly cost: PlanRangeView | null
+  readonly unknownTasks: Reading
+}
+
 /** PlanView is one plan. `nodes` holds every task with `--all` and the open
  * ones alone without it, while `tasks`/`closed`/`open` count every task either
  * way -- so a header drawn from those three reads the same in both reads. */
@@ -1778,6 +1809,10 @@ export interface PlanView {
   readonly tasks: Reading
   readonly closed: Reading
   readonly open: Reading
+  /** the plan's estimate, or `null` for a CLI older than the release that
+   * carries one -- which is the same absence as none, and a screen draws
+   * nothing either way */
+  readonly estimate: PlanEstimateView | null
 }
 
 /** PlanTotalsView is every plan's figures added up: the header line a screen
@@ -1904,6 +1939,40 @@ function planReleaseAt(raw: unknown, index: number, plan: string, where: string)
   }
 }
 
+/** planRangeAt is one end of an estimate. Its two members go through
+ * `readingOf`, so a range the document did not carry whole is two `n/a`s rather
+ * than a refused document: the estimate is a figure beside a plan, and a plan
+ * whose figure the console cannot read is still a plan it draws. */
+function planRangeAt(raw: unknown, field: string, where: string): PlanRangeView {
+  const range = objectAt(raw, field, where)
+  return { low: readingOf(range, 'low', field), high: readingOf(range, 'high', field) }
+}
+
+/**
+ * planEstimateAt reads a plan's `estimate` block, `null` when the document has
+ * none: the key is **additive** (the CLI's compatibility rule), so a CLI older
+ * than the release that added it writes no estimate at all and a console draws
+ * nothing rather than a `0`-valued figure. Absent and `null` are the same fact
+ * here, as they are for the node's `omitempty` keys.
+ *
+ * `ready_in_minutes` is required -- an estimate with no time in it is a shape
+ * this console has not learned to read, refused by name like any other required
+ * key -- while `cost_usd` may be absent, and then the plan's cost is unknown
+ * rather than nothing (D2723).
+ */
+function planEstimateAt(plan: Record<string, unknown>, field: string, where: string): PlanEstimateView | null {
+  const value = plan['estimate']
+  if (value === undefined || value === null) return null
+  const at = `${field}.estimate`
+  const estimate = objectAt(value, at, where)
+  const cost = estimate['cost_usd']
+  return {
+    readyIn: planRangeAt(required(estimate, 'ready_in_minutes', at, where), `${at}.ready_in_minutes`, where),
+    cost: cost === undefined || cost === null ? null : planRangeAt(cost, `${at}.cost_usd`, where),
+    unknownTasks: readingOf(estimate, 'cost_unknown_tasks', at),
+  }
+}
+
 function planAt(raw: unknown, index: number, where: string): PlanView {
   const field = `plans[${String(index)}]`
   const plan = objectAt(raw, field, where)
@@ -1921,6 +1990,7 @@ function planAt(raw: unknown, index: number, where: string): PlanView {
     tasks: readingOf(plan, 'tasks', `${field}.tasks`),
     closed: readingOf(plan, 'closed', `${field}.closed`),
     open: readingOf(plan, 'open', `${field}.open`),
+    estimate: planEstimateAt(plan, field, where),
   }
 }
 
