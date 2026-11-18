@@ -439,6 +439,70 @@ func TestCredentialsServiceSharedJobAccountsReachTheService(t *testing.T) {
 	}
 }
 
+// TestCredentialsServiceRepoBuildAccountsReachTheAuthenticator is the same
+// wiring test for the repository build class (B4.3, R5, D2076, G20): the rows
+// the build-credentials route admits are derived from FUGARO_JOB_ACCOUNTS —
+// the same document the job bindings come from, read a third way — and a class
+// quietly dropped on the way to AuthConfig would look exactly like an
+// installation that runs no repository's build. Only the route's answer would
+// differ, and reaching it takes a Google ID token.
+//
+// The class's own overlap rule is what makes the wiring reachable: one address
+// may not be both a repository's build service account and one of the
+// installation's verifiers, because one caller would then be two classes
+// (auth.go). The address below is DERIVED from the document this file's
+// environment holds, by the function the command derives it with, so the
+// refusal exists ONLY if the rows arrived at the authenticator — a service
+// built with RepoBuildAccounts dropped starts, and one built with the rows
+// refuses. The refusal names the variable and never an account, which is this
+// process's own no-echo rule.
+//
+// The second half is the empty half of the same wiring: an empty job document
+// is refused by name (a table that binds nothing admits nobody), and the
+// derivation is over the SAME per-provider list the job accounts come from, so
+// there is no state in which a repository has a build class and no jobs.
+//
+// Mutation (verified, run and restored): dropping RepoBuildAccounts from the
+// AuthConfig literal in credentialsServiceConfig — this test fails on the
+// first half, the configuration building with the verifier admitted and no
+// build class configured.
+func TestCredentialsServiceRepoBuildAccountsReachTheAuthenticator(t *testing.T) {
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	// The one repository this file's environment names, read the way the
+	// command reads it: the derived row is the deployment's own account and not
+	// a second spelling of it.
+	rows, err := credsvc.RepoBuildAccountsFor(credentialsServeEnv[envGCPProject], "github",
+		[]credsvc.RepoJob{{Repo: "acme/webapp", Workflow: "api"}})
+	if err != nil {
+		t.Fatalf("RepoBuildAccountsFor over the document this file's environment holds: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the derived rows = %+v, want one for the one repository the document names", rows)
+	}
+	buildAccount := rows[0].Email
+	t.Setenv(envVerifierAccounts, `["`+buildAccount+`"]`)
+	fakeCredentialsService(t)
+
+	_, err = credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: one address that is both a verifier and a repository's build service account must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") || !strings.Contains(err.Error(), "build service account") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers because the address is also a repository's build service account, which is reachable only if the build rows reached the authenticator", err)
+	}
+	if strings.Contains(err.Error(), buildAccount) {
+		t.Errorf("err = %v, which carries the derived build account itself: the refusal names the variable and never an account", err)
+	}
+
+	t.Setenv(envVerifierAccounts, "")
+	t.Setenv(envJobAccounts, "[]")
+	if _, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: a job document that names no job binds no run to a repository and is refused by name", err)
+	}
+}
+
 // TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder:
 // the document is a deployment's own text, so its order is not a fact about the
 // installation and the same rows written twice are one account -- the table

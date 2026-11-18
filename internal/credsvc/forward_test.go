@@ -384,6 +384,16 @@ func TestServiceHasNoAdminRoutes(t *testing.T) {
 		{http.MethodGet, VerifyPath},
 		{http.MethodPost, VerifyPath + "/"},
 		{http.MethodPost, VerifyPath + "/x"},
+		// The build-credentials route (B4.3): a POST of its exact path and
+		// nothing else, held the way the workflow-secrets route is — a GET, a
+		// trailing slash and a subpath are all no route at all. It is its own
+		// path and not a subpath of the build route's, which is the other half
+		// of the same rule: BuildTokenPath is a route of its own with its own
+		// caller class, and a request for one of them never reaches the other.
+		{http.MethodGet, BuildCredentialsPath},
+		{http.MethodPost, BuildCredentialsPath + "/"},
+		{http.MethodPost, BuildCredentialsPath + "/x"},
+		{http.MethodPost, BuildTokenPath + "/credentials"},
 		// The Bitbucket prefix serves GET, POST and PUT (git's own calls and
 		// the REST allow-list's), so a DELETE or a PATCH under it is a route
 		// this service does not have. These two rows are what holds that gate:

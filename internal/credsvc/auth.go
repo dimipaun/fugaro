@@ -61,6 +61,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -569,6 +570,33 @@ type AuthConfig struct {
 	// the identity that may knock and the identity that is served are one value
 	// read twice rather than two derivations that agree by luck.
 	BuildAccounts []string
+	// RepoBuildAccounts are one REPOSITORY's builds (B4.3, R5, D2076, D2077):
+	// the service accounts a repository's image build and daily check run as,
+	// one per repository, and the caller class of the build-credentials route
+	// and of nothing else.
+	//
+	// It is NOT BuildAccounts. That list is the installation's own catalog-build
+	// identity, one per Fugaro project, which bakes shared images and names no
+	// repository; this one is a repository's own build, which names exactly one
+	// repository and is served exactly that repository's credentials (G20). The
+	// two are different accounts of different derivations
+	// (gcp.BuildIdentityAccountID and gcp.BuildServiceAccountID) and the two
+	// classes are told apart by which route read the token, so a service that
+	// merged them would serve a project's build one repository's credentials.
+	//
+	// A row carries the binding the class is: the repository's slug (the key
+	// the workflow-secrets record is written under and the name every audit line
+	// of this service is keyed by), the canonical repository name the published
+	// policy speaks, and the provider the repository is held at. All three are
+	// derived from the deployment (RepoBuildAccountsFor) and none is a field of
+	// a call: a build that could name its own repository or its own provider
+	// would be a build that could ask for another repository's credentials,
+	// which is the whole of what G20 refuses.
+	//
+	// It is held against EVERY other list in NewAuthenticator, like
+	// BuildAccounts and for the same reason: one address in two classes is a
+	// caller whose class is decided by which route read the token.
+	RepoBuildAccounts []RepoBuildAccount
 	// Now is the clock, for tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -626,7 +654,14 @@ type Authenticator struct {
 	// branch of Verify consults it, which is what keeps a build off the run
 	// routes.
 	buildAccounts map[string]string
-	now           func() time.Time
+	// repoBuildAccounts maps a presented email, folded the same way, to the
+	// repository's build row (B4.3): the class the build-credentials route is
+	// answered by, read by VerifyRepoBuild and by nothing else. Like every other
+	// list here it is read by one entry point — that route is answered ahead of
+	// the shared parse — so no branch of Verify consults it, which is what keeps
+	// a repository's build off the run routes.
+	repoBuildAccounts map[string]RepoBuildAccount
+	now               func() time.Time
 }
 
 // NewAuthenticator validates the configuration and returns the verifier.
@@ -918,6 +953,72 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		}
 		builds[folded] = email
 	}
+	// A repository's build class (B4.3), read LAST so that every list above is
+	// already in hand and held against it: the rows are read the same way the
+	// project build identity's are, and each row is held to the two facts its
+	// own class needs and to nothing else — the address a presented claim is
+	// matched by (the rule every list here is held to), and the repository the
+	// binding is, because a row with no repository would be a build this
+	// service could not name a repository for and would therefore have to
+	// refuse every call of. A provider is required too: the provider is the
+	// deployment's answer and never a call's, so a row that named none would be
+	// a build whose git credential this service could not choose.
+	//
+	// An empty list is not a missing gate: an installation that runs no
+	// repository's build names none, and the class is then one no caller
+	// belongs to.
+	repoBuilds := make(map[string]RepoBuildAccount, len(cfg.RepoBuildAccounts))
+	for _, row := range cfg.RepoBuildAccounts {
+		folded, ok := foldEmail(row.Email)
+		if !ok {
+			return nil, errors.New("credsvc: a repository's build service account is not a printable ASCII email address")
+		}
+		if row.Slug == "" || row.Repo == "" {
+			return nil, errors.New("credsvc: a repository's build account names no repository, so the credentials it would be served could not be read")
+		}
+		if row.Provider != gitprov.KindGitHub && row.Provider != gitprov.KindBitbucket {
+			// The provider decides which credential the route issues from and
+			// which host the answer names, and it is the deployment's answer:
+			// one this service does not know is a build whose git credential it
+			// cannot choose, which is a refusal here rather than a route that
+			// serves a build half of what it asked for.
+			return nil, errors.New("credsvc: a repository's build account names a provider this service does not mint at")
+		}
+		if _, isJob := accounts[folded]; isJob {
+			return nil, errors.New("credsvc: a repository's build service account is also one of the installation's job service accounts, so one caller would be two classes")
+		}
+		if _, isShared := shared[folded]; isShared {
+			return nil, errors.New("credsvc: a repository's build service account is also a shared project job's service account, so one caller would be two classes")
+		}
+		if _, isReview := review[folded]; isReview {
+			return nil, errors.New("credsvc: a repository's build service account is also one of the review job accounts, so one caller would be two classes")
+		}
+		if _, isVerifier := verifiers[folded]; isVerifier {
+			return nil, errors.New("credsvc: a repository's build service account is also one of the installation's verifiers, so one caller would be two classes")
+		}
+		if _, isPerson := people[folded]; isPerson {
+			return nil, errors.New("credsvc: a repository's build service account is also one of the installation's people, and a build class is an automation")
+		}
+		if _, isLauncher := launchers[folded]; isLauncher {
+			return nil, errors.New("credsvc: a repository's build service account is also one of the installation's launchers, and a build class is an automation")
+		}
+		if _, isOrchestrator := orchestrators[folded]; isOrchestrator {
+			return nil, errors.New("credsvc: a repository's build service account is also the installation's orchestrator daemon, so one caller would be two classes")
+		}
+		if coordinator != "" && folded == coordinator {
+			return nil, errors.New("credsvc: a repository's build service account is also the installation's coordinator, so one caller would be two classes")
+		}
+		if _, isBuild := builds[folded]; isBuild {
+			return nil, errors.New("credsvc: a repository's build service account is also the installation's catalog-build identity, so one caller would be two classes")
+		}
+		if prev, dup := repoBuilds[folded]; dup {
+			if prev.Slug != row.Slug {
+				return nil, errors.New("credsvc: one build service account is bound to two repositories")
+			}
+			continue
+		}
+		repoBuilds[folded] = row
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -933,6 +1034,7 @@ func NewAuthenticator(cfg AuthConfig) (*Authenticator, error) {
 		orchestratorAccounts: orchestrators,
 		coordinatorAccount:   coordinator,
 		buildAccounts:        builds,
+		repoBuildAccounts:    repoBuilds,
 		now:                  now,
 	}, nil
 }
@@ -1400,6 +1502,52 @@ func (a *Authenticator) VerifyBuildCaller(ctx context.Context, tok string) (stri
 		return "", err
 	}
 	return account, nil
+}
+
+// VerifyRepoBuild admits the caller of the build-credentials route (build.go),
+// or refuses it with ErrUnverifiedJob (the caller is not one of this
+// installation's repositories' build accounts) or ErrUnavailable (the key set
+// could not be read). It answers the row the address matched — the repository,
+// its slug and its provider — or the zero row with an error, never a partially
+// verified caller.
+//
+// It is VerifyBuildCaller's mechanism against one more list and not a seventh
+// spelling of the token check: the signature, the issuer, the email fold and the
+// token's own window are the same shared code (callerClaims, checkCallerToken),
+// and the audience is this class's own line (checkCallerAudience) exactly as it
+// is every other class's — this service's own URL and nothing else, like every
+// class whose caller is not a person.
+//
+// The class is the whole of the difference from VerifyBuildCaller, and it is
+// B4.3's: a repository's build is the account its image build and daily check
+// run as (gcp.BuildServiceAccountID), which holds no run identity and is a job
+// of no repository — so there is nothing to pair and nothing the call decides.
+// The repository the caller is served IS the row, and no field of the call can
+// reach it (G20): a build of one repository is answered that repository's
+// credentials and never a name it typed.
+//
+// It takes the caller's token directly for VerifyBuildCaller's reason: the route
+// is answered ahead of RequestFromHTTP, because a build holds no run identity
+// and the shared parse refuses a call that has none.
+func (a *Authenticator) VerifyRepoBuild(ctx context.Context, tok string) (RepoBuildAccount, error) {
+	now := a.now()
+	claims, folded, err := a.callerClaims(ctx, tok)
+	if err != nil {
+		return RepoBuildAccount{}, err
+	}
+	if err := checkCallerAudience(claims, a.cfg.Audience); err != nil {
+		return RepoBuildAccount{}, err
+	}
+	row, ok := a.repoBuildAccounts[folded]
+	if !ok {
+		// The reason names the class and never the address, for the reason
+		// VerifyVerifier's does.
+		return RepoBuildAccount{}, fmt.Errorf("%w: the caller is not one of this installation's repositories' build service accounts, so it may not mint a build's credentials", ErrUnverifiedJob)
+	}
+	if err := checkCallerToken(claims, now); err != nil {
+		return RepoBuildAccount{}, err
+	}
+	return row, nil
 }
 
 // LauncherCaller is a verified launcher (D1938): a member of the installation
