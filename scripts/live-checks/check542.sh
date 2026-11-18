@@ -488,8 +488,25 @@ field() { # field FILE KEY — the value of one `key=value` line, "" when absent
   sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
 }
 
+# perm_level and csv_has read a list held in a variable without a pipeline that
+# a reader can leave early: under pipefail, an awk that exits at its match or a
+# grep -q that stops at its first hit leaves the writer in front of it to die of
+# SIGPIPE when the writer's output arrives in two writes (the CI runner's
+# coreutils write a translated line list in two), and that status is either an
+# internal error that ends the check or a "not named" that is wrong.
 perm_level() { # perm_level "name:level,name:level" NAME
-  printf '%s' "$1" | tr ',' '\n' | awk -F: -v n="$2" '$1 == n { print $2; exit }'
+  case ",$1," in
+  *",$2:"*)
+    local rest=",$1,"
+    rest=${rest#*",$2:"}
+    printf '%s' "${rest%%,*}"
+    ;;
+  esac
+}
+
+csv_has() { # csv_has "a,b,c" VALUE
+  case ",$1," in *",$2,"*) return 0 ;; esac
+  return 1
 }
 
 # err_text FILE: the first line a tool wrote to stderr, for a row that has to say
@@ -820,7 +837,7 @@ step_bypass() {
       named="${named}${named:+; }ruleset ${id} (name $(field "$SCRATCH/rs-${id}.txt" name), $(field "$SCRATCH/rs-${id}.txt" enforcement)) covers ${BASE} and its answer carries NO bypass list — a list this check cannot read is not one that names nobody"
       continue
     fi
-    if printf '%s' "$actors" | tr ',' '\n' | grep -qxF "Integration:${APP_ID}"; then
+    if csv_has "$actors" "Integration:${APP_ID}"; then
       named="${named}${named:+; }ruleset ${id} (name $(field "$SCRATCH/rs-${id}.txt" name), $(field "$SCRATCH/rs-${id}.txt" enforcement)) covers ${BASE} and names the App (Integration:${APP_ID}) among its bypass actors (${actors:-none})"
     fi
   done <"$SCRATCH/rulesets.txt"
@@ -845,7 +862,7 @@ step_bypass() {
     fi
     local apps
     apps=$(field "$SCRATCH/protection.txt" apps)
-    if printf '%s' "$apps" | tr ',' '\n' | grep -qxF "$APP_ID"; then
+    if csv_has "$apps" "$APP_ID"; then
       named="${named}${named:+; }the classic branch protection of ${BASE} names the App (app id ${APP_ID}) among its bypass actors (${apps})"
     fi
     classic="the base's classic branch protection was read (required_pull_request_reviews $(field "$SCRATCH/protection.txt" required_reviews)): its bypass list is $(if [ -n "$apps" ]; then printf 'apps %s' "$apps"; else printf 'empty, so it names nobody'; fi)"
