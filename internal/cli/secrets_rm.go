@@ -437,7 +437,7 @@ func secretsEntryFields(data []byte, block, name string) string {
 	if len(entry.AllowDataTo) > 0 {
 		pairs = append(pairs, "allow_data_to="+strings.Join(entry.AllowDataTo, ", "))
 	}
-	if entry.Proxy {
+	if entry.ProxyOn() {
 		pairs = append(pairs, "proxy=true")
 	}
 	return strings.Join(pairs, ", ")

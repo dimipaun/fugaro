@@ -34,8 +34,33 @@ type ProjectSecret struct {
 	// per-repository decision: whether the installation runs a proxy is one
 	// choice for the whole installation, and the per-repository half is
 	// allow_data_to, published as the policy node's bitbucket_token.allow_repos.
-	Proxy bool `yaml:"proxy,omitempty" json:"proxy,omitempty"`
+	//
+	// It is tri-state, and the three states are three different things (the
+	// owner's ruling of 2026-11-18, D2314's amendment): nil is no statement at
+	// all, which is the state `fugaro secrets set --proxy=false` writes (it takes
+	// the key away rather than writing false, secrets.go) and the ONLY one
+	// `fugaro update` may turn on; a stated false is the operator's own no, which
+	// every reader keeps off and no step of an update may flip; and a stated true
+	// is the switch on. A bool could not tell the first from the second, so the
+	// update turned a hand-written `proxy: false` on.
+	Proxy *bool `yaml:"proxy,omitempty" json:"proxy,omitempty"`
 }
+
+// ProxyOn reports whether the entry states the switch as on. It is the reading
+// every consumer of the switch takes, the shape CredentialsServiceOn has for the
+// other tri-state record in this package: an entry that states no switch is not
+// proxied, and a stated false is not proxied either.
+func (p ProjectSecret) ProxyOn() bool { return p.Proxy != nil && *p.Proxy }
+
+// ProxySet is whether the entry says anything about the switch at all, which is
+// the question a writer asks before it answers for the operator (ProxyOn reads
+// both no-statement and a stated false as "not proxied").
+func (p ProjectSecret) ProxySet() bool { return p.Proxy != nil }
+
+// WithProxy is the entry with the switch STATED as on or off: the record a
+// writer leaves, never the absent key — absence is what the config holds when
+// nobody has answered, and it is the update's own answer to make (ProxySet).
+func (p ProjectSecret) WithProxy(on bool) ProjectSecret { p.Proxy = &on; return p }
 
 // AllowsData reports whether repo (owner/name) may mount p. Case-folded,
 // like ModelProvider.AllowsData and ClaudeAccount.AllowsData, and — unlike
@@ -218,7 +243,7 @@ func ValidateProjectSecrets(secrets map[string]ProjectSecret) []Problem {
 		// proxy written on another entry would be a setting nothing reads,
 		// which is the failure mode this block's checks exist to prevent — an
 		// operator who wrote it believes their installation is proxied.
-		if secrets[name].Proxy && name != BitbucketSecret {
+		if secrets[name].ProxyOn() && name != BitbucketSecret {
 			ps = append(ps, Problem{Path: at + ".proxy", Message: fmt.Sprintf("%s is the Bitbucket token's switch: only project_secrets.%s may set proxy, because the credentials service forwards that token alone — every other reserved name is mounted on the job that needs it (D493)", pluginwire.Printable("proxy"), BitbucketSecret)})
 		}
 	}

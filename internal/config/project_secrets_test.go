@@ -241,7 +241,7 @@ func TestValidateProjectSecretsRefusesWideningWildcards(t *testing.T) {
 // another entry would be a setting nothing reads, written by an operator who
 // believes their installation is proxied.
 func TestProjectSecretProxyOnlyOnBitbucketToken(t *testing.T) {
-	proxied := ProjectSecret{AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: true}
+	proxied := ProjectSecret{AllowDataTo: []string{"workspace-a/repo-a"}}.WithProxy(true)
 	if ps := ValidateProjectSecrets(map[string]ProjectSecret{BitbucketSecret: proxied}); len(ps) != 0 {
 		t.Fatalf("proxy on %s was refused: %+v", BitbucketSecret, ps)
 	}
@@ -258,15 +258,36 @@ func TestProjectSecretProxyOnlyOnBitbucketToken(t *testing.T) {
 	if err := yaml.Unmarshal([]byte("allow_data_to: [workspace-a/repo-a]\nproxy: true\n"), &entry); err != nil {
 		t.Fatalf("decoding a project_secrets entry: %v", err)
 	}
-	if !entry.Proxy || !entry.AllowsData("workspace-a/repo-a") {
+	if !entry.ProxyOn() || !entry.AllowsData("workspace-a/repo-a") {
 		t.Errorf("decoded entry = %+v, want proxy true with its allow_data_to", entry)
 	}
 	var absent ProjectSecret
 	if err := yaml.Unmarshal([]byte("allow_data_to: [workspace-a/repo-a]\n"), &absent); err != nil {
 		t.Fatalf("decoding a project_secrets entry: %v", err)
 	}
-	if absent.Proxy {
-		t.Error("an entry that writes no proxy is proxied")
+	if absent.ProxyOn() || absent.ProxySet() {
+		t.Errorf("an entry that writes no proxy reads as %+v, want no statement about the switch at all", absent)
+	}
+	// The third state, and the one the owner ruled on (2026-11-18): a written
+	// false is an ANSWER and not the absence of one, which is the whole reason
+	// the field is a pointer. `fugaro update` may turn an absent switch on and
+	// never a stated off.
+	var off ProjectSecret
+	if err := yaml.Unmarshal([]byte("allow_data_to: [workspace-a/repo-a]\nproxy: false\n"), &off); err != nil {
+		t.Fatalf("decoding a project_secrets entry: %v", err)
+	}
+	if off.ProxyOn() || !off.ProxySet() {
+		t.Errorf("an entry that writes proxy false reads as on=%v stated=%v, want a stated off", off.ProxyOn(), off.ProxySet())
+	}
+	// The tag is its own key in both directions: a member dropped on the way out
+	// would take the operator's answer with it the next time a command rewrites
+	// the entry (settingsRewriteList writes back what it found).
+	out, err := yaml.Marshal(off)
+	if err != nil {
+		t.Fatalf("encoding a project_secrets entry: %v", err)
+	}
+	if !strings.Contains(string(out), "proxy: false") {
+		t.Errorf("an entry stating proxy false encodes as %q, want the answer written", out)
 	}
 }
 

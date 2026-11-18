@@ -99,9 +99,12 @@ type bitbucketProxySwitch struct {
 //   - the project's own Bitbucket repositories, which are what the entry's list
 //     and the node's allow_repos are derived from. A project that has none has
 //     nothing to proxy.
-//   - and the switch itself not being there already: an entry that forwards and
-//     already covers every one of them is a project this update leaves exactly
-//     as it is.
+//   - and the entry not answering for the switch itself: an entry that forwards
+//     and already covers every one of them is a project this update leaves
+//     exactly as it is, and an entry that states OFF is the operator's own no,
+//     which this step never turns on (the owner's ruling of 2026-11-18: only an
+//     ABSENT field is one the update may answer, D2314's amendment). A stated
+//     true that does not cover every repository is still widened below.
 func (e *initEngine) bitbucketProxyFlip() (repos []string, turn bool) {
 	o, lc := e.r.o, e.lc
 	if lc == nil || o == nil || o.doorName() != updateDoor.name || o.planOnly || policyNodeUnreachable(lc) {
@@ -117,8 +120,15 @@ func (e *initEngine) bitbucketProxyFlip() (repos []string, turn bool) {
 	if len(repos) == 0 {
 		return nil, false
 	}
-	if entry, ok := lc.ProjectSecrets[config.BitbucketSecret]; ok && entry.Proxy && bitbucketProxyCovers(entry, repos) {
-		return nil, false
+	// The entry's own answer about the switch ends it, and the two answers are
+	// not the same thing (config.ProjectSecret.Proxy's three states): a stated
+	// false is the operator's own no, which no step of this update may flip, and
+	// a stated true that covers every repository is the project already on it.
+	// Only an entry that states NOTHING is one this step answers for.
+	if entry, ok := lc.ProjectSecrets[config.BitbucketSecret]; ok && entry.ProxySet() {
+		if !entry.ProxyOn() || bitbucketProxyCovers(entry, repos) {
+			return nil, false
+		}
 	}
 	return repos, true
 }
@@ -357,7 +367,7 @@ func bitbucketProxyConfig(lc *localcfg.Config, entry config.ProjectSecret, add [
 	next.ProjectSecrets = make(map[string]config.ProjectSecret, len(lc.ProjectSecrets)+1)
 	maps.Copy(next.ProjectSecrets, lc.ProjectSecrets)
 	entry.AllowDataTo = append(slices.Clone(entry.AllowDataTo), add...)
-	entry.Proxy = true
+	entry = entry.WithProxy(true)
 	next.ProjectSecrets[config.BitbucketSecret] = entry
 	return &next
 }

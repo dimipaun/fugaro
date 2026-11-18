@@ -193,7 +193,7 @@ func TestUpdateTurnsTheBitbucketProxyOn(t *testing.T) {
 			if string(after) != string(beforeNode) {
 				t.Errorf("%s: the node's bitbucket_token moved from %s to %s:\n%s", name, beforeNode, after, out)
 			}
-			if tc.extra == "" && ok && entry.Proxy {
+			if tc.extra == "" && ok && entry.ProxyOn() {
 				t.Errorf("%s: the config's %s entry forwards after the run:\n%s", name, config.BitbucketSecret, out)
 			}
 			if strings.Contains(out, "turned the credentials service's Bitbucket proxy on") {
@@ -201,7 +201,7 @@ func TestUpdateTurnsTheBitbucketProxyOn(t *testing.T) {
 			}
 			continue
 		}
-		if !ok || !entry.Proxy {
+		if !ok || !entry.ProxyOn() {
 			t.Fatalf("%s: the config's %s entry does not forward after the run (entry %+v, present %v): the flip is the write S6 is\n%s", name, config.BitbucketSecret, entry, ok, out)
 		}
 		if !slices.Contains(entry.AllowDataTo, "acme/other") {
@@ -255,7 +255,7 @@ func TestUpdateBitbucketProxyConvergesInOneUpdate(t *testing.T) {
 		t.Fatalf("the migrated node carries bitbucket_token = %+v, want the block the same run's config edit implies: a node that moves with no block beside a file that forwards is the pair resolveBitbucketProxied stops a run over\n%s", p.BitbucketToken, out)
 	}
 	entry, ok := proxyEntryOn(t, f)
-	if !ok || !entry.Proxy || !slices.Contains(entry.AllowDataTo, "acme/other") {
+	if !ok || !entry.ProxyOn() || !slices.Contains(entry.AllowDataTo, "acme/other") {
 		t.Errorf("the config's %s entry is %+v (present %v) after one run, want it forwarding for acme/other: the switch is the file half of the same step\n%s", config.BitbucketSecret, entry, ok, out)
 	}
 }
@@ -317,11 +317,80 @@ func TestUpdateDefersTheBitbucketProxyOnAReSeed(t *testing.T) {
 		t.Fatalf("the update after the re-seed failed: %v\n%s", err, out)
 	}
 	entry, ok := proxyEntryOn(t, f)
-	if !ok || !entry.Proxy || !slices.Contains(entry.AllowDataTo, "acme/other") {
+	if !ok || !entry.ProxyOn() || !slices.Contains(entry.AllowDataTo, "acme/other") {
 		t.Fatalf("the config's %s entry is %+v (present %v) after the second update, want it forwarding for acme/other\n%s", config.BitbucketSecret, entry, ok, out)
 	}
 	if p := proxyNodeOn(t, f); p.BitbucketToken == nil || !p.BitbucketToken.Proxy {
 		t.Errorf("the node carries bitbucket_token = %+v after the second update, want the block the entry implies\n%s", p.BitbucketToken, out)
+	}
+}
+
+// TestUpdateLeavesAStatedOffSwitchOff is the owner's ruling of 2026-11-18: the
+// switch is tri-state, and only an ABSENT field is one this update may answer
+// (config.ProjectSecret.Proxy). An entry that writes proxy: false is the
+// operator's own no — the state a hand edit leaves, since `fugaro secrets set
+// --proxy=false` takes the key away rather than writing a second spelling of off
+// — and a step of the update that turned it on would be the update overruling
+// the one person who answered.
+//
+// The file is left byte for byte as it was, and the node stays as the entry
+// states it: the node's block is derived from the same entry, so an entry
+// stating off derives a block stating off and there is nothing for this run to
+// publish.
+func TestUpdateLeavesAStatedOffSwitchOff(t *testing.T) {
+	f, sm := proxySwitchFixture(t)
+	appendProxySwitchConfig(t, f.path, "project_secrets:\n  "+config.BitbucketSecret+": { proxy: false, allow_data_to: [acme/other] }\n")
+	publishProxySwitchNode(t, f)
+	seedProxyBundle(t, sm, proxySwitchBundle(t))
+	before := readFileString(t, f.path)
+	useVersion(t, proxySince)
+	h := newMigrationRig(t, f, &initOptions{})
+
+	out, err := h.apply(t, true)
+	if err != nil {
+		t.Fatalf("the update failed on a config that states the switch off: %v\n%s", err, out)
+	}
+	entry, ok := proxyEntryOn(t, f)
+	if !ok || entry.ProxyOn() || !entry.ProxySet() {
+		t.Errorf("the config's %s entry reads on=%v stated=%v after the run, want the stated off it found: only an absent field is one this update answers (the owner's ruling of 2026-11-18)\n%s",
+			config.BitbucketSecret, entry.ProxyOn(), entry.ProxySet(), out)
+	}
+	if got := readFileString(t, f.path); got != before {
+		t.Errorf("the update rewrote the local config of a project whose entry states the switch off:\n%s", got)
+	}
+	if strings.Contains(out, "turned the credentials service's Bitbucket proxy on") {
+		t.Errorf("the update says it turned the proxy on:\n%s", out)
+	}
+}
+
+// TestSecretsDenyKeepsTheSwitchAnswerItFound: the second half of the same
+// ruling, on the command that reformats an entry. A flow list is the shape
+// docs/git-providers.md teaches the Bitbucket allow-list in, and the rewrite
+// that makes it editable writes the entry again — so a stated off is written
+// back as stated off rather than dropped, or the entry the update finds
+// afterwards would be one NOBODY answered and the next `fugaro update` would
+// turn the proxy on.
+func TestSecretsDenyKeepsTheSwitchAnswerItFound(t *testing.T) {
+	secretsRmFugaro(t)
+	secretsFixture(t)
+	projectSecretFixture(t, "project_secrets:\n  "+config.BitbucketSecret+": { proxy: false, allow_data_to: [\"acme/app\"] }\n")
+	path := os.Getenv("FUGARO_CONFIG")
+	noTerminal(t)
+
+	out, errOut, err := execute(t, "secrets", "deny", config.BitbucketSecret, "acme/app")
+	if err != nil {
+		t.Fatalf("secrets deny %s acme/app: %v\nstdout %s\nstderr %s", config.BitbucketSecret, err, out, errOut)
+	}
+	entry := secretsPolicyEntry(t, path, config.BitbucketSecret)
+	if !entry.ProxySet() || entry.ProxyOn() {
+		t.Errorf("the entry reads on=%v stated=%v after the reformatting edit, want the stated off written back: an entry left stating nothing about the switch is one the next update turns the proxy on for",
+			entry.ProxyOn(), entry.ProxySet())
+	}
+	if len(entry.AllowDataTo) != 0 {
+		t.Errorf("allow_data_to = %v, want the removal the run asked for", entry.AllowDataTo)
+	}
+	if got := readFileString(t, path); !strings.Contains(got, "proxy: false") {
+		t.Errorf("the rewritten entry does not carry the stated off:\n%s", got)
 	}
 }
 
@@ -351,7 +420,7 @@ func TestUpdateLeavesABlockThisMachineNeverStated(t *testing.T) {
 	// The entry goes: what is left is a machine that never stated it, beside the
 	// node the machine that did published.
 	rewriteConfigLine(t, stated, "")
-	seedProxyBundle(t, sm, []byte(config.AnthropicSecret + ": " + credsValue(t, "model") + "\n"))
+	seedProxyBundle(t, sm, []byte(config.AnthropicSecret+": "+credsValue(t, "model")+"\n"))
 	useVersion(t, proxySince)
 	h := newMigrationRig(t, f, &initOptions{})
 

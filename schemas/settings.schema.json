@@ -1365,7 +1365,7 @@
           "default": "unset = nobody"
         },
         "project_secrets.*.proxy": {
-          "default": "unset = none"
+          "default": "unset = no statement, which fugaro update may turn on; false = the operator's own off, which no update flips"
         },
         "providers.*.allow_data_to": {
           "default": "unset = nobody"

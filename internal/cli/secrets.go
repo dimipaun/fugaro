@@ -1428,7 +1428,7 @@ func secretsPolicyValue(data []byte, block, name string, proxy bool) string {
 	}
 	entry := secretsPolicyEntryOf(lc, block, name)
 	if proxy {
-		if !entry.Proxy {
+		if !entry.ProxyOn() {
 			return ""
 		}
 		return "true"

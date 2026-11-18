@@ -127,7 +127,7 @@ func TestSecretsAllowProxySetsTheFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secrets allow bitbucket-token --proxy: %v", err)
 	}
-	if !secretsPolicyEntry(t, path, "bitbucket-token").Proxy {
+	if !secretsPolicyEntry(t, path, "bitbucket-token").ProxyOn() {
 		t.Errorf("the switch was not written:\n%s", out)
 	}
 	if !strings.Contains(out, "widens what the secret reaches") {
@@ -141,7 +141,7 @@ func TestSecretsAllowProxySetsTheFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("secrets allow bitbucket-token --proxy=false: %v", err)
 	}
-	if secretsPolicyEntry(t, path, "bitbucket-token").Proxy {
+	if secretsPolicyEntry(t, path, "bitbucket-token").ProxyOn() {
 		t.Errorf("the switch is still on:\n%s", out)
 	}
 	if strings.Contains(out, "widens what the secret reaches") {

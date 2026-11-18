@@ -69,7 +69,7 @@ func TestSecretsSetProxyIsATypedWidening(t *testing.T) {
 	if strings.Contains(out, "to confirm: ") {
 		t.Errorf("the widening still asks a question:\n%s", out)
 	}
-	if got := secretsPolicyEntry(t, path, "bitbucket-token"); !got.Proxy {
+	if got := secretsPolicyEntry(t, path, "bitbucket-token"); !got.ProxyOn() {
 		t.Errorf("proxy was not written: %+v", got)
 	}
 	if !strings.Contains(out+errOut, "project_secrets.bitbucket-token.proxy") {
@@ -84,7 +84,7 @@ func TestSecretsSetProxyIsATypedWidening(t *testing.T) {
 		t.Errorf("turning the switch off was confirmed as a widening:\n%s", out)
 	}
 	off := secretsPolicyEntry(t, path, "bitbucket-token")
-	if off.Proxy {
+	if off.ProxyOn() {
 		t.Errorf("the switch is still on: %+v", off)
 	}
 	if !slices.Contains(off.AllowDataTo, "acme/app") {

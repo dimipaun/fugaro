@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -375,9 +376,10 @@ func settingsSetListFallback(src []byte, path []string, want []string, err error
 
 // settingsRewriteList writes one allow-list entry again in the block style this
 // program writes a list in — values under allow_data_to, and the Bitbucket
-// token's proxy written back only when the entry carried it — and is the second
-// half of every edit of the two lists that share it: `project_secrets`/
-// `workflow_secrets` and `claude_accounts`.
+// token's proxy written back as the entry stated it (nil for a block that has
+// no such member, claude_accounts) — and is the second half of every edit of the
+// two lists that share it: `project_secrets`/`workflow_secrets` and
+// `claude_accounts`.
 //
 // The entry is taken away whole rather than edited in place because a member
 // cannot be spliced into a flow collection, which is the one shape the editor's
@@ -394,7 +396,12 @@ func settingsSetListFallback(src []byte, path []string, want []string, err error
 // bytes unchanged and no error, and the refusal the operator reads comes from
 // the write that follows; that is why every step below, the removal included,
 // means the same thing by its error (workspaceEditResult).
-func settingsRewriteList(old []byte, block, name string, values []string, proxy bool) ([]byte, error) {
+//
+// The switch is written back as it was found and not only when it was on: an
+// entry that stated false is not an entry that stated nothing, and a rewrite
+// that dropped it would leave a switch the operator turned off absent for the
+// update's flip to turn on (config.ProjectSecret.Proxy's three states).
+func settingsRewriteList(old []byte, block, name string, values []string, proxy *bool) ([]byte, error) {
 	path := block + "." + name
 	next, err := yamledit.RemoveKeyWithOptions(old, []string{block, name}, yamledit.RemoveOptions{DropEmptyParents: true})
 	if next, err = workspaceEditResult(path, next, err); err != nil {
@@ -406,8 +413,8 @@ func settingsRewriteList(old []byte, block, name string, values []string, proxy 
 			return nil, err
 		}
 	}
-	if proxy {
-		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, "true")
+	if proxy != nil {
+		scaled, setErr := yamledit.SetScalar(next, []string{block, name, "proxy"}, strconv.FormatBool(*proxy))
 		if next, err = workspaceEditResult(path, scaled, setErr); err != nil {
 			return nil, err
 		}
