@@ -529,8 +529,23 @@ var grantRules = map[string]map[string]who{
 	// pull, are in the artifact registry row below, added there deliberately
 	// by the task that granted them (B6), and they are the whole of what this
 	// principal holds outside this bit.
+	//
+	// toOrchestrator is F19 and O2's row, the build identity's fact one class
+	// over and the reason it is on THIS resource type rather than the job one
+	// above: the resident orchestrator's daemon keeps the pull request labels
+	// of its own runs through the credentials service and takes its merge
+	// credential from it, and both routes are served by that service, so
+	// without the invoker bit Cloud Run's front end refuses the daemon before
+	// the container can decide its caller class (credentials.tf's own
+	// statement of the same fact for the three classes already on this row).
+	// It is Fugaro's own account, created by the apply that turns the
+	// orchestrator on, and it comes with nothing wider — no actAs, no project
+	// role, and no second resource type: this bit is the whole of what the
+	// daemon may do with the service, and the class the service matches it
+	// against (FUGARO_ORCHESTRATOR_ACCOUNTS) admits the label route and the
+	// merge mint and nothing else either.
 	"google_cloud_run_v2_service_iam_member": {
-		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity,
+		"roles/run.invoker": toAccounts | toPeople | toCoordinator | toVerifier | toBuildIdentity | toOrchestrator,
 	},
 	"google_logging_log_view_iam_member": {
 		"roles/logging.viewAccessor": toPeople,

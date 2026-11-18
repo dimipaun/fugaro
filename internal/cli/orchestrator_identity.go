@@ -117,7 +117,7 @@ var orchestratorServiceIdentity = func(ctx context.Context, url, account string)
 	defer cancel()
 	out, err := reviewGcloudRun(cctx, orchestratorIdentityArgs(url, account)...)
 	if err != nil {
-		return "", userErr("%s: its own Google ID token could not be minted as %s. Run `%s auth login --impersonate-service-account=%s` on this machine, which is what makes a token for the credentials service's own URL; an account that may not impersonate it needs `roles/iam.serviceAccountTokenCreator` on it, which the installation's owner holds", what, safetext.Field(account), reviewGcloudBin, safetext.Field(account))
+		return "", userErr("%s: its own Google ID token could not be minted as %s. Run `%s auth login --impersonate-service-account=%s` on this machine, which is what makes a token for the credentials service's own URL; if the impersonation itself is refused, run `fugaro update` in the installation's checkout, which binds `roles/iam.serviceAccountTokenCreator` on that account for every operator of the installation", what, safetext.Field(account), reviewGcloudBin, safetext.Field(account))
 	}
 	tok := strings.TrimSpace(string(out))
 	if tok == "" || len(tok) > reviewIdentityMaxBytes || !reviewPrintableToken(tok) {

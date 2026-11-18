@@ -2676,12 +2676,14 @@ func TestViewerRoleHasNoCancelPermission(t *testing.T) {
 // any claim set for any uid, so it can be the phone and the consumer. A plan
 // that rode a toAccounts row would be one job account's reach away from that.
 //
-// Its table is the design's and nothing else, and the table is the test: five
-// cells across four resource types — the launcher's project role, the job
+// Its table is the design's and nothing else, and the table is the test: six
+// cells across five resource types — the launcher's project role, the job
 // runner's role on the installation's jobs, the token-minter role on the signer
-// ACCOUNT (another project's, which the design grants on purpose), and the runs
+// ACCOUNT (another project's, which the design grants on purpose), the runs
 // bucket's two grants the launchers hold (a conditional write and an
-// unconditional read). A cell added is a grant the design's never-list did not
+// unconditional read), and — since F19 and O2 — the invoker bit on the
+// credentials service, which is the row that makes the daemon's own class
+// reachable there. A cell added is a grant the design's never-list did not
 // price; a cell removed is a row of its table the account cannot reach.
 //
 // The narrowing is what the rows cannot say, so each covered case is written
@@ -2714,6 +2716,13 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		"google_storage_bucket_iam_member|roles/storage.objectUser",
 		"google_storage_bucket_iam_member|roles/storage.objectViewer",
 		"google_secret_manager_secret_iam_member|roles/secretmanager.secretAccessor",
+		// F19 and O2's row: the daemon keeps the labels of its own runs and
+		// takes its merge credential through the installation's credentials
+		// service, and Cloud Run decides admission per service — so without
+		// this bit the front end refuses the daemon before the class check the
+		// whole task exists to reach. It is credentials.tf's own statement of
+		// the same fact, one class over.
+		"google_cloud_run_v2_service_iam_member|roles/run.invoker",
 	}
 	var got []string
 	for typ, row := range grantRules {
@@ -2789,10 +2798,16 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 			map[string]any{"member": member, "role": "roles/serviceusage.serviceUsageConsumer", "project": "proj-1"}, map[string]any{}, false},
 
 		// The credentials service's invoker, which Q13's answer (2026-10-19)
-		// took OUT of the table: the run presents its own job token (D134) and
-		// the orchestrator never calls the service.
+		// took OUT of the table and F19 and O2 (the owner's approval of
+		// 2026-11-17) put back: the run presents its own job token (D134) and
+		// the daemon never called the service — until the daemon's own class
+		// was wired to it, which it is now, so the bit is a row of section
+		// 4.3's table rather than a grant the account may not hold. What this
+		// cell holds is the (type, role, kind) triple and not which service
+		// the bit is on, which is the same limit the other four classes on
+		// that row have.
 		{"the credentials service's invoker", "google_cloud_run_v2_service_iam_member",
-			map[string]any{"member": member, "role": "roles/run.invoker", "project": "proj-1"}, map[string]any{}, false},
+			map[string]any{"member": member, "role": "roles/run.invoker", "project": "proj-1"}, map[string]any{}, true},
 
 		// The write, moved: another bucket, another condition, or none.
 		{"the write with no condition at all", "google_storage_bucket_iam_member",
