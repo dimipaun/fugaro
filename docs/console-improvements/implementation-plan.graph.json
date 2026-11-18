@@ -102,51 +102,6 @@
       }
     },
     {
-      "id": "SM1",
-      "title": "labels, descriptions, groups and types for `agent.` and `escalation.`",
-      "run": null,
-      "version": null,
-      "size": 3,
-      "tier": "medium",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/settings/meta_agent.go",
-          "internal/settings/meta_agent_test.go"
-        ]
-      }
-    },
-    {
-      "id": "SM2",
-      "title": "labels, descriptions, groups and types for `git.`, `followup.`, `clone_urls.` and `credentials.`",
-      "run": null,
-      "version": null,
-      "size": 3,
-      "tier": "medium",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/settings/meta_git.go",
-          "internal/settings/meta_git_test.go"
-        ]
-      }
-    },
-    {
-      "id": "SM3",
-      "title": "labels, descriptions, groups and types for `governance.`, `layer.defaults.`, `layer.governance.`, `watch.`, the `budget.*` generic keys and `bake_repos`",
-      "run": null,
-      "version": null,
-      "size": 3,
-      "tier": "medium",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/settings/meta_governance.go",
-          "internal/settings/meta_governance_test.go"
-        ]
-      }
-    },
-    {
       "id": "SU1",
       "title": "one main-process modal for entry, validation, diff and confirmation",
       "run": null,
@@ -199,40 +154,6 @@
       }
     },
     {
-      "id": "AL1",
-      "title": "the new argv rows and the CLI floors",
-      "run": null,
-      "version": null,
-      "size": 3,
-      "tier": "medium",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "console/src/main/spawn.ts",
-          "console/src/shared/version.ts",
-          "console/test/unit/spawn.test.ts",
-          "console/test/unit/version.test.ts"
-        ]
-      }
-    },
-    {
-      "id": "AL2",
-      "title": "the IPC operations, the bridge and the section 5.1 table",
-      "run": null,
-      "version": null,
-      "size": 3,
-      "tier": "medium",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "console/src/main/ipc.ts",
-          "console/src/preload/index.ts",
-          "console/test/unit/ipc.test.ts",
-          "docs/design/desktop-console.md"
-        ]
-      }
-    },
-    {
       "id": "P1",
       "title": "the console read timing script",
       "run": null,
@@ -276,7 +197,7 @@
         "prediction": true,
         "paths": [
           "console/src/renderer/stream.ts",
-          "console/src/renderer/screens/run.ts",
+          "console/src/renderer/entry.ts",
           "console/src/renderer/section.ts",
           "console/test/unit/stream.test.ts",
           "console/test/e2e/runs-stream.spec.ts"
@@ -374,24 +295,6 @@
       }
     },
     {
-      "id": "SW3",
-      "title": "the first-run and Add project wizard",
-      "run": null,
-      "version": null,
-      "size": 5,
-      "tier": "large",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "console/src/renderer/wizard/wizard.ts",
-          "console/src/main/onboarding.ts",
-          "console/src/main/wizardrun.ts",
-          "console/src/renderer/installations.ts",
-          "console/test/unit/wizard.test.ts"
-        ]
-      }
-    },
-    {
       "id": "MG0",
       "title": "the Manage kind descriptor",
       "run": null,
@@ -402,6 +305,7 @@
         "prediction": true,
         "paths": [
           "console/src/renderer/manage/types.ts",
+          "console/src/renderer/manage/command.ts",
           "console/test/unit/manage-types.test.ts",
           "docs/console-improvements/manage-kinds.md"
         ]
@@ -505,7 +409,7 @@
     },
     {
       "id": "MW1",
-      "title": "models use, add and remove from the Manage list",
+      "title": "models use and add from the Manage list",
       "run": null,
       "version": null,
       "size": 4,
@@ -523,7 +427,7 @@
     },
     {
       "id": "MW2",
-      "title": "image catalog add and remove from the Manage list",
+      "title": "image catalog add from the Manage list",
       "run": null,
       "version": null,
       "size": 4,
@@ -555,6 +459,89 @@
       }
     },
     {
+      "id": "AL",
+      "title": "the argv rows, IPC operations, bridge, floors, the narrowed never-table and the section 5.1 and contract text",
+      "run": null,
+      "version": null,
+      "size": 6,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/spawn.ts",
+          "console/src/main/ipc.ts",
+          "console/src/preload/index.ts",
+          "console/src/shared/version.ts",
+          "console/test/unit/spawn.test.ts",
+          "console/test/unit/ipc.test.ts",
+          "docs/design/desktop-console.md",
+          "console/docs/json-contract.md",
+          "internal/cli/docs_desktop_console_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SM1",
+      "title": "labels, descriptions, groups and types for `agent.`, `escalation.`, `stages.`, `orchestrator.`, `issues.` and `repos.`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_agent.go",
+          "internal/cli/settings_meta_agent_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SM2",
+      "title": "labels, descriptions, groups and types for `git.`, `followup.`, `clone_urls.`, `credentials.`, `watch.` and `governance.`",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_git.go",
+          "internal/cli/settings_meta_git_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SM3",
+      "title": "labels, descriptions, groups and types for `layer.*` (the profiles, the A/B keys, the jobs and the defaults) and `workflows.*`",
+      "run": null,
+      "version": null,
+      "size": 4,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_layer.go",
+          "internal/settings/meta_workflows.go",
+          "internal/cli/settings_meta_layer_test.go"
+        ]
+      }
+    },
+    {
+      "id": "SM4",
+      "title": "labels, descriptions, groups and types for `budget.*`, `bake_repos`, `base_branch`, `max_parallel`, `update_check`, `commit_name`, `commit_email`, `default_claude_account`, `claude_account_auto`, `subscription_spread`, `triage`, `verifier_accounts` and `planning.decoupling`",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/settings/meta_single.go",
+          "internal/cli/settings_meta_single_test.go"
+        ]
+      }
+    },
+    {
       "id": "SMC",
       "title": "every writable key carries its metadata",
       "run": null,
@@ -564,9 +551,110 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/settings/meta_coverage_test.go"
+          "internal/cli/settings_meta_coverage_test.go"
         ]
       }
+    },
+    {
+      "id": "SW3a",
+      "title": "the wizard's main process half: validation, the answers file, plan then apply",
+      "run": null,
+      "version": null,
+      "size": 5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/main/wizardrun.ts",
+          "console/src/main/setupview.ts",
+          "console/src/main/onboarding.ts",
+          "console/test/unit/wizard-main.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "SW3b",
+      "title": "the wizard screens and the Add project button",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/wizard/wizard.ts",
+          "console/src/renderer/installations.ts",
+          "console/src/main/picker.ts",
+          "console/test/unit/wizard.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "PW1",
+      "title": "prewarm the other tabs' cached views",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/prewarm.ts",
+          "console/src/renderer/entry.ts",
+          "console/test/unit/prewarm.test.ts"
+        ]
+      }
+    },
+    {
+      "id": "C-OPS",
+      "title": "the new operations' names and payload types",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/shared/new-ops.ts",
+          "console/src/renderer/stubs/bridge-stub.ts",
+          "console/test/unit/new-ops.test.ts",
+          "docs/console-improvements/contract-ops.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "console/src/renderer/stubs/bridge-stub.ts"
+      ]
+    },
+    {
+      "id": "I-OPS",
+      "title": "retire the stub bridge and hold the allow-list to the contract",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/stubs/bridge-stub.ts",
+          "console/test/unit/ops-contract.test.ts",
+          "console/test/e2e/ops.spec.ts"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-OPS",
+      "title": "amend C-OPS: an operation or payload field a consumer needs",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": []
+      },
+      "kind": "contract_change"
     }
   ],
   "edges": [
@@ -586,29 +674,14 @@
       "reason": "the render is built against `Lookup`'s signature"
     },
     {
-      "task": "SM1",
-      "needs": "SM0",
-      "reason": "the entries are built against `Meta` and `Register`"
-    },
-    {
-      "task": "SM2",
-      "needs": "SM0",
-      "reason": "the entries are built against `Meta` and `Register`"
-    },
-    {
-      "task": "SM3",
-      "needs": "SM0",
-      "reason": "the entries are built against `Meta` and `Register`"
-    },
-    {
       "task": "SU1",
       "needs": "SM-E",
       "reason": "the controls are built against the emitted members and the fixture"
     },
     {
       "task": "SU1",
-      "needs": "AL2",
-      "reason": "the window is opened through the listed op"
+      "needs": "C-OPS",
+      "reason": "built against the operations' names and types and the stub bridge"
     },
     {
       "task": "SU2a",
@@ -631,24 +704,24 @@
       "reason": "both write `projects.ts`"
     },
     {
-      "task": "AL2",
-      "needs": "AL1",
-      "reason": "an operation names a spawn row, so both write the allow-list in order; one change split in two"
-    },
-    {
       "task": "RS2",
       "needs": "RS1",
       "reason": "decodes the fixture and the line shape the CLI task produces"
     },
     {
       "task": "RS2",
-      "needs": "AL2",
-      "reason": "spawns through the listed op"
+      "needs": "RB1",
+      "reason": "both write `section.ts`"
     },
     {
       "task": "RS2",
-      "needs": "RB1",
-      "reason": "both write `section.ts`"
+      "needs": "RB4",
+      "reason": "both write `entry.ts`"
+    },
+    {
+      "task": "RS2",
+      "needs": "C-OPS",
+      "reason": "built against the operations' names and types and the stub bridge"
     },
     {
       "task": "RB4",
@@ -657,23 +730,13 @@
     },
     {
       "task": "RB4",
-      "needs": "AL2",
-      "reason": "spawns through the listed op"
+      "needs": "C-OPS",
+      "reason": "built against the operations' names and types and the stub bridge"
     },
     {
       "task": "ST2",
       "needs": "ST1",
       "reason": "both register flags in `init.go`"
-    },
-    {
-      "task": "SW3",
-      "needs": "ST2",
-      "reason": "decodes the events and fixture the CLI task produces (ST1's answers file arrives through it)"
-    },
-    {
-      "task": "SW3",
-      "needs": "AL2",
-      "reason": "spawns through the listed ops"
     },
     {
       "task": "MO-SH",
@@ -702,8 +765,8 @@
     },
     {
       "task": "MO-C",
-      "needs": "AL2",
-      "reason": "spawns through the listed ops"
+      "needs": "C-OPS",
+      "reason": "built against the operations' names and types and the stub bridge"
     },
     {
       "task": "I-MG",
@@ -736,6 +799,11 @@
       "reason": "lists the kinds"
     },
     {
+      "task": "I-MG",
+      "needs": "SU2a",
+      "reason": "both write `projects.ts`"
+    },
+    {
       "task": "MW1",
       "needs": "I-MG",
       "reason": "adds an action to the list kind the integration wired"
@@ -752,7 +820,7 @@
     },
     {
       "task": "MW1",
-      "needs": "AL2",
+      "needs": "AL",
       "reason": "writes the same allow-list, after it"
     },
     {
@@ -776,6 +844,41 @@
       "reason": "names a flag that must exist"
     },
     {
+      "task": "AL",
+      "needs": "RS1",
+      "reason": "the docs pin holds the allow-list's flags to flags the CLI registers"
+    },
+    {
+      "task": "AL",
+      "needs": "WH1",
+      "reason": "same"
+    },
+    {
+      "task": "AL",
+      "needs": "ST2",
+      "reason": "same"
+    },
+    {
+      "task": "SM1",
+      "needs": "SM0",
+      "reason": "the entries are built against `Meta` and `Register`"
+    },
+    {
+      "task": "SM2",
+      "needs": "SM0",
+      "reason": "the entries are built against `Meta` and `Register`"
+    },
+    {
+      "task": "SM3",
+      "needs": "SM0",
+      "reason": "the entries are built against `Meta` and `Register`"
+    },
+    {
+      "task": "SM4",
+      "needs": "SM0",
+      "reason": "the entries are built against `Meta` and `Register`"
+    },
+    {
       "task": "SMC",
       "needs": "SM-E",
       "reason": "reads the real emission"
@@ -794,8 +897,149 @@
       "task": "SMC",
       "needs": "SM3",
       "reason": "needs the entries"
+    },
+    {
+      "task": "SMC",
+      "needs": "SM4",
+      "reason": "needs the entries"
+    },
+    {
+      "task": "SW3a",
+      "needs": "ST2",
+      "reason": "decodes the events and fixture the CLI task produces (ST1's answers file arrives through it)"
+    },
+    {
+      "task": "SW3a",
+      "needs": "SU1",
+      "reason": "the confirmation window is SU1's single window"
+    },
+    {
+      "task": "SW3a",
+      "needs": "C-OPS",
+      "reason": "built against the operations' names and types and the stub bridge"
+    },
+    {
+      "task": "SW3b",
+      "needs": "SW3a",
+      "reason": "one change split in two: the screens follow main's event feed and digest binding"
+    },
+    {
+      "task": "SW3b",
+      "needs": "MG0",
+      "reason": "`left_for_you` lines use the safe copy builder"
+    },
+    {
+      "task": "PW1",
+      "needs": "RB1",
+      "reason": "uses the cache API it adds"
+    },
+    {
+      "task": "PW1",
+      "needs": "RS2",
+      "reason": "both write `entry.ts`"
+    },
+    {
+      "task": "PW1",
+      "needs": "SU2b",
+      "reason": "both write `entry.ts`"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "C-OPS",
+      "reason": "integrates the contract"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "AL",
+      "reason": "needs the real operations"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "SU1",
+      "reason": "needs the real consumer"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "RB4",
+      "reason": "needs the real consumer"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "RS2",
+      "reason": "needs the real consumer"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "MO-C",
+      "reason": "needs the real consumer"
+    },
+    {
+      "task": "I-OPS",
+      "needs": "SW3a",
+      "reason": "needs the real consumer"
     }
   ],
-  "decoupling": [],
-  "contract_changes": []
+  "decoupling": [
+    {
+      "contract": "C-OPS",
+      "was": {
+        "task": "SU1",
+        "needs": "AL"
+      },
+      "integration": "I-OPS",
+      "reason": "SU1 needed the operations' names and types, not the allow-list's rows"
+    },
+    {
+      "contract": "C-OPS",
+      "was": {
+        "task": "RB4",
+        "needs": "AL"
+      },
+      "integration": "I-OPS",
+      "reason": "RB4 needed the operations' names and types, not the allow-list's rows"
+    },
+    {
+      "contract": "C-OPS",
+      "was": {
+        "task": "RS2",
+        "needs": "AL"
+      },
+      "integration": "I-OPS",
+      "reason": "RS2 needed the operations' names and types, not the allow-list's rows"
+    },
+    {
+      "contract": "C-OPS",
+      "was": {
+        "task": "MO-C",
+        "needs": "AL"
+      },
+      "integration": "I-OPS",
+      "reason": "MO-C needed the operations' names and types, not the allow-list's rows"
+    },
+    {
+      "contract": "C-OPS",
+      "was": {
+        "task": "SW3a",
+        "needs": "AL"
+      },
+      "integration": "I-OPS",
+      "reason": "SW3a needed the operations' names and types, not the allow-list's rows"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-OPS",
+      "contract": "C-OPS",
+      "raised_by": "SU1",
+      "reason": "an operation or payload field a consumer needs that the contract lacks",
+      "affects": [
+        "SU1",
+        "RB4",
+        "RS2",
+        "MO-C",
+        "SW3a",
+        "AL"
+      ]
+    }
+  ]
 }

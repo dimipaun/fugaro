@@ -10,8 +10,8 @@ adds to [docs/status.md](../status.md) follows the rule that a spec's row moves 
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec **verbatim**. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1 to A5, findings F1 to F24, decisions D2900 to D2909 with the owner's dated answers, resolutions R1 to R10, open items O1 to O4, UNVERIFIED U1 to U8. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Six slices and 34 tasks with levels, the critical path, the shared-files table, the dependencies broken and kept, the estimate line, the three owner-run checks and the after-deploy steps. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1 to A5, findings F1 to F26, decisions D2900 to D2909 with the owner's dated answers, resolutions R1 to R10, open items O1 to O5, UNVERIFIED U1 to U8. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Six slices and 38 tasks with levels, the critical path, the shared-files table, the dependencies broken and kept, the estimate line, the three owner-run checks and the after-deploy steps. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads (schema 3) |
 
 ## Numbers taken
