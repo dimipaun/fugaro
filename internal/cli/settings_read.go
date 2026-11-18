@@ -454,6 +454,7 @@ var settingsOwnerCommands = map[string]string{
 	"workspace":         "fugaro workspace",
 	"image map":         "fugaro image map",
 	"project clone-url": "fugaro project clone-url",
+	"project binaries":  "fugaro project binaries",
 	"setup":             "fugaro setup, which writes the installation's own facts",
 	"update":            "fugaro update, which writes the installation's own generations",
 	"budget":            "fugaro setup, which writes the installation's own budget backend",

@@ -71,7 +71,7 @@ func newProjectCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 	}
 	cmd.AddCommand(newProjectPolicyCmd(), newProjectShowCmd(), newProjectReposCmd(), newProjectSyncCmd(), newProjectCloneURLCmd(),
-		newProjectProfileCmd(), newProjectRoutingCmd())
+		newProjectProfileCmd(), newProjectRoutingCmd(), newProjectBinariesCmd())
 	return cmd
 }
 
