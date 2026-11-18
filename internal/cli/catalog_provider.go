@@ -41,19 +41,21 @@ import (
 // ran (refuseKeyReadInAgent's rule).
 const catalogKeyRead = "fugaro image build"
 
-// catalogGitHubAppID is the GitHub App ID a catalog build of repo is named
-// with: the repository's own, which the local config records
-// (localcfg.Repo.GitHubAppID, read through the storedAppID the repository
-// stage resolves the checkout's own repository with, so a config that names
-// the repository another way still answers), else FUGARO_GITHUB_APP_ID.
+// repoGitHubAppID is the GitHub App ID a command names repo's provider with --
+// the catalog build that copies an entry's Dockerfile, and `fugaro followups`
+// reading a run's merged parent pull request: the repository's own, which the
+// local config records (localcfg.Repo.GitHubAppID, read through the storedAppID
+// the repository stage resolves the checkout's own repository with, so a config
+// that names the repository another way still answers), else
+// FUGARO_GITHUB_APP_ID.
 //
 // The configured ID wins over a different value in the environment, and the
 // environment is only the fallback when the config holds none. The config is
 // what onboarding wrote from the App this repository was set up with, so it is
 // the project's own answer; the environment is whatever this shell happens to
 // carry, and an exported ID -- another App's, another project's -- must not
-// silently point this build, and the Cloud Build clone it submits, at a
-// repository the installation never onboarded with that App.
+// silently point this read, and the Cloud Build clone the catalog build
+// submits, at a repository the installation never onboarded with that App.
 //
 // With neither set the refusal names both places, because they are the two
 // ways this ID ever gets here: the config key, where the fix is, and the
@@ -63,7 +65,7 @@ const catalogKeyRead = "fugaro image build"
 // internal/infra/projectjobs.go give for the same missing field -- because
 // --github-app-id, which infra.Repo names for the same state, is not a flag
 // this command takes.
-func catalogGitHubAppID(lc *localcfg.Config, repo string, getenv func(string) string) (string, error) {
+func repoGitHubAppID(lc *localcfg.Config, repo string, getenv func(string) string) (string, error) {
 	if id := storedAppID(lc, repo); id != "" {
 		return id, nil
 	}
@@ -133,7 +135,7 @@ func tokenReadHint(cause error) string {
 // when the environment holds none of its own -- the App ID and the App's
 // private key for GitHub, the access token for Bitbucket.
 //
-// The App ID is rs's own: catalogGitHubAppID resolved it for this repository
+// The App ID is rs's own: repoGitHubAppID resolved it for this repository
 // (config first, environment only when the config holds none) and infra.Repo
 // carried that same answer into the spec, so the credential this command reads
 // the Dockerfile with and the one the submitted build clones with cannot
@@ -201,7 +203,7 @@ func repoProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs i
 
 // githubProviderEnv is repoProviderEnv's GitHub half.
 func githubProviderEnv(ctx context.Context, w io.Writer, lc *localcfg.Config, rs infra.RepoSpec, env []string, who string, getenv func(string) string, stdinTerminal bool, node *projectpolicy.Policy) ([]string, string, error) {
-	// rs.GitHubAppID is the one answer catalogGitHubAppID gave for this
+	// rs.GitHubAppID is the one answer repoGitHubAppID gave for this
 	// repository, which the spec the build is submitted with carries too: the
 	// ID is appended after the process environment, so it is the one
 	// providers.envVars keeps of the two, and the credential this command

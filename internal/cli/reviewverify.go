@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/safetext"
@@ -316,6 +317,22 @@ var (
 	serviceReadBitbucketAPIURL = bitbucket.DefaultBaseURL
 )
 
+// configuredCredentialsServiceURL is the credentials service the installation
+// publishes,
+// and "" for an installation that publishes none: the one place the block is
+// read, so a caller that only asks whether this machine has a service to read
+// through cannot answer differently from the read that uses it. It is the local
+// config's own value and never a variable of the environment: the
+// credentials-service URL variable providers.FromEnv reads is a JOB's fact, set
+// on the job by the platform, and a person's shell holding it would name a
+// service their installation may not have.
+func configuredCredentialsServiceURL(lc *localcfg.Config) string {
+	if lc == nil || lc.CredentialsService == nil {
+		return ""
+	}
+	return lc.CredentialsService.URL
+}
+
 // serviceReadProvider opens the provider a person's forge read is made through:
 // the forge's own adapter for one repository, keyless, with the installation's
 // credentials service as the source of every token it uses. `fugaro review
@@ -345,10 +362,7 @@ var (
 // at all is refused rather than opened some other way, which is what keeps the
 // fallback this task removes from coming back through the default branch.
 func serviceReadProvider(ctx context.Context, env *cloudEnv, kind, repo, what string) (gitprov.Provider, error) {
-	serviceURL := ""
-	if env.lc != nil && env.lc.CredentialsService != nil {
-		serviceURL = env.lc.CredentialsService.URL
-	}
+	serviceURL := configuredCredentialsServiceURL(env.lc)
 	if serviceURL == "" {
 		return nil, userErr("this installation has no credentials service (credentials_service is not published in this project's config), and %s with a token the service mints for you: a person's machine holds no GitHub App key to read one with. Ask the owner to opt this installation in to the credentials service and run fugaro update", what)
 	}

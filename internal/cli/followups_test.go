@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -117,8 +118,20 @@ func followUpPR(number int, branch string, state gitprov.PRState) fake.PRState {
 // followUpsStub installs the command's opener over one fake host holding prs:
 // the provider kind is resolved from this machine's config for real, and the
 // read itself is the fake's, which is the network no test has.
+//
+// The credential the command resolves before it opens anything is this
+// machine's own -- an App ID and the App's key, which no shell holds
+// (catalog_provider.go) -- so the fixture exports both. They are the seam's own
+// override (the environment wins over the config and no secret is read for
+// it), which is what keeps the read these tests are about the only thing
+// standing in for the credential: the key is never parsed, because the opener
+// below is what opens. The App ID and the key's ID and secret are the catalog
+// fixtures' own placeholders, since the two commands share the seam.
 func followUpsStub(t *testing.T, prs ...fake.PRState) *fake.Provider {
 	t.Helper()
+	catalogClearProviderEnv(t)
+	t.Setenv(providers.EnvGitHubAppID, catalogBuildAppID)
+	t.Setenv(providers.EnvGitHubAppKey, catalogAppKeyPlaceholder)
 	p := &fake.Provider{Repo: "acme/app", State: fake.State{PRs: prs}}
 	was := openFollowUpsProvider
 	openFollowUpsProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
