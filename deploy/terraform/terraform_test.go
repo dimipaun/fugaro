@@ -2409,15 +2409,24 @@ func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
 // module's account grants must be literals — cover.onDeployer refuses a
 // computed one), so the spelling is a deliberate choice and not an oversight;
 // what it must never lose is the edge that the reference would have carried.
+//
+// What the guard does not see is a name a local builds: logging.tf's
+// local.log_bucket_path, which the log view's own bucket attribute takes, is a
+// path wrapped around the identity and not the identity expression itself.
+// Those are few and each carries its own depends_on; a new one has to be
+// written with the same care rather than caught here.
 func TestStringNamedResourcesAreWaitedFor(t *testing.T) {
 	type nameable struct {
 		idAttr string   // the attribute holding the created resource's identity
 		named  []string // the attributes a naming resource spells that identity in
 	}
+	// Every type whose instances a sibling can name by a string, and the
+	// attribute that holds the identity. A service account is the one whose
+	// spelling is not an attribute value but an address inside one (an email,
+	// in member, service_account_id or service_account_email), so it carries
+	// no `named`; the two types with a path form of their own — a secret and a
+	// custom role — are handled in namesByIdentity beside their bare id.
 	nameableByType := map[string]nameable{
-		// A service account is named inside an email address, in whatever
-		// attribute holds one (member, service_account_id,
-		// service_account_email): its two spellings are handled below.
 		"google_service_account":               {idAttr: "account_id"},
 		"google_secret_manager_secret":         {idAttr: "secret_id", named: []string{"secret_id", "secret"}},
 		"google_storage_bucket":                {idAttr: "name", named: []string{"bucket"}},
