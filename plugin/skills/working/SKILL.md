@@ -79,7 +79,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 ## Cancel and retry
 
 - `fugaro cancel <run>` stops a run: the runner stops the current stage and opens a draft pull request with what it has. Run it only on the user's word. `--now` stops the execution at once, without waiting for the draft. Neither hard-stops a run that is opening its pull request (`finalize`): `cancel` waits up to 10 more minutes for it, then exits 1. A run writing back its cache counts as finalized.
-- `fugaro run --retry <run>` launches a stored task that never started (`unlaunched`). Repeating a launch with the same `--run-id` reports `already-launched` instead of starting a second run, so a launch whose outcome you do not know is safe to repeat.
+- `fugaro run --retry <run>` launches a stored task that never started (`unlaunched`); a run that already started is refused with `nothing launched`. A repeated `--run-id` reports `already-launched` instead of a second run, so a launch you are unsure of is safe to repeat.
 - A run that failed after starting is not retried: read `fugaro diagnose`, then launch a new run or a follow-up with the user's go-ahead.
 
 ## Read the result
