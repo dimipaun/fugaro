@@ -410,14 +410,16 @@ func TestAllowedTypesCoverTheModules(tt *testing.T) {
 			`service_account = google_service_account.credentials[0].email`},
 		// The resident orchestrator's own literals, which its two cases read
 		// (orchestratorServiceChange, orchestratorTickChange): the IAM setting
-		// that is the fence, the argv of the subcommand, the three names
+		// that is the fence, the argv of the subcommand, the six names
 		// orchestratorServiceEnv allows, the account the template names, and
-		// the tick's route. A module edit that renamed or dropped one fails
-		// here rather than refusing a plan the module still writes.
+		// the tick's route. The six are the node's three (P5.1c) and the
+		// launch's three (P5.1d). A module edit that renamed or dropped one
+		// fails here rather than refusing a plan the module still writes.
 		"modules/installation/orchestrator.tf": {`invoker_iam_disabled = false`,
 			`args  = ["orchestrator", "serve"]`,
 			`orchestrator_tick_path = "/tick"`,
 			`"FUGARO_PROJECT"`, `"FUGARO_FIREBASE_PROJECT"`, `"FUGARO_RTDB_URL"`,
+			`"FUGARO_GCP_PROJECT"`, `"FUGARO_REGION"`, `"FUGARO_BUCKET"`,
 			`service_account = google_service_account.orchestrator[0].email`},
 	}
 	for file, wants := range pins {
@@ -1851,8 +1853,8 @@ func orchestratorTick(uri, audience, email string) ResourceChange {
 // reads the digest back would otherwise have this process, which may be the
 // phone, run their code.
 //
-// The environment is the three names orchestrator.tf sets (the process reads no
-// fourth: internal/cli's TestOrchestratorServiceEnvIsTheDeploymentsOwn holds
+// The environment is the six names orchestrator.tf sets (the process reads no
+// seventh: internal/cli's TestOrchestratorServiceEnvIsTheDeploymentsOwn holds
 // the two lists to each other), with literal values and no value_source — an
 // environment is the one path a value could reach this process without a Secret
 // Manager read.
@@ -1860,7 +1862,7 @@ func orchestratorTick(uri, audience, email string) ResourceChange {
 // Mutation (run, restore): delete the orchestratorServiceChange branch from
 // Cover.attributes — the module's own plan becomes REFUSED, which is the row
 // that pins the branch: every change at this address then falls to the
-// credentials service's case, which refuses the argv, the account and the three
+// credentials service's case, which refuses the argv, the account and the six
 // names of this container. A test that only listed refused rows would miss it.
 func TestCoverRefusesAnOrchestratorServiceThatIsNotTheModules(t *testing.T) {
 	img := "us-east5-docker.pkg.dev/proj-1/fugaro-ghcr/dimipaun/fugaro-base:1.2.3@sha256:" + strings.Repeat("a", 64)

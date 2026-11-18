@@ -83,10 +83,15 @@
 // here reads a variable it does not need, and nothing here prints one.
 //
 // THE LAUNCH IS `fugaro run`'S ONE PATH, BUILT THE WAY A CONTAINER CAN BUILD IT.
-// The one launcher this tree has is internal/cli/orchestrator_launcher.go's — the
-// command's own steps and gate block, shared with the daemon precisely so that a
-// second launch path cannot appear (that file's header: F11, D931, T2) — and
-// what this deployment builds is the half of it a container can have: a
+// Both launchers this tree has live in the same file, and they are two bindings
+// of ONE path rather than two paths (F11, D931, T2): the claim, the mint and the
+// job execution are the command's own steps in each, `fugaro run --retry`'s
+// reader of a stored task included, and what the daemon's launcher adds — the
+// spec and the task it builds for an item, and the command's gate block — is
+// exactly what a container has no hand in (orchestrator_launcher.go's
+// residentLauncher names the two halves and what skipping the gates can cost,
+// and its header is the argument for it). What this deployment builds over that
+// path is the half a container can have: a
 // *cloudEnv built from the three facts a run's own container already carries
 // (FUGARO_BUCKET, FUGARO_GCP_PROJECT and FUGARO_REGION, which internal/cli's
 // exec.go and imagecheck.go read inside a run; internal/infra's BucketEnv,
@@ -558,10 +563,11 @@ type orchestratorStore interface {
 type residentOrchestrator struct {
 	id string
 	db orchestratorStore
-	// launch starts a re-issued attempt, and it is the one launch path this
-	// tree has (orchestrator_launcher.go's residentLauncher, built by the
-	// configuration builder): this file hands a plan's re-issue to it and
-	// writes no step of its own — no claim, no mint, no jobs.run.
+	// launch starts a re-issued attempt, over the command's own launch path
+	// (orchestrator_launcher.go's residentLauncher, built by the configuration
+	// builder: the claim, the mint and the job execution are that launcher's
+	// and the command's): this file hands a plan's re-issue to it and writes
+	// no step of its own — no claim, no mint, no jobs.run.
 	launch orchestrator.Launcher
 	log    *slog.Logger
 }
@@ -847,11 +853,15 @@ func (s *residentOrchestrator) carry(ctx context.Context, state orchestrator.Sta
 	out := orchestrator.ResidentCarry(ctx, orchestrator.Starter{Launcher: s.launch}, state, orchestrator.RunView{}, caps, now)
 	pass.Unreported, pass.Carried, pass.Left = out.Read, out.Carried, out.Left
 	for _, err := range out.Refused {
-		// One line per attempt a launcher refused, and it names the process
-		// rather than a run id: what the launcher's own words carry is its
-		// business, and they name the run (the launcher reads the record off
-		// the node). oneLine because an error may quote a path this process
-		// read, and this log is Cloud Logging.
+		// One line per attempt a launcher refused, and it names the run: the
+		// error beside these attributes is the launcher's own sentence, and
+		// the launcher's sentences name the record they were refused for
+		// (retrySpec's "run acme/app/<id> has no task.json"), which is what a
+		// person needs to know WHICH attempt is stuck — the pass's own line
+		// carries counts and quotes no item, and it cannot say this. A run id
+		// is not this process's secret: the operator wrote it on the node, and
+		// `fugaro runs ls` prints it. oneLine because an error may quote a path
+		// this process read, and this log is Cloud Logging.
 		s.log.Warn("the tick could not start an attempt the node records",
 			"process", orchestratorProcessName, "orchestrator", s.id, "error", oneLine(err.Error()))
 	}

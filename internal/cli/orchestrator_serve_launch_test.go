@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -160,11 +161,13 @@ func tickWithNode(t *testing.T, docs map[string]string, at time.Time, launch orc
 // What the pass DOES with such a reading is start it, under the run id the node
 // recorded and through the one launcher (the fake here): that is `carried`, and
 // it is a second field rather than the same number under another name because
-// the two differ exactly where a launcher refused. Nothing is counted per
-// attempt and nothing is named: the run id never reaches this process's log (a
-// project's plan does not belong in Cloud Logging), and a long run — which
-// reads as one of these too — is not a warning, because there is nothing a
-// person could do about it.
+// the two differ exactly where a launcher refused. So a carried attempt is ONE
+// line and it is the pass's own, with the counts in its fields and no attempt
+// named in it — a project's plan is counted here and never quoted, and a long
+// run, which reads as one of these too, is not a warning at all, because there
+// is nothing a person could do about it. (A REFUSAL beside it is a line of its
+// own and does name the run: the test below is where that difference is held,
+// and `carry` says why.)
 func TestOrchestratorTickCarriesTheReissueItReads(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	doc := residentNodeDoc(t, at)
@@ -195,8 +198,17 @@ func TestOrchestratorTickCarriesTheReissueItReads(t *testing.T) {
 	if strings.Contains(logged, "WARNING") {
 		t.Errorf("the pass logged %q, and a carried attempt is not a warning: the pass's own line carries the count", logged)
 	}
+	// One line, and the pass's own: a carried attempt is counted, not named —
+	// the field the caller reads is the count, and a plan's items are what this
+	// line must never quote.
+	if n := strings.Count(strings.TrimSuffix(logged, "\n"), "\n") + 1; n != 1 {
+		t.Errorf("the pass logged %d lines (%q), and a pass that carried an attempt and refused none writes one", n, logged)
+	}
+	if !strings.Contains(logged, orchestratorPassLine) {
+		t.Errorf("the pass logged %q, and the line an operator reads is %q", logged, orchestratorPassLine)
+	}
 	if strings.Contains(logged, residentLaunchRun) {
-		t.Errorf("the pass logged %q, and the node's items are counted and never quoted: a project's plan does not belong in Cloud Logging", logged)
+		t.Errorf("the pass logged %q, and a plan's items are counted on this line and never quoted", logged)
 	}
 }
 
@@ -211,6 +223,12 @@ func TestOrchestratorTickCarriesTheReissueItReads(t *testing.T) {
 // The refusal is logged once, with the launcher's own words and on one line, and
 // the pass still answers 200 with the count of what it carried: what a person
 // needs is both the number and the reason.
+//
+// The refusal line NAMES THE RUN, and the fake's sentence is worded the way the
+// real launcher's is (retrySpec's "run acme/app/<id> has no task.json") so that
+// the assertions below can fail: a fake whose error carried no run id would make
+// any claim about the line's contents vacuous. What stays unquoted is the pass's
+// OWN line, a plan's items being counted there and never written down.
 func TestOrchestratorTickCarriesTheRestWhenALauncherRefusesOne(t *testing.T) {
 	at := time.Date(2026, 11, 17, 5, 0, 0, 0, time.UTC)
 	const secondRun = "20261117-051500-ef01"
@@ -221,8 +239,10 @@ func TestOrchestratorTickCarriesTheRestWhenALauncherRefusesOne(t *testing.T) {
 	}
 	// The launcher refuses the first attempt the plan reads and answers the
 	// second: what the pass does with a plan whose first request fails is the
-	// whole of this test.
-	launch := &fakeResidentLauncher{refuse: map[string]error{residentLaunchRun: errors.New("the runs bucket holds no task for this run")}}
+	// whole of this test. The sentence is the command's own for a run the
+	// bucket holds no task of, and it names the run.
+	refusal := fmt.Errorf("run %s/%s has no task.json", appSlug, residentLaunchRun)
+	launch := &fakeResidentLauncher{refuse: map[string]error{residentLaunchRun: refusal}}
 
 	rec, logged := tickWithNode(t, map[string]string{statePath: doc}, at, launch)
 	if rec.Code != http.StatusOK {
@@ -238,11 +258,35 @@ func TestOrchestratorTickCarriesTheRestWhenALauncherRefusesOne(t *testing.T) {
 	if len(launch.starts) != 2 {
 		t.Fatalf("the launcher was asked for %v, and both attempts were the pass's to carry: a refusal must not stop the rest", launch.starts)
 	}
-	if !strings.Contains(logged, "could not start an attempt the node records") || !strings.Contains(logged, "holds no task") {
-		t.Errorf("the pass logged %q, and a refusal that is not written down is an attempt nobody knows is stuck", logged)
+	// The two lines, told apart by what they are: the pass's own carries the
+	// counts and quotes no attempt, and the refusal carries the launcher's
+	// sentence and names the run a person has to act on.
+	passLine, refusalLine := "", ""
+	for _, line := range strings.Split(strings.TrimSuffix(logged, "\n"), "\n") {
+		switch {
+		case strings.Contains(line, orchestratorPassLine):
+			passLine = line
+		case strings.Contains(line, "WARNING"):
+			refusalLine = line
+		}
 	}
-	if strings.Contains(logged, residentLaunchRun) || strings.Contains(logged, secondRun) {
-		t.Errorf("the pass logged %q, and the run ids are the node's, not this process's log's", logged)
+	if passLine == "" {
+		t.Errorf("the pass logged %q, and one line of it is the pass's own", logged)
+	}
+	if strings.Contains(passLine, residentLaunchRun) || strings.Contains(passLine, secondRun) {
+		t.Errorf("the pass's own line is %q, and a plan's items are counted there and never quoted", passLine)
+	}
+	if refusalLine == "" {
+		t.Fatalf("the pass logged %q, and a refusal that is not written down is an attempt nobody knows is stuck", logged)
+	}
+	if !strings.Contains(refusalLine, "could not start an attempt the node records") || !strings.Contains(refusalLine, "has no task.json") {
+		t.Errorf("the refusal line is %q, and it is the pass's own sentence with the launcher's error beside it", refusalLine)
+	}
+	if !strings.Contains(refusalLine, residentLaunchRun) {
+		t.Errorf("the refusal line is %q, and it has to name the attempt a person must act on: the pass's own line cannot, and the launcher's sentence does", refusalLine)
+	}
+	if strings.Contains(logged, secondRun) {
+		t.Errorf("the pass logged %q, and the attempt it CARRIED has no refusal of its own to report: a line per carried attempt is a line per tick per long run", logged)
 	}
 }
 

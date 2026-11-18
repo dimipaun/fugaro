@@ -5,10 +5,18 @@
 // WHAT THIS FILE IS, AND WHAT IT IS NOT. Section 4.2's second bullet is the
 // launcher: "for a launch request, takes the launch claim, mints the budget
 // token, and starts the job execution. That is `fugaro run`'s existing path
-// with a service account behind it." That path is internal/cli's
-// orchestratorLauncher and the command's own launch steps behind it — the ONE
-// launcher this tree has (F11, D931, T2: a launch that skipped the budget
-// pre-check or the gates is a hole the command does not have). So this file
+// with a service account behind it." That path is the command's own launch —
+// launchRun's claim, mint and job execution — and internal/cli binds it to this
+// package's Launcher interface TWICE OVER ONE PATH and not twice over two:
+// orchestratorLauncher, the daemon's, which builds the spec and the task an
+// item names and passes the command's whole gate block (freshLaunchGates), and
+// P5.1d's residentLauncher, which starts the task an earlier launcher already
+// stored and deliberately runs no gate block — its own header names the two
+// halves a container has none of and what the skip can cost, and the steps the
+// design names (the claim, the mint, the job start) are the command's in both.
+// F11, D931 and T2's one path is what that sharing keeps; what it does not make
+// true is that every launcher passes every gate, and a reader who needs the
+// gate block has to ask which launcher they are reading. So this file
 // holds NO launcher and no step of one: what it holds is the SPLIT of one
 // node's plan (ResidentRequests) and the CARRYING of the half a resident pass
 // may act on (ResidentCarry), which is the part the resident pass owns and the
@@ -154,8 +162,8 @@ func ResidentRequests(s State, view RunView, caps Caps, now time.Time) (requests
 // and what a starter answers is what this returns. Nothing here decides what to
 // start — the ids, the specs and the fence between them are the plan's and the
 // state's — and nothing here is a step of a launch: the claim, the mint and the
-// job execution are the launcher's, which is the one path this tree has
-// (internal/cli), handed in as Starter.Launcher.
+// job execution are the launcher's, the command's own path in internal/cli,
+// handed in as Starter.Launcher.
 //
 // The starter a caller hands in is one with a Launcher and WITHOUT a commit or a
 // mint, and that is what makes the split hold rather than what a comment asks
