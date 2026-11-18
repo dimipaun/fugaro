@@ -27,12 +27,11 @@ import (
 // a token names the family a key belongs to, not that the family writes the
 // key, and `secrets` owns `batch.secrets` while writing expiry and rotation and
 // no key of the batch block. Those rows are named in settingsUnwrittenKeys
-// beside the tokens, so the measurement reaches them (F21). The rows another
-// task of the plan already gives a writer are named in
-// settingsLabelledElsewhere rather than labelled here — a label registered
-// for one of those would be a second registrant of one pattern, and
-// settings.RegisterWriter panics on that in every command
-// (docs/contracts/config-ownership.md §4).
+// beside the tokens, so the measurement reaches them (F21). A row another task
+// of the plan has given a writer is not labelled here at all: its family
+// registers the writer, and labelling it beside that would be a second
+// registrant of one pattern, which settings.RegisterWriter panics on in every
+// command (docs/contracts/config-ownership.md §4).
 
 const (
 	labelPlumbing     = settings.LabelPlumbing
@@ -71,29 +70,16 @@ var settingsUnwrittenKeys = map[string]bool{
 	"batch.secrets": true,
 }
 
-// settingsLabelledElsewhere names the rows of those tokens another task of the
-// plan gives a writer, with the task. They stay T1's golden gap until it lands,
-// and a label here would be the same row registered twice.
-//
-// R1's five rows left this table when it landed: `settings set` writes them, so
-// the ratchet registers their writer and the golden loses their lines. M4's five
-// stay until `fugaro rigor security` exists.
-var settingsLabelledElsewhere = map[string]string{
-	"security.patterns":                  "M4 registers `fugaro rigor security` for it",
-	"layer.security.always_level_3":      "M4 registers `fugaro rigor security` for it",
-	"layer.security.patterns.*.name":     "M4 registers `fugaro rigor security` for it",
-	"layer.security.patterns.*.match":    "M4 registers `fugaro rigor security` for it",
-	"layer.security.patterns.*.category": "M4 registers `fugaro rigor security` for it",
-}
+// Two task-scoped exemptions have stood here and are gone, both because the
+// command they named landed: R1's five rows left when `settings set` learned to
+// write them, and M4's five — `security.patterns` and the layer's four
+// `security.*` rows — when `fugaro rigor security` did. A row of this file is
+// now one of the two maps above and nothing else.
 
-// settingsRowNeedsALabel is the measurement the three maps above make: the row
-// is one of a token no command answers for, or a key no family writes although
-// one owns it, and no other task has claimed it. It is the scope of this file,
-// read by the test and by nothing else.
+// settingsRowNeedsALabel is the measurement the two maps above make: the row is
+// one of a token no command answers for, or a key no family writes although one
+// owns it. It is the scope of this file, read by the test and by nothing else.
 func settingsRowNeedsALabel(r settings.Row) bool {
-	if _, elsewhere := settingsLabelledElsewhere[r.Key]; elsewhere {
-		return false
-	}
 	return settingsUnwrittenOwners[r.Owner] || settingsUnwrittenKeys[r.Key]
 }
 

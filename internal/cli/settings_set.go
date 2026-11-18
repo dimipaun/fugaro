@@ -70,17 +70,16 @@ var settingsFamilyCommands = map[string]string{
 	// clone-url` is that command, and the refusal names it rather than
 	// `fugaro project`, which writes the project's other policy keys.
 	"project clone-url": "fugaro project clone-url",
-	// The security paths name no family here, and the register is the reason:
-	// the five rows — `security.patterns` and the layer's four `security.*`
-	// rows — carry the owner token `config`, whose read sentence points at
-	// `fugaro config publish`, the command that carries the layer file each of
-	// them is stated in. D2613's `fugaro rigor security add|rm` is what M4 of
-	// docs/config-ownership registers for an entry edited by its key field, and
-	// the token arrives in that task's own commit beside the command: an entry
-	// here is the write's refusal in that family's name and the read's word for
-	// the row, so naming a command the tree does not have would point both at a
-	// fix that does nothing. Until M4 lands the five are refused by the
-	// allowlist, in the words their own rows have named since before R1.
+	// The security list and the layer's switch are a family of one command for
+	// the image map's reason: a row of the list is addressed by its name and
+	// written whole — a name, a glob and a category — which no generic scalar
+	// write can do, and the switch beside it is the layer's own (D2613, M4 of
+	// docs/config-ownership). The five rows named `config` until that command
+	// was in the tree, because their one editor was the layer file
+	// `fugaro config publish` carries; `fugaro rigor security add|rm` writes the
+	// same two files entry by entry, so the family is the answer now, and the
+	// refusal for one of the five names it rather than the publish door.
+	"rigor security": "fugaro rigor security",
 }
 
 // settingsGenericKeys is the allowlist of spec §4.4: the exact keys `settings

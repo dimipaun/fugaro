@@ -7492,6 +7492,11 @@ the sensitive direction, so a coding agent's session is refused it with the
 command to run at your own terminal, and your own terminal writes it and asks
 nothing.
 
+`fugaro rigor security add|rm` writes the paths a change has to touch to be
+reviewed as a security-sensitive change, and the project layer's switch that
+puts every change there: it writes `security.patterns` and the layer's own
+`security.always_level_3`, in the same two layers and with the same fence.
+
 Usage: `fugaro rigor`
 
 Flags:
@@ -7503,6 +7508,7 @@ Flags:
 Subcommands:
 
 - `fugaro rigor floor` -- Set or remove the review floor a project's runs are held to
+- `fugaro rigor security` -- Add or remove a security path, or the project's always-level-3 switch
 - `fugaro rigor set` -- Write the project layer's rigor default, or one area rule
 
 ## `fugaro rigor floor`
@@ -7643,6 +7649,95 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor security`
+
+Add or remove a security path, or the project's always-level-3 switch
+
+Write the paths a change has to touch to be reviewed as a security-sensitive change, and the switch that puts every change at review level 3.
+
+A row is addressed by its name: `fugaro rigor security add --name NAME --match GLOB --category CATEGORY` writes the row that name holds, adding it when the list does not carry it yet — its glob and its category are then required — and replacing the glob and the category of the row it names when it does. A row already in the list keeps the value its flag does not state. `fugaro rigor security rm --name NAME` takes the row away whole.
+
+`--always-level-3` writes the switch instead of a row: `add` turns it on and `rm` turns it off. It is the project layer file's alone — a repository's `security:` block is its own rows and nothing else — and it puts every change of every repository of the project at review level 3, which is the answer D1503 gives a `**` pattern: a pattern that matches everything is not a pattern, it is this switch.
+
+A removal, and an add that gives a row already in the list another glob, are the lowering direction: a coding agent's session is refused them with the diff and the command to run at your own terminal, and your own terminal writes them and asks nothing. Adding a row, or turning the switch on, only ever escalates more.
+
+With no `--layer` the write lands in this machine's own project layer file, the one `fugaro update` publishes, and it ends with `next: fugaro update`. `--layer repo` writes a checkout's own `fugaro.yaml` instead, where the rows are live once your branch is merged to the base branch — this command commits, pushes and opens nothing. `--repo` names that repository, as owner/name or as a path to its checkout; without it the checkout the command runs in is the one written. A layer the key does not have is refused naming the layers it does: `local` is not one of them.
+
+Usage: `fugaro rigor security`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for security |
+
+Subcommands:
+
+- `fugaro rigor security add` -- Add a security path, or turn the project's always-level-3 switch on
+- `fugaro rigor security rm` -- Remove a security path, or turn the project's always-level-3 switch off
+
+## `fugaro rigor security add`
+
+Add a security path, or turn the project's always-level-3 switch on
+
+Add one row to the security list, or turn the project layer's switch on.
+
+The row is addressed by its name. A name the list does not carry yet is added, and its glob and its category are then both required: a row with no glob is one no matcher can use, and a category outside the seven the classifier labels matches with is a row the loader refuses. A name the list already carries has its glob and its category replaced by the ones the flags state, and keeps the ones it has for a flag that is left out — so a row the list carries is corrected rather than duplicated, and one call writes one row.
+
+Giving such a row another glob is the lowering direction: the paths the row named before stop being escalated to review level 3 unless another row names them, so it is the step a coding agent's session is refused. Adding a row is not, and `--always-level-3` only puts every change of the project at review level 3.
+
+`--always-level-3` writes the layer file's own switch and takes no --name, --match or --category. Turning it off is `fugaro rigor security rm --always-level-3`, and no layer writes it for one repository: a repository's `security:` block is its rows and nothing else.
+
+Usage: `fugaro rigor security add (--name NAME --match GLOB --category CATEGORY | --always-level-3) [--layer LAYER] [--repo REPO]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--always-level-3` | bool | `false` | no | write the project layer's own switch instead of a row: turn it on, so every change of every repository of the project reaches review level 3 |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
+| `--category` | string | "" | no | the row's category: credentials, guards, targets, infrastructure, prompts, CI, artifacts; required for a name the list does not carry yet, and optional for one it does |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the rows are live once your branch is merged to the base branch) |
+| `--match` | string | "" | no | the row's glob, relative to the repository root (e.g. internal/creds/**); required for a name the list does not carry yet, and optional for one it does |
+| `--name` | string | "" | no | the row to write, by the name that is its identity in the union of the three layers |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor security rm`
+
+Remove a security path, or turn the project's always-level-3 switch off
+
+Take one row out of the security list, or turn the project layer's switch off.
+
+The row is taken away whole, by its name: a name the list does not carry is not a failure, and the command says so and writes nothing. A removal is the lowering direction — the paths the row named stop being escalated to review level 3 unless another row names them — so a coding agent's session is refused it with the diff, and your own terminal writes it and asks nothing. It is not a re-aim: a row that should name other paths is corrected with `fugaro rigor security add`, which refuses the same session for the same reason.
+
+`--always-level-3` turns the layer file's own switch off: with it off, a run of the project reaches review level 3 through the paths its list matches and the per-run `fugaro run --security` request, and nothing else. A layer that is not carrying the switch already is not a failure either.
+
+Usage: `fugaro rigor security rm (--name NAME | --always-level-3) [--layer LAYER] [--repo REPO]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--always-level-3` | bool | `false` | no | write the project layer's own switch instead of a row: turn it off, so a change is escalated by the paths the list matches and by nothing else |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the rows are live once your branch is merged to the base branch) |
+| `--name` | string | "" | no | the row to write, by the name that is its identity in the union of the three layers |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
 
 Subcommands:
 
