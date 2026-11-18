@@ -182,7 +182,7 @@
           "internal/cli/runs_stream.go",
           "internal/cli/runs_stream_test.go",
           "schemas/runs-stream.schema.json",
-          "console/test/fixtures/runs-stream.ndjson"
+          "internal/cli/testdata/runs_stream.golden.ndjson"
         ]
       }
     },
@@ -236,7 +236,7 @@
           "internal/cli/user_ls_me_test.go",
           "internal/access/resolve.go",
           "schemas/whoami.schema.json",
-          "console/test/fixtures/whoami.json"
+          "internal/cli/testdata/whoami.golden.json"
         ]
       }
     },
@@ -290,7 +290,7 @@
           "internal/cli/report_step.go",
           "internal/cli/setup_events_test.go",
           "schemas/setup-events.schema.json",
-          "console/test/fixtures/setup-events.ndjson"
+          "internal/cli/testdata/setup_events.golden.ndjson"
         ]
       }
     },
@@ -637,6 +637,8 @@
         "prediction": true,
         "paths": [
           "console/src/renderer/stubs/bridge-stub.ts",
+          "console/src/main/handlers.ts",
+          "console/src/main/window.ts",
           "console/test/unit/ops-contract.test.ts",
           "console/test/e2e/ops.spec.ts"
         ]
@@ -681,7 +683,7 @@
     {
       "task": "SU1",
       "needs": "C-OPS",
-      "reason": "built against the operations' names and types and the stub bridge"
+      "reason": "built against the operation's payload and the handler signature, and the stub bridge"
     },
     {
       "task": "SU2a",
@@ -916,7 +918,7 @@
     {
       "task": "SW3a",
       "needs": "C-OPS",
-      "reason": "built against the operations' names and types and the stub bridge"
+      "reason": "built against the operations' payloads and the handler signatures"
     },
     {
       "task": "SW3b",
@@ -951,7 +953,7 @@
     {
       "task": "I-OPS",
       "needs": "AL",
-      "reason": "needs the real operations"
+      "reason": "needs the real operations and the registry"
     },
     {
       "task": "I-OPS",
