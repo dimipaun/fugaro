@@ -2501,7 +2501,7 @@ func TestStringNamedResourcesAreWaitedFor(t *testing.T) {
 	if created < 40 {
 		t.Errorf("found only %d resources a string can name across %d directories: the scan is not seeing the tree", created, len(dirs))
 	}
-	if spelled < 15 {
+	if spelled < 25 {
 		t.Errorf("found only %d resources that spell a module-created resource by string: the scan is not seeing the grants it exists for", spelled)
 	}
 }
