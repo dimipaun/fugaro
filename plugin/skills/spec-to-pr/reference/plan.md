@@ -13,6 +13,7 @@ The plan is built for parallelism: a plan that reads as one chain is a defect. D
 - **Slices, then tasks.** A slice ships something inert or useful alone. A task is the smallest unit that carries its own test cycle and its own review gate, completable in one focused run and touching about five files or fewer; a task past that is two tasks.
 - **Parallel execution**: the edges, the levels, the critical path and the shared-files table.
 - **The dependencies the plan broke and kept** (below).
+- **The estimate the graph read printed**: the one line `fugaro plan graph` prints for the plan — ready-by and cost — quoted as it printed it, with the sentence beside it that it is informational and reserves no budget.
 - **Checks the plan takes** (from its reserved block): what each measures and who runs it.
 - **After-deploy steps** (a backfill, a configuration or secret change, a rollout order), each as a release-actions entry in that part's own pull request, as the repository's convention says.
 
@@ -65,13 +66,19 @@ Read the pass's switch first: `fugaro settings planning.decoupling --json`, with
 
 ## The graph, written beside the plan
 
-Write `implementation-plan.graph.json` in the same folder, in schema 3 (`parallelism` shows a full example): the nodes with their kind (contract, integration or contract change; an ordinary task carries none), size and footprint paths; the `edges` that remain with a `reason` each; one `decoupling` entry per broken edge (`contract`, `was`, `integration`, `reason`); and the contract changes the plan anticipates. A contract names its stubs one by one in `stubs` and in its own footprint; a footprint is a prediction of the files a task touches, in glob form, and never a permission. Then read it back:
+Write `implementation-plan.graph.json` in the same folder, in schema 3 (`parallelism` shows a full example): the nodes with their kind (contract, integration or contract change; an ordinary task carries none), `tier`, size and footprint paths; the `edges` that remain with a `reason` each; one `decoupling` entry per broken edge (`contract`, `was`, `integration`, `reason`); and the contract changes the plan anticipates. A contract names its stubs one by one in `stubs` and in its own footprint; a footprint is a prediction of the files a task touches, in glob form, and never a permission.
+
+Every node carries a `tier` beside its numeric `size`, and the two answer different questions: `size` weighs a decoupling's gain, where `tier` is the expectation a run of that task is dispatched at — one of `trivial`, `small`, `medium` and `large`, the four `fugaro run --tier` takes. A node the plan gives no tier is estimated at `medium` and counted under `assumed`, so leaving it out is a statement of its own rather than a saving of typing. A tier is an expectation and never a cap: the run's own budget stays the ceiling whatever tier it carries.
+
+Then read it back:
 
 ```bash
 fugaro plan graph --plan docs/<slug>/implementation-plan.md
 ```
 
 A refusal (a cycle, a missing reason, a contract with no file of its own) is a plan to fix. The read prints the edges broken, the stubs left and the gain in tasks and weight; a break it reports as no gain is one to undo.
+
+The read prints the plan's estimate too, as one line: `ready in 40–70 min, $3–$5 (12 tasks; history for 9, seeds for 3)`. Quote that line in the plan and in the pull-request body exactly as the read printed it, and say beside it that it is informational and reserves no budget — it is what the tasks' tiers and this machine's run history predict, not a figure the plan holds to. It moves as runs finish and as the graph changes, and nothing about it waits on a person's approval.
 
 ## What the plan says in its own words
 

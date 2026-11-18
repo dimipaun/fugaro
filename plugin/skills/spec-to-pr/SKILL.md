@@ -79,7 +79,7 @@ Findings, then decisions with the answers to the spec's own open questions, then
 
 Run the **contract-first pass** over every edge: does the dependent need the other task's interface or its behaviour? Where it is only the interface, the plan holds a small contract task, the two sides run side by side behind it and an integration task re-joins them. `reference/plan.md` says how, and the `parallelism` skill's decoupling reference has the per-edge test in full. Read the switch first with `fugaro settings planning.decoupling --json`, naming the repository with `--repo`: when the pass is off the plan says so, which is not the same fact as a plan in which no edge could be broken.
 
-Write the graph beside the plan, check it with `fugaro plan graph --plan <folder>/implementation-plan.md`, and put what the read reports (edges broken and kept, the path before and after) in the plan's own words. Write `README.md` last. Commit.
+Tag every node with a `tier` — the expectation a run of that task is dispatched at, one of `trivial`, `small`, `medium` and `large`, and not the numeric `size` the decoupling gain is weighed in. Write the graph beside the plan, check it with `fugaro plan graph --plan <folder>/implementation-plan.md`, and put what the read reports (edges broken and kept, the path before and after, and the estimate line it prints) in the plan's own words, saying beside the estimate that it is informational and reserves no budget. Write `README.md` last. Commit.
 
 ### 7. Review and fix, at most three rounds
 
@@ -98,7 +98,7 @@ Run the repository's documents checks if it has any, then the checklist:
 
 Push the branch (a plain push, never forced) and open the pull request with the host's CLI: `gh pr create --base <default> --head docs/<slug> --title ... --body-file ...` on GitHub, `bb pullrequest create --source docs/<slug> --destination <default> --title ... --description ...` on Bitbucket. Afterwards **check that the body is not empty** (`gh pr view <n> --json body --jq '.body|length'`); an agent that "updated the body" has been wrong before.
 
-Title: `docs(<slug>): spec, reconciliation and implementation plan`. The description holds: what the spec is and who owns it; the headline findings that changed the design; each decision on one line with the answer and its `(default)`, `not the recommendation` or `amended after review` mark; the open tensions and items; the review rounds and what each caught; the slices and tasks in order with the critical path; the dependencies broken by contract and the gain; and **that nothing is approved or implemented**, with what waits on something external. Finish with the link and one line saying implementation has not started.
+Title: `docs(<slug>): spec, reconciliation and implementation plan`. The description holds: what the spec is and who owns it; the headline findings that changed the design; each decision on one line with the answer and its `(default)`, `not the recommendation` or `amended after review` mark; the open tensions and items; the review rounds and what each caught; the slices and tasks in order with the critical path; the dependencies broken by contract and the gain; the estimate line the graph read printed, quoted as printed and marked informational, not a reservation; and **that nothing is approved or implemented**, with what waits on something external. Finish with the link and one line saying implementation has not started.
 
 ## Red flags
 
