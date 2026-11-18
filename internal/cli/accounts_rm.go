@@ -164,21 +164,31 @@ type accountsRmPlan struct {
 	rest       []string // the profiles that still list the account after the edit
 	// repos is the repository entries whose own claude_accounts names this
 	// account (docs/project-claude-accounts.md §3). They are cleared with the
-	// declaration rather than refused over, for the crafts' reason: no command
-	// of this release edits that list (`repos.*.claude_accounts` is not a
-	// `settings set` path), so a refusal would send the owner to a hand edit,
-	// while an entry left behind is a repository naming an account this file no
-	// longer declares — the state a publish refuses. Empty for a run that keeps
-	// the declaration.
+	// declaration rather than refused over, for the crafts' reason: the one
+	// command that writes that list adds to it (`fugaro accounts repo add`) and
+	// none takes an entry away, so a refusal would send the owner to a hand
+	// edit, while an entry left behind is a repository naming an account this
+	// file no longer declares — the state a publish refuses. Empty for a run
+	// that keeps the declaration.
 	repos []string
 	// crafts is the crafts whose access names the typed entry this removal
-	// takes away. They are cleared with it rather than refused over: the key is
-	// the one `fugaro update`'s own conversion writes (init_craft_migrate.go),
-	// no command of this release writes a crafts key — the generic path refuses
-	// a family-owned row (settings_set.go) — and a refusal naming a remedy that
-	// does not exist sends the owner to a hand edit. Empty for a run that
-	// removes no typed entry.
+	// takes away. They are cleared with it rather than refused over, which is
+	// the order the pair was written in and the one a removal keeps: the access
+	// is cleared and the removal reported in the sentence, where a refusal would
+	// make one command's removal another command's precondition. The key is
+	// written by `fugaro accounts craft set` (and by `fugaro update`'s own
+	// conversion, init_craft_migrate.go), so the sentence can name the command
+	// that puts it back. Empty for a run that removes no typed entry.
 	crafts []string
+	// craftsGone is the subset of crafts whose block this removal takes away
+	// whole: the crafts whose only leaf was the access that named the entry. They
+	// are recorded in node_removals.crafts beside the credential's own record
+	// (F22, D2607) — the node fills the access of a craft the file still states
+	// from its own copy, and a craft the file no longer states at all would
+	// otherwise be served from the node with the credential this run removed.
+	// Empty for a run that removes no typed entry, and for one whose crafts keep
+	// a model of their own.
+	craftsGone []string
 }
 
 // runAccountsRm is the order spec §4 forces: everything that can refuse does,
@@ -411,9 +421,9 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 		next = n
 		// A craft's access that named the entry goes on the same bytes: the
 		// entry it named is gone, so an access left behind resolves to no
-		// credential at all, and no command of this release could repoint it
-		// (accountsRmPlan.crafts). The sentence this run prints names every key
-		// it clears.
+		// credential at all (accountsRmPlan.crafts). The sentence this run
+		// prints names every key it clears, and `fugaro accounts craft set` is
+		// what puts one back.
 		for _, craft := range plan.crafts {
 			n, err := yamledit.RemoveKeyWithOptions(next, []string{"crafts", craft, "access"},
 				yamledit.RemoveOptions{DropEmptyParents: true})
@@ -421,6 +431,31 @@ func accountsRmResolve(path string, lc *localcfg.Config, name, want string, old 
 				return accountsRmPlan{}, nil, nil, userErr("crafts.%s.access: %v", craft, err)
 			}
 			next = n
+		}
+		// The explicit unset, on the same bytes (D2607, F22): silence in this file
+		// keeps the node's own blocks, so a credential taken away here without the
+		// record would go on being served by the node and spent by every craft
+		// that named it. The record is the only statement that the credential was
+		// removed rather than never declared, and the publish this write's own
+		// hook runs is what acts on it.
+		if next, err = yamledit.AddListItem(next, []string{"node_removals", "craft_credentials"}, name); err != nil {
+			return accountsRmPlan{}, nil, nil, userErr("node_removals.craft_credentials: %v", err)
+		}
+		// A craft whose access was the whole of what this file stated goes with
+		// the entry — the block had the one leaf — and it is recorded too: the
+		// node would fill the access of a craft the file no longer states from
+		// its own copy, which is the removed credential (publishedCrafts). A
+		// craft that keeps a model is not removed and is not recorded here: half
+		// of it is still the owner's, and the node's access for it is the
+		// publish's own question (F24, reported rather than decided here).
+		for _, craft := range plan.crafts {
+			if lc.Crafts.Of(craft).Model != "" {
+				continue
+			}
+			plan.craftsGone = append(plan.craftsGone, craft)
+			if next, err = yamledit.AddListItem(next, []string{"node_removals", "crafts"}, craft); err != nil {
+				return accountsRmPlan{}, nil, nil, userErr("node_removals.crafts: %v", err)
+			}
 		}
 	}
 	// The edit is read back strictly before it is written, as add's is: a file
@@ -455,11 +490,9 @@ func accountsRmTyped(lc *localcfg.Config, name string) bool {
 // names is a command the owner can run — `accounts pool rm` for the pool that
 // lists the entry — which is what makes the refusal worth printing.
 //
-// A craft's access is not refused here: nothing in this release writes a crafts
-// key — the migration is its only writer (init_craft_migrate.go) and the
-// generic path refuses a family-owned row (settings_set.go) — so a refusal
-// would point at a hand edit. The entry's own crafts are cleared with it
-// instead (craftsNaming).
+// A craft's access is not refused here: the removal takes the entry away and
+// an access left naming it is a craft whose next call is refused, so the key
+// goes with the entry and the craft's own block stays (craftsNaming).
 func accountsRmPoolMember(lc *localcfg.Config, name string) error {
 	var named []string
 	for _, p := range lc.Pools {
@@ -1063,6 +1096,11 @@ func accountsRmWhat(plan accountsRmPlan) string {
 		if len(plan.crafts) > 0 {
 			parts = append(parts, fmt.Sprintf("clear %s, which named that entry and would have nothing to spend without it",
 				craftAccessKeys(plan.crafts)))
+		}
+		parts = append(parts, "record the removal in node_removals, so this run's own publish takes the typed entry off the node instead of leaving it served")
+		if len(plan.craftsGone) > 0 {
+			parts = append(parts, fmt.Sprintf("record crafts %s as removed with it, which had nothing but that access and would otherwise be served from the node",
+				strings.Join(plan.craftsGone, ", ")))
 		}
 	}
 	if len(plan.repos) > 0 {
