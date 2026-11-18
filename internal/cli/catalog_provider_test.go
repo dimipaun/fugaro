@@ -153,7 +153,7 @@ func TestCatalogGitHubAppIDFromTheConfigOrTheEnvironment(t *testing.T) {
 				}
 				return ""
 			}
-			got, err := catalogGitHubAppID(lc, "acme/app", getenv)
+			got, err := repoGitHubAppID(lc, "acme/app", getenv)
 			if err != nil {
 				t.Fatalf("%v", err)
 			}
@@ -166,7 +166,7 @@ func TestCatalogGitHubAppIDFromTheConfigOrTheEnvironment(t *testing.T) {
 	// Neither source: the refusal names both, because they are the two ways
 	// this ID ever gets here, and the command that writes the first -- and
 	// neither is a flag this command takes.
-	_, err := catalogGitHubAppID(&localcfg.Config{Name: "aurora", GCPProject: "proj-1234"}, "acme/app", func(string) string { return "" })
+	_, err := repoGitHubAppID(&localcfg.Config{Name: "aurora", GCPProject: "proj-1234"}, "acme/app", func(string) string { return "" })
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v: no App ID anywhere is a user error", ExitCode(err), err)
 	}

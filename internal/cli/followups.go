@@ -15,10 +15,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -39,9 +43,37 @@ const followUpMaxDefault = 10
 
 // openFollowUpsProvider is OpenProvider, a seam for this command's one read on
 // a code host (openSurveyProvider's pattern): the pull request the parent run's
-// branch is the source of, read with the process environment's own credential,
-// the way every read outside a run's own job is.
+// branch is the source of, opened with the credential repoProviderEnv supplied
+// -- the repository's own App ID and its App key, or the project's Bitbucket
+// token, read where they actually are. Before this the command handed it
+// os.Environ() alone and a person's terminal has never held either, so the read
+// failed with "FUGARO_GITHUB_APP_ID is not set" (issue #1701's defect, in this
+// command).
 var openFollowUpsProvider = OpenProvider
+
+// openFollowUpsServiceProvider is the provider this command's read is opened
+// through in a coding agent's session: the installation's credentials service
+// mints the token the read is made with, and this machine holds no key at all.
+// It is serviceReadProvider, the review's own read, named here so a test can
+// drive the PATH the session takes without a service standing; the real one is
+// what ships.
+var openFollowUpsServiceProvider = func(ctx context.Context, env *cloudEnv, kind, repo string) (gitprov.Provider, error) {
+	return serviceReadProvider(ctx, env, kind, repo, followUpsParentRead)
+}
+
+// followUpsParentRead is this command's own name for the read
+// serviceReadProvider makes for it, and the name every refusal of it carries
+// (reviewHeadRead is the review's): `fugaro followups` reads the parent pull
+// request a run's findings were deferred on, and one seam serves both.
+const followUpsParentRead = "the pull request a run's deferred findings belong to is read"
+
+// followUpsKeyRead is this command's own name in the coding-agent refusal the
+// shared credential seam makes (repoProviderEnv's who). A session is offered
+// the service read first (followUpsProvider) and takes it whenever the
+// installation publishes one, so this is what a session reads in an
+// installation that has none: the sentence still names the command that ran
+// rather than the command the seam is shared with.
+const followUpsKeyRead = "fugaro followups"
 
 // followUpsOut is `fugaro followups --json`: the parent run the deferrals came
 // from, the pull request it was found by, and the plan (or the launches) that
@@ -117,7 +149,14 @@ func newFollowUpsCmd() *cobra.Command {
 			"reason are fenced and indented as data in the brief.\n\n" +
 			"A group a run already covers is skipped, found through the run list, so a\n" +
 			"second call files only what is left and an interrupted one can simply be run\n" +
-			"again.",
+			"again.\n\n" +
+			"Where it runs is where fugaro run runs: your own terminal, or a coding\n" +
+			"agent's session, with no difference between the two. The pull request is read\n" +
+			"with whatever credential is there -- your terminal's own, the repository's\n" +
+			"configured App ID with the App's key or the project's Bitbucket token, or, in\n" +
+			"a session, the installation's credentials service minting one read-only token\n" +
+			"for that repository -- and a session reads no App key and no Secret Manager\n" +
+			"value.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runFollowUps(cmd, o, args[0], launch, max, asJSON)
@@ -181,7 +220,10 @@ func runFollowUps(cmd *cobra.Command, o cloudOptions, ref string, launch bool, m
 	if err != nil {
 		return err
 	}
-	info, err := followUpsParent(ctx, env, repo, branch, warn)
+	// The terminal fact is the command's own stdin, the way the catalog build
+	// asks it (cmd.InOrStdin): the coding-agent question below asks about THIS
+	// command's session, and a process-wide answer could answer for another.
+	info, err := followUpsParent(ctx, env, repo, branch, warn, stdinIsTerminal(cmd.InOrStdin()))
 	if err != nil {
 		return err
 	}
@@ -325,12 +367,98 @@ func followUpsBranch(slug, runID string, parent *task.Spec) (string, error) {
 	return parent.Branch, nil
 }
 
+// followUpsRepoSpec is the repository spec the provider credential is resolved
+// for. This command runs without a checkout -- the run it is asked about is any
+// repository this machine's config resolves a slug for -- so the spec is built
+// from the local config and the slug alone, carrying the two values
+// infra.Repo derives for a real one: the credential's own secret ID
+// (gcp.SecretID) and the account whose live grant the secret's resolution is
+// checked against. That account is the repository's build service account,
+// which its Cloud Build clones run as, and it is the same comparison the
+// catalog build and fugaro doctor --check-github-app make (resolveGitSecretID).
+//
+// The App ID is the answer repoGitHubAppID gave for this repository -- the
+// config's own, the environment only when the config holds none -- so the App a
+// read of this repository is named with is named by the same rule as the
+// catalog build's, and a shell exporting another App's ID cannot silently
+// change which App this read signs as.
+func followUpsRepoSpec(lc *localcfg.Config, repo, kind string, getenv func(string) string) (infra.RepoSpec, error) {
+	slug, err := task.Slug(kind, repo)
+	if err != nil {
+		return infra.RepoSpec{}, userErr("%v", err)
+	}
+	rs := infra.RepoSpec{
+		Name: repo, Provider: kind, Slug: slug,
+		Secrets:                  map[string]string{},
+		BuildServiceAccountEmail: gcp.BuildServiceAccountID(slug) + "@" + lc.GCPProject + ".iam.gserviceaccount.com",
+	}
+	if logical, ok := infra.GitSecret(kind); ok {
+		rs.Secrets[logical] = gcp.SecretID(slug, logical)
+	}
+	if kind == gitprov.KindGitHub {
+		if rs.GitHubAppID, err = repoGitHubAppID(lc, repo, getenv); err != nil {
+			return infra.RepoSpec{}, err
+		}
+	}
+	return rs, nil
+}
+
+// followUpsProvider opens the provider the parent pull request is read through:
+// the forge's own adapter for repo, with the credential from where it is.
+//
+// A coding agent's session does not read a key of this machine's. When the
+// installation publishes a credentials service the read is the service's
+// (serviceReadProvider, this command's own name for the work:
+// followUpsParentRead): the service mints a read-only token for the one
+// repository, this machine holds no App key at all, and no Secret Manager value
+// is read for a read as ordinary as this one (C2.2, D145; SECURITY.md). A
+// session whose installation publishes no service has no such path and gets the
+// shared seam's own refusal, which names this command (followUpsKeyRead). A
+// person's own terminal takes neither: it resolves the credential
+// repoProviderEnv supplies -- the repository's config App ID with the
+// environment as the fallback and the override, and the App key or the
+// project's Bitbucket token read through the seam the catalog build reads it
+// through -- and opens the provider with it. Either way the value reaches the
+// provider opened below and nothing else.
+func followUpsProvider(ctx context.Context, env *cloudEnv, repo, kind string, warn io.Writer, stdinTerminal bool) (gitprov.Provider, error) {
+	if agentMarker(os.Getenv, stdinTerminal) != "" && configuredCredentialsServiceURL(env.lc) != "" {
+		return openFollowUpsServiceProvider(ctx, env, kind, repo)
+	}
+	rs, err := followUpsRepoSpec(env.lc, repo, kind, os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	provEnv, hint, err := repoProviderEnv(ctx, warn, env.lc, rs, os.Environ(), followUpsKeyRead, os.Getenv, stdinTerminal, nodePolicy(ctx, &env.policy, env.lc))
+	if err != nil {
+		return nil, err
+	}
+	_, open, err := openFollowUpsProvider(provEnv, func(w string) {
+		fmt.Fprintf(warn, "fugaro: warning: %s\n", w)
+	})
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	p, _, err := open(ctx, kind, repo)
+	if err != nil {
+		// A credential the seam could not read leaves the provider's own "is
+		// not set" failure standing, and the seam's one sentence says where
+		// the value is and what reading it needs (tokenReadHint): the
+		// command tells the operator nothing new here, it only stops losing
+		// that sentence.
+		if hint != "" && errors.Is(err, providers.ErrNoCredential) {
+			return nil, userErr("opening %s: %v%s", repo, err, hint)
+		}
+		return nil, userErr("opening %s: %v", repo, err)
+	}
+	return p, nil
+}
+
 // followUpsParent is the parent pull request, read off the forge by branch and
 // nothing else. It is refused unless the pull request is merged: the merge is
 // what says the findings were left deliberately rather than still being worked
 // on (D1843), and a call that filed tasks for an open pull request would race
 // the run still holding it.
-func followUpsParent(ctx context.Context, env *cloudEnv, repo, branch string, warn io.Writer) (gitprov.PRInfo, error) {
+func followUpsParent(ctx context.Context, env *cloudEnv, repo, branch string, warn io.Writer, stdinTerminal bool) (gitprov.PRInfo, error) {
 	co := checkoutConfig(ctx, repo)
 	if co == nil {
 		co = &config.Config{}
@@ -339,15 +467,9 @@ func followUpsParent(ctx context.Context, env *cloudEnv, repo, branch string, wa
 	if kind == "" {
 		return gitprov.PRInfo{}, userErr("cannot tell which git provider %s is on: set provider in its repos entry of the local config, or run this from its checkout", repo)
 	}
-	_, open, err := openFollowUpsProvider(os.Environ(), func(w string) {
-		fmt.Fprintf(warn, "fugaro: warning: %s\n", w)
-	})
+	p, err := followUpsProvider(ctx, env, repo, kind, warn, stdinTerminal)
 	if err != nil {
-		return gitprov.PRInfo{}, userErr("%v", err)
-	}
-	p, _, err := open(ctx, kind, repo)
-	if err != nil {
-		return gitprov.PRInfo{}, userErr("opening %s: %v", repo, err)
+		return gitprov.PRInfo{}, err
 	}
 	r, ok := p.(gitprov.PRBranchReader)
 	if !ok {
