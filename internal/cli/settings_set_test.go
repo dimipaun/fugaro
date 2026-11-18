@@ -488,22 +488,42 @@ func TestSettingsUnsetOfNothingIsAnExitZeroSentence(t *testing.T) {
 	}
 }
 
-// TestSettingsSetPrintsOnlyFugaroUpdateNext: every local edit ends with one
-// line, and it is `next: fugaro update` — never a list of steps (spec §1).
-func TestSettingsSetPrintsOnlyFugaroUpdateNext(t *testing.T) {
+// TestSettingsSetNamesNoSecondStep: a local edit ends on what it did and never
+// on a list of steps (spec §1, composite AP5). The edit runs the step its key
+// declares itself — the policy stage, which the node is derived from — so the
+// command that made the change is the command that published it, and the
+// operator is sent nowhere else. The one command this file may name is
+// `fugaro apply`, and only when the step was left owed (D1563): the second half
+// below is that case, and it is the only line of either ending that carries a
+// `next:`-shaped hand-off.
+func TestSettingsSetNamesNoSecondStep(t *testing.T) {
 	settingsWriteHome(t)
 	out, _, err := execute(t, "settings", "set", "commit_name", "person-1", "--layer", "local")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
-	next := []string{}
+	if !strings.Contains(out, "applied "+initflow.Policy) {
+		t.Errorf("the local edit does not end on the stage that publishes it:\n%s", out)
+	}
+	if strings.Contains(out, "next:") || strings.Contains(out, "fugaro update") {
+		t.Errorf("the edit hands off to a second command:\n%s", out)
+	}
+
+	out, _, err = execute(t, "settings", "set", "commit_name", "person-2", "--layer", "local", "--no-apply")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "saved, not live yet: "+initflow.Policy+" still owed") {
+		t.Errorf("--no-apply does not say what is still owed:\n%s", out)
+	}
+	named := []string{}
 	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
-		if strings.HasPrefix(line, "next:") {
-			next = append(next, line)
+		if strings.Contains(line, "fugaro apply") {
+			named = append(named, line)
 		}
 	}
-	if len(next) != 1 || next[0] != "next: fugaro update" {
-		t.Errorf("next lines = %q, want exactly one `next: fugaro update`", next)
+	if len(named) != 1 {
+		t.Errorf("the owed ending names `fugaro apply` in %d lines, want exactly the one:\n%s", len(named), out)
 	}
 }
 
@@ -1341,8 +1361,10 @@ func TestSettingsSetConcreteWildcardKeyCreatesTheBlock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writing one key of a block the layer file does not hold was refused: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "next: fugaro update") {
-		t.Errorf("a layer write does not close with the command that publishes it:\n%s", out)
+	// The block the write created is published by the write itself (composite
+	// AP5): a project-layer key owes the layer stage, and the command runs it.
+	if !strings.Contains(out, "applied "+initflow.Layer) {
+		t.Errorf("a layer write does not close on the stage that publishes it:\n%s", out)
 	}
 	layer, ps := config.ParseProjectLayer([]byte(readFileString(t, path)), config.LayerAnchor{Project: "aurora", GCPProject: "aurora-gcp"})
 	if len(ps) > 0 {

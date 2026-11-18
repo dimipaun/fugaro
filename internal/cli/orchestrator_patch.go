@@ -70,15 +70,18 @@ type orchestratorPatchDoc struct {
 }
 
 // personOnly reports whether op is an op only a person may land (D1225, G2):
-// approving a work item, setting the goal, or closing a decision that waits on
-// a person. The state it is asked with is the one the patch starts from,
-// because which class a decision waits on is a fact about the node as it
-// stands. A decision this run cannot find is not one of them: Apply refuses an
-// unknown id before it looks at the class, so nothing is written either way.
+// approving a work item, approving a plan's imported items (D2706, D2717),
+// setting the goal, or closing a decision that waits on a person. The state it
+// is asked with is the one the patch starts from, because which class a
+// decision waits on is a fact about the node as it stands. A decision this run
+// cannot find is not one of them: Apply refuses an unknown id before it looks
+// at the class, so nothing is written either way.
 func personOnly(before orchestrator.State, op orchestrator.Op) bool {
 	switch op.Op {
 	case orchestrator.OpWorkItemApprove:
 		return op.Approve != nil
+	case orchestrator.OpPlanApprove:
+		return op.PlanApprove != nil
 	case orchestrator.OpGoalSet:
 		return true
 	case orchestrator.OpDecisionResolve:
@@ -187,6 +190,30 @@ func opWords(after orchestrator.State, op orchestrator.Op) []string {
 			return []string{head}
 		}
 		return itemWords(head, w)
+	case orchestrator.OpPlanApprove:
+		if op.PlanApprove == nil {
+			return []string{"approving a plan's items"}
+		}
+		lines := []string{"approving the items of " + safetext.Field(op.PlanApprove.Node) + " the list names:"}
+		for _, it := range op.PlanApprove.Items {
+			// Every item of the list is shown the way a single approval shows
+			// one: the digest the list carries, and the spec that digest binds
+			// as the patch leaves it. A list of ids and digests the person
+			// never saw is not an approval of anything they read (D2706,
+			// D2738), which is what the op's own id list exists for.
+			head := fmt.Sprintf("  %s against spec %s:", safetext.Field(it.ID), safetext.Field(string(it.Digest)))
+			w, ok := after.Item(it.ID)
+			if !ok {
+				lines = append(lines, head)
+				continue
+			}
+			sub := itemWords(head, w)
+			lines = append(lines, sub[0])
+			for _, l := range sub[1:] {
+				lines = append(lines, "  "+l)
+			}
+		}
+		return lines
 	case orchestrator.OpWorkItemArchive:
 		if op.Archive == nil {
 			return []string{"archiving a work item"}

@@ -339,6 +339,17 @@ var consoleReadPaths = map[string]bool{
 	// and it is the read the Project tab's policy panel was missing. It reads
 	// the project's database node and writes neither it nor the state file.
 	"fugaro project policy show": true,
+	// The project's two enrolment reads (the repos-management plan's RE5,
+	// D2413): `project repos ls --json` prints what the project admits and what
+	// each repository runs, and `project repos status --json` prints one row per
+	// fact that decides whether a run of a repository can start. Both resolve
+	// the project the way every cloud read here does -- so a console that asks
+	// either must remember no checkout -- and both write nothing on any path,
+	// `--json` included, with the status read reading a credential's presence
+	// and never a value. The group's two writes, `repos add` and `repos rm`, are
+	// on §5.1's never table and are named by no row there.
+	"fugaro project repos ls":     true,
+	"fugaro project repos status": true,
 	// The effective-craft read (the model-crafts plan's MC8, D1633): per
 	// craft, the model and the credential or pool it runs on, with the layer
 	// each half came from and whether the pool serves anything yet. It is
@@ -363,6 +374,18 @@ var consoleReadPaths = map[string]bool{
 	// read-only half of the roles model: `user grant` and `user revoke` are the
 	// writes, and no row of §5.1 admits either.
 	"fugaro user ls": true,
+	// The pending-steps read (docs/composite-commands, D1569): the console's
+	// one view of what a management command saved for later. Its child is
+	// `fugaro apply --status --json` and never the bare word -- `--status` is
+	// the arm that writes nothing at all, no pending file, no cache and no
+	// remembered checkout, which is what makes it the one read the console is
+	// admitted to (the command's own comment, `apply.go`) -- and `apply` is
+	// the design's row for exactly that argv. The entry is keyed by the
+	// command path, as this whole table is, so the bare `fugaro apply` the
+	// console will later spawn for the chain (D1572, §5.1's other row for this
+	// command) is covered by it too: it is named in consoleLaunchPaths for
+	// that reason, and the two tables are read together.
+	"fugaro apply": true,
 	// The one the design names and §5.1 has not carried a row for yet (the
 	// console task adds it); it resolves no checkout today.
 	"fugaro plan graph": true,

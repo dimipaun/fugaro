@@ -3,15 +3,14 @@ package cli
 import (
 	"context"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/apply"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/safetext"
-	"github.com/dimipaun/fugaro/internal/settings"
 )
 
 // This file is the after-write hook's implementation (C1's afterWriteFunc,
@@ -154,80 +153,28 @@ func afterWriteSelection(cmd *cobra.Command) (localcfg.Selection, *localcfg.Conf
 	return settingsAimedSelection(o)
 }
 
-// afterWriteStages is the stages a write owes, from the registry row of the key
-// that was written and the store the command wrote it in (D2615).
+// afterWriteStages is the stages a write owes, from the change that was written
+// and the store the command wrote it in (D2615, and apply.WriteSteps is the
+// rule itself).
 //
-// The row decides what the key IS and the store decides where this write
-// landed, and both are needed: a pool's store is `local` — the command writes
-// the machine's own config — while the published node is what serves it, and one
-// {key, store} pair cannot say "both layers" on its own. Neither can the store
-// alone say it: a command may write the project layer file for a key whose row
-// also states the local one.
+// It was the hook's own rule until composite AP5 gave the settings commands
+// their own chain: the two now ask one function, so what `settings set` queues
+// and says it owes and what this hook runs cannot come to be two answers
+// (D1561). The row decides what the key IS and the store decides where this
+// write landed, and both are needed: a pool's store is `local` — the command
+// writes the machine's own config — while the published node is what serves it,
+// and one {key, store} pair cannot say "both layers" on its own. Neither can
+// the store alone say it: a command may write the project layer file for a key
+// whose row also states the local one.
 //
-// What each stage is owed for:
-//
-//   - the policy stage owns the published node. A write is the node's business
-//     when the row states the cloud layer (`policy`, which CR1 adds to the rows
-//     the node serves), when the row is one the machine's own config carries
-//     (`local`, `shared`) — the node is derived from that config, so a value the
-//     node serves lives there for a key the node serves, which is what makes a
-//     pool's write a publish — or when the command wrote the node itself;
-//   - the layer stage owns the project layer file, so a row that states the
-//     project layer, or a write that landed in it.
-//
-// A key with no row at all runs nothing. The registry is the one place a key is
-// known, and a key nothing there answers for is one no stage can be said to
-// serve: running the update's stages for it would be this hook deciding about a
-// key the program has never heard of, which is the fail-closed direction read
-// the wrong way round — the hook is not a gate and owes nothing it cannot name.
-//
-// A row whose key varies (`pools.*.members` is written at `pools.dev.members`)
-// is matched by its pattern, the way the read resolves one, and the key the
-// write landed on is the concrete spelling: a hook that knew only the exact
-// spellings would run no stage for a pool, which is the row D2615 is explicit
-// about. Two patterns that match one key are settled by the more specific of
-// them — the row that varies in fewer segments — and a function of the registry
-// rather than of the order the map happens to hand its rows out in.
-//
-// The names come back for stagesNamed, which orders them: both stages are
-// named here in no order of their own, because initflow's order is the run's.
+// A write into a checkout's `fugaro.yaml` owes nothing at all: the branch's
+// merge is what makes it live (D1564). A key with no row in the registry and no
+// row in the table runs nothing — the registry is the one place a key is known,
+// and running the update's stages for a key the program has never heard of
+// would be this hook deciding about it, which is the fail-closed direction read
+// the wrong way round.
 func afterWriteStages(change afterWriteChange) []string {
-	if row, ok := settings.Lookup(change.Key); ok {
-		return afterWriteStagesFor(row, change.Store)
-	}
-	best, found, varied := settings.Row{}, false, 0
-	for _, row := range settings.Rows() {
-		if !settingsPatternMatch(row.Key, change.Key) {
-			continue
-		}
-		if n := strings.Count(row.Key, "*"); !found || n < varied || (n == varied && row.Key < best.Key) {
-			best, found, varied = row, true, n
-		}
-	}
-	if !found {
-		return nil
-	}
-	return afterWriteStagesFor(best, change.Store)
-}
-
-// afterWriteStagesFor is afterWriteStages' rule over one row and one store, and
-// it is a function of its own so the rule can be read (and held to a case) for a
-// row no command writes today: no row carries both the project layer and the
-// local one, so the arm that owes both stages is reachable only from here.
-func afterWriteStagesFor(row settings.Row, store settings.Store) []string {
-	policy := store == settings.StoreNode ||
-		slices.Contains(row.Layers, settings.LayerPolicy) ||
-		slices.Contains(row.Layers, settings.LayerLocal) ||
-		slices.Contains(row.Layers, settings.LayerShared)
-	layer := store == settings.StoreProject || slices.Contains(row.Layers, settings.LayerProject)
-	var names []string
-	if policy {
-		names = append(names, initflow.Policy)
-	}
-	if layer {
-		names = append(names, initflow.Layer)
-	}
-	return names
+	return apply.WriteSteps(apply.Change{Kind: apply.Setting, Key: change.Key}, change.Store)
 }
 
 // afterWriteGate reads the managed project's marks for this run, the way the

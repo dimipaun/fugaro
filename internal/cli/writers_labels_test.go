@@ -21,7 +21,7 @@ func TestEveryUnwrittenRowCarriesALabelAndAReason(t *testing.T) {
 		measured[r.Key] = true
 		w, ok := settings.WriterOf(r.Key)
 		if !ok {
-			t.Errorf("the registry row %s is written by no command and no writer answers for it: register a labelled writer in writers_labels.go, or name the task that gives it one in settingsLabelledElsewhere (docs/contracts/config-ownership.md §5)", r.Key)
+			t.Errorf("the registry row %s is written by no command and no writer answers for it: register the command that writes it in the family's writers_*.go file, or the label and the one-line reason in writers_labels.go (docs/contracts/config-ownership.md §5)", r.Key)
 			continue
 		}
 		if w.Label == "" {
@@ -50,12 +50,6 @@ func TestEveryUnwrittenRowCarriesALabelAndAReason(t *testing.T) {
 			t.Errorf("writers_labels.go labels %s and the measurement above does not reach it: the family that owns the row now writes it, settingsUnwrittenKeys no longer names it, or another task claimed it — and the label is then a second answer to one question", r.pattern)
 		}
 	}
-	for key, holder := range settingsLabelledElsewhere {
-		if _, ok := settings.Lookup(key); !ok {
-			t.Errorf("settingsLabelledElsewhere names %s, which is no longer a registry row; it is there because %s", key, holder)
-		}
-	}
-
 	// F18, as the probe left it: nothing outside a test assigns a
 	// localcfg.Endpoints field, so `fugaro setup` never writes one and the
 	// block is the fake-endpoint label's, not `plumbing`.

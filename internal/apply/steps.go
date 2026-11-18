@@ -5,11 +5,15 @@
 // Two things live here and nothing else. steps.go is the one table from a
 // change — a setting key or a resource type — to the steps that make it live:
 // the initflow stage names plus the one step that is not a stage, a catalog
-// image's build. The order and the dedupe are initflow's (Names, Needs); this
-// package keeps no second list of stages, so a stage renamed or reordered
-// there moves here with no edit. pending.go is the local document beside the
-// project config that records the steps still owed, bound to the project and
-// the GCP project ID and holding no value of anything.
+// image's build. For a setting it holds the exceptions only — the steps no
+// layer of the key's own row names, the catalog's build and the workspace's two
+// stages — and every other key answers from its registry row
+// (internal/settings/steps.go, AP5), so the declaration is one place per key
+// and not a second list beside the registry. The order and the dedupe are
+// initflow's (Names, Needs); this package keeps no second list of stages, so a
+// stage renamed or reordered there moves here with no edit. pending.go is the
+// local document beside the project config that records the steps still owed,
+// bound to the project and the GCP project ID and holding no value of anything.
 //
 // Nothing here reads the cloud, the config files or the command line: a Change
 // is a value, and the pending document is a file the caller names a project
@@ -21,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/settings"
 )
 
 // CatalogBuild is the one step of the table that is not an initflow stage: the
@@ -53,6 +58,12 @@ const (
 	// project_enroll.go): onboarding one is what the repository stage's own
 	// plan is made from.
 	ResourceRepo = "repo"
+	// ResourceAccount is a model account of the project (internal/cli/
+	// accounts_rm.go).
+	ResourceAccount = "account"
+	// ResourceModel is a model of the project (internal/cli/models_add.go,
+	// models_rm.go).
+	ResourceModel = "model"
 	// ResourceWorkspace is the workspace this project is the owner of
 	// (internal/cli/workspace.go, D1292).
 	ResourceWorkspace = "workspace"
@@ -80,10 +91,46 @@ var catalogSteps = []string{CatalogBuild, initflow.Repository, initflow.Policy}
 // resourceSteps is the resource-type half of the table.
 var resourceSteps = map[string][]string{
 	ResourceImage: catalogSteps,
-	// Onboarding a repository is what the repository stage's plan is made
-	// from: its Terraform root is per repository, and so is the redeploy
-	// (F15, D1574).
-	ResourceRepo: []string{initflow.Repository},
+	// ResourceRepo is a repository of the project (internal/cli/
+	// project_enroll.go): onboarding one is what the repository stage's own
+	// plan is made from, and the three stages are the ones the enrolment's own
+	// converge runs (project_enroll_converge.go's reposEnrolmentStageList): the
+	// policy stage publishes the node the enrolment rewrote (`image_map` beside
+	// the `allow_repos` the command wrote itself), the installation stage
+	// deploys the jobs of the profiles this project's repositories use, and the
+	// repository stage is the new repository's own Terraform root — its jobs and
+	// its service accounts (F15, D1574).
+	ResourceRepo: []string{initflow.Policy, initflow.Installation, initflow.Repository},
+	// ResourceAccount is a model account of the project (internal/cli/
+	// accounts_rm.go): removing one takes the declaration out of the local
+	// config, and the two stages below are the project-wide halves of what that
+	// change affects — the node stops naming the account (`accounts.NAME`, which
+	// the policy stage derives from the profiles' lists), and the job the account
+	// owned goes from the installation's job set (one job and one service account
+	// per profile, provider and account).
+	//
+	// The repository stage is deliberately not one of them. The third thing
+	// `accounts add` converges is "the running checkout's own repository root",
+	// whose workflows mount the named secret (the accounts spec §2.5), which is a
+	// fact about where the command is run and not about the account: the
+	// command's converge runs it for the checkout it is run in, and a project
+	// directory that is no checkout is the ordinary case for both commands. D865
+	// answers for that case by naming the repository rather than leaving work
+	// owed, and queuing the redeploy here would contradict it — every such
+	// machine would hold a step whose subject it cannot name (`fugaro apply`
+	// redeploys the checkout it is run in, D1574) while the removal's own report
+	// says the installation is done.
+	ResourceAccount: []string{initflow.Policy, initflow.Installation},
+	// ResourceModel is a model of the project (internal/cli/models_add.go,
+	// models_rm.go): the published node carries the `model_prices` and
+	// `budget.allowed_models` halves of the change, which is what the policy
+	// stage publishes. The route's own claims are in the copy of the providers
+	// block each job holds, and that copy is refreshed by the repository
+	// stage's own redeploy — which is per repository and per checkout (D1574),
+	// so it is queued by a change made in a repository (ResourceRepo) and never
+	// by a project-wide one: a models change that named it would leave every
+	// machine with no checkout of that repository holding a step it cannot run.
+	ResourceModel: []string{initflow.Policy},
 	// A workspace is both halves of the owner's own declaration, built from the
 	// `workspace_members` and `workspace_cap` this installation declares: the
 	// workspace's own project — its service account and the one grant that
@@ -99,11 +146,14 @@ var resourceSteps = map[string][]string{
 // row answers every key that starts with it, and an exact row answers its own
 // key and nothing else.
 //
-// A key that matches no row is a gap in the table and not an answer (Steps says
-// so), because every setting a command writes has to declare what it affects
-// (spec rule 2, D1561). A row with no steps is a declaration too — it says the
-// change is live once the config is written — and it is a different answer from
-// the gap, which is why the two are not spelled the same way.
+// A key that matches no row here is asked of the registry itself, whose rows
+// declare what a write of their key owes through their own layers
+// (settings.KeySteps, AP5): a key no row of either answers for is a gap and not
+// an answer (Steps says so), because every setting a command writes has to
+// declare what it affects (spec rule 2, D1561). A row with no steps is a
+// declaration too — it says the change is live once the config is written — and
+// it is a different answer from the gap, which is why the two are not spelled
+// the same way.
 var settingSteps = []struct {
 	// match is the key this row answers for, or the prefix of the family it
 	// answers for when exact is false.
@@ -174,9 +224,62 @@ func Steps(change Change) ([]string, bool) {
 			}
 			return Order(row.steps), true
 		}
-		return nil, false
+		// The rows above are the exceptions this table adds to what the
+		// registry declares: the catalog's build and the workspace's two
+		// stages are steps no layer of the key's row names. Everything else
+		// answers from the row itself (settings.KeySteps, AP5), so a key the
+		// registry holds is declared by being there and this table does not
+		// restate it.
+		steps, ok := settings.KeySteps(change.Key)
+		if !ok {
+			return nil, false
+		}
+		return Order(steps), true
 	}
 	return nil, false
+}
+
+// WriteSteps is what a write of change landed in store owes: the steps of the
+// change itself (Steps) plus the store's own stage, and nothing at all for a
+// write into a checkout's `fugaro.yaml` (D1564).
+//
+// The store is the second half of the answer and neither half alone is it. A
+// key's own declaration says what the key is — the layers it may be set in, and
+// so the stages that serve it — while the store says where THIS write landed:
+// `--layer project` owes the layer stage, and `--layer repo` on a key that has a
+// project layer too owes it nothing, because a checkout's file is a file the
+// next run reads and the change that makes it live is the merge of the branch
+// holding it (D1564, docs/contracts/config-ownership.md §3). The node is the
+// one store whose stage is its own publish, which a row's `policy` layer states
+// already — the union dedupes.
+//
+// It is the one rule for every caller: the settings commands' own chain and the
+// after-write hook both ask it, so the steps a command says it owes and the
+// steps it runs cannot come to be two answers (D1561).
+//
+// A key neither the table nor the registry answers for owes nothing at all, and
+// the store does not fill the gap in: a step run for a key the program cannot
+// name is this rule deciding about a key it has never heard of, which is the
+// fail-closed direction read the wrong way round — and it is the answer the
+// after-write hook gave for such a key before this function was its rule.
+func WriteSteps(change Change, store settings.Store) []string {
+	// A checkout's file owes nothing, whatever the key's own row says: the
+	// branch's merge is what makes the change live, and no step of this
+	// machine's can run before it (D1564).
+	if store == settings.StoreRepo {
+		return nil
+	}
+	steps, ok := Steps(change)
+	if !ok {
+		return nil
+	}
+	switch store {
+	case settings.StoreProject:
+		steps = append(steps, initflow.Layer)
+	case settings.StoreNode:
+		steps = append(steps, initflow.Policy)
+	}
+	return Order(steps)
 }
 
 // Order returns names deduped and in the order initflow runs them: the stage

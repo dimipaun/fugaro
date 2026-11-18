@@ -73,7 +73,7 @@ import { createSpawnLog } from '../main/spawnlog'
 import type { SpawnLogWriter } from '../main/spawnlog'
 import type { OperationName, ValidatedArguments } from '../main/ipc'
 import { MAX_TEXT_INPUT_LENGTH } from '../shared/sanitize'
-import { licenceKeySupported } from '../shared/version'
+import { licenceKeySupported, noApplySupported } from '../shared/version'
 import {
   SourceRefusal,
   refusalFrom,
@@ -243,6 +243,14 @@ export function feedSilence(
  * retyping its commands.
  */
 export const FUGARO_INSTALL_COMMAND = 'brew install dimipaun/tap/fugaro'
+
+/**
+ * USER_ERROR_EXIT is `ExitUserError` (`internal/cli/root.go`): the code the CLI
+ * exits with when it refused something the operator can act on. One read of this
+ * surface prints its answer and *then* exits with it (`repos.status`), so the
+ * number is named here rather than written as a bare `1` at that one call site.
+ */
+const USER_ERROR_EXIT = 1
 
 /**
  * NoInstallationState is the console's state when there is no `fugaro` to read:
@@ -521,28 +529,59 @@ export class CliSource implements FugaroSource {
     const licenceKey = licenceKeySupported(this.installation.version)
       ? this.#options.licenceKey?.(this.#options.target.project)
       : undefined
+    // The settings write's own floor, asked the same way and in the same place:
+    // `--no-apply` is the plan's row word (D1565, D1572) and no release of the
+    // CLI registers it yet, so **no child is handed it today** -- the write is
+    // spawned without it, which is the argv every installed CLI answers. The
+    // question is asked here rather than at the spawn sites because this is the
+    // one builder of a settings edit's plan, so the argv the confirmation window
+    // drew (`settingsEditArgv`) and the argv the child is started with
+    // (`settingsEdit`) read one answer (`sameArgv`).
+    const settingsEdit =
+      facts?.settingsEdit === undefined
+        ? undefined
+        : { ...facts.settingsEdit, noApply: noApplySupported(this.installation.version) }
     return planFor(operation, args, {
       target: this.#options.target,
       binaryPath: this.#binaryPath,
       directory: this.#directory,
       appEnv: this.#env,
       ...(licenceKey === undefined ? {} : { licenceKey }),
-      ...(facts?.settingsEdit === undefined ? {} : { settingsEdit: facts.settingsEdit }),
+      ...(settingsEdit === undefined ? {} : { settingsEdit }),
       ...(facts?.roadmapMove === undefined ? {} : { roadmapMove: facts.roadmapMove }),
     })
   }
 
-  /** readDocument runs one one-shot read and returns the document it printed. */
-  async #readDocument(operation: OperationName, args: ValidatedArguments): Promise<Snapshot> {
+  /** readDocument runs one one-shot read and returns the document it printed.
+   *
+   * `documentBeatsExit` is the one exit code a read may fail with **and still
+   * have answered** (`repos.status` alone, and `USER_ERROR_EXIT` is the code):
+   * that command writes its document and then exits 1 when a row that blocks a
+   * launch failed (`reposStatusPrint`, `internal/cli/project_status.go`), so the
+   * failing rows and the fix each one names are exactly what the read is for,
+   * and a console that refused them would refuse the one case it exists to draw
+   * (`docs/design/desktop-console.md` §5.1: "this operation's answer is the
+   * document rather than the status").
+   *
+   * stdout is read first and the code is only a refusal when there is no
+   * document to hand back: a tolerated code with nothing parseable beside it is a
+   * refusal, and any other code is a refusal whatever the bytes are. Every read
+   * that leaves it out keeps the contract it had, where a nonzero exit is the
+   * CLI's own sentence: the default is 0, and a code of 0 was never one. */
+  async #readDocument(
+    operation: OperationName,
+    args: ValidatedArguments,
+    documentBeatsExit = 0,
+  ): Promise<Snapshot> {
     const plan = this.#plan(operation, args)
     const result = await runToCompletion(plan, {
       log: this.#log,
       ...(this.#options.spawner === undefined ? {} : { spawner: this.#options.spawner }),
     })
-    if (result.code !== 0) {
+    const read = parseStdout(result.stdout, this.#stamp())
+    if (result.code !== 0 && result.code !== documentBeatsExit) {
       throw refusalFrom(operation, cliSentence(result.stderr))
     }
-    const read = parseStdout(result.stdout, this.#stamp())
     if (read.document === null) {
       throw refusalFrom(operation, cliSentence(result.stderr) ?? `${operation} printed no JSON document`)
     }
@@ -869,6 +908,35 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('policy.show', args)
   }
 
+  /** listRepos reads `project repos ls --json`: the project's repositories as
+   * data -- the published allow-list with each entry's source, this machine's
+   * copies and the repositories that have run here (the repos-management plan's
+   * RE5, D2413). The argv is the spawn row's own four words and the
+   * installation's `--project`, because the operation takes no argument at all.
+   * It writes nothing: the allow-list node and the history are listed and this
+   * machine's config is read, with the caller's own credential. */
+  listRepos(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('repos.ls', args)
+  }
+
+  /** reposStatus reads `project repos status --json`: each repository's
+   * enrolment as a doctor, one row per fact that decides whether a run of it can
+   * start, with the one command each failing row wants (the same plan, D2413).
+   * The argv is the spawn row's own five words and the installation's
+   * `--project`: the optional positional repository is deliberately not an
+   * argument of the operation, so no caller aims the child at one. It writes
+   * nothing on any path and never fetches a secret's value -- the credential row
+   * carries a container's name, whether it holds an enabled version and that
+   * version's age -- so this child stores nothing and sends nothing.
+   *
+   * **The document is the answer even when the child exits 1**, which is the one
+   * place on this surface where a nonzero exit is not a refusal: the command
+   * exits `USER_ERROR_EXIT` when a row that blocks a launch failed, and those
+   * rows and the fix each names are the whole reason the read exists. */
+  reposStatus(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('repos.status', args, USER_ERROR_EXIT)
+  }
+
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot> {
     return this.#readDocument('run.diagnose', args)
   }
@@ -948,6 +1016,23 @@ export class CliSource implements FugaroSource {
     return this.#readDocument('members.list', args)
   }
 
+  /** readPendingSteps reads `apply --status --json`: the follow-up steps a
+   * management command saved for a later `fugaro apply`, the change that asked
+   * for each of them and whether a record is on disk and still stamped
+   * against this machine's config (the
+   * composite-commands plan's AP8, D1569; contract §6.28). The argv is the
+   * spawn row's own three words and the installation's `--project`, because the
+   * operation takes no argument at all -- **and `--status` is a word of that
+   * row's command path rather than a flag this method could leave out**: the
+   * bare `fugaro apply` is the chain that runs the steps, so the word is the
+   * whole difference between the read and the write. It reads this machine's
+   * own project config and the pending record beside it -- no bucket, no
+   * database, no host -- so it writes nothing, mints nothing of the host's and
+   * is safe to ask on an installation whose cloud is unreachable. */
+  readPendingSteps(args: ValidatedArguments): Promise<Snapshot> {
+    return this.#readDocument('apply.pending', args)
+  }
+
   /** readSettings reads `settings --json`: the project's settings, each with
    * the value a run gets, the layer that decided it, its default, its state and
    * the three writability facts the row set draws its pencils from (the
@@ -974,7 +1059,10 @@ export class CliSource implements FugaroSource {
   /**
    * settingsEdit runs one phase of the settings write (the settings-edit plan's
    * C3): the dry run, which classifies the edit and writes nothing (D1106), or
-   * the write itself, which carries no flag (D1107).
+   * the write itself, whose one word is `--no-apply` (D1107, D1572) -- passed
+   * only to a CLI at or above `NO_APPLY_CLI_FLOOR`, which no release is yet, so
+   * the write going out today asks for no follow-up word at all: the change is
+   * saved and what it owes is run later by `fugaro apply`.
    *
    * **A non-zero exit is a returned refusal and not a thrown one**, unlike every
    * read beside it: a dry run the CLI refuses is a sentence the settings window
@@ -1976,6 +2064,21 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * published node is replaced in place when a policy is published, so a floor
      * between two calls would draw a stale one. */
     policyShow: (args) => read('policy.show', (source) => source.policyShow(args)),
+    /** listRepos has no precondition and no cadence, for policyShow's reason:
+     * the read is the allow-list node, this machine's own config and the
+     * installation's history with the caller's own credential, and no checkout
+     * stands behind it -- so a console with an installation and no checkout
+     * still answers. A floor between two calls would hold an enrolment an
+     * operator has just made behind a minute-old listing. */
+    listRepos: (args) => read('repos.ls', (source) => source.listRepos(args)),
+    /** reposStatus has no precondition and no cadence either, and the second
+     * half is the deliberate one: its answer is the state of an enrolment an
+     * operator may be changing right now -- a job being deployed, a secret
+     * version being stored -- so a minute-old "everything is in place" in front
+     * of a row that has just started failing is exactly the misreading the
+     * command exists to prevent. It needs no directory: the read is the jobs,
+     * the containers' metadata and this machine's config, never a checkout. */
+    reposStatus: (args) => read('repos.status', (source) => source.reposStatus(args)),
     diagnoseRun: (args) => read('run.diagnose', (source) => source.diagnoseRun(args)),
     readRunLogs: (args) => read('run.logs', (source) => source.readRunLogs(args)),
     runLogLink: (args) => read('run.logLink', (source) => source.runLogLink(args)),
@@ -2009,6 +2112,22 @@ export function createBoundSource(deps: BoundSourceDeps): BoundSource {
      * they run it, and a minute-old answer in front of a newer one would show a
      * role that has already moved. */
     listMembers: (args) => read('members.list', (source) => source.listMembers(args)),
+    /** readPendingSteps has no precondition and no cadence, and both halves are
+     * deliberate. It needs no directory: the installation is the `--project`
+     * the spawn fixes, and the record it reads is that installation's own --
+     * so a console with an installation and no checkout still answers. It
+     * passes no `--dir` and remembers no checkout, which is what puts the read
+     * on `consoleReadPaths` (`internal/cli/project.go`). It holds no floor
+     * between two calls either, and that is the point of the read: a pending
+     * step is written by a management command the operator just ran, and an
+     * answer held back for a minute would show a list the screen has already
+     * changed.
+     *
+     * **It is answered on an installation whose cloud is unreachable**, which
+     * is why no cloud precondition is written here: the child reads a file on
+     * this machine, and the steps it lists are exactly what a lapsed or
+     * offline installation still owes. */
+    readPendingSteps: (args) => read('apply.pending', (source) => source.readPendingSteps(args)),
     /** readSettings has no precondition and no cadence either: the read is the
      * registry, the project layer's cache, the local config and the checkouts
      * this machine remembers, with no bucket, no database and no host behind

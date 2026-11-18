@@ -546,7 +546,12 @@ both directions — the directories and the file exist and hold what the exempti
 planted source beside them is still refused. Rule 9 is new and holds the page's key sign-up card to
 the forms' own fields (`website/test/keys.mjs`'s) and to the documents behind it: the Terms' §7.1
 clause on what the Key Service collects, the design's recipient sentence, and the store's comment
-and the service's `dropPersonal` that the retention sentence is written from.
+and the service's `dropPersonal` that the retention sentence is written from. **Both halves of that
+retention are read**, because the drop does not reach a request a person decides on: the
+`Application` in `ee/keyservice/store.go` and the `queueAlert` mail in `ee/keyservice/queue.go` are
+each held to the fields the card's sentence about a decided request names — the address, the domain,
+the text and the repository URLs — so a record that stopped holding one, or a notification that
+stopped writing one, is refused rather than left as a sentence describing a request nothing keeps.
 
 **Left open deliberately.** D457 — how long the record of an *issued* key is kept — is still open,
 so the card states the behaviour the code implements (the application's personal data goes once the

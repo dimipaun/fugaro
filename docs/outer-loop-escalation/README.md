@@ -1,6 +1,6 @@
 # Outer-loop escalation for non-converging PRs
 
-**Status as of 2026-11-10: plan only; nothing is implemented; no task approved.**
+**Status as of 2026-11-17: built — E0 to E13 and E16 are merged, E14 is the docs sweep they are followed by (this page, `docs/recipes.md`, `README.md`, `SECURITY.md` and the working skill), and E15 (the owner's Checks 540 to 542) is not started; see [docs/status.md](../status.md) for the current table.** *The status as first written, kept:* **Status as of 2026-11-10: plan only; nothing is implemented; no task approved.**
 
 **Spec owner:** Dimi Paun
 **Written:** 2026-11-10
@@ -23,7 +23,7 @@ deterministic "merge as-is and file a follow-up" rule; Fugaro never merges excep
 means trivial/small/medium/large; reports have one project-level writer. So the ladder reuses O14's gate, a model judge may
 only veto, the names become rungs and model grades, thresholds are local-only keys that replace `orchestrator.triage_after`,
 and the digest gains an Escalation section. The owner chose, against the recommendation, to let the daemon ready a stalled
-draft and merge it (D2041), behind a local switch that ships off.
+draft and merge it (D2041), behind a local switch that ships on (D2046).
 
 ## Numbers this work holds
 

@@ -198,12 +198,14 @@ func TestImageAddWritesAnEntry(t *testing.T) {
 	if err := os.WriteFile(df, []byte("FROM scratch\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "image", "add", "extra", "--tags", "redis,postgres", "--inline", df, "--description", "a redis image")
+	// --no-apply: this test is about the write, and the chain a plain add runs
+	// is what image_catalog_apply_test.go is about (D1565).
+	out, _, err := execute(t, "image", "add", "extra", "--tags", "redis,postgres", "--inline", df, "--description", "a redis image", "--no-apply")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "extra") {
-		t.Errorf("image add printed %q, want the entry it wrote", out)
+	if !strings.Contains(out, "saved, not live yet") {
+		t.Errorf("image add --no-apply printed %q, want the sentence that says the entry is saved and not live yet", out)
 	}
 	path := os.Getenv("FUGARO_CONFIG")
 	data, err := os.ReadFile(path)
@@ -235,7 +237,7 @@ func TestImageAddWritesAnEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = execute(t, "image", "add", "extra", "--tags", "redis", "--inline", df)
+	_, _, err = execute(t, "image", "add", "extra", "--tags", "redis", "--inline", df, "--no-apply")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "extra") {
 		t.Fatalf("adding a taken name: exit %d, err %v", ExitCode(err), err)
 	}
@@ -251,7 +253,7 @@ func TestImageAddWritesAnEntry(t *testing.T) {
 	// as owner/name:path, and --branch is the branch the build reads it from:
 	// the entry keeps the pointer, so it follows the file rather than a copy
 	// of it.
-	if _, _, err := execute(t, "image", "add", "app", "--tags", "node", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--branch", "release-1.0"); err != nil {
+	if _, _, err := execute(t, "image", "add", "app", "--tags", "node", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--branch", "release-1.0", "--no-apply"); err != nil {
 		t.Fatal(err)
 	}
 	data, err = os.ReadFile(path)
@@ -337,13 +339,14 @@ func TestImageRmRefusesAnEntryAJobStillPointsAt(t *testing.T) {
 		t.Error("a refused rm still wrote the config")
 	}
 
-	// An entry no job runs is removed, and the file says so.
-	out, _, err := execute(t, "image", "rm", "base")
+	// An entry no job runs is removed, and the file says so. --no-apply keeps
+	// this test on the write: the chain is image_catalog_apply_test.go's.
+	out, _, err := execute(t, "image", "rm", "base", "--no-apply")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "base") {
-		t.Errorf("image rm printed %q, want the entry it removed", out)
+	if !strings.Contains(out, "saved, not live yet") {
+		t.Errorf("image rm --no-apply printed %q, want the sentence that says the removal is saved and not live yet", out)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -480,7 +483,9 @@ func TestImageRmRefusesAnEntryTheMapPointsAtWithoutACheckout(t *testing.T) {
 	}
 
 	// The control: the default entry the map gives nobody is still removable.
-	if _, _, err := execute(t, "image", "rm", "base"); err != nil {
+	// --no-apply keeps these removals on the write; the chain is
+	// image_catalog_apply_test.go's (D1565).
+	if _, _, err := execute(t, "image", "rm", "base", "--no-apply"); err != nil {
 		t.Fatalf("removing the entry no mapping names: %v", err)
 	}
 }
@@ -526,7 +531,7 @@ func TestImageRmRefusesAnEntryTheMapGivesARepositoryThisMachineDoesNotList(t *te
 	}
 
 	// The control: the entry the map gives nobody is still removable.
-	if _, _, err := execute(t, "image", "rm", "base"); err != nil {
+	if _, _, err := execute(t, "image", "rm", "base", "--no-apply"); err != nil {
 		t.Fatalf("removing the entry the map gives nobody: %v", err)
 	}
 }
@@ -557,7 +562,7 @@ func TestImageRmAllowsAnEntryAListedRepositoriesJobDoesNotRun(t *testing.T) {
 			publishedMapFixture(t)
 			catalogCheckout(t, tc.yaml)
 
-			if _, _, err := execute(t, "image", "rm", "tools"); err != nil {
+			if _, _, err := execute(t, "image", "rm", "tools", "--no-apply"); err != nil {
 				t.Fatalf("removing the entry this repository's job does not run: %v", err)
 			}
 			data, err := os.ReadFile(os.Getenv("FUGARO_CONFIG"))
@@ -605,7 +610,7 @@ func TestImageRmAllowsAnEntryARepositorySpelledDifferentlyDoesNotRun(t *testing.
 		t.Fatal(err)
 	}
 
-	if _, _, err := execute(t, "image", "rm", "tools"); err != nil {
+	if _, _, err := execute(t, "image", "rm", "tools", "--no-apply"); err != nil {
 		t.Fatalf("removing the entry this repository's job does not run, its key spelled as a person writes it: %v", err)
 	}
 	after, err := os.ReadFile(path)
@@ -769,13 +774,14 @@ func catalogOnDisk(t *testing.T, path string) *localcfg.Config {
 func TestImageAddPrebuiltWritesASourceImage(t *testing.T) {
 	catalogFixture(t)
 	path := os.Getenv("FUGARO_CONFIG")
+	// --no-apply: this test is about the write (D1565).
 	out, _, err := execute(t, "image", "add", "legacy", "--tags", "node,postgres",
-		"--image", "ghcr.io/acme/legacy:1.2", "--description", "what the old pipeline pushed")
+		"--image", "ghcr.io/acme/legacy:1.2", "--description", "what the old pipeline pushed", "--no-apply")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "legacy") {
-		t.Errorf("image add printed %q, want the entry it wrote", out)
+	if !strings.Contains(out, "saved, not live yet") {
+		t.Errorf("image add --no-apply printed %q, want the sentence that says the entry is saved and not live yet", out)
 	}
 	lc := catalogOnDisk(t, path)
 	if lc.ImageCatalog == nil || len(lc.ImageCatalog.Entries) != 3 {
@@ -882,7 +888,7 @@ func TestImageAddRefusesImageWithDockerfile(t *testing.T) {
 func TestImageLsShowsThePrebuiltEntry(t *testing.T) {
 	catalogFixture(t)
 	if _, _, err := execute(t, "image", "add", "legacy", "--tags", "node",
-		"--image", "ghcr.io/acme/legacy:1.2", "--description", "what the old pipeline pushed"); err != nil {
+		"--image", "ghcr.io/acme/legacy:1.2", "--description", "what the old pipeline pushed", "--no-apply"); err != nil {
 		t.Fatal(err)
 	}
 	out, _, err := execute(t, "image", "ls")

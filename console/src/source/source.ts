@@ -491,6 +491,30 @@ export interface FugaroSource {
    * graph plan's CG9a) -- so a screen that draws this node takes its fields from
    * the command's own `{project, policy}` shape and from nothing else. */
   policyShow(args: ValidatedArguments): Promise<Snapshot>
+  /** listRepos reads `project repos ls --json`: the project's repositories as
+   * data -- the published allow-list with each entry's source, this machine's
+   * own copies, and the repositories this project has run, read from the two
+   * durable places (the repos-management plan's RE5, D2413). It takes **no
+   * argument at all** -- no positional word and no `--gcp-project`/`--region`,
+   * since the two project flags are main-process state (rule 3). It is the
+   * group's read half and the whole of what this console may ask of `project
+   * repos`: `add` and `rm` are on `src/main/ipc.ts`'s never table, so no code
+   * in this tree can build a word of either. The read writes nothing -- the
+   * CLI's own comment says so of every path, `--json` included -- and it lists
+   * the allow-list node, this machine's own config and the history with the
+   * caller's credential, so it asks no credentials service for one. */
+  listRepos(args: ValidatedArguments): Promise<Snapshot>
+  /** reposStatus reads `project repos status --json`: the doctor for a
+   * repository's enrolment, one row per fact that decides whether a run of it
+   * can start, each failing row naming the one command that puts it right (the
+   * same plan, D2413). It takes no argument either: the command's optional
+   * positional repository is deliberately not one, so the answer covers every
+   * repository the project knows and no caller can aim the read at one. It
+   * writes nothing on any path and reads a credential's **presence**, never its
+   * value -- the credential row carries a container's name, whether it holds an
+   * enabled version and that version's age -- so nothing in its document is a
+   * secret. */
+  reposStatus(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -557,6 +581,27 @@ export interface FugaroSource {
    */
   listMembers(args: ValidatedArguments): Promise<Snapshot>
   /**
+   * readPendingSteps is the pending-steps read (`fugaro apply --status --json`,
+   * the composite-commands plan's AP8, D1569): the follow-up steps a management
+   * command saved for a later `fugaro apply`, the change that asked for each of
+   * them, and whether a record is on disk and still stamped against this
+   * machine's config.
+   *
+   * It takes **no argument at all** -- the command is cobra's `NoArgs` and the
+   * operation declares no key -- so an implementation adds no word of its own to
+   * the argv, which is the spawn row's own three words plus the installation's
+   * `--project`. **`--status` is a word of that row's command path and not a
+   * flag a caller controls**: the bare `fugaro apply` is the chain that runs the
+   * steps, and this is the arm that runs none of them.
+   *
+   * **Nothing it reads is a cloud object**: the child reads this machine's
+   * project config and the pending record beside it, so the read writes nothing
+   * and reaches no bucket, database or host. What comes back is the project's
+   * own text carried as data -- a step's name, the kind of change and the key or
+   * repository it was about -- and no screen reads a word of it as a flag.
+   */
+  readPendingSteps(args: ValidatedArguments): Promise<Snapshot>
+  /**
    * readSettings is the Project tab's settings section (`settings --json`, the
    * settings-edit plan's C1; `console/docs/json-contract.md` §6.19): the
    * project's settings, each with the value a run gets, the layer that decided
@@ -586,7 +631,9 @@ export interface FugaroSource {
    *
    * The argv is a pure function of the three arguments and carries **no**
    * renderer-supplied flag: the phase (`--dry-run --json` for the
-   * classification, and no word for either write) and the layer (`--layer <L>`)
+   * classification, and the write's one word `--no-apply` when the child's own
+   * CLI registers it -- `NO_APPLY_CLI_FLOOR`, unset today, so the write carries
+   * no phase word at all until a release does) and the layer (`--layer <L>`)
    * are main-process facts (`argvFor`'s own `settingsEdit`), and the value is
    * the operator's one element behind the `--` terminator.
    *
@@ -598,9 +645,10 @@ export interface FugaroSource {
   settingsEditArgv(args: ValidatedArguments, phase: SettingsEditPhase, layer: string): Promise<readonly string[]>
   /**
    * settingsEdit runs one phase: the dry run (which writes nothing, D1106) or
-   * the write (which carries no flag, D1107). It answers the dry run's
-   * document or the write's sentence, or the CLI's own refusal sentence -- see
-   * `SettingsEditSpawn`.
+   * the write (whose one word is `--no-apply`, D1107 and D1572, passed only
+   * above `NO_APPLY_CLI_FLOOR`). It answers the
+   * dry run's document or the write's sentence, or the CLI's own refusal
+   * sentence -- see `SettingsEditSpawn`.
    *
    * `shown` is the argv the confirmation window drew for that phase, and a plan
    * whose argv differs from it is **refused rather than spawned**: an operator
@@ -907,6 +955,12 @@ export function handlersFor(
     'roadmap.move': (args) => source.roadmapMove(args),
     'managed.status': (args) => source.managedStatus(args),
     'policy.show': (args) => source.policyShow(args),
+    // The `project repos` group's two reads (the repos-management plan's RE5,
+    // D2413). They are the group's whole reach: `repos add` and `repos rm` are
+    // on `src/main/ipc.ts`'s never table, so neither is a handler here and no
+    // handler could build a word of either.
+    'repos.ls': (args) => source.listRepos(args),
+    'repos.status': (args) => source.reposStatus(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,
@@ -915,6 +969,7 @@ export function handlersFor(
     'models.list': (args) => source.listModels(args),
     'seats.read': (args) => source.readSeats(args),
     'members.list': (args) => source.listMembers(args),
+    'apply.pending': (args) => source.readPendingSteps(args),
     'settings.read': (args) => source.readSettings(args),
     'environment.report': (args) => source.environmentReport(args),
     'link.openExternal': async (args) => {

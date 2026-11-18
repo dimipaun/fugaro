@@ -527,6 +527,63 @@ func TestDocsCheck197IsRegistered(t *testing.T) {
 	}
 }
 
+// TestDocsCheck194IsRegistered: B3.6 writes Check 194, S3's own reading — a
+// repository's workflow secrets served by the credentials service instead of
+// mounted into its job, and the flip measured by the same script's
+// `--after-flip` — and the register carries both halves of its registration, in
+// the pairing TestDocsCheck190IsRegistered, TestDocsCheck193IsRegistered and
+// TestDocsCheck195IsRegistered pin: a `| 194 |` row in the summary table and a
+// `## Check 194:` section below it. A row without its section is a promise of
+// steps that are not written, and a section without its row is a check nothing
+// points at. The section says five things a reader needs and cannot infer: the
+// check is **NOT RUN** (the owner runs it in B3.7, and again in B3.9 after the
+// flip), no agent runs any step of it, the owner's own steps are in the work's
+// own file rather than in the register, it has two halves — one script, one
+// `--after-flip` — because a section that named only the first would read as a
+// check the flip is not measured by, and the containers the record names are the
+// installation's PROJECT ones and never a repository's (D2313), which is the one
+// reading a person setting the allow-list up cannot guess: the plan's "one
+// per-repository and one project workflow secret" predates that decision, and a
+// section that left it out would send the owner looking for a container the
+// merged code never writes.
+func TestDocsCheck194IsRegistered(t *testing.T) {
+	register := readDoc(t, liveChecksDoc)
+	if !regexp.MustCompile(`(?m)^\|\s*194\s*\|`).MatchString(register) {
+		t.Errorf("%s's register has no `| 194 |` row: Check 194 is written below it, and the table is where a reader finds it", liveChecksDoc)
+	}
+	heading := "\n## Check 194:"
+	i := strings.Index(register, heading)
+	if i < 0 {
+		t.Fatalf("%s has no `## Check 194:` section: the row above points at steps that have to be there", liveChecksDoc)
+	}
+	// Bounded by the next `## ` heading, so a check written after this one does
+	// not widen what is read here.
+	section := register[i+1:]
+	if end := strings.Index(section, "\n## "); end >= 0 {
+		section = section[:end]
+	}
+	flat := strings.ToLower(flattenDoc(section))
+	for _, want := range []string{
+		// The banner, before either run of it: nothing has measured S3 yet.
+		"**not run",
+		// The register's own rule for an owner-run check: no agent runs any step
+		// of it, and the text has to say so.
+		"no agent runs any step of it",
+		// Where the owner's own steps live, so the section does not have to carry
+		// them (and cannot drift from them).
+		"secrets-brokering/check194-steps.md",
+		// The second half: one script, and the mode the flip is read by.
+		"check194.sh --after-flip",
+		// Which containers the record may name, which is the reading D2313 moved
+		// after this check was planned.
+		"**d2313**",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("Check 194's section does not say %q: the check is owner-run, not yet run, its steps are the work's own file, its second half is the --after-flip mode, and the containers it reads are the installation's project ones whatever the allow-list entry says — a section that leaves any of them out reads as something an agent did, as a check the flip is not measured by, or as a per-repository container the merged code never writes", want)
+		}
+	}
+}
+
 // TestDocsSecretReadersStatesTheBitbucketProxysState is B1.10's pin on the
 // audit's Bitbucket rows, corrected by B1.13 part two. The proxy shipped (B1.5,
 // B1.6, B1.7), so a reader has to learn two things and not one: on a repository

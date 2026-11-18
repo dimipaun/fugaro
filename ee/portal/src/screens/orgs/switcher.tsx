@@ -55,6 +55,14 @@ export function settingsPath(organisationId: string): string {
   return `/settings?org=${encodeURIComponent(organisationId)}`
 }
 
+/** Where an organisation's own account is, which is also where its owner deletes
+ * it (P2.4). It is the only place `?org=` is built for that screen: an account
+ * is a person's, and the organisation beside it in the URL is the one whose
+ * deletion the page offers. */
+export function accountPath(organisationId: string): string {
+  return `/account?org=${encodeURIComponent(organisationId)}`
+}
+
 /**
  * The organisation a screen's URL names, or null when the value cannot be one.
  *
@@ -142,6 +150,15 @@ export function OrganisationSwitcher({
                 }}
               >
                 Settings
+              </Link>{' '}
+              <Link
+                to={accountPath(organisation.id)}
+                aria-label={`Account for ${organisation.name}`}
+                onClick={(event) => {
+                  follow(organisation, event)
+                }}
+              >
+                Account
               </Link>
             </li>
           ))}

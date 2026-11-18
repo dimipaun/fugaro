@@ -742,7 +742,8 @@ reaches.
 
 Then it converges, in the same command and after that one sentence: the
 policy node the account was published in, the job set and this checkout's
-repository root, through the stages fugaro update runs.
+repository root, through the stages fugaro update runs. With --no-apply the
+removal is saved and that converge is owed, and fugaro apply runs it later.
 
 If the delete fails after the config was written, the config is put back the
 way it was and the command stops: an account whose declaration is gone while
@@ -761,6 +762,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--profile` | string | "" | no | the profile whose claude_accounts loses the name (a profile that lists accounts is taken out of it one at a time) |
 
 Subcommands:
@@ -3689,18 +3691,25 @@ Subcommands:
 Add an image catalog entry to this machine's project config
 
 Add a named image to the project's image catalog, in this machine's project
-config: the copy fugaro update publishes to the project's policy node
-(image_catalog). The entry's source is a Dockerfile in one of the project's
-repositories (--dockerfile owner/name:path, with --branch), a Dockerfile
-written out here (--inline <file>), or an image that already exists
-(--image <ref>), and its tags are what a repository's needs: is matched
-against. The three are one entry's alternatives and are refused together
-rather than resolved.
+config: the copy the project's policy node serves (image_catalog). The entry's
+source is a Dockerfile in one of the project's repositories (--dockerfile
+owner/name:path, with --branch), a Dockerfile written out here (--inline
+<file>), or an image that already exists (--image <ref>), and its tags are
+what a repository's needs: is matched against. The three are one entry's
+alternatives and are refused together rather than resolved.
 
-Nothing is built and nothing is published here: fugaro image build <name>
-builds the entry's image, and fugaro update publishes the catalog. --default
-marks the entry a job whose repositories name no needs runs; a catalog marks
-one entry, or none.
+The entry is added and made live by this one command: its image is built,
+the repository it is read out of is redeployed and the catalog is published,
+so no further command is needed. --no-apply saves the entry and leaves those
+steps to fugaro apply. --default marks the entry a job whose repositories
+name no needs runs; a catalog marks one entry, or none.
+
+In a coding agent's session --inline, --image, --default and --branch are
+refused: the first three define executable content the project's jobs run,
+and --branch reads an entry's Dockerfile from a branch no review here has
+vouched for, which a session may have pushed itself. --dockerfile alone is
+allowed there as it is anywhere else: it reads the project's own repository
+at its base branch, where the file was committed and reviewed.
 
 Usage: `fugaro image add <name>`
 
@@ -3708,7 +3717,7 @@ Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
-| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch) |
+| `--branch` | string | "" | no | the branch --dockerfile reads (default: the repository's base branch; a coding agent's session is refused it) |
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
 | `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |
@@ -3717,6 +3726,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--image` | string | "" | no | a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is |
 | `--inline` | string | "" | no | a file whose contents are the entry's Dockerfile |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--tags` | stringSlice | `[]` | no | the tags the image provides (node, postgres, redis, firebase-emulator, docker); comma-separated or repeated |
@@ -4066,11 +4076,16 @@ the entry — because a workflow names it (image_name:), because the
 project's image_map gives it to the repository, or because the tag-cover
 rule picks it for the tags the workflow needs — since that job would then
 be on an image no catalog describes. Point the repository at another entry
-first (image_name: in its fugaro.yaml, or fugaro image map set), run
-fugaro update, and remove the entry after.
+first (image_name: in its fugaro.yaml, or fugaro image map set), then
+remove the entry.
+
+The removal is made live by this one command: the repository whose job ran
+the entry is redeployed and the catalog is published without it, so no
+further command is needed. --no-apply saves the removal and leaves those
+steps to fugaro apply.
 
 Nothing is deleted from the registry: the entry's built image stays where
-it is, and the next fugaro update publishes the catalog without the entry.
+it is.
 
 Usage: `fugaro image rm <name>`
 
@@ -4081,6 +4096,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -4795,6 +4811,20 @@ every pass until an operator removes the node with their own credential.
 Every reply and every heartbeat is signed before it is written, so a value
 the signer refuses is not written at all.
 
+A registration is the app's push token, its platform and its per-category
+switches, and it is written to the sibling node config/admin/push/<uid> —
+never under config/admin/devices/<uid>, which only `fugaro pair` and
+`fugaro pair revoke` write and whose existence is what admits the device. A
+registration whose account has no device node is refused and writes nothing,
+so a revocation is final; a re-registration overwrites the token, the
+platform and the time it was written and leaves the rest of the node alone.
+The write needs roles/firebasedatabase.admin, the role a pairing needs, since
+every node under config/admin is the operator's own credential's and no
+client token's: where the credential does not hold it, or the database cannot
+be reached, the pass stops and says so rather than pretending the phone
+registered — and the delivery is not consumed, so the first pass after the
+role is granted or the outage ends writes the node.
+
 The heartbeat IS the lease, and the loop renews it on every pass: it is
 rewritten with the current instant under the same compare-and-swap a take
 uses, which is what tells the phone this consumer is present and what keeps
@@ -4808,9 +4838,10 @@ do nothing with. The pairing key is read from the OS keychain by item name
 and is never printed; the item's name is not a secret and appears in a
 diagnostic.
 
-The command writes only the outbox and the heartbeat, with the operator's own
-credential, which is what makes that write set a rule in this command's code
-rather than a fence the database enforces.
+The command writes the outbox, the heartbeat and the one push node a
+registration names, with the operator's own credential, which is what makes
+that write set a rule in this command's code rather than a fence the database
+enforces.
 
 Its own state is the ledger at
 $XDG_STATE_HOME/fugaro/mailbox/<project>/ledger.json, written 0o600 by
@@ -5179,11 +5210,13 @@ it; when it is absent it stays absent.
 Only the keys it changes are rewritten: every comment and every other key of
 the file is kept.
 
-The change reaches a run through `fugaro update`, which publishes the policy
-node: a model_prices entry and a budget.allowed_models entry are what a run
-reads from there. A route's own claim is not — a run routes by the copy of
-the providers block in its job's environment — so a repository routes to the
-model once `fugaro update --repo .` has been run in its checkout.
+The change reaches a run when the policy node is published, which this command
+does itself: a model_prices entry and a budget.allowed_models entry are what a
+run reads from there. With --no-apply the change is saved and the publish is
+owed, and `fugaro apply` runs it later. A route's own claim is not published —
+a run routes by the copy of the providers block in its job's environment — so a
+repository routes to the model once `fugaro update --repo .` has been run in
+its checkout.
 
 Usage: `fugaro models add <id>`
 
@@ -5192,6 +5225,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
 | `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
 | `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
@@ -5427,11 +5461,12 @@ of each one fails at launch with no provider for the model, until the pin is
 changed with `fugaro models use` or the model is added back.
 
 Only the keys it changes are rewritten: every comment and every other key of
-the file is kept. `fugaro update` publishes the policy node, which carries the
-model_prices and budget.allowed_models halves of the removal to the runs that
-read it; the route's own claims are in the copy of the providers block each
-job holds, so a repository stops routing to the model when `fugaro update
---repo .` is run in its checkout.
+the file is kept. The command publishes the policy node itself, which carries
+the model_prices and budget.allowed_models halves of the removal to the runs
+that read it; with --no-apply the change is saved and the publish is owed, and
+`fugaro apply` runs it later. The route's own claims are in the copy of the
+providers block each job holds, so a repository stops routing to the model when
+`fugaro update --repo .` is run in its checkout.
 
 Usage: `fugaro models rm <id>`
 
@@ -5440,6 +5475,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 
 Subcommands:
 
@@ -5536,8 +5572,10 @@ log. patch applies one document from -f, and the ops only a person may
 land (approving a work item, setting the goal, closing a decision that
 waits on a person) are confirmed at a real terminal with the project's
 name typed: a session that has none writes nothing.
-import loads the one-time session dump, validated as a patch and refused
-the person's own ops: no dump approves work.
+import loads one of two documents: a plan's graph, which becomes the
+work items of the plan's own node, or the one-time session dump,
+validated as a patch and refused the person's own ops: no dump approves
+work, and no import approves anything.
 
 run is the daemon itself, in the foreground. install, uninstall and
 status are the login unit that keeps it running: the three read no
@@ -5556,7 +5594,7 @@ Flags:
 Subcommands:
 
 - `fugaro orchestrator events` -- Read the orchestrator's audit log
-- `fugaro orchestrator import` -- Load the one-time session dump into the orchestrator's state
+- `fugaro orchestrator import` -- Load a plan's graph, or the one-time session dump, into the orchestrator
 - `fugaro orchestrator install` -- Install or re-render the login unit that runs the daemon
 - `fugaro orchestrator ls` -- List the installation's orchestrators
 - `fugaro orchestrator patch` -- Apply one typed patch document to the orchestrator's state
@@ -5594,14 +5632,28 @@ This command has no subcommands.
 
 ## `fugaro orchestrator import`
 
-Load the one-time session dump into the orchestrator's state
+Load a plan's graph, or the one-time session dump, into the orchestrator
 
-Load the one-time session dump (the spec's Migration) into the project's
-orchestrator state, from -f's file or from stdin with -f -. The dump is one
-patch document (schemas/orchestrator-patch.schema.json) a session wrote out,
-and it is read by the same validator and bounded by the same caps as
-fugaro orchestrator patch: it is the one document in this loop written by a
-model, and everything it carries is data, never an instruction.
+Load work into the orchestrator from one of two documents, never both.
+
+--plan <folder> imports a plan: it reads <folder>/implementation-plan.graph.json
+with fugaro plan's own reader and writes the plan's node (orchestrator <id>/
+plans/<plan>) one work item per node of the graph — the task's id, the plan's
+name as its spec, <plan>/<task> as its plan task, the graph's edges as its
+dependencies, and a brief that pins the plan's commit and the SHA-256 of the
+task's own section (D2704, D2737). A re-import writes only the items nothing
+has launched yet and keeps an unchanged section's brief, so an approval a
+person already gave still stands (D2745); a graph this build refuses writes
+nothing at all. It lands as a session, which is who runs it — the session in
+the checkout the plan merged in — so it approves nothing: the items arrive
+unapproved, and --json prints them with the digests approving them takes.
+
+-f loads the one-time session dump (the spec's Migration), from its file or
+from stdin with -f -. The dump is one patch document
+(schemas/orchestrator-patch.schema.json) a session wrote out, and it is read
+by the same validator and bounded by the same caps as fugaro orchestrator
+patch: it is the one document in this loop written by a model, and everything
+it carries is data, never an instruction.
 
 The dump lands as the person who runs this, because the migration is theirs
 to make, and it lands nothing a session may not land: approving a work
@@ -5621,6 +5673,8 @@ Flags:
 | `-f`, `--file` | string | "" | no | the session dump to import, or - to read it from stdin |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for import |
+| `--json` | bool | `false` | no | print machine-readable output |
+| `--plan` | string | "" | no | the plan to import, as its folder under docs/ (docs/<plan>): reads its implementation-plan.graph.json into the plan's node |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -6624,6 +6678,10 @@ rewrites what a run in flight holds.
 as this command did before the enrolment converged: it is what * needs, and
 it is the whole of what a pattern such as owner/* can want.
 
+--no-apply writes the enrolment and stops there: the publish of the node
+and the deploy of the repository's own root are saved in this machine's
+record, and `fugaro apply` runs them later.
+
 Usage: `fugaro project repos add <provider/owner/name | owner/name>`
 
 Flags:
@@ -6634,6 +6692,7 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 
@@ -7433,6 +7492,11 @@ the sensitive direction, so a coding agent's session is refused it with the
 command to run at your own terminal, and your own terminal writes it and asks
 nothing.
 
+`fugaro rigor security add|rm` writes the paths a change has to touch to be
+reviewed as a security-sensitive change, and the project layer's switch that
+puts every change there: it writes `security.patterns` and the layer's own
+`security.always_level_3`, in the same two layers and with the same fence.
+
 Usage: `fugaro rigor`
 
 Flags:
@@ -7444,6 +7508,7 @@ Flags:
 Subcommands:
 
 - `fugaro rigor floor` -- Set or remove the review floor a project's runs are held to
+- `fugaro rigor security` -- Add or remove a security path, or the project's always-level-3 switch
 - `fugaro rigor set` -- Write the project layer's rigor default, or one area rule
 
 ## `fugaro rigor floor`
@@ -7584,6 +7649,95 @@ Flags:
 | `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor security`
+
+Add or remove a security path, or the project's always-level-3 switch
+
+Write the paths a change has to touch to be reviewed as a security-sensitive change, and the switch that puts every change at review level 3.
+
+A row is addressed by its name: `fugaro rigor security add --name NAME --match GLOB --category CATEGORY` writes the row that name holds, adding it when the list does not carry it yet — its glob and its category are then required — and replacing the glob and the category of the row it names when it does. A row already in the list keeps the value its flag does not state. `fugaro rigor security rm --name NAME` takes the row away whole.
+
+`--always-level-3` writes the switch instead of a row: `add` turns it on and `rm` turns it off. It is the project layer file's alone — a repository's `security:` block is its own rows and nothing else — and it puts every change of every repository of the project at review level 3, which is the answer D1503 gives a `**` pattern: a pattern that matches everything is not a pattern, it is this switch.
+
+A removal, and an add that gives a row already in the list another glob, are the lowering direction: a coding agent's session is refused them with the diff and the command to run at your own terminal, and your own terminal writes them and asks nothing. Adding a row, or turning the switch on, only ever escalates more.
+
+With no `--layer` the write lands in this machine's own project layer file, the one `fugaro update` publishes, and it ends with `next: fugaro update`. `--layer repo` writes a checkout's own `fugaro.yaml` instead, where the rows are live once your branch is merged to the base branch — this command commits, pushes and opens nothing. `--repo` names that repository, as owner/name or as a path to its checkout; without it the checkout the command runs in is the one written. A layer the key does not have is refused naming the layers it does: `local` is not one of them.
+
+Usage: `fugaro rigor security`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for security |
+
+Subcommands:
+
+- `fugaro rigor security add` -- Add a security path, or turn the project's always-level-3 switch on
+- `fugaro rigor security rm` -- Remove a security path, or turn the project's always-level-3 switch off
+
+## `fugaro rigor security add`
+
+Add a security path, or turn the project's always-level-3 switch on
+
+Add one row to the security list, or turn the project layer's switch on.
+
+The row is addressed by its name. A name the list does not carry yet is added, and its glob and its category are then both required: a row with no glob is one no matcher can use, and a category outside the seven the classifier labels matches with is a row the loader refuses. A name the list already carries has its glob and its category replaced by the ones the flags state, and keeps the ones it has for a flag that is left out — so a row the list carries is corrected rather than duplicated, and one call writes one row.
+
+Giving such a row another glob is the lowering direction: the paths the row named before stop being escalated to review level 3 unless another row names them, so it is the step a coding agent's session is refused. Adding a row is not, and `--always-level-3` only puts every change of the project at review level 3.
+
+`--always-level-3` writes the layer file's own switch and takes no --name, --match or --category. Turning it off is `fugaro rigor security rm --always-level-3`, and no layer writes it for one repository: a repository's `security:` block is its rows and nothing else.
+
+Usage: `fugaro rigor security add (--name NAME --match GLOB --category CATEGORY | --always-level-3) [--layer LAYER] [--repo REPO]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--always-level-3` | bool | `false` | no | write the project layer's own switch instead of a row: turn it on, so every change of every repository of the project reaches review level 3 |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
+| `--category` | string | "" | no | the row's category: credentials, guards, targets, infrastructure, prompts, CI, artifacts; required for a name the list does not carry yet, and optional for one it does |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the rows are live once your branch is merged to the base branch) |
+| `--match` | string | "" | no | the row's glob, relative to the repository root (e.g. internal/creds/**); required for a name the list does not carry yet, and optional for one it does |
+| `--name` | string | "" | no | the row to write, by the name that is its identity in the union of the three layers |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro rigor security rm`
+
+Remove a security path, or turn the project's always-level-3 switch off
+
+Take one row out of the security list, or turn the project layer's switch off.
+
+The row is taken away whole, by its name: a name the list does not carry is not a failure, and the command says so and writes nothing. A removal is the lowering direction — the paths the row named stop being escalated to review level 3 unless another row names them — so a coding agent's session is refused it with the diff, and your own terminal writes it and asks nothing. It is not a re-aim: a row that should name other paths is corrected with `fugaro rigor security add`, which refuses the same session for the same reason.
+
+`--always-level-3` turns the layer file's own switch off: with it off, a run of the project reaches review level 3 through the paths its list matches and the per-run `fugaro run --security` request, and nothing else. A layer that is not carrying the switch already is not a failure either.
+
+Usage: `fugaro rigor security rm (--name NAME | --always-level-3) [--layer LAYER] [--repo REPO]`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--always-level-3` | bool | `false` | no | write the project layer's own switch instead of a row: turn it off, so a change is escalated by the paths the list matches and by nothing else |
+| `--ask` | bool | `false` | no | in a project whose marks say it is managed, ask the confirmation this write would otherwise get instead of writing on the gate's verdict: a managed project asks nothing by default, and this is the flag that puts the question back. Refused where nobody can answer it (a coding agent's session, a pipe); a no-op with a sentence in a project that is not managed |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--layer` | string | "" | no | where the write lands: project (this machine's project layer file, the default) or repo (a checkout's own fugaro.yaml, where the rows are live once your branch is merged to the base branch) |
+| `--name` | string | "" | no | the row to write, by the name that is its identity in the union of the three layers |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
+| `--repo` | string | "" | no | the repository a --layer repo write is for, as owner/name or as a path to its checkout; without it, the checkout the command runs in |
 
 Subcommands:
 
@@ -9242,7 +9396,13 @@ schemas/settings-write.schema.json describes, which is what a caller that draws
 an edit reads. --dry-run takes no bare --json (the two answer different
 questions).
 
-Every write ends with one line: next: fugaro update.
+A write runs the steps its key declares: the published policy node for a key
+the machine's own config carries, the project layer file for a project-layer
+key, and nothing at all for a write into a checkout's fugaro.yaml — that file
+is live once the change is merged, and no step here can make it live before
+then. A step that fails leaves the change saved and the step pending and exits
+non-zero. --no-apply saves the change and runs none of the steps: `fugaro apply`
+runs them later.
 
 Usage: `fugaro settings set KEY VALUE`
 
@@ -9259,6 +9419,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--remove` | string | "" | no | remove an item from a string-list key |
 | `--remove-entry` | stringArray | `[]` | no | remove one entry from a map or an object list (the member's name, or the key field's value) |
@@ -9294,7 +9455,13 @@ terminal, and with --json it prints the versioned document
 schemas/settings-write.schema.json describes. --dry-run takes no bare --json
 (the two answer different questions).
 
-Every write ends with one line: next: fugaro update.
+A removal runs the steps its key declares, exactly as writing one does: the
+published policy node for a key the machine's own config carries, the project
+layer file for a project-layer key, and nothing at all for a checkout's
+fugaro.yaml — that file is live once the change is merged, and no step here can
+make it live before then. A step that fails leaves the change saved and the
+step pending and exits non-zero. --no-apply saves the change and runs none of
+the steps: `fugaro apply` runs them later.
 
 Usage: `fugaro settings unset KEY`
 
@@ -9309,6 +9476,7 @@ Flags:
 | `-h`, `--help` | bool | `false` | no | help for unset |
 | `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--repo` | string | "" | no | the repository whose fugaro.yaml to edit (owner/name, or a path inside its checkout) |
 
@@ -10625,6 +10793,7 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for set |
 | `--monthly` | float64 | `0` | no | the cap in US dollars per month, more than zero |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--workspace` | string | "" | no | the workspace whose cap this is (required: a cap is never spelled globally) |
 
 Subcommands:
@@ -10760,6 +10929,7 @@ Flags:
 | `--fp` | string | "" | no | the member's Fugaro project name, which the token's fp claim must be |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--job-service-account` | stringArray | `[]` | no | a job service account of the member, which the workspace's service resolves a caller by (repeatable) |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--repo` | stringArray | `[]` | no | a repository the member contributes to the workspace, as owner/name (repeatable) |
 
 Subcommands:
@@ -10788,6 +10958,7 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
+| `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 
 Subcommands:
 

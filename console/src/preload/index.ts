@@ -344,6 +344,21 @@ export const BRIDGE_VERSION = 1
  * the read is about. The three members it answers with (a person, a role and a
  * scope) are somebody else's text carried as data, drawn through the same
  * classes as everything else.
+ *
+ * **The composite-commands plan's AP8 added the forty-first** (`apply.pending` /
+ * `readPendingSteps`, the pending steps a management command saved for a later
+ * `fugaro apply`) and left the other forty exactly where they were. It is
+ * **not in any release this table has been read at yet**: it lands in the
+ * release that carries AP8, and no screen asks for it -- the console's
+ * pending-steps panel is that plan's own console task, so this row is the
+ * surface's fence rather than a read the shipped app makes today. It sits last,
+ * under the Members read, and it **takes no argument at all**: the command is
+ * cobra's `NoArgs` and the row declares no key. **Its argv carries `--status`
+ * as a word of the command path** and not as a flag a screen could set: the
+ * bare `fugaro apply` is the chain that runs what is owed, and this is the arm
+ * that runs no step and writes nothing. What comes back is the project's own
+ * text carried as data -- a step's name, the key or the repository a change was
+ * about -- and nothing in it is a credential.
  */
 export const EXPOSED_OPERATIONS = Object.freeze([
   ['live.watch', 'subscribeLive'],
@@ -511,6 +526,22 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // (F18); what this document does carry is the project's own `budget` block,
   // and that is the project's policy rather than a spend figure.
   ['policy.show', 'policyShow'],
+  // The project's enrolled repositories (the repos-management plan's RE5,
+  // D2413): `fugaro project repos ls --json` and `fugaro project repos status
+  // --json`, the `project repos` group's two read verbs. **They are the group's
+  // whole reach from this file**, and that is the claim: `repos add` and `repos
+  // rm` are on `src/main/ipc.ts`'s never table, so no method here can enrol a
+  // repository, un-enrol one or delete the Cloud Run jobs a removal takes.
+  // Neither takes an argument -- `repos.status` answers for every repository
+  // when it names none, which is the read a screen would draw, and a caller
+  // that could fill the word could aim the read at a repository this
+  // installation does not have. The first is what the project admits and what
+  // each repository runs; the second is a doctor for one repository's
+  // enrolment, each failing row naming the one command that puts it right. No
+  // screen consumes either document yet (D2413: the reach is settled before the
+  // screen is written).
+  ['repos.ls', 'listRepos'],
+  ['repos.status', 'reposStatus'],
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
   // operation's own closed schema. What this method *does* is ask the main
@@ -559,12 +590,22 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // without it. Nothing in the document is a credential and none of it is
   // interpreted here: the CLI's own words are what a screen draws.
   ['members.list', 'listMembers'],
+  // The pending-steps read (the composite-commands plan's AP8, D1569):
+  // `fugaro apply --status --json` -- the steps a management command saved for
+  // a later `fugaro apply`, the change that asked for each of them, and
+  // whether a record is on disk and still stamped against this machine's
+  // config. **It is the read half of a command whose
+  // bare word is a write**: `--status` is a word of the row's command path
+  // (`src/main/spawn.ts`), so nothing a caller sends can drop it, and the
+  // operation's schema is empty. Nothing a screen controls reaches this child,
+  // and the document is the project's own text drawn as data.
+  ['apply.pending', 'readPendingSteps'],
 ] as const) satisfies readonly (readonly [string, string])[]
 
 /**
  * ExposedName is the closed union of the operation names this file exposes --
- * forty string literals, not `string`. It is the type of the `operations` list
- * a screen switches on, so the closure is what lets a screen be exhaustive.
+ * forty-one string literals, not `string`. It is the type of the `operations`
+ * list a screen switches on, so the closure is what lets a screen be exhaustive.
  */
 export type ExposedName = (typeof EXPOSED_OPERATIONS)[number][0]
 

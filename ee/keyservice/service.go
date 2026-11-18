@@ -302,6 +302,11 @@ type Service struct {
 	// is this process's, like renewMu below and for the same reason — what a
 	// second process does is the store's to hold, and when the store can count
 	// inside a transaction the lock is what goes.
+	//
+	// The reseller's customer creation takes it too (resellers.go), because the
+	// count it takes first is this same count of this same account's day: two
+	// writers of one account's organisations are one window, whatever route they
+	// came in by.
 	signUpMu sync.Mutex
 	// renewMu is one renewal at a time in this process. A renewal reads the key's
 	// state, mints and then writes what records the rotation, and two of them in

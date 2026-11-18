@@ -1161,6 +1161,26 @@ export const MERCHANT_OF_RECORD = 'Paddle'
 export const MERCHANT_RECIPIENT_SENTENCE = 'The merchant of record appears as a recipient of buyers'
 export const SIGNUP_DESIGN = 'docs/design/key-signing-service.md'
 
+/** What a function writes into the mail it builds: the argument of every `body.WriteString(…)` call
+ * in `text`, each read to that call's own matching close rather than to the end of its line, because
+ * a field is written inside an expression (`strings.Join(a.Repositories, ", ")`). A field the
+ * function merely names — in a guard, a comment, a variable it never writes — is not in here at all,
+ * which is the point: the card's sentence is about the mail the owner receives, and a mention of a
+ * field is not a line of it. */
+function writtenInto(text) {
+  const call = 'body.WriteString('
+  const out = []
+  for (let at = text.indexOf(call); at >= 0; at = text.indexOf(call, at + call.length)) {
+    let end = at + call.length
+    for (let depth = 1; depth > 0 && end < text.length; end += 1) {
+      if (text[end] === '(') depth += 1
+      else if (text[end] === ')') depth -= 1
+    }
+    out.push(text.slice(at + call.length, end - 1))
+  }
+  return out.join('\n')
+}
+
 /** Every way the statement and the key sign-up disagree, or []. `page` is the built privacy
  * page's markup, `terms` and `design` are the repository's own files each as text, and `portal`
  * is the portal origin the card must link to — derived from site.yaml's canonical URL, the same
