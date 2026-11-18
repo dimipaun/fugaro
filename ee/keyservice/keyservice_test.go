@@ -59,17 +59,13 @@ const (
 	openSourceOrg    = "code.example/acme/widget"
 	applicantAddress = "dev@acme.example"
 
-	// The admin page's own fixtures (S3.4): the account the project's sign-in
-	// answers as the owner's, the plan an Order Form mints under, and the page's
-	// own secret, which is obviously not a real one — the deploy holds the
-	// secret and the account, and a test names its own of both.
+	// The deployment's own fixtures: the account the project's sign-in answers as
+	// the owner's, the plan an Order Form mints under, and the secret a forgery is
+	// signed with — another deployment's, of the same shape, so an event carrying
+	// it is refused by the signature alone.
 	ownerAccount       = "owner@fugaro.example"
 	enterprisePlanName = "enterprise"
-	adminSecret        = "fake-admin-secret-0123456789"
-	// otherAdminSecret is what a forgery is signed with: another secret of the
-	// same shape, so a token carrying it is refused by the signature alone.
-	otherAdminSecret = "not-this-deploys-secret-0123456789"
-	stepUpCode       = "step-up-code"
+	otherDeploySecret  = "not-this-deploys-secret-0123456789"
 
 	// The portal's own deploy values (plan P1.0). None of them is a real one,
 	// and the three that are secret-shaped are the fixture's own strings rather
@@ -223,47 +219,6 @@ func (r *recordingMints) recorded(key, secret string) {
 	r.secrets = append(r.secrets, secret)
 }
 
-// ownerSpy is the project's identity in a test: the account a request arrives
-// signed in as. An empty one is nobody signed in, which is the state §6's first
-// row is about.
-type ownerSpy struct{ account string }
-
-func (o *ownerSpy) SignedIn(context.Context) (string, bool) {
-	return o.account, o.account != ""
-}
-
-// stepUpSpy is the second factor in a test: the code it accepts, and what it
-// was asked. **D455 is open** — a hardware key or TOTP — so the factor is a seam
-// and this is its only implementation in the tree.
-type stepUpSpy struct {
-	accepts string
-	accept  bool
-	err     error
-
-	// mu is the spy's own, and not the fixture's: the factor is asked before
-	// the page takes its turn, so a burst of the page's actions reaches this at
-	// once. A deployment's factor is called that way and has to answer it.
-	mu    sync.Mutex
-	asked []string
-}
-
-func (p *stepUpSpy) Verified(_ context.Context, account, code string) (bool, error) {
-	p.mu.Lock()
-	p.asked = append(p.asked, account+" "+code)
-	p.mu.Unlock()
-	if p.err != nil {
-		return false, p.err
-	}
-	return p.accept && code == p.accepts, nil
-}
-
-// askedCodes is what the factor was asked, in order.
-func (p *stepUpSpy) askedCodes() []string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]string(nil), p.asked...)
-}
-
 // notifierSpy records what the owner was told a request is waiting (§4.5). It
 // is a seam of its own and not the applicant's mail path, which is what lets
 // §7.2's "the manual form mails nothing" hold while the owner is notified.
@@ -277,25 +232,6 @@ func (n *notifierSpy) Notify(_ context.Context, alert Alert) error {
 		return n.err
 	}
 	n.alerts = append(n.alerts, alert)
-	return nil
-}
-
-// auditorSpy records the page's audit lines (§6, D456). log, when a test sets
-// it, is the order hook beside recordingMints'.
-type auditorSpy struct {
-	lines []MintLine
-	err   error
-	log   *steps
-}
-
-func (a *auditorSpy) Mint(_ context.Context, line MintLine) error {
-	if a.err != nil {
-		return a.err
-	}
-	a.lines = append(a.lines, line)
-	if a.log != nil {
-		a.log.add("audit")
-	}
 	return nil
 }
 
@@ -566,10 +502,7 @@ type fixture struct {
 	proofs    *proofSpy
 	signer    *signerSpy
 	recording *recordingMints
-	owner     *ownerSpy
-	stepUp    *stepUpSpy
 	notifier  *notifierSpy
-	auditor   *auditorSpy
 	docs      *docsSpy
 	signIn    *signInSpy
 	paddle    *paddleSpy
@@ -620,10 +553,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		"acme/unapproved":  {Public: true, Licence: "OpenSSL"},
 	}}
 	f.proofs = &proofSpy{proved: true, organisation: openSourceOrg}
-	f.owner = &ownerSpy{account: ownerAccount}
-	f.stepUp = &stepUpSpy{accept: true, accepts: stepUpCode}
 	f.notifier = &notifierSpy{}
-	f.auditor = &auditorSpy{}
 	f.docs = newDocsSpy(f.store)
 	f.signIn = &signInSpy{caller: Caller{
 		UID: "uid-1", Email: ownerAccount, Provider: "google.com", AuthTime: f.now,
@@ -652,23 +582,13 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		FreeMailDomains: []string{"gmail.example", "outlook.example"},
 		VerificationTTL: 24 * time.Hour,
 		MerchantSecret:  f.secret,
-		// §6's own deployment: the one account the page answers to, the secret
-		// its tokens are signed with (obviously not a real one), the period a
-		// rendered form stays submittable, D454's caps and the plan the page
-		// reaches that the site's forms do not (§5.5). The caps are loose enough
-		// that a test which is not about the limit never meets it.
-		AdminAccount:  ownerAccount,
-		AdminSecret:   []byte(adminSecret),
-		AdminTokenTTL: 15 * time.Minute,
+		// D454's caps: loose enough that a test which is not about the limit
+		// never meets it.
 		MintCaps: map[string]Limits{
 			licence.TierCommunity:  {Requests: 20, Window: time.Hour},
 			licence.TierTeam:       {Requests: 20, Window: time.Hour},
 			licence.TierEnterprise: {Requests: 20, Window: time.Hour},
 		},
-		PagePlans: []Plan{{
-			Name: enterprisePlanName, Tier: licence.TierEnterprise,
-			Features: []string{"seats"}, Seats: 25, TermDays: 365,
-		}},
 		// The deploy's own code host, which §4.4's check reads and no other: the
 		// fixture's repositories are all on it, so a test that names a repository
 		// elsewhere reads that the line was refused before any call.
@@ -694,10 +614,7 @@ func newFixtureWith(t *testing.T, env Environment, edit func(*fixture)) *fixture
 		Mailer:    f.mail,
 		CodeHost:  f.host,
 		Proofs:    f.proofs,
-		Owner:     f.owner,
-		StepUp:    f.stepUp,
 		Notifier:  f.notifier,
-		Auditor:   f.auditor,
 		Docs:      f.docs,
 		SignIn:    f.signIn,
 		Paddle:    f.paddle,
@@ -789,66 +706,6 @@ func (f *fixture) get(route string, query url.Values) *httptest.ResponseRecorder
 	rec := httptest.NewRecorder()
 	f.handler.ServeHTTP(rec, req)
 	return rec
-}
-
-// apply is the free seat's form.
-func (f *fixture) apply(email string) *httptest.ResponseRecorder {
-	f.t.Helper()
-	return f.post(RouteFreeSeat, url.Values{"email": {email}})
-}
-
-// applyOpenSource is the open-source programme's form: the repositories the
-// applicant named, one per line, and its address.
-func (f *fixture) applyOpenSource(email string, repositories ...string) *httptest.ResponseRecorder {
-	f.t.Helper()
-	return f.post(RouteOpenSource, url.Values{
-		"email":        {email},
-		"repositories": {strings.Join(repositories, "\n")},
-	})
-}
-
-// verify follows a verification link.
-func (f *fixture) verify(token string) *httptest.ResponseRecorder {
-	f.t.Helper()
-	return f.get(RouteVerify, url.Values{"token": {token}})
-}
-
-// mailedToken is the token of the link in the last mail the intake sent.
-func (f *fixture) mailedToken() string {
-	f.t.Helper()
-	tokens := f.mailedTokens()
-	if len(tokens) == 0 {
-		f.t.Fatal("the intake mailed nothing, so there is no link to follow")
-	}
-	return tokens[len(tokens)-1]
-}
-
-// mailedTokens is the token of every verification link the intake has sent, in
-// the order it sent them. A test that is about a link nobody followed needs the
-// link that is not the last one.
-func (f *fixture) mailedTokens() []string {
-	f.t.Helper()
-	out := make([]string, 0, len(f.mail.sent))
-	for _, msg := range f.mail.sent {
-		at := strings.Index(msg.Body, "token=")
-		if at < 0 {
-			f.t.Fatalf("the mail carries no verification link: %q", msg.Body)
-		}
-		token := msg.Body[at+len("token="):]
-		if end := strings.IndexAny(token, " \n\r\t<"); end >= 0 {
-			token = token[:end]
-		}
-		out = append(out, token)
-	}
-	return out
-}
-
-// verifications is every pending link the store holds.
-func (f *fixture) verifications() []Verification {
-	f.t.Helper()
-	f.store.mu.Lock()
-	defer f.store.mu.Unlock()
-	return append([]Verification(nil), f.store.verifications...)
 }
 
 // records is every issuance the store holds, oldest first.
@@ -1077,65 +934,6 @@ func (f *fixture) event(e Event) *httptest.ResponseRecorder {
 	return f.deliver(e)
 }
 
-// adminGet opens the page. It is a GET because the page is one: nothing it does
-// changes anything, and the two actions are POSTs.
-func (f *fixture) adminGet() *httptest.ResponseRecorder {
-	f.t.Helper()
-	req := httptest.NewRequest(http.MethodGet, intakeOrigin+RouteAdmin, nil)
-	req.RemoteAddr = applicantIP
-	rec := httptest.NewRecorder()
-	f.handler.ServeHTTP(rec, req)
-	return rec
-}
-
-// adminPost submits one of the page's forms.
-func (f *fixture) adminPost(route string, form url.Values) *httptest.ResponseRecorder {
-	f.t.Helper()
-	req := httptest.NewRequest(http.MethodPost, intakeOrigin+route, strings.NewReader(form.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.RemoteAddr = applicantIP
-	rec := httptest.NewRecorder()
-	f.handler.ServeHTTP(rec, req)
-	return rec
-}
-
-// pageToken is the token the page renders for one action and one account, built
-// the way the page builds it. A test that is about the token being refused
-// builds its own instead.
-func (f *fixture) pageToken(account, action string) string {
-	f.t.Helper()
-	token, err := f.svc.pageToken(account, action)
-	if err != nil {
-		f.t.Fatalf("minting a page token: %v", err)
-	}
-	return token
-}
-
-// mintForm is the page's mint form as the page renders it: the action's own
-// token, the second factor, and whatever the test fills the rest with.
-func (f *fixture) mintForm(values url.Values) url.Values {
-	f.t.Helper()
-	if values == nil {
-		values = url.Values{}
-	}
-	if values.Get("token") == "" {
-		values.Set("token", f.pageToken(ownerAccount, actionMint))
-	}
-	if values.Get("step_up") == "" {
-		values.Set("step_up", stepUpCode)
-	}
-	return values
-}
-
-// decideForm is the page's decline form, built the same way.
-func (f *fixture) decideForm(id string) url.Values {
-	f.t.Helper()
-	return url.Values{
-		"application": {id},
-		"token":       {f.pageToken(ownerAccount, actionDecide)},
-	}
-}
-
 // open is the queue as the page reads it: the requests nobody has answered.
 func (f *fixture) open() []Application {
 	f.t.Helper()
@@ -1159,4 +957,41 @@ func answerBody(t *testing.T, rec *httptest.ResponseRecorder) string {
 		t.Fatal("the intake answered with nothing")
 	}
 	return rec.Body.String()
+}
+
+// burstGate is how long one request waits for the burst it is part of. It is the
+// window a burst of one account's requests arrives inside, and a request that
+// arrives alone waits it out rather than waiting for requests that are not
+// coming.
+const burstGate = 200 * time.Millisecond
+
+// together submits one request n times at once and answers the status code each
+// submission got, in submission order. They all wait on one channel, so the n
+// are in flight together rather than queued behind a loop.
+func together(n int, submit func(i int) *httptest.ResponseRecorder) []int {
+	start := make(chan struct{})
+	codes := make([]int, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			codes[i] = submit(i).Code
+		}()
+	}
+	close(start)
+	wg.Wait()
+	return codes
+}
+
+// answered is how many of the codes are one status.
+func answered(codes []int, want int) int {
+	n := 0
+	for _, code := range codes {
+		if code == want {
+			n++
+		}
+	}
+	return n
 }

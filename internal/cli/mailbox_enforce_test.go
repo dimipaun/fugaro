@@ -1210,7 +1210,7 @@ func TestMailboxKindThatDoesNotTravelIsRefused(t *testing.T) {
 // a kind or a verb the schema renames would otherwise be a branch nothing
 // reaches — or, for a verb, a record this consumer would try to run.
 func TestMailboxInboxKindsAndVerbsAreTheSchemas(t *testing.T) {
-	for _, kind := range []string{mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt} {
+	for _, kind := range []string{mailboxKindAction, mailboxKindAnswer, mailboxKindPrompt, mailboxKindRegistration} {
 		if !slices.Contains(mailbox.Kinds, kind) {
 			t.Errorf("this file reads %q out of an inbox, and shared/mailbox-schema does not name it: %v", kind, mailbox.Kinds)
 		}

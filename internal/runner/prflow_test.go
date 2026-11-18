@@ -1278,3 +1278,145 @@ func TestDeferralTextIsEscapedAndRedacted(t *testing.T) {
 		t.Errorf("the report's deferral line is not %q:\n%s", want, report)
 	}
 }
+
+// ticketSpec is the harness's task with the external id a daemon's launch
+// writes for an item that came from a GitHub issue (task.Spec.External, B7):
+// the one input the closing line is built from.
+func ticketSpec(ticket string) *task.Spec {
+	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Workflow: "app", Task: "Add a feature", External: ticket}
+}
+
+// TestPRBodyFixesOwnRepoIssue: a run launched for an item that came from an
+// issue in its own repository names that issue in its pull request's body as
+// `Fixes #<n>` -- GitHub's own closing keyword, so the merge the run's pull
+// request gets closes the issue, with no daemon write (D2727, B5). The number
+// alone is the spelling GitHub closes on, and the repository is not spelled
+// out where the pull request's own repository is already the issue's.
+func TestPRBodyFixesOwnRepoIssue(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	h.setSpec(t, ticketSpec("github:acme/app#7"))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	body := onlyPR(t, h.provider).Body
+	if !strings.Contains(body, "\nFixes #7\n") {
+		t.Fatalf("the body of a run for issue #7 does not name it as its own line:\n%s", body)
+	}
+	if strings.Contains(body, "acme/app#7") {
+		t.Errorf("the run's own repository is spelled out in its own pull request:\n%s", body)
+	}
+}
+
+// TestPRBodyFixesOtherRepoIssue: an item whose issue lives in another
+// repository is named whole, `Fixes <owner>/<repo>#<n>`: the line is a link
+// to the ticket rather than a keyword the merge can close, and a reader
+// lands on the issue from a repository it is not in (D2727, B5).
+func TestPRBodyFixesOtherRepoIssue(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	h.setSpec(t, ticketSpec("github:acme/other#7"))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	body := onlyPR(t, h.provider).Body
+	if !strings.Contains(body, "Fixes acme/other#7") {
+		t.Fatalf("the body of a run for another repository's issue #7 does not name it whole:\n%s", body)
+	}
+	if strings.Contains(body, "Fixes #7") {
+		t.Errorf("another repository's issue is named as if it were this repository's:\n%s", body)
+	}
+}
+
+// TestTaskWithoutExternalUnchanged: a task that carries no external id -- every
+// run a person starts, and a daemon launch whose job image cannot read the
+// field -- opens exactly the pull request it opened before the field existed:
+// no closing line, and no paragraph where one would be, so the body of the
+// many runs that close nothing is what it was (D2727, B5).
+func TestTaskWithoutExternalUnchanged(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	body := onlyPR(t, h.provider).Body
+	if strings.Contains(body, "Fixes") {
+		t.Errorf("a run for no issue carries a closing line:\n%s", body)
+	}
+	if want := "Adds feature.txt.\n\n" + statusBegin; !strings.HasPrefix(body, want) {
+		t.Errorf("the description and the section must follow each other as they did before the field, want %q:\n%s", want, body)
+	}
+}
+
+// TestPRBodyIgnoresAnIdItCannotName: the external id is the one value of a
+// task that reaches a pull request's body as the runner writes it, and a task
+// is a document this runner reads from its own bucket, so a hand-written one
+// can carry any text where the daemon writes a ticket (ticketRE, the only
+// guard between that text and the published body). An id outside the shape the
+// orchestrator admitted names no issue this run can honestly claim: the run
+// opens its pull request as it does for any other task without one -- no
+// closing line, no text of the id, no paragraph where a line would be, and a
+// ready outcome, since a link the run cannot read is not worth a failed run
+// (D2727, B5).
+func TestPRBodyIgnoresAnIdItCannotName(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		ticket string
+		repo   string
+	}{
+		{name: "trailing text after the number", ticket: "github:acme/app#7 fix it"},
+		{name: "a mention after the number", ticket: "github:acme/app#7 cc @octocat"},
+		{name: "an upper-case owner", ticket: "github:ACME/app#7"},
+		{name: "issue zero", ticket: "github:acme/app#0"},
+		{name: "a leading zero", ticket: "github:acme/app#07"},
+		{name: "a newline and a second line", ticket: "github:acme/app#7\n\nFixes #8"},
+		{name: "another host", ticket: "gitlab:acme/app#7"},
+		{name: "no repository segment", ticket: "github:acme#7"},
+		// A repository task.Validate admits (its repoRE) and task.CanonicalRepo
+		// refuses: the run bootstraps and opens its pull request, and the id
+		// cannot be named against a repository with no canonical form.
+		{name: "a repository the run cannot canonicalize", ticket: "github:acme/app#7", repo: "acme/..git"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := prHarness(t, prCfg(t, 2, ""))
+			spec := ticketSpec(tc.ticket)
+			if tc.repo != "" {
+				spec.Repo = tc.repo
+			}
+			h.setSpec(t, spec)
+			rec, err := h.run(t, implement("feature"), review("ship", 0))
+			if err != nil || rec.Outcome != runstore.OutcomeReady {
+				t.Fatalf("a task whose external id is not a ticket must run as one with no id at all, rec = %+v, err = %v", rec, err)
+			}
+			body := onlyPR(t, h.provider).Body
+			if strings.Contains(body, "Fixes") {
+				t.Errorf("the body carries a closing line built from an id the run cannot name:\n%s", body)
+			}
+			if strings.Contains(body, "@") {
+				t.Errorf("the body carries a mention out of the task's external id:\n%s", body)
+			}
+			if want := "Adds feature.txt.\n\n" + statusBegin; !strings.HasPrefix(body, want) {
+				t.Errorf("the body must be the one a task with no external id opens, want %q:\n%s", want, body)
+			}
+		})
+	}
+}
+
+// TestPRBodyFixesWithoutEarlyDraft: the closing line is on the pull request a
+// run opens at finalize alone (git.pr.early_draft off) too. That run's body
+// comes from a different funnel than the early draft's -- the one with no
+// status section -- and a line that landed on only one of them would lose the
+// issue's closing for every repository that turns the early draft off
+// (D2727, B5).
+func TestPRBodyFixesWithoutEarlyDraft(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ", early_draft: false"))
+	h.setSpec(t, ticketSpec("github:acme/app#7"))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	body := onlyPR(t, h.provider).Body
+	if !strings.Contains(body, "\nFixes #7") {
+		t.Fatalf("the body of a run for issue #7 opened at finalize does not name it:\n%s", body)
+	}
+}

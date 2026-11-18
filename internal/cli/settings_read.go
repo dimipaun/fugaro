@@ -447,6 +447,7 @@ var settingsOwnerCommands = map[string]string{
 	"models":            "fugaro models",
 	"rigor":             "fugaro rigor set",
 	"rigor floor":       "fugaro rigor floor",
+	"rigor security":    "fugaro rigor security",
 	"accounts":          "fugaro accounts",
 	"secrets":           "fugaro secrets",
 	"project":           "fugaro project",

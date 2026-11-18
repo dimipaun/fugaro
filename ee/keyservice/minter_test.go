@@ -226,8 +226,10 @@ func TestTheIntakeMintsThroughTheMinterService(t *testing.T) {
 
 	f.deps.Mints = RemoteMints{URL: srv.URL, Client: srv.Client(), Tokens: staticTokens("id-token-for-the-minter")}
 	f.start()
-	f.apply(applicantAddress)
-	f.verify(f.mailedToken())
+	// The merchant's own door: it is one of the intake's routes that reaches a
+	// key through Mints (the trial ask is the other), and since P9.3 it is the
+	// one a test can drive without a signed-in account.
+	f.purchase("evt-1", "acme.example", 3, 365)
 
 	if presented != "Bearer id-token-for-the-minter" {
 		t.Errorf("the intake presented %q to the minter, want the ID token the platform's check reads", presented)
@@ -236,8 +238,11 @@ func TestTheIntakeMintsThroughTheMinterService(t *testing.T) {
 	if len(records) != 1 {
 		t.Fatalf("the application recorded %d key(s), want one", len(records))
 	}
-	if records[0].Tier != licence.TierTeam || records[0].KeyID != productionKeyID {
-		t.Errorf("the record is %+v, want the plan's claims under the production key id", records[0])
+	if records[0].Tier != licence.TierTeam {
+		t.Errorf("the record is %+v, want the plan's claims, which are a Team tier's", records[0])
+	}
+	if !strings.HasPrefix(records[0].KeyID, keyIDPrefix) {
+		t.Errorf("the record names the key id %q, want one of the licence keys (%q)", records[0].KeyID, keyIDPrefix)
 	}
 	if got := f.signer.calls; got != 1 {
 		t.Errorf("the minter signed %d key(s), want one", got)

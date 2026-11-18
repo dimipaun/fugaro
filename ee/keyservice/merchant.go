@@ -11,7 +11,7 @@ package keyservice
 // subscription belongs to (§8, D2131 — see `withdrawn` for how the walk finds
 // them and what that does not stop), a cancellation stops the reissue, and a
 // test-mode event mints a staging key and nothing else. Enterprise is not this
-// path: it is invoiced directly by the entity and its key is the admin page's
+// path: it is invoiced directly by the entity and its key is minted by hand
 // (D2141, §5.5).
 //
 // Three rules give this path its shape. A body is verified **before it is read**,
@@ -509,13 +509,13 @@ func (s *Service) completed(ctx context.Context, e Event, record Record) error {
 // again.
 //
 // Enterprise is refused before any of that, and it is refused rather than sold
-// the Team row: §5.5's keys are invoiced directly by the entity and minted from
-// the admin page, so a deployment whose paid plan names the Enterprise tier is
+// the Team row: §5.5's keys are invoiced directly by the entity and minted by
+// hand, so a deployment whose paid plan names the Enterprise tier is
 // one whose checkout would price a tier that is never self-serve — and the
 // customer would be granted a licence nobody sold them (D2141).
 func (s *Service) purchased(ctx context.Context, e Event) error {
 	if s.cfg.Paid.Tier != licence.TierTeam {
-		return fmt.Errorf("the checkout sells Team keys and this deployment's paid plan names the %s tier, and an Enterprise key is invoiced directly and minted from the admin page (D2141, §5.5)", s.cfg.Paid.Tier)
+		return fmt.Errorf("the checkout sells Team keys and this deployment's paid plan names the %s tier, and an Enterprise key is invoiced directly and granted by operations (D2141, §5.5)", s.cfg.Paid.Tier)
 	}
 	if e.Organisation == "" || e.WorkspaceID == "" || e.Seats < 1 || e.TermDays < 1 {
 		return fmt.Errorf("%w: the purchase %s", ErrNoClaims, e.ID)
@@ -1076,7 +1076,7 @@ func (s *Service) seatChanged(ctx context.Context, e Event, sub Subscription) er
 // leave the licence renewing after the money went back.
 //
 // Only a key whose record names a subscription is walked by that step, which is
-// what keeps a hand-minted key — the admin page's, the mint tool's, a trial's —
+// what keeps a hand-minted key — the mint tool's, a trial's —
 // from being read as the same licence as every other key whose record names
 // none.
 //
@@ -1235,10 +1235,17 @@ func (s *Service) withdrawn(ctx context.Context, e Event) error {
 	// installation: a store that fails on this write leaves keys that are already
 	// dead and a licence the merchant's retry withdraws again — the walk above is
 	// idempotent — rather than a licence that is dead with its keys still live.
-	if err := s.revokeEntitlement(ctx, entitlement); err != nil {
+	if _, err := s.revokeEntitlement(ctx, entitlement); err != nil {
 		return err
 	}
-	return nil
+	// The walk above ran while the licence was still active, and a binding that
+	// minted its key and committed in the window between it and this write read
+	// the licence active: its key is one the walk never reached, and the status
+	// just written is not a withdrawal of it. The walk is taken again now that
+	// the licence is not active, with the same reason and the same instant as the
+	// first pass, and it reaches every key the licence has — the walk is
+	// idempotent, so the keys it already reached are only reached again.
+	return s.withdrawEveryKeyOf(ctx, entitlement.ID, reason, e.OccurredAt)
 }
 
 // entitlementFor resolves the entitlement one event is about: the licence the
@@ -1458,7 +1465,7 @@ func (s *Service) renewed(ctx context.Context, sub Subscription, record Record) 
 // checkoutRows is the whole of what the checkout sells: the Team month and the
 // Team year (D442, spec section 12.1). The two rows are the plans a merchant
 // event may be minted under, and Enterprise is not one of them — §5.5's keys are
-// invoiced directly and minted from the admin page (D2141).
+// invoiced directly and minted by hand (D2141).
 var checkoutRows = []struct {
 	policy string
 	period time.Duration
@@ -1505,11 +1512,9 @@ func checkoutPolicy(termDays int) (string, bool) {
 
 // paidRequest is the minter's v1 Request for one term of one subscription: the
 // row the term is sold under, the workspace the checkout bound, and the claims
-// and the term in days the merchant's event names (§5.1). It is the v1 twin of
-// mintRequest, and the difference between the two is the format: this one names
-// a row of the policy table, and the row is where the grace, the renewal mode
-// and the check interval come from — the caller names none of them (D2133,
-// D2138).
+// and the term in days the merchant's event names (§5.1). It names a row of the
+// policy table, and the row is where the grace, the renewal mode and the check
+// interval come from — the caller names none of them (D2133, D2138).
 func (s *Service) paidRequest(policy, workspaceID, organisation string, seats, days int) RequestV1 {
 	return RequestV1{
 		Environment:  s.cfg.Environment,
@@ -1707,21 +1712,6 @@ func paidKeyMail(to, key, secret string) Message {
 		Body: "Your Fugaro licence key:\n\n" + key + "\n" + secret + "\n\n" +
 			"Keep both lines: the first is the key and the second is its renewal secret.\n" +
 			"Install them in the console, or keep them for the CLI.\n",
-	}
-}
-
-// mintRequest is the minter's Request for one plan: the claims, and a term in days.
-// The service never states a date, and it cannot: `issued` and `expires` are the
-// minter's own (§2).
-func (s *Service) mintRequest(plan Plan, organisation string, seats, days int) Request {
-	return Request{
-		Environment:  s.cfg.Environment,
-		Tier:         plan.Tier,
-		Features:     append([]string(nil), plan.Features...),
-		Seats:        seats,
-		Organisation: organisation,
-		Plan:         plan.Name,
-		TermDays:     days,
 	}
 }
 

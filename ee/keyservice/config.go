@@ -544,7 +544,7 @@ func (e deployEnv) keys() (Keys, error) {
 }
 
 // deployPlans is the JSON shape of FUGARO_PLANS: the plans the routes mint
-// under, the plans only the admin page reaches, and D454's per-tier mint caps.
+// under, the plans no route reads, and D454's per-tier mint caps.
 //
 // It is one document because the fields are one decision — what this deployment
 // sells and what it allows — and because the alternative is five variables that

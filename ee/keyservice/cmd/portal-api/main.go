@@ -12,24 +12,14 @@
 // along: this process holds the store, the mail key and the merchant's secret,
 // and the other holds the key ring (§3.3, Check 174).
 //
-// **Three seams have no implementation in this repository.** CodeHost (§4.4's
-// repository check), Owner (§6's admin page identity) and Proofs are declared by
-// P1.1 and P1.2 and nothing writes them:
-//
-//   - CodeHost and Proofs belong to the open-source programme, and **D452 is
-//     open**: Proofs is nil here, so §4.4's check refuses every application
-//     before any repository is read (api_opensource.go), which is what a
-//     deployment with no proof check is supposed to do. The code host is a
-//     refusing one for the same reason — it is reached by nothing today, and a
-//     stand-in that answered `public: true` would be a licence check that passed
-//     on a repository nobody read.
-//   - Owner is what the admin page reads to find the account a request is signed
-//     in as. The deployment's identity provider is the platform's (IAP in front
-//     of the page, §3.3's identity table) and nothing here reads it yet, so this
-//     refuses: the page renders as "no account", and P9.2's deploy script has to
-//     wire the real one before the Licensor can mint from it. A stand-in that
-//     named the admin account would be a page anyone who can reach the URL may
-//     mint from, which is the one thing §6's row is about.
+// **Two seams have no implementation in this repository.** CodeHost (§4.4's
+// repository check) and Proofs are declared by P1.1 and P1.2 and nothing writes
+// them. Both belong to the open-source programme, and **D452 is open**: Proofs is
+// nil here, so §4.4's check refuses every application before any repository is
+// read (api_opensource.go), which is what a deployment with no proof check is
+// supposed to do. The code host is a refusing one for the same reason — it is
+// reached by nothing today, and a stand-in that answered `public: true` would be
+// a licence check that passed on a repository nobody read.
 //
 // The rest is real wiring, and it is what P1.7 is for: the document store, the
 // mail path, the merchant of record, the two token verifiers and the handover's
@@ -257,7 +247,6 @@ func build(ctx context.Context, environ []string, secrets keyservice.Secrets, op
 		MintsV1:   minter,
 		Mailer:    mailer,
 		CodeHost:  refusingCodeHost{},
-		Owner:     refusingOwner{},
 		Notifier:  ownerMail{mailer: mailer, to: deploy.NotifyAddress},
 		SignIn:    keyservice.PortalSignIn{Verifier: signIn},
 		Paddle:    paddle,
@@ -344,18 +333,6 @@ type refusingCodeHost struct{}
 func (refusingCodeHost) Repository(context.Context, string, string) (keyservice.Repository, error) {
 	return keyservice.Repository{}, keyservice.ErrRepository
 }
-
-// refusingOwner is §6's signed-in account with no identity provider behind it.
-// It answers "no account", which is what the page does with anybody it cannot
-// name: it renders read-only, and nothing there mints.
-//
-// This is the deployment's one known gap, and it is named in this file's head
-// rather than papered over: the real Owner reads the platform's own assertion
-// about the request (IAP, §3.3's identity table), and until it is wired the
-// Licensor reaches the page but cannot mint from it.
-type refusingOwner struct{}
-
-func (refusingOwner) SignedIn(context.Context) (string, bool) { return "", false }
 
 // jobSignIn is SchedulerVerifier behind the API's own seam (api.go's
 // Scheduler), which is the other place this deployment's own verifier meets a

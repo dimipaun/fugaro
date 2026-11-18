@@ -526,6 +526,22 @@ export const EXPOSED_OPERATIONS = Object.freeze([
   // (F18); what this document does carry is the project's own `budget` block,
   // and that is the project's policy rather than a spend figure.
   ['policy.show', 'policyShow'],
+  // The project's enrolled repositories (the repos-management plan's RE5,
+  // D2413): `fugaro project repos ls --json` and `fugaro project repos status
+  // --json`, the `project repos` group's two read verbs. **They are the group's
+  // whole reach from this file**, and that is the claim: `repos add` and `repos
+  // rm` are on `src/main/ipc.ts`'s never table, so no method here can enrol a
+  // repository, un-enrol one or delete the Cloud Run jobs a removal takes.
+  // Neither takes an argument -- `repos.status` answers for every repository
+  // when it names none, which is the read a screen would draw, and a caller
+  // that could fill the word could aim the read at a repository this
+  // installation does not have. The first is what the project admits and what
+  // each repository runs; the second is a doctor for one repository's
+  // enrolment, each failing row naming the one command that puts it right. No
+  // screen consumes either document yet (D2413: the reach is settled before the
+  // screen is written).
+  ['repos.ls', 'listRepos'],
+  ['repos.status', 'reposStatus'],
   // The launch, and the surface's **one write** (V2.5.1a, design section 5.1
   // rule 11, D22). One row, like every other: the five fields are the
   // operation's own closed schema. What this method *does* is ask the main

@@ -352,7 +352,7 @@ func (s *Service) newerKey(ctx context.Context, call RenewalCall, now time.Time)
 // ever. A key whose record names no licence at all is still refused with the
 // uniform answer: the owner's ruling of 2026-11-13 is that a key nothing can
 // prove was granted never renews, and that is a key the licensor minted by hand
-// (the admin page's, the mint tool's).
+// (the mint tool's, or another key minted by hand).
 //
 // A key the licence sold and whose record names no subscription is refused too,
 // and it is the same kind of rule: a purchase's subscription is written by the
@@ -838,7 +838,7 @@ func (h holder) status() string {
 }
 
 // sight records a key's check (§8): the instant it last asked the service
-// anything, which is the admin page's answer to whether a holder is still
+// anything, which is what tells whether a holder is still
 // checking.
 //
 // A store that refuses the write is logged and not answered with a failure, the
@@ -870,9 +870,9 @@ func (s *Service) sight(ctx context.Context, keyID string) {
 // through, and inherited by the successor the endpoint writes — and `renew`
 // reads it, and how it has moved since, before a key is minted at all. A record
 // naming none is refused there and not passed on to this window: it is a key no
-// subscription paid for — the admin page's, the free seat's, the trial's, all of
-// them minted through `mint` (see `Record.Subscription`) — and a mint here would
-// hand it a term nobody bought. So this window answers whether the term *after*
+// subscription paid for — the free seat's, the trial's and a hand-minted key's,
+// all of them minted through `mint` (see `Record.Subscription`) — and a mint here
+// would hand it a term nobody bought. So this window answers whether the term *after*
 // the one the customer is in is the next one to sign, and the gate answers
 // whether anybody paid for it: a subscription reaching one term ahead and no
 // further stops the ladder on its first call, before this window is asked

@@ -159,7 +159,7 @@ func chainSettle(cmd *cobra.Command, lc *localcfg.Config, path string, queued *a
 		return nil
 	}
 	applyKeptLine(cmd.OutOrStdout(), kept)
-	return userErr("%s still owed; run `fugaro apply` to finish the job", strings.Join(kept, ", "))
+	return userErr("%s still owed; run `fugaro apply` to finish the steps it can answer", strings.Join(kept, ", "))
 }
 
 // chainChangeFor is the change one owed step answers: the first of the

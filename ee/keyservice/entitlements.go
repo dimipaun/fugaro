@@ -231,16 +231,34 @@ func (s *Service) supersededBy(ctx context.Context, from recordReader, grant ent
 // superseded, which is a grant another grant replaced in its workspace, and
 // nothing expires, which is read from the term. What moves is the status alone,
 // so the licence keeps the term, the seats and the buyer the money was for.
-func (s *Service) revokeEntitlement(ctx context.Context, entitlement WireEntitlement) error {
-	entitlement.Status = entitlementRevoked
-	doc, err := storedDoc(entitlement)
+//
+// The status is moved on the record the transaction reads, and the whole record
+// written is that one: the caller's own read is a read from before whatever else
+// reached the licence — a binding that landed, a grant that superseded it, a
+// second operator's change — and a record written back from it would unmake
+// that. It answers the record it wrote, which is what a door answers the caller
+// with.
+func (s *Service) revokeEntitlement(ctx context.Context, entitlement WireEntitlement) (WireEntitlement, error) {
+	var revoked WireEntitlement
+	err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		held, present, err := getRecord[WireEntitlement](ctx, tx, entitlementsCollection, entitlement.ID)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return errNoSuchEntitlement
+		}
+		held.Status = entitlementRevoked
+		if err := putRecord(ctx, tx, entitlementsCollection, held.ID, held); err != nil {
+			return err
+		}
+		revoked = held
+		return nil
+	})
 	if err != nil {
-		return err
+		return WireEntitlement{}, fmt.Errorf("keyservice: the licence %s was withdrawn and its record could not be written: %w", entitlement.ID, err)
 	}
-	if err := s.docs.Put(ctx, entitlementsCollection, entitlement.ID, doc); err != nil {
-		return fmt.Errorf("keyservice: the licence %s was withdrawn and its record could not be written: %w", entitlement.ID, err)
-	}
-	return nil
+	return revoked, nil
 }
 
 // entitlementWrite is one grant's write, worked out before the transaction

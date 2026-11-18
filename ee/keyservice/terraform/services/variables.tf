@@ -115,6 +115,12 @@ variable "handover_role" {
   default     = "fugaroHandoverSealer"
 }
 
+variable "deletes_signins_role" {
+  description = "The custom role the API's account is granted to delete a sign-in: firebaseauth.users.delete, and nothing else, because the predefined role carrying it reaches every user and the project's sign-in settings (D2195)."
+  type        = string
+  default     = "fugaroDeletesSignins"
+}
+
 variable "statement_job" {
   description = "The monthly statement job's name."
   type        = string

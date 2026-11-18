@@ -495,6 +495,12 @@ func (s *Service) apiOpsCutHandover(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// refuseOverCap is D454's rate as the operator reads it: the tier's window is
+// spent, and the mint is queued rather than lost (ops.go's errOperationsOverCap).
+// The operations API is the minting surface that meets the cap, so the sentence
+// sits beside the route that answers with it.
+const refuseOverCap = "This tier's mint limit for the window is reached. The request stays in the queue."
+
 // refuseOperations answers one failed operations request. Each refusal is the
 // code the SPA branches on and a sentence it can show, and never a word about
 // the service's inside (§7.2's rule, read at this area's door).
@@ -526,6 +532,8 @@ func refuseOperations(w http.ResponseWriter, err error) {
 		refuseAPI(w, http.StatusConflict, "already_bound", "That workspace already holds this project id.")
 	case errors.Is(err, errOperationsDestinationBound):
 		refuseAPI(w, http.StatusConflict, "workspace_bound", "That workspace is bound to another Firebase project. Move that binding first, or transfer this project id into a workspace that holds none.")
+	case errors.Is(err, errOperationsWorkspaceRelicensed):
+		refuseAPI(w, http.StatusConflict, "workspace_relicensed", "That workspace took another licence while this transfer was in flight. Send it again: the transfer will be decided on the licence the workspace holds now, and will withdraw the keys of that one.")
 	case errors.Is(err, errOperationsEventAnswered):
 		refuseAPI(w, http.StatusConflict, "already_answered", "That event has already been decided.")
 	case errors.Is(err, errOperationsOverCap):

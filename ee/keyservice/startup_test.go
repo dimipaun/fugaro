@@ -39,50 +39,34 @@ func TestTheIntakeRefusesToStartInsteadOfServing(t *testing.T) {
 		{name: "no environment at all", serves: "serve a mode the merchant's events are measured against", edit: func(c *Config, _ *Deps) { c.Environment = "" }},
 		{name: "no key id for the production environment", serves: "mint keys under no id, which verify nowhere", edit: func(c *Config, _ *Deps) { c.Keys.Production = "" }},
 		{name: "no key id for the staging environment", serves: "mint test-mode keys under no id", edit: func(c *Config, _ *Deps) { c.Environment = Staging; c.Keys.Staging = "" }},
-		{name: "no URL", serves: "mail a verification link built from nothing", edit: func(c *Config, _ *Deps) { c.URL = "  " }},
-		{name: "no free-seat plan", serves: "answer the free seat's route with nothing to mint", edit: func(c *Config, _ *Deps) { c.FreeSeat = nil }},
-		{name: "no open-source plan", serves: "answer the open-source route with nothing to mint", edit: func(c *Config, _ *Deps) { c.OpenSource = nil }},
-		{name: "a free-seat plan with no name", serves: "write a record that names no plan", edit: func(c *Config, _ *Deps) { c.FreeSeat.Name = "" }},
+		{name: "no URL", serves: "mail an invitation link built from nothing, and read the portal's origin from nothing", edit: func(c *Config, _ *Deps) { c.URL = "  " }},
+		{name: "no open-source plan", serves: "file the open-source ask under a plan nobody named", edit: func(c *Config, _ *Deps) { c.OpenSource = nil }},
 		{name: "a plan naming a tier no key is issued for", serves: "mint a key the verifier refuses", edit: func(c *Config, _ *Deps) { c.Paid.Tier = "gold" }},
-		{name: "a free-seat plan with no term", serves: "mint a key that expires the day it is issued", edit: func(c *Config, _ *Deps) { c.FreeSeat.TermDays = 0 }},
-		{name: "a free-seat plan with no seats", serves: "mint a key nobody can install", edit: func(c *Config, _ *Deps) { c.FreeSeat.Seats = 0 }},
-		{name: "an open-source plan with no term", serves: "mint a key that expires the day it is issued", edit: func(c *Config, _ *Deps) { c.OpenSource.TermDays = 0 }},
-		{name: "an open-source plan with no seats", serves: "mint a key nobody can install", edit: func(c *Config, _ *Deps) { c.OpenSource.Seats = 0 }},
-		{name: "verification links with no life", serves: "leave a key in a mailbox forever", edit: func(c *Config, _ *Deps) { c.VerificationTTL = 0 }},
 		{name: "no merchant secret", serves: "read an unsigned body as the merchant's", edit: func(c *Config, _ *Deps) { c.MerchantSecret = nil }},
-		{name: "no repository cap", serves: "ask the code host about every line of a 16 KiB post", edit: func(c *Config, _ *Deps) { c.MaxRepositories = 0 }},
+		{name: "no repository cap", serves: "ask the code host about every line of a 4 KiB ask", edit: func(c *Config, _ *Deps) { c.MaxRepositories = 0 }},
 		{name: "no code host to read", serves: "read repositories from whatever an applicant typed", edit: func(c *Config, _ *Deps) { c.CodeHosts = nil }},
 		{name: "a code host named as a URL", serves: "compare a host against a URL and serve neither", edit: func(c *Config, _ *Deps) { c.CodeHosts = []string{"https://code.example"} }},
 		{name: "no terms version", serves: "record a sign-up's acceptance of a wording it cannot name (D2199)", edit: func(c *Config, _ *Deps) { c.TermsVersion = "  " }},
 		{name: "no store", serves: "mint a key it cannot remember and cannot tell a redelivery from a first delivery", edit: func(_ *Config, d *Deps) { d.Store = nil }},
 		{name: "no minter", serves: "sign with a service it does not have", edit: func(_ *Config, d *Deps) { d.Mints = nil }},
-		{name: "no mailer", serves: "issue a key to an address it never verified", edit: func(_ *Config, d *Deps) { d.Mailer = nil }},
+		{name: "no mailer", serves: "deliver a purchase's notice with no mail path, and an invitation nobody receives is one nobody can accept", edit: func(_ *Config, d *Deps) { d.Mailer = nil }},
 		{name: "no code-host client", serves: "run an open-source check that reads no repository", edit: func(_ *Config, d *Deps) { d.CodeHost = nil }},
-		{name: "no throttle", serves: "mail on demand from an unauthenticated form", edit: func(c *Config, _ *Deps) { c.Throttle = Limits{} }},
-		{name: "no admin account", serves: "answer the page that mints any key for any tier to whoever asks", edit: func(c *Config, _ *Deps) { c.AdminAccount = " " }},
-		{name: "no admin secret", serves: "accept a page token it did not sign", edit: func(c *Config, _ *Deps) { c.AdminSecret = nil }},
-		{name: "an admin secret too short to sign with", serves: "accept a token a stranger can forge, and a forged token is a mint", edit: func(c *Config, _ *Deps) { c.AdminSecret = []byte("short") }},
-		{name: "admin tokens with no life", serves: "leave a form rendered once submittable for ever", edit: func(c *Config, _ *Deps) { c.AdminTokenTTL = 0 }},
-		{name: "no plan the page reaches", serves: "render a page that can mint nothing the site's forms cannot (§5.5)", edit: func(c *Config, _ *Deps) { c.PagePlans = nil }},
-		{name: "a page plan sharing a name with a form's", serves: "read two plans as one and write a record that names the wrong one", edit: func(c *Config, _ *Deps) { c.PagePlans[0].Name = c.Paid.Name }},
-		{name: "a page plan naming a tier no key is issued for", serves: "mint a key the verifier refuses", edit: func(c *Config, _ *Deps) { c.PagePlans[0].Tier = "gold" }},
+		{name: "no throttle", serves: "serve every door of the intake without a rate", edit: func(c *Config, _ *Deps) { c.Throttle = Limits{} }},
 		{name: "no per-tier mint caps", serves: "let one session mint without limit (§6's limits row, D454)", edit: func(c *Config, _ *Deps) { c.MintCaps = nil }},
-		{name: "a tier with no mint cap", serves: "leave one tier of the page's own minting uncapped", edit: func(c *Config, _ *Deps) { delete(c.MintCaps, licence.TierEnterprise) }},
-		{name: "a mint cap of no mints", serves: "render a page whose every mint is refused", edit: func(c *Config, _ *Deps) {
+		{name: "a tier with no mint cap", serves: "leave one tier of the operations API's minting uncapped", edit: func(c *Config, _ *Deps) { delete(c.MintCaps, licence.TierEnterprise) }},
+		{name: "a mint cap of no mints", serves: "answer every operations mint with the over-cap refusal", edit: func(c *Config, _ *Deps) {
 			c.MintCaps[licence.TierTeam] = Limits{Window: time.Hour}
 		}},
 		{name: "a mint cap over no window", serves: "count a cap over a window of nothing", edit: func(c *Config, _ *Deps) { c.MintCaps[licence.TierTeam] = Limits{Requests: 5} }},
-		{name: "no identity to read", serves: "tell the owner from anyone else on a page that mints", edit: func(_ *Config, d *Deps) { d.Owner = nil }},
 		{name: "no notifier", serves: "leave a queued request for an owner who is never told (§4.5)", edit: func(_ *Config, d *Deps) { d.Notifier = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg, d := base, deps
 			// The fixture's plans and lists are pointers and slices; a case that
 			// edits one must not edit what the next case reads.
-			cfg.FreeSeat, cfg.OpenSource = copyPlan(base.FreeSeat), copyPlan(base.OpenSource)
+			cfg.OpenSource = copyPlan(base.OpenSource)
 			cfg.FreeMailDomains = append([]string(nil), base.FreeMailDomains...)
 			cfg.CodeHosts = append([]string(nil), base.CodeHosts...)
-			cfg.PagePlans = append([]Plan(nil), base.PagePlans...)
 			cfg.MintCaps = map[string]Limits{}
 			for tier, limit := range base.MintCaps {
 				cfg.MintCaps[tier] = limit
