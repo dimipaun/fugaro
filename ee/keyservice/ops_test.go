@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/ee/keyservice/docstore"
 	"github.com/dimipaun/fugaro/ee/licence"
 )
 
@@ -129,11 +130,20 @@ func (f *fixture) operationsGround() (WireOrganisation, WireEntitlement) {
 // because the wire refuses a body that leaves one out.
 func (f *fixture) mintBody(workspaceID, row string, seats int, ends time.Time) string {
 	f.t.Helper()
+	return f.mintBodyCheckInterval(workspaceID, row, seats, ends, "null")
+}
+
+// mintBodyCheckInterval is one operations mint whose check interval is the one a
+// case names: the interval is the one field of the shape that is not the row's
+// own term or count, and `null` is what the air-gapped row's key carries and no
+// other row's may (F28).
+func (f *fixture) mintBodyCheckInterval(workspaceID, row string, seats int, ends time.Time, interval string) string {
+	f.t.Helper()
 	return `{"workspace_id":` + jsonString(f.t, workspaceID) +
 		`,"row":` + jsonString(f.t, row) +
 		`,"seats":` + strconv.Itoa(seats) +
 		`,"ends_at":` + jsonString(f.t, ends.UTC().Format(time.RFC3339)) +
-		`,"check_interval":null}`
+		`,"check_interval":` + interval + `}`
 }
 
 // actionBody is one term change as the SPA sends it: the four actions share one
@@ -1386,6 +1396,112 @@ func TestProjectTransferWithdrawsEveryKeyOfTheLicence(t *testing.T) {
 	}
 }
 
+// transferGap is the fixture's store with the window a project transfer holds
+// open between the state it decided on and the transaction that writes it: the
+// transaction is the next thing the request does after it has read the licence
+// and written its line, so the hook runs just before that write.
+//
+// It is `gapDocs`'s shape at a whole transaction rather than at one read, which
+// is what a case about a write needs: what it can put in the window is any state
+// the store could have reached in it, and the transaction under test then reads
+// that state as its own.
+type transferGap struct {
+	Docs
+	mu     sync.Mutex
+	armed  bool
+	during func()
+}
+
+func (d *transferGap) arm(during func()) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.armed, d.during = true, during
+}
+
+func (d *transferGap) Update(ctx context.Context, fn func(context.Context, Tx) error) error {
+	d.mu.Lock()
+	fire := d.armed
+	var during func()
+	if fire {
+		// Disarmed before the step runs: the step is another request, and its own
+		// transaction would otherwise fire this again.
+		d.armed, during, d.during = false, d.during, nil
+	}
+	d.mu.Unlock()
+	if during != nil {
+		during()
+	}
+	return d.Docs.Update(ctx, fn)
+}
+
+// TestProjectTransferRefusesAWorkspaceRelicensedInTheWindow: the key list a
+// transfer withdraws belongs to the licence the source workspace named when the
+// transfer was decided, and the workspace's own licence is read again in the
+// transaction that moves the project id.
+//
+// A workspace re-bound to another licence in the window between that read and
+// that write is a workspace whose keys are the other licence's: the list the
+// request is holding is stale, and withdrawing it would reach the keys of a
+// licence this transfer has nothing to do with — a licence the customer may be
+// running somewhere else, killed by an act that never named it (F29). The
+// request is refused rather than made without its withdrawal, because the
+// licence the workspace holds now minted its own key for this project id, and a
+// transfer that moved the id while withdrawing nothing would leave that key live
+// on a project the customer no longer holds. The refusal is a conflict: a
+// request sent again is decided on the licence the workspace holds then, and
+// withdraws that one's list.
+func TestProjectTransferRefusesAWorkspaceRelicensedInTheWindow(t *testing.T) {
+	var gap *transferGap
+	f := newFixtureWith(t, Production, func(f *fixture) {
+		gap = &transferGap{Docs: f.docs}
+		f.deps.Docs = gap
+	})
+	f.operationsOrg(roleOwner)
+	org, _ := f.operationsGround()
+
+	// The licence the workspace is re-bound to: a second licence of the same
+	// organisation, unbound, which is what a rebind leaves the workspace naming —
+	// a state no route reaches while the project is still bound, so it is stood
+	// up here the way this file stands up the states its cases are about.
+	other, err := f.svc.grantEntitlement(context.Background(), entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	if err != nil {
+		t.Fatalf("granting the licence the workspace is re-bound to: %v", err)
+	}
+	held, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsBoundWS)
+	gap.arm(func() {
+		rebound := held
+		rebound.EntitlementID = &other.ID
+		f.seed(workspacesCollection, opsBoundWS, rebound)
+	})
+
+	rec := f.apiAsCaller(http.MethodPost, apiOpsProjectTransfersPath, transferBody(t, opsProject, opsFreeWS, "null"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("the transfer answered %d (%s), want the refusal: the workspace took another licence while the request was in flight", rec.Code, rec.Body)
+	}
+	if code := refusal(f, rec); code != "workspace_relicensed" {
+		t.Errorf("the refusal carries the code %q, want workspace_relicensed", code)
+	}
+	if _, withdrawn, err := f.store.Revocation(context.Background(), opsKeyID); err != nil || withdrawn {
+		t.Errorf("the key %s is on §8's list (withdrawn=%v err=%v): it is the key of the licence the workspace no longer holds, and the transfer withdrew the list it read before its transaction", opsKeyID, withdrawn, err)
+	}
+	if got := f.revocations(); len(got) != 0 {
+		t.Errorf("§8's list holds %+v, want no entry: no key the transfer read belongs to the licence the workspace holds now", got)
+	}
+	if moved, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsFreeWS); moved.ProjectID != nil {
+		t.Errorf("the destination is %+v, want it holding nothing: the act was refused rather than made without its withdrawal", moved)
+	}
+	if source, _ := heldRecord[WireWorkspace](f, workspacesCollection, opsBoundWS); source.ProjectID == nil || *source.ProjectID != opsProject {
+		t.Errorf("the source workspace is %+v, want it still holding %q: the id moves with the withdrawal of the licence the workspace holds, and neither happened", source, opsProject)
+	}
+}
+
 // TestOperationsSeatChangeNeedsAnActiveLicence: F29's rule at the one action of
 // the four that mints.
 //
@@ -1673,6 +1789,127 @@ func TestOperationsActSurvivesACompetingAct(t *testing.T) {
 	})
 }
 
+// TestOperationsRevokeSurvivesACompetingBind: the revocation's own write is made
+// on the record the store holds, so a binding that landed while the request was
+// in flight stands.
+//
+// `operationsAct` reads the licence to decide the act, and the write that
+// withdraws it is a later step, taken after the walk over its keys: written back
+// whole from that read — which is what a plain put does — the revocation unmakes
+// the binding. The licence that comes back is a licence with a key and no record
+// of the binding, which is the state `TestOperationsActSurvivesACompetingAct`'s
+// first window states: the next bind of it takes the first-bind path again and
+// mints a second key without withdrawing the first. What the revocation moves is
+// the status, and the guard the act itself asks is asked of the state it read —
+// a licence that is active when the act is decided is one this act withdraws.
+//
+// The binding here lands before the walk, so the walk reaches the key it minted;
+// `TestOperationsRevokeReachesTheKeyBoundInItsOwnWindow` is the same pair of
+// writes the other way round.
+func TestOperationsRevokeSurvivesACompetingBind(t *testing.T) {
+	f, gap, held := gapGround(t, false)
+	var bound *httptest.ResponseRecorder
+	gap.arm(entitlementsCollection, func() {
+		f.actsAs(danaUID, danaEmail, signInGoogle)
+		bound = f.bind(t, held.ID, opsProject)
+	})
+	rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, held.ID, "revoke", "null", "null", "null"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the revocation answered %d (%s), want it made", rec.Code, rec.Body)
+	}
+	if bound == nil || bound.Code != http.StatusOK {
+		t.Fatalf("the binding this case put in the window answered %v, want the key: the case is about a binding that really landed", bound)
+	}
+
+	after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+	if after.Status != entitlementRevoked {
+		t.Errorf("the licence reads %q, want %q: the status is the whole of what the act moves", after.Status, entitlementRevoked)
+	}
+	if after.BoundAt == nil {
+		t.Errorf("the licence reads %+v, want the binding's own instant on it: the revocation wrote the record back whole from the read before the binding, so the binding is unrecorded on the licence and the next bind of it takes the first-bind path again", after)
+	}
+	if after.WorkspaceID == nil || *after.WorkspaceID != opsBoundWS {
+		t.Errorf("the licence names the workspace %v, want %q: the binding's own pointer is not the revocation's to move", after.WorkspaceID, opsBoundWS)
+	}
+	if after.Seats != held.Seats || !after.EndsAt.Equal(held.EndsAt) || after.Source != held.Source {
+		t.Errorf("the licence reads %+v, want the term, the seats and the source of %+v: a revocation moves the status and nothing else", after, held)
+	}
+}
+
+// TestOperationsRevokeReachesTheKeyBoundInItsOwnWindow: the walk over a licence's
+// keys and the write of its status are two steps of one act, and a key minted
+// between them goes out with the licence.
+//
+// The walk reads the licence's keys before the status is written, and a binding
+// that mints its key and commits in between read the licence active — its own
+// transaction re-reads the status, so it would be refused once the revocation is
+// on the record — and the key it minted is one no step of the act has seen. The
+// act takes the walk again once the status is the store's, which is what reaches
+// that key (F29: a licence left revoked with a live key is the gap the rule
+// forbids). Without it the customer's installation holds a key nothing on §8's
+// list names, running to the end of the term the operator withdrew.
+func TestOperationsRevokeReachesTheKeyBoundInItsOwnWindow(t *testing.T) {
+	var gap *transferGap
+	f := newBindingFixtureWith(t, func(f *fixture) {
+		f.deps.MintsV1 = f.recording
+		gap = &transferGap{Docs: f.deps.Docs}
+		f.deps.Docs = gap
+	})
+	org := f.seededOrganisation(opsCustomerID, "Dana Ltd", orgTypeCustomer, danaUID, danaEmail, roleOwner)
+	workspace := f.seedWorkspace(opsBoundWS, org.ID, "Dana's bound")
+	held := f.grant(t, entitlementGrant{
+		At:             f.now,
+		OrganisationID: org.ID,
+		WorkspaceID:    &workspace.ID,
+		Source:         entitlementSourceOperations,
+		Row:            PolicyTeamAnnual,
+		Seats:          3,
+		StartsAt:       f.now,
+	})
+	f.operationsOrg(roleOwner)
+
+	// The window between the walk and the write is real and a millisecond wide,
+	// so a case cannot reach it by timing and the act itself closes it by walking
+	// again rather than by reading anything above the write. It is opened here:
+	// the step below runs where the withdrawal's own transaction would, so the
+	// walk has answered and the status is not yet the store's.
+	var bound *httptest.ResponseRecorder
+	gap.arm(func() {
+		f.actsAs(danaUID, danaEmail, signInGoogle)
+		bound = f.bind(t, held.ID, opsProject)
+	})
+
+	rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, held.ID, "revoke", "null", "null", "null"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("the revocation answered %d (%s), want it made", rec.Code, rec.Body)
+	}
+	if bound == nil || bound.Code != http.StatusOK {
+		t.Fatalf("the binding this case put in the window answered %v, want the key: the case is about a binding that really landed", bound)
+	}
+	records := f.records()
+	if len(records) != 1 {
+		t.Fatalf("the licence minted %d key(s), want the binding's one", len(records))
+	}
+	entry, withdrawn, err := f.store.Revocation(context.Background(), records[0].KeyID)
+	if err != nil || !withdrawn {
+		t.Errorf("the key %s the binding minted is not on §8's list (withdrawn=%v err=%v): it was minted in the window between the revocation's walk and its status, and nothing walked the licence again — a revoked licence with a live key is the gap F29 forbids", records[0].KeyID, withdrawn, err)
+	} else if entry.Reason != ReasonOperations || !entry.At.Equal(f.now) {
+		t.Errorf("the key's entry is %+v, want %q at the act's own instant %s", entry, ReasonOperations, f.now)
+	}
+	if got := len(f.revocations()); got != 1 {
+		t.Errorf("§8's list holds %d entry(ies), want the licence's one key: the walk is taken twice and the store keeps the first entry for a key", got)
+	}
+	after, _ := heldRecord[WireEntitlement](f.fixture, entitlementsCollection, held.ID)
+	if after.Status != entitlementRevoked {
+		t.Errorf("the licence reads %q, want %q: the binding in the window does not save it", after.Status, entitlementRevoked)
+	}
+	if after.BoundAt == nil {
+		t.Errorf("the licence reads %+v, want the binding's own instant on it: the binding that landed in the window is not the revocation's to unmake", after)
+	}
+}
+
 // TestParkedEventIsResolvedOnce: a parked event — one whose transaction and
 // subscription did not begin with a transaction this API created (F15) — is
 // operations' to attach or dismiss, and it is decided once. Attaching it says
@@ -1765,5 +2002,286 @@ func TestParkedEventIsResolvedOnce(t *testing.T) {
 	}
 	if parked := readAnswer[[]WireLedgerEvent](f, rec); len(parked) != 1 || parked[0].ID != "evt-parked-3" {
 		t.Errorf("the queue answers %+v, want the event nobody has decided", parked)
+	}
+}
+
+// TestTwoDecisionsOfAParkedEventCannotBothLand: the event's state is the record
+// of the decision, and the check that it is still parked and the write that
+// decides it are one transaction (P5.1's resolutions).
+//
+// A check made outside the write holds nothing: two members deciding one event
+// at once both read it parked, and the second write leaves a decided event
+// holding a decision the first operator's answer — already sent — says is not
+// the one on it. The windows are two, because there are two ways the state
+// moves under one request: a whole second decision landing between the read and
+// the write (the first case, opened rather than timed), and two requests
+// arriving together (the second, over a store whose transactions really
+// conflict).
+func TestTwoDecisionsOfAParkedEventCannotBothLand(t *testing.T) {
+	attach := `{"id":` + jsonString(t, opsEventID) + `,"decision":"attach","entitlement_id":`
+	dismiss := `{"id":` + jsonString(t, opsEventID) + `,"decision":"dismiss","entitlement_id":null}`
+
+	t.Run("a decision that lands in the window", func(t *testing.T) {
+		var gap *gapDocs
+		f := newFixtureWith(t, Production, func(f *fixture) {
+			gap = &gapDocs{Docs: f.deps.Docs}
+			f.deps.Docs = gap
+		})
+		f.operationsOrg(roleOwner)
+		_, granted := f.operationsGround()
+
+		var first *httptest.ResponseRecorder
+		gap.arm(paddleEventsCollection, func() {
+			first = f.apiAsCaller(http.MethodPost, apiOpsEventResolutionsPath, dismiss)
+		})
+		rec := f.apiAsCaller(http.MethodPost, apiOpsEventResolutionsPath, attach+jsonString(t, granted.ID)+`}`)
+		if first == nil || first.Code != http.StatusOK {
+			t.Fatalf("the dismissal this case put in the window answered %v, want it made", first)
+		}
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("the attach whose event was dismissed in the window answered %d (%s), want 409: the decision the store already holds is the one the request it interrupted was answered with", rec.Code, rec.Body)
+		}
+		if code := refusal(f, rec); code != "already_answered" {
+			t.Errorf("the refusal carries the code %q, want already_answered", code)
+		}
+		stored, _ := heldRecord[WireLedgerEvent](f, paddleEventsCollection, opsEventID)
+		if stored.State != ledgerDismissed || stored.EntitlementID != nil {
+			t.Errorf("the store holds %+v, want the decision that landed first (%q and no licence)", stored, ledgerDismissed)
+		}
+	})
+
+	t.Run("two decisions arriving together", func(t *testing.T) {
+		f := newFixtureWith(t, Production, func(f *fixture) {
+			f.deps.Docs = &docsOnDocstore{db: docstore.NewMemory()}
+		})
+		f.operationsOrg(roleOwner)
+		_, granted := f.operationsGround()
+		docs := f.deps.Docs.(*docsOnDocstore)
+
+		answers := make([]*httptest.ResponseRecorder, 2)
+		bodies := []string{attach + jsonString(t, granted.ID) + `}`, dismiss}
+		var ready, done sync.WaitGroup
+		start := make(chan struct{})
+		ready.Add(len(bodies))
+		done.Add(len(bodies))
+		for i, body := range bodies {
+			go func(i int, body string) {
+				defer done.Done()
+				ready.Done()
+				<-start
+				answers[i] = f.apiAsCaller(http.MethodPost, apiOpsEventResolutionsPath, body)
+			}(i, body)
+		}
+		ready.Wait()
+		close(start)
+		done.Wait()
+
+		landed, refused := 0, 0
+		for _, rec := range answers {
+			switch rec.Code {
+			case http.StatusOK:
+				landed++
+			case http.StatusConflict:
+				refused++
+				if code := refusal(f, rec); code != "already_answered" {
+					t.Errorf("the refusal carries the code %q, want already_answered", code)
+				}
+			default:
+				t.Errorf("a resolution answered %d (%s), want one decision made and the other refused", rec.Code, rec.Body)
+			}
+		}
+		if landed != 1 || refused != 1 {
+			t.Fatalf("%d of the two resolutions landed and %d were refused, want exactly one each: both read the event parked", landed, refused)
+		}
+		stored, present, err := getRecord[WireLedgerEvent](context.Background(), docs, paddleEventsCollection, opsEventID)
+		if err != nil || !present {
+			t.Fatalf("reading the event back: present=%v err=%v", present, err)
+		}
+		if stored.State != ledgerProcessed && stored.State != ledgerDismissed {
+			t.Fatalf("the store holds %+v, want one of the two decisions and not the parked state", stored)
+		}
+		for _, rec := range answers {
+			if rec.Code != http.StatusOK {
+				continue
+			}
+			if answered := readAnswer[WireLedgerEvent](f, rec); answered.State != stored.State {
+				t.Errorf("the answer says the event is %q and the store holds %q: the winning decision is the store's, and one of the two wrote over the other", answered.State, stored.State)
+			}
+		}
+	})
+}
+
+// TestOperationsMintStaysInsideTheRowsTerm: F30's bound at the mint, which is
+// the row's own term counted from the instant the grant is made.
+//
+// The row is looked up and never believed (D2133), so a request cannot name a
+// term the row does not carry: an end past it would be a licence running longer
+// than the row every key of it is minted from, and an end that is not after now
+// would be a term nobody is in.
+func TestOperationsMintStaysInsideTheRowsTerm(t *testing.T) {
+	f := newFixture(t)
+	f.operationsOrg(roleOwner)
+	f.operationsGround()
+	row, known := DefaultPolicy(PolicyTeamAnnual)
+	if !known {
+		t.Fatalf("the policy table does not carry %s, the row this case mints on", PolicyTeamAnnual)
+	}
+
+	// The row's own bound is reached and not passed.
+	if rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBody(opsMintWS, PolicyTeamAnnual, 3, f.now.Add(row.Term))); rec.Code != http.StatusCreated {
+		t.Fatalf("the mint ending at the row's own bound answered %d (%s), want it minted", rec.Code, rec.Body)
+	}
+	over := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBody(opsMintWS, PolicyTeamAnnual, 3, f.now.Add(row.Term+time.Hour)))
+	if over.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the mint ending past the row's bound answered %d (%s), want the refusal", over.Code, over.Body)
+	}
+	if code := refusal(f, over); code != "invalid_term" {
+		t.Errorf("the refusal carries the code %q, want invalid_term", code)
+	}
+	now := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBody(opsMintWS, PolicyTeamAnnual, 3, f.now))
+	if now.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the mint ending at this instant answered %d (%s), want the refusal: a term that is over is ended rather than granted", now.Code, now.Body)
+	}
+	if code := refusal(f, now); code != "invalid_term" {
+		t.Errorf("the refusal carries the code %q, want invalid_term", code)
+	}
+	if held := f.entitlementsOfOrganisation(opsCustomerID); len(held) != 2 {
+		t.Errorf("the organisation holds %d licence(s), want the ground licence and the one grant whose end was inside the row: a refused grant writes none", len(held))
+	}
+}
+
+// TestOperationsMintSeatsAreTheRows: D2184's count, at the mint.
+//
+// A row that carries its own seat count takes no other — the row is the deal the
+// customer bought, and a grant of five seats on the one-seat row would be a key
+// whose count no price is attached to — and a row with no count of its own takes
+// any count a person can use.
+func TestOperationsMintSeatsAreTheRows(t *testing.T) {
+	f := newFixture(t)
+	f.operationsOrg(roleOwner)
+	f.operationsGround()
+	day := f.now.Add(30 * 24 * time.Hour)
+
+	if rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBody(opsMintWS, PolicyTeamAnnual, 5, day)); rec.Code != http.StatusCreated {
+		t.Fatalf("the mint of five seats on a row that carries none answered %d (%s), want it minted", rec.Code, rec.Body)
+	}
+	for _, seats := range []int{0, -1} {
+		rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBody(opsMintWS, PolicyTeamAnnual, seats, day))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("the mint of %d seat(s) answered %d (%s), want the refusal: nobody can use fewer than one", seats, rec.Code, rec.Body)
+			continue
+		}
+		if code := refusal(f, rec); code != "invalid_seats" {
+			t.Errorf("the refusal of %d seat(s) carries the code %q, want invalid_seats", seats, code)
+		}
+	}
+	// The free seat is one seat (D2184), and its row is the row that says so.
+	other := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBody(opsFreeWS, PolicyFreeSeat, 2, day))
+	if other.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the mint of two seats on the one-seat row answered %d (%s), want the refusal", other.Code, other.Body)
+	}
+	if code := refusal(f, other); code != "invalid_seats" {
+		t.Errorf("the refusal carries the code %q, want invalid_seats", code)
+	}
+	if rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBody(opsFreeWS, PolicyFreeSeat, 1, day)); rec.Code != http.StatusCreated {
+		t.Fatalf("the mint of the free seat's own one seat answered %d (%s), want it minted", rec.Code, rec.Body)
+	}
+	if held := f.entitlementsOfOrganisation(opsCustomerID); len(held) != 3 {
+		t.Errorf("the organisation holds %d licence(s), want the ground licence and the two grants the rows took", len(held))
+	}
+}
+
+// TestOperationsMintCheckIntervalStaysInItsSpan: F28's bounds on the one field
+// of a mint that is not the row's own term or count.
+//
+// The interval a request names is checked against what a key can read and
+// against the span F28 states, and it is checked against the row: a row whose
+// key never contacts the server is the air-gapped row's alone, and no other
+// row's key may say it checks never — a key nothing can reach is a key
+// revocation cannot withdraw (D2206).
+func TestOperationsMintCheckIntervalStaysInItsSpan(t *testing.T) {
+	f := newFixture(t)
+	f.operationsOrg(roleOwner)
+	f.operationsGround()
+	day := f.now.Add(50 * 24 * time.Hour)
+
+	if rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBodyCheckInterval(opsMintWS, PolicyTeamAnnual, 3, day, jsonString(t, "P2D"))); rec.Code != http.StatusCreated {
+		t.Fatalf("the mint naming a two-day check interval answered %d (%s), want it minted: the span is daily to monthly", rec.Code, rec.Body)
+	}
+	for _, interval := range []string{"P31D", "P0D", "PT1H", "30d"} {
+		rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath, f.mintBodyCheckInterval(opsMintWS, PolicyTeamAnnual, 3, day, jsonString(t, interval)))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("the mint naming the check interval %q answered %d (%s), want the refusal", interval, rec.Code, rec.Body)
+			continue
+		}
+		if code := refusal(f, rec); code != "invalid_check_interval" {
+			t.Errorf("the refusal of %q carries the code %q, want invalid_check_interval", interval, code)
+		}
+	}
+	// The air-gapped row's key carries no interval, and the row is the only
+	// thing that says so.
+	airGapped := f.apiAsCaller(http.MethodPost, apiOpsMintsPath,
+		f.mintBodyCheckInterval(opsFreeWS, PolicyEnterpriseAirGapped, 1, day, jsonString(t, "P1D")))
+	if airGapped.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the mint naming an interval on the air-gapped row answered %d (%s), want the refusal", airGapped.Code, airGapped.Body)
+	}
+	if code := refusal(f, airGapped); code != "invalid_check_interval" {
+		t.Errorf("the refusal carries the code %q, want invalid_check_interval", code)
+	}
+	if rec := f.apiAsCaller(http.MethodPost, apiOpsMintsPath,
+		f.mintBodyCheckInterval(opsFreeWS, PolicyEnterpriseAirGapped, 1, day, "null")); rec.Code != http.StatusCreated {
+		t.Fatalf("the mint of the air-gapped row with no interval answered %d (%s), want it minted: null is that row's own", rec.Code, rec.Body)
+	}
+}
+
+// TestOperationsExtendStaysInsideTheRowsTerm: F30's bound at the extend, which
+// is the row's term counted from the term's own start.
+//
+// An extension moves the end and never the row: an end past the row's term is a
+// term the licence was never granted for, and an end that is not after now is a
+// licence whose term is over — which `revoke` ends and no extension of a term
+// nobody is in.
+func TestOperationsExtendStaysInsideTheRowsTerm(t *testing.T) {
+	f := newFixture(t)
+	f.operationsOrg(roleOwner)
+	_, granted := f.operationsGround()
+	row, known := DefaultPolicy(PolicyTeamAnnual)
+	if !known {
+		t.Fatalf("the policy table does not carry %s, the row this case extends on", PolicyTeamAnnual)
+	}
+	at := func(when time.Time) string { return jsonString(t, when.UTC().Format(time.RFC3339)) }
+
+	inside := granted.StartsAt.Add(row.Term - time.Hour)
+	if rec := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, granted.ID, "extend", "null", at(inside), "null")); rec.Code != http.StatusOK {
+		t.Fatalf("the extension to %s answered %d (%s), want it made: it is inside the row's own term", inside, rec.Code, rec.Body)
+	}
+	over := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, granted.ID, "extend", "null", at(granted.StartsAt.Add(row.Term+time.Hour)), "null"))
+	if over.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the extension past the row's term answered %d (%s), want the refusal", over.Code, over.Body)
+	}
+	if code := refusal(f, over); code != "invalid_term" {
+		t.Errorf("the refusal carries the code %q, want invalid_term", code)
+	}
+	past := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, granted.ID, "extend", "null", at(f.now.Add(-time.Hour)), "null"))
+	if past.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the extension to an instant behind this one answered %d (%s), want the refusal", past.Code, past.Body)
+	}
+	if code := refusal(f, past); code != "invalid_term" {
+		t.Errorf("the refusal carries the code %q, want invalid_term", code)
+	}
+	none := f.apiAsCaller(http.MethodPost, apiOpsEntitlementActionsPath,
+		actionBody(t, granted.ID, "extend", "null", "null", "null"))
+	if none.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("the extension naming no end answered %d (%s), want the refusal", none.Code, none.Body)
+	}
+	if code := refusal(f, none); code != "invalid_term" {
+		t.Errorf("the refusal carries the code %q, want invalid_term", code)
+	}
+	after, _ := heldRecord[WireEntitlement](f, entitlementsCollection, granted.ID)
+	if !after.EndsAt.Equal(inside) {
+		t.Errorf("the licence ends at %s, want %s: the three refusals moved nothing", after.EndsAt, inside)
 	}
 }

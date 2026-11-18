@@ -214,6 +214,15 @@ var (
 	// installation runs was minted for another, and nothing here can tell which
 	// of the two the customer meant.
 	errOperationsDestinationBound = errors.New("keyservice: that workspace is bound to another Firebase project")
+	// errOperationsWorkspaceRelicensed is a transfer whose source workspace
+	// named another licence by the time the transaction that moves the project
+	// ran: the key list the request read is that other licence's, and the
+	// withdrawal this act owes (F29) is not the one it is holding. The act is
+	// refused rather than made without it — a transfer that moves the id and
+	// withdraws nothing leaves the key of the licence the workspace holds now
+	// live on a project the customer no longer holds — and a request sent again
+	// is decided on the licence the workspace holds then.
+	errOperationsWorkspaceRelicensed = errors.New("keyservice: the workspace holds another licence than the one this transfer was decided on")
 	// errOperationsNoHandover is a key with no handover open, which is a key
 	// whose window has already closed as well as one that never had one.
 	errOperationsNoHandover = errors.New("keyservice: no handover is open for that key")
@@ -670,15 +679,28 @@ func (s *Service) operationsAct(ctx context.Context, actor Caller, asked WireEnt
 		// that are already dead and a licence a retry withdraws again — the walk
 		// is idempotent — rather than a licence that is dead with its keys still
 		// live, which is the gap F29 states.
-		if err := s.withdrawEveryKeyOf(ctx, entitlement.ID, now); err != nil {
+		if err := s.withdrawEveryKeyOf(ctx, entitlement.ID, ReasonOperations, now); err != nil {
 			return WireEntitlement{}, err
 		}
-		if err := s.revokeEntitlement(ctx, entitlement); err != nil {
+		// The status is moved on the record the store holds now and not on the
+		// one this act was decided on (`revokeEntitlement`): a change that landed
+		// while the keys were being walked — a binding, another operator's act —
+		// would otherwise be written away by that stale read, and a revocation
+		// moves the status and nothing else.
+		revoked, err := s.revokeEntitlement(ctx, entitlement)
+		if err != nil {
 			return WireEntitlement{}, err
 		}
-		changed := entitlement
-		changed.Status = entitlementRevoked
-		return changed, nil
+		// The walk is taken again now that the licence is not active, and it is
+		// the half of F29 the status write cannot do: a binding that minted its
+		// key and committed while the first walk was running read the licence
+		// active, so the key it minted is one that walk never saw and no later
+		// act withdraws. Every key the licence has now goes out with it, and the
+		// walk is idempotent, so the first pass's keys are only reached again.
+		if err := s.withdrawEveryKeyOf(ctx, entitlement.ID, ReasonOperations, now); err != nil {
+			return WireEntitlement{}, err
+		}
+		return revoked, nil
 	}
 	// The change is made inside the transaction that re-reads the licence and
 	// asks the guards again. The record this act was decided on is a read from
@@ -969,15 +991,24 @@ func (s *Service) licenceKeys(ctx context.Context, entitlementID string) ([]stri
 //
 // It is `merchant.go`'s walk read at a second door rather than a second rule:
 // what a withdrawal is, is F29's, and the two callers must reach the same keys.
-// The reason is the licensor's own word for it (store.go's Revocation) and
-// never what reaches the holder.
-func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID string, now time.Time) error {
+// The reason and the instant are the caller's own word for the withdrawal — an
+// operator's act, or the money going back at the event's own instant — and
+// neither is what reaches the holder (store.go's Revocation).
+//
+// Each door takes this walk **twice**, once before the licence's own status is
+// written and once after it, and the second pass is what F29's rule owes a key
+// nothing else reaches: a binding that minted its key and committed while the
+// first walk ran read the licence as active, so its key is one that walk never
+// saw, and the status the door writes afterwards is not a withdrawal of it. The
+// walk is idempotent — the store keeps the first entry for a key and ignores the
+// rest — so the second pass adds what appeared and takes nothing back.
+func (s *Service) withdrawEveryKeyOf(ctx context.Context, entitlementID, reason string, at time.Time) error {
 	keys, err := s.licenceKeys(ctx, entitlementID)
 	if err != nil {
 		return err
 	}
 	for _, keyID := range keys {
-		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: ReasonOperations, At: now}); err != nil {
+		if err := s.store.Revoke(ctx, Revocation{KeyID: keyID, Reason: reason, At: at}); err != nil {
 			return err
 		}
 	}
@@ -1079,6 +1110,25 @@ func (s *Service) operationsTransfer(ctx context.Context, actor Caller, asked Wi
 			if err != nil {
 				return err
 			}
+		}
+		// The withdrawal is the one the licence this transfer decided on earns
+		// (F29), and that licence is re-read with the workspace that named it: a
+		// workspace re-bound to another licence between the read above and this
+		// write is a workspace whose key list is that other licence's, and
+		// withdrawing it here would reach the keys of a licence this transfer has
+		// nothing to do with. The act is refused instead of made without its
+		// withdrawal: moving the id and withdrawing nothing leaves the key of the
+		// licence the workspace holds now live on a project the customer no
+		// longer holds, and a request sent again is decided on the licence the
+		// workspace holds then. A licence on neither side is the same state read
+		// twice — a workspace with no licence of its own — and not one that
+		// moved.
+		licenceMoved := (source.EntitlementID == nil) != (heldSource.EntitlementID == nil)
+		if !licenceMoved && source.EntitlementID != nil {
+			licenceMoved = *source.EntitlementID != *heldSource.EntitlementID
+		}
+		if licenceMoved {
+			return errOperationsWorkspaceRelicensed
 		}
 		if err := s.revokeProjectKeys(ctx, tx, replacing, now); err != nil {
 			return err
@@ -1285,6 +1335,12 @@ func (s *Service) operationsParkedEvents(ctx context.Context, state string) ([]W
 // a second state for one fact would be a reader of the ledger with a case to
 // add. A dismissal answers `dismissed`, which is its own state and not a
 // processed event — nothing was resolved and the money is somebody else's.
+//
+// The read above is what the decision and the log line are made of, and the
+// write is made in the transaction that reads the state again
+// (`markEventFrom`): two members deciding one event at once both read it
+// parked, and a write that did not re-read would leave the second decision on
+// the event while the first is what the store already answered with.
 func (s *Service) resolveOperationsEvent(ctx context.Context, actor Caller, asked WireEventResolution) (WireLedgerEvent, error) {
 	held, present, err := s.storedEvent(ctx, asked.ID)
 	if err != nil {
@@ -1326,14 +1382,7 @@ func (s *Service) resolveOperationsEvent(ctx context.Context, actor Caller, aske
 	if err := s.operationsAudit(ctx, actor, action, organisation, &held.ID, false, nil); err != nil {
 		return WireLedgerEvent{}, err
 	}
-	if err := s.markEvent(ctx, held.ID, state, target); err != nil {
-		return WireLedgerEvent{}, err
-	}
-	held.State = state
-	if target != nil {
-		held.EntitlementID = target
-	}
-	return held, nil
+	return s.markEventFrom(ctx, held.ID, ledgerParked, state, target)
 }
 
 // operationsSearchOrganisations answers the organisations whose name holds the
