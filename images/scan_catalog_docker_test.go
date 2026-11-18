@@ -170,6 +170,7 @@ func scanPEM(t *testing.T, kind string) string {
 func buildScanFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	const image = "fugaro-scan-catalog:test"
+	removeImages(t, image)
 	dir := t.TempDir()
 	for name, content := range files {
 		if name == "key.pem" {
@@ -194,6 +195,7 @@ func buildScanFixture(t *testing.T, files map[string]string) string {
 func buildScanLeak(t *testing.T, from, key string) string {
 	t.Helper()
 	const image = "fugaro-scan-catalog-leak:test"
+	removeImages(t, image)
 	dir := t.TempDir()
 	writeScanFixtureFile(t, filepath.Join(dir, "Dockerfile"), "FROM "+from+"\nCOPY key.pem "+scanLeakPath+"\n")
 	writeScanFixtureFile(t, filepath.Join(dir, "key.pem"), key)
@@ -206,6 +208,21 @@ func writeScanFixtureFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// removeImages drops images now and again when the test ends. They are small,
+// but they are this test's: a run of the docker tests should not leave tags on
+// the daemon, and the removal before the build is what makes a rebuild start
+// from no image rather than from whatever an earlier one left under the tag.
+func removeImages(t *testing.T, images ...string) {
+	t.Helper()
+	drop := func() {
+		for _, image := range images {
+			_ = exec.Command("docker", "image", "rm", "--force", image).Run()
+		}
+	}
+	drop()
+	t.Cleanup(drop)
 }
 
 // scanImageLayers is every diff ID the image's config lists, in order and with
