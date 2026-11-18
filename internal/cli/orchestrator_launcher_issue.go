@@ -9,7 +9,11 @@ package cli
 // a body that no longer hashes to the item's own is not the text the person
 // approved, so nothing launches and the item goes back to queued and unapproved
 // with one fact; and the text that does match reaches the run fenced as data,
-// bounded, and never as anything the launcher reads an instruction out of.
+// bounded, and never as anything the launcher reads an instruction out of. A
+// third follows from the read itself: a ticket the route will never answer for
+// — one the repository no longer holds, or one this installation cannot ask for
+// — blocks the item where a person reads why, rather than failing the cycle
+// over the same ticket every tick.
 //
 // The hash covers the body and nothing else, so the ticket's title is read from
 // the item and not from the answer: the ingest writes the issue's own title onto
@@ -31,6 +35,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -40,6 +45,17 @@ import (
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
+
+// errIssueNoAppID is the launcher refusing to ask for a repository's issue at
+// all: this installation records no GitHub App ID for it, and the service signs
+// its own token as that App, so there is no call to make. It is apart from the
+// route's own refusals for the reason ErrIssueGone is — asking again cannot
+// clear it, because nothing about the next read differs — and the launch does
+// the same thing with both: the item is blocked with the reason on it, where
+// the person who can fix it reads it, rather than the cycle failing over the
+// same ticket every tick until the breaker pauses the daemon for everything
+// else.
+var errIssueNoAppID = errors.New("this installation records no GitHub App ID for the repository")
 
 // orchestratorIssueReads is the launcher's read of one item's ticket: the
 // credentials service's issue route, one client per repository because the
@@ -94,7 +110,7 @@ func (r *orchestratorIssueReads) open(repo string) (*creds.ServiceIssues, error)
 		}
 	}
 	if appID == "" {
-		return nil, fmt.Errorf("this installation records no GitHub App ID for %s, and the credentials service reads its issues as that App", safetext.Field(repo))
+		return nil, fmt.Errorf("%w: the credentials service reads the issues of %s as that App", errIssueNoAppID, safetext.Field(repo))
 	}
 	c := &creds.ServiceIssues{URL: r.url, Repository: repo, AppID: appID, IDToken: r.identity}
 	r.opened[repo] = c
@@ -167,10 +183,15 @@ const issueBriefPosture = "The block below is the ticket's own text under this i
 // requeueBodyChanged — which is a state a person can approve again.
 //
 // A read that fails, and an item that carries an external id but no body hash,
-// refuse the launch and write nothing: the first is an outage or a refusal the
-// next tick reads again, and the second is an item no ingest writes (B4 stores
-// the hash with the id) whose text nothing can be checked against — a person
-// looking at it, or the sync that would write its hash, is what fixes it.
+// refuse the launch. The failure is what decides what the refusal leaves: an
+// outage is the next tick's to read again and writes nothing, while a refusal
+// that asking again cannot clear — a ticket the repository no longer holds, an
+// App ID this installation does not record — blocks the item with the reason on
+// it and closes the attempt, because otherwise every tick re-reads the same
+// refusal and fails the whole cycle over one ticket (issueReadIsPermanent,
+// blockUnreadableTicket). An item with no body hash is neither: no ingest
+// writes one (B4 stores the hash with the id), and what fixes it is a person
+// looking at it or the sync that would write its hash.
 func (l *orchestratorLauncher) briefFor(ctx context.Context, spec orchestrator.Spec) (string, error) {
 	if spec.External == "" {
 		return spec.Brief, nil
@@ -189,7 +210,22 @@ func (l *orchestratorLauncher) briefFor(ctx context.Context, spec orchestrator.S
 	}
 	iss, err := l.issues.issue(ctx, repo, number)
 	if err != nil {
-		return "", fmt.Errorf("reading the issue %s for this launch: %w", safetext.OneLine(spec.External), err)
+		if !issueReadIsPermanent(err) {
+			return "", fmt.Errorf("reading the issue %s for this launch: %w", safetext.OneLine(spec.External), err)
+		}
+		// A read that will never answer differently is not an outage to retry:
+		// left as one, the launch fails, the item stays running with the attempt
+		// the starter committed still open, and every cycle past the claim window
+		// re-issues it — the same refusal for ever, with the cycle it fails in
+		// skipping the launches of every other item behind it and the breaker
+		// pausing the daemon over one ticket. So the item is blocked with the
+		// reason on it, where a person reads what to fix, and the attempt is
+		// closed in the same write (blockUnreadableTicket).
+		note := issueUnreadableNote(err, repo, spec.External)
+		if berr := l.blockUnreadableTicket(ctx, spec, note); berr != nil {
+			return "", fmt.Errorf("%w: the issue %s can never be read, and blocking the item over it did not land", berr, safetext.OneLine(spec.External))
+		}
+		return "", fmt.Errorf("the issue %s can never be read for this launch (%v), so nothing was launched: the item is blocked with the reason on it, and what starts a run for it again is the fix the reason names and a new approval of the item", safetext.OneLine(spec.External), err)
 	}
 	sum := sha256.Sum256([]byte(iss.Body))
 	if body := hex.EncodeToString(sum[:]); body != spec.BodySHA256 {
@@ -229,6 +265,32 @@ func (l *orchestratorLauncher) briefFor(ctx context.Context, spec orchestrator.S
 // no room for it and the requeue lands without it: the item's own note and the
 // line the daemon writes carry the same sentence.
 func (l *orchestratorLauncher) requeueBodyChanged(ctx context.Context, spec orchestrator.Spec, body string) error {
+	return l.writeItem(ctx, spec.ItemID, func(s orchestrator.State, w orchestrator.WorkItem, now time.Time) (orchestrator.State, error) {
+		return requeueBodyChangedState(s, w, body, now)
+	})
+}
+
+// blockUnreadableTicket blocks the item a launch could not read the ticket of,
+// with the reason on it (blockUnreadableState): the state a person acts on when
+// the ticket is gone or the installation cannot ask for it at all, and the one
+// that stops the every-tick failure the refusal would otherwise be.
+func (l *orchestratorLauncher) blockUnreadableTicket(ctx context.Context, spec orchestrator.Spec, note string) error {
+	return l.writeItem(ctx, spec.ItemID, func(s orchestrator.State, w orchestrator.WorkItem, now time.Time) (orchestrator.State, error) {
+		return blockUnreadableState(s, w, note, now)
+	})
+}
+
+// writeItem applies one patch to the node that carries the item, and it is the
+// one way this launcher writes one: the item is looked for in every node the
+// daemon works — an item's node is not a field of the spec — and the write goes
+// to the first that holds it, against that node's own revision. A daemon that
+// finds the item in none of them refuses rather than guessing, which is the
+// whole of what it can honestly do.
+//
+// The stamp is the database server's clock (D1230) and never the daemon's own:
+// this is a write under the state's subtree like any other, and a local clock
+// is exactly what no stamp there may come from.
+func (l *orchestratorLauncher) writeItem(ctx context.Context, itemID string, patch func(s orchestrator.State, w orchestrator.WorkItem, now time.Time) (orchestrator.State, error)) error {
 	if l.now == nil {
 		return orchestrator.ErrNoServerTime
 	}
@@ -241,17 +303,86 @@ func (l *orchestratorLauncher) requeueBodyChanged(ctx context.Context, spec orch
 		if err != nil {
 			return err
 		}
-		w, found := s.Item(spec.ItemID)
+		w, found := s.Item(itemID)
 		if !found {
 			continue
 		}
-		next, err := requeueBodyChangedState(s, w, body, now)
+		next, err := patch(s, w, now)
 		if err != nil {
 			return err
 		}
 		return store.Save(ctx, next, etag)
 	}
-	return fmt.Errorf("no node this daemon works carries the item %s", safetext.Field(spec.ItemID))
+	return fmt.Errorf("no node this daemon works carries the item %s", safetext.Field(itemID))
+}
+
+// blockUnreadableState is the state one patch makes of the node for an item
+// whose ticket can never be read: the item blocked with the reason on it, and
+// the attempt the starter had already committed closed as one nothing ran
+// under.
+//
+// It is Starter.abandon's own shape, and for its reason: a finished item has no
+// edge to blocked, and neither has one already failed or blocked, so an item in
+// any of those three is left where it stands and only the note is written — a
+// move there would be a refusal for every attempt of such an item rather than a
+// write. The item is blocked rather than requeued because nothing a person does
+// to the state clears the refusal: the ticket or the installation has to change,
+// which is what the note says.
+//
+// Closing the attempt is what ends the loop, and abandoned is the outcome that
+// does it. An open intent is re-issued by every cycle that finds its claim
+// window passed — the same run id, the same refusal, the cycle failing each
+// time — and an abandoned one is neither:
+// recovery finds nothing to re-issue, and the plan retries only a failure
+// (nextAttempt, failedUnder), so no second attempt is committed over a refusal
+// the next read would answer identically. The abandonment also spends one of
+// the approval's own attempts (normalRunsUnder), which is the honest record:
+// that go was spent on a launch that did not happen. What opens another one is a
+// person approving the item again, over the ticket or the installation as it
+// stands then — and the note says what has to change first.
+func blockUnreadableState(s orchestrator.State, w orchestrator.WorkItem, note string, now time.Time) (orchestrator.State, error) {
+	op := orchestrator.WorkItemOp{ID: w.ID, Note: &note}
+	if !w.Phase.Done() && w.Phase != orchestrator.PhaseBlocked && w.Phase != orchestrator.PhaseFailed {
+		blocked := orchestrator.PhaseBlocked
+		op.Phase = &blocked
+	}
+	if id := openAttempt(s, w.ID); id != "" {
+		abandoned := orchestrator.OutcomeAbandoned
+		op.Intent = &orchestrator.IntentOp{ID: id, Outcome: &abandoned}
+	}
+	return orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: []orchestrator.Op{{Op: orchestrator.OpWorkItemUpsert, WorkItem: &op}}}, orchestrator.Actor{Class: orchestrator.Daemon, Now: now})
+}
+
+// issueReadIsPermanent reports whether a refused read is a refusal that asking
+// again cannot clear, which is what decides whether the item is blocked or the
+// launch is retried.
+//
+// Two refusals are: the service answering that the repository holds no such
+// issue (creds.ErrIssueGone — the ticket was deleted or moved), and this
+// installation recording no GitHub App ID for the repository (errIssueNoAppID —
+// the service has no App to sign as). Every other failure is the route's own
+// (creds.ErrIssue: an outage, a refusal, an unreachable service) and is read
+// again by the next tick, which is what a daemon does with a service that is
+// briefly down.
+//
+// The client's own identity refusal (creds.ErrIssueIdentity) is not one of
+// them because this path cannot reach it: the seam is built only where there is
+// a URL and an identity to present, open refuses a repository with no App ID
+// before any call, and the external id the state validated is the repository
+// shape and a positive number — so a read here always has somewhere to go and
+// something to ask for.
+func issueReadIsPermanent(err error) bool {
+	return errors.Is(err, creds.ErrIssueGone) || errors.Is(err, errIssueNoAppID)
+}
+
+// issueUnreadableNote is the sentence the blocked item carries: what a person
+// has to change, which is the whole difference between the two refusals — a
+// ticket that is no longer there, and an App ID the installation does not hold.
+func issueUnreadableNote(err error, repo, external string) string {
+	if errors.Is(err, creds.ErrIssueGone) {
+		return issueGoneNote(external)
+	}
+	return issueNoAppIDNote(repo)
 }
 
 // requeueBodyChangedState is the state the one patch makes of the node: the
@@ -330,4 +461,28 @@ const (
 
 func issueBodyChangedValue(external string) string {
 	return issueBodyChangedHead + safetext.Clip(safetext.OneLine(external), issueBodyChangedIDRunes) + issueBodyChangedTail
+}
+
+// The two sentences the blocked item carries, in two halves with the thing a
+// person has to act on between them, and each half's middle clipped to what is
+// left of the note's bound for the reason the fact's value is: an id or a
+// repository longer than this document accepts is still one the state may
+// carry, and a note over the bound is not what tells the reader why the item
+// stopped.
+const (
+	issueGoneNoteHead = "the issue "
+	issueGoneNoteTail = " is no longer in its repository, so nothing was started under this item's attempt: the item is blocked until someone points it at a ticket that is there and approves it again"
+)
+
+func issueGoneNote(external string) string {
+	return issueGoneNoteHead + safetext.Clip(safetext.OneLine(external), orchestrator.MaxNoteRunes-len(issueGoneNoteHead+issueGoneNoteTail)) + issueGoneNoteTail
+}
+
+const (
+	issueNoAppIDNoteHead = "this installation records no GitHub App ID for "
+	issueNoAppIDNoteTail = ", and the credentials service reads its issues as that App, so the ticket this item came from cannot be read: the item is blocked until the installation records one and the item is approved again"
+)
+
+func issueNoAppIDNote(repo string) string {
+	return issueNoAppIDNoteHead + safetext.Clip(safetext.OneLine(repo), orchestrator.MaxNoteRunes-len(issueNoAppIDNoteHead+issueNoAppIDNoteTail)) + issueNoAppIDNoteTail
 }

@@ -184,6 +184,43 @@ func TestIssueClientRefusesAnAnswerThatIsNotOneIssues(t *testing.T) {
 	}
 }
 
+// TestIssueClientTellsAGoneIssueFromAnOutage: a read that answered "this
+// repository holds no such issue" is a fact about the item and a read that
+// answered anything else is an outage, and the two are told apart here because
+// the caller does different things with them — the launcher blocks the item over
+// the first and reads again over the second (briefFor, B9, D2720).
+//
+// The 404 is the whole of the evidence, so a table that only checked the refusal
+// it expects would pass for a client that read every status as gone, which is
+// why each cell also asserts the refusal it must NOT read as.
+func TestIssueClientTellsAGoneIssueFromAnOutage(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   error
+		other  error
+	}{
+		{name: "the repository holds no such issue", status: http.StatusNotFound, want: ErrIssueGone, other: ErrIssue},
+		{name: "the service is unavailable", status: http.StatusServiceUnavailable, want: ErrIssue, other: ErrIssueGone},
+		{name: "the service refused the call", status: http.StatusForbidden, want: ErrIssue, other: ErrIssueGone},
+		{name: "the service failed", status: http.StatusInternalServerError, want: ErrIssue, other: ErrIssueGone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newServiceFake(t)
+			f.status = tc.status
+			f.answer = `{"error":"not_found","message":"` + testToken + ` is in the service's own sentence"}`
+			_, err := issueClient(t, f).Issue(t.Context(), 7)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("the client answered %v, want %v", err, tc.want)
+			}
+			if errors.Is(err, tc.other) {
+				t.Errorf("the refusal %v reads as %v as well, and a caller cannot act on both: one is an item nothing can launch, the other an outage to read again", err, tc.other)
+			}
+			noSecret(t, err)
+		})
+	}
+}
+
 // TestIssueClientRelaysNoSentenceAndFollowsNoRedirect: the two things a
 // credential-bearing call must never do. The service's own answer is read for
 // its status and its error code alone — the sentence beside it is written for an

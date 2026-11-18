@@ -141,4 +141,13 @@ var (
 	// three, an issue number that is not positive, or a title the open act
 	// cannot be made with.
 	ErrIssueIdentity = errors.New("creds: the orchestrator daemon has no identity to ask for an issue call with")
+	// ErrIssueGone is the service answering that this repository holds no such
+	// issue (404): the ticket a read named is gone — deleted, or moved to
+	// another repository. It is apart from ErrIssue because asking again cannot
+	// clear it, and a caller has to tell the two apart: what a launch reads is
+	// the ticket an item was approved with, so a ticket that is no longer there
+	// is a fact about the item to report rather than an outage of the service to
+	// retry. The `get` act is the one it is answered for; the route's other two
+	// acts read a listing and create an issue, and neither names one.
+	ErrIssueGone = errors.New("creds: the repository holds no such issue")
 )

@@ -141,6 +141,17 @@ func (s *ServiceIssues) Issue(ctx context.Context, number int) (Issue, error) {
 		return Issue{}, fmt.Errorf("%w: the service's answer is larger than an issue call's", ErrIssue)
 	}
 	if resp.StatusCode != http.StatusOK {
+		// A read of an issue the repository does not hold is the one refusal
+		// here that asking again cannot clear, and the caller decides something
+		// different on it: the launcher blocks the item it was reading the
+		// ticket for rather than retrying the launch (B9, D2720). The status is
+		// the whole of the evidence — the route's own error code is written for
+		// an operator's log and a service that answered "unavailable" beside a
+		// 404 would be telling two things at once — so the 404 is what this
+		// reads, and every other status stays the route's own refusal.
+		if resp.StatusCode == http.StatusNotFound {
+			return Issue{}, fmt.Errorf("%w: the service answered %d%s", ErrIssueGone, resp.StatusCode, refusalCode(data))
+		}
 		return Issue{}, fmt.Errorf("%w: the service answered %d%s", ErrIssue, resp.StatusCode, refusalCode(data))
 	}
 	var ans IssueAnswer

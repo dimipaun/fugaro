@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -103,7 +104,10 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 	// item goes back to queued and unapproved rather than being briefed with
 	// text nobody read. It is here and not inside prepare because a refusal
 	// must cost nothing of the launch — no plan resolution, no gate, no task.
-	brief, err := l.briefFor(ctx, spec)
+	//
+	// A run that already holds a stored task is a different matter, and
+	// briefForAttempt is what tells the two apart.
+	brief, err := l.briefForAttempt(ctx, spec, runID)
 	if err != nil {
 		return "", err
 	}
@@ -116,6 +120,68 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 		return "", err
 	}
 	return res.RunID, nil
+}
+
+// briefForAttempt is the brief this launch uses: the one the run already
+// holds, where it holds one, and the brief built for this attempt otherwise
+// (briefFor).
+//
+// The two differ for one case, and it is the case a crash leaves: an attempt
+// whose task was stored and whose start did not happen is re-issued by the next
+// tick under the same run id (D1231), and what the runner of that run reads is
+// the stored task. So the stored brief is the run's own text, and rebuilding it
+// is both unnecessary and unsafe for an item that came from an issue — the
+// ticket is read again, and a body edited at the forge since the launch would
+// take the requeue path (requeueBodyChanged): the attempt the running launch
+// holds is closed as one nothing ran under, the item is requeued and
+// unapproved, a fact says nothing was launched, and the next approval starts a
+// second run over an execution that is already going. Nothing of that can be
+// true of a run whose task is the one it was briefed with, and the ticket the
+// stored brief carries is the text that was checked against the item's hash
+// when it was built — which is the check this launch owes, already made.
+//
+// createTask is what holds the two together: a re-issue whose resolved task
+// differs from the stored one is refused, so a brief built from a ticket read
+// again is a brief that can only ever be refused — the attempt failing under
+// its own run id every tick.
+func (l *orchestratorLauncher) briefForAttempt(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
+	stored, err := l.storedBrief(ctx, spec, runID)
+	if err != nil {
+		return "", err
+	}
+	if stored != "" {
+		return stored, nil
+	}
+	return l.briefFor(ctx, spec)
+}
+
+// storedBrief is the brief the run recorded as runID was started with, or ""
+// where that run holds no stored task.
+//
+// It reads the task the launch path itself writes (runstore.Store.ReadTask,
+// under the slug the launch resolves and under the checkoutless context the
+// whole launch runs in), and an absent one is an answer and not an error:
+// every launch that has not reached its task store yet is this answer. Anything
+// else the bucket says — an answer that is not a task, a bucket that could not
+// be read — is an error, because a launch that could not tell whether its run
+// is the one already briefed is one that must not guess.
+//
+// The task's own text is the brief, and it is read for nothing else: the rest
+// of it is re-resolved by prepare, which keeps the stored task's own copy where
+// the two differ (createTask).
+func (l *orchestratorLauncher) storedBrief(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
+	slug, err := l.env.repoSlug(spec.Repo, checkoutOf(ctx, spec.Repo))
+	if err != nil {
+		return "", err
+	}
+	ts, err := runstore.Open(l.env.bucket.Bucket, slug, runID).ReadTask(ctx)
+	switch {
+	case errors.Is(err, runstore.ErrNotFound):
+		return "", nil
+	case err != nil:
+		return "", remote(err)
+	}
+	return ts.Task, nil
 }
 
 // prepare is everything a launch does before it starts anything, and it is a

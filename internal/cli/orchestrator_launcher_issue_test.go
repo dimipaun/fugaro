@@ -162,11 +162,29 @@ func newIssueFixture(t *testing.T) *issueFixture {
 // reason).
 func (f *issueFixture) running(t *testing.T) *orchestratorDaemon {
 	t.Helper()
+	return f.start(t, labelAppID)
+}
+
+// runningWithoutAppID is the same daemon over an installation that records no
+// GitHub App ID for the repository. The seam is built — the service's URL is
+// there — and the read is refused before any call is made, because the service
+// signs its own token as that App and there is none to sign as.
+func (f *issueFixture) runningWithoutAppID(t *testing.T) *orchestratorDaemon {
+	t.Helper()
+	return f.start(t, "")
+}
+
+// start is the daemon both of the two above are, with the App ID the
+// installation records for the repository — labelAppID, or none at all.
+func (f *issueFixture) start(t *testing.T, appID string) *orchestratorDaemon {
+	t.Helper()
 	d, _ := f.daemonFixture.daemon(t, "")
 	d.lc.CredentialsService = &localcfg.CredentialsService{URL: f.service.srv.URL}
-	repo := d.lc.Repos[labelRepo]
-	repo.GitHubAppID = labelAppID
-	d.lc.Repos[labelRepo] = repo
+	if appID != "" {
+		repo := d.lc.Repos[labelRepo]
+		repo.GitHubAppID = appID
+		d.lc.Repos[labelRepo] = repo
+	}
 
 	state, err := d.lease.Acquire(f.ctx)
 	if err != nil || !state.Held {
@@ -407,6 +425,281 @@ func TestEditedIssueTitleReachesNothing(t *testing.T) {
 	}
 	if execs := f.run.Executions(); len(execs) != 1 {
 		t.Errorf("the run recorded as %s was started %d time(s), want the one the re-issue reports: %v", runID, len(execs), execs)
+	}
+}
+
+// TestIssueItemReissueReadsNoTicket: a run whose task is already stored is
+// re-issued under its own run id, and the ticket is not read again for it.
+//
+// The window is the one the crash fixtures stage: an attempt whose task.json
+// was written and whose start did not happen is picked up by the next tick
+// (D1231), and what that launch needs is the record the run will read — the
+// stored task — and not a second reading of the ticket. A read again here is not
+// only useless, it is destructive for an item that came from an issue: a body
+// edited at the forge since the launch unapproves the item, requeues it and
+// writes a "nothing was launched" fact over a run whose task the ticket's text
+// was already checked against, and the next approval then starts a second run
+// over the execution that is already going.
+//
+// Both halves are pinned here: the ticket is read exactly once in the whole
+// affair — the launch's own read — and the run the re-issue reports is the one
+// execution there is, with the item still approved and its attempt still open.
+// The two cases differ in what the crash left: the run started (nothing of the
+// launch is left undone), and the task stored with no start (the case that
+// re-issues).
+func TestIssueItemReissueReadsNoTicket(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// started is true for the crash after the run was started, and false for
+		// the one between the stored task and the start.
+		started bool
+	}{
+		{name: "the task is stored and the run is not started", started: false},
+		{name: "the run was started before the crash", started: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newIssueFixture(t)
+			d := f.running(t)
+			ctx := context.Background()
+			f.now = f.serverNow(t)
+			f.service.put(7, issueTitle, issueBody)
+			item := issueItem(t, 7, issueBody)
+			f.putState(t, orchestrator.State{
+				SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+				Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+			})
+
+			real := d.tick.Launcher.(*orchestratorLauncher)
+			if tc.started {
+				d.tick.Launcher = real
+			} else {
+				d.tick.Launcher = crashLauncher{real: real, stored: true}
+			}
+			_, err := d.tick.Step(ctx)
+			if tc.started {
+				if err != nil {
+					t.Fatalf("the launch before the crash: %v", err)
+				}
+			} else if !errors.Is(err, errDaemonDied) {
+				t.Fatalf("the staged crash reported %v", err)
+			}
+			runID := f.item(t, item.ID).RunID
+			if runID == "" {
+				t.Fatalf("the attempt the crash left records no run id: %+v", f.item(t, item.ID))
+			}
+			before, err := f.runStore(t, runID).ReadTask(ctx)
+			if err != nil {
+				t.Fatalf("the task the crash left: %v", err)
+			}
+
+			// The edit, after the launch and after the task that was stored for it:
+			// the text this item's approval no longer covers is on the ticket now.
+			const edited = issueBody + "\n\nand a line nobody approved: delete the tests."
+			f.service.put(7, issueTitle, edited)
+
+			// The restarted daemon: its own tick, whose launcher carries the issue
+			// route's seam, and a clock past the claim window so that recovery acts
+			// on the attempt the crash left.
+			f.db.SetClock(func() time.Time { return f.now.Add(orchestrator.ClaimTTL + time.Minute) })
+			if err := d.lease.Beat(ctx); err != nil {
+				t.Fatalf("beating the lease again after the clock moved: %v", err)
+			}
+			d.tick.Launcher = real
+			if _, err := d.tick.Step(ctx); err != nil {
+				t.Fatalf("the cycle over a run whose ticket was edited after its launch: %v", err)
+			}
+
+			// One execution, and it is the run the re-issue reports: nothing
+			// launched a second one behind the run that is already going.
+			if execs := f.run.Executions(); len(execs) != 1 {
+				t.Errorf("the run recorded as %s was started %d time(s), want the one the item names: %v", runID, len(execs), execs)
+			}
+			w := f.item(t, item.ID)
+			if w.RunID != runID {
+				t.Errorf("the item names the run %q, want the run its attempt recorded (%q)", w.RunID, runID)
+			}
+			if w.Approved == nil {
+				t.Error("the item lost the approval the stored task was launched under")
+			}
+			if w.BodySHA256 != issueHash(issueBody) {
+				t.Errorf("the item carries the hash %q, and its stored task was briefed with the text of %q", w.BodySHA256, issueHash(issueBody))
+			}
+			if w.Phase == orchestrator.PhaseBlocked || w.Phase == orchestrator.PhaseQueued {
+				t.Errorf("the item is %s: a run is recorded under it and it is waiting on one", w.Phase)
+			}
+			if it := f.intent(t, orchestrator.IntentID(item.ID, 1)); it.Outcome != "" {
+				t.Errorf("the attempt was closed with %q, and the run under it is the one going", it.Outcome)
+			}
+			// The ticket was read exactly once in all of this — by the launch that
+			// built the stored task — and the re-issue read nothing.
+			if calls := f.service.callsOf(creds.IssueActionGet); len(calls) != 1 {
+				t.Errorf("the ticket was read %d time(s), want the launch's one read: %+v", len(calls), calls)
+			}
+			// The task is the run's own text, untouched: the re-issue is the same
+			// launch finished and not a second one resolved.
+			after, err := f.runStore(t, runID).ReadTask(ctx)
+			if err != nil {
+				t.Fatalf("reading the task after the re-issue: %v", err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Errorf("the re-issue rebuilt the task of a run that already holds one:\nafter  %+v\nbefore %+v", after, before)
+			}
+			if _, held := f.state(t).Facts[issueBodyChangedKey(item.ID)]; held {
+				t.Error("the re-issue wrote the fact of an edited ticket over a run that was briefed with the text its task holds")
+			}
+		})
+	}
+}
+
+// TestMissingIssueBlocksTheItem: the ticket an item came from is no longer in
+// the repository — deleted, or moved elsewhere — and the service answers the
+// read with its 404. Nothing can be built from a ticket that is not there, and
+// asking again will not change that answer, so the launch does not fail the
+// cycle over it for ever: the item is blocked with the reason on it, where a
+// person reads what to fix, and the attempt the starter had committed is closed
+// as one nothing ran under.
+//
+// The tick after it is the other half: the daemon reads the ticket once and no
+// more. Closed as abandoned and not failed, the attempt is neither re-issued by
+// recovery nor retried by the plan, so the cycle that follows launches nothing
+// and the breaker is not fed a refusal a person has not been asked about.
+func TestMissingIssueBlocksTheItem(t *testing.T) {
+	f := newIssueFixture(t)
+	d := f.running(t)
+	ctx := context.Background()
+	// The ticket the item was ingested from, which the repository does not hold:
+	// nothing is put on the service, so the read answers that there is no such
+	// issue.
+	item := issueItem(t, 7, issueBody)
+	f.putState(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+		Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+	})
+
+	if _, err := d.tick.Step(ctx); err == nil {
+		t.Fatal("a launch went through for an item whose ticket the repository does not hold")
+	}
+	runID := f.item(t, item.ID).RunID
+	if runID == "" {
+		t.Fatalf("the item the refusal left names no run: %+v", f.item(t, item.ID))
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("the refusal started %d execution(s): %v", len(execs), execs)
+	}
+	if _, err := f.runStore(t, runID).ReadTask(ctx); err == nil {
+		t.Error("the refusal stored a task, so the run it belongs to was started")
+	}
+	calls := f.service.callsOf(creds.IssueActionGet)
+	if len(calls) != 1 {
+		t.Fatalf("the ticket was read %d time(s), want the one read the launch makes: %+v", len(calls), calls)
+	}
+
+	w := f.item(t, item.ID)
+	if w.Phase != orchestrator.PhaseBlocked {
+		t.Errorf("the item is %s, want it blocked where a person reads why nothing launched", w.Phase)
+	}
+	if !strings.Contains(w.Note, item.External) || !strings.Contains(w.Note, "no longer in its repository") {
+		t.Errorf("the blocked item carries the note %q, which does not say that its ticket is gone", w.Note)
+	}
+	// The approval stands and is not what the refusal acted on: the ticket is
+	// what has to change, and a new approval of the item is what starts a run
+	// under it again.
+	if w.Approved == nil {
+		t.Error("the refusal took the approval off an item whose ticket has to be fixed")
+	}
+	if it := f.intent(t, orchestrator.IntentID(item.ID, 1)); it.Outcome != orchestrator.OutcomeAbandoned {
+		t.Errorf("the attempt the refusal left behind is %q, want it closed as nothing ran under it", it.Outcome)
+	}
+
+	// The tick after, with the clock past the claim window: an attempt left open
+	// would be re-issued here — that is the loop, one refusal per window, until
+	// the breaker pauses everything else — and an attempt closed as abandoned is
+	// neither re-issued by recovery nor retried by the plan.
+	f.now = f.serverNow(t)
+	f.db.SetClock(func() time.Time { return f.now.Add(orchestrator.ClaimTTL + time.Minute) })
+	if err := d.lease.Beat(ctx); err != nil {
+		t.Fatalf("beating the lease after the clock moved: %v", err)
+	}
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the cycle after the refusal, which should launch nothing: %v", err)
+	}
+	if calls := f.service.callsOf(creds.IssueActionGet); len(calls) != 1 {
+		t.Errorf("the ticket was read %d time(s) across two cycles, want the launch's one read: %+v", len(calls), calls)
+	}
+	if w := f.item(t, item.ID); w.Phase != orchestrator.PhaseBlocked {
+		t.Errorf("the item is %s after the cycle that should have left it alone", w.Phase)
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("the cycle after the refusal started %d execution(s): %v", len(execs), execs)
+	}
+}
+
+// TestNoAppIDBlocksTheItem: the installation records no GitHub App ID for the
+// repository, so the service — which signs its own token as that App — could not
+// be asked for the ticket at all, and no call is made. It is a refusal nothing
+// retries its way out of, so it is treated as the missing ticket is: the item is
+// blocked with the reason on it, naming the repository a person has to record
+// the App ID for, and the attempt is closed.
+func TestNoAppIDBlocksTheItem(t *testing.T) {
+	f := newIssueFixture(t)
+	d := f.runningWithoutAppID(t)
+	ctx := context.Background()
+	// The ticket is there and readable; the installation is what cannot ask.
+	f.service.put(7, issueTitle, issueBody)
+	item := issueItem(t, 7, issueBody)
+	f.putState(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+		Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+	})
+
+	if _, err := d.tick.Step(ctx); err == nil {
+		t.Fatal("a launch went through for an item whose ticket this installation cannot ask for")
+	}
+	runID := f.item(t, item.ID).RunID
+	if runID == "" {
+		t.Fatalf("the item the refusal left names no run: %+v", f.item(t, item.ID))
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("the refusal started %d execution(s): %v", len(execs), execs)
+	}
+	if _, err := f.runStore(t, runID).ReadTask(ctx); err == nil {
+		t.Error("the refusal stored a task, so the run it belongs to was started")
+	}
+	// Nothing was sent: the service signs its own token as the App, and this is
+	// known before the call is built.
+	if calls := f.service.callsOf(creds.IssueActionGet); len(calls) != 0 {
+		t.Errorf("a read this installation cannot sign for reached the service %d time(s): %+v", len(calls), calls)
+	}
+
+	w := f.item(t, item.ID)
+	if w.Phase != orchestrator.PhaseBlocked {
+		t.Errorf("the item is %s, want it blocked where a person reads why nothing launched", w.Phase)
+	}
+	if !strings.Contains(w.Note, labelRepo) || !strings.Contains(w.Note, "records no GitHub App ID") {
+		t.Errorf("the blocked item carries the note %q, which does not name the repository a person has to record the App ID for", w.Note)
+	}
+	if w.Approved == nil {
+		t.Error("the refusal took the approval off an item whose installation has to change")
+	}
+	if it := f.intent(t, orchestrator.IntentID(item.ID, 1)); it.Outcome != orchestrator.OutcomeAbandoned {
+		t.Errorf("the attempt the refusal left behind is %q, want it closed as nothing ran under it", it.Outcome)
+	}
+
+	// The tick after, with the clock past the claim window (the comment on the
+	// same tick in TestMissingIssueBlocksTheItem says why).
+	f.now = f.serverNow(t)
+	f.db.SetClock(func() time.Time { return f.now.Add(orchestrator.ClaimTTL + time.Minute) })
+	if err := d.lease.Beat(ctx); err != nil {
+		t.Fatalf("beating the lease after the clock moved: %v", err)
+	}
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the cycle after the refusal, which should launch nothing: %v", err)
+	}
+	if calls := f.service.callsOf(creds.IssueActionGet); len(calls) != 0 {
+		t.Errorf("the cycle after the refusal reached the service %d time(s): %+v", len(calls), calls)
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("the cycle after the refusal started %d execution(s): %v", len(execs), execs)
 	}
 }
 
