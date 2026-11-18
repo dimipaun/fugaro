@@ -1492,7 +1492,8 @@ answer_u2() {
 answer_u3() {
   case "$AUTH" in
   vertex | api-key) ;;
-  "")
+  # The reader prints `-` for an auth the checkout does not resolve at all.
+  "" | -)
     unmeasured u3 "the checkout resolves no agent.auth at all, so the authentication this installation's model calls are made under is not one U3 is about ('an API key or Vertex'): the row cannot say which authentication the default account was used under. Set agent.auth in ${REPO}'s fugaro.yaml ('vertex', or 'api-key') and run this check again"
     return 0
     ;;

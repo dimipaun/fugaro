@@ -1407,6 +1407,234 @@ test_an_artifact_with_no_verdict_is_a_finding() {
   expect_row review "does not state this review: review_run matches the run 'yes', pr matches #$pr 'yes', head_sha '$head_sha', verdict '-'" "an artifact with no verdict: the row names what is missing"
 }
 
+test_an_image_that_is_not_the_base_image_fails_u1() {
+  local dir=$work/u1-other-image
+  prepare "$dir"
+  # The job holds everything a review job has to hold — the service's address, no
+  # secret — and runs an image that is not the installation's: the job row cannot
+  # see that, and U1 is the row that can.
+  run_check "$dir" FAKE_JOBS_FILE=jobs-other-image.json
+  expect_status "$status" 1 "a review job on another image"
+  expect_row job "PASS — the installation's implicit review-only job" "a review job on another image: the job row is not the one that reads the image"
+  expect_row u1 "FAIL — U1: $repo's workflow is baked and the review-only job '$job' runs the image '$other_image', which is NOT the installation's base image '$base_image'" "a review job on another image: the row names both images"
+  expect_row u1 "D2388 answers U1 'yes for now' on the ground that the review recipe only READS the checkout" "a review job on another image: why it is a finding"
+  assert_one_launch "$dir" "a review job on another image"
+}
+
+test_a_doctor_with_no_base_image_leaves_u1_unmeasured() {
+  local dir=$work/u1-no-base
+  prepare "$dir"
+  run_check "$dir" FAKE_DOCTOR_FILE=doctor-nobase.json
+  expect_status "$status" 2 "a doctor with no base image"
+  expect_row u1 "FAIL — fugaro doctor --json carried no base image for this installation (project.base_images.base), so the review-only job's image '$base_image' cannot be compared with it" "a doctor with no base image: the row"
+  expect_row u1 "an image this check has no other side to compare against is not that row" "a doctor with no base image: why it is not measured"
+  assert_one_launch "$dir" "a doctor with no base image"
+}
+
+test_a_default_account_that_is_not_admitted_fails_u2() {
+  local dir=$work/u2-default-not-admitted
+  prepare "$dir"
+  # The PROJECT admits the repository and the DEFAULT account does not: the policy
+  # row reads the first and says the second is U2's own row, and U2 is where the
+  # gap the plan puts on record is measured.
+  run_check "$dir" FAKE_POLICY_FILE=policy-default-not-admitted.json
+  expect_status "$status" 1 "a default account the policy does not admit"
+  expect_row policy "PASS — $install's published policy carries NO profiles block and admits $repo to the project" "a default account the policy does not admit: the policy row"
+  expect_row u2 "FAIL — U2: $install's published policy carries no profiles block and its accounts block does NOT admit the default account ('default') to $repo" "a default account the policy does not admit: the row"
+  expect_row u2 "credsvc's admittedAccounts" "a default account the policy does not admit: the service that would refuse the call"
+  assert_one_launch "$dir" "a default account the policy does not admit"
+}
+
+test_an_auth_that_is_not_an_api_key_or_vertex_leaves_u3_unmeasured() {
+  local dir=$work/u3-cascade
+  prepare "$dir"
+  run_check "$dir" FAKE_CONFIG_FILE=config-cascade.json
+  expect_status "$status" 2 "a checkout authenticating another way"
+  expect_row u3 "FAIL — the checkout resolves agent.auth 'cascade', which is not one of the two U3 is about (an API key or Vertex)" "a checkout authenticating another way: the row"
+  expect_row u3 "Name a sandbox repository whose fugaro.yaml resolves agent.auth 'vertex' or 'api-key'" "a checkout authenticating another way: what to do instead"
+  # The row is not measured, so the service's lines are never read for it.
+  expect_absent "$(cat "$dir/logs/gcloud.calls")" "logging read" "a checkout authenticating another way: no log read is made"
+  assert_one_launch "$dir" "a checkout authenticating another way"
+}
+
+test_a_checkout_that_resolves_no_auth_leaves_u3_unmeasured() {
+  local dir=$work/u3-no-auth
+  prepare "$dir"
+  run_check "$dir" FAKE_CONFIG_FILE=config-no-auth.json
+  expect_status "$status" 2 "a checkout resolving no auth"
+  expect_row u3 "FAIL — the checkout resolves no agent.auth at all" "a checkout resolving no auth: the row"
+  expect_row u3 "Set agent.auth in $repo's fugaro.yaml" "a checkout resolving no auth: what to do instead"
+  assert_one_launch "$dir" "a checkout resolving no auth"
+}
+
+test_an_artifact_naming_another_account_is_a_finding() {
+  local dir=$work/u3-artifact-account
+  prepare "$dir"
+  run_check "$dir" FAKE_ARTIFACT_FILE=artifact-other-account.json
+  expect_status "$status" 1 "an artifact naming another account"
+  expect_row u3 "FAIL — U3: the review's model calls were served as the default account ('default' in the credentials service's own audit for the run $run_id) and the artifact the review wrote names the reviewer account 'work'" "an artifact naming another account: the row names both readings"
+  expect_row u3 "the account the review states it ran as and the account the service really served are two readings of one fact, and they disagree" "an artifact naming another account: why it is a finding"
+  assert_one_launch "$dir" "an artifact naming another account"
+}
+
+test_a_run_the_service_wrote_no_forward_line_for_is_a_finding() {
+  local dir=$work/u3-no-forward
+  prepare "$dir"
+  run_check "$dir" FAKE_LOG_FILE=log-no-forward.json
+  expect_status "$status" 1 "a run with no served model line"
+  expect_row u3 "FAIL — U3: the checkout resolves agent.auth 'vertex' and the review run ($run_id) has NO served model line (purpose 'forward', status ok)" "a run with no served model line: the row"
+  expect_row u3 "a review-only job mounts nothing and the service is its only route to one" "a run with no served model line: why it is a finding"
+  assert_one_launch "$dir" "a run with no served model line"
+}
+
+test_a_first_model_call_with_another_credential_is_a_finding() {
+  local dir=$work/u3-other-credential
+  prepare "$dir"
+  run_check "$dir" FAKE_LOG_FILE=log-other-credential.json
+  expect_status "$status" 1 "a first model call on another credential"
+  expect_row u3 "FAIL — U3: the review run's first model call ($run_id) was served with the credential 'work', not the DEFAULT account ('default')" "a first model call on another credential: the row"
+  expect_row u3 "the implicit review-only job serves that account and no other (config.DefaultClaudeAccount, D2385)" "a first model call on another credential: why it is a finding"
+  assert_one_launch "$dir" "a first model call on another credential"
+}
+
+test_the_first_model_call_is_read_by_its_time() {
+  local dir=$work/u3-two-forwards
+  prepare "$dir"
+  # Two served model calls, and the EARLIEST by its own timestamp is the default
+  # account's: the document's first forward line is the later switch, so a read that
+  # took that one would fail this row on a review that did nothing wrong.
+  run_check "$dir" FAKE_LOG_FILE=log-two-forwards.json
+  expect_status "$status" 0 "the earliest served call by its own time"
+  expect_row u3 "PASS — U3: the checkout resolves agent.auth 'vertex' and the review's model calls were served by the installation's credentials service as the credential 'default'" "the earliest served call by its own time: the row"
+  expect_row u3 "the earliest served line of purpose 'forward' the service wrote for the run $run_id, read by NAME and never by value" "the earliest served call by its own time: how it was read"
+}
+
+test_a_line_of_another_run_is_not_read() {
+  local dir=$work/u3-other-run
+  prepare "$dir"
+  # The read answers with a line, and the line is another run's: the FILTER is what
+  # keeps it out of this row, and a row that counted it would read a credential off
+  # a review this check never launched.
+  run_check "$dir" FAKE_LOG_FILE=log-other-run.json CHECK610_LOG_WAIT_SECONDS=1
+  expect_status "$status" 1 "a served line of another run"
+  expect_row u3 "has NO served model line (purpose 'forward', status ok)" "a served line of another run: it is not this run's"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "jsonPayload.run=\"$run_id\"" "a served line of another run: the read is filtered by the run's own id"
+  assert_one_launch "$dir" "a served line of another run"
+}
+
+test_a_log_read_that_failed_leaves_u3_unmeasured() {
+  local dir=$work/u3-log-failed
+  prepare "$dir"
+  # A read that did not answer is NOT the service having written no line: the row
+  # is unmeasured, and the reason has to be the read's own, not a finding.
+  run_check "$dir" FAKE_MODE=log-fails CHECK610_LOG_WAIT_SECONDS=1
+  expect_status "$status" 2 "a log read that failed"
+  expect_row u3 "FAIL — the service's own lines for the review run ($run_id) could not be read: 'gcloud logging read' exited 1" "a log read that failed: the row"
+  expect_row u3 "a read that did not answer is NOT the service having written no line" "a log read that failed: why it is not a finding"
+  assert_one_launch "$dir" "a log read that failed"
+}
+
+test_the_log_read_asks_for_the_oldest_lines() {
+  local dir=$work/u3-limit
+  prepare "$dir"
+  # gcloud answers the NEWEST --limit lines by default, and a review writes more
+  # model calls than this check reads: the first one — the row U3 is about — is the
+  # OLDEST, so the read has to ask for the oldest and the knob has to reach gcloud.
+  run_check "$dir" CHECK610_LOG_LIMIT=3
+  expect_status "$status" 0 "the log limit"
+  expect_contains "$(cat "$dir/logs/gcloud.calls")" "--limit=3 --order=asc" "the log limit: the read is the oldest 3 lines"
+  expect_row u3 "PASS — U3" "the log limit: the row still reads the first call"
+}
+
+test_the_log_window_is_widened_by_the_time_since_the_launch() {
+  local dir=$work/u3-window
+  prepare "$dir"
+  # CHECK610_LOG_AGE is the floor of the window; the check widens it by the time
+  # since the launch, because a review that outlasts the knob would otherwise lose
+  # the head of its own lines — the first model call, which is this row.
+  run_check "$dir" CHECK610_LOG_AGE=1m
+  expect_status "$status" 0 "a window widened by the launch"
+  local fresh
+  fresh=$(grep -o -- '--freshness=[0-9a-z]*' "$dir/logs/gcloud.calls" | head -n 1)
+  case "$fresh" in
+  --freshness=1m | "")
+    fail "a window widened by the launch: the read asked for '${fresh:-no freshness at all}' rather than a window that reaches back past the launch"
+    ;;
+  --freshness=[0-9]*[mhd]) ;;
+  *) fail "a window widened by the launch: the read asked for '$fresh', which is not a window" ;;
+  esac
+  expect_row u3 "PASS — U3" "a window widened by the launch: the row is still read"
+}
+
+test_an_installation_that_deploys_a_coding_project_job_fails_u4() {
+  local dir=$work/u4-coding-job
+  prepare "$dir"
+  # The job list holds the per-repository job, the implicit review-only job and a
+  # coding project job: U4 is about an installation that deploys NONE, and the
+  # per-repository job is not a project job at all (it is named for the repository).
+  run_check "$dir" FAKE_JOBS_FILE=jobs-coding.json
+  expect_status "$status" 1 "an installation with a coding project job"
+  expect_row u4 "FAIL — U4: $install deploys 1 coding project job(s) alongside the review-only job — $coding_job out of 2 job(s) named 'fugaro-p-…'" "an installation with a coding project job: the row"
+  expect_row u4 "U4 is 'a live terraform apply with NO project jobs'" "an installation with a coding project job: why it is a finding"
+  expect_absent "$(printf '%s\n' "$out" | grep -m1 '^FACT u4: ' || true)" "$per_repo_job" "an installation with a coding project job: the per-repository job is not a project job"
+  # The review itself still landed on the review-only job: U4's finding is about
+  # the apply, not about where this check's review ran.
+  expect_row u1 "PASS — U1" "an installation with a coding project job: U1 still holds"
+  assert_one_launch "$dir" "an installation with a coding project job"
+}
+
+test_kept_scratch_is_reported() {
+  local dir=$work/keep-scratch
+  prepare "$dir"
+  run_check "$dir" CHECK610_KEEP_SCRATCH=1
+  expect_status "$status" 0 "kept scratch"
+  expect_row scratch-removed "PASS — kept on request (CHECK610_KEEP_SCRATCH is set), at $scratch" "kept scratch: the row names where it is"
+  [ -d "$scratch" ] || fail "kept scratch: the scratch directory is not there after all"
+}
+
+test_every_row_of_the_block_is_reached() {
+  local dir=$work/block-shape
+  prepare "$dir"
+  # The block's keys and their order are the register's contract, quoted row by row:
+  # a key this check forgets to print reads `FAIL — not reached` on a run that failed
+  # for some other reason too, which is why a key removed from the check has to be
+  # removed here in the same diff.
+  run_check "$dir"
+  expect_status "$status" 0 "the block's shape"
+  expect_absent "$out" "not reached" "the block's shape: no row is missing"
+  local key
+  for key in fugaro-version xtrace agent-session belong sandbox config policy job pull launch run review u1 u2 u3 u4 restore scratch-removed; do
+    expect_contains "$out" "FACT $key: " "the block's shape: the $key row"
+  done
+}
+
+test_the_sandbox_can_be_named_as_an_argument() {
+  local dir=$work/sandbox-argument
+  prepare "$dir"
+  # The documented interface is the argument, and an empty environmental value has
+  # to fall through to it rather than win as a value the check was given.
+  run_check "$dir" CHECK610_SANDBOX= -- --sandbox "$dir/sandbox"
+  expect_status "$status" 0 "a sandbox named as an argument"
+  expect_row sandbox "PASS — $dir/sandbox is a Fugaro repository's checkout of the GITHUB repository $repo" "a sandbox named as an argument: the row"
+  assert_scratch_removed "$dir" "a sandbox named as an argument"
+}
+
+test_a_checkout_whose_origin_names_belong_is_refused() {
+  local dir=$work/origin-guard
+  prepare "$dir"
+  # The repository name is read from the origin and reaches the same guard the
+  # installation's own name does.
+  run_check "$dir" FAKE_ORIGIN=https://github.com/belong/chk610-sandbox.git
+  expect_status "$status" 1 "a repository named belong"
+  expect_contains "$err" "belongs to $install ($gcp_project, region $region) and belong/chk610-sandbox" "a repository named belong: the refusal names what it read"
+  expect_row sandbox "FAIL" "a repository named belong: the row"
+  # The guard reads the installation before it compares the name it read with it:
+  # the refusal names both sides, and the repository's own name is the side that
+  # came from the origin.
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "doctor --json (in $dir/sandbox)" "a repository named belong: the installation is read, and named in the refusal"
+  assert_no_launch "$dir" "a repository named belong"
+}
+
 # ------------------------------------------------------------------- the run
 # CHECK_TEST_ONLY names one case; CHECK_TEST_SHARD=i/n runs every case whose index
 # is congruent to i modulo n. scripts/live_checks_test.go splits the suite across
@@ -1484,6 +1712,24 @@ t test_a_review_show_that_prints_no_artifact_is_a_finding
 t test_an_artifact_about_another_run_is_a_finding
 t test_an_artifact_about_another_pull_request_is_a_finding
 t test_an_artifact_with_no_verdict_is_a_finding
+t test_an_image_that_is_not_the_base_image_fails_u1
+t test_a_doctor_with_no_base_image_leaves_u1_unmeasured
+t test_a_default_account_that_is_not_admitted_fails_u2
+t test_an_auth_that_is_not_an_api_key_or_vertex_leaves_u3_unmeasured
+t test_a_checkout_that_resolves_no_auth_leaves_u3_unmeasured
+t test_an_artifact_naming_another_account_is_a_finding
+t test_a_run_the_service_wrote_no_forward_line_for_is_a_finding
+t test_a_first_model_call_with_another_credential_is_a_finding
+t test_the_first_model_call_is_read_by_its_time
+t test_a_line_of_another_run_is_not_read
+t test_a_log_read_that_failed_leaves_u3_unmeasured
+t test_the_log_read_asks_for_the_oldest_lines
+t test_the_log_window_is_widened_by_the_time_since_the_launch
+t test_an_installation_that_deploys_a_coding_project_job_fails_u4
+t test_kept_scratch_is_reported
+t test_every_row_of_the_block_is_reached
+t test_the_sandbox_can_be_named_as_an_argument
+t test_a_checkout_whose_origin_names_belong_is_refused
 
 if [ "$failures" -ne 0 ]; then
   echo "check610_test.sh: $failures failure(s)" >&2
