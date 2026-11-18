@@ -302,6 +302,33 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestRigorScalarShorthandIsBothASchemaAndALoaderForm: the repository's rigor
+// block may be written as the level alone beside the mapping (the owner's
+// ruling of 2026-11-18, item 8), so the two spellings have to agree in both
+// places a document is judged: a schema that took only the mapping would fail a
+// `rigor: critical` a run accepted, and one that took any string would pass a
+// level the loader refuses. The project layer's own defaults.rigor is not here:
+// it takes the mapping alone, every key of that layer being a fugaro.yaml key
+// its own command writes.
+func TestRigorScalarShorthandIsBothASchemaAndALoaderForm(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const scalar = "version: 1\nproject: aurora\ngit: { provider: github }\nrigor: critical\n" +
+		"workflows: { server: { commands: { build: make, test: make test } } }\n"
+	if err := sch.Validate(yamlInstance(t, []byte(scalar))); err != nil {
+		t.Errorf("fugaro.schema.json rejects the scalar rigor shorthand: %v", err)
+	}
+	if _, ps := config.Parse([]byte(scalar)); len(ps) > 0 {
+		t.Errorf("config.Parse rejects the scalar rigor shorthand: %v", ps)
+	}
+	bad := strings.Replace(scalar, "rigor: critical", "rigor: paranoid", 1)
+	if err := sch.Validate(yamlInstance(t, []byte(bad))); err == nil {
+		t.Error("fugaro.schema.json accepts a rigor level outside the vocabulary")
+	}
+	if _, ps := config.Parse([]byte(bad)); len(ps) == 0 {
+		t.Error("config.Parse accepts a rigor level outside the vocabulary")
+	}
+}
+
 // schemaDescriptionAt walks file's raw JSON (not through the jsonschema
 // compiler, which drops "description") down path and returns the
 // "description" string at the end of it.
@@ -996,10 +1023,12 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		{"an area's moment outside D22's three", `"at":"round"`, `"at":"lunchtime"`},
 		{"a revision that is not text", `"revision":"origin/main"`, `"revision":5`},
 		{"an area with no name", `"name":"payments"`, `"match":"internal/payments/**"`},
-		{"an area with no mode", `"mode":"critical","at":"bootstrap"`, `"at":"bootstrap"`},
-		{"an area's mode outside the vocabulary", `"mode":"critical","at":"bootstrap"`, `"mode":"paranoid","at":"bootstrap"`},
+		{"an area with no mode", `{"name":"payments","mode":"critical","level":"critical","at":"bootstrap"}`, `{"name":"payments","level":"critical","at":"bootstrap"}`},
+		{"an area's mode outside the vocabulary", `"name":"payments","mode":"critical"`, `"name":"payments","mode":"paranoid"`},
+		{"an area's level outside the vocabulary", `"name":"payments","mode":"critical","level":"critical"`, `"name":"payments","mode":"critical","level":"paranoid"`},
 		{"a name that is not one", `"name":"payments"`, `"name":"../../etc/passwd"`},
 		{"the block with no mode", `"mode":"critical",`, ``},
+		{"the block's level outside the vocabulary", `"mode":"critical","level":"critical"`, `"mode":"critical","level":"paranoid"`},
 		{"the block with no layer", `"from":"area",`, ``},
 		{"the block with no moment", `,"at":"finalize"`, ``},
 		{"a key the block does not carry", `"revision":"origin/main"`, `"score":9`},
@@ -1016,6 +1045,27 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The level is carried under two keys (LD2): `mode`, which the block has
+	// always had, and `level` beside it. The key is additive, so a record a
+	// runner before the rename wrote — `mode` alone, block and areas alike —
+	// is still a document this schema accepts, and one written since carries
+	// both and reads the same way.
+	legacy := bytes.ReplaceAll(data, []byte(`,"level":"critical"`), nil)
+	legacy = bytes.ReplaceAll(legacy, []byte(`,"level":"poc"`), nil)
+	const withoutLevel = `"rigor":{"mode":"critical","from":"area",` +
+		`"areas":[{"name":"payments","mode":"critical","at":"bootstrap"},` +
+		`{"name":"docs","mode":"poc","at":"round"}]`
+	if !bytes.Contains(legacy, []byte(withoutLevel)) {
+		t.Fatalf("the legacy fixture is not a block written before the rename: %s", legacy)
+	}
+	old2, err := jsonschema.UnmarshalJSON(bytes.NewReader(legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(old2); err != nil {
+		t.Errorf("schema rejects a record written before the rename: %v", err)
+	}
+
 	// The filed items (docs/rigor-modes T4.5, D9): an id is the day and the
 	// day's sequence, so a record carrying anything else names no file. The
 	// field is additive — a record from before it existed, which is most of

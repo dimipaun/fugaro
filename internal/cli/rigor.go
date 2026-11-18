@@ -236,7 +236,7 @@ is not written over: with no local file there the command refuses and names
 // fugaro.yaml spells the same two keys bare.
 const (
 	rigorDefaultKey     = "layer.defaults.rigor.default"
-	rigorAreasKey       = "layer.defaults.rigor.areas.*.mode"
+	rigorAreasKey       = "layer.defaults.rigor.areas.*.level"
 	rigorRepoDefaultKey = "rigor.default"
 	rigorRepoAreasKey   = "rigor.areas"
 )
@@ -376,7 +376,7 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 		return err
 	}
 	if o.area != "" && layer == settingsLayerProject {
-		// The edit lands on the whole rule and not on the `mode` leaf the row is
+		// The edit lands on the whole rule and not on the `level` leaf the row is
 		// spelled for: UpsertSeqItemByKey writes the rule's fields together, and
 		// the path the gate and the loader are handed is the sequence that moves
 		// — which is also what the diff shows. The repository's spelling of the

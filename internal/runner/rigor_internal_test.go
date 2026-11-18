@@ -155,8 +155,8 @@ git: { provider: github }
 rigor:
   default: critical
   areas:
-    - { name: payments, match: "internal/payments/**", mode: critical }
-    - { name: docs, match: "docs/**", mode: poc }
+    - { name: payments, match: "internal/payments/**", level: critical }
+    - { name: docs, match: "docs/**", level: poc }
 workflows:
   server: { commands: { build: make, test: make test } }
 `
@@ -327,7 +327,7 @@ git: { provider: github }
 rigor:
   default: startup
   areas:
-    - { name: payments, match: "internal/payments/**", mode: critical }
+    - { name: payments, match: "internal/payments/**", level: critical }
 ` + workflowsYAML
 	for _, tc := range []struct {
 		name string
@@ -428,8 +428,8 @@ git: { provider: github }
 rigor:
   default: startup
   areas:
-    - { name: payments, match: "internal/payments/**", mode: critical }
-    - { name: docs, match: "docs/**", mode: poc }
+    - { name: payments, match: "internal/payments/**", level: critical }
+    - { name: docs, match: "docs/**", level: poc }
 ` + workflowsYAML
 	r, _ := rigorRun(t, map[string]string{"README.md": "hello\n", "fugaro.yaml": base}, nil,
 		&task.Spec{Paths: []string{"internal/payments/charge.go"}})
@@ -456,8 +456,8 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
 	const twoAreas = `rigor:
   default: startup
   areas:
-    - { name: payments, match: "internal/payments/**", mode: critical }
-    - { name: ledgers, match: "internal/**", mode: startup }
+    - { name: payments, match: "internal/payments/**", level: critical }
+    - { name: ledgers, match: "internal/**", level: startup }
 `
 	for _, tc := range []struct {
 		name  string
@@ -466,7 +466,7 @@ func TestFinalSectionNamesTheModeAndWhereItCameFrom(t *testing.T) {
 	}{
 		{"the repository's own default", "rigor: { default: critical }\n", "rigor: critical (repo)"},
 		{"the area a path the run touched matched",
-			"rigor:\n  default: startup\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: critical }\n",
+			"rigor:\n  default: startup\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: critical }\n",
 			"rigor: critical (area payments)"},
 		{"two matching rules, the strictest named", twoAreas, "rigor: critical (area payments +1)"},
 	} {
@@ -594,8 +594,8 @@ git: { provider: github }
 rigor:
   default: startup
   areas:
-    - { name: payments, match: "internal/payments/**", mode: critical }
-    - { name: docs, match: "docs/**", mode: poc }
+    - { name: payments, match: "internal/payments/**", level: critical }
+    - { name: docs, match: "docs/**", level: poc }
 workflows:
   server: { commands: { build: make, test: make test } }
 `

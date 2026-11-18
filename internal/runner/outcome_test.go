@@ -508,7 +508,7 @@ func decideOf(t *testing.T, r *run) (bool, string) {
 // can go and look at the rule rather than guess.
 func TestRaisedModeByAreaKeepsDraft(t *testing.T) {
 	r := raisedRun(t, raisedCase{
-		block:    "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: critical }\n",
+		block:    "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: critical }\n",
 		findings: []Finding{riskFour},
 		moments:  []string{runstore.RigorAtRound},
 	})
@@ -535,7 +535,7 @@ func TestRaisedModeByAreaKeepsDraft(t *testing.T) {
 // review round was held at is a raise that round answered, so a round the
 // raised mode tolerates still becomes ready.
 func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
-	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: startup }\n"
 	late := raisedRun(t, raisedCase{block: block, findings: []Finding{riskFour}, moments: []string{runstore.RigorAtFinalize}})
 	if got := late.reachedRigor(); got != rigor.Startup {
 		t.Fatalf("the run resolved %q; want startup, or the case proves nothing", got)
@@ -568,7 +568,7 @@ func TestModeRaisedAtFinalizeLeavesDraft(t *testing.T) {
 // was held at the raised mode and its deferral is an answer the run publishes
 // under.
 func TestTriageDeferralsVoidedByFinalizeRaise(t *testing.T) {
-	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: startup }\n"
 	late := raisedRun(t, raisedCase{
 		block: block, findings: []Finding{riskNine}, deferred: []rigor.Score{scoreOf(riskNine)},
 		moments: []string{runstore.RigorAtFinalize},
@@ -708,7 +708,7 @@ func TestAStopDoesNotCountADeferralTwice(t *testing.T) {
 // own rule blocks on) and the case reads acceptsAtStop rather than passing it
 // for want of a stop.
 func TestStopAcceptanceIsWithdrawnByARaiseAtFinalize(t *testing.T) {
-	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", mode: startup }\n"
+	const block = "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"internal/payments/**\", level: startup }\n"
 	r := raisedRun(t, raisedCase{block: block, findings: []Finding{riskNine}, moments: []string{runstore.RigorAtFinalize}})
 	r.stopAt = runstore.StopRoundsSpent
 	if got := r.reachedRigor(); got != rigor.Startup {
@@ -749,7 +749,7 @@ func TestStopAcceptanceIsWithdrawnByARaiseAtFinalize(t *testing.T) {
 // record itself contradicts.
 func TestRaisedModeByLayerAfterARoundStaysReady(t *testing.T) {
 	base := raisedCase{
-		block:    "rigor:\n  default: pro\n  areas:\n    - { name: docs, match: \"docs/**\", mode: poc }\n",
+		block:    "rigor:\n  default: pro\n  areas:\n    - { name: docs, match: \"docs/**\", level: poc }\n",
 		declared: []string{"docs/readme.md"},
 		paths:    []string{"internal/foo.go"},
 		moments:  []string{runstore.RigorAtRound, runstore.RigorAtFinalize},

@@ -18,7 +18,7 @@ defaults:
     areas:
       - name: payments
         match: "payments/**"
-        mode: hotfix
+        level: hotfix
 `
 
 // TestRigorConfigKeepsTheTwoLayersApart: the resolver's configuration is the
@@ -205,5 +205,52 @@ func TestRepoRigorSetReadsTheKeyNotTheValue(t *testing.T) {
 	}
 	if null.RepoRigor != nil {
 		t.Errorf("a null block resolved a value: %+v", null.RepoRigor)
+	}
+}
+
+// TestRigorScalarShorthand: the repository's own key may name the level alone,
+// `rigor: critical`, which says what a block carrying only default says (item
+// 8's shape, as the owner ruled it: the block stays for the repositories that
+// also name areas). The two forms are read by the same decoder, so the value
+// vocabulary is the same set either way.
+//
+// Mutation (drop UnmarshalYAML from Rigor): the scalar form is a type error,
+// "cannot unmarshal !!str into config.Rigor", and the cases below fail.
+func TestRigorScalarShorthand(t *testing.T) {
+	cfg, ps := Parse([]byte(minimalRepo + "git: {provider: github}\nrigor: critical\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
+	if len(ps) > 0 {
+		t.Fatalf("the scalar shorthand was refused: %s", problemsText(ps))
+	}
+	if cfg.Rigor == nil || cfg.Rigor.Default != rigor.Critical || len(cfg.Rigor.Areas) != 0 {
+		t.Fatalf("rigor: critical resolved %+v, want the default alone", cfg.Rigor)
+	}
+	// The block form still carries both keys, and the scalar is the level:
+	// a value outside the vocabulary is refused where it is written.
+	cfg, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor: {default: poc, areas: [{name: docs, match: \"docs/**\", level: pro}]}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
+	if len(ps) > 0 {
+		t.Fatalf("the block form was refused: %s", problemsText(ps))
+	}
+	if cfg.Rigor.Default != rigor.POC || len(cfg.Rigor.Areas) != 1 || cfg.Rigor.Areas[0].Level != rigor.Pro {
+		t.Fatalf("the block form resolved %+v", cfg.Rigor)
+	}
+	_, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor: Paranoid\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
+	if len(ps) == 0 || !strings.Contains(problemsText(ps), "rigor must be one of "+rigor.RigorList()) {
+		t.Fatalf("a level outside the vocabulary was not refused by name: %s", problemsText(ps))
+	}
+}
+
+// TestRigorRefusesTheRenamedModeKey: the key an area rule's level is written
+// under was `mode:` before the rename, so a document a person upgrades carries
+// it. It is refused — the key is gone, and a rule half-read would set no level
+// — and the refusal names the key that replaced it, so the fix is the message
+// itself.
+func TestRigorRefusesTheRenamedModeKey(t *testing.T) {
+	_, ps := Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
+	if got := problemsText(ps); !strings.Contains(got, "`level:`") || !strings.Contains(got, "`mode:`") {
+		t.Fatalf("the repository layer's renamed key: %q, want a refusal naming level and mode", got)
+	}
+	const text = "version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  rigor:\n    areas:\n      - {name: docs, match: \"docs/**\", mode: pro}\n"
+	if l, ps := ParseProjectLayer([]byte(text), testAnchor); l != nil || !strings.Contains(problemsText(ps), "`level:`") {
+		t.Fatalf("the project layer's renamed key: %v, %s", l, problemsText(ps))
 	}
 }

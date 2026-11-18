@@ -304,7 +304,7 @@ func layerDocumentRules(data []byte) []string {
 // layerKeyPaths is the document's key paths, one per leaf, one per key the
 // registry knows and one per empty block: the paths the two rules above are
 // decided over. `*` stands in for an element of a list of blocks, which is how
-// the registry spells one (`defaults.rigor.areas.*.mode`). See layerWalkKeys
+// the registry spells one (`defaults.rigor.areas.*.level`). See layerWalkKeys
 // for the walk itself.
 func layerKeyPaths(data []byte) ([][]string, bool) {
 	var paths [][]string

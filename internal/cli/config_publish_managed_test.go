@@ -607,7 +607,7 @@ func TestConfigPublishManagedRefusesALoweredRigorFloor(t *testing.T) {
 		out := minimalAnchored + "defaults:\n  rigor: { default: " + defaultMode + " }\n"
 		if areaMode != "" {
 			out = minimalAnchored + "defaults:\n  rigor:\n    default: " + defaultMode +
-				"\n    areas:\n      - { name: db, match: \"db/*\", mode: " + areaMode + " }\n"
+				"\n    areas:\n      - { name: db, match: \"db/*\", level: " + areaMode + " }\n"
 		}
 		return out
 	}
@@ -652,7 +652,7 @@ func TestConfigPublishManagedRefusesALoweredRigorFloor(t *testing.T) {
 		r := newManagedPublishRig(t)
 		agentSession(t)
 		publishedLayer(t, r.cloudFixture, rigorBlock("pro", "startup"))
-		raised := minimalAnchored + "defaults:\n  rigor:\n    default: critical\n    areas:\n      - { name: db, match: \"db/*\", mode: critical }\n      - { name: web, match: \"web/*\", mode: pro }\n"
+		raised := minimalAnchored + "defaults:\n  rigor:\n    default: critical\n    areas:\n      - { name: db, match: \"db/*\", level: critical }\n      - { name: web, match: \"web/*\", level: pro }\n"
 		_, _, err := execute(t, "config", "publish", layerFile(t, raised))
 		if err == nil {
 			t.Fatal("a layer raising the project's rigor floors was published in a coding agent's session")

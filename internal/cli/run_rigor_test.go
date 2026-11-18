@@ -389,7 +389,7 @@ func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 	}{
 		{"equal to the repository's", "rigor:\n  default: critical\n", "critical", nil,
 			"--mode critical is not higher than the repository's resolved mode critical: it has no effect"},
-		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", mode: critical }\n", "pro", []string{"payments/x.go"},
+		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", level: critical }\n", "pro", []string{"payments/x.go"},
 			"--mode pro is not higher than the repository's resolved mode critical: it has no effect"},
 		{"above the repository's", "rigor:\n  default: startup\n", "critical", nil, ""},
 	}

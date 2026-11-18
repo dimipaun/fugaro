@@ -244,21 +244,65 @@ type Planning struct {
 func (p *Planning) DecouplingOn() bool { return p == nil || p.Decoupling == nil || *p.Decoupling }
 
 // Rigor is fugaro.yaml's rigor: block and the project layer's defaults.rigor
-// (D20): the mode a repository runs at when nothing narrower decides, and
+// (D20): the level a repository runs at when nothing narrower decides, and
 // the named area rules that decide it from the paths a run touches. Both
 // keys may be set in either layer (docs/project-layer.md §5).
 type Rigor struct {
-	// Default is the mode this layer sets; "" sets none, so a layer below
+	// Default is the level this layer sets; "" sets none, so a layer below
 	// decides (the built-in default is rigor.Default, D19). A narrower layer
-	// may set a *lower* mode than a wider one (D21): this is a default, and a
+	// may set a *lower* level than a wider one (D21): this is a default, and a
 	// project that wants a floor says so with a floor.
 	Default rigor.Rigor `yaml:"default,omitempty"`
-	// Areas are this layer's area rules (D20c). A rule sets the mode for the
+	// Areas are this layer's area rules (D20c). A rule sets the level for the
 	// paths it matches; the repository's list and the project layer's are
 	// both in effect, never one replacing the other (the merge rule §4
 	// otherwise gives a list), which is RepoRigor's reason to exist.
 	Areas []rigor.Area `yaml:"areas,omitempty"`
 }
+
+// rigorBlockKeys are the keys the block form accepts, the set
+// UnmarshalYAML refuses anything else by (the strict decoder's own job for
+// every other block: a type with an unmarshaler opts out of Decoder.KnownFields).
+var rigorBlockKeys = map[string]bool{"default": true, "areas": true}
+
+// UnmarshalYAML reads the block form (default:, areas:) and the scalar
+// shorthand, `rigor: critical`, which says the same thing as a block carrying
+// only default (D20, the levels reconciliation's item 8 as the owner ruled it).
+//
+// One way to write a thing is usually the better rule, and the shorthand is the
+// exception for the same reason the block has a default at all: the level a
+// repository runs at is the whole of what most repositories have to say, and
+// making them write four lines of block for it is what the block's own name
+// exists to avoid. The block stays for the repositories that also name areas.
+func (r *Rigor) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		lvl, ok := rigor.Parse(node.Value)
+		if !ok {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: rigor must be one of %s", node.Line, rigor.RigorList())}}
+		}
+		*r = Rigor{Default: lvl}
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: rigor must be one of %s, or a mapping of default and areas", node.Line, rigor.RigorList())}}
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if k := node.Content[i]; !rigorBlockKeys[k.Value] {
+			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, rigorType)}}
+		}
+	}
+	type plain Rigor // no methods: decodes the fields without recursing into this one
+	var v plain
+	if err := node.Decode(&v); err != nil {
+		return err
+	}
+	*r = Rigor(v)
+	return nil
+}
+
+// rigorType is Rigor's own type name, for the unknown-field refusal above:
+// UnmarshalYAML builds the message yaml.v3's strict mode would have built.
+var rigorType = reflect.TypeOf(Rigor{})
 
 // Security is fugaro.yaml's security: block (D1500): this repository's own
 // list of named patterns. It is one block whose list is security.patterns and

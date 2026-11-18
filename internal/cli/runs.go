@@ -1336,7 +1336,7 @@ func modeCell(r runview.Row) string {
 	if rg == nil {
 		return "-"
 	}
-	cell := string(rg.Mode) + " (" + string(rg.From)
+	cell := string(rg.LevelOf()) + " (" + string(rg.From)
 	if len(rg.Areas) > 0 {
 		cell += " " + clipRunes(rg.Areas[0].Name, maxNameCellRunes)
 		if n := len(rg.Areas) - 1; n > 0 {

@@ -596,7 +596,7 @@ func TestDecideToleratedHotfixRoundFilesNothing(t *testing.T) {
 // thing, leaves the block as the round left it.
 func TestRigorRoundMomentRaisesTheModeFromTheRunsOwnDiff(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "agent:\n",
-		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
@@ -649,7 +649,7 @@ func TestReviewRoundsTheModeRaisedBetweenRoundsSuppliesMore(t *testing.T) {
 		t.Fatal("the fixture has no review_rounds: 2 to drop, so the mode would not be the one supplying the number")
 	}
 	cfg = strings.Replace(cfg, "agent:\n",
-		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", mode: critical }\nagent:\n", 1)
+		"rigor:\n  default: startup\n  areas:\n    - { name: app, match: \"feature.txt\", level: critical }\nagent:\n", 1)
 	h := newHarness(t, cfg, nil)
 	fix := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
