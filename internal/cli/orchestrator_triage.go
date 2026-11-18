@@ -96,7 +96,9 @@ type orchestratorTriage struct {
 	// identity is the daemon's own identity at the installation's credentials
 	// service (F19, O2), installed on every provider this seam opens as its
 	// merge mint (orchestratorUseMergeMint). It is an incomplete identity on
-	// an installation with no service, and the mint is then not installed.
+	// an installation with no service, and on one whose tfvars carry no
+	// orchestrator block — the account exists only there — and the mint is
+	// then not installed.
 	identity orchestratorIdentity
 	open     gitprov.Opener
 	warn     io.Writer

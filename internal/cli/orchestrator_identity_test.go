@@ -16,6 +16,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -113,26 +115,77 @@ func TestOrchestratorIDTokenRefusesWithoutAUsableCredential(t *testing.T) {
 	}
 }
 
+// holdOrchestratorWorkdir writes the installation workdir this machine holds
+// for project: the installation root's own terraform.tfvars.json, with the
+// resident orchestrator's block in it (held) or without it. It is written where
+// `fugaro update` plans the root, which is where the daemon reads it
+// (orchestratorBlockHeld), and the fixtures give every test an $XDG_STATE_HOME
+// of its own, so this is one test's installation and no other's.
+//
+// Nothing else in the document matters to what these tests are about: the block
+// is the installation's own statement that it opted in (infra.OrchestratorRecorded),
+// and no reader of the identity reads a field inside it.
+func holdOrchestratorWorkdir(t *testing.T, project string, held bool) {
+	t.Helper()
+	dir, err := infra.InstallationWorkdir(os.Getenv, project)
+	if err != nil {
+		t.Fatalf("the fixture's installation workdir: %v", err)
+	}
+	doc := map[string]any{"project": project}
+	if held {
+		doc[infra.OrchestratorKey] = map[string]any{
+			"account_id":        infra.OrchestratorAccountID,
+			"firebase_project":  "fp-2",
+			"signer_account_id": infra.SignerAccountID,
+			"service":           "fugaro-orchestrator",
+			"image":             "ghcr.io/dimipaun/fugaro-base@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			"rtdb_url":          "https://proj-1234.firebasedatabase.app",
+			"scheduler_job":     "fugaro-orchestrator-tick",
+			"scheduler_region":  "us-east5",
+		}
+	}
+	b, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := infra.WorkdirVarsPath(dir, "installation")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestOrchestratorIdentityOfIsTheInstallationsOwn records the two halves the
-// daemon presents and where each comes from: the account from the project the
-// installation's config names — the same derivation `fugaro doctor`'s
-// orchestrator-identity check makes, because the module's account ID is one
-// literal — and the URL from the block `fugaro update` publishes. Either
+// daemon presents and where each comes from: the URL from the config
+// `fugaro update` publishes it into, and the account from the project that
+// config names — the same derivation `fugaro doctor`'s orchestrator-identity
+// check makes, because the module's account ID is one literal — read ONLY where
+// the installation's workdir carries the orchestrator block, because that is
+// the record the account is created from and nothing else creates it. Either
 // missing is an incomplete identity (`none`), and never a value guessed at.
 func TestOrchestratorIdentityOfIsTheInstallationsOwn(t *testing.T) {
 	svc := &localcfg.CredentialsService{URL: identityURL}
 	for _, tc := range []struct {
 		name string
 		lc   *localcfg.Config
+		held bool
 		want orchestratorIdentity
 	}{
-		{"no config at all", nil, orchestratorIdentity{}},
-		{"a project and a service", &localcfg.Config{GCPProject: identityProject, CredentialsService: svc},
+		{"no config at all", nil, true, orchestratorIdentity{}},
+		{"a project, a service and the block", &localcfg.Config{GCPProject: identityProject, CredentialsService: svc}, true,
 			orchestratorIdentity{account: identityAccount, url: identityURL}},
-		{"no project", &localcfg.Config{CredentialsService: svc}, orchestratorIdentity{url: identityURL}},
-		{"no service", &localcfg.Config{GCPProject: identityProject}, orchestratorIdentity{account: identityAccount}},
+		{"no project", &localcfg.Config{CredentialsService: svc}, true, orchestratorIdentity{url: identityURL}},
+		{"no service", &localcfg.Config{GCPProject: identityProject}, true, orchestratorIdentity{account: identityAccount}},
+		// The installation that names a service and holds no block: the account
+		// is never composed (it would be one no project holds), so the identity
+		// is incomplete — none — and the URL it does carry is a half no caller
+		// presents on its own.
+		{"no block", &localcfg.Config{GCPProject: identityProject, CredentialsService: svc}, false, orchestratorIdentity{url: identityURL}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			holdOrchestratorWorkdir(t, identityProject, tc.held)
 			got := orchestratorIdentityOf(tc.lc)
 			if got != tc.want {
 				t.Errorf("orchestratorIdentityOf = %+v, want %+v", got, tc.want)
@@ -141,6 +194,89 @@ func TestOrchestratorIdentityOfIsTheInstallationsOwn(t *testing.T) {
 				t.Errorf("none() = %v for %+v, want %v", got.none(), got, want)
 			}
 		})
+	}
+}
+
+// TestAnInstallationWithoutTheOrchestratorBlockGetsNoIdentity: the installation
+// the local config describes and the installation the module built are two
+// records, and this is the second one's own test. An installation that names a
+// credentials service but whose workdir carries no orchestrator block has no
+// daemon account — the module creates none without the block — so the daemon
+// has no identity: it builds NO label seams at all (nothing to ask the route
+// with, nothing to ask it about), it installs no merge mint on the providers
+// its triage opens, and it runs the mint never.
+//
+// What that buys is the state a daemon on such an installation is in today, and
+// it is why the identity is derived from the file rather than from the config's
+// project alone: the account name composes just as well there as anywhere, and
+// every cycle would then spend a gcloud impersonation of an address no project
+// holds — a refusal or a timeout, once per repository per tick, for the life of
+// the daemon, where before this identity existed there was silence.
+func TestAnInstallationWithoutTheOrchestratorBlockGetsNoIdentity(t *testing.T) {
+	f := newLabelFixture(t, labelPR(7, ""))
+	f.openRun(t, labelRunA, 7)
+	running := labelItem("wi-1", orchestrator.PhaseRunning, labelRunA, "forge-labels", 1)
+	f.seed(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion,
+		Rev:           1,
+		AgentID:       "aurora",
+		Role:          orchestrator.RoleOrchestrator,
+		WorkItems:     []orchestrator.WorkItem{running},
+		Intents:       []orchestrator.Intent{labelAttempt(running, 1, labelRunA, "")},
+	})
+	d, out := f.daemon(t)
+	// The fixture's installation has opted in; this is the one that has not.
+	holdOrchestratorWorkdir(t, d.lc.GCPProject, false)
+
+	if id := orchestratorIdentityOf(d.lc); !id.none() {
+		t.Fatalf("an installation that holds no orchestrator block gave the daemon the identity %+v: the account it names is one the module creates on no installation", id)
+	}
+	if seams := orchestratorLabelSeams(d); seams.Labelers != nil || seams.PRs != nil || seams.Log != nil {
+		t.Errorf("the daemon built label seams (%+v) for an installation with no daemon account: every call they make would be a mint for an address no project holds", seams)
+	}
+
+	// A whole cycle of the real tick, with a running item whose pull request is
+	// open and labelled nothing: nothing is asked of the service, nothing of the
+	// mint, and no line is written — a daemon that said something here would say
+	// it again on every cycle, for ever.
+	f.open(t, d)
+	f.step(t, d)
+
+	if len(f.mint.asked) != 0 {
+		t.Errorf("the daemon minted %d times for an installation with no orchestrator block: the mint is a gcloud impersonation of an account that does not exist, and it would run once per repository per tick", len(f.mint.asked))
+	}
+	if calls := labelCalls(f.host); len(calls) != 0 {
+		t.Errorf("the daemon called the label route %q for an installation with no daemon account", calls)
+	}
+	if lines := f.service.identities(); len(lines) != 0 {
+		t.Errorf("the route was presented %q by a daemon with no identity", lines)
+	}
+	// The cycle's other noise is the triage's (this fixture records no GitHub
+	// App ID, so it says so once), and what must not be in it is a line about
+	// labels: with no seams the syncer never runs at all, where a daemon that
+	// built them for an account no project holds would write its refusal once
+	// per repository on every tick for ever.
+	if got := out.String(); strings.Contains(strings.ToLower(got), "label") {
+		t.Errorf("the daemon wrote %q: an installation with no orchestrator block is in this state for ever, and this is the per-tick line that must not exist", got)
+	}
+}
+
+// TestAnInstallationWithoutTheOrchestratorBlockInstallsNoMergeMint: the other
+// caller of the same identity (E10b, E16/D2049). The triage installs the
+// service's gated mint on the providers it opens, and an installation with no
+// daemon account has no mint to install: the provider keeps the credential it
+// holds, and its merge refuses with ErrNoMergeMint rather than presenting a
+// token the installation cannot mint.
+func TestAnInstallationWithoutTheOrchestratorBlockInstallsNoMergeMint(t *testing.T) {
+	withLabelIdentity(t)
+	f := newLabelFixture(t)
+	d, _ := f.daemon(t)
+	holdOrchestratorWorkdir(t, d.lc.GCPProject, false)
+
+	p := &mintRecordingProvider{}
+	orchestratorUseMergeMint(p, d.env, labelRepo, orchestratorIdentityOf(d.lc))
+	if p.mint != nil {
+		t.Error("a provider took a merge mint on an installation whose daemon has no account to mint with")
 	}
 }
 

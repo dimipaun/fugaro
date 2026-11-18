@@ -261,6 +261,11 @@ func (f *labelFixture) daemon(t *testing.T) (*orchestratorDaemon, *strings.Build
 	repo := d.lc.Repos[labelRepo]
 	repo.GitHubAppID = labelAppID
 	d.lc.Repos[labelRepo] = repo
+	// The installation this daemon runs in has opted in: its workdir holds the
+	// orchestrator block, which is the record of the account the daemon mints as
+	// (F19, O2). A test about the installation that has NOT opted in rewrites it
+	// without the block (holdOrchestratorWorkdir).
+	holdOrchestratorWorkdir(t, d.lc.GCPProject, true)
 	return d, out
 }
 

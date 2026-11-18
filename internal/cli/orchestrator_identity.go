@@ -16,11 +16,16 @@
 //
 // The account is the installation module's own (orchestrator.tf, through
 // infra.OrchestratorAccountID), derived from the local config's project the way
-// `fugaro doctor`'s orchestrator-identity check derives it, and the URL is the
-// one `fugaro update` published into that config (localcfg.Config.CredentialsService),
-// which is the same string the module renders into the service's own
-// environment as its audience. Reading the URL from anywhere else would be a
-// token minted for an audience no revision answers to.
+// `fugaro doctor`'s orchestrator-identity check derives it — and derived only
+// where the installation's own tfvars carry the orchestrator block
+// (orchestratorBlockHeld), because the account exists only there: the module
+// creates it under the block's switch and nothing else does. The URL is the one
+// `fugaro update` published into that config
+// (localcfg.Config.CredentialsService), which is the same string the module
+// renders into the service's own environment as its audience. Reading the URL
+// from anywhere else would be a token minted for an audience no revision
+// answers to; deriving the account from the project alone would be a daemon
+// impersonating an address no project holds, once per cycle, for ever.
 //
 // The installation deliberately grants nobody the right to mint a token for
 // that account: no `actAs` on it (orchestrator.tf's "Nothing is granted actAs
@@ -33,6 +38,7 @@ package cli
 
 import (
 	"context"
+	"os"
 	"strings"
 	"time"
 
@@ -60,25 +66,76 @@ type orchestratorIdentity struct {
 // none reports whether this installation gave the daemon nothing to present: no
 // account to mint as, or no service to present it to. Both halves arrive from
 // the installation's own records (orchestratorIdentityOf), and either can be
-// absent — a project whose local config names no credentials service runs a
-// daemon exactly as it did before the service existed.
+// absent — a project whose local config names no credentials service, or one
+// whose installation holds no orchestrator block, runs a daemon exactly as it
+// did before this identity existed.
 func (id orchestratorIdentity) none() bool { return id.account == "" || id.url == "" }
 
 // orchestratorIdentityOf derives the daemon's identity from the installation's
 // own records. It is the one place both halves are read, so a caller cannot
 // mint for one project's account and present to another project's service.
+//
+// The account half is read from TWO records and not from the project alone: the
+// account the service's class admits is the one the installation module creates
+// from its orchestrator block, so an installation whose local config names a
+// credentials service but whose tfvars hold no block has no account to be, and
+// the identity is incomplete (none) — which is the answer a daemon has to get
+// right rather than an account name it composes anyway, because what follows
+// from composing one is a gcloud impersonation of an address no project holds,
+// run on every tick and refused every time (orchestratorBlockHeld).
 func orchestratorIdentityOf(lc *localcfg.Config) orchestratorIdentity {
 	var id orchestratorIdentity
 	if lc == nil {
 		return id
 	}
-	if lc.GCPProject != "" {
-		id.account = infra.OrchestratorAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
-	}
 	if lc.CredentialsService != nil {
 		id.url = lc.CredentialsService.URL
 	}
+	if lc.GCPProject != "" && orchestratorBlockHeld(lc.GCPProject) {
+		id.account = infra.OrchestratorAccountID + "@" + lc.GCPProject + ".iam.gserviceaccount.com"
+	}
 	return id
+}
+
+// orchestratorBlockHeld reports whether the installation this machine holds
+// records the resident orchestrator's block, which is the one record that says
+// the daemon's account exists: the installation root's own
+// terraform.tfvars.json, read from the workdir `fugaro update` plans it in
+// (infra.OrchestratorRecorded, the reader beside the carry that keeps the block
+// across an update).
+//
+// Read from the file rather than assumed from the local config, because the
+// block's presence is the installation's own statement and the config's project
+// is not: a project ID says nothing about whether a daemon account was created
+// under it. The local config is the record of the SERVICE (its URL, published
+// by `fugaro update`), and the block is the record of the ACCOUNT — the two
+// halves of one identity, each from where it is really written. Nothing in this
+// tree composes the block yet (P5.1b: the variable has no CLI writer), so the
+// one installation that holds it is one whose owner put it there by hand, and
+// every installation that did not is unchanged by this identity existing.
+//
+// Every way of not holding it is one answer here — a project that is not a
+// project ID, a machine that holds no workdir for it, a document this program
+// cannot read, a document with no block or a null one — for the reason the
+// derivation above gives: what the daemon would otherwise be is an impersonation
+// of an account no project holds. What a daemon on such an installation does is
+// then nothing, and says nothing about it: no label seams, no client, no merge
+// mint, and no line each tick, which is the state an installation with no
+// credentials service is in for ever (orchestratorLabelSeams).
+func orchestratorBlockHeld(project string) bool {
+	dir, err := infra.InstallationWorkdir(os.Getenv, project)
+	if err != nil {
+		return false
+	}
+	vars, err := infra.ReadWorkdirVars(dir, "installation")
+	if err != nil {
+		return false
+	}
+	held, err := infra.OrchestratorRecorded(vars)
+	if err != nil {
+		return false
+	}
+	return held
 }
 
 // orchestratorIdentityToken is the one seam both of the daemon's callers of the

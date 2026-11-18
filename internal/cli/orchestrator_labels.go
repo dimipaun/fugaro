@@ -35,11 +35,13 @@ import (
 // as LabelSeams.Set asks.
 //
 // None is the answer where the installation has nothing to reach the route
-// with: no credentials service URL, or no account to mint a token as — an
-// identity that is incomplete (orchestratorIdentityToken's nil). A tick with no
-// seams labels nothing at all and says nothing about it, which is the state a
-// project with no credentials service is in and the state a project on a host
-// without labels is in for ever (R7). A daemon that HAS an identity and fails
+// with: no credentials service URL, or no daemon account to mint a token as
+// because the installation's tfvars carry no orchestrator block — an identity
+// that is incomplete (orchestratorIdentityToken's nil). A tick with no seams
+// labels nothing at all and says nothing about it, which is the state a project
+// with no credentials service is in, the state an installation that never opted
+// in is in, and the state a project on a host without labels is in for ever
+// (R7). A daemon that HAS an identity and fails
 // to mint one is a different thing, and never this: the refusal travels back
 // through the client and the syncer writes it as one line (the caller's own
 // ErrLabelIdentity), because a daemon silently labelling nothing with the
