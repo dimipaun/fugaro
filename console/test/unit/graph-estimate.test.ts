@@ -78,10 +78,10 @@ const ESTIMATE: Readonly<Record<string, unknown>> = Object.freeze({
   cost_unknown_tasks: 0,
 })
 
-/** RANGE is the two ranges of one estimate as this screen says them: whole
- * minutes, dollars to the cent and an **en dash** between the ends -- U+2013,
- * the mark the CLI's own line prints, spelled here as an escape so this file
- * cannot drift from `GRAPH_ESTIMATE_RANGE` by a keystroke. */
+/** READY_RANGE and COST_RANGE are the two ranges of ESTIMATE as this screen says
+ * them: whole minutes, dollars to the cent, and an **en dash** between the ends
+ * -- U+2013, the mark the CLI's own line prints, spelled here as an escape so
+ * this file cannot drift from `GRAPH_ESTIMATE_RANGE` by a keystroke. */
 const READY_RANGE = '40–70'
 const COST_RANGE = '$3.00–$5.00'
 
