@@ -167,8 +167,14 @@ leaks() {
   # no credential, and a skip would promote an image nobody cleared. The count
   # is the daemon's own, so the number of layers is not taken from the save's
   # JSON here.
+  #
+  # The daemon lists a layer once per step that made it, while a save stores a
+  # layer's content once: BuildKit gives every no-op RUN the same empty layer,
+  # one diff ID, so an image of 20 layers can hold 19 distinct ones. What is
+  # held to the read is therefore the number of distinct diff IDs -- a layer
+  # whose content was read once is read for every step that shares it.
   docker save -o "$work/image.tar" "$image"
-  layers=$(docker inspect --format '{{len .RootFS.Layers}}' "$image")
+  layers=$(docker inspect --format '{{range .RootFS.Layers}}{{println .}}{{end}}' "$image" | sed '/^$/d' | sort -u | wc -l | LC_ALL=C tr -d ' ')
   tar -tf "$work/image.tar" > "$work/outer"
   read_layers=0
   while IFS= read -r entry; do
@@ -176,8 +182,15 @@ leaks() {
     tar -xOf "$work/image.tar" "$entry" > "$work/layer" 2>/dev/null || continue
     if ! tar -tf "$work/layer" > "$work/members" 2>/dev/null; then
       # Not a tar: a manifest or the image's config, which a save carries
-      # beside its layers and which this is not the fence for.
-      continue
+      # beside its layers and which this is not the fence for. Anything else
+      # is a layer in a codec this worker cannot decode, and the distinct count
+      # alone would let it pass beside a second blob of an already-read diff ID.
+      first=$(head -c 512 "$work/layer" | LC_ALL=C tr -d ' \t\r\n' | head -c 1)
+      case "$first" in
+        '{'|'['|'') continue ;;
+      esac
+      echo "scan.sh: $image holds a layer this cannot decode: $entry" >&2
+      exit 1
     fi
     read_layers=$((read_layers + 1))
     grep -E "$git_config_path" "$work/members" > "$work/configs" || true
@@ -195,7 +208,7 @@ leaks() {
     done < "$work/configs"
   done < "$work/outer"
   if [ "$read_layers" -ne "$layers" ]; then
-    echo "scan.sh: $image holds $layers layers and this read $read_layers of them: a layer it cannot decode is a layer it cannot clear" >&2
+    echo "scan.sh: $image holds $layers distinct layers and this read $read_layers of them: a layer it cannot decode is a layer it cannot clear" >&2
     echo "scan.sh: the image is refused rather than promoted with a layer nobody read" >&2
     exit 1
   fi
