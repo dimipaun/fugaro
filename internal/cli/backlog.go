@@ -248,14 +248,24 @@ type backlogItem struct {
 }
 
 // backlogUpsert writes items into the backlog node, skipping every id the node
-// already holds, and reports the ids it wrote.
+// already knows, and reports the ids it wrote.
 //
 // It is the one writer both `fugaro backlog add` (B1) and the fold of
 // docs/backlog/ `fugaro update` runs (B2, D2716) go through, because an item is
 // one shape whoever files it: a work item with NO spec (D2715), queued and
 // unapproved (D2717), in the project's own backlog node (D2735). What the skip
-// is for is the fold's "once": an id the node already holds is an item already
-// filed, so a second update over the same checkout writes nothing.
+// is for is the fold's "once": an id the node already knows is an item already
+// filed, so a second update over the same checkout does not file it again.
+//
+// "Knows" is the work list AND the archive, and the archive half is what makes
+// the "once" hold: an item leaves the work list through OpWorkItemArchive —
+// which is how a folded item ends, archived by a person or by the daemon once
+// it has finished — and the file it was folded from is still in the checkout, so
+// a skip that read the work list alone would refile it the first time it
+// finished. The archive is bounded history rather than a record (state.go's
+// keptArchived, and shrink drops its oldest entry first when a node is over its
+// target), so the ids the skip recognises are the ones the node still remembers,
+// and the oldest id it has forgotten is one the fold files a second time.
 //
 // The recipe and the tier the run is dispatched with are not a filer's to
 // invent silently: the state model requires both of every item, so what is
@@ -268,9 +278,15 @@ type backlogItem struct {
 // takes, and a node that moved under the caller is returned as
 // orchestrator.ErrStateMoved rather than as a lost item.
 func backlogUpsert(ctx context.Context, node *orchestrator.Node, db *rtdb.Client, s orchestrator.State, etag orchestrator.ETag, items []backlogItem) ([]string, error) {
-	have := make(map[string]bool, len(s.WorkItems))
+	// The work list and the archive both: an item that has finished is one the
+	// node has already filed, and the file it came from is still in the
+	// checkout, so a skip that read the work list alone would file it again.
+	have := make(map[string]bool, len(s.WorkItems)+len(s.Archived))
 	for _, w := range s.WorkItems {
 		have[w.ID] = true
+	}
+	for _, a := range s.Archived {
+		have[a.ID] = true
 	}
 	var ops []orchestrator.Op
 	var wrote []string

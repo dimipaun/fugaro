@@ -56,20 +56,20 @@ func backlogItemFile(t *testing.T, root, id, slug, title, status string) {
 	}
 }
 
-// seedBacklogNode writes items into the fixture's backlog node the way a
-// session's own patch does — orchestrator.Apply over the empty state — so a
-// command under test reads a node a run would have written. It is the state a
-// checkout that was already folded is in: the node holds the item the folder's
-// file stands for.
-func seedBacklogNode(t *testing.T, db *gcpfake.RTDB, ops ...orchestrator.Op) {
+// seedBacklogNode writes ops into the fixture's backlog node the way a run's
+// own patch does — orchestrator.Apply over the empty state — so a command under
+// test reads a node a run would have written. It is the state a checkout that
+// was already folded is in: the node holds the item the folder's file stands
+// for. The actor is the caller's because one of the states below carries a
+// phase, and a phase is the daemon's to write (G12).
+func seedBacklogNode(t *testing.T, db *gcpfake.RTDB, actor orchestrator.Actor, ops ...orchestrator.Op) {
 	t.Helper()
 	s := orchestrator.State{
 		SchemaVersion: orchestrator.SchemaVersion,
 		AgentID:       orchestratorTestID,
 		Role:          orchestrator.RoleOrchestrator,
 	}
-	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: ops},
-		orchestrator.Actor{Class: orchestrator.Session, Name: "session", Now: orchestratorTestNow})
+	next, err := orchestrator.Apply(s, orchestrator.Patch{BaseRev: s.Rev, Ops: ops}, actor)
 	if err != nil {
 		t.Fatalf("seeding the backlog node: %v", err)
 	}
@@ -78,6 +78,21 @@ func seedBacklogNode(t *testing.T, db *gcpfake.RTDB, ops ...orchestrator.Op) {
 		t.Fatal(err)
 	}
 	db.Set(orchestratorPath(t, orchestrator.BacklogNode), json.RawMessage(raw))
+}
+
+// archivedBacklogOps are the ops that leave an item in the node's archive and
+// in no work list, which is where a folded item ends: filed, then finished and
+// archived out (OpWorkItemArchive — `fugaro orchestrator patch archive`, and the
+// daemon's own pass over a finished item). Both the phase and the archive entry
+// are the daemon's to write.
+func archivedBacklogOps(id, title string) []orchestrator.Op {
+	done := orchestrator.PhaseDone
+	item := workItemUpsert(id, title)
+	item.WorkItem.Phase = &done
+	return []orchestrator.Op{
+		item,
+		{Op: orchestrator.OpWorkItemArchive, Archive: &orchestrator.ArchiveOp{ID: id, Outcome: string(done)}},
+	}
 }
 
 // storedBacklogItems reads the fixture's backlog node back the way the CLI
@@ -111,9 +126,12 @@ func storedBacklogItems(t *testing.T, db *gcpfake.RTDB) map[string]orchestrator.
 //
 // The closed file is the half that says which items the fold is about: a closed
 // or dropped item is history, and the standing backlog holds no item for it.
-// The node's own item is the other half, and it is what the "once" means
-// (D2716): the id the node already carries is one already filed, so the run
-// writes nothing for that file and leaves the item it found exactly as it was.
+// The node's own items are the other half, and they are what the "once" means
+// (D2716): an id the node already carries is one already filed, whether it is
+// still in the work list or has been archived out of it, so the run writes
+// nothing for either file. The archived one is the half that is easy to miss —
+// archiving is where a folded item normally ends, and a skip that read the work
+// list alone would refile it as a fresh queued duplicate.
 //
 // The door is not run a second time here, for the reason TestUpdateIsIdempotent
 // gives: this rig's first run onboards the repository, and a second run's
@@ -124,7 +142,12 @@ func TestUpdateFoldsOpenBacklogOnce(t *testing.T) {
 	backlogItemFile(t, r.root, "20261021-01", "one", "the first thing left open", "open")
 	backlogItemFile(t, r.root, "20261021-02", "two", "the second thing left open", "open")
 	backlogItemFile(t, r.root, "20261021-03", "three", "a thing already dealt with", "closed")
-	seedBacklogNode(t, r.db, workItemUpsert("20261021-02", "an item somebody already filed"))
+	backlogItemFile(t, r.root, "20261021-04", "four", "a thing folded here and finished since", "open")
+	// The node as a run that already folded this checkout has it: one item still
+	// in the work list, and one that finished and was archived out.
+	node := []orchestrator.Op{workItemUpsert("20261021-02", "an item somebody already filed")}
+	node = append(node, archivedBacklogOps("20261021-04", "a thing folded here and finished since")...)
+	seedBacklogNode(t, r.db, orchestrator.Actor{Class: orchestrator.Daemon, Name: "daemon", Now: orchestratorTestNow}, node...)
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
@@ -146,6 +169,13 @@ func TestUpdateFoldsOpenBacklogOnce(t *testing.T) {
 	}
 	if _, ok := byID["20261021-03"]; ok {
 		t.Errorf("the closed file was folded: %+v. A closed or dropped item is history, and the standing backlog holds no item for it (D2716)", byID["20261021-03"])
+	}
+	// An id the node has archived is an id it knows: the item finished and left
+	// the work list, and the folder's file is still there. A skip that read the
+	// live items alone would file it again, as a queued duplicate of an item the
+	// node has already dealt with (D2716).
+	if got, ok := byID["20261021-04"]; ok {
+		t.Errorf("an item the node had archived was filed again: %+v", got)
 	}
 
 	folded, ok := byID["20261021-01"]

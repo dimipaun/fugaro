@@ -23,9 +23,20 @@ import (
 // `fugaro backlog add` files into it (B1). D2716 supersedes the folder's
 // format: `fugaro update`, run in a checkout, imports the folder's open items
 // into that node ONCE — one item per file, under the file's own id, so a second
-// update over the same checkout writes nothing — and the folder stays as
-// history, where a reader still finds it and `fugaro backlog index` still
+// update over the same checkout does not file it again — and the folder stays
+// as history, where a reader still finds it and `fugaro backlog index` still
 // regenerates its index (B8).
+//
+// "Once" is as far as the node remembers (backlogUpsert's skip): the ids in the
+// backlog shard's work list, and the ids in the bounded archive it keeps, which
+// is where a folded item goes once it has finished. The ordinary case is
+// therefore silent for good — the archive is not pruned while a node is inside
+// its size target — and the one that is not is an item folded long ago, finished
+// and since aged out of that archive: the folder's file is still there, the node
+// no longer holds the id, and a later update files it a second time, queued and
+// unapproved like the first, so a person still sees it before anything runs.
+// Closing that hole takes a mark on the node that retention cannot trim, and a
+// node field is a decision for the owner rather than a step this change takes.
 //
 // Why the import is a step of this door: the HARD RULE says the upgrade is
 // `fugaro update` alone, so a person who upgrades and runs it in a checkout has
@@ -38,7 +49,7 @@ import (
 // It asks nothing, and it is silent wherever there is nothing to do: outside a
 // checkout, in a checkout with no docs/backlog/ folder, in an installation with
 // no database to write into, and on the second and every later update over a
-// checkout it has already folded.
+// checkout whose ids the node still knows.
 
 // backlogOpenStatus is the one of D27's three status words the fold imports: a
 // closed or dropped file is history, and the standing backlog has no item for
