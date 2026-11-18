@@ -78,12 +78,14 @@ run_slug=chk610-sandbox/$run_id
 branch=chk610-$run_base
 pr=7
 head_sha=abc1234def5678
-# credential_origin is the origin a token-based clone leaves behind: a GitHub URL
+# credentialed_origin is the origin a token-based clone leaves behind: a GitHub URL
 # whose userinfo carries a credential, split by a `/`, which is where a strip that
 # cannot cross one would leave it in place. What it holds is not a credential and
 # opens nothing: it is the word the case below asserts never reaches the output,
-# so one that appears was printed by this check and by nothing else.
-credential_origin='https://x-access-token:LEAK-CANARY/with-a-slash@github.com/acme-owner/chk610-sandbox.git'
+# so one that appears was printed by this check and by nothing else. What the
+# strip leaves of it — `https://github.com/` — names no repository, which is the
+# refusal whose text reaches both stderr and the block.
+credentialed_origin='https://x-access-token:LEAK-CANARY/with-a-slash@github.com/'
 credential_words='x-access-token LEAK-CANARY with-a-slash'
 
 # --------------------------------------------------------------------- fakes
@@ -428,6 +430,9 @@ out("doctor-noproject.json", d)
 d = clone(doctor)
 d["project"]["name"] = "belong"
 out("doctor-belong.json", d)
+# A doctor whose document this check cannot read as an installation at all: it
+# answers no project block, and the row says which of the two it read.
+out("doctor-no-document.json", [])
 
 # ------------------------------------------------------------------- config
 config = configure(
@@ -794,6 +799,257 @@ test_happy_path() {
   expect_contains "$ghcalls" "pr create --repo $repo --base $base_branch --head $branch --title Check 610: a throwaway pull request to review" "the happy path: the pull request it opened"
   expect_contains "$ghcalls" "pr view $branch --repo $repo --json number -q .number" "the happy path: the number it read back"
 }
+test_an_unknown_argument_is_refused() {
+  local dir=$work/unknown
+  prepare "$dir"
+  run_check "$dir" -- --review
+  expect_status "$status" 2 "an unknown argument"
+  expect_contains "$err" "unknown argument: --review" "an unknown argument: the reason"
+  assert_no_launch "$dir" "an unknown argument"
+}
+
+test_a_missing_sandbox_is_refused() {
+  local dir=$work/no-sandbox
+  prepare "$dir"
+  run_check "$dir" CHECK610_SANDBOX=
+  expect_status "$status" 2 "no --sandbox"
+  expect_contains "$err" "Check 610 needs --sandbox" "no --sandbox: the reason"
+  expect_absent "$(cat "$dir/logs/fugaro.calls")" "doctor" "no --sandbox: nothing is read"
+  assert_no_launch "$dir" "no --sandbox"
+}
+
+test_a_path_that_is_not_a_checkout_is_refused() {
+  local dir=$work/not-a-checkout
+  prepare "$dir"
+  rm -f "$dir/sandbox/fugaro.yaml"
+  run_check "$dir"
+  expect_status "$status" 2 "a path that is not a checkout"
+  expect_contains "$err" "carries no fugaro.yaml" "a path that is not a checkout: the reason"
+  assert_no_launch "$dir" "a path that is not a checkout"
+}
+
+test_a_missing_tool_stops_before_anything_is_called() {
+  local dir=$work/no-tool
+  prepare "$dir"
+  # A PATH that holds the fakes for everything but `gh`, and the real one nowhere:
+  # this machine may have a real gh, git or fugaro installed, and a case that only
+  # deleted a fake would drive it.
+  mkdir -p "$dir/empty"
+  local tool
+  for tool in bash mktemp python3 sed grep tr cut head tail cat rm chmod mkdir date sleep kill ls cp awk; do
+    ln -s "$(command -v "$tool")" "$dir/empty/$tool" 2>/dev/null || true
+  done
+  ln -s "$dir/bin/git" "$dir/empty/git"
+  ln -s "$dir/bin/gcloud" "$dir/empty/gcloud"
+  ln -s "$dir/bin/fugaro" "$dir/empty/fugaro"
+  # run_check makes the call logs; this case calls the script itself, so the log
+  # the assertion below reads is made here.
+  mkdir -p "$dir/logs"
+  : >"$dir/logs/git.calls"
+  status=0
+  env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_REMOTE -u CURSOR_AGENT -u AI_AGENT \
+    PATH="$dir/empty" HOME="$dir/home" TMPDIR="$dir/tmp" \
+    FAKE_LOG_DIR="$dir/logs" FAKE_STATE_DIR="$dir/state" \
+    CHECK610_SANDBOX="$dir/sandbox" \
+    "$dir/empty/bash" "$script" >"$dir/out" 2>"$dir/err" || status=$?
+  out=$(cat "$dir/out")
+  err=$(cat "$dir/err")
+  expect_status "$status" 2 "a missing tool"
+  expect_contains "$err" "Check 610 needs 'gh' and it is not on PATH" "a missing tool: the reason"
+  expect_absent "$(cat "$dir/logs/git.calls")" "git " "a missing tool: nothing is read"
+}
+
+test_xtrace_is_refused() {
+  local dir=$work/xtrace
+  prepare "$dir"
+  run_check "$dir" -- --xtrace
+  expect_status "$status" 1 "a traced shell"
+  expect_contains "$out" "FACT xtrace: FAIL" "a traced shell: the row"
+  expect_contains "$out" "this shell is tracing" "a traced shell: the reason"
+  assert_no_launch "$dir" "a traced shell"
+  assert_scratch_removed "$dir" "a traced shell"
+}
+
+test_a_coding_agents_session_is_refused() {
+  local dir=$work/agent
+  prepare "$dir"
+  run_check "$dir" CLAUDECODE=1
+  expect_status "$status" 1 "a coding agent's session"
+  expect_contains "$out" "FACT agent-session: FAIL" "a coding agent's session: the row"
+  expect_contains "$out" "is set, so this is a coding agent's session" "a coding agent's session: the marker is named"
+  assert_no_launch "$dir" "a coding agent's session"
+  assert_scratch_removed "$dir" "a coding agent's session"
+}
+
+test_belong_is_refused_by_name() {
+  local dir=$work/belong
+  prepare "$dir"
+  run_check "$dir" CHECK610_SANDBOX="$dir/belong-checkout"
+  expect_status "$status" 1 "a sandbox path naming belong"
+  expect_contains "$err" "a value this check was given or read names belong" "a sandbox path naming belong: the reason"
+  expect_contains "$out" "FACT belong: FAIL" "a sandbox path naming belong: the row"
+  expect_contains "$out" "FACT sandbox: FAIL — not reached" "a sandbox path naming belong: nothing is read"
+  assert_no_launch "$dir" "a sandbox path naming belong"
+}
+
+test_a_value_that_names_belong_is_refused_by_the_repository_guard() {
+  local dir=$work/installation-guard
+  prepare "$dir"
+  run_check "$dir" FAKE_DOCTOR_FILE=doctor-belong.json
+  expect_status "$status" 1 "an installation named belong"
+  expect_contains "$err" "belongs to belong ($gcp_project, region $region) and $repo" "an installation named belong: the refusal says what it read"
+  expect_contains "$out" "FACT sandbox: FAIL" "an installation named belong: the row"
+  assert_no_launch "$dir" "an installation named belong"
+  assert_scratch_removed "$dir" "an installation named belong"
+}
+
+test_a_checkout_with_no_origin_is_refused() {
+  local dir=$work/no-origin
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=git-no-origin
+  expect_status "$status" 1 "a checkout with no origin"
+  expect_contains "$err" "names no origin this check could read (git exited 2)" "a checkout with no origin: the refusal says what git answered"
+  expect_contains "$err" "No such remote 'origin'" "a checkout with no origin: the reason is quoted"
+  assert_no_launch "$dir" "a checkout with no origin"
+}
+
+test_an_origin_that_names_no_repository_is_refused() {
+  local dir=$work/odd-origin
+  prepare "$dir"
+  run_check "$dir" "FAKE_ORIGIN=https://github.com/"
+  expect_status "$status" 1 "an origin naming no repository"
+  expect_contains "$err" "is 'https://github.com/', which names no repository" "an origin naming no repository: the refusal says what it read"
+  assert_no_launch "$dir" "an origin naming no repository"
+}
+
+test_an_origin_that_is_not_github_is_refused() {
+  local dir=$work/not-github
+  prepare "$dir"
+  run_check "$dir" "FAKE_ORIGIN=https://bitbucket.org/acme-owner/chk610-sandbox.git"
+  expect_status "$status" 1 "a Bitbucket checkout"
+  expect_contains "$err" "is not a GitHub repository (its host is 'bitbucket.org')" "a Bitbucket checkout: the refusal says which host it read"
+  expect_contains "$err" "the Bitbucket half is Check 611" "a Bitbucket checkout: the refusal names the other half"
+  expect_contains "$out" "FACT aborted: FAIL" "a Bitbucket checkout: the reason is in the block"
+  assert_no_launch "$dir" "a Bitbucket checkout"
+}
+
+test_a_credential_in_the_origin_is_never_printed() {
+  local dir=$work/credentialled-origin
+  prepare "$dir"
+  # A URL the strip cannot leave whole: its userinfo carries a `/`, which is where
+  # a rule that could not cross one would leave the credential in place. What it
+  # still names is `github.com/`, which is the refusal this case measures.
+  run_check "$dir" "FAKE_ORIGIN=$credentialed_origin"
+  expect_status "$status" 1 "a credentialled origin"
+  local word
+  for word in $credential_words; do
+    expect_absent "$err" "$word" "a credentialled origin: '$word' on stderr"
+    expect_absent "$out" "$word" "a credentialled origin: '$word' in the block"
+  done
+  # The URL is kept, minus its userinfo: the refusal still says what it refused.
+  expect_contains "$err" "is 'https://github.com/', which names no repository" "a credentialled origin: the URL is kept without its credential"
+  expect_contains "$out" "FACT aborted: FAIL" "a credentialled origin: the reason is in the block"
+  assert_no_launch "$dir" "a credentialled origin"
+}
+
+test_a_dirty_checkout_is_refused() {
+  local dir=$work/dirty
+  prepare "$dir"
+  run_check "$dir" "FAKE_DIRTY= M CHK610.md"
+  expect_status "$status" 1 "a dirty checkout"
+  expect_contains "$err" "has uncommitted changes, and this check commits one file to it" "a dirty checkout: the reason"
+  expect_contains "$err" "it will not touch them" "a dirty checkout: what it promises"
+  assert_no_launch "$dir" "a dirty checkout"
+}
+
+test_a_doctor_whose_checks_are_not_all_ok_is_an_answer() {
+  local dir=$work/doctor-status-1
+  prepare "$dir"
+  run_check "$dir" FAKE_DOCTOR_STATUS=1
+  expect_status "$status" 0 "a doctor that exited 1"
+  expect_contains "$out" "FACT sandbox: PASS" "a doctor that exited 1: the sandbox row is measured"
+  assert_one_launch "$dir" "a doctor that exited 1"
+}
+
+test_a_doctor_that_never_answers_is_not_measured() {
+  local dir=$work/doctor-hangs
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=doctor-hangs CHECK610_DOCTOR_TIMEOUT_SECONDS=1
+  expect_status "$status" 2 "a doctor that never answered"
+  expect_contains "$out" "FACT sandbox: FAIL — fugaro doctor --json did not answer" "a doctor that never answered: the sandbox row"
+  expect_contains "$out" "FACT config: FAIL — there is no checkout to read a workflow of" "a doctor that never answered: the config row"
+  expect_contains "$out" "FACT u2: FAIL — the checkout could not be read far enough" "a doctor that never answered: U2"
+  assert_no_launch "$dir" "a doctor that never answered"
+  assert_scratch_removed "$dir" "a doctor that never answered"
+}
+
+test_a_doctor_that_carries_no_project_is_not_measured() {
+  local dir=$work/doctor-no-project
+  prepare "$dir"
+  run_check "$dir" FAKE_DOCTOR_FILE=doctor-noproject.json
+  expect_status "$status" 2 "a doctor with no project block"
+  expect_contains "$out" "FACT sandbox: FAIL — fugaro doctor --json answered without a project block" "a doctor with no project block: the row"
+  assert_no_launch "$dir" "a doctor with no project block"
+}
+
+test_a_doctor_that_is_not_a_document_is_not_measured() {
+  local dir=$work/doctor-no-document
+  prepare "$dir"
+  run_check "$dir" FAKE_DOCTOR_FILE=doctor-no-document.json
+  expect_status "$status" 2 "a doctor that is not a document"
+  expect_contains "$out" "FACT sandbox: FAIL — fugaro doctor --json answered without a project block" "a doctor that is not a document: the row says what it could not read"
+  assert_no_launch "$dir" "a doctor that is not a document"
+}
+
+test_a_checkout_whose_fugaro_yaml_carries_profiles_is_not_measured() {
+  local dir=$work/own-profiles
+  prepare "$dir"
+  write_checkout_with_profiles "$dir/sandbox"
+  run_check "$dir"
+  expect_status "$status" 2 "a checkout whose own file carries profiles"
+  expect_contains "$out" "FACT config: FAIL — the checkout's own fugaro.yaml carries a \`profiles:\` key" "a checkout whose own file carries profiles: the row"
+  expect_contains "$out" "FACT pull: FAIL — the checkout is not the baked, profile-less repository this check is for; the config row says why, so no pull request is opened" "a checkout whose own file carries profiles: nothing is launched on it"
+  assert_no_launch "$dir" "a checkout whose own file carries profiles"
+}
+
+test_a_checkout_with_no_workflow_is_not_measured() {
+  local dir=$work/no-workflow
+  prepare "$dir"
+  run_check "$dir" FAKE_CONFIG_FILE=config-no-workflow.json
+  expect_status "$status" 2 "a checkout with no workflow"
+  expect_contains "$out" "FACT config: FAIL — the checkout's resolved config carries no workflow at all" "a checkout with no workflow: the row"
+  assert_no_launch "$dir" "a checkout with no workflow"
+}
+
+test_a_workflow_that_is_not_baked_is_not_measured() {
+  local dir=$work/cloned-workflow
+  prepare "$dir"
+  run_check "$dir" FAKE_CONFIG_FILE=config-clone.json
+  expect_status "$status" 2 "a cloned workflow"
+  expect_contains "$out" "FACT config: FAIL — the checkout resolves 1 workflow(s) and chk is not baked (chk=clone)" "a cloned workflow: the row names the workflow and its kind"
+  expect_contains "$out" "which is a different review path from the one D2388 and U1 are about" "a cloned workflow: why it is not measured"
+  assert_no_launch "$dir" "a cloned workflow"
+}
+
+test_a_second_workflow_that_is_not_baked_is_not_measured() {
+  local dir=$work/second-workflow
+  prepare "$dir"
+  run_check "$dir" FAKE_CONFIG_FILE=config-nonbaked-two.json
+  expect_status "$status" 2 "a second, non-baked workflow"
+  expect_contains "$out" "FACT config: FAIL — the checkout resolves 2 workflow(s) and other is not baked (chk=baked,other=shared)" "a second, non-baked workflow: the row names every workflow"
+  assert_no_launch "$dir" "a second, non-baked workflow"
+}
+
+test_a_config_that_could_not_be_read_is_not_measured() {
+  local dir=$work/config-refused
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=config-fails
+  expect_status "$status" 2 "a config that could not be read"
+  expect_contains "$out" "FACT config: FAIL — fugaro config show --json did not answer in $dir/sandbox (exit 1)" "a config that could not be read: the row says what answered"
+  expect_contains "$out" "a config nobody read is not a baked workflow" "a config that could not be read: why it is not measured"
+  assert_no_launch "$dir" "a config that could not be read"
+}
+
 # ------------------------------------------------------------------- the run
 # CHECK_TEST_ONLY names one case; CHECK_TEST_SHARD=i/n runs every case whose index
 # is congruent to i modulo n. scripts/live_checks_test.go splits the suite across
@@ -814,6 +1070,28 @@ t() {
 t test_help
 t test_dry_run
 t test_happy_path
+t test_an_unknown_argument_is_refused
+t test_a_missing_sandbox_is_refused
+t test_a_path_that_is_not_a_checkout_is_refused
+t test_a_missing_tool_stops_before_anything_is_called
+t test_xtrace_is_refused
+t test_a_coding_agents_session_is_refused
+t test_belong_is_refused_by_name
+t test_a_value_that_names_belong_is_refused_by_the_repository_guard
+t test_a_checkout_with_no_origin_is_refused
+t test_an_origin_that_names_no_repository_is_refused
+t test_an_origin_that_is_not_github_is_refused
+t test_a_credential_in_the_origin_is_never_printed
+t test_a_dirty_checkout_is_refused
+t test_a_doctor_whose_checks_are_not_all_ok_is_an_answer
+t test_a_doctor_that_never_answers_is_not_measured
+t test_a_doctor_that_carries_no_project_is_not_measured
+t test_a_doctor_that_is_not_a_document_is_not_measured
+t test_a_checkout_whose_fugaro_yaml_carries_profiles_is_not_measured
+t test_a_checkout_with_no_workflow_is_not_measured
+t test_a_workflow_that_is_not_baked_is_not_measured
+t test_a_second_workflow_that_is_not_baked_is_not_measured
+t test_a_config_that_could_not_be_read_is_not_measured
 
 if [ "$failures" -ne 0 ]; then
   echo "check610_test.sh: $failures failure(s)" >&2

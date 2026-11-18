@@ -931,7 +931,7 @@ step_sandbox() {
     stop "the origin of $SANDBOX is '$url', which names no repository: the repository this check runs for is named by the origin, and a URL this check cannot read is one it will not guess at"
   fi
   if [ "$host" != github.com ]; then
-    stop "the origin of $SANDBOX is $url, which is not a GitHub repository (its host is '${host:-none}'): this check is the GITHUB half — the implicit review-only job for provider github, and `fugaro review --pr N` resolving onto it — and the Bitbucket half is Check 611. Name a sandbox GITHUB repository checkout"
+    stop "the origin of $SANDBOX is $url, which is not a GitHub repository (its host is '${host:-none}'): this check is the GITHUB half — the implicit review-only job for provider github, and \`fugaro review --pr N\` resolving onto it — and the Bitbucket half is Check 611. Name a sandbox GITHUB repository checkout"
   fi
   # The working tree has to be clean before this check commits to it: it cuts a
   # branch from the base branch and puts one file on it, and a dirty tree would
