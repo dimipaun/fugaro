@@ -528,12 +528,24 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 		return nil, err
 	}
 	return &orchestrator.Tick{
-		Store:    d.node,
-		Runs:     &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
-		Launcher: &orchestratorLauncher{env: d.env, stderr: d.warn, started: d.launched},
-		Mint:     func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
-		Caps:     caps,
-		Breaker:  &orchestrator.Breaker{},
+		Store: d.node,
+		Runs:  &orchestratorRunView{bucket: d.env.bucket.Bucket, env: d.env, warn: d.warn},
+		Launcher: &orchestratorLauncher{
+			env: d.env, stderr: d.warn, started: d.launched,
+			// The ticket behind an item is read through the installation's
+			// credentials service (B9, D2720), and the one write a launch may
+			// make under the state — putting an item whose issue was edited back
+			// to queued — goes to the node this daemon works, stamped with the
+			// server's own clock. A daemon with no node here is one nothing
+			// launches from, and the launcher refuses that write rather than
+			// making it nowhere.
+			issues: issueReadSeam(d),
+			nodes:  []orchestrator.Store{d.node},
+			now:    d.db.ServerNow,
+		},
+		Mint:    func(now time.Time) (string, error) { return task.NewRunID(now, crand.Reader) },
+		Caps:    caps,
+		Breaker: &orchestrator.Breaker{},
 		// A tick has three things to say — a run it folded ended, it committed
 		// a question (O7), and it merged under a ceiling that tells somebody
 		// (D2030) — and the log sink is the channel slice 1 ships, one cleaned

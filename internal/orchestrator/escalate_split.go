@@ -143,7 +143,7 @@ func splitTitle(item WorkItem) string { return "a smaller scope: " + item.Title 
 func splitBrief(item WorkItem, scope string) string {
 	return "The escalation ladder split " + item.ID + ": the merge judge blocked this change on a fundamental issue, " +
 		"and what continues is a scope a person approves. The judge named it:\n\n" +
-		fenced(scope, maxScopeFenceRunes) +
+		Fenced(scope, maxScopeFenceRunes) +
 		"\n\nThis item is that scope and not the specification the ladder decided about: nothing of the original brief is relaunched, " +
 		"and the branch and the pull request stay as they are. Approve the item when the scope is the right work."
 }

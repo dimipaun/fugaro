@@ -40,6 +40,20 @@ type orchestratorLauncher struct {
 	// the one moment the binary check is skipped: a daemon that handed over
 	// mid-launch would abandon a start whose intent is already on the node.
 	started *launchInFlight
+	// issues is the route an item's ticket is read back through, or nil where
+	// this installation can reach no such route (issueReadSeam): an item whose
+	// ticket cannot be read is started on its own brief, which is the launch
+	// every item had before the route existed.
+	issues *orchestratorIssueReads
+	// nodes are the nodes this daemon works, and they are read for one thing
+	// only: the write that puts an item whose issue was edited back to queued
+	// and unapproved (requeueBodyChanged, D2720). A launcher that finds the item
+	// in none of them refuses rather than guessing.
+	nodes []orchestrator.Store
+	// now is the database server's clock (D1230), which is what that write is
+	// stamped with: it is a write under the subtree like any other, and a
+	// laptop's clock is exactly what no stamp there may come from.
+	now orchestrator.ServerNow
 }
 
 // Launch starts the run recorded as runID for one attempt, over the path
@@ -82,7 +96,18 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 	// mints where spec.md §6 allows one (D904). `fugaro run` installs one in
 	// the same place and for the same reason (finishLaunch).
 	ctx = withServiceReadCache(ctx)
-	slug, ts, err := l.prepare(ctx, spec, runID)
+	// The brief is built before anything else of the launch, and for an item
+	// that came from a GitHub issue that means the ticket is read back and
+	// checked against the body the item was approved with (briefFor, B9,
+	// D2720): an issue edited since the approval refuses the launch, and the
+	// item goes back to queued and unapproved rather than being briefed with
+	// text nobody read. It is here and not inside prepare because a refusal
+	// must cost nothing of the launch — no plan resolution, no gate, no task.
+	brief, err := l.briefFor(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	slug, ts, err := l.prepare(ctx, spec, brief, runID)
 	if err != nil {
 		return "", err
 	}
@@ -103,7 +128,11 @@ func (l *orchestratorLauncher) Launch(ctx context.Context, spec orchestrator.Spe
 // mark one itself: the launch is one resolution, and a part of it that installed
 // the switch on its own is how the launch ends up judging the repository with no
 // checkout and starting it on the one the daemon's directory holds.
-func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Spec, runID string) (string, *task.Spec, error) {
+//
+// brief is the run's brief as Launch built it and not spec.Brief: an item that
+// came from an issue is briefed with the ticket's own text, read at this launch
+// and fenced (briefFor).
+func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Spec, brief, runID string) (string, *task.Spec, error) {
 	// Everything here resolves under the launch's checkoutless context, which
 	// Launch installs over the whole launch: the plan, the project layer the
 	// task carries and every gate are one resolution, and the start that
@@ -118,7 +147,7 @@ func (l *orchestratorLauncher) prepare(ctx context.Context, spec orchestrator.Sp
 	if err != nil {
 		return "", nil, err
 	}
-	slug, ts, err := buildAttemptSpec(plan, o, spec.Brief)
+	slug, ts, err := buildAttemptSpec(plan, o, brief)
 	if err != nil {
 		return "", nil, err
 	}
