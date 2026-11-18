@@ -104,6 +104,14 @@ func TestIssueClientAsksForOneIssueRead(t *testing.T) {
 // names no repository or no issue — and the URL cells are the scheme rule the
 // label client and the mint hold theirs to: over plain http the daemon's ID
 // token, which is a bearer credential, would travel in cleartext.
+//
+// Each cell also holds the refusal to the point it is about, which the error
+// alone does not: the daemon's token is minted by a function the cell counts,
+// and a cell that keeps one must leave it uncalled. Deleting the URL check
+// leaves every error here unchanged — the call then goes out to a name that
+// does not resolve, and the caller still reads the route's own refusal — so a
+// test of the error is a test that passes while the client has already minted
+// the bearer credential and sent it in cleartext.
 func TestIssueClientRefusesWhatItCannotAsk(t *testing.T) {
 	f := newServiceFake(t)
 	f.answer = issueAnswer(7, "the ticket's title", "the ticket's body")
@@ -127,6 +135,11 @@ func TestIssueClientRefusesWhatItCannotAsk(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := issueClient(t, f)
+			minted := 0
+			c.IDToken = func(context.Context) (string, error) {
+				minted++
+				return testIDToken, nil
+			}
 			tc.mutate(c)
 			if _, err := c.Issue(t.Context(), tc.number); !errors.Is(err, tc.wantErr) {
 				t.Fatalf("the client answered %v, want %v", err, tc.wantErr)
@@ -135,6 +148,11 @@ func TestIssueClientRefusesWhatItCannotAsk(t *testing.T) {
 			}
 			if calls := f.seen(); len(calls) != 0 {
 				t.Errorf("a refused call sent %d call(s) to the service: %+v", len(calls), calls)
+			}
+			// The cell that carries no mint function of its own (the nil-token
+			// refusal, which replaces this one) has nothing to count.
+			if c.IDToken != nil && minted != 0 {
+				t.Errorf("a refused call minted the daemon's ID token %d time(s), want none: the refusal has to come before the identity is presented", minted)
 			}
 		})
 	}
