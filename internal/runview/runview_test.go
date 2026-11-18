@@ -949,9 +949,11 @@ func TestJoinPlanTaskDropsAnIDThatIsNotOne(t *testing.T) {
 
 // TestJoinCarriesTheRunsRigor: the row carries the record's rigor block, and
 // the JSON key is `rigor`, so `runs ls --json`, `diagnose` and the console
-// read the mode, the layer that won and the areas that matched from the one
-// place the record wrote them (D24). A run with no block carries none: nil,
-// never an empty block a reader would render as a decision nobody took.
+// read the level, the layer that won and the areas that matched from the one
+// place the record wrote them (D24). The block reaches the row under both
+// keys, `mode` and `level` (LD2), so a reader written against either CLI's
+// record reads the same figure. A run with no block carries none: nil, never
+// an empty block a reader would render as a decision nobody took.
 func TestJoinCarriesTheRunsRigor(t *testing.T) {
 	r := rec(runstore.StatusSucceeded, nil)
 	r.Rigor = &runstore.RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
@@ -966,7 +968,7 @@ func TestJoinCarriesTheRunsRigor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), `"rigor":{"mode":"critical","from":"area"`) {
+	if !strings.Contains(string(b), `"rigor":{"mode":"critical","level":"critical","from":"area"`) {
 		t.Fatalf("the row does not carry the block under %q:\n%s", "rigor", b)
 	}
 	if plain := Join(Input{Task: spec}, prices, now); plain.Rigor != nil {

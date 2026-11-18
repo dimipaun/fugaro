@@ -1,6 +1,7 @@
 package runstore
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 
@@ -92,6 +93,21 @@ type RigorRecord struct {
 	Revision string `json:"revision,omitempty"`
 }
 
+// MarshalJSON writes the block with its level under both keys, so a record
+// this binary writes carries `mode` and `level` with the same value whatever
+// the caller built in memory — the invariant the two keys exist for, kept in
+// one place instead of at every construction site. A block holding a level
+// neither spelling carries is written as it stands: no writer of this runner
+// produces one (Bounded drops it), and inventing a value here would hide it.
+func (r RigorRecord) MarshalJSON() ([]byte, error) {
+	type plain RigorRecord // no methods: every field and tag is written as declared
+	out := plain(r)
+	if lvl := r.LevelOf(); rigor.Known(lvl) {
+		out.Mode, out.Level = lvl, lvl
+	}
+	return json.Marshal(out)
+}
+
 // LevelOf is the level the block records: Level where a writer set it, and
 // Mode otherwise — the preference LD2 states, in one place, so no reader has
 // to know which key the record it is holding was written with. It is "" for a
@@ -159,6 +175,17 @@ type RigorArea struct {
 	// Level is the same fact under the name the vocabulary uses now (LD2).
 	Level rigor.Rigor `json:"level"`
 	At    string      `json:"at"`
+}
+
+// MarshalJSON writes the rule the way RigorRecord.MarshalJSON writes the
+// block: both keys, one value, whoever built it.
+func (a RigorArea) MarshalJSON() ([]byte, error) {
+	type plain RigorArea
+	out := plain(a)
+	if lvl := a.LevelOf(); rigor.Known(lvl) {
+		out.Mode, out.Level = lvl, lvl
+	}
+	return json.Marshal(out)
 }
 
 // LevelOf is the level the rule sets: Level where a writer set it, and Mode

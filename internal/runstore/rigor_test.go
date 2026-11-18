@@ -34,9 +34,9 @@ func TestRigorRecordIsTheJSONTheSchemaAndTheConsoleRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"mode":"critical","from":"area",` +
-		`"areas":[{"name":"payments","mode":"critical","at":"bootstrap"},` +
-		`{"name":"docs","mode":"poc","at":"round"}],` +
+	const want = `{"mode":"critical","level":"critical","from":"area",` +
+		`"areas":[{"name":"payments","mode":"critical","level":"critical","at":"bootstrap"},` +
+		`{"name":"docs","mode":"poc","level":"poc","at":"round"}],` +
 		`"at":"finalize","revision":"origin/main"}`
 	if string(block) != want {
 		t.Errorf("the rigor block marshals as\n%s\nwant\n%s", block, want)
@@ -48,9 +48,33 @@ func TestRigorRecordIsTheJSONTheSchemaAndTheConsoleRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"mode":"pro","from":"default","at":"finalize"}`; string(none) != want {
+	if want := `{"mode":"pro","level":"pro","from":"default","at":"finalize"}`; string(none) != want {
 		t.Errorf("a block with no areas marshals as\n%s\nwant\n%s", none, want)
 	}
+	// A record written before the axis was renamed carries `mode` alone: it
+	// still reads, under either key — LevelOf prefers `level` and falls back to
+	// `mode`, and a block built from one carries both keys when it is written
+	// again, so nothing downstream has to know which CLI wrote it.
+	const legacy = `{"mode":"critical","from":"repo","at":"finalize",` +
+		`"areas":[{"name":"payments","mode":"poc","at":"round"}]}`
+	var old RigorRecord
+	if err := json.Unmarshal([]byte(legacy), &old); err != nil {
+		t.Fatal(err)
+	}
+	if old.LevelOf() != rigor.Critical {
+		t.Errorf("a legacy record's level read as %q; want the mode it carries", old.LevelOf())
+	}
+	if len(old.Areas) != 1 || old.Areas[0].LevelOf() != rigor.POC {
+		t.Errorf("a legacy area read as %+v; want the mode it carries", old.Areas)
+	}
+	back, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(back), `"level":"critical"`) || !strings.Contains(string(back), `"level":"poc"`) {
+		t.Errorf("a legacy record did not gain the level key when written again: %s", back)
+	}
+
 	// And a record with no block writes no key at all, so a record from
 	// before this field existed is the record an old reader saw.
 	bare, err := json.Marshal(Record{Version: 1})
@@ -101,9 +125,9 @@ func TestRigorRecordFoldNeverLowers(t *testing.T) {
 	// it was FIRST applied at — a rule re-matched later does not read as one
 	// the run met only at the end.
 	wantAreas := []RigorArea{
-		{Name: "payments", Level: rigor.Critical, At: RigorAtBootstrap},
-		{Name: "web", Level: rigor.Critical, At: RigorAtRound},
-		{Name: "docs", Level: rigor.POC, At: RigorAtBootstrap},
+		{Name: "payments", Mode: rigor.Critical, Level: rigor.Critical, At: RigorAtBootstrap},
+		{Name: "web", Mode: rigor.Critical, Level: rigor.Critical, At: RigorAtRound},
+		{Name: "docs", Mode: rigor.POC, Level: rigor.POC, At: RigorAtBootstrap},
 	}
 	if !reflect.DeepEqual(rec.Areas, wantAreas) {
 		t.Errorf("areas after three moments = %+v; want %+v", rec.Areas, wantAreas)
@@ -172,15 +196,17 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 	}
 	good := &RigorRecord{Level: rigor.Critical, From: rigor.FromArea,
 		Areas: []RigorArea{{Name: "payments", Level: rigor.Critical, At: RigorAtBootstrap}}, At: RigorAtFinalize, Revision: "origin/main"}
-	if got := good.Bounded(); got == nil || got.Level != good.Mode || got.From != good.From || got.At != good.At || len(got.Areas) != 1 {
+	if got := good.Bounded(); got == nil || got.LevelOf() != good.LevelOf() || got.Mode != good.LevelOf() || got.From != good.From || got.At != good.At || len(got.Areas) != 1 {
 		t.Errorf("a block Applied wrote did not survive bounding: %+v", got)
 	}
 	for _, tc := range []struct {
 		name string
 		mut  func(r *RigorRecord)
 	}{
-		{"a mode outside the vocabulary", func(r *RigorRecord) { r.Mode = "paranoid" }},
-		{"an empty mode", func(r *RigorRecord) { r.Mode = "" }},
+		{"a mode outside the vocabulary, as an older writer left it", func(r *RigorRecord) { r.Mode, r.Level = "paranoid", "" }},
+		{"a level outside the vocabulary", func(r *RigorRecord) { r.Mode, r.Level = "", "paranoid" }},
+		{"both keys outside the vocabulary", func(r *RigorRecord) { r.Mode, r.Level = "paranoid", "paranoid" }},
+		{"neither key at all", func(r *RigorRecord) { r.Mode, r.Level = "", "" }},
 		{"a layer outside the vocabulary", func(r *RigorRecord) { r.From = "floor" }},
 		{"the layer only a resolution names", func(r *RigorRecord) { r.From = rigor.FromReached }},
 		{"an empty layer", func(r *RigorRecord) { r.From = "" }},
@@ -201,7 +227,14 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 	noMode := good.Clone()
 	noMode.Areas = append(noMode.Areas, RigorArea{Name: "web", At: RigorAtBootstrap})
 	if got := noMode.Bounded(); len(got.Areas) != 1 {
-		t.Errorf("an area with no mode survived bounding: %+v", got.Areas)
+		t.Errorf("an area with no level survived bounding: %+v", got.Areas)
+	}
+	// An area an older writer filled in carries `mode` alone, and comes back
+	// under both keys.
+	legacy := good.Clone()
+	legacy.Areas = []RigorArea{{Name: "web", Mode: rigor.POC, At: RigorAtBootstrap}}
+	if got := legacy.Bounded(); len(got.Areas) != 1 || got.Areas[0].Level != rigor.POC || got.Areas[0].Mode != rigor.POC {
+		t.Errorf("an area an older writer wrote bounded to %+v; want both keys, the level it carries", got.Areas)
 	}
 
 	// The bounds themselves: names capped in count and in length, an area
@@ -220,7 +253,7 @@ func TestRigorRecordBoundedRefusesABlockItCannotRead(t *testing.T) {
 	big.Revision = strings.Repeat("r", MaxRigorRevision+50)
 	big.Areas[0].Name = strings.Repeat("n", rigor.MaxAreaName+50)
 	big.Areas[1].At = "sometime"
-	big.Areas[1].Mode = "paranoid"
+	big.Areas[1].Mode, big.Areas[1].Level = "paranoid", "paranoid"
 	got := big.Bounded()
 	if got == nil {
 		t.Fatal("a block with too much in it bounded to nothing")
