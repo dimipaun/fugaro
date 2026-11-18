@@ -56,6 +56,11 @@ var orchestratorResources = []struct{ typ, name string }{
 	{"google_service_account_iam_member", "orchestrator_token_minter"},
 	{"google_cloud_run_v2_service", "orchestrator"},
 	{"google_cloud_run_v2_service_iam_member", "orchestrator_invoker"},
+	// The account's way into the credentials service (F19, O2 of
+	// docs/forge-labels): the label route and the gated merge mint are served
+	// to this account's class alone, and the front end refuses a caller
+	// without roles/run.invoker before the container runs.
+	{"google_cloud_run_v2_service_iam_member", "orchestrator_credentials_invoker"},
 	{"google_cloud_scheduler_job", "orchestrator_tick"},
 }
 
@@ -260,9 +265,14 @@ func TestOrchestratorIsNeverALauncher(t *testing.T) {
 
 	// The account's address is bound by this file and nowhere else in the
 	// module: the table is one file, and a second file's grant is one no reader
-	// of this table would look for. outputs.tf is the one other file that names
-	// the account, and it names its EMAIL to publish the identity rather than
-	// binding anything with it.
+	// of this table would look for. Two other files name the account, and both
+	// name its EMAIL as a VALUE rather than binding anything with it:
+	// outputs.tf publishes the identity, and credentials.tf renders it into the
+	// credentials service's own environment (FUGARO_ORCHESTRATOR_ACCOUNTS,
+	// F19/O2) — which is a value the service verifies a caller's claim
+	// against, not a grant made with the address. The member expression above
+	// is refused EVERYWHERE but this file, so a grant written in a second file
+	// still fails, whichever spelling it reaches for.
 	for name, text := range tfFiles(t) {
 		if name == orchestratorTF {
 			continue
@@ -270,8 +280,19 @@ func TestOrchestratorIsNeverALauncher(t *testing.T) {
 		if strings.Contains(text, orchestratorMemberExpr) {
 			t.Errorf("%s names the orchestrator's address as a member: section 4.3's table is orchestrator.tf's alone, and a grant written in a second file is one the table's own test cannot see", name)
 		}
-		if strings.Contains(text, "google_service_account.orchestrator") && name != "outputs.tf" {
-			t.Errorf("%s names the orchestrator's account resource: the table is orchestrator.tf's, and outputs.tf is the one other file that may name it — to publish the identity rather than to bind anything with it", name)
+		if !strings.Contains(text, "google_service_account.orchestrator") {
+			continue
+		}
+		if name != "outputs.tf" && name != "credentials.tf" {
+			t.Errorf("%s names the orchestrator's account resource: the table is orchestrator.tf's, and outputs.tf (publishing the identity) and credentials.tf (rendering it into the service's environment) are the two other files that may name it as a value rather than to bind anything with it", name)
+		}
+		for _, m := range regexp.MustCompile(`google_service_account\.orchestrator\[[^]]*\]\.([A-Za-z_]+)`).FindAllStringSubmatch(text, -1) {
+			if m[1] != "email" {
+				t.Errorf("%s reads the orchestrator account's .%s: the account's email is the identity, and every other attribute — .member above all — is what a BINDING is built from, which belongs in %s alone", name, m[1], orchestratorTF)
+			}
+		}
+		if strings.Contains(text, "google_service_account.orchestrator[") && !strings.Contains(text, "google_service_account.orchestrator[0].email") {
+			t.Errorf("%s names the orchestrator's account resource and not its email: the one thing these two files may read off it is the address the service matches a caller's claim against", name)
 		}
 	}
 }
@@ -424,10 +445,24 @@ func TestOrchestratorLeavesAPlanUntouchedWhenItIsOff(t *testing.T) {
 	if n := strings.Count(src, `resource "`); n != len(orchestratorResources) {
 		t.Fatalf("%s declares %d resources and %d are expected: the count below cannot be checked against a list that is not the file's", orchestratorTF, n, len(orchestratorResources))
 	}
+	// The one resource that needs a second switch, and the whole of why: the
+	// credentials-service invoker grant binds something on a resource
+	// credentials.tf creates, so an installation whose credentials service is
+	// off has no service to bind anything on. It is the same shape every grant
+	// of that service in iam.tf and build_identity.tf has. The local holding
+	// the pair still turns the file off whole when the orchestrator is off, so
+	// the no-op this test is about is unchanged.
+	twoSwitches := map[string]string{
+		"google_cloud_run_v2_service_iam_member.orchestrator_credentials_invoker": "count = local.orchestrator_credentials_on ? 1 : 0",
+	}
 	for _, r := range orchestratorResources {
 		block := tfBlock(src, r.typ, r.name)
-		if !strings.Contains(block, "count = local.orchestrator_on ? 1 : 0") {
-			t.Errorf("%s: %s.%s is not counted on local.orchestrator_on, so an installation that has not opted in acquires it:\n%s", orchestratorTF, r.typ, r.name, block)
+		want := "count = local.orchestrator_on ? 1 : 0"
+		if c, ok := twoSwitches[r.typ+"."+r.name]; ok {
+			want = c
+		}
+		if !strings.Contains(block, want) {
+			t.Errorf("%s: %s.%s does not carry %q, so an installation that has not opted in acquires it:\n%s", orchestratorTF, r.typ, r.name, want, block)
 		}
 	}
 

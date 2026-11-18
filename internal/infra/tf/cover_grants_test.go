@@ -2714,6 +2714,16 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		"google_storage_bucket_iam_member|roles/storage.objectUser",
 		"google_storage_bucket_iam_member|roles/storage.objectViewer",
 		"google_secret_manager_secret_iam_member|roles/secretmanager.secretAccessor",
+		// ... and the one row that is not section 4.3's, added by the task that
+		// gave the daemon an identity to the credentials service (F19, O2 of
+		// docs/forge-labels): the account is the service's one caller class
+		// (credsvc.OrchestratorAccounts, D2049), and Cloud Run's front end
+		// refuses a caller without roles/run.invoker before the container runs.
+		// Q13's answer of 2026-10-19 kept the cell out on the premise that the
+		// orchestrator never calls the service at all, which the owner
+		// reversed on 2026-11-17. It is the installation's OWN service and the
+		// class is what answers the call.
+		"google_cloud_run_v2_service_iam_member|roles/run.invoker",
 	}
 	var got []string
 	for typ, row := range grantRules {
@@ -2789,10 +2799,14 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 			map[string]any{"member": member, "role": "roles/serviceusage.serviceUsageConsumer", "project": "proj-1"}, map[string]any{}, false},
 
 		// The credentials service's invoker, which Q13's answer (2026-10-19)
-		// took OUT of the table: the run presents its own job token (D134) and
-		// the orchestrator never calls the service.
+		// took OUT of the table and the owner put back on 2026-11-17 (F19, O2):
+		// the daemon's own token is the class the service's label route and its
+		// gated merge mint are served to (D2049), and a token the front end
+		// refuses before the container runs reaches no class at all. The run's
+		// own job token (D134) is untouched by it: the run's class is the job
+		// accounts', which this row has always admitted.
 		{"the credentials service's invoker", "google_cloud_run_v2_service_iam_member",
-			map[string]any{"member": member, "role": "roles/run.invoker", "project": "proj-1"}, map[string]any{}, false},
+			map[string]any{"member": member, "role": "roles/run.invoker", "project": "proj-1"}, map[string]any{}, true},
 
 		// The write, moved: another bucket, another condition, or none.
 		{"the write with no condition at all", "google_storage_bucket_iam_member",
