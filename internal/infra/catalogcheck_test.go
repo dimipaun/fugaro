@@ -2,6 +2,7 @@ package infra
 
 import (
 	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -280,11 +281,39 @@ func TestCatalogCheckUsesTheProjectCopyOfAProjectScopedCredential(t *testing.T) 
 	if want := gcp.ProjectSecretID("aurora", config.BitbucketSecret); app.GitSecretID != want {
 		t.Errorf("acme/app's git credential is %s, want the project's copy %s", app.GitSecretID, want)
 	}
-	// ... and the GitHub App key is the same answer with no entry at all: a
-	// provider key is project-scoped by default (config.ProjectScopeByDefault),
-	// so both repositories mount the project's copy.
-	if other := repoOf(t, spec, "acme/other"); other.GitSecretID != gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret) {
-		t.Errorf("acme/other's git credential is %s, want the project's copy of %s", other.GitSecretID, config.GitHubAppKeySecret)
+	// ... and the GitHub App key, which is project-scoped by default but has
+	// no container unless the config makes one (projectSecretContainers), is
+	// the repository's own: a grant on a container the installation never
+	// creates is the 404 that stopped fugaro update 0.25.0 -> 0.26.0.
+	other := repoOf(t, spec, "acme/other")
+	if want := gcp.SecretID(other.Slug, config.GitHubAppKeySecret); other.GitSecretID != want {
+		t.Errorf("acme/other's git credential is %s, want its own %s: no project container for %s exists", other.GitSecretID, want, config.GitHubAppKeySecret)
+	}
+}
+
+// TestCatalogCheckNamesOnlyAProjectContainerTheInstallationCreates: whatever
+// git credential the spec names, the installation creates its container —
+// the project's copy exactly when projectSecretContainers includes it.
+func TestCatalogCheckNamesOnlyAProjectContainerTheInstallationCreates(t *testing.T) {
+	lc := parseLC(t, catalogCheckLocal+`project_secrets:
+  github-app-key: { allow_data_to: [acme/other] }
+`)
+	cc, err := CatalogCheck(lc, "fugaro-runs-proj-1234", true)
+	if err != nil || cc == nil {
+		t.Fatalf("CatalogCheck: %v, %v", cc, err)
+	}
+	var spec CatalogCheckJobSpec
+	if err := json.Unmarshal([]byte(cc.Env[CatalogCheckSpecEnv]), &spec); err != nil {
+		t.Fatal(err)
+	}
+	containers := projectSecretContainers(lc)
+	for _, r := range spec.Repositories {
+		if strings.Contains(r.GitSecretID, "-project-") && !slices.Contains(slices.Collect(maps.Values(containers)), r.GitSecretID) {
+			t.Errorf("%s's git credential %s is a project container nothing creates (%v)", r.Repo, r.GitSecretID, containers)
+		}
+	}
+	if got, want := repoOf(t, spec, "acme/other").GitSecretID, gcp.ProjectSecretID("aurora", config.GitHubAppKeySecret); got != want {
+		t.Errorf("with the container configured acme/other's credential is %s, want %s", got, want)
 	}
 }
 

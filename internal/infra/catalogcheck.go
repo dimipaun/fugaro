@@ -516,7 +516,14 @@ func catalogCheckRepo(lc *localcfg.Config, name string) (CatalogCheckRepoSpec, b
 	// the one predicate they resolve it through: the project's copy when the
 	// name is project-scoped for this repository, the repository's own
 	// container otherwise (infra.ProjectSecretCandidate, RepoSpec.MountSecretID).
-	if projectID, ok := ProjectSecretCandidate(lc, logical, name); ok {
+	//
+	// The project's copy only when the installation creates its container
+	// (projectSecretContainers, the set modules/installation's secrets.tf
+	// makes): the candidate predicate says a name is eligible, not that a
+	// container exists, and a grant on one that does not fails the whole apply
+	// with a 404 — an installation whose config records no GitHub provider has
+	// no github-app-key container, and its repositories mount their own.
+	if projectID, ok := ProjectSecretCandidate(lc, logical, name); ok && projectSecretContainers(lc)[logical] == projectID {
 		id = projectID
 	} else {
 		id = gcp.SecretID(slug, logical)
