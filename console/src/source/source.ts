@@ -491,6 +491,30 @@ export interface FugaroSource {
    * graph plan's CG9a) -- so a screen that draws this node takes its fields from
    * the command's own `{project, policy}` shape and from nothing else. */
   policyShow(args: ValidatedArguments): Promise<Snapshot>
+  /** listRepos reads `project repos ls --json`: the project's repositories as
+   * data -- the published allow-list with each entry's source, this machine's
+   * own copies, and the repositories this project has run, read from the two
+   * durable places (the repos-management plan's RE5, D2413). It takes **no
+   * argument at all** -- no positional word and no `--gcp-project`/`--region`,
+   * since the two project flags are main-process state (rule 3). It is the
+   * group's read half and the whole of what this console may ask of `project
+   * repos`: `add` and `rm` are on `src/main/ipc.ts`'s never table, so no code
+   * in this tree can build a word of either. The read writes nothing -- the
+   * CLI's own comment says so of every path, `--json` included -- and it lists
+   * the allow-list node, this machine's own config and the history with the
+   * caller's credential, so it asks no credentials service for one. */
+  listRepos(args: ValidatedArguments): Promise<Snapshot>
+  /** reposStatus reads `project repos status --json`: the doctor for a
+   * repository's enrolment, one row per fact that decides whether a run of it
+   * can start, each failing row naming the one command that puts it right (the
+   * same plan, D2413). It takes no argument either: the command's optional
+   * positional repository is deliberately not one, so the answer covers every
+   * repository the project knows and no caller can aim the read at one. It
+   * writes nothing on any path and reads a credential's **presence**, never its
+   * value -- the credential row carries a container's name, whether it holds an
+   * enabled version and that version's age -- so nothing in its document is a
+   * secret. */
+  reposStatus(args: ValidatedArguments): Promise<Snapshot>
   diagnoseRun(args: ValidatedArguments): Promise<Snapshot>
   readRunLogs(args: ValidatedArguments): Promise<Snapshot>
   runLogLink(args: ValidatedArguments): Promise<TextSnapshot>
@@ -931,6 +955,12 @@ export function handlersFor(
     'roadmap.move': (args) => source.roadmapMove(args),
     'managed.status': (args) => source.managedStatus(args),
     'policy.show': (args) => source.policyShow(args),
+    // The `project repos` group's two reads (the repos-management plan's RE5,
+    // D2413). They are the group's whole reach: `repos add` and `repos rm` are
+    // on `src/main/ipc.ts`'s never table, so neither is a handler here and no
+    // handler could build a word of either.
+    'repos.ls': (args) => source.listRepos(args),
+    'repos.status': (args) => source.reposStatus(args),
     'run.diagnose': (args) => source.diagnoseRun(args),
     'run.logs': (args) => source.readRunLogs(args),
     'run.logLink': async (args) => (await source.runLogLink(args)).text,

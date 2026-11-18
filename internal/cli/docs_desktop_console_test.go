@@ -1539,7 +1539,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-nine argvs and nothing else -- the console's one spawn table
+// the thirty-one argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1664,6 +1664,17 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// screen and the `caps` panel. The same two project flags and no
 		// argument of its own.
 		"project policy show --json --project <name> [--config <path>]",
+		// The project's enrolled repositories (the repos-management plan's
+		// RE5, D2413, the `repos.ls` and `repos.status` operations): what the
+		// project admits and what each repository runs, and the per-repository
+		// doctor whose failing rows name the one command that puts each right.
+		// Read-only, and neither has an argument of its own: the command's own
+		// optional `[REPO]` on the status row is deliberately not one, so the
+		// rows spell the command's argv and the two project flags of §3.4
+		// rule 3 and nothing else. The group's two writes, `project repos add`
+		// and `project repos rm`, are on the never table below.
+		"project repos ls --json --project <name> [--config <path>]",
+		"project repos status --json --project <name> [--config <path>]",
 		// The effective-craft read (the model-crafts plan's MC8, D1633): one
 		// row per craft -- the model it runs, the credential or pool its calls
 		// go out on, the layer each half came from and whether what it names
@@ -1987,7 +1998,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-nine commands: the thirteen dashboard reads (logs has two argvs), the
+	// Thirty-one commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -2013,10 +2024,13 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// -- the never table below keeps off this list, and the pending-steps read
 	// `apply --status --json` (docs/composite-commands, D1569, AP8), which
 	// shares its command with the chain the console runs after a management
-	// command saved a change (D1572): the two are two argvs and one command, so
-	// this table counts thirty argvs over the twenty-nine commands.
-	if len(allowed) != 29 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 29 (logs and apply have two argvs each)", path, argvs, len(allowed))
+	// command saved a change (D1572): the two are two argvs and one command. The
+	// two enrolment reads of the repos-management plan's RE5 (D2413) are the
+	// thirtieth and thirty-first commands: `project repos ls --json` and `project
+	// repos status --json`, the `project repos` group's whole reach, since its two
+	// writes are on the never table below.
+	if len(allowed) != 31 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 31 (logs and apply have two argvs each)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
