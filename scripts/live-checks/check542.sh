@@ -53,7 +53,10 @@
 #   * **the service's audit log**: one `credsvc: audit` line for each call of
 #     this run that an admitted caller answered, and none for a call refused
 #     before the caller was verified (that refusal is answered ahead of any
-#     identity, and a line for it would name a caller the service never had).
+#     identity, and a line for it would name a caller the service never had). A
+#     line is this run's by its own instant — the row matches the line's
+#     timestamp against the instant the call went out — so another caller's line
+#     with the same status is never read as this run's.
 #
 # What it does NOT do: it grants nothing (the App's permission is your own
 # per-repository step, D2048), it changes no ruleset and no branch protection, it
@@ -105,7 +108,9 @@
 # id the run-identity probe presents), SERVICE_NAME (fugaro-credentials),
 # SERVICE_URL (read from Cloud Run when empty), ORCHESTRATOR_ACCOUNT (the
 # daemon's own account; the installation's `fugaro-orch` when empty), REGION
-# (us-east5), LOG_FRESHNESS (30m), GCP_TIMEOUT_SECONDS (180),
+# (us-east5), LOG_FRESHNESS (30m), LOG_SKEW_SECONDS (60, the clock slack the
+# audit row allows between a call's instant here and the line's instant in the
+# log), GCP_TIMEOUT_SECONDS (180),
 # CLI_TIMEOUT_SECONDS (180) and TOKEN_TIMEOUT_SECONDS (60).
 set -Eeuo pipefail
 
@@ -197,8 +202,9 @@ DAEMON_STATUS=""
 DAEMON_READ=""
 IAM_STATUS=""
 IAM_READ=""
-MINT_CALLS=""       # one `key<TAB>status<TAB>admitted` line per call this check made
+MINT_CALLS=""       # one `key<TAB>status<TAB>admitted<TAB>instant` line per call this check made
 MINT_ANSWERED=0
+MINT_STARTED_AT=""  # the instant the call now being made went out, in seconds (post_mint)
 scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk542.XXXXXXXX") || die "Check 542 cannot make a scratch directory"
   chmod 700 "$SCRATCH"
@@ -259,6 +265,7 @@ remove_scratch() {
 # copies into its output.
 write_reader() {
   cat >"$SCRATCH/read.py" <<'PY'
+import datetime
 import json
 import sys
 
@@ -274,6 +281,22 @@ def flat(value):
 
 def yes(value):
     return "true" if value else "false"
+
+
+def epoch_of(stamp):
+    # A log line's own instant as seconds since the epoch, so the audit row can
+    # compare it with the instant a call was made in arithmetic rather than in
+    # string order (Cloud Logging's spelling is RFC3339 in UTC, to the
+    # nanosecond, and a timestamp this reader cannot read is 0: an instant it
+    # does not know can never be the instant of a call this check made).
+    try:
+        return int(
+            datetime.datetime.strptime(str(stamp)[:19], "%Y-%m-%dT%H:%M:%S")
+            .replace(tzinfo=datetime.timezone.utc)
+            .timestamp()
+        )
+    except (TypeError, ValueError):
+        return 0
 
 
 def ref_covers(include, exclude, base):
@@ -436,7 +459,7 @@ elif what == "audit":
     print("count=%d" % len(rows))
     for row in rows:
         payload = row.get("jsonPayload") or {}
-        print("line\t%s\t%s\t%s\t%s\t%s\t%s\t%s" % (
+        print("line\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d" % (
             flat(payload.get("caller")),
             flat(payload.get("repository")),
             flat(payload.get("status")),
@@ -444,6 +467,7 @@ elif what == "audit":
             flat(payload.get("run")),
             flat(payload.get("job")),
             flat(row.get("timestamp")),
+            epoch_of(row.get("timestamp")),
         ))
 else:
     sys.stderr.write("read.py: unknown query %s\n" % what)
@@ -996,6 +1020,11 @@ post_mint() { # post_mint KEY TOKENKEY [CURL-ARGS...]
   local body="$SCRATCH/post-${key}.json"
   printf '{"repository":"%s","number":%s,"head_sha":"%s","app_id":"%s"}\n' \
     "$SLUG" "$PR" "$MINT_HEAD" "$APP_ID" >"$body"
+  # The instant the call is made, taken before it: the audit row binds a line to
+  # this run by the line's OWN instant, so it has to know when each call went
+  # out. Taken here rather than after the call returns, because the service
+  # writes the line while it is serving the call.
+  MINT_STARTED_AT=$(date -u +%s 2>/dev/null || true)
   run_bounded "$TIMEOUT" "$key" "$SANDBOX" curl -sS -o "$SCRATCH/$key.body" -w '%{http_code}' \
     --config "$SCRATCH/token-${tokenkey}.curl" -H 'Content-Type: application/json' \
     --data @"$body" "$@" "${SERVICE_URL}${MERGE_MINT_PATH}"
@@ -1064,10 +1093,15 @@ mint_answer_text() { # mint_answer_text KEY
 }
 
 # record_mint KEY: one line per mint call this check made, for the audit row: the
-# key, the STATUS the service's own line would carry for it, and whether the
-# CALLER was admitted at all. The status is read off the answer rather than the
-# HTTP code, because the audit line's status field is the contract's own error
-# type (StatusOK, or unverified_run_identity, request_refused, state_unavailable)
+# key, the STATUS the service's own line would carry for it, whether the CALLER
+# was admitted at all, and the instant the call went out (post_mint's own, in
+# seconds). The instant is what makes the row this run's: a line is looked for at
+# or after the moment the call was made, so another caller's line with the same
+# status — the daemon minting on its own, hours or minutes earlier — can never
+# stand in for a line this run's call never got. The status is read off the
+# answer rather than the HTTP code, because the audit line's status field is
+# the contract's own error type (ok, or unverified_run_identity,
+# request_refused, state_unavailable)
 # and a refusal answered BEFORE the caller is verified — the class's own — is the
 # one refusal with no line to look for: there is no identity for it to name.
 #
@@ -1090,7 +1124,7 @@ record_mint() { # record_mint KEY
     admitted=no
     ;;
   esac
-  printf '%s\t%s\t%s\n' "$key" "$status" "$admitted" >>"$MINT_CALLS"
+  printf '%s\t%s\t%s\t%s\n' "$key" "$status" "$admitted" "$MINT_STARTED_AT" >>"$MINT_CALLS"
   MINT_ANSWERED=$((MINT_ANSWERED + 1))
 }
 
@@ -1288,9 +1322,15 @@ step_audit() {
     fact audit FAIL "the service's log carries merge_mint line(s) with status unverified_job_identity (caller ${wrong:-unknown}) in the last ${LOG_FRESHNESS}: that status is the refusal answered BEFORE the caller is verified, so there is no identity for a line to name and none may be written — a line there means either the service audits a caller it refused (the rule this row exists to check) or its status vocabulary and its refusal order disagree. Read the lines with \`gcloud logging read\` on purpose=merge_mint and take it to the service's owner"
     return 0
   fi
-  # Every call this run made that the service ADMITTED must have its one line.
-  local key status admitted want="" missing="" unchecked="" pre=0
-  while IFS=$'\t' read -r key status admitted; do
+  # Every call this run made that the service ADMITTED must have its one line —
+  # and it has to be a line of THIS run's: the line's own instant ($9, the
+  # seconds the reader made of the line's timestamp) has to be at or after the
+  # instant the call went out. Matching the status alone over the whole window
+  # would let another caller's line — the daemon minting on its own, half an hour
+  # ago — stand in for a line this run's call never got, which is the one reading
+  # this row exists to prevent.
+  local key status admitted at want="" missing="" unchecked="" pre=0
+  while IFS=$'\t' read -r key status admitted at; do
     [ -n "$key" ] || continue
     if [ "$status" = "-" ]; then
       unchecked="${unchecked}${unchecked:+, }${key}"
@@ -1301,7 +1341,12 @@ step_audit() {
       continue
     fi
     want="${want}${want:+, }${key}(${status})"
-    if ! awk -F'\t' -v s="$status" '$1 == "line" && $4 == s { seen = 1 } END { exit(seen ? 0 : 1) }' "$SCRATCH/audit.txt"; then
+    if [ -z "$at" ]; then
+      missing="${missing}${missing:+, }${key} (the instant its call went out could not be taken)"
+      continue
+    fi
+    if ! awk -F'\t' -v s="$status" -v at="$at" -v slack="$LOG_SKEW_SECONDS" \
+      '$1 == "line" && $4 == s && $9 + 0 >= at - slack { seen = 1 } END { exit(seen ? 0 : 1) }' "$SCRATCH/audit.txt"; then
       missing="${missing}${missing:+, }${status}"
     fi
   done <"$MINT_CALLS"
@@ -1321,10 +1366,10 @@ step_audit() {
     return 0
   fi
   if [ -n "$missing" ]; then
-    fact audit FAIL "the service wrote no merge_mint line with status ${missing} in the last ${LOG_FRESHNESS} for the call(s) this run made as an ADMITTED caller (${want}): every mint and every refusal after the caller is verified writes exactly one line, and a call with no line is the one thing that rule forbids (C1.13, D143). If the calls were made in the last minute or two, Cloud Logging's own lag is the other reading — wait and run this check again. The log carries ${rows:-0} merge_mint line(s), and what they say is in $SCRATCH/audit.txt"
+    fact audit FAIL "the service wrote no merge_mint line of this run's with status ${missing}, at or after the instant the call went out (up to ${LOG_SKEW_SECONDS}s of clock slack), for the call(s) this run made as an ADMITTED caller (${want}): every mint and every refusal after the caller is verified writes exactly one line, and a call with no line is the one thing that rule forbids (C1.13, D143). A line of another caller's with the same status does not stand in for it: this row matches the line's own instant against the instant of the call. If the calls were made in the last minute or two, Cloud Logging's own lag is the other reading — wait and run this check again. The log carries ${rows:-0} merge_mint line(s) in the last ${LOG_FRESHNESS}, and what they say is in $SCRATCH/audit.txt"
     return 0
   fi
-  fact audit PASS "the service's log carries one merge_mint line per call of this run that was admitted (${want}) and none with the pre-verification status${unchecked_clause}: the line names the repository, the daemon as its caller, the App key as its credential and no run and no job (the caller holds none — it is a daemon, and no run identity is accepted on this route at all), and it carries no value. Read from Cloud Logging for ${SERVICE_NAME} in ${PROJECT} over the last ${LOG_FRESHNESS}; the log holds ${rows:-0} merge_mint line(s) in that window, and the others are other callers'"
+  fact audit PASS "the service's log carries one merge_mint line per call of this run that was admitted (${want}) and none with the pre-verification status${unchecked_clause}: each line carries its call's own status and its own instant at or after the instant that call went out (up to ${LOG_SKEW_SECONDS}s of clock slack), so it is this run's call the line is about and not another caller's line of the same status. The line names the repository, the daemon as its caller, the App key as its credential and no run and no job (the caller holds none — it is a daemon, and no run identity is accepted on this route at all), and it carries no value. Read from Cloud Logging for ${SERVICE_NAME} in ${PROJECT} over the last ${LOG_FRESHNESS}; the log holds ${rows:-0} merge_mint line(s) in that window, and the others are other callers'"
 }
 
 # moved_head SHA: the same commit shape, one character along — a head the pull
@@ -1515,6 +1560,12 @@ SERVICE_URL=${CHECK542_SERVICE_URL:-}
 ORCHESTRATOR_ACCOUNT=${CHECK542_ORCHESTRATOR_ACCOUNT:-}
 REGION=${CHECK542_REGION:-us-east5}
 LOG_FRESHNESS=${CHECK542_LOG_FRESHNESS:-30m}
+# The slack the audit row allows between the instant this machine took a call and
+# the instant Cloud Logging stamps the line for it: the two clocks are not the
+# same one, and a line written for the call can carry a timestamp a few seconds
+# on either side of it. A minute is the slack; a narrower one would FAIL a
+# correct installation for its clock, and the row names the instant it matched.
+LOG_SKEW_SECONDS=${CHECK542_LOG_SKEW_SECONDS:-60}
 GCP_TIMEOUT=${CHECK542_GCP_TIMEOUT_SECONDS:-180}
 CLI_TIMEOUT=${CHECK542_CLI_TIMEOUT_SECONDS:-180}
 TOKEN_TIMEOUT=${CHECK542_TOKEN_TIMEOUT_SECONDS:-60}

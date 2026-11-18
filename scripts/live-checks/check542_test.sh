@@ -299,6 +299,7 @@ logging)
   case "$mode" in
   audit-unverified) cat "$json/audit-before-verification.json" ;;
   audit-drop) printf '[]\n' ;;
+  audit-stale) cat "$json/audit-stale.json" ;;
   *)
     {
       printf '['
@@ -469,11 +470,20 @@ if [ "$audited" = yes ]; then
     fi
   fi
 fi
+# A caller the service answered but never audited: the calls of this run are
+# admitted and write nothing, which is the one reading the audit row forbids —
+# and the log still holds another caller's line with the same status, so a row
+# that matched on the status alone would call it this run's.
+if [ "$mode" = audit-stale ]; then audited=no; fi
 if [ "$audited" = yes ]; then
   audit_status=ok
   [ "$status" = 200 ] || audit_status=$(sed -n 's/.*"error":"\([^"]*\)".*/\1/p' <<<"$body")
-  printf '{"jsonPayload":{"message":"credsvc: audit","purpose":"merge_mint","caller":"fugaro-orch@chk542-test.iam.gserviceaccount.com","repository":"chk542-owner/sandbox","job":"","credential":"fugaro-merge-mint","tier":"","status":"%s","slip":"","owner":"","run":""},"timestamp":"2026-11-18T00:30:00Z"}\n' \
-    "$audit_status" >>"$FAKE_LOG_DIR/audit.entries"
+  # Cloud Logging stamps a line with the instant it receives it, and the check
+  # binds a line to this run by that instant against the instant the call went
+  # out: a fake that stamped every line with one fixed moment would make the row
+  # unmeasurable rather than measured.
+  printf '{"jsonPayload":{"message":"credsvc: audit","purpose":"merge_mint","caller":"fugaro-orch@chk542-test.iam.gserviceaccount.com","repository":"chk542-owner/sandbox","job":"","credential":"fugaro-merge-mint","tier":"","status":"%s","slip":"","owner":"","run":""},"timestamp":"%s"}\n' \
+    "$audit_status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$FAKE_LOG_DIR/audit.entries"
 fi
 if [ -n "$out" ]; then
   # `curl -o` creates the file whatever comes back, and the check reads an empty
@@ -563,6 +573,18 @@ JSON
   # caller is verified, which has no identity for a line to name.
   cat >"$1/json/audit-before-verification.json" <<JSON
 [{"jsonPayload":{"message":"credsvc: audit","purpose":"merge_mint","caller":"nobody@example.com","repository":"${slug}","status":"unverified_job_identity","credential":"fugaro-merge-mint"},"timestamp":"2026-11-18T00:30:00Z"}]
+JSON
+  # Another installation's caller, on another repository, with the three statuses
+  # this run's admitted calls would carry — each written an hour before those
+  # calls. The instant is relative to now rather than fixed, because what the case
+  # needs is lines that are OLDER than the calls the check is about to make,
+  # whatever the clock says.
+  stale_stamp=$(python3 -c 'import datetime
+print((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))')
+  cat >"$1/json/audit-stale.json" <<JSON
+[{"jsonPayload":{"message":"credsvc: audit","purpose":"merge_mint","caller":"fugaro-orch@chk542-other.iam.gserviceaccount.com","repository":"chk542-other/other","job":"","credential":"fugaro-merge-mint","status":"ok"},"timestamp":"${stale_stamp}"},
+ {"jsonPayload":{"message":"credsvc: audit","purpose":"merge_mint","caller":"fugaro-orch@chk542-other.iam.gserviceaccount.com","repository":"chk542-other/other","job":"","credential":"fugaro-merge-mint","status":"request_refused"},"timestamp":"${stale_stamp}"},
+ {"jsonPayload":{"message":"credsvc: audit","purpose":"merge_mint","caller":"fugaro-orch@chk542-other.iam.gserviceaccount.com","repository":"chk542-other/other","job":"","credential":"fugaro-merge-mint","status":"unverified_run_identity"},"timestamp":"${stale_stamp}"}]
 JSON
 }
 
@@ -1080,7 +1102,22 @@ test_an_admitted_call_with_no_audit_line_is_a_finding() {
   expect_status "$status" 1 "an admitted call with no audit line"
   expect_contains "$out" "FACT mint: PASS" "an admitted call with no audit line: the mint itself held"
   expect_contains "$out" "FACT audit: FAIL" "an admitted call with no audit line: the row"
-  expect_contains "$out" "wrote no merge_mint line with status ok" "an admitted call with no audit line: which line is missing"
+  expect_contains "$out" "wrote no merge_mint line of this run's with status ok" "an admitted call with no audit line: which line is missing"
+}
+
+# The line has to be THIS run's. The log holds another caller's line with the
+# status an admitted call of this run would carry, written an hour before the
+# calls — and this run's own calls wrote none. A row that matched the status over
+# the window would call that older line this run's and PASS a call the service
+# never audited, which is the finding this case pins.
+test_an_older_line_with_the_same_status_is_not_this_runs() {
+  local dir=$work/auditstale
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=audit-stale
+  expect_status "$status" 1 "an older line with the same status"
+  expect_contains "$out" "FACT mint: PASS" "an older line: the mint itself held, so an admitted call is missing its line"
+  expect_contains "$out" "FACT audit: FAIL" "an older line: the row"
+  expect_contains "$out" "at or after the instant the call went out" "an older line: the binding the row matched on"
 }
 
 test_xtrace_refused() {
@@ -1264,6 +1301,7 @@ t test_a_state_refusal_of_an_admitted_caller_is_reported
 t test_a_call_that_never_reached_the_route_is_reported
 t test_an_audit_line_before_verification_is_a_finding
 t test_an_admitted_call_with_no_audit_line_is_a_finding
+t test_an_older_line_with_the_same_status_is_not_this_runs
 t test_xtrace_refused
 t test_an_agent_session_is_refused
 t test_an_account_naming_belong_is_refused
