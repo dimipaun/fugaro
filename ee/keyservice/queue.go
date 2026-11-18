@@ -28,7 +28,7 @@ type Decision string
 
 const (
 	// Undecided is an application nobody has answered. It is the zero value and
-	// it is what the page's queue reads.
+	// it is what the queue reads.
 	Undecided Decision = ""
 	// Approved is an application the owner minted for. It is written after the
 	// key is out, so a failure between the two leaves the request in the queue
@@ -44,8 +44,8 @@ const (
 // wrote and a body carrying what the owner has to see. It has Message's shape
 // for Message's reason — nothing an applicant typed is a header (§7.2) — and it
 // is a type of its own because the applicant's mail path and the owner's are two
-// different doors: the manual form mails the applicant nothing at all, and a
-// notification that went through Mailer would be one.
+// different doors: a request the checks send to a person mails the applicant
+// nothing at all, and a notification that went through Mailer would be one.
 type Alert struct {
 	Subject string
 	Body    string
@@ -64,11 +64,16 @@ type Notifier interface {
 	Notify(ctx context.Context, alert Alert) error
 }
 
+// routeOps is the portal page the queue is read at (P5.1). The screens are the
+// portal's, so a notification's link is the portal's own origin plus this rather
+// than a page on this service (queueAlert).
+const routeOps = "/ops"
+
 // enqueue writes one request into the queue and tells the owner it is there.
 //
 // The notification is what makes a failed enqueue a failed request: a request
 // written and never mentioned is one nobody will look at, and the applicant's
-// form is the only place it existed.
+// request is the only place it existed.
 func (s *Service) enqueue(ctx context.Context, a Application) error {
 	if a.ID == "" {
 		return errors.New("a queued request with no id is one the store cannot tell from another")
@@ -79,7 +84,16 @@ func (s *Service) enqueue(ctx context.Context, a Application) error {
 	if err := s.store.SaveApplication(ctx, a); err != nil {
 		return err
 	}
-	return s.alerts.Notify(ctx, queueAlert(s.cfg.URL, a))
+	// The link is the portal's, built from the deployment's own origin and never
+	// from the request's Host header (§7.2's rule, as invitationURL's link is): a
+	// deployment that states no portal origin is one whose owner is told nothing,
+	// because a notification leading to a page that is not there is worse than a
+	// request that failed.
+	origin, err := portalOrigin(s.cfg.URL)
+	if err != nil {
+		return err
+	}
+	return s.alerts.Notify(ctx, queueAlert(origin, a))
 }
 
 // queue is every request nobody has answered, oldest first: the order the queue
@@ -99,8 +113,8 @@ func (s *Service) queue(ctx context.Context) ([]Application, error) {
 	return open, nil
 }
 
-// application reads one queued request by the id the page carries. The id is
-// the record's own, and it is a secret rather than a counter, so a request's
+// application reads one queued request by the id its own record carries. The id
+// is the record's own, and it is a secret rather than a counter, so a request's
 // address and text are not reachable by guessing a number (§4.5, §7.3).
 func (s *Service) application(ctx context.Context, id string) (Application, bool, error) {
 	held, err := s.store.Applications(ctx)
@@ -115,9 +129,8 @@ func (s *Service) application(ctx context.Context, id string) (Application, bool
 	return Application{}, false, nil
 }
 
-// decide writes what the owner made of one request. It mints nothing: an
-// approval is the page's minting action, which writes the record §5.2's
-// idempotency reads, and this is only the answer.
+// decide writes what the owner made of one request. It mints nothing: a mint
+// writes the record §5.2's idempotency reads, and this is only the answer.
 func (s *Service) decide(ctx context.Context, a Application, decision Decision) error {
 	a.Decision = decision
 	a.DecidedAt = s.now()
@@ -127,8 +140,8 @@ func (s *Service) decide(ctx context.Context, a Application, decision Decision) 
 // queueAlert is what one queued request tells the owner. The applicant's own
 // text is body text and never the subject, and the address the request is about
 // is in it because the owner has to be able to tell one request from another
-// without opening the page.
-func queueAlert(intakeURL string, a Application) Alert {
+// without opening the screen.
+func queueAlert(origin string, a Application) Alert {
 	var body strings.Builder
 	body.WriteString("A request is waiting in the queue.\n\n")
 	body.WriteString("Address: " + a.Email + "\n")
@@ -145,6 +158,6 @@ func queueAlert(intakeURL string, a Application) Alert {
 		body.WriteString("Repositories: " + strings.Join(a.Repositories, ", ") + "\n")
 	}
 	body.WriteString("\n" + a.Detail + "\n\n")
-	body.WriteString(strings.TrimSuffix(intakeURL, "/") + RouteAdmin + "\n")
+	body.WriteString(strings.TrimSuffix(origin, "/") + routeOps + "\n")
 	return Alert{Subject: queueSubject, Body: body.String()}
 }

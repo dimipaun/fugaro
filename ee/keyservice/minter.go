@@ -412,7 +412,7 @@ func (m Minter) MintV1(ctx context.Context, req RequestV1) (MintedV1, error) {
 	// own project, or `fugaro license refresh` — may be given a longer term,
 	// because that renewal covers the rest of the term the customer is in rather
 	// than a fresh period. A period that is neither is a special deal, and a
-	// special deal is the admin page's override of the row rather than a term on
+	// special deal is a hand-minted key's override of the row rather than a term on
 	// this route (sections 12.1, 13; K2.6).
 	//
 	// An end is not a term in this sense: it is the instant a key's term ends,
