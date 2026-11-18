@@ -39,9 +39,9 @@ import (
 //     not launch this repository leaves no task, no token and no execution
 //     behind.
 //   - the bounds are the tier's own (D2407): USD 0.25 and fifteen minutes
-//     against the three hours a coding run takes, written into the task — where
-//     the run's own cap and its backend timeout are read from — and enforced by
-//     the gateway as it enforces any run's.
+//     against the three hours a coding run takes, written into the task — a
+//     per-run cap the gateway enforces as it enforces any run's, and the
+//     backend timeout the job is handed.
 //   - it never retries. One execution is started, and a job that does not
 //     answer within its timeout reaches the offline path with the sentence
 //     D2407 names; there is no second launch and no --rerun path, because a
@@ -59,10 +59,29 @@ import (
 const (
 	// troubleshootMaxUSD is the run's own cap: a diagnosis is a few calls of a
 	// model that reads code and logs, and the project's budget is a shared one,
-	// so it is far below any run's per-run cap. It is written into the task
-	// (overrides.max_budget_usd), which is what the run applies to its
-	// configuration, and the gateway enforces it as it enforces any run's
-	// (D2407).
+	// so it is far below any run's per-run cap.
+	//
+	// It goes into the task as overrides.max_usd — the chain's dollar limit,
+	// which is the field the runner hands the gateway as the run's per-run cap
+	// and nothing else does (run-limit-carry-over D1041/D1059, runner's
+	// policy.go: setChainLayer writes the limit the chain layer resolved into
+	// the merged per_run_usd, which becomes the cap the lease is taken
+	// against). A diagnosis is a chain of one run, so the figure it carries is
+	// its own cap, and the merge only tightens: a project or a repository whose
+	// own budget.per_run_usd is smaller keeps the smaller one.
+	//
+	// overrides.max_budget_usd is NOT this: that is the per-stage ceiling the
+	// agent binary is launched with (Spec.Apply writes it into
+	// agent.max_budget_usd), a figure Claude Code stops a stage at, outside the
+	// gateway — a diagnosis bounded by it alone would be bounded by the
+	// project's ordinary per-run cap instead.
+	//
+	// It is a field a runner older than launchLimitsSince refuses outright, so
+	// carrying one is gated on the job image wherever the launch path judges a
+	// spec — and the pre-flight judges this one through that same block, since
+	// it is freshLaunchGates (T-TC1). The gate refuses nothing the recipe's own
+	// does not: the diagnose step arrived in a later release than the chain
+	// limits did.
 	troubleshootMaxUSD = 0.25
 	// troubleshootTimeout is the diagnosis's own total timeout: fifteen minutes
 	// against the three hours a coding run takes, written into the task as
@@ -172,7 +191,7 @@ func troubleshootDiagnosisSpec(ctx context.Context, env *cloudEnv, ev diagnoseag
 		ReviewClass: true,
 		Recipe:      &task.Recipe{Name: recipe.TroubleshootRecipe, Source: string(recipe.SourceCatalog), SHA256: recipe.Sum(text), YAML: string(text)},
 	}
-	spec.Overrides.MaxBudgetUSD = ptr(troubleshootMaxUSD)
+	spec.Overrides.MaxUSD = ptr(troubleshootMaxUSD)
 	spec.Overrides.TotalTimeout = troubleshootTimeout.String()
 	// The project layer goes into the task's own copy, the way `fugaro run` and
 	// the daemon's launcher put it there: the runner resolves the run's

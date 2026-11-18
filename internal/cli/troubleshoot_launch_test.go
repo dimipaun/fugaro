@@ -168,10 +168,17 @@ func TestTroubleshootLaunchOutsideACheckoutDeclines(t *testing.T) {
 }
 
 // TestTroubleshootLaunchSetsItsOwnTimeout is D2407's bound: the diagnosis is
-// fifteen minutes long and four dollars short of any coding run, written into
-// the task's own overrides — where the run applies its cap from — and handed to
-// the platform as the execution's task timeout, with the slack every launch's
-// timeout carries.
+// fifteen minutes long and a fraction of any coding run's cap, written into
+// the task's own overrides — the chain's dollar limit, which is what the runner
+// hands the gateway as the run's per-run cap, and the run's own clock, which is
+// what the platform is handed as the execution's task timeout, with the slack
+// every launch's timeout carries.
+//
+// What the cap must not be is the per-stage ceiling (overrides.max_budget_usd,
+// which Spec.Apply writes into agent.max_budget_usd): that is a figure Claude
+// Code stops a stage at, outside the gateway, so a diagnosis carrying it alone
+// would be bounded by the project's ordinary per-run cap — not by D2407's
+// number.
 //
 // Mutation (run, restore): write no total timeout (or the workflow's own) into
 // the spec and the launch is handed the wrong deadline: a diagnosis that hung
@@ -196,8 +203,12 @@ func TestTroubleshootLaunchSetsItsOwnTimeout(t *testing.T) {
 	if calls[0].Timeout != want {
 		t.Errorf("the execution's task timeout is %q, want %q", calls[0].Timeout, want)
 	}
-	if usd := tcStoredTask(t, f.cloudFixture, job.slug, job.spec.RunID).Overrides.MaxBudgetUSD; usd == nil || *usd != troubleshootMaxUSD {
-		t.Errorf("the stored task caps the run at %v, want %v", usd, troubleshootMaxUSD)
+	stored := tcStoredTask(t, f.cloudFixture, job.slug, job.spec.RunID).Overrides
+	if stored.MaxUSD == nil || *stored.MaxUSD != troubleshootMaxUSD {
+		t.Errorf("the stored task caps the run at %v, want %v (overrides.max_usd, the gateway's per-run cap)", stored.MaxUSD, troubleshootMaxUSD)
+	}
+	if stored.MaxBudgetUSD != nil {
+		t.Errorf("the stored task carries the per-stage ceiling %v, and the tier's cap is the run's own (overrides.max_usd)", *stored.MaxBudgetUSD)
 	}
 }
 
