@@ -366,19 +366,17 @@ type troubleshootCloudJob struct {
 
 // This command's cloud tier is four seams, one per call that reaches outside
 // this process (the header of this file): the plan that resolves what the tier
-// would launch, T-TC1's pre-flight, T-TC5's upload and the launch itself. The
-// two halves of the launch are the next task's and are declared here, nil, so
-// that this binary compiles and ships without them: troubleshootCloudTier
-// answers what this command answered before the tier existed when either is
-// unset, rather than launching a spec nothing here can build.
+// would launch, T-TC1's pre-flight, T-TC5's upload and the launch itself, each
+// a variable so a test drives the tier's order and its answer without a project
+// (the tier's own file, troubleshoot_launch.go, holds the plan and the launch).
 var (
 	// troubleshootCloudPlan resolves the job above from the evidence's own
 	// facts, and declines with D2409's reason when there is no repository to
 	// scope a run to.
-	troubleshootCloudPlan func(ctx context.Context, ev diagnoseagent.Evidence) (troubleshootCloudJob, error)
+	troubleshootCloudPlan = troubleshootPlanJob
 	// troubleshootLaunchCloud is the launch, in the interface the plan names:
 	// one execution, no retry, and the run reference a person reads.
-	troubleshootLaunchCloud func(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec) (string, error)
+	troubleshootLaunchCloud = troubleshootLaunchRun
 	// troubleshootPreflight is T-TC1's judgement of the spec, made without
 	// launching any of it. It is a variable for the same reason the launch is:
 	// a test drives the tier's order and its answer with a verdict of its own,
@@ -423,11 +421,10 @@ var (
 func troubleshootCloudTier(cmd *cobra.Command, o *troubleshootOptions, ev diagnoseagent.Evidence, d troubleshootDoc, rec srctree.Record, credErr error) error {
 	ctx := cmd.Context()
 	if troubleshootCloudPlan == nil || troubleshootLaunchCloud == nil {
-		// The launch is the next task's, and this binary does not carry it yet:
-		// what it answers is what it answered before this tier existed — the
-		// evidence, with the reason the credential was refused — rather than a
-		// refusal of a tier nobody asked for or a job launched from a spec no
-		// code here can build.
+		// Both halves are this binary's own (troubleshoot_launch.go), so this
+		// is a test that cleared one: what it asks for is the answer this
+		// command gave before the tier existed — the evidence, with the reason
+		// the credential was refused — rather than a tier nobody launched.
 		return troubleshootOffline(cmd, o, ev, d, credErr)
 	}
 	job, err := troubleshootCloudPlan(ctx, ev)
