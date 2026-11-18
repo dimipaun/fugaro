@@ -201,10 +201,11 @@ is a craft no layer states.
 
 The removal is recorded beside the block, and the record is what takes the craft
 off the published node (F22, D2607): silence in this file keeps the node's own
-copy, so a craft taken away without the record would go on being served. Publishing
-is this write's own follow-up, so the node stops stating the craft as this command
+copy, so a craft taken away without the record would go on being served. A craft
+of this installation's own config owes the policy stage, and this command runs
+that stage before it returns, so the node stops stating the craft as this command
 returns; a craft the file no longer states and the node no longer holds leaves the
-record behind as nothing, and the next publish clears it.
+record behind as nothing, and that same publish clears it.
 
 Nothing here removes the credential the craft named: a credential is removed by
 fugaro accounts rm, which clears the access of every craft that named it.
@@ -623,6 +624,20 @@ func accountsAccessWrite(cmd *cobra.Command, lc *localcfg.Config, target setting
 	if target.kind == settingsDocRepo {
 		fmt.Fprintf(cmd.OutOrStdout(), "%s: the change is in this file's working tree and nowhere else: review it, commit it on your own branch and merge that to the base branch — every run reads the base branch, and this command never commits or pushes\n", oneLine(target.path))
 	}
+	// The store is also what makes the sentence the caller printed true rather
+	// than a promise about a command the owner would have to run: a key of this
+	// machine's own config owes the policy stage (settings' layerSteps names that
+	// layer's stage), the crafts block and the derived accounts block reach a run
+	// off the published node and nowhere else, and the hook runs that stage before
+	// this returns — so "the node stops stating the craft as this command returns"
+	// is this write's own follow-up, and a stage that cannot leave the change live
+	// is answered by the hook's own not-live sentence instead
+	// (TestCraftWritesReachTheNode reads the node in a world that has one). A
+	// stage that finds nothing to publish to — a project with no database the
+	// node is read through — returns without a word, and no node serves the craft
+	// there for the sentence to be false about; a node a credentials move is
+	// holding mid-flight is the one state in which this command's sentence comes
+	// true late, when the move lets the publish through.
 	return runAfterWrite(cmd.Context(), cmd, afterWriteChange{Key: key, Store: accountsAccessStore(target)})
 }
 

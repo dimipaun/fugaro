@@ -292,6 +292,57 @@ func TestAccountsCraftRmRecordsTheRemoval(t *testing.T) {
 	}
 }
 
+// TestCraftWritesReachTheNode is the sentence both craft commands end on, read
+// where it can be checked: the crafts block is served to a run off the published
+// node and nowhere else, so `craft set` owes the publish that carries the access
+// there and `craft rm` owes the one that takes the craft off it. Nothing in
+// either command publishes by hand — the registry row of crafts.<name>.access is
+// a `local` one, a `local` write is the policy stage's (settings.layerSteps), and
+// the after-write hook runs the stages the write owes before it returns
+// (contract §3, D2602; write_publish.go). Without that pair the sentences would
+// be an overstatement and the node would go on serving the craft the owner had
+// just taken away.
+func TestCraftWritesReachTheNode(t *testing.T) {
+	r := newAddRigWith(t, addRigLocal+`
+credentials:
+  - name: team-a
+    type: claude-oauth
+  - name: team-b
+    type: claude-oauth
+crafts:
+  coder:
+    model: deepseek-v4-1
+    access: team-a
+`)
+
+	out, _, err := execute(t, "accounts", "craft", "set", "coder", "--access", "team-b")
+	if err != nil {
+		t.Fatalf("accounts craft set: %v\n%s", err, out)
+	}
+	if got := publishedCraft(t, r, config.CraftCoder).Access; got != "team-b" {
+		t.Errorf("the published node carries crafts.coder.access = %q as this command returns, want team-b: every coder stage of a run of this installation resolves its calls against the node", got)
+	}
+
+	out, _, err = execute(t, "accounts", "craft", "rm", "coder")
+	if err != nil {
+		t.Fatalf("accounts craft rm: %v\n%s", err, out)
+	}
+	if got := publishedCraft(t, r, config.CraftCoder); got != (config.Craft{}) {
+		t.Errorf("the published node still carries crafts.coder = %+v as this command returns, want it gone: the record the removal wrote is what the publish acts on", got)
+	}
+}
+
+// publishedCraft is the craft the published node states, the zero block for a
+// craft the node does not carry.
+func publishedCraft(t *testing.T, r *addRig, name string) config.Craft {
+	t.Helper()
+	p := r.policy(t)
+	if p.Crafts == nil {
+		return config.Craft{}
+	}
+	return p.Crafts.Of(name)
+}
+
 // TestCredentialRmWritesTheExplicitUnset is F22's storage half for the craft
 // side: `accounts rm` takes the typed entry away, and with the node keeping its
 // own copy of craft_credentials and of the crafts block, the removal has to

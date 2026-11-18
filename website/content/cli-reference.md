@@ -507,10 +507,11 @@ is a craft no layer states.
 
 The removal is recorded beside the block, and the record is what takes the craft
 off the published node (F22, D2607): silence in this file keeps the node's own
-copy, so a craft taken away without the record would go on being served. Publishing
-is this write's own follow-up, so the node stops stating the craft as this command
+copy, so a craft taken away without the record would go on being served. A craft
+of this installation's own config owes the policy stage, and this command runs
+that stage before it returns, so the node stops stating the craft as this command
 returns; a craft the file no longer states and the node no longer holds leaves the
-record behind as nothing, and the next publish clears it.
+record behind as nothing, and that same publish clears it.
 
 Nothing here removes the credential the craft named: a credential is removed by
 fugaro accounts rm, which clears the access of every craft that named it.
