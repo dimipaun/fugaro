@@ -1,0 +1,1028 @@
+{
+  "schema_version": 3,
+  "plan": "docs/mobile-identity-pairing/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "T0",
+      "title": "pin test and the live checks 730-736",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/docs_mobile_identity_pairing_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "DA",
+      "title": "amendment notes in the mobile-auth and mobile folders (D114, D162, D232)",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/mobile-auth/README.md",
+          "docs/mobile/README.md",
+          "internal/cli/docs_mobile_auth_test.go"
+        ]
+      }
+    },
+    {
+      "id": "C1",
+      "title": "the assertion and pairing wire contract",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/mobilesession/contract.go",
+          "internal/mobilesession/stub.go",
+          "shared/mobile-session/vectors.json",
+          "docs/mobile-identity-pairing/contract.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/mobilesession/stub.go"
+      ]
+    },
+    {
+      "id": "C2",
+      "title": "the app session port",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "shared/mobile-session/port.js",
+          "shared/mobile-session/stub.js",
+          "shared/mobile-session/port.test.js",
+          "docs/mobile-identity-pairing/session-port.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "shared/mobile-session/stub.js"
+      ]
+    },
+    {
+      "id": "M0",
+      "title": "app spike: provider tokens, device key, share extension (owner-run, Check 733)",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/mobile-identity-pairing/app-spike.md"
+        ]
+      }
+    },
+    {
+      "id": "Z0",
+      "title": "context spike (owner-run, Check 732)",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/mobile-identity-pairing/context-spike.md"
+        ]
+      }
+    },
+    {
+      "id": "P5",
+      "title": "credsvc grant on the token-signer account (needs O1)",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/credentials.tf",
+          "internal/infra/tf/cover.go",
+          "internal/infra/credentials_mobile_test.go"
+        ]
+      }
+    },
+    {
+      "id": "A1",
+      "title": "assertion signer in the identity project",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/identitysvc/sign.go",
+          "ee/identitysvc/idtoken.go",
+          "ee/identitysvc/handler.go",
+          "ee/identitysvc/sign_test.go"
+        ]
+      }
+    },
+    {
+      "id": "A2",
+      "title": "JWKS publication and key rotation",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/identitysvc/jwks.go",
+          "ee/identitysvc/rotation.go",
+          "ee/identitysvc/jwks_test.go"
+        ]
+      }
+    },
+    {
+      "id": "A3",
+      "title": "identity project Terraform: key ring, service, auth providers",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/identitysvc/terraform/main.tf",
+          "ee/identitysvc/terraform/keyring.tf",
+          "ee/identitysvc/terraform/auth.tf",
+          "ee/identitysvc/infra_test.go"
+        ]
+      }
+    },
+    {
+      "id": "P1",
+      "title": "assertion verifier with JWKS cache and single-use ids",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/assertion/verify.go",
+          "internal/assertion/jwks_cache.go",
+          "internal/assertion/jti.go",
+          "internal/assertion/verify_test.go"
+        ]
+      }
+    },
+    {
+      "id": "P2",
+      "title": "invites and fugaro pair --email --role",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/pair.go",
+          "internal/cli/pair_invite.go",
+          "internal/mobileauth/invite.go",
+          "internal/cli/pair_invite_test.go"
+        ]
+      }
+    },
+    {
+      "id": "P3",
+      "title": "credsvc pairing endpoint: policy, device node, audit",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/mobile_pair.go",
+          "internal/credsvc/mobile_policy.go",
+          "internal/credsvc/mobile_audit_pair.go",
+          "internal/credsvc/mobile_pair_test.go"
+        ]
+      }
+    },
+    {
+      "id": "P4",
+      "title": "credsvc session: rotating refresh, hourly custom token, revoke-self",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/mobile_session.go",
+          "internal/credsvc/mobile_refresh_store.go",
+          "internal/credsvc/mobile_mint.go",
+          "internal/credsvc/mobile_session_test.go"
+        ]
+      }
+    },
+    {
+      "id": "P6",
+      "title": "project policy fields for mobile",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/mobile.go",
+          "internal/projectpolicy/version.go",
+          "schemas/projectpolicy.schema.json",
+          "internal/cli/doctor_mobile.go"
+        ]
+      }
+    },
+    {
+      "id": "P7",
+      "title": "admin revoke reaches the refresh family",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/pair.go",
+          "internal/cli/pair_revoke.go",
+          "internal/cli/pair_revoke_test.go"
+        ]
+      }
+    },
+    {
+      "id": "K1",
+      "title": "encrypted paired-list store in the identity project",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/identitysvc/pairedlist.go",
+          "ee/identitysvc/pairedlist_test.go",
+          "ee/identitysvc/terraform/pairedlist.tf",
+          "ee/identitysvc/rtdb.rules.json"
+        ]
+      }
+    },
+    {
+      "id": "K2",
+      "title": "credsvc restore: challenge, strict switch, audit per restore",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/mobile_restore.go",
+          "internal/credsvc/mobile_restore_audit.go",
+          "internal/credsvc/mobile_restore_test.go"
+        ]
+      }
+    },
+    {
+      "id": "M1",
+      "title": "app identities: providers, store, relay detection",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/identity/store.js",
+          "mobile/src/identity/providers.js",
+          "mobile/src/identity/index.js",
+          "mobile/src/accounts/secure-store.js",
+          "mobile/package.json"
+        ]
+      }
+    },
+    {
+      "id": "M2",
+      "title": "app pairing flow: QR, identity pick, assertion, errors",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/pairing/payload.js",
+          "mobile/src/pairing/session.js",
+          "mobile/src/pairing/index.js",
+          "mobile/src/pairing/errors.js"
+        ]
+      }
+    },
+    {
+      "id": "M3",
+      "title": "app session: device key, refresh loop, sign out everywhere",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/session/refresh.js",
+          "mobile/src/session/devicekey.js",
+          "mobile/src/session/index.js",
+          "mobile/src/accounts/secret.js"
+        ]
+      }
+    },
+    {
+      "id": "K3",
+      "title": "app continuity: list sync, restore, keychain backup",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/continuity/sync.js",
+          "mobile/src/continuity/restore.js",
+          "mobile/src/continuity/index.js",
+          "mobile/src/accounts/expo-secure-store.js"
+        ]
+      }
+    },
+    {
+      "id": "J1",
+      "title": "device read of run state (rules, only if U9 says no)",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/rules/rules.json.tmpl",
+          "internal/budget/rules/emulator_runs_test.go",
+          "internal/projectpolicy/version.go"
+        ]
+      }
+    },
+    {
+      "id": "J2",
+      "title": "running-jobs view across paired projects",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/jobs/list.js",
+          "mobile/src/jobs/running.js",
+          "mobile/src/jobs/scope.test.js",
+          "mobile/src/jobs/index.js"
+        ]
+      }
+    },
+    {
+      "id": "J3",
+      "title": "confirmation policy: cancel and costly starts",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "shared/confirm/policy.js",
+          "shared/confirm/index.js",
+          "shared/confirm/policy.test.js"
+        ]
+      }
+    },
+    {
+      "id": "J4",
+      "title": "start and cancel verbs through the mailbox",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "shared/command/verbs.js",
+          "mobile/src/mailbox/client.js",
+          "shared/mailbox-schema/vectors.json",
+          "internal/mailbox/verbs.go"
+        ]
+      }
+    },
+    {
+      "id": "X1",
+      "title": "one transcript for voice and text",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/text/transcript.js",
+          "mobile/src/text/screen.js",
+          "mobile/src/text/index.js",
+          "mobile/src/voice/screen.js"
+        ]
+      }
+    },
+    {
+      "id": "X2",
+      "title": "long paste and detail-to-screen",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/text/composer.js",
+          "mobile/src/text/detail.js",
+          "mobile/src/text/index.js"
+        ]
+      }
+    },
+    {
+      "id": "X3",
+      "title": "share target with spec-to-pr named",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/app.config.js",
+          "mobile/src/share/receive.js",
+          "mobile/src/share/index.js",
+          "mobile/package.json"
+        ]
+      }
+    },
+    {
+      "id": "Z1",
+      "title": "context gauge",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/context/gauge.js",
+          "mobile/src/context/index.js",
+          "mobile/src/context/gauge.test.js"
+        ]
+      }
+    },
+    {
+      "id": "Z2",
+      "title": "compact button and idle auto-compaction",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/context/compaction.js",
+          "mobile/src/context/compaction.test.js",
+          "internal/projectpolicy/mobile.go"
+        ]
+      }
+    },
+    {
+      "id": "Z3",
+      "title": "per-account usage meter",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "mobile/src/context/usage.js",
+          "mobile/src/context/usage.test.js",
+          "mobile/src/context/index.js"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration: signer to verifier to credsvc to the app, end to end",
+      "run": null,
+      "version": null,
+      "size": 3.5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/server.go",
+          "internal/mobilesession/stub.go",
+          "internal/credsvc/mobile_e2e_test.go",
+          "mobile/src/session/e2e.test.js"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "D1",
+      "title": "SECURITY.md, its mirror and the mobile claims",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "website/content/security.md",
+          "website/data/mobile-claims.yaml",
+          "internal/cli/docs_mobile_identity_security_test.go"
+        ]
+      }
+    },
+    {
+      "id": "UP1",
+      "title": "fugaro update converges the previous version",
+      "run": null,
+      "version": null,
+      "size": 2.5,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_mobile.go",
+          "internal/cli/update_mobile_test.go",
+          "docs/releases/README.md"
+        ]
+      }
+    },
+    {
+      "id": "I2",
+      "title": "integration: surfaces onto the real session port",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "shared/mobile-session/stub.js",
+          "mobile/src/jobs/index.js",
+          "mobile/src/text/index.js",
+          "mobile/src/session/surfaces.test.js"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "CR1",
+      "title": "C1 amended if P3 finds the strict-switch state missing from the pair response",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/mobilesession/contract.go",
+          "shared/mobile-session/vectors.json"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "CR2",
+      "title": "C2 amended if J3 finds the costly-mode list missing from the session",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "shared/mobile-session/port.js"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "M1",
+      "needs": "M0",
+      "reason": "which provider packages and which device-key kind the app can use is what the spike finds"
+    },
+    {
+      "task": "M2",
+      "needs": "M0",
+      "reason": "which provider packages and which device-key kind the app can use is what the spike finds"
+    },
+    {
+      "task": "X3",
+      "needs": "M0",
+      "reason": "the share-extension package and config come from the spike"
+    },
+    {
+      "task": "M3",
+      "needs": "M1",
+      "reason": "both write mobile/src/accounts secure-store files"
+    },
+    {
+      "task": "K3",
+      "needs": "M3",
+      "reason": "real refresh loop and the shared secure-store file"
+    },
+    {
+      "task": "P7",
+      "needs": "P2",
+      "reason": "same file, internal/cli/pair.go"
+    },
+    {
+      "task": "J1",
+      "needs": "P6",
+      "reason": "version.go and the policy fields"
+    },
+    {
+      "task": "J3",
+      "needs": "P6",
+      "reason": "reads the costly-mode list from the policy fields"
+    },
+    {
+      "task": "X2",
+      "needs": "X1",
+      "reason": "text/index.js"
+    },
+    {
+      "task": "X3",
+      "needs": "X2",
+      "reason": "the share lands in the composer"
+    },
+    {
+      "task": "Z1",
+      "needs": "Z0",
+      "reason": "what the session exposes is what the spike finds"
+    },
+    {
+      "task": "Z2",
+      "needs": "Z0",
+      "reason": "whether compaction can be injected when idle is behaviour"
+    },
+    {
+      "task": "Z2",
+      "needs": "P6",
+      "reason": "per-project threshold lives in internal/projectpolicy/mobile.go"
+    },
+    {
+      "task": "Z2",
+      "needs": "Z1",
+      "reason": "context/index.js"
+    },
+    {
+      "task": "Z3",
+      "needs": "Z0",
+      "reason": "whether the limits can be read is behaviour"
+    },
+    {
+      "task": "Z3",
+      "needs": "Z2",
+      "reason": "context/index.js"
+    },
+    {
+      "task": "I1",
+      "needs": "A1",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "A2",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "P1",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "P2",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "P3",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "P4",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "K1",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "K2",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "M1",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "M2",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "M3",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I1",
+      "needs": "K3",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I2",
+      "needs": "J2",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I2",
+      "needs": "J3",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I2",
+      "needs": "J4",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I2",
+      "needs": "X1",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "I2",
+      "needs": "M3",
+      "reason": "wires the sides the contract separated"
+    },
+    {
+      "task": "D1",
+      "needs": "I1",
+      "reason": "says what the integrated service really does"
+    },
+    {
+      "task": "UP1",
+      "needs": "I1",
+      "reason": "update deploys and migrates all of it"
+    },
+    {
+      "task": "UP1",
+      "needs": "P5",
+      "reason": "update deploys and migrates all of it"
+    },
+    {
+      "task": "UP1",
+      "needs": "P6",
+      "reason": "update deploys and migrates all of it"
+    },
+    {
+      "task": "UP1",
+      "needs": "P7",
+      "reason": "update deploys and migrates all of it"
+    },
+    {
+      "task": "P1",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "P3",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "P4",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "K2",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "M1",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "M2",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "M3",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "J2",
+      "needs": "C2",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "J3",
+      "needs": "C2",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "J4",
+      "needs": "C2",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "X1",
+      "needs": "C2",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    },
+    {
+      "task": "K3",
+      "needs": "C1",
+      "reason": "built against the contract's shapes and stub, not the provider's behaviour"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "P1",
+        "needs": "A1"
+      },
+      "integration": "I1",
+      "reason": "the verifier needs the assertion's claims and JWKS shape, not the signer's behaviour"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "P3",
+        "needs": "P1"
+      },
+      "integration": "I1",
+      "reason": "P3 calls the Verifier interface; it needs its signature, not its checks"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "P4",
+        "needs": "P3"
+      },
+      "integration": "I1",
+      "reason": "the refresh path needs the device node's shape, not the pairing code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "K2",
+        "needs": "P3"
+      },
+      "integration": "I1",
+      "reason": "restore needs the pair response shape, not the pairing code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M1",
+        "needs": "A1"
+      },
+      "integration": "I1",
+      "reason": "the identities ask for an assertion by the contract's request shape"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M2",
+        "needs": "P3"
+      },
+      "integration": "I1",
+      "reason": "the app needs the pair request and error codes, not the endpoint"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "M3",
+        "needs": "P4"
+      },
+      "integration": "I1",
+      "reason": "the loop needs the refresh request and response shapes"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "J2",
+        "needs": "M3"
+      },
+      "integration": "I2",
+      "reason": "the view needs the session's endpoint, role and token accessor"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "J3",
+        "needs": "M3"
+      },
+      "integration": "I2",
+      "reason": "the policy needs the session's role"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "J4",
+        "needs": "M3"
+      },
+      "integration": "I2",
+      "reason": "the verbs send through the session port"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "X1",
+        "needs": "M3"
+      },
+      "integration": "I2",
+      "reason": "the transcript runs over the session port"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "K3",
+        "needs": "K2"
+      },
+      "integration": "I1",
+      "reason": "the sync client needs the restore request and response shapes"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "CR1",
+      "contract": "C1",
+      "raised_by": "P3",
+      "reason": "the pair response may need to carry the strict-switch state so the app can say a fresh QR is needed",
+      "affects": [
+        "M2",
+        "K3",
+        "K2"
+      ]
+    },
+    {
+      "change": "CR2",
+      "contract": "C2",
+      "raised_by": "J3",
+      "reason": "confirmations may need the project's costly-mode list on the session",
+      "affects": [
+        "J2",
+        "J4",
+        "X1",
+        "M3"
+      ]
+    }
+  ]
+}

@@ -75,6 +75,8 @@ Build order: assertion, identity, pairing, then continuity, jobs, text and conte
 - **F28. Gap** (`mip-identity`). Provider setup is owner work with no agent path: Google OAuth client, Microsoft app registration, Sign in with Apple service id and key, email templates, and App Store and Play data-safety declarations (Checks 731, 734).
 - **F29. Gap** (`mip-assertion`, `mip-pairing`). Platform limits assumed away at "hundreds of thousands of workspaces": Firebase Auth quotas, Cloud KMS sign requests per minute per key, credsvc cold start on the hourly refresh path. UNVERIFIED (U6).
 
+- **F30. Gap** (`mip-jobs`). "See currently running jobs" needs run state the phone can read. Run records live in the runs bucket, which a Firebase device session cannot read; the RTDB holds per-run counters under `runs/$slug/$run` and the write-once `outcomes` node (`internal/budget/rules/rules.json.tmpl`), and the app's read set was deliberately fenced to spend, caps and kill state (`mobile/src/jobs/scope.test.js`). Consequence: a running run is derived from `runs` without an `outcomes` entry, which needs a device read rule if none exists (U9); a rules change bumps the rules generation and `fugaro update` migrates it (D2797).
+
 ## Decisions
 
 | # | Question | Recommendation | Answer |
@@ -124,4 +126,5 @@ None between answers. D2782 (credsvc) and `.claude/rules/credentials-service.md`
 - **U5.** Whether a hardware-backed, non-exportable signing key is available in Expo for the device binding; otherwise the key is software and the plan says so. Mobile spike.
 - **U6.** Firebase Auth, KMS and Cloud Run quotas at the stated scale. Owner reads the quotas pages.
 - **U7.** The share-target mechanics (iOS share extension, Android intent filter) in this Expo setup. Mobile spike; owner runs the store builds (Check 734).
+- **U9.** Whether a paired device's token can already read `runs/$slug/$run` and `outcomes` under the current rules. The first step of task J1 reads the rules and the emulator test, and J1 changes them only if the answer is no.
 - **U8.** How Firebase treats one email under several providers (account linking setting) in the identity project. Owner, Check 731.
