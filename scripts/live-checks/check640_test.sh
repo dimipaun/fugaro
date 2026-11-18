@@ -543,7 +543,7 @@ run640() {
       case "$n" in
       gh | gcloud | fugaro | git) continue ;;
       esac
-      [ -e "$dir/notools/$n" ] || ln -s "$f" "$dir/notools/$n"
+      [ -e "$dir/notools/$n" ] || [ -L "$dir/notools/$n" ] || ln -s "$f" "$dir/notools/$n"
     done
     path="$dir/notools"
   fi
