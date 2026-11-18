@@ -300,9 +300,13 @@ func TestImagesSkillEntryBuildAsksForNoSecret(t *testing.T) {
 	}
 	// The refusal the skill states is the tree's: the publish path reads the
 	// definition's own text for a secret of its own, and answers by name and
-	// line, which is the sentence an agent can rely on.
+	// line, which is the sentence an agent can rely on. The call is read
+	// without its `return` because a fetched definition's refusal is wrapped
+	// with the repository and the ref it was read at (the branch the entry
+	// pins can be an old one that still carries what main no longer does), and
+	// the sentence itself is unchanged.
 	fetch := readRepoFile(t, "internal/catalog/fetch.go")
-	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "return SecretRefusal(e.Name, line.line)") {
+	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "SecretRefusal(e.Name, line.line)") {
 		t.Error("refuseCredentialIn no longer refuses a definition that asks for a secret of its own by name and line, which is the refusal the skill states")
 	}
 	// And the refusal is not a text guard standing in front of a build that
