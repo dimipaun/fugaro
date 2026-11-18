@@ -1065,7 +1065,7 @@ var localRows = []Row{
 	locLocal("crafts.merge-judge.access", "the coder's access", "accounts", docCrafts),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
-	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
+	loc("project_secrets.*.proxy", "none: an entry that says nothing about the switch is the state `fugaro update` turns on, and a written false is a hold it never lifts", "secrets", docSetup),
 
 	loc("workflow_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("workflow_secrets.*.proxy", "none: refused, D1275", "secrets", docSetup),

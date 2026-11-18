@@ -311,46 +311,57 @@ func TestUpdateAsksForTheWorkspaceTokenOnce(t *testing.T) {
 	}
 }
 
-// TestUpdateRefusesASecondBitbucketWorkspace is D2314: one Bitbucket access
-// token reaches the repositories of one workspace and the proxy forwards that
-// one token, so a project whose Bitbucket repositories span two workspaces is
-// one the credentials service cannot serve. The refusal names the second
-// workspace and a repository of each, and it is raised where the flip would
-// turn the switch on — so the file and the node are left exactly as they were,
-// and nothing was written for an operator to undo.
-func TestUpdateRefusesASecondBitbucketWorkspace(t *testing.T) {
+// TestUpdateHoldsTheSwitchBackForASecondBitbucketWorkspace is D2314 as the
+// owner amended it on 2026-11-18: one Bitbucket access token reaches the
+// repositories of one workspace and the proxy forwards that one token, so a
+// project whose Bitbucket repositories span two workspaces is one the
+// credentials service cannot serve — and that is a reason to hold the SWITCH
+// back, never a reason for the one command that is the whole upgrade to stop.
+//
+// The gate used to fail the policy stage, which failed the update: an operator
+// whose project has a repository in a second workspace was left with an
+// installation one release behind on every other step of it, and running the
+// command again met the same refusal. The line it prints names the second
+// workspace and a repository of each, and the file and the node are left as
+// they were — the runs of the project keep the mounted credential they have.
+func TestUpdateHoldsTheSwitchBackForASecondBitbucketWorkspace(t *testing.T) {
 	f, sm := proxySwitchFixture(t)
 	publishProxySwitchNode(t, f)
 	seedProxyBundle(t, sm, proxySwitchBundle(t))
 	rewriteConfigLine(t, "  acme/other: { provider: bitbucket, workflows: [web] }",
 		"  acme/other: { provider: bitbucket, workflows: [web] }\n  other-ws/repo: { provider: bitbucket, workflows: [web] }")
 	before := readFileString(t, f.path)
+	beforeNode, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
 	useVersion(t, proxySince)
 	h := newMigrationRig(t, f, &initOptions{})
 
 	out, err := h.apply(t, true)
-	if err == nil {
-		t.Fatalf("the update turned a proxy on for a project whose Bitbucket repositories are in two workspaces, and the credentials service forwards one token per project:\n%s", out)
+	if err != nil {
+		t.Fatalf("the update failed over a project whose Bitbucket repositories are in two workspaces, which is the switch's own reason to stay off and no other step's: %v\n%s", err, out)
 	}
-	if got := ExitCode(err); got != ExitUserError {
-		t.Errorf("exit %d, want %d: which project a repository belongs to is the operator's own decision\n%s", got, ExitUserError, err)
-	}
-	for _, want := range []string{"acme", "other-ws", "acme/other", "other-ws/repo", "D2314", "nothing was written"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal does not carry %q, so it does not name what the operator has to move:\n%v", want, err)
+	for _, want := range []string{"leaves the Bitbucket proxy switch off", "acme", "other-ws", "acme/other", "other-ws/repo", "D2314", "every other step of this update went on"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the line does not carry %q, so it does not name what the operator has to move or what the update left alone:\n%s", want, out)
 		}
 	}
 	if _, ok := proxyEntryOn(t, f); ok {
-		t.Errorf("the refused run wrote the %s entry anyway", config.BitbucketSecret)
+		t.Errorf("the run wrote the %s entry anyway", config.BitbucketSecret)
 	}
 	if got := readFileString(t, f.path); got != before {
-		t.Errorf("the refused run rewrote the local config:\n%s", got)
+		t.Errorf("the run rewrote the local config:\n%s", got)
 	}
-	if got := nodeVersionOn(t, f.db); got != projectpolicy.Version {
-		t.Errorf("the node moved to version %d on a refusal", got)
+	after, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(beforeNode) {
+		t.Errorf("the node moved over a switch this run holds back:\nbefore %s\nafter  %s\n%s", beforeNode, after, out)
 	}
 	if p := proxyNodeOn(t, f); p.BitbucketToken != nil {
-		t.Errorf("the refused run published bitbucket_token = %+v", p.BitbucketToken)
+		t.Errorf("the run published bitbucket_token = %+v over a project the service cannot serve", p.BitbucketToken)
 	}
 }
 
@@ -513,5 +524,63 @@ func TestUpdateKeepsTheHoldAWrittenProxyFalseIs(t *testing.T) {
 	}
 	if p := proxyNodeOn(t, f); p.BitbucketToken != nil {
 		t.Errorf("the node carries bitbucket_token = %+v, want none: the derivation of a held-off entry with no allow_data_to is no block\n%s", p.BitbucketToken, out)
+	}
+}
+
+// TestTheProxySwitchIsTheUpdateDoorsOwn is the pin the review of 2026-11-18
+// found missing under the flip's first condition: the switch is `fugaro update`'s
+// own step (D2306 is about the upgrade), and the two other doors that reach the
+// policy stage — `fugaro setup` and `fugaro accounts add` — must leave it off.
+//
+// The fixture is everything the flip asks for on its own terms: a project with a
+// Bitbucket repository, a deployed credentials service, the workspace token in
+// its bundle, and a binary at the release that carries the proxy. The only thing
+// that answers "no" is the door. Turning it on here would be a decision nobody
+// asked those two commands for: an installation's proxy is one choice for the
+// whole project, and a door that flipped it as a side effect of installing
+// something else would have moved every repository of the project onto a
+// credential path its owner never chose.
+//
+// The mutation it is the red step of is the update-door condition in
+// bitbucketProxyFlip, and each row below fails without it: the switch lands in
+// the file, the block lands in the node, and the run says it turned the proxy on.
+func TestTheProxySwitchIsTheUpdateDoorsOwn(t *testing.T) {
+	for _, door := range []string{setupDoor.name, "accounts add"} {
+		t.Run(door, func(t *testing.T) {
+			f, sm := proxySwitchFixture(t)
+			publishProxySwitchNode(t, f)
+			seedProxyBundle(t, sm, proxySwitchBundle(t))
+			before := readFileString(t, f.path)
+			beforeNode, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			useVersion(t, proxySince)
+			h := newMigrationRig(t, f, &initOptions{door: door})
+
+			out, err := h.apply(t, true)
+			if err != nil {
+				t.Fatalf("%s failed over a project the flip has nothing to say to it about: %v\n%s", door, err, out)
+			}
+			if got := readFileString(t, f.path); got != before {
+				t.Errorf("%s rewrote the local config of a project whose proxy is not its decision:\n%s", door, got)
+			}
+			if entry, ok := proxyEntryOn(t, f); ok && entry.ProxyStated() {
+				t.Errorf("%s wrote the %s entry (%+v): the switch is `fugaro update`'s own step, and no other door turns a project's proxy on\n%s", door, config.BitbucketSecret, entry, out)
+			}
+			after, err := json.Marshal(f.db.Value(projectpolicy.PathShared()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(after) != string(beforeNode) {
+				t.Errorf("%s moved the published node over a switch that is not its decision:\nbefore %s\nafter  %s\n%s", door, beforeNode, after, out)
+			}
+			if p := proxyNodeOn(t, f); p.BitbucketToken != nil {
+				t.Errorf("%s published bitbucket_token = %+v: the block is the entry the flip writes, and this door does not write one\n%s", door, p.BitbucketToken, out)
+			}
+			if strings.Contains(out, "turned the credentials service's Bitbucket proxy on") {
+				t.Errorf("%s says it turned the proxy on:\n%s", door, out)
+			}
+		})
 	}
 }
