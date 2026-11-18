@@ -24,24 +24,30 @@ scripts with the `docker` build tag.
 
 `go test ./images/` needs nothing but Go: the scan's own tests run it against a
 fake docker and fixture tars (`scan_test.go`), so they are part of the default
-suite and of CI's `rest-images` shard.
+suite and of CI's `rest-images` shard. That includes
+`TestScanReadsTheCatalogFixture`, which reads the fixture the docker-tagged test
+loads -- the same tar, as the image's save -- so a fixture that a load would
+reshape fails on a machine with no daemon rather than only on the nightly job.
 
-A test that builds or runs a real container carries `//go:build docker` and
-needs a Docker daemon and network (it pulls the images its Dockerfile builds
-from, and the Trivy image `scan.sh` runs). Run them all with
+A test that loads or runs a real container carries `//go:build docker` and needs
+a Docker daemon and network (the Trivy image `scan.sh` runs). Run them all with
 
 ```sh
 go test -tags docker -count=1 ./images/
 ```
 
-`TestScanSecretsOnACatalogShapedImage` runs the real `scan.sh --secrets` on a
-small real image shaped like a catalog build (`images/catalog/go/Dockerfile`):
-a tiny pinned base, the two paths `trivy-secret.yaml` allows a build's false
-positives at holding throwaway placeholders, two RUNs that change nothing, and
-a private key in the checkout. It is the assertion a fixture cannot make -- a
-daemon really does hand the image over with a repeated empty layer, and the
-pinned Trivy really does flag the two placeholders and clear them once the
-allowances are in the config. Run it alone with
+`TestScanSecretsOnACatalogShapedImage` loads an image shaped like a catalog
+build (`images/catalog/go/Dockerfile`) into a real daemon and runs the real
+`scan.sh --secrets` on it: the two paths `trivy-secret.yaml` allows a build's
+false positives at holding throwaway placeholders, an empty layer the image's
+history lists twice, and -- in a second image -- a private key in the checkout.
+
+The image is written as an OCI layout tar by `scan_catalog_test.go` and loaded
+with `docker load`, rather than built from a Dockerfile: what a no-op step
+leaves is the builder's to shape, and the repeat this test pins is only the
+fixture's to promise. Everything past the load is real -- the daemon's inspect,
+save and export, and the pinned Trivy over them -- which is the assertion a
+fixture cannot make. Run it alone with
 
 ```sh
 go test -tags docker -count=1 -run TestScanSecretsOnACatalogShapedImage ./images/
@@ -50,12 +56,9 @@ go test -tags docker -count=1 -run TestScanSecretsOnACatalogShapedImage ./images
 Its subtests are the four things a catalog build's scan has to get right: the
 clean image passes; the two placeholders are findings of their own, so they are
 what the allowances clear; a key left in the checkout is refused by name; and a
-layer no decompressor can read is refused.
-
-Two of those are built only where the environment allows it, and say so when
-they skip: the clean scan skips on a worker with no `zstd` beside a daemon that
-re-exports layers zstd-compressed (no image is clearable there), and the
-undecodable-layer case skips where the daemon's save hands over nothing this
-worker cannot read. A test skips itself where no daemon answers
+layer no decompressor can read is refused. The last one is built only where the
+daemon keeps its layers as written: a store that re-exports each layer's plain
+diff tar (the classic store) hands over nothing this worker cannot read, and
+that subtest says so when it skips. A test skips itself where no daemon answers
 (`testutil.RequireDocker`). CI runs the docker-tagged set in
 `.github/workflows/images.yml`'s `docker-tests` job, on every event but a push.
