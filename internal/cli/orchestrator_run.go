@@ -539,6 +539,11 @@ func (d *orchestratorDaemon) newTick(ctx context.Context) (*orchestrator.Tick, e
 			// server's own clock. A daemon with no node here is one nothing
 			// launches from, and the launcher refuses that write rather than
 			// making it nowhere.
+			//
+			// The list is the state node, which is the node an item was launched
+			// from today; whatever cycle comes to work several nodes (Tick.Nodes)
+			// hands them here too, because the launcher has to find the item it
+			// was asked to start in the node it is starting it from.
 			issues: issueReadSeam(d),
 			nodes:  []orchestrator.Store{d.node},
 			now:    d.db.ServerNow,
