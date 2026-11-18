@@ -183,7 +183,10 @@ const WINDOWS_PATH = 'C:\\Windows\\System32;C:\\Windows'
  * composite-commands plan's AP8's pending-steps read, `apply.pending`, the
  * twenty-eighth: `fugaro apply --status --json` resolves the installation from
  * the project flags the row fixes, so it takes the flag every other read of a
- * project takes. The
+ * project takes -- and the repos-management plan's RE5's two enrolment reads,
+ * `repos.ls` and `repos.status`, the twenty-ninth and thirtieth: both resolve the
+ * installation and then the project whose allow-list they read, so they take
+ * the flag like every other project read here. The
  * complement -- the commands
  * that take no
  * flag at all -- is the *module's* `COMMANDS_WITHOUT_PROJECT`, keyed by the
@@ -216,6 +219,8 @@ const COMMANDS_TAKING_PROJECT: readonly OperationName[] = [
   'roadmap.move',
   'managed.status',
   'policy.show',
+  'repos.ls',
+  'repos.status',
   'run.launch',
   'seats.read',
   'members.list',
@@ -543,7 +548,7 @@ describe('the spawn table and the argv it builds', () => {
     }).toThrow(/does not start with config list/)
   })
 
-  it('fixes the design allow-list exactly: thirty argvs, twenty-seven commands, twenty-eight of them with --project', () => {
+  it('fixes the design allow-list exactly: thirty-two argvs, twenty-nine commands, thirty of them with --project', () => {
     // The design's §5.1 rule 6 table is the whole allow-list, argv for argv:
     // the rail's read (`config list --json`, the case above) used to be the
     // picker's own row in a second table until the owner's ruling of 2026-10-25,
@@ -584,7 +589,15 @@ describe('the spawn table and the argv it builds', () => {
     // own `expectFlag` emits -- and the roles-and-scopes plan's RS7 added the
     // members read, `user ls --json`, the Members view's own argv: the `user`
     // group's one reachable word, whose one argument is the repository a role is
-    // asked about and which the caller may leave out. The Go
+    // asked about and which the caller may leave out. The repos-management
+    // plan's RE5 added the thirty-first and thirty-second argvs: `project repos
+    // ls --json` and `project repos status --json`, the Project tab's view of
+    // what the project has enrolled and the per-repository doctor that says
+    // whether one of them can start a run. Both are the managed reads' shape --
+    // the row's own words and the installation's two, no argument at all, which
+    // is what keeps `status`'s optional positional repository out of a caller's
+    // reach -- and both take `--project`, so they are two more rows over two
+    // more commands in the count below. The Go
     // side pins
     // the document's list (`internal/cli/docs_desktop_console_test.go`,
     // TestDocsDesktopConsoleDesignAllowListIsExactArgv) and this case pins the
@@ -636,6 +649,15 @@ describe('the spawn table and the argv it builds', () => {
       // own words, filled from the chosen installation like every other row's.
       'managed status --json',
       'project policy show --json',
+      // The project's enrolled repositories (the repos-management plan's RE5,
+      // D2413): the Project tab's view of what the project has enrolled, and the
+      // per-repository doctor that says whether one of them can start a run.
+      // Both rows are the command and `--json` and nothing else -- no argument
+      // of any kind, so `project repos status`'s optional positional repository
+      // is unreachable -- and the two project flags are this row's own words,
+      // filled from the chosen installation like every other row's.
+      'project repos ls --json',
+      'project repos status --json',
       // The seat estimate (subscriptions plan S4.2): the Project tab's advisory
       // read, whose argv is the command, its one fixed flag and the
       // installation's two words -- there is no argument for a caller to fill.
@@ -654,7 +676,7 @@ describe('the spawn table and the argv it builds', () => {
       'apply --status --json',
     ])
     // The commands that take the flag (addCloudFlags, internal/cli/cloud.go:51)
-    // are twenty-eight rows over twenty-five commands: `logs` has two rows,
+    // are thirty rows over twenty-seven commands: `logs` has two rows,
     // `--json` and `--url`, and neither of them may be the one that forgets
     // --project, and `settings` (a read and a write) and `graph` (a read and its
     // feed) have two each as well.
@@ -686,6 +708,8 @@ describe('the spawn table and the argv it builds', () => {
         'coordinator intents',
         'managed status',
         'project policy show',
+        'project repos ls',
+        'project repos status',
         'seats',
         'user ls',
         'coordinator roadmap move',
@@ -693,7 +717,7 @@ describe('the spawn table and the argv it builds', () => {
         'apply',
       ]),
     )
-    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(28)
+    expect(SPAWN_COMMANDS.filter((row) => row.takesProject)).toHaveLength(30)
     // ...and the table's own flags agree with the list the tests above use.
     for (const row of SPAWN_COMMANDS) {
       expect(row.takesProject, row.operation).toBe(COMMANDS_TAKING_PROJECT.includes(row.operation))
@@ -1261,6 +1285,61 @@ describe('the spawn table and the argv it builds', () => {
     // omits the installation's caps (F18), so the row this surface carries has
     // to be that command's.
     expect(SPAWN_COMMANDS.map((row) => row.words.slice(0, 3).join(' '))).toContain('project policy show')
+  })
+
+  it('spawns the two enrolment reads as their command, `--json` and nothing else', () => {
+    // **RE5's pair, word for word** (the repos-management plan, D2413; the
+    // design allow-list's `project repos ls --json` and `project repos status
+    // --json`). Both are the managed reads' shape again -- the argv is the row's
+    // own words and the caller fills none of them -- and the emptiness is what
+    // keeps the reads about *this* project: `project repos status` answers for
+    // every repository the project knows when it names none, so a payload that
+    // could name a repository would be aiming the read at one this installation
+    // may not have. Spelled out here rather than read off the rows, so a change
+    // to either row is a failing test.
+    expect(argvFor('repos.ls', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'project',
+      'repos',
+      'ls',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    expect(argvFor('repos.status', {}, safeContext({ project: 'chosen' }))).toEqual([
+      'project',
+      'repos',
+      'status',
+      '--json',
+      '--project',
+      'chosen',
+    ])
+    for (const operation of ['repos.ls', 'repos.status'] as const) {
+      const row = SPAWN_COMMANDS.find((candidate) => candidate.operation === operation)
+      expect(row?.args, operation).toEqual([])
+      expect(row?.dirFlag, operation).toBe(false)
+      // A key neither row declares never reaches an element -- and the words
+      // these commands own but no row declares (`--config`, the group's
+      // positional repository, and the group's two writes) are refused like any
+      // other.
+      for (const key of ['project', 'config', 'repo', 'json', 'all', 'token']) {
+        expect(
+          () => argvFor(operation, { [key]: 'x' }, safeContext()),
+          `${operation} accepted ${key}`,
+        ).toThrow(/does not declare/)
+      }
+      // The argv's whole flag list is the row's one word plus the console's own
+      // `--project`: no credential, no host, no path and no other command's flag.
+      const argv = argvFor(operation, {}, safeContext({ project: 'chosen' }))
+      expect(argv.filter((word) => word.startsWith('--'))).toEqual(['--json', '--project'])
+    }
+    // The group's two writes are not on this surface at all: the only words
+    // under `project repos` here are the two reads, which is the claim
+    // `assertSpawnSurface` and the design's never table hold from the other side.
+    expect(
+      SPAWN_COMMANDS.filter((row) => row.words.slice(0, 2).join(' ') === 'project repos').map(
+        (row) => row.words.slice(2).join(' '),
+      ),
+    ).toEqual(['ls --json', 'status --json'])
   })
 
   it('spawns the seats estimate as its command, `--json` and nothing else', () => {
@@ -1834,8 +1913,8 @@ describe('the spawn table and the argv it builds', () => {
     // steps*, which is what the console's own chain (`apply.pending` and the
     // `fugaro apply` that follows it) is for. **The table is the spelling and
     // not the argv**: the write's word goes out only for a plan whose
-    // `noApply` answers for it (`SETTINGS_EDIT_PHASE_WORD_GATES`, unset
-    // `NO_APPLY_CLI_FLOOR`), which the two cases above drive from both sides. A
+    // `noApply` answers for it (`SETTINGS_EDIT_PHASE_WORD_GATES`, read
+    // against `NO_APPLY_CLI_FLOOR`), which the two cases above drive from both sides. A
     // fourth phase, a write phase that lost the word, or a word on the dry run
     // fails here.
     expect(Object.keys(SETTINGS_EDIT_PHASE_WORDS).sort()).toEqual(['dry-run', 'narrowing', 'widening'])
@@ -5368,6 +5447,79 @@ describe('the source as a whole', () => {
     const error = await source.listRuns({ since: '3d' }).catch((thrown: unknown) => thrown)
     expect(error).toBeInstanceOf(SourceRefusal)
     expect((error as SourceRefusal).sentence).toBe('no runs matched --since 3d')
+  })
+
+  itHostRoute('answers `project repos status` with its document even though a failing row makes it exit 1', async () => {
+    // The one read whose exit status is not its answer: the command writes the
+    // document and *then* exits `ExitUserError` when a row that blocks a launch
+    // failed (`reposStatusPrint`, `internal/cli/project_status.go`), so a source
+    // that read the code first would refuse exactly the case the read exists for
+    // -- the failing rows and the fix each one names (`docs/design/desktop-
+    // console.md` section 5.1: "this operation's answer is the document rather
+    // than the status").
+    const directory = freshDirectory()
+    const statusDocument = {
+      version: 1,
+      project: PROJECT,
+      repos: [
+        {
+          canonical: 'acme/app',
+          enrolled: true,
+          state: '',
+          rows: [
+            {
+              id: 'credential-version',
+              ok: false,
+              problem: 'the github-app-key container holds no enabled version',
+              fix: 'fugaro secrets set github-app-key --repo acme/app',
+              severity: 'blocking',
+            },
+          ],
+        },
+      ],
+    }
+    const stub = installStub(directory, {
+      commands: { version: { stdout: '1.4.2\n' }, 'project repos status': { stdout: `${JSON.stringify(statusDocument)}\n`, code: 1 } },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const snapshot = await source.reposStatus({})
+    expect(snapshot.document).toEqual(statusDocument)
+    const rows = (snapshot.document['repos'] as readonly Record<string, unknown>[])[0]?.['rows'] as readonly Record<string, unknown>[]
+    expect(rows[0]?.['ok']).toBe(false)
+    expect(rows[0]?.['fix']).toBe('fugaro secrets set github-app-key --repo acme/app')
+  })
+
+  itHostRoute('refuses `project repos status` that exited 1 with no document to hand back', async () => {
+    // The tolerance is for the code *with* a document and never for the code
+    // alone: a failure that printed nothing is the CLI's own sentence, as it is
+    // for every other read.
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'project repos status': { stderr: 'fugaro: the runs bucket could not be read\n', code: 1 },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    const error = await source.reposStatus({}).catch((thrown: unknown) => thrown)
+    expect(error).toBeInstanceOf(SourceRefusal)
+    expect((error as SourceRefusal).sentence).toBe('the runs bucket could not be read')
+  })
+
+  itHostRoute('refuses every other exit code, even beside a whole document', async () => {
+    // One code is tolerated and it is `ExitUserError`'s, so this is a decision
+    // about `repos.status` and not a general "ignore the exit status": a code
+    // the CLI uses for something else with a document on stdout is still a
+    // refusal, and the read stays the only one that can fail and answer.
+    const directory = freshDirectory()
+    const stub = installStub(directory, {
+      commands: {
+        version: { stdout: '1.4.2\n' },
+        'project repos status': { stdout: '{"version":1,"project":"fugaro","repos":[]}\n', code: 2 },
+      },
+    })
+    const source = await CliSource.create({ target: { project: PROJECT }, configuredBinaryPath: stub.binary, appEnv: {} })
+    await expect(source.reposStatus({})).rejects.toBeInstanceOf(SourceRefusal)
   })
 
   itHostRoute('returns the version line and the one link as text, with no document in them', async () => {

@@ -132,6 +132,56 @@ func (s *Service) markEvent(ctx context.Context, id, state string, entitlementID
 	return s.docs.Put(ctx, paddleEventsCollection, id, doc)
 }
 
+// markEventFrom moves one stored event out of the state a caller decided it in,
+// and it reads that state and writes the new one in **one transaction**.
+//
+// Whether an event may move is a question about the state the store holds, and
+// a read answered outside the write that acts on it is a state something else
+// can move in between: two resolutions of one parked event (P5.1) both read
+// `parked`, both write, and the second overwrites the first — the decision the
+// first operator made is gone and only the log says it ever happened. The read
+// here is part of what the transaction read, so a competing resolution is
+// either seen as the state it left or a conflict that runs this again on it.
+//
+// It is `markEvent`'s act with the state as a precondition rather than beside
+// it: what a caller knows about the event is what it read, and the state the
+// event is in now is the store's to answer. A caller that read the event only
+// to write it back uses `markEvent`; a caller whose whole decision is "it is
+// still parked" uses this.
+//
+// What it refuses with is the two answers a reader of a stored event already
+// branches on — the id the store does not hold, and the state the decision was
+// not made in — so a door does not have to tell them apart from a store that
+// failed.
+func (s *Service) markEventFrom(ctx context.Context, id, from, to string, entitlementID *string) (WireLedgerEvent, error) {
+	var written WireLedgerEvent
+	err := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+		held, present, err := getRecord[WireLedgerEvent](ctx, tx, paddleEventsCollection, id)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return errOperationsNoEvent
+		}
+		if held.State != from {
+			return errOperationsEventAnswered
+		}
+		held.State = to
+		if entitlementID != nil {
+			held.EntitlementID = entitlementID
+		}
+		if err := putRecord(ctx, tx, paddleEventsCollection, id, held); err != nil {
+			return err
+		}
+		written = held
+		return nil
+	})
+	if err != nil {
+		return WireLedgerEvent{}, err
+	}
+	return written, nil
+}
+
 // storedEvent reads one stored event back.
 func (s *Service) storedEvent(ctx context.Context, id string) (WireLedgerEvent, bool, error) {
 	return getRecord[WireLedgerEvent](ctx, s.docs, paddleEventsCollection, id)

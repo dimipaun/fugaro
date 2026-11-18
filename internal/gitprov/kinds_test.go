@@ -66,6 +66,7 @@ var forgeKindGoSites = map[string]string{
 	"internal/cli/project_enroll_converge.go":  "the kind the enrolment reads off a repository's origin remote, and the GitHub-only App ID its repos: entry is built with",
 	"internal/cli/reviewverify.go":             "reading a pull request's head per provider",
 	"internal/cli/run.go":                      "the kind a launch resolves for the slug it runs on, refused for a read-only context repository the credentials service cannot fetch",
+	"internal/cli/update_proxy_switch.go":      "the project's own repositories the update's Bitbucket proxy switch has to reach, and the workspace they are all in (D2306, D2314)",
 	"internal/config/validate.go":              "config.Providers, the config-side list, and the per-provider identity checks — held to runner.jobProviderKinds by internal/cli's TestProviderKindsAgreeWithTheConfigsList",
 	"internal/credsvc/bitbucket.go":            "the credentials service's admission of a Bitbucket provider",
 	"internal/credsvc/bitbucketproxy.go":       "the proxied Bitbucket request's provider",

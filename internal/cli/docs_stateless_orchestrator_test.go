@@ -663,14 +663,14 @@ func TestDocsStatelessOrchestratorLadderAmendmentsAreRecorded(t *testing.T) {
 	// rulings: E0 of that plan was gated on the owner confirming its open items
 	// T1, T3 and T4, and this task may only record what the plan states. So each
 	// row says which confirmation it carries, and the switch's default is
-	// marked as the owner's to rule rather than as a decided default.
+	// marked as the owner's ruling (on by default, D2046).
 	for _, tc := range []struct{ id, want string }{
 		{"D1244", "replaced by D2032 of `docs/outer-loop-escalation`"},
 		{"D1244", "`orchestrator.triage_after` was never built"},
 		{"D1244", "that plan's own open item **T1**"},
 		{"D1245", "D2041 of `docs/outer-loop-escalation`"},
 		{"D1245", "`escalation.ready_drafts`"},
-		{"D1245", "The switch's default is not yet ruled"},
+		{"D1245", "The switch's default is ruled on"},
 		{"D1245", "`D2046`"},
 		{"D1246", "D2036 of `docs/outer-loop-escalation`"},
 		{"D1246", "the same **T1** confirmation"},

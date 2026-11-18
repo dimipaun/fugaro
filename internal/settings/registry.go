@@ -386,12 +386,12 @@ var yamlMeta = map[string]Row{
 	// with no entry here takes: D1515 decides the editor is fugaro.yaml and the
 	// project layer file — a list has no scalar floor for the allow-list's rule
 	// to raise — and `fugaro config publish` is the command that carries the
-	// layer's half, which is what the row names. The family that will edit one
-	// entry by its key field is `fugaro rigor security`, which M4 of
-	// docs/config-ownership registers (D2613): the token stays `config` until
-	// that command is in the tree, because a token names a command a person can
-	// run — the read prints it, and the write refuses in its name.
-	"security.patterns": {Owner: "config", Merge: Union, Default: unset("the engine's floor alone")},
+	// layer's half. The family that edits one entry by its key field is
+	// `fugaro rigor security` (M4 of docs/config-ownership, D2613), which is
+	// what the row names: an entry is addressed by its name and written whole,
+	// which no scalar path can do, and the token is a command a person can run
+	// — the read prints it and the write refuses in its name.
+	"security.patterns": {Owner: "rigor security", Merge: Union, Default: unset("the engine's floor alone")},
 
 	// The planning pass's switch (docs/contract-first-decoupling, D1813). It
 	// is a preference rather than a bound, so the ordinary rule decides it:
@@ -831,17 +831,16 @@ var layerRows = []Row{
 	// The project layer's own half of the security list (D1501) and the switch
 	// that is its alone (D1517, D1503): the rows the layer adds for every
 	// repository of the project, and always_level_3, which asks for the
-	// adversarial review level for every change of the project. Owner `config`
-	// for security.patterns' reason — the layer file is the second editor
-	// D1515 names, and `fugaro config publish` is what carries it — and the
-	// rows are judged by the rules the repository's own are, which is why they
-	// share that row's answer. always_level_3 is the one that is no list: it is
-	// a switch that only turns on, and false is a layer that states nothing.
-	// M4's `fugaro rigor security` is the family that will edit one of these.
-	layerRow("security.patterns.*.name", "none", "config", docLayer),
-	layerRow("security.patterns.*.match", "none", "config", docLayer),
-	layerRow("security.patterns.*.category", "none", "config", docLayer),
-	layerValueRow("security.always_level_3", "false", "config", docLayer),
+	// adversarial review level for every change of the project. Owner `rigor
+	// security` for security.patterns' reason, since M4's command writes them
+	// there too: the rows are judged by the rules the repository's own are,
+	// which is why they share that row's answer, and always_level_3 is the one
+	// that is no list — it is a switch that only turns on, and false is a layer
+	// that states nothing.
+	layerRow("security.patterns.*.name", "none", "rigor security", docLayer),
+	layerRow("security.patterns.*.match", "none", "rigor security", docLayer),
+	layerRow("security.patterns.*.category", "none", "rigor security", docLayer),
+	layerValueRow("security.always_level_3", "false", "rigor security", docLayer),
 }
 
 // LocalPrefix marks a local row whose bare name a fugaro.yaml key already
@@ -1639,9 +1638,9 @@ var defaultValues = map[string]Default{
 	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
 	// The ladder's own two (E3): the scale a critical-path item's times are
 	// multiplied by, and the switch that decides whether the orchestrator may
-	// ready a stalled draft itself (off, D2046).
+	// ready a stalled draft itself (on, D2046).
 	"escalation.critical_path_factor": value("0.5", "localcfg.DefaultEscalationCriticalPathFactor"),
-	"escalation.ready_drafts":         value("false", "localcfg.DefaultEscalationReadyDrafts"),
+	"escalation.ready_drafts":         value("true", "localcfg.DefaultEscalationReadyDrafts"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

@@ -6637,12 +6637,18 @@ const truncatedNote = "\n\n*(Truncated by Fugaro: the description was longer tha
 
 // prText returns the pull request's title and body, redacted and clipped
 // to what every provider accepts.
+//
+// It is the body of a run whose pull request is opened at finalize alone
+// (git.pr.early_draft off), and earlyPRText beside it is the body of one that
+// carries a status section: each is a run's whole published body on its own
+// path, so the closing line a run for a GitHub item owes its issue goes on
+// both (withFixes, prflow.go, D2727).
 func (r *run) prText() (string, string) {
 	title, body := r.rawPRText()
 	if runes := []rune(title); len(runes) > maxTitleRunes {
 		title = string(runes[:maxTitleRunes-1]) + "…"
 	}
-	return title, clipBody(body, maxBodyBytes)
+	return title, r.withFixes(clipBody(body, maxBodyBytes))
 }
 
 // clipBody cuts body to at most limit bytes, ending with a note when it

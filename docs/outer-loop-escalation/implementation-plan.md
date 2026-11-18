@@ -12,7 +12,7 @@ decision is not a go. The owner's answers that shaped the plan (2026-11-10): D20
 D2031 the merge judge can only block; D2032 the ladder replaces `orchestrator.triage_after`; D2033 rungs and model grades;
 D2034 an Escalation section in the one digest; D2035 rung 0 is a cloud rebase run; D2036 a repeated finding goes to R2 then
 R4; D2037 Critical and non-Routine wait for a person; **D2041 the daemon may ready a draft and merge it (not the
-recommendation)**; D2042 an item's approval covers its ladder runs. D2046 (default off for `ready_drafts`) awaits confirmation. **O3, O4 and O5 were answered (D2047-D2049): the Routine allowlist stays narrow, the owner grants the App's merge permission per repository, and the merge credential is a new gated mint in the credentials service (E16).** Resolutions D2038-D2040 and D2043-D2045 stand unless overturned at review.
+recommendation)**; D2042 an item's approval covers its ladder runs. D2046 (default on for `ready_drafts`) was ruled by the owner on 2026-11-13 (`docs/status.md`) and re-confirmed on 2026-11-18, against the recommended off. **O3, O4 and O5 were answered (D2047-D2049): the Routine allowlist stays narrow, the owner grants the App's merge permission per repository, and the merge credential is a new gated mint in the credentials service (E16).** Resolutions D2038-D2040 and D2043-D2045 stand unless overturned at review.
 
 External prerequisites (not tasks here): O0-O4 and O6 of `docs/stateless-orchestrator` are merged; **O8 and O14** are not
 (`docs/status.md`: 10 of 19; O7 is merged), and this plan's R3/R4 executor (E10b) owns the merge and the split, so O14 is **re-scoped to read
@@ -129,7 +129,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
 - **Interfaces:** consumes `escalation.Thresholds` (E1) and the registry (E2). Produces the keys
   `escalation.r2_after_hours`, `escalation.r2_after_attempts`, `escalation.r3_after_hours`,
   `escalation.critical_path_factor` (default 0.5), `escalation.cost_ceiling`, `escalation.r2_coder`,
-  `escalation.merge_judge` (a grade name), **`escalation.ready_drafts` (default off, T3)** and the per-mode override table.
+  `escalation.merge_judge` (a grade name), **`escalation.ready_drafts` (default on, D2046, T3)** and the per-mode override table.
   The spec's `tier2_*`, `tier3_*` and `tier2_coder` keys are renamed for rungs (D2033), because a key named for the old word
   would mean something else beside `internal/tier`; the reconciliation maps one to the other.
 - **Schema/rules/config:** local config only; **refused at load** when set in the project layer or a repo `fugaro.yaml`
@@ -137,7 +137,7 @@ Reviewer tier is **standard** unless stated. Every task's tests are targeted; no
   `ready_drafts` on, lowering a threshold or raising `cost_ceiling` is a loosening and is **refused from a coding agent's
   session** by the settings writer, like the existing floor refusals.
 - **Tests:** `TestEscalationKeysDefaultsPerMode`, `TestEscalationKeysRefusedInProjectLayer`, `TestEscalationKeysRefusedInRepo`,
-  `TestEscalationReadyDraftsDefaultsOff`, `TestEscalationKeysRefusedFromAgentSession` (a courtesy beside the existing refusals in `internal/cli/settings_write.go`, not a fence: a session can edit the local file itself; the fence is that these keys only matter to the local daemon).
+  `TestEscalationReadyDraftsDefaultsOn`, `TestEscalationKeysRefusedFromAgentSession` (a courtesy beside the existing refusals in `internal/cli/settings_write.go`, not a fence: a session can edit the local file itself; the fence is that these keys only matter to the local daemon).
 - **Command:** `go test ./internal/localcfg/ ./internal/settings/ -run 'Escalation' -count=1`.
 - **Depends on:** E1, E2 (the registry file). **Commit:** `feat(localcfg): the local escalation keys (E3)`.
 - **Red step:** `TestEscalationKeysRefusedInRepo` fails while a repository `fugaro.yaml` can carry the key (the project layer's strict decoder already refuses it).
@@ -342,7 +342,7 @@ Its merge and ready half uses E16's mint; the judge, the human gate and the spli
 ### E14. Docs, skill, release notes
 
 - **Files:** `docs/outer-loop-escalation/README.md`, `docs/recipes.md` (readiness paragraph: the daemon may ready a draft under D2041), `README.md` (the "Fugaro itself never merges" line), `SECURITY.md` and `website/content/security.md` (where they say it),  `plugin/skills/working/SKILL.md` (the ladder in one paragraph, the commands), `docs/releases/` notes per its README
-  (`### For operators`: run `fugaro update`; it asks nothing new; the daemon restarts into its own state migration to version 2, `escalation.ready_drafts` is off, and the App needs the merge permission, O4), `website/data/release-summaries.yaml` (no backticks).
+  (`### For operators`: run `fugaro update`; it asks nothing new; the daemon restarts into its own state migration to version 2, `escalation.ready_drafts` is on, and the App needs the merge permission, O4), `website/data/release-summaries.yaml` (no backticks).
 - **Tests:** `go test ./internal/cli/ -run Docs -count=1`; `go test ./plugin/... -count=1`; `npm run check` in `website/` if
   website content changed. **Command:** the first of these.
 - **Depends on:** E10b, E12, E13. **Commit:** `docs: the escalation ladder, its skill and release notes (E14)`.
@@ -430,7 +430,7 @@ stateless-orchestrator, rigor-modes and design pages. A change to any task's Fil
 
 ## After deploy
 
-Nothing beyond `fugaro update`: the local keys have defaults, `escalation.ready_drafts` is off, the new recipes ride the catalog,
+Nothing beyond `fugaro update`: the local keys have defaults, `escalation.ready_drafts` is on, the new recipes ride the catalog,
 the new state and task fields are optional. E14 states it in the release notes. If E7 finds the RTDB rules pin the node shape,
 the rules change and its migration ship inside `update` in that task's release (the HARD RULE of `CLAUDE.md`).
 

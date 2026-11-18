@@ -312,7 +312,7 @@ outside every repository, which is why the agent-session refusal is here.
   `TestSettingsUnsetRemovesTheKeyRatherThanWritingTheDefault`,
   `TestSettingsUnsetOfACeilingAsksForTheTypedProjectName` (spec §4.3: removal crosses the same
   boundary as loosening, so `unset` of a ceiling or a floor asks for the typed name),
-  `TestSettingsUnsetOfNothingIsAnExitZeroSentence`, `TestSettingsSetPrintsOnlyFugaroUpdateNext`,
+  `TestSettingsUnsetOfNothingIsAnExitZeroSentence`, `TestSettingsSetNamesNoSecondStep`,
   `TestSettingsSetWritesNothingInTheCloud`, `TestTheThreeEditorsPreserveBytesTheSameWay` (D847's
   cross-document test), and `TestSettingsGetOnAKeySetNowhereIsTheDefaultRowAndExitZero` — `get` is
   this task's subcommand and not S1's, so its "a key set nowhere prints the default row and exits 0"
@@ -489,8 +489,8 @@ nothing, G1 and G2).
   deployed job carries no ceiling of its own (`WINS job` would be the deployed copy's; §2.2 spells the
   two levels apart on purpose); then the same loop for a project-layer key
   once S4 and R1 are in.
-  `TestConvergePrintsOnlyFugaroUpdateNext` (the loop's whole output names `next: fugaro update` once and
-  no second command).
+  `TestConvergeNamesTheOneCommandThatFinishesIt` (the loop's whole output names one command once and
+  no second one).
 - **Hermetic:** `internal/gcpfake`, a fake Realtime Database, `t.TempDir()` config home. No cloud call.
 
 ## Live checks

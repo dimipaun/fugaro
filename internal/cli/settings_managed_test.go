@@ -181,7 +181,13 @@ func TestSettingsSetManagedAdmitsARegistryKeyInAnAgentSession(t *testing.T) {
 	path := settingsManagedLayerFile(t, minimalAnchored)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
+	// --no-apply is what these tests need of the chain (composite AP5, D1565):
+	// their subject is the write and the gate's record of it, and the step the
+	// write owes is the layer stage's, which refuses a coding agent's session by
+	// its own rule — so the write is saved and the step is owed either way, and
+	// the flag is how this fixture observes the write without the stage's
+	// refusal ending the command.
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--no-apply")
 	if err != nil {
 		t.Fatalf("a registry key was refused in a managed project's coding agent session: %v\nstdout:\n%s", err, out)
 	}
@@ -425,7 +431,13 @@ func TestSettingsSetManagedAdmitsALayerWrittenFromThePublishedGeneration(t *test
 	setConfigScalar(t, "layer_generation", `"0"`)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
+	// --no-apply is what these tests need of the chain (composite AP5, D1565):
+	// their subject is the write and the gate's record of it, and the step the
+	// write owes is the layer stage's, which refuses a coding agent's session by
+	// its own rule — so the write is saved and the step is owed either way, and
+	// the flag is how this fixture observes the write without the stage's
+	// refusal ending the command.
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--no-apply")
 	if err != nil {
 		t.Fatalf("this machine's own layer file was refused: %v\n%s", err, out)
 	}
@@ -951,7 +963,7 @@ func TestSettingsSetManagedAgentSessionReadsTheAgentsOwnSentence(t *testing.T) {
 			before := readFileString(t, path)
 			agentSession(t)
 
-			out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project")
+			out, _, err := executeStdin(t, "", "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--no-apply")
 			after := readFileString(t, path)
 			if !tc.managed {
 				if err == nil || !strings.Contains(err.Error(), "refusing to write") || !strings.Contains(err.Error(), "nothing was written") {
@@ -1251,7 +1263,7 @@ func TestSettingsSetManagedAdmitsAConfigSpelledTheProjectsWay(t *testing.T) {
 	spelled := filepath.Dir(cfg) + "/./" + filepath.Base(cfg)
 	agentSession(t)
 
-	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--config", spelled)
+	out, _, err := execute(t, "settings", "set", settingsManagedLayerKey, settingsManagedLayerValue, "--layer", "project", "--config", spelled, "--no-apply")
 	if err != nil {
 		t.Fatalf("the project's own config, spelled with a redundant segment, was refused: %v\n%s", err, out)
 	}

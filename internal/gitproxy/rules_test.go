@@ -295,6 +295,188 @@ func TestRulesFetchOtherRepositoryRefused(t *testing.T) {
 
 }
 
+// TestClassifyLFSBatchAsFetch: git-lfs's two reads are fetches of a
+// repository, and this is the red step that says so (U2, R4). Nothing
+// classified them at all before: the batch call and an object download are
+// neither of git's two services nor a REST route, so every LFS read a proxied
+// run made was refused as a call no run makes - which is a clone that fails on
+// the first LFS file it touches, and that is the point of the task rather than
+// a detail of it.
+//
+// Both calls are reads of the run's own repository, so both are KindFetch and
+// the rule that decides them is Decide's. An LFS object of ANOTHER repository
+// is a nested read - a submodule's or a sibling's - and is refused by that
+// same rule, which is what makes the classification worth anything: the
+// repository decides, and the path only says which of git-lfs's two calls it
+// is.
+func TestClassifyLFSBatchAsFetch(t *testing.T) {
+	const oid = "9c1f4c3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a9988776655443322110"
+	batch := classify(t, "POST", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/batch")
+	if batch.Kind != KindFetch || batch.Repo != jobRepo {
+		t.Fatalf("an LFS batch of the run's repository = %+v, want a %q of %q", batch, KindFetch, jobRepo)
+	}
+	if batch.LFS != LFSBatch || batch.OID != "" {
+		t.Errorf("the batch classified as %+v, want %q naming no object", batch, LFSBatch)
+	}
+	// The path says a batch and nothing more: a download's and an upload's are
+	// the same POST, so the operation is read out of the body before the rules
+	// see the request (ReadLFSBatch) and the service sets it here. This is the
+	// batch a client opens a FETCH with, so it names the download.
+	batch.LFSOperation = LFSOperationDownload
+	if got := Decide(batch, runIdentity(), jobRepo, admittedBlock()); !got.Allow || got.Reason != string(KindFetch) {
+		t.Errorf("an LFS batch of the run's repository = %+v, want an allow named %q", got, KindFetch)
+	}
+
+	object := classify(t, "GET", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/"+oid)
+	if object.Kind != KindFetch || object.Repo != jobRepo {
+		t.Fatalf("an LFS object of the run's repository = %+v, want a %q of %q", object, KindFetch, jobRepo)
+	}
+	if object.LFS != LFSObject || object.OID != oid {
+		t.Errorf("the object classified as %+v, want %q carrying the id it named", object, LFSObject)
+	}
+	if got := Decide(object, runIdentity(), jobRepo, admittedBlock()); !got.Allow {
+		t.Errorf("an LFS object of the run's repository = %+v, want an allow", got)
+	}
+
+	// The same Decide applies, and it is the repository that decides: an LFS
+	// read of a repository this run is not paired to is refused exactly as a
+	// fetch of a ref there is, on both of git-lfs's paths.
+	for _, tc := range []struct{ name, method, rawURL string }{
+		{"an LFS object of another repository", "GET", "https://bitbucket.org/acme/other.git/info/lfs/objects/" + oid},
+		{"an LFS batch of another repository", "POST", "https://bitbucket.org/acme/other.git/info/lfs/objects/batch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := classify(t, tc.method, tc.rawURL)
+			if got := Decide(req, runIdentity(), jobRepo, admittedBlock()); got.Allow || got.Reason != ReasonOtherRepository {
+				t.Fatalf("%s = %+v, want %q", tc.rawURL, got, ReasonOtherRepository)
+			}
+		})
+	}
+}
+
+// TestClassifyLFSWritesRefused: git-lfs's writes are not calls this proxy
+// carries, and the refusal is the classification's own - the path is
+// well-formed and is simply not a request a run makes (R4: "an LFS write is
+// refused").
+//
+// The upload is the one that matters: it is a PUT to the very path the
+// download GETs, so what tells them apart is the method and nothing in the
+// path, and a classifier that read the path alone would forward an upload as a
+// read. The batch call is the same lesson twice - a POST to .../objects/batch
+// is a read and a PUT to it is not - and the locks are a route the tree's own
+// code never asks for, refused rather than carried on the chance that one day
+// it will.
+func TestClassifyLFSWritesRefused(t *testing.T) {
+	const oid = "9c1f4c3c2b1a0f9e8d7c6b5a4938271605f4e3d2c1b0a9988776655443322110"
+	for _, tc := range []struct{ name, method, rawURL string }{
+		{"an object upload", "PUT", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/" + oid},
+		{"an upload to the batch path", "PUT", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/batch"},
+		{"a lock", "POST", "https://bitbucket.org/acme/sandbox.git/info/lfs/locks/verify"},
+		{"a batch spelled as a GET", "GET", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/batch"},
+		{"a batch carrying a query", "POST", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/batch?transfers=basic"},
+		{"an object id that is not a hash", "GET", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/" + strings.Repeat("x", 64)},
+		{"an object id in another case", "GET", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/" + strings.ToUpper(oid)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := refusedClass(t, tc.method, tc.rawURL); got != ReasonCallNotAllowed {
+				t.Fatalf("Classify(%s %s) was refused as %q, want %q", tc.method, tc.rawURL, got, ReasonCallNotAllowed)
+			}
+		})
+	}
+}
+
+// TestDecideRefusesABatchThatIsNotADownload: the batch call is the one fetch
+// whose body says which call it is, and only its operation may be the
+// download (R4).
+//
+// A download's batch and an upload's are the same POST to the same path, so a
+// classifier that read the path alone would carry an upload - and an upload is
+// a write: what comes back from bitbucket.org for one is the set of upload
+// actions, which is the run being handed a way to put objects in the
+// repository whose refs alone it may move. The refusal is the class every
+// call this route does not carry earns (call_not_allowed), it is the same for
+// a writing identity and for a read-only one, and a body that named no
+// operation at all is refused with it: a batch whose operation this file did
+// not read is a batch it did not decide about.
+func TestDecideRefusesABatchThatIsNotADownload(t *testing.T) {
+	for _, tc := range []struct{ name, operation string }{
+		{"an upload", "upload"},
+		{"an operation this file does not know", "verify"},
+		{"no operation at all", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := classify(t, "POST", "https://bitbucket.org/acme/sandbox.git/info/lfs/objects/batch")
+			req.LFSOperation = tc.operation
+			got := Decide(req, runIdentity(), jobRepo, admittedBlock())
+			if got.Allow || got.Reason != ReasonCallNotAllowed {
+				t.Fatalf("a batch whose operation is %q = %+v, want %q", tc.operation, got, ReasonCallNotAllowed)
+			}
+			// The repository is still what is named first: an upload batch of
+			// another repository is that repository's refusal, and the
+			// operation decides only a call about the run's own.
+			req.Repo = otherRepo
+			if got := Decide(req, runIdentity(), otherRepo, admittedBlock()); got.Allow || got.Reason != ReasonCallNotAllowed {
+				t.Errorf("an upload batch of another repository = %+v, want %q", got, ReasonCallNotAllowed)
+			}
+		})
+	}
+}
+
+// TestReadLFSBatchReadsTheOperation: the operation is what the rules decide the
+// batch on, so reading it is the rule's own step and it is held to the same
+// strictness as a pull-request write's body: exactly one JSON object, no key
+// named twice, and the key spelled as git-lfs spells it.
+//
+// The bytes it read are the body the service forwards, byte for byte, which is
+// why they are returned rather than dropped: what bitbucket.org acts on is the
+// document this file read the operation out of and not a re-encoding of it.
+func TestReadLFSBatchReadsTheOperation(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"a download", `{"operation":"download","transfers":["basic"],"objects":[]}`, "download"},
+		{"an upload", `{"operation":"upload","objects":[]}`, "upload"},
+		{"no operation", `{"transfers":["basic"],"objects":[]}`, ""},
+		{"an operation and nothing else", `{"operation":"download"}`, "download"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operation, consumed, err := ReadLFSBatch(strings.NewReader(tc.body), 1<<16)
+			if err != nil {
+				t.Fatalf("ReadLFSBatch(%s) = %v", tc.body, err)
+			}
+			if operation != tc.want {
+				t.Errorf("the operation = %q, want %q", operation, tc.want)
+			}
+			if string(consumed) != tc.body {
+				t.Errorf("the consumed body = %q, want the bytes it read (%q)", consumed, tc.body)
+			}
+		})
+	}
+
+	for _, tc := range []struct{ name, body string }{
+		{"an upload named twice", `{"operation":"download","operation":"upload"}`},
+		{"an operation another case", `{"Operation":"download"}`},
+		{"not an object", `["download"]`},
+		{"nothing at all", ``},
+		{"an object that never closes", `{"operation":"download"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operation, consumed, err := ReadLFSBatch(strings.NewReader(tc.body), 1<<16)
+			if !errors.Is(err, ErrLFSBatchMalformed) {
+				t.Fatalf("ReadLFSBatch(%s) = %v, want %v", tc.body, err, ErrLFSBatchMalformed)
+			}
+			if operation != "" || consumed != nil {
+				t.Errorf("ReadLFSBatch(%s) = %q, %q, want nothing: a body the rules refused is not forwarded", tc.body, operation, consumed)
+			}
+		})
+	}
+
+	// A body over the bound is refused rather than held, and the bound is the
+	// caller's: the service's own is maxLFSBatchBodyBytes.
+	big := `{"operation":"download","objects":["` + strings.Repeat("a", 4096) + `"]}`
+	if _, _, err := ReadLFSBatch(strings.NewReader(big), 64); !errors.Is(err, ErrLFSBatchTooLarge) {
+		t.Errorf("a body over the bound = %v, want %v", err, ErrLFSBatchTooLarge)
+	}
+}
+
 // TestRulesWorkspaceNamedLikeARoute: a workspace may be named for a segment
 // the classifier reads as a route head - "2.0", the API root every REST path
 // carries, and "repositories", the REST route itself. Both must still reach

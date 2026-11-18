@@ -220,6 +220,16 @@ type InstallationOutputs struct {
 	// field is the contract that test pins), so an output with no field is an
 	// output this binary cannot report.
 	Intake *IntakeService `json:"intake"`
+	// VoiceService is the installation's voice hop (P5.3.3): the Cloud Run
+	// service a paired phone calls before its speech reaches a provider, or null
+	// while the installation has not opted in. Nothing in Go reads its URL —
+	// the hop's callers mint their ID tokens for the installation's Firebase
+	// project and not for the service's address, which is why
+	// CredentialsServiceSpec's block and the module's own variable carry no url
+	// member (voice.tf) — and the field is here because DecodeOutputs reads the
+	// root's outputs by name (the field is the contract that test pins), so an
+	// output with no field is an output this binary cannot report.
+	VoiceService *VoiceService `json:"voice_service"`
 	// CatalogCheckServiceAccount is the project's catalog check job's account
 	// (D1148), its email, or "" on an installation whose project publishes no
 	// catalog: the value every repository root reads from its own tfvars
@@ -272,6 +282,19 @@ type CredentialsService struct {
 // nothing inside the resource can read its own uri. A caller cannot mint an ID
 // token for the intake without it.
 type IntakeService struct {
+	Name   string `json:"name"`
+	Region string `json:"region"`
+	URL    string `json:"url,omitempty"`
+}
+
+// VoiceService is the installation root's `voice_service` output (P5.3.3), in
+// the same shape IntakeService carries, and it is the ONE of the three with a
+// URL nothing read backs: the hop's callers are phones whose Firebase ID
+// tokens are minted for the installation's Firebase project, so there is no
+// audience to fill and no second apply for it. The URL is published for the
+// operator and for a check that reads an installation back, and no part of
+// this binary writes it into a variable.
+type VoiceService struct {
 	Name   string `json:"name"`
 	Region string `json:"region"`
 	URL    string `json:"url,omitempty"`

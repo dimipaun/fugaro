@@ -158,10 +158,16 @@ agent's session included (the owner's ruling of 2026-11-16). A mode below what t
 project resolves to today is
 the sensitive direction, so a coding agent's session is refused it with the
 command to run at your own terminal, and your own terminal writes it and asks
-nothing.`,
+nothing.
+
+` + "`fugaro rigor security add|rm`" + ` writes the paths a change has to touch to be
+reviewed as a security-sensitive change, and the project layer's switch that
+puts every change there: it writes ` + "`security.patterns`" + ` and the layer's own
+` + "`security.always_level_3`" + `, in the same two layers and with the same fence.`,
 	}
 	cmd.AddCommand(newRigorSetCmd())
 	cmd.AddCommand(newRigorFloorCmd())
+	cmd.AddCommand(newRigorSecurityCmd())
 	return cmd
 }
 
@@ -543,17 +549,22 @@ func runRigorSet(cmd *cobra.Command, name string, o rigorOptions) error {
 		return err
 	}
 	if target.kind == settingsDocRepo {
-		// D1564's composite, in the words `models use` gives the same fact: the
-		// change is in the checkout's working tree and nowhere else. Nothing is
-		// committed, pushed or opened — every run reads the base branch, so the
-		// mode is live when the owner's own branch is merged to it, which is why
-		// there is no `next: fugaro update` here either: that stage publishes the
-		// project layer file, and this write is not in it.
-		fmt.Fprintf(cmd.OutOrStdout(), "the change is in %s's working tree and nowhere else: review it, commit it on your own branch and merge that to the base branch — every run reads the base branch, and this command never commits or pushes\n", oneLine(repo))
+		fmt.Fprintln(cmd.OutOrStdout(), repoWorkTreeLine(repo))
 		return nil
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "next: fugaro update")
 	return nil
+}
+
+// repoWorkTreeLine is D1564's composite, in the words `models use` gives the
+// same fact: a `--layer repo` write is in the checkout's own working tree and
+// nowhere else. Nothing is committed, pushed or opened — every run reads the
+// base branch, so the value is live when the owner's own branch is merged to it,
+// which is why a repository-layer write ends with this sentence and not with
+// `next: fugaro update`: that stage publishes the project layer file, and this
+// write is not in it.
+func repoWorkTreeLine(repo string) string {
+	return fmt.Sprintf("the change is in %s's working tree and nowhere else: review it, commit it on your own branch and merge that to the base branch — every run reads the base branch, and this command never commits or pushes", oneLine(repo))
 }
 
 // rigorCreateLayerFile creates this machine's own project layer file when §3

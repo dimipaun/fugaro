@@ -133,12 +133,15 @@ func TestAccessImageProjectAdminAddsCatalogImage(t *testing.T) {
 	f := accessFixture(t, true)
 	accessAs(t, f.db, accessAdminAddr,
 		userStored(t, accessMember(t, accessAdminAddr), accesslib.RoleAdmin, "project"))
-	out, _, err := execute(t, "image", "add", "extra", "--tags", "redis", "--inline", accessDockerfile(t), "--description", "a redis image")
+	// --no-apply: what this test is about is the grant the write is judged
+	// by, and the chain a plain add runs is image_catalog_apply_test.go's
+	// (D1565).
+	out, _, err := execute(t, "image", "add", "extra", "--tags", "redis", "--inline", accessDockerfile(t), "--description", "a redis image", "--no-apply")
 	if err != nil {
 		t.Fatalf("a project admin could not add a catalog entry: %v", err)
 	}
-	if !strings.Contains(out, "extra") {
-		t.Errorf("image add printed %q, want the entry it wrote", out)
+	if !strings.Contains(out, "saved, not live yet") {
+		t.Errorf("image add --no-apply printed %q, want the sentence that says the entry is saved and not live yet", out)
 	}
 	if !strings.Contains(accessConfigText(t), "extra") {
 		t.Error("the entry is not in the project config")

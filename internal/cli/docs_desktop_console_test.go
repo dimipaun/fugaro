@@ -1262,27 +1262,10 @@ func TestDocsDesktopConsoleContractNamesOnlyRealFlags(t *testing.T) {
 	// one of the commands this document describes -- the console spawns
 	// subcommands -- so its own flag is not in `all` either.
 	//
-	// `no-apply` is the second, and its reason is the other side of the same
-	// coin: §6.20 names the word the console's settings WRITE passes -- the one
-	// that says "save this and run none of its follow-up steps" (the
-	// composite-commands plan's D1565) -- while this build's commands do not
-	// register it yet: `settings set` and `settings unset` gain it in that
-	// plan's AP5 and AP6, and AP8 (the task that landed this document's §6.28
-	// and the console's spawn row) is the console half, which the plan lands
-	// ahead of them. So the absence is recorded here the way `version`'s is,
-	// and **an entry that stops being absent fails**: the moment a command
-	// gains the flag this test says so, and the two sentences -- the
-	// document's and this map's -- move together.
-	//
-	// The console holds the word off the wire until that release ships
-	// (`NO_APPLY_CLI_FLOOR` is unset, and `CliSource`'s plan asks it before it
-	// puts the word on a child's argv), so the absence is not a hazard the
-	// console runs into: it is the state the console is written for. The pin
-	// that keeps the two halves of that arrangement together --
-	// TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters, in this file --
-	// reads the floor constant and this document's own map from opposite sides,
-	// and the entry below is the one it moves with.
-	documentedAbsent := map[string]bool{"version": true, "no-apply": true}
+	// `no-apply` was the second until the composite-commands plan's AP5 gave
+	// `settings set` and `settings unset` the flag: the entry left this map the
+	// moment a command registered it, which is the failure the map is for.
+	documentedAbsent := map[string]bool{"version": true}
 
 	// (1) Every flag token in the document, outside the sections whose command
 	// moved out of the core with the coordinator (see consoleMovedSections).
@@ -1556,7 +1539,7 @@ func firstBacktick(cell string) string {
 // is what a review of the first revision found here: the table could lose a
 // row -- or gain one -- and the test would still pass. This parses both tables
 // §5.1 rule 6 carries and compares their first cells exactly: the allow-list is
-// the twenty-nine argvs and nothing else -- the console's one spawn table
+// the thirty-one argvs and nothing else -- the console's one spawn table
 // (SPAWN_COMMANDS) since the installation rail took the picker's read onto the
 // dashboard's surface -- and a review of an earlier revision found the picker's own
 // read, `config list --json`, absent here, which left the specification
@@ -1681,6 +1664,17 @@ func TestDocsDesktopConsoleDesignAllowListIsExactArgv(t *testing.T) {
 		// screen and the `caps` panel. The same two project flags and no
 		// argument of its own.
 		"project policy show --json --project <name> [--config <path>]",
+		// The project's enrolled repositories (the repos-management plan's
+		// RE5, D2413, the `repos.ls` and `repos.status` operations): what the
+		// project admits and what each repository runs, and the per-repository
+		// doctor whose failing rows name the one command that puts each right.
+		// Read-only, and neither has an argument of its own: the command's own
+		// optional `[REPO]` on the status row is deliberately not one, so the
+		// rows spell the command's argv and the two project flags of §3.4
+		// rule 3 and nothing else. The group's two writes, `project repos add`
+		// and `project repos rm`, are on the never table below.
+		"project repos ls --json --project <name> [--config <path>]",
+		"project repos status --json --project <name> [--config <path>]",
 		// The effective-craft read (the model-crafts plan's MC8, D1633): one
 		// row per craft -- the model it runs, the credential or pool its calls
 		// go out on, the layer each half came from and whether what it names
@@ -2004,7 +1998,7 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 			t.Errorf("%s allows the console to spawn %q, but %q is not in consoleReadPaths (internal/cli/project.go): a command on the allow-list is a read, and a read must not write the remembered checkouts", path, argv, cmdPath)
 		}
 	}
-	// Twenty-nine commands: the thirteen dashboard reads (logs has two argvs), the
+	// Thirty-one commands: the thirteen dashboard reads (logs has two argvs), the
 	// rail's `config list --json` (D13's amendment of 2026-10-20), the graph
 	// screen's `plan status --json` (GV2.1), the dependency graph read
 	// `graph --json` (the graph plan's CG9a), the project view's
@@ -2030,10 +2024,13 @@ func TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode(t *testing.T) {
 	// -- the never table below keeps off this list, and the pending-steps read
 	// `apply --status --json` (docs/composite-commands, D1569, AP8), which
 	// shares its command with the chain the console runs after a management
-	// command saved a change (D1572): the two are two argvs and one command, so
-	// this table counts thirty argvs over the twenty-nine commands.
-	if len(allowed) != 29 {
-		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 29 (logs and apply have two argvs each)", path, argvs, len(allowed))
+	// command saved a change (D1572): the two are two argvs and one command. The
+	// two enrolment reads of the repos-management plan's RE5 (D2413) are the
+	// thirtieth and thirty-first commands: `project repos ls --json` and `project
+	// repos status --json`, the `project repos` group's whole reach, since its two
+	// writes are on the never table below.
+	if len(allowed) != 31 {
+		t.Errorf("%s: the allow-list's %d argvs name %d commands, want 31 (logs and apply have two argvs each)", path, argvs, len(allowed))
 	}
 	// The other direction: the list carries §5.1's commands and nothing else,
 	// except the read the design names for the console and §5.1 has not grown
@@ -2410,6 +2407,17 @@ func consoleFlagWords(t *testing.T, src, name string) []string {
 	return out
 }
 
+// floorConstantIsNull reports whether version.ts still declares the named floor
+// as `string | null = null`.
+func floorConstantIsNull(version, name string) bool {
+	return regexp.MustCompile(`(?m)^export const ` + name + `: string \| null = null$`).MatchString(version)
+}
+
+// consoleFloorUnset is floorConstantIsNull for the constant a gate's fact names.
+func consoleFloorUnset(version, fact string) bool {
+	return floorConstantIsNull(version, consoleGateFloorConstants[fact])
+}
+
 // consoleGateFacts reads `SETTINGS_EDIT_PHASE_WORD_GATES`: the word a phase word
 // is held by, and the fact the plan must answer for it before it goes out.
 func consoleGateFacts(t *testing.T, src string) map[string]string {
@@ -2485,11 +2493,13 @@ func cliFlagNames() map[string]bool {
 //     "which phase is this" into "does this child's CLI answer for this word".
 //     The other direction fails too: a gate on a word the CLI now registers is a
 //     word the console holds back for no reason.
-//  3. **A held word's floor is unset while no command registers it.** The gate's
-//     fact names a constant (`consoleGateFloorConstants`), and that constant has
-//     to still read `string | null = null` in `console/src/shared/version.ts`:
-//     set it to a release and the console hands the word to CLIs below that
-//     release, which is the failure the floor exists to prevent.
+//  3. **A held word's floor is unset while no command registers it, and a
+//     release once one does.** The gate's fact names a constant
+//     (`consoleGateFloorConstants`): while no command registers the word it has
+//     to still read `string | null = null` in `console/src/shared/version.ts`
+//     (a release there hands the word to CLIs below it); once a command does, it
+//     has to read `'X.Y.Z'` and the gate stays, because the floor comparison is
+//     what keeps an older CLI from `unknown flag`.
 //
 // The mutations that prove it: add a flag word to `SPAWN_FLAGS` that no command
 // has (claim 1 fails, naming the word); take `--no-apply` out of
@@ -2528,8 +2538,8 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 	// is held behind a floor or belongs to a command under ee/.
 	for _, word := range words {
 		if has(word) {
-			if fact, held := gates[word]; held {
-				t.Errorf("%s's gate holds %s behind %q, and a command reachable from NewRootCmd() registers it: the release the floor waits for has shipped, so set %s to that release and take the word out of SETTINGS_EDIT_PHASE_WORD_GATES -- a word the CLI answers for is one the console may hand over", consoleSpawnPath, word, fact, consoleGateFloorConstants[fact])
+			if fact, held := gates[word]; held && floorConstantIsNull(version, consoleGateFloorConstants[fact]) {
+				t.Errorf("%s's gate holds %s behind %q, and a command reachable from NewRootCmd() registers it: a command in this tree answers for it, so set %s to the release that carries it (the gate stays: the floor comparison is what keeps an older CLI off the word)", consoleSpawnPath, word, fact, consoleGateFloorConstants[fact])
 			}
 			continue
 		}
@@ -2546,8 +2556,8 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 	for _, word := range phase {
 		_, held := gates[word]
 		switch {
-		case has(word) && held:
-			t.Errorf("%s's SETTINGS_EDIT_PHASE_WORDS carries %s, which a command in this tree registers, and SETTINGS_EDIT_PHASE_WORD_GATES still holds it: the settings write would go out without a word the CLI now answers for, which is the console choosing the CLI's older behaviour on its own", consoleSpawnPath, word)
+		case has(word) && held && consoleFloorUnset(version, gates[word]):
+			t.Errorf("%s's SETTINGS_EDIT_PHASE_WORDS carries %s, which a command in this tree registers, and SETTINGS_EDIT_PHASE_WORD_GATES still holds it with the floor unset: the settings write would go out without a word the CLI now answers for, which is the console choosing the CLI's older behaviour on its own -- set the floor to the release that carries the word", consoleSpawnPath, word)
 		case !has(word) && !held:
 			t.Errorf("%s's SETTINGS_EDIT_PHASE_WORDS carries %s and no command in this tree registers it, with no gate in SETTINGS_EDIT_PHASE_WORD_GATES: the phase table is what a settings write emits, so this is a write spawned into `unknown flag: %s` -- hold the word behind a floor the way the table's other words are held", consoleSpawnPath, word, strings.TrimPrefix(word, "--"))
 		}
@@ -2562,10 +2572,31 @@ func TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters(t *testing.T) {
 			continue
 		}
 		if has(word) {
-			continue // claim 1's error above already names what to do
+			if floorConstantIsNull(version, name) {
+				continue // claim 1's error above already names what to do
+			}
+			if !regexp.MustCompile(`(?m)^export const ` + name + `: string \| null = '\d+\.\d+\.\d+'$`).MatchString(version) {
+				t.Errorf("console/src/shared/version.ts declares %s as something other than `string | null = 'X.Y.Z'`, and a command in this tree registers %s: the floor is the release that carries the word, and the gate that reads it is what keeps an older CLI from `unknown flag`", name, word)
+			}
+			continue
 		}
 		if !regexp.MustCompile(`(?m)^export const ` + name + `: string \| null = null$`).MatchString(version) {
 			t.Errorf("console/src/shared/version.ts no longer declares `%s: string | null = null`, and no command in this tree registers %s: a floor set to a release hands the word to every CLI at or above it, and none of them answers it -- the constant stays unset until the release that registers the word ships", name, word)
+		}
+	}
+	// A floor that names a release is only safe while the gate that reads it
+	// stays: without the gate the word goes to every CLI, including the ones
+	// below the floor.
+	for fact, name := range consoleGateFloorConstants {
+		if floorConstantIsNull(version, name) {
+			continue
+		}
+		kept := false
+		for _, held := range gates {
+			kept = kept || held == fact
+		}
+		if !kept {
+			t.Errorf("console/src/shared/version.ts sets %s to a release and %s no longer gates any word on %q: the floor is what keeps an older CLI from `unknown flag`, so the gate stays as long as the floor is a comparison", name, consoleSpawnPath, fact)
 		}
 	}
 	if len(gates) == 0 {
