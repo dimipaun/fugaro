@@ -446,6 +446,12 @@ func TestGitCredentialUnchangedWithoutTheService(t *testing.T) {
 // output, and not a refusal. Every refusal that comes after the answer was read
 // is this file's own sentence and names the field it refused, because a build's
 // log is the one place a credential a build holds becomes everyone's.
+//
+// Each case's answer is complete in everything but the one thing it is refused
+// for, and each case pins the sentence it was refused with: an answer holding a
+// secret the build did not ask for is refused by writeBuildSecrets whatever its
+// credential is, so a case whose answer is short of its secret is refused by
+// that guard and says nothing about the credential's own.
 func TestGitCredentialNeverPrintsTheValue(t *testing.T) {
 	const (
 		token  = "service-token-not-a-real-credential"
@@ -454,27 +460,37 @@ func TestGitCredentialNeverPrintsTheValue(t *testing.T) {
 	served := func() credsvc.BuildGitCredential {
 		return credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token, Host: "bitbucket.org"}
 	}
+	// The secret the case below mounts, so the answer is refused for its
+	// credential alone and never for a short answer.
+	mounted := []credsvc.BuildSecretValue{{Env: "NPM_TOKEN", Value: secret}}
 	testutil.IsolateGit(t)
 	gitCredentialEnv(t)
 	buildCallMetadata(t)
 	for _, c := range []struct {
 		name   string
 		answer credsvc.BuildCredentialsResponse
+		reason string
 	}{
+		{"a credential for another provider", credsvc.BuildCredentialsResponse{
+			Git:     credsvc.BuildGitCredential{Provider: gitprov.KindGitHub, Username: github.GitUsername, Token: token, Host: "bitbucket.org"},
+			Secrets: mounted,
+		}, "answered a credential for the provider github"},
 		{"a credential for another host", credsvc.BuildCredentialsResponse{
-			Git: credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token, Host: "evil.example"},
-		}},
+			Git:     credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token, Host: "evil.example"},
+			Secrets: mounted,
+		}, "answered a credential for the host evil.example"},
 		{"a credential holding a control character", credsvc.BuildCredentialsResponse{
-			Git: credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token + "\n", Host: "bitbucket.org"},
-		}},
+			Git:     credsvc.BuildGitCredential{Provider: gitprov.KindBitbucket, Username: "x-token-auth", Token: token + "\n", Host: "bitbucket.org"},
+			Secrets: mounted,
+		}, "holds a control character"},
 		{"a secret the build does not mount", credsvc.BuildCredentialsResponse{
 			Git:     served(),
 			Secrets: []credsvc.BuildSecretValue{{Env: "NOT_MOUNTED", Value: secret}},
-		}},
+		}, "which this build does not mount"},
 		{"a secret answered twice", credsvc.BuildCredentialsResponse{
 			Git:     served(),
 			Secrets: []credsvc.BuildSecretValue{{Env: "NPM_TOKEN", Value: secret}, {Env: "NPM_TOKEN", Value: secret}},
-		}},
+		}, "answered NPM_TOKEN twice"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			svc := &buildCredentialsService{answer: c.answer}
@@ -488,6 +504,9 @@ func TestGitCredentialNeverPrintsTheValue(t *testing.T) {
 			stdout, stderr, err := execute(t, "image", "git-credential", "--provider", gitprov.KindBitbucket, "--repo-url", "https://bitbucket.org/acme/app.git", "--out", out)
 			if err == nil {
 				t.Fatalf("the step wrote a credential out of %s", c.name)
+			}
+			if !strings.Contains(err.Error(), c.reason) {
+				t.Errorf("the step refused %s with %v, want the refusal naming %q", c.name, err, c.reason)
 			}
 			if got := len(svc.asked()); got != 1 {
 				t.Fatalf("the step asked the service %d times, want the one call whose answer it refused (err: %v)", got, err)
