@@ -8,11 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/images"
+	"gopkg.in/yaml.v3"
 )
 
 // scanFixture is the image the fake docker answers for: the environment its
@@ -511,5 +513,66 @@ func TestScanSharesTheGitPatterns(t *testing.T) {
 	}
 	if want := "path: '" + images.GitConfigPathText + "'"; !strings.Contains(string(images.TrivySecretConfig), want) {
 		t.Errorf("images/trivy-secret.yaml does not carry %s", want)
+	}
+}
+
+// allowedByTrivyConfig reports whether the shipped Trivy config excuses a
+// finding at path: Trivy applies each allow-rule's path as a regular expression
+// over the layer-relative path, with no leading slash, and Go's regexp is the
+// engine it uses. The scan itself is Trivy in a container, which no hermetic
+// test runs, so the allowances are pinned through the config's own text.
+func allowedByTrivyConfig(t *testing.T, path string) bool {
+	t.Helper()
+	var cfg struct {
+		AllowRules []struct {
+			ID   string `yaml:"id"`
+			Path string `yaml:"path"`
+		} `yaml:"allow-rules"`
+	}
+	if err := yaml.Unmarshal(images.TrivySecretConfig, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range cfg.AllowRules {
+		if r.Path == "" {
+			t.Fatalf("allow-rule %s has no path: an allowance is by path, never by rule alone", r.ID)
+		}
+		if regexp.MustCompile(r.Path).MatchString(path) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTrivyConfigAllowsTheGoToolchainFalsePositives pins the two findings a
+// catalog build's catalog-scan step raised on the go entry (Cloud Build
+// 07b73da0, 2026-11-18): the placeholder in a module's source and the Go
+// toolchain's own test key. Both are allowed in any version, and nothing next
+// to them is: a credential in a repository checkout, another file of the same
+// module or toolchain, or a lookalike path still fails the scan.
+func TestTrivyConfigAllowsTheGoToolchainFalsePositives(t *testing.T) {
+	for _, p := range []string{
+		"home/fugaro/go/pkg/mod/gocloud.dev@v0.46.0/blob/gcsblob/gcsblob.go",
+		"home/fugaro/go/pkg/mod/gocloud.dev@v0.47.1/blob/gcsblob/gcsblob.go",
+		"home/fugaro/.local/share/mise/installs/go/1.27.1/src/crypto/x509/platform_root_key.pem",
+		"home/fugaro/.local/share/mise/installs/go/1.28.0/src/crypto/x509/platform_root_key.pem",
+	} {
+		if !allowedByTrivyConfig(t, p) {
+			t.Errorf("%s is a known false positive and the config does not allow it", p)
+		}
+	}
+	for _, p := range []string{
+		"work/repo/blob/gcsblob/gcsblob.go",
+		"work/repo/home/fugaro/go/pkg/mod/gocloud.dev@v0.46.0/blob/gcsblob/gcsblob.go",
+		"work/repo/key.pem",
+		"work/repo/mise/installs/go/1.27.1/src/crypto/x509/other_key.pem",
+		"home/fugaro/go/pkg/mod/gocloud.dev@v0.46.0/blob/gcsblob/other.go",
+		"home/fugaro/.local/share/mise/installs/go/1.27.1/src/crypto/tls/key.pem",
+		"home/fugaro/.local/share/mise/installs/node/22/src/crypto/x509/platform_root_key.pem",
+		"home/fugaro/.netrc",
+		"home/fugaro/.gitconfig",
+	} {
+		if allowedByTrivyConfig(t, p) {
+			t.Errorf("%s is allowed and must stay a finding", p)
+		}
 	}
 }
