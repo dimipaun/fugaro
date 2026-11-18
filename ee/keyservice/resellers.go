@@ -792,17 +792,44 @@ func (s *Service) inviteCustomerFirstOwner(ctx context.Context, actor Caller, he
 		return WireInvite{}, err
 	}
 	if err := s.mail.Send(ctx, invitationMail(origin, org.Name, invitation, inviteTTL)); err != nil {
+		// The invitation goes back with the send that failed, and this is the
+		// second invitation in this service that does (SeedOperations' is the
+		// other, and for the same reason). A customer organisation's first owner
+		// is invited by a reseller that is not a member of it (F40), so an
+		// invitation left pending here is one nobody inside the organisation can
+		// withdraw: P2.2's withdraw needs a member, and an act through the
+		// operations membership into another organisation's invitations is
+		// refused (invites.go's inviteAccess). The act's own guard refuses on a
+		// member OR a live invitation, so the retry it exists for — the second
+		// try after an invitation nobody accepted — would meet errFirstOwnerSet
+		// for the whole seven days the abandoned invitation is live, and the
+		// customer would be an organisation nobody can ever reach. What the
+		// failure leaves is the organisation, which holds nothing and which the
+		// next request fills rather than writing a second one.
+		//
+		// The `invitation.create` line written above stands: it records the act
+		// this request made, and the log is append-only (D456).
+		if undoErr := s.docs.Update(ctx, func(ctx context.Context, tx Tx) error {
+			return tx.Delete(ctx, invitesCollection, invitation.ID)
+		}); undoErr != nil {
+			return WireInvite{}, errors.Join(err, undoErr)
+		}
 		return WireInvite{}, err
 	}
 	return invitation, nil
 }
 
 // refuseResellerOwnAddress refuses an invitation whose address is already a member
-// of the inviting reseller organisation. The two addresses are compared through
-// access.Member on both sides, as every address comparison in this service is
-// (invitedMember's own reading): the address as it was typed against the address
-// a membership carries, so that a case difference is not a way past the rule and a
-// capitalised local part is not one either.
+// of the inviting reseller organisation. The address as it was typed is compared
+// with the address a membership carries, and the comparison is case-folded
+// (sameAddress): access.Member keeps the local part byte for byte and lower-cases
+// only the domain, while a membership's Email is the caller's own address folded
+// WHOLE by mcpauth (api.go's Caller, portalauth.go's VerifiedSignIn) — so the two
+// sides of this comparison are not spelled the same way even when they are the
+// same address, and comparing the members directly would let a reseller owner
+// whose token claimed `Sam@example.com` invite `Sam@example.com` into a customer
+// organisation it made: its own address, beside the buyer whose organisation it
+// is, which is F40's line crossed.
 //
 // A membership whose address is no member at all is skipped rather than refused:
 // such a record can admit nobody (F31's fail-closed half), and refusing the
@@ -822,7 +849,7 @@ func (s *Service) refuseResellerOwnAddress(ctx context.Context, resellerID, addr
 		if err != nil {
 			continue
 		}
-		if theirs == invited {
+		if sameAddress(theirs, invited) {
 			return fmt.Errorf("%w: %s is already a member of the reseller organisation", errResellerNotPermitted, address)
 		}
 	}

@@ -23,6 +23,7 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -797,6 +798,74 @@ func TestResellerCannotInviteAfterTheFirstOwner(t *testing.T) {
 	}
 	if held, found := f.invitation(readAnswer[WireInvite](f, again).ID); !found || held.State != invitePending {
 		t.Errorf("the second invitation is %+v (found %v), want a pending one", held, found)
+	}
+}
+
+// TestFirstOwnerInviteIsRetriedAfterItsMailFails: a failed send must not leave
+// the customer organisation in the one state this act's own guard refuses on. A
+// reseller's invitation into a customer is one nobody inside that organisation
+// can withdraw — the reseller is not a member of it (F40) and an act through the
+// operations membership into another organisation's invitations is refused
+// (invites.go's inviteAccess) — so an invitation left pending by a failed send
+// refuses the reseller's only remedy, asking again, for the whole of the seven
+// days it is live, and the customer is an organisation nobody can ever reach.
+// SeedOperations is the other invitation in this service that goes back with the
+// send that failed, for the same reason (TestSeedIsRunnableAgainAfterItsMailFails).
+func TestFirstOwnerInviteIsRetriedAfterItsMailFails(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	bought := f.soldBy("Example Ltd")
+
+	f.mail.err = errors.New("the mail provider refused the message")
+	rec := f.firstOwnerInvite(bought.ID, buyerMail, roleOwner)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("an invitation whose mail the provider refused answered %d (%s), want the failure: a link nobody received must not read as one that was sent", rec.Code, rec.Body)
+	}
+	if held := f.invitationsOf(bought.ID); len(held) != 0 {
+		t.Errorf("the failed send left %+v, want nothing: a pending invitation here refuses the retry this act exists for, and no member of the customer can withdraw it", held)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the failed send recorded a message anyway")
+	}
+
+	f.mail.err = nil
+	retry := f.firstOwnerInvite(bought.ID, buyerMail, roleOwner)
+	if retry.Code != http.StatusCreated {
+		t.Fatalf("inviting again after a failed send answered %d (%s), want the first owner's invitation", retry.Code, retry.Body)
+	}
+	held := f.invitationsOf(bought.ID)
+	if len(held) != 1 || held[0].Email != buyerMail || held[0].State != invitePending {
+		t.Errorf("the store holds %+v, want the one pending invitation the retry wrote", held)
+	}
+	if len(f.mail.sent) != 1 {
+		t.Errorf("the retry mailed %d message(s), want the one it delivered", len(f.mail.sent))
+	}
+}
+
+// TestResellerCannotInviteItsOwnAddressInAnotherCase: F40 read through the fold
+// the two sides of this comparison are spelled with. A membership's Email is the
+// caller's address folded WHOLE by mcpauth (api.go's Caller, portalauth.go's
+// VerifiedSignIn), and access.Member keeps the local part byte for byte — so a
+// reseller owner whose token claimed `Sam@example.com` carries a member no stored
+// record equals, and comparing that member with the address it types would let it
+// invite its own address into a customer organisation it made. The refusal is the
+// same one however the address is spelled, and nothing is written.
+func TestResellerCannotInviteItsOwnAddressInAnotherCase(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, "sam@example.com", roleOwner)
+	f.signedInAsClaiming(sellerUID, "Sam@example.com", signInGoogle)
+	bought := f.soldBy("Example Ltd")
+
+	readAPIRefusal(t, f.firstOwnerInvite(bought.ID, "Sam@example.com", roleOwner),
+		http.StatusForbidden, "not_permitted")
+	readAPIRefusal(t, f.firstOwnerInvite(bought.ID, "sam@example.com", roleOwner),
+		http.StatusForbidden, "not_permitted")
+	if held := f.invitationsOf(bought.ID); len(held) != 0 {
+		t.Errorf("a refused invitation was written anyway: %+v", held)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the refused invitation was mailed, and its address is one of the reseller's own people")
 	}
 }
 
