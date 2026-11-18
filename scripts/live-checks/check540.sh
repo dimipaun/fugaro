@@ -164,6 +164,7 @@ MERGED_EPOCH=""
 FIRST_MOVE_AT=""
 FIRST_MOVE_EPOCH=""
 RUNGS_SEEN=""
+WAIT_LINE=""
 CYCLES_DRIVEN=0
 WALK_STOPPED=""
 # SETTINGS_LOG is what this check wrote for its own run, one `key<TAB>value<TAB>
@@ -620,12 +621,17 @@ step_walk() {
       FIRST_MOVE_AT=$(awk -F'\t' '$1 == "tr" { print $5; exit }' "$SCRATCH/show.txt")
       FIRST_MOVE_EPOCH=$(awk -F'\t' '$1 == "tr" { print $6; exit }' "$SCRATCH/show.txt")
     fi
+    if ! read_events; then
+      unmeasured walk "fugaro orchestrator events --json did not answer after cycle ${cycle} (exit ${BOUNDED_STATUS}): the audit line the ladder records a rung-3 wait in could not be read, and that line is what tells this check the walk is over. What it printed is in $SCRATCH/events.err"
+      return 0
+    fi
+    WAIT_LINE=$(ladder_wait)
     if pull_request_merged; then
       WALK_STOPPED="the pull request is MERGED after ${cycle} cycle(s)"
       break
     fi
-    if case ",${RUNGS_SEEN}," in *,R3,*) true ;; *) false ;; esac; then
-      WALK_STOPPED="rung 3 was reached after ${cycle} cycle(s) and the pull request has not merged: the ladder is asking you a question rather than walking on (fugaro orchestrator events holds the line it left)"
+    if [ -n "$WAIT_LINE" ]; then
+      WALK_STOPPED="the ladder recorded a rung-3 wait after ${cycle} cycle(s) — '${WAIT_LINE:0:200}' — so it is asking you something rather than walking on"
       break
     fi
     if [ "$cycle" -ge "$CYCLES" ]; then
@@ -659,6 +665,29 @@ read_ledger() { # read_ledger
     return 1
   fi
   read_json show "$SCRATCH/show.out" "$SCRATCH/show.txt"
+}
+
+# read_events: the audit lines of the plan's own node. The rung-3 refusal is one of
+# them (the ladder writes `escalation: rung R3 (…), run … wait: <clauses>`) and it is
+# the reading that says the ladder has STOPPED rather than that a cycle is still
+# going: rung 3 launches the review it merges on and the landing comes in a later
+# cycle, so a walk stopped at the first sight of rung 3 in the ledger would report a
+# working ladder as a pull request that never merged.
+read_events() { # read_events
+  run_bounded "$CLI_TIMEOUT" events "$SANDBOX" "$FUGARO_BIN" orchestrator events --json
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || [ "$BOUNDED_STATUS" != 0 ]; then
+    return 1
+  fi
+  read_json events "$SCRATCH/events.out" "$SCRATCH/events.txt"
+}
+
+# ladder_wait: the last audit line in which the ladder's own rung-3 merge attempt was
+# recorded as a wait — `escalation: rung R3 (…), run …, wait: <clauses>` — and "" when
+# no cycle has written one. A retry's own line is not one of these (it is written under
+# the word `retry`, and the ladder is still going), so the match is anchored on the rung.
+ladder_wait() { # ladder_wait
+  awk -F'\t' '$1 == "event" && $5 ~ /^escalation: rung R[34] .*wait: / { line = $5 } END { if (line != "") print line }' \
+    "$SCRATCH/events.txt" 2>/dev/null || true
 }
 
 # pull_request_merged: the host's own answer, and the one that counts: the ledger

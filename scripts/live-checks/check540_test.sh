@@ -81,6 +81,9 @@ pr)
   ready-pr) cat "$json/pr-ready.json" ;;
   merged-pr) cat "$json/pr-merged.json" ;;
   r3-no-merge) cat "$json/pr-draft.json" ;;
+  r3-then-merge)
+    if [ "$cycles" -ge 5 ]; then cat "$json/pr-merged.json"; else cat "$json/pr-draft.json"; fi
+    ;;
   no-walk) cat "$json/pr-draft.json" ;;
   *)
     if [ "$cycles" -ge 3 ]; then cat "$json/pr-merged.json"; else cat "$json/pr-draft.json"; fi
@@ -172,11 +175,25 @@ settings)
   esac
   ;;
 orchestrator)
-  if [ "${2:-}" != "run" ]; then echo "fugaro: unexpected orchestrator ${2:-}" >&2; exit 1; fi
-  cycles=$(cat "$FAKE_LOG_DIR/cycles" 2>/dev/null || echo 0)
-  cycles=$((cycles + 1))
-  printf '%s\n' "$cycles" >"$FAKE_LOG_DIR/cycles"
-  printf 'orchestrator chk540: cycle %s: 0 folded, 1 escalated\n' "$cycles"
+  case "${2:-}" in
+  run)
+    cycles=$(cat "$FAKE_LOG_DIR/cycles" 2>/dev/null || echo 0)
+    cycles=$((cycles + 1))
+    printf '%s\n' "$cycles" >"$FAKE_LOG_DIR/cycles"
+    printf 'orchestrator chk540: cycle %s: 0 folded, 1 escalated\n' "$cycles"
+    ;;
+  events)
+    # The audit log of the cycles the fake has run: the rung-3 wait line the
+    # ladder writes when it stops and asks the owner (the `r3-no-merge` shape),
+    # and an empty log while it is still walking.
+    cycles=$(cat "$FAKE_LOG_DIR/cycles" 2>/dev/null || echo 0)
+    if [ "$mode" = r3-no-merge ] && [ "$cycles" -ge 3 ]; then cat "$json/events-wait.json"; else cat "$json/events-none.json"; fi
+    ;;
+  *)
+    echo "fugaro: unexpected orchestrator ${2:-}" >&2
+    exit 1
+    ;;
+  esac
   ;;
 escalation)
   if [ "${2:-}" != "show" ]; then echo "fugaro: unexpected escalation ${2:-}" >&2; exit 1; fi
@@ -277,6 +294,17 @@ JSON
   cat >"$1/json/backlog-no-fu.json" <<JSON
 {"version":1,"kind":"backlog","project":"${project}","waiting":0,
  "items":[{"id":"other-1","title":"somebody else's work","phase":"queued","repo":"chk540-owner/sandbox","node":"","approved":false}]}
+JSON
+  # The audit log the walk's own signal is read from: empty while the ladder is
+  # still walking, and the rung-3 wait line the ladder writes the moment it stops
+  # and asks the owner something.
+  cat >"$1/json/events-none.json" <<JSON
+{"version":1,"kind":"events","id":"chk540","events":[]}
+JSON
+  cat >"$1/json/events-wait.json" <<JSON
+{"version":1,"kind":"events","id":"chk540","events":[
+  {"id":"e1","at":"2026-11-18T00:03:00Z","subject":"${item}","transition":"R2->R3","text":"escalation: rung R3 (r2_clean), run run-1 wait: draft_held"},
+  {"id":"e2","at":"2026-11-18T00:03:00Z","subject":"${item}","transition":"R3","text":"escalation: rung R3 (r2_clean), run run-1 wait: paths_not_routine"}]}
 JSON
 }
 
@@ -399,7 +427,7 @@ assert_only_known_calls() { # dir what
     n=$((n + 1))
     case "${line#*$'\t'}" in
     version | doctor\ --json | "settings get "* | "settings set "* | "settings unset "* \
-      | "orchestrator run --once" | "escalation show "* | "backlog list --json") ;;
+      | "orchestrator run --once" | "orchestrator events --json" | "escalation show "* | "backlog list --json") ;;
     *) fail "$2: the check ran 'fugaro ${line#*$'\t'}' from ${line%%$'\t'*}, an argument list this check does not make" ;;
     esac
   done <"$1/logs/fugaro.calls"
@@ -611,6 +639,25 @@ test_a_walk_that_never_enters_the_ladder_is_a_finding() {
   expect_contains "$out" "FACT merge: FAIL" "a ladder that never enters the item: nothing merged"
 }
 
+test_a_merge_that_comes_after_rung_3_is_not_a_false_finding() {
+  # Rung 3 is where the ladder launches the review it merges on, and the landing
+  # itself comes in a later cycle. A walk stopped at the first sight of rung 3
+  # would report a working ladder as a pull request that never merged, so the
+  # signal the walk waits for is the ladder's OWN audit line saying it is waiting,
+  # and this case is the one that pins it: the ledger is at rung 3 from cycle 3,
+  # no wait line is ever written, and the merge arrives at cycle 5.
+  local dir=$work/r3merge
+  prepare "$dir"
+  run_check "$dir" FAKE_MODE=r3-then-merge CHECK540_CYCLES=20
+  expect_status "$status" 0 "a merge after rung 3"
+  expect_contains "$out" "FACT walk: PASS" "a merge after rung 3: the walk reached the merge rung"
+  expect_contains "$out" "FACT merge: PASS" "a merge after rung 3: the merge is read at the host, not from the rung alone"
+  expect_contains "$out" "FACT time-to-merge: PASS" "a merge after rung 3: the duration"
+  [ "$(grep -c 'orchestrator run --once' "$dir/logs/fugaro.calls")" -eq 5 ] ||
+    fail "a merge after rung 3: the check drove $(grep -c 'orchestrator run --once' "$dir/logs/fugaro.calls") cycle(s) and not the five the merge arrives on"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" $'\t'"orchestrator events --json" "a merge after rung 3: the audit log is what the walk reads each cycle"
+}
+
 test_a_rung_3_that_does_not_merge_is_a_finding() {
   # Rung 3 is the merge rung: a walk that reaches it and leaves the pull request
   # open is the ladder asking the owner something, and the check stops driving
@@ -622,6 +669,7 @@ test_a_rung_3_that_does_not_merge_is_a_finding() {
   expect_contains "$out" "FACT walk: PASS" "rung 3 without a merge: the walk reached the merge rung"
   expect_contains "$out" "FACT merge: FAIL" "rung 3 without a merge: the merge row"
   expect_contains "$out" "is the ladder asking YOU something" "rung 3 without a merge: what it means"
+  expect_contains "$out" "wait: paths_not_routine" "rung 3 without a merge: the ladder's own line is what stopped the walk"
   expect_contains "$out" "FACT cycles: PASS" "rung 3 without a merge: the cycles row"
   # Three cycles is where the fake's ledger reaches rung 3: the check stops there
   # and does not drive the other seventeen.
@@ -804,6 +852,7 @@ t test_a_ready_pull_request_is_a_finding
 t test_a_merged_pull_request_is_a_finding
 t test_an_unset_judge_is_a_finding
 t test_a_walk_that_never_enters_the_ladder_is_a_finding
+t test_a_merge_that_comes_after_rung_3_is_not_a_false_finding
 t test_a_rung_3_that_does_not_merge_is_a_finding
 t test_an_approved_follow_up_is_a_finding
 t test_a_clean_landing_cannot_say_whether_a_follow_up_waits
