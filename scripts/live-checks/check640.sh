@@ -258,6 +258,31 @@ guard_xtrace() {
   fact xtrace PASS "this shell is not tracing, so no trace of this run can carry a command's environment"
 }
 
+# guard_agent_session: this check is the owner's. Its rows are about a real pull
+# request on the dogfood installation and about the credentials service's own
+# record of what was done to it, and the block it prints is meant to be pasted
+# back by the person who ran the run it reads — the register's row says no agent
+# runs any step of it. Refusing here is what makes the block say that, rather
+# than an agent's run reading as the installation's answer.
+#
+# The loop is the five markers that say an agent, and not a person, is driving
+# this shell. The sixth, CLAUDE_CODE_SSE_PORT, says only that this shell sits in
+# an editor's terminal, where the person is still the one typing, so it is
+# DROPPED rather than refused: refusing on it would lock you out of this check in
+# your own editor.
+guard_agent_session() {
+  local marker="" name
+  for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
+    if [ -n "${!name:-}" ]; then marker="$name"; break; fi
+  done
+  if [ -n "$marker" ]; then
+    fact agent-session FAIL "${marker} is set, so this is a coding agent's session: Check 640 is yours to run at your own terminal, against the installation you run the daemon on, and no agent runs any step of it"
+    stop "${marker} is set, so this is a coding agent's session: Check 640 is yours to run at your own terminal, against the installation you run the daemon on, and no agent runs any step of it"
+  fi
+  unset CLAUDE_CODE_SSE_PORT
+  fact agent-session PASS "no coding agent's marker is set (CLAUDECODE and the like), so this is your own session — the one this check is written for: the run it reads is the run you launched. The editor extension's own marker (CLAUDE_CODE_SSE_PORT) is dropped from this script's environment rather than refused, because it says this shell sits in an editor's terminal and not that an agent is driving it"
+}
+
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 
 # guard_belong: `belong` is the installation this check must never touch — its
@@ -1202,8 +1227,8 @@ step_audit() {
 # missing), the daemon, the item and the run it launched, then the labels on that
 # run's pull request, the repository's own table, and the service's record of the
 # acts.
-BLOCK_KEYS=(xtrace installation belong identity daemon item run running settled
-  spec-label colours audit restore)
+BLOCK_KEYS=(xtrace agent-session installation belong identity daemon item run
+  running settled spec-label colours audit restore)
 
 # criteria_unmet FACTS — the block's criteria that are not a PASS row. A row
 # reading UNVERIFIED (the criterion could not be verified: a reading taken after
@@ -1428,6 +1453,7 @@ main() {
   scratch_up
   write_reader
   guard_xtrace
+  guard_agent_session
 
   step_installation
   step_identity

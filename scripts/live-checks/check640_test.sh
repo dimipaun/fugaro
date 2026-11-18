@@ -116,8 +116,8 @@ expect_called() { # dir tool what
 }
 
 # Every fact key the run's block must carry, whatever it measured.
-BLOCK_KEYS=(xtrace installation belong identity daemon item run running settled
-  spec-label colours audit restore)
+BLOCK_KEYS=(xtrace agent-session installation belong identity daemon item run
+  running settled spec-label colours audit restore)
 
 # The installation, the item and the run the fakes answer with. The slug is
 # internal/task's own value for this repository (the readable canonical name and
@@ -152,6 +152,7 @@ RUN640_AUDIT=""
 RUN640_AUDIT_LAG=""
 RUN640_SPEC=""
 RUN640_SPEC_SET=""
+RUN640_ENV=()
 RUN640_SHELL=""
 RUN640_PATH=""
 RUN640_RUN_SECONDS=""
@@ -549,7 +550,10 @@ run640() {
   status=0
   out=""
   err=""
-  env PATH="$path" TMPDIR="$dir/tmp" HOME="$dir/home" \
+  # env -i: the case's environment is the whole environment, so no marker of the
+  # suite that started this file can decide the check's own agent-session guard.
+  env -i PATH="$path" TMPDIR="$dir/tmp" HOME="$dir/home" \
+    ${RUN640_ENV[@]+"${RUN640_ENV[@]}"} \
     CHECK640_CALL_SECONDS=20 \
     CHECK640_RUN_POLL_SECONDS=1 CHECK640_RUN_SECONDS="${RUN640_RUN_SECONDS:-6}" \
     CHECK640_SETTLE_POLL_SECONDS=1 CHECK640_SETTLE_SECONDS="${RUN640_SETTLE_SECONDS:-3}" \
@@ -597,6 +601,7 @@ run640() {
   RUN640_AUDIT_LAG=""
   RUN640_SPEC=""
   RUN640_SPEC_SET=""
+  RUN640_ENV=()
   RUN640_SHELL=""
   RUN640_PATH=""
   RUN640_RUN_SECONDS=""
@@ -1154,6 +1159,28 @@ test_xtrace_is_refused() {
   expect_no_cloud_reads "$work/xtrace" "a shell that arrived with tracing on"
 }
 
+# The check is the owner's: a coding agent's session is refused before anything
+# is read, and the refusal says which marker said so.
+test_a_coding_agents_session_is_refused() {
+  RUN640_ENV=(CLAUDECODE=1)
+  run640 agent-session
+  expect_status "$status" 2 "a coding agent's session"
+  expect_contains "$out" "FACT agent-session: FAIL" "the marker is the failure"
+  expect_contains "$out" "CLAUDECODE is set" "the row names the marker it read"
+  expect_contains "$out" "no agent runs any step of it" "the row says whose check this is"
+  expect_contains "$out" "FACT installation: FAIL — not reached" "nothing was measured"
+  expect_no_cloud_reads "$work/agent-session" "a coding agent's session"
+
+  # The editor extension's marker is NOT one of those: it says this shell sits
+  # in an editor's terminal, and the person is still the one typing. It is
+  # dropped rather than refused, so the check runs for someone in their editor.
+  RUN640_ENV=(CLAUDE_CODE_SSE_PORT=12345)
+  run640 editor-terminal
+  expect_status "$status" 0 "an editor's terminal, not an agent"
+  expect_contains "$out" "FACT agent-session: PASS" "the editor's marker is not a refusal"
+  expect_contains "$out" "dropped from this script's environment" "the row says what it did with it"
+}
+
 test_cleanup_leaves_nothing_behind() {
   run640 cleanup
   expect_status "$status" 0 "the cleanup case"
@@ -1234,6 +1261,7 @@ t test_dry_run_touches_nothing
 t test_the_plan_and_the_usage_need_no_cloud_tools
 t test_argument_complaints
 t test_xtrace_is_refused
+t test_a_coding_agents_session_is_refused
 t test_cleanup_leaves_nothing_behind
 t test_the_block_is_one_block
 
