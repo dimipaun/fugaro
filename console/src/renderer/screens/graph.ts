@@ -2051,7 +2051,10 @@ function nodeCard(
  *
  * The minutes are the `count` unit -- whole minutes are all the precision an
  * estimate has, and the unit word is this file's own -- and the money is the
- * `usd` unit, so a cost range reads `$3.00–$5.00` with the sign on each end.
+ * `usd` unit, so a cost range reads `$3.00–$5.00` with the sign on each end. The
+ * CLI's own line prints whole dollars there; the console draws every money figure
+ * to the cent (`availability.ts` is its only formatter, and the spend screens
+ * read the same), which is a difference of precision rather than of figure.
  */
 function estimateText(estimate: PlanEstimateView): string {
   const ready = `${GRAPH_ESTIMATE_READY} ${rangeText(estimate.readyIn, 'count')} ${GRAPH_ESTIMATE_MINUTES}`
