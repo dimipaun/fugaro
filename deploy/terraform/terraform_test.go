@@ -2388,6 +2388,64 @@ func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
 	}
 }
 
+// TestInstallationStringNamedAccountsAreWaitedFor: a resource that names a
+// service account this module creates by a literal path or member string
+// (which the test above requires of every service-account grant) carries no
+// reference to the account resource, so Terraform has no edge between them and
+// applies the two in parallel: the first `fugaro update` of an installation
+// that gains the account fails with "Unknown service account, notFound" on the
+// grants that ran before it existed (0.25.0 -> 0.26.0, the build identity).
+// Every resource whose body spells such an account must therefore name the
+// account resource, in depends_on or otherwise.
+func TestInstallationStringNamedAccountsAreWaitedFor(t *testing.T) {
+	const dir = "gcp/modules/installation/"
+	type account struct{ name, idExpr string }
+	var accounts []account
+	var blocks []block
+	var paths []string
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, dir) || !strings.HasSuffix(path, ".tf") {
+			return
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			blocks = append(blocks, blk)
+			paths = append(paths, path)
+			if blk.typ == "google_service_account" {
+				accounts = append(accounts, account{blk.name, firstAttr(blk.body, "account_id")})
+			}
+		}
+	})
+	if len(accounts) < 5 {
+		t.Fatalf("found only %d service accounts in %s: the scan is not seeing the module's own accounts", len(accounts), dir)
+	}
+	spelled := 0
+	for _, a := range accounts {
+		// The ID as it reads inside a "${...}" string: a literal stays itself,
+		// an expression (var.x.account_id) is interpolated.
+		id := strings.Trim(a.idExpr, `"`)
+		if strings.HasPrefix(a.idExpr, `"`) {
+			// literal
+		} else {
+			id = "${" + id + "}"
+		}
+		for i, blk := range blocks {
+			if blk.name == a.name {
+				continue
+			}
+			if !strings.Contains(blk.body, "/"+id+"@") && !strings.Contains(blk.body, ":"+id+"@") {
+				continue
+			}
+			spelled++
+			if !strings.Contains(blk.body, a.name) {
+				t.Errorf("%s: %s names the account %s by its ID string (%s@...) and never references the resource, so Terraform applies it in parallel with the account's creation and it fails with notFound; add depends_on = [%s]", paths[i], blk.name, a.name, id, a.name)
+			}
+		}
+	}
+	if spelled < 4 {
+		t.Errorf("found only %d resources that spell a module-created account by string: the scan is not seeing the grants it exists for", spelled)
+	}
+}
+
 // REGRESSION (same-project layout): the project-level roles any job, build or
 // scheduler account holds are exactly these, in every module and IAM resource
 // type. None gives access to the RTDB, Firestore, Identity Platform or the
