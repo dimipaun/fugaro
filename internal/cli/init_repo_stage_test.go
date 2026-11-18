@@ -1050,12 +1050,21 @@ func TestRepoEngineRefusesTheFirstBuildWithoutFugaroYAMLOnTheBaseBranch(t *testi
 // admits, which is the path M7 leaves exactly as it was.
 func publishSharedNode(t *testing.T, db *gcpfake.RTDB, provider string, repos ...string) {
 	t.Helper()
+	publishSharedNodeAt(t, db, projectpolicy.Version, provider, repos...)
+}
+
+// publishSharedNodeAt is publishSharedNode with the version the node STATES,
+// for the readers that have to answer the same way on a node written by the
+// release behind (projectpolicy.Version-1) as on this release's: the version is
+// the one fact a strict read refuses and the carried-forward read carries.
+func publishSharedNodeAt(t *testing.T, db *gcpfake.RTDB, version int, provider string, repos ...string) {
+	t.Helper()
 	if len(repos) == 0 {
 		t.Fatal("publishSharedNode needs the repositories the profile admits")
 	}
 	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
 	db.Set(projectpolicy.PathShared(), map[string]any{
-		"version":     projectpolicy.Version,
+		"version":     version,
 		"allow_repos": repos,
 		"profiles": map[string]any{
 			projectpolicy.DefaultProfileName: map[string]any{
