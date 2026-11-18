@@ -22,20 +22,25 @@ import (
 //
 // The entry is the image of every job whose repository names none, so it is
 // written only in the state where writing it cannot make this same update
-// refuse a job it converges today (internal/infra's unbuiltOnBaked, D1191): a
-// repository no profile admits, and the checkout's own workflows that would be
-// handed the entry and cannot run it. The rig is update_converge_test.go's: an
-// installation a release behind, in a checkout of its own repository, with one
-// GitHub repository (acme/app) and one Bitbucket repository (acme/sandbox)
-// enrolled and no profiles block at all.
+// refuse a job it converges today (internal/infra's unbuiltOnBaked, D1191), and
+// there are three of those: a repository the project does not admit, a
+// repository this run holds no checkout of — both of them keep the
+// per-repository job their own root deploys, which the entry is the image of,
+// and the second is unreadable from here — and, for the checkout this run does
+// hold, a workflow of it that the entry would be handed to and cannot run.
+//
+// The rig is update_converge_test.go's: an installation a release behind, in a
+// checkout of its own repository, whose config lists the checkout's own
+// repository alone (onlyRepos; newInitRig's own config also enrols a Bitbucket
+// repository, and this write waits for a project that lists no other). The
+// published node is currentNode's, which admits github/acme/app.
 
-// bakedWorkflowYAML is the checkout of the two tests below that need the
-// entry's own write to be the thing under test rather than the refusal it
-// waits on: both workflows write a dockerfile: of their own, so the catalog's
-// default is set aside for them (D1900) and neither is a job the entry would
-// be handed to. It is the shape of
-// TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage, for the same
-// reason.
+// bakedWorkflowYAML is the checkout of the tests below that need the entry's
+// own write to be the thing under test rather than the refusal it waits on:
+// both workflows write a dockerfile: of their own, so the catalog's default is
+// set aside for them (D1900) and neither is a job the entry would be handed to.
+// It is the shape of TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage,
+// for the same reason.
 const bakedWorkflowYAML = "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
 	"  app: { dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n" +
 	"  api: { dockerfile: .fugaro/api.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n"
@@ -46,13 +51,48 @@ const bakedWorkflowYAML = "version: 1\nproject: aurora\ngit: { provider: github 
 // about.
 const ownImageDockerfile = "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"
 
+// appRepo is the checkout's own repository as the rig's config records it: the
+// GitHub App ID is what the project's GitHub job is composed from, and the two
+// workflows are the ones the checkout's fugaro.yaml defines.
+var appRepo = localcfg.Repo{Provider: "github", Workflows: []string{"app", "api"}, GitHubAppID: "12345"}
+
+// onlyRepos makes the project's repository list exactly the checkout's own
+// repository plus every name given, all on GitHub, and re-registers the
+// installation doctor reads.
+//
+// Every test below starts from the checkout's repository alone, because that is
+// the one list this write happens on at all: a repository this run holds no
+// checkout of holds the entry back (defaultCatalogEntryRefusal's second state),
+// so a test that lists another repository is about the reason the write waits.
+func onlyRepos(t *testing.T, r *convergeRig, extra ...string) {
+	t.Helper()
+	repos := map[string]localcfg.Repo{"acme/app": appRepo}
+	for _, name := range extra {
+		repos[name] = localcfg.Repo{Provider: "github", Workflows: []string{"app"}, GitHubAppID: "12345"}
+	}
+	rewriteRigConfig(t, r.imagesRig, func(lc *localcfg.Config) { lc.Repos = repos })
+	registerInstallation(t, r.initRig)
+}
+
 // ownImageRig is the converge rig over a checkout whose workflows write an
-// image of their own, so that the entry is written for the two repositories the
-// project enrols and the only variable left between the tests below is the one
+// image of their own, so that the entry is written for the one repository the
+// project lists and the only variable left between the tests below is the one
 // each is about.
 func ownImageRig(t *testing.T) *convergeRig {
 	t.Helper()
-	r := newConvergeRigYAML(t, currentNode(), bakedWorkflowYAML)
+	r := ownImageRigNode(t, currentNode())
+	onlyRepos(t, r)
+	return r
+}
+
+// ownImageRigNode is ownImageRig over a published node of the caller's own, for
+// the tests that are about which repositories the write waits for: those need a
+// node whose allow_repos admits the repositories their config lists, because
+// the reason they would read otherwise is the admission half of the guard,
+// which is another test's.
+func ownImageRigNode(t *testing.T, node map[string]any) *convergeRig {
+	t.Helper()
+	r := newConvergeRigYAML(t, node, bakedWorkflowYAML)
 	for _, wf := range []string{"app", "api"} {
 		checkoutFile(t, filepath.Join(r.root, ".fugaro", wf+".Dockerfile"), ownImageDockerfile)
 	}
@@ -70,14 +110,28 @@ func writtenDefaultEntry(t *testing.T) (config.Entry, bool) {
 	return catalog.Default(*cat)
 }
 
+// withheldEntryLine is the one line this write prints when it writes nothing,
+// "" when it printed none: the reason and the repository it is about are in
+// that line, and an assertion over the whole output cannot tell it from the
+// lines about everything else the update did.
+func withheldEntryLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "no default catalog entry was written") {
+			return line
+		}
+	}
+	return ""
+}
+
 // TestUpdateWritesTheDefaultEntryOnlyWhenEveryRepoIsAdmitted is S10's red step
 // at the write: no step wrote a default entry, so the shared jobs of every
-// profile ran the base image with nothing naming it. The project's repositories
-// are both admitted — acme/app by the GitHub default profile this same run
-// writes and acme/sandbox by its Bitbucket one (S5, D2310) — so the entry is
-// written, it is the base image this run pinned, it reaches the published node
-// (which is where a run reads the project's catalog) and the shared jobs of
-// every profile are deployed on it.
+// profile ran the base image with nothing naming it. The project's one
+// repository is admitted — the published node's allow_repos names it and the
+// GitHub default profile this same run writes (S5, D2310) admits it — and it is
+// the checkout this run holds, so the entry is written, it is the base image
+// this run pinned, it reaches the published node (which is where a run reads
+// the project's catalog) and the shared jobs of every profile are deployed on
+// it.
 //
 // The entry's image is compared against the base image the same run recorded,
 // and not against the fixture's: the base moves in every update (its images
@@ -139,12 +193,12 @@ func TestUpdateWritesTheDefaultEntryOnlyWhenEveryRepoIsAdmitted(t *testing.T) {
 }
 
 // TestUpdateLeavesTheEntryAndSaysWhyForAnUnadmittedRepo: the entry is the image
-// of every job whose repository names no image, so a repository no profile
-// admits — which keeps the per-repository job its own root deploys — would be
-// handed it, and a bare `checkout: baked` workflow of that repository is a job
-// the deployer refuses (unbuiltOnBaked, D1191). The write therefore waits for
-// the whole list of repositories the project lists, and says which one holds it
-// back.
+// of every job whose repository names no image, so a repository the project
+// does not admit — which keeps the per-repository job its own root deploys —
+// would be handed it, and a bare `checkout: baked` workflow of that repository
+// is a job the deployer refuses (unbuiltOnBaked, D1191). The write therefore
+// waits for the whole list of repositories the project lists, and says which
+// one holds it back.
 //
 // The checkout's own workflows are the ones that could not be refused (the
 // fixture above writes an image of their own), so the reason this run prints is
@@ -170,11 +224,84 @@ func TestUpdateLeavesTheEntryAndSaysWhyForAnUnadmittedRepo(t *testing.T) {
 		t.Errorf("this update wrote the default entry %+v, and %s is admitted by no profile: that repository keeps the per-repository job its own root deploys, and the entry would be the image of a job the deployer refuses where the workflow writes none of its own (unbuiltOnBaked)\n%s",
 			entry, unadmitted, out)
 	}
-	if !strings.Contains(out, "no default catalog entry was written") {
+	line := withheldEntryLine(out)
+	if line == "" {
 		t.Errorf("this update wrote no default entry and says nothing about it, so the operator reads a project on the images it runs and not a project whose write was held back:\n%s", out)
 	}
-	if !strings.Contains(out, unadmitted) {
+	if !strings.Contains(line, unadmitted) {
 		t.Errorf("the line this update prints about the entry does not name %s, the repository that keeps it from being written:\n%s", unadmitted, out)
+	}
+}
+
+// TestUpdateLeavesTheEntryAndSaysWhyForARepositoryTheProjectDoesNotAdmit is the
+// other half of the admission the test above reads, and the half a profile
+// cannot answer on its own: a repository is admitted when the project's own
+// allow_repos names it AND a profile of its provider admits it
+// (projectpolicy.Admits, the gate a run of a shared job is held to), and a
+// publish keeps the node's allow_repos rather than re-seeding it from this
+// config — so a repository this config lists and the published node does not
+// admit is one whose runs every shared job refuses, whatever the profiles say.
+// It keeps the per-repository job its own root deploys, and the entry waits for
+// it exactly as it waits for a repository no profile admits.
+func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryTheProjectDoesNotAdmit(t *testing.T) {
+	const unadmitted = "github/acme/other"
+	r := ownImageRig(t)
+	// A profile that admits it, which is the half that answers "admitted" on
+	// its own: what is left is the node's allow_repos, which names the
+	// checkout's repository alone (currentNode).
+	rewriteRigConfig(t, r.imagesRig, func(lc *localcfg.Config) {
+		lc.Profiles = map[string]config.JobProfile{projectpolicy.DefaultProfileName: {
+			Provider: "github", CPU: 2, Memory: "4Gi", TimeoutClass: "2h",
+			AllowRepos: []string{"github/acme/app", unadmitted},
+		}}
+		lc.Repos["acme/other"] = localcfg.Repo{Provider: "github", Workflows: []string{"app"}, GitHubAppID: "12345"}
+	})
+	registerInstallation(t, r.initRig)
+	out := convergeOn(t, r, []string{"policy-vs-jobs"})
+
+	if entry, ok := writtenDefaultEntry(t); ok {
+		t.Errorf("this update wrote the default entry %+v, and the policy published at %s admits %s on no shared job: that repository keeps the per-repository job its own root deploys, and the entry would be the image of a job the deployer refuses where the workflow writes none of its own (unbuiltOnBaked)\n%s",
+			entry, projectpolicy.PathShared(), unadmitted, out)
+	}
+	line := withheldEntryLine(out)
+	if line == "" {
+		t.Errorf("this update wrote no default entry and says nothing about it, so the operator reads a project on the images it runs and not a project whose write was held back:\n%s", out)
+	}
+	if !strings.Contains(line, unadmitted) {
+		t.Errorf("the line this update prints about the entry does not name %s, the repository the project's own allow_repos does not admit:\n%s", unadmitted, out)
+	}
+}
+
+// TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold: a repository
+// admitted to a profile still deploys the per-repository job of its own root
+// (RepoSpec.Shared is a mark no root reads yet, M7), so the entry would be that
+// job's image as much as an unadmitted repository's — and the workflows of a
+// repository this machine holds no checkout of are not readable from here, so a
+// bare `checkout: baked` one among them is refused by the deployer at its own
+// repository stage, in a run this one cannot warn. The write therefore waits
+// for a project whose list is the checkout's own alone, whatever admission
+// says: the node and the profile this run writes both admit the second
+// repository here, and the entry is still not written.
+func TestUpdateLeavesTheEntryAndSaysWhyForARepositoryItDoesNotHold(t *testing.T) {
+	const sibling = "github/acme/other"
+	node := currentNode()
+	node["allow_repos"] = []string{"github/acme/app", sibling}
+	r := ownImageRigNode(t, node)
+	onlyRepos(t, r, "acme/other")
+	out := convergeOn(t, r, []string{"policy-vs-jobs"})
+
+	if entry, ok := writtenDefaultEntry(t); ok {
+		t.Errorf("this update wrote the default entry %+v while the project lists %s, a repository this run holds no checkout of: that repository keeps the per-repository job its own root deploys, the entry is that job's image, and its workflows are not readable here — so the deployer can refuse a bare baked one of them at its own repository stage\n%s",
+			entry, sibling, out)
+	}
+	line := withheldEntryLine(out)
+	if line == "" {
+		t.Errorf("this update wrote no default entry and says nothing about it, so the operator reads a project on the images it runs and not a project whose write was held back:\n%s", out)
+	}
+	for _, want := range []string{sibling, "unbuiltOnBaked"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the line this update prints about the entry does not name %q, which is the repository the write waits on and the refusal the entry would be the image of:\n%s", want, out)
+		}
 	}
 }
 
@@ -195,6 +322,7 @@ func TestUpdateLeavesTheEntryAndSaysWhyForAnUnadmittedRepo(t *testing.T) {
 // serve).
 func TestUpdatePreviousVersionWithABakedWorkflowConvergesInOneUpdate(t *testing.T) {
 	r := newConvergeRig(t, staleNode(t))
+	onlyRepos(t, r)
 	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
 	if got := convergeNode(t, r).Version; got != projectpolicy.Version {
@@ -207,11 +335,12 @@ func TestUpdatePreviousVersionWithABakedWorkflowConvergesInOneUpdate(t *testing.
 	if p := convergeNode(t, r); p.ImageCatalog != nil {
 		t.Errorf("the policy this update published carries a catalog (%+v), want none: this machine's config names none, and an entry is the only thing this run would have written there", p.ImageCatalog)
 	}
-	if !strings.Contains(out, "no default catalog entry was written") {
+	line := withheldEntryLine(out)
+	if line == "" {
 		t.Errorf("this update wrote no default entry and says nothing about it, so the person reads a project on the images it runs and not a project whose write was held back:\n%s", out)
 	}
-	for _, want := range []string{"unbuiltOnBaked", "github/acme/app"} {
-		if !strings.Contains(out, want) {
+	for _, want := range []string{"unbuiltOnBaked", "acme/app"} {
+		if !strings.Contains(line, want) {
 			t.Errorf("the line this update prints about the entry does not name %q, which is the reason the write waits and the repository it is about:\n%s", want, out)
 		}
 	}

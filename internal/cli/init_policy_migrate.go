@@ -2009,12 +2009,14 @@ const defaultCatalogEntryName = "base"
 // this run refuse something it converges today. The entry is the image of every
 // job whose repository names no image, so a project that keeps a per-repository
 // job for any reason would meet the deployer's refusal for a bare `checkout:
-// baked` workflow (internal/infra's unbuiltOnBaked, D1191) — the state the
-// repository's own workflows are read for here, because a repository admitted
-// to a profile still deploys its own root until the shared job's image is the
-// one its workflows declare. The other states are the project's own: a catalog
-// this machine's config does not hold is not one to write into, and an entry
-// the config already has under this name is the operator's.
+// baked` workflow (internal/infra's unbuiltOnBaked, D1191) — and a repository
+// keeps one whenever no profile admits it, whenever this run holds no checkout
+// of it (RepoSpec.Shared is a mark no root reads yet, M7), or, for the checkout
+// this run does hold, whenever its own workflows are such a workflow: the three
+// states defaultCatalogEntryRefusal reads, and the reason a repository admitted
+// to a profile is still read here. The other states are the project's own: a
+// catalog this machine's config does not hold is not one to write into, and an
+// entry the config already has under this name is the operator's.
 //
 // Every line it prints is a reason and a remedy, and it is silent in the one
 // state where there is nothing to say: a project that already marks a default
@@ -2069,7 +2071,7 @@ func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
 			entry.Name, selfCommand()+" update"))
 		return
 	}
-	if why := e.defaultCatalogEntryRefusal(cat, e.lc.ImageMapEffective(publishedMap), entry); why != "" {
+	if why := e.defaultCatalogEntryRefusal(cat, e.lc.ImageMapEffective(publishedMap), entry, p); why != "" {
 		e.withholdDefaultCatalogEntry(why)
 		return
 	}
@@ -2141,17 +2143,29 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 }
 
 // defaultCatalogEntryRefusal is why the entry must not be written, "" when
-// nothing holds it back: the two states in which the entry would be the image
+// nothing holds it back: the three states in which the entry would be the image
 // of a job this run has to deploy and the deployer would refuse that job.
 //
-// The first is a repository no profile admits. Such a repository runs on the
-// per-repository job its own root deploys, and that job's image is the
+// The first is a repository the project does not admit. Such a repository runs
+// on the per-repository job its own root deploys, and that job's image is the
 // catalog's default — so a bare `checkout: baked` workflow of it, which carries
 // no image of its own to keep instead, meets unbuiltOnBaked. The write waits
 // for the whole list: the entry is the project's, and half a project on it is a
 // project whose next update refuses.
 //
-// The second is the checkout's own workflows, which are the ones this run
+// The second is every repository this run holds no checkout of, which is the
+// same refusal one step earlier and the reason the two are separate: a
+// repository admitted to a profile still deploys the per-repository job of its
+// own root (RepoSpec.Shared is a mark no root reads yet, M7), and the entry is
+// that job's image too — so a bare `checkout: baked` workflow of a repository
+// this machine does not hold is refused by the deployer at its own repository
+// stage, in a run this one cannot warn. Nothing about that file is readable
+// from here (a checkout's workflows live in its own fugaro.yaml, and this
+// machine holds one checkout), so the entry waits until the project lists no
+// repository but this checkout's — the state in which the per-repository jobs
+// the entry could be the image of are the ones this run reads.
+//
+// The third is the checkout's own workflows, which are the ones this run
 // really builds (the repository stage and the images stage run for this
 // checkout alone): the entry is asked of the one resolver here, so that a
 // workflow that pins an entry, needs tags, or writes an image of its own — the
@@ -2162,12 +2176,16 @@ func catalogEntries(cat *config.Catalog) []config.Entry {
 // written, and a workflow's image_name, its needs and the project's image_map
 // are read only against a catalog, so a job that runs the base image today can
 // be refused the moment the entry lands.
-func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry) string {
-	if repos := unadmittedRepos(e.lc); len(repos) > 0 {
-		return fmt.Sprintf("no profile admits %s, so %s runs on the per-repository job its own root deploys, and the entry would be the image of that job — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191)",
-			strings.Join(repos, ", "), them(repos))
+func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) string {
+	if repos := unadmittedRepos(e.lc, node); len(repos) > 0 {
+		return fmt.Sprintf("this project does not admit %s — a repository is admitted when the project's published allow_repos names it and a profile of its provider admits it — and a repository it does not admit runs on the per-repository job its own root deploys, so the entry would be the image of that job: a checkout: baked workflow of it that writes no image of its own is refused there (unbuiltOnBaked, D1191)",
+			strings.Join(repos, ", "))
 	}
 	cfg, slug := e.checkoutWorkflows()
+	if repos := unvouchedRepos(e.lc, e.heldCanonical()); len(repos) > 0 {
+		return fmt.Sprintf("this project's config lists %s: a repository this run holds no checkout of keeps the per-repository job its own root deploys, whose image is this project's catalog default — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191), and this run cannot read those workflows from here",
+			strings.Join(repos, ", "))
+	}
 	if cfg == nil {
 		return ""
 	}
@@ -2206,7 +2224,10 @@ func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap ma
 
 // checkoutWorkflows is the checkout's own fugaro.yaml and the repository it is
 // about, nil when this run holds no checkout (a converge from a machine that
-// does not hold the repository, which has no workflow to read).
+// does not hold the repository, which has no workflow to read). The repository
+// is the checkout's own name (owner/name), which is the form the image
+// selection is asked about; heldCanonical is the form the project's lists
+// spell.
 func (e *initEngine) checkoutWorkflows() (*config.Config, string) {
 	if e.repo == nil || e.repo.tg == nil {
 		return nil, ""
@@ -2214,21 +2235,46 @@ func (e *initEngine) checkoutWorkflows() (*config.Config, string) {
 	return e.repo.tg.cfg, e.repo.tg.repo
 }
 
+// heldCanonical is the checkout's repository as this project's allow-lists
+// spell it ("github/acme/app"), "" when this run holds no checkout or nothing
+// here names the repository's provider: the name unvouchedRepos compares the
+// project's repositories against.
+//
+// The provider is the config's own for the checkout's entry, canonicalized
+// exactly as usedProviders canonicalizes the list that comparison walks, so
+// that the two spellings cannot disagree about one repository.
+func (e *initEngine) heldCanonical() string {
+	if e.repo == nil || e.repo.tg == nil {
+		return ""
+	}
+	key := repoConfigKey(e.lc, e.repo.tg.repo)
+	r, ok := e.lc.Repos[key]
+	if !ok || r.Provider == "" {
+		return ""
+	}
+	c, err := projectpolicy.Canonical(r.Provider, key)
+	if err != nil {
+		return ""
+	}
+	return c
+}
+
 // unadmittedRepos is the repositories this project's config lists that no
 // profile of it admits, in the order the config names them: the repositories
 // whose runs are per-repository ones.
 //
-// A repository is admitted when a profile serves its provider and admits it —
-// the profile's own allow_repos when it names one, and the project's enrolment
-// otherwise, which is the list the config's own repositories are the seed of
-// (projectpolicy.Admits' rule, read here on the config this run is about to
-// publish rather than on the node).
-func unadmittedRepos(lc *localcfg.Config) []string {
+// A repository is admitted when the project admits it on a profile of its
+// provider — projectpolicy.Admits' answer, which is the gate a run of a shared
+// job is held to (internal/runner's admissionCheck, and internal/credsvc's
+// pairShared on the serving side), read here on the config this run is about to
+// publish rather than on the node: the profile's own allow_repos when it names
+// one, and the project's own enrolment otherwise.
+func unadmittedRepos(lc *localcfg.Config, node *projectpolicy.Policy) []string {
 	_, used := usedProviders(lc)
 	var out []string
 	for _, name := range config.Providers {
 		for _, canonical := range used[name] {
-			if !admittedByAProfile(lc, name, canonical) {
+			if !admittedByAProfile(lc, node, name, canonical) {
 				out = append(out, canonical)
 			}
 		}
@@ -2236,12 +2282,50 @@ func unadmittedRepos(lc *localcfg.Config) []string {
 	return out
 }
 
-// admittedByAProfile reports whether some profile of this provider admits the
-// repository. A profile that names no allow_repos admits what the project's own
-// enrolment admits, and this repository is one of those: the enrolment is
-// derived from the repositories this config lists (allowSourcesOf), which is
-// the list the caller walked to ask.
-func admittedByAProfile(lc *localcfg.Config, provider, canonical string) bool {
+// unvouchedRepos is the repositories this project's config lists that are not
+// the checkout this run holds — held is that repository as the project's lists
+// spell it — in the order the config names them: the ones whose own root this
+// run does not read, and which therefore keep the per-repository job that root
+// deploys — a repository the entry would be the image of just as much as one
+// the project does not admit, and whose workflows nothing here can read.
+//
+// A held of "" is a run with no checkout, or one whose repository this config
+// does not name: it vouches for no repository, so every one the config lists is
+// unvouched.
+func unvouchedRepos(lc *localcfg.Config, held string) []string {
+	_, used := usedProviders(lc)
+	var out []string
+	for _, name := range config.Providers {
+		for _, canonical := range used[name] {
+			if canonical != held {
+				out = append(out, canonical)
+			}
+		}
+	}
+	return out
+}
+
+// admittedByAProfile reports whether the project admits the repository on a
+// profile of this provider, which is what projectpolicy.Admits answers: the
+// project's own enrolment and the profile's list, both of them.
+//
+// The enrolment is the node's allow_repos, and reading it is not a formality: a
+// publish keeps the list the node holds and never re-seeds it from this config
+// (publishAllowRepos), so a repository this config lists and the node does not
+// admit is one whose runs every shared job refuses — the state `fugaro doctor`
+// reports as allow-list-uncovered — and it keeps the per-repository job its own
+// root deploys whatever the profiles say.
+//
+// A profile that names no allow_repos admits what the enrolment admits, so the
+// node's list is the one that decides for it. A node that is not there at all
+// has no list to read, and this run's own publish is what seeds one from the
+// repositories this config lists (publishAllowRepos seeds a node that is
+// absent): those are the repositories the caller walked, so the enrolment half
+// admits them.
+func admittedByAProfile(lc *localcfg.Config, node *projectpolicy.Policy, provider, canonical string) bool {
+	if node != nil && !projectpolicy.AdmitRepo(node.AllowRepos, canonical) {
+		return false
+	}
 	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
 		pr := lc.Profiles[name]
 		if pr.Provider != provider {
@@ -2252,14 +2336,4 @@ func admittedByAProfile(lc *localcfg.Config, provider, canonical string) bool {
 		}
 	}
 	return false
-}
-
-// them is a repository list as the sentence about it reads: "it" for one and
-// "they" for more, so the line names the repositories without a verb that does
-// not agree with them.
-func them(repos []string) string {
-	if len(repos) == 1 {
-		return "it"
-	}
-	return "they"
 }
