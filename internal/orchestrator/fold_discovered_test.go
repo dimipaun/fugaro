@@ -16,10 +16,13 @@ package orchestrator_test
 //   - TestFoldNeverRemovesOrUnblocks and TestBlocksStayInTheRunsOwnNode:
 //     nothing a run reports removes an edge, moves a phase, reaches an item
 //     another attempt is going for, or crosses into another node (F44, F51).
-//   - TestFoldRefusesCycle and TestFoldRefusesPastMaxDependsOn: an addition the
-//     fence would refuse leaves one line in the audit log and the fold of the
-//     run's outcome rides on — ValidateState checks no cycle (F42), so a fold
-//     that insisted on one would leave a node every tick refuses to read again.
+//   - TestFoldRefusesCycle, TestFoldRefusesPastMaxDependsOn and
+//     TestFoldKeepsTheEdgeOutWhenTheFactHasNoRoom: an addition the fence would
+//     refuse leaves one line in the audit log and the fold of the run's outcome
+//     rides on — ValidateState checks no cycle (F42), so a fold that insisted on
+//     one would leave a node every tick refuses to read again — and an edge
+//     whose D2740 fact has no room is refused with it, so no item is left
+//     un-approved with nothing on the node saying why.
 //   - TestNeededBecomesGraphSuspect and TestOneGraphSuspectFactPerRun: what a
 //     run needed reorders nothing and leaves at most one fact per run.
 //   - TestConflictEdgeOnNextAttempt and TestFoldIgnoresRunningAttempts: a
@@ -406,6 +409,68 @@ func TestFoldRefusesPastMaxDependsOn(t *testing.T) {
 	}
 	if text := nodeText(t, foldRefusal(t, h, "wi-b"), "text"); !strings.Contains(text, "(deps)") {
 		t.Errorf("the line is %q, and the code a reader goes to the node with is deps", text)
+	}
+}
+
+// TestFoldKeepsTheEdgeOutWhenTheFactHasNoRoom is D2740's other half: the edge
+// that un-approves an item and the fact saying which item, which edge and which
+// run did it are one change, so a node with no room for the fact — here at
+// MaxFacts, and the size target is the same answer through the same fence —
+// refuses the edge with it. The item keeps the approval a person gave it, and
+// the line says cap.
+//
+// Mutation (run, restored): ask for the edge and the fact as two ops, the way
+// this fold asked before the review — the edge lands alone, the item is left
+// waiting for a person with nothing on the node saying why, and this test fails
+// on the dependency, the approval and the missing fact.
+func TestFoldKeepsTheEdgeOutWhenTheFactHasNoRoom(t *testing.T) {
+	now := o6Now()
+	approvedAt := now.Add(-time.Hour)
+	const runID = "20261107-090000-abcd"
+
+	w, it := foldRun("wi-a", runID, approvedAt, now.Add(-30*time.Minute))
+	target := foldItem("wi-b", orchestrator.PhaseQueued, approvedAt, planTask("plan-a/T2"))
+	s := tickState(t, now, []orchestrator.WorkItem{w, target}, []orchestrator.Intent{it})
+	s.Facts = make(map[string]orchestrator.Fact, orchestrator.MaxFacts)
+	for i := 0; i < orchestrator.MaxFacts; i++ {
+		s.Facts[fmt.Sprintf("k%02d", i)] = orchestrator.Fact{Value: "a note the node already carries", By: orchestrator.Daemon}
+	}
+	if orchestrator.OverCap(s) {
+		t.Fatal("the node this test built is past its size target, so the fold would skip it for another reason than the one this test is about")
+	}
+
+	h := newHarness(t, s, now)
+	foldOnly(h)
+	h.tick.Audit = mustAudit(t, rtdbClient(t, h.db), clockAt(now))
+	h.reader.reports = []orchestrator.RunReport{
+		foldReport(runID, orchestrator.OutcomeSucceeded, []runstore.DiscoveredItem{namesTask("plan-a/T2")}, nil),
+	}
+
+	rep := h.step()
+	got := h.state()
+	b := foldItemOf(t, got, "wi-b")
+	if len(b.DependsOn) != 0 {
+		t.Errorf("the item depends on %v after a cycle whose edge had no fact to land beside it: the two are one change (D2740)", b.DependsOn)
+	}
+	if b.Approved == nil {
+		t.Error("the item lost the approval a person gave it while its declaration did not change: an item waiting for a person with nothing on the node saying why is what D2740 exists to prevent")
+	}
+	if len(got.Facts) != orchestrator.MaxFacts {
+		t.Errorf("the node carries %d facts, and a fold that can write no note writes none (MaxFacts is %d)", len(got.Facts), orchestrator.MaxFacts)
+	}
+	for _, k := range foldFactKeys(got.Facts) {
+		if strings.HasPrefix(k, "graph_edge_") {
+			t.Errorf("the node carries the fact %q, and no edge landed beside it", k)
+		}
+	}
+	if a := foldItemOf(t, got, "wi-a"); a.Phase != orchestrator.PhaseDone {
+		t.Errorf("the item is %s, and a refused addition is not a reason to stop folding the run that ended", a.Phase)
+	}
+	if rep.Folded != 1 {
+		t.Errorf("the cycle folded %d finished runs where one reported", rep.Folded)
+	}
+	if text := nodeText(t, foldRefusal(t, h, "wi-b"), "text"); !strings.Contains(text, "(cap)") {
+		t.Errorf("the line is %q, and the code a reader goes to the node with is cap", text)
 	}
 }
 

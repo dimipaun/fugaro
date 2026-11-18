@@ -21,7 +21,10 @@
 // changes nothing at all, and every op the fold asks for is put through Apply
 // on the state the ops accepted so far have made — so an addition that would
 // make a cycle, pass MaxDependsOn or put the node over its cap is refused by
-// the same reading the daemon's own commit makes.
+// the same reading the daemon's own commit makes. An edge and the D2740 fact
+// beside it are one change and are read as one patch: the two land together or
+// not at all, and a node with no room for the fact (MaxFacts, or the size
+// target) keeps the edge out with it.
 //
 // **Nothing here fails a tick.** A refused addition leaves one line in the
 // audit log and the fold of the run's outcome rides on: a cycle or an oversized
@@ -33,6 +36,13 @@
 // the item it is added to, because `depends_on` is digested and the person
 // approved a spec the daemon has just made another one — D2740's answer, with
 // the fact beside it saying which item, which edge and which run.
+//
+// The facts are the node's and this fold never retires one: a fact is the note a
+// person reads, and nothing a run reports may take another run's note away. The
+// bound on them is the state's own retention (Retain, retainFacts), which drops
+// facts past keptFacts by key order — so the oldest run ids go first — and a
+// node that reaches MaxFacts before retention runs refuses further additions
+// with the `cap` line rather than un-approving an item with no note beside it.
 
 package orchestrator
 
@@ -288,12 +298,20 @@ func (f *folder) suspect(w WorkItem, runID string, d *runstore.Discovered, met [
 // has made so far and not from the node as it was read: two runs' reports are
 // folded in one patch, and the second addition to one item must be read against
 // the first.
+//
+// The edge and D2740's fact beside it are asked for as one change: an edge that
+// un-approves an item and the note saying which edge and which run did it land
+// together or not at all, so a node with no room for the fact — at MaxFacts, or
+// past its size target — keeps the edge out with it and the item keeps the
+// approval a person gave it. A fact claiming an edge the fence refused would be
+// a lie about the node, and an item un-approved with nothing on the node saying
+// why is what that decision exists to prevent.
 func (f *folder) addEdge(targetID, source, runID string) {
 	t, ok := f.state.Item(targetID)
 	if !ok {
 		return
 	}
-	what := "the dependency " + source + " -> " + targetID + " from run " + runID + " was not added"
+	what := "the dependency " + source + " -> " + targetID + " from run " + runID + " was not added, and the note beside it was not written"
 	code := ""
 	switch {
 	case reaches(f.state, source, targetID):
@@ -305,41 +323,34 @@ func (f *folder) addEdge(targetID, source, runID string) {
 		code = codeGraphDeps
 	}
 	deps := append(slices.Clone(t.DependsOn), source)
-	if code == "" && f.room < 2 {
-		// An edge and the fact beside it are one change (D2740), and a patch
-		// with room for only one of them adds neither: an item left un-approved
-		// with no note on the node saying why is the thing that decision exists
-		// to prevent, and the entry the cycle could not record is one the next
-		// tick derives again from the same report.
-		code = codeGraphRoom
-	}
-	if !f.ask(Op{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{ID: targetID, DependsOn: &deps}}, targetID, what, code) {
-		return
-	}
-	// D2740's fact, beside the edge that un-approved the item: the person who
-	// approved the spec reads on the node which item changed, which edge was
-	// added and which run caused it, rather than having to guess why the item
-	// they approved is waiting for them again. It is written only for an edge
-	// that landed — a fact claiming an edge the fence refused would be a lie
-	// about the node.
-	f.ask(Op{Op: OpFactSet, Fact: &FactOp{Key: edgeFactKey(targetID), Value: edgeFactValue(targetID, source, runID)}},
-		targetID, "the note beside the dependency "+source+" -> "+targetID+" was not written", "")
+	f.askAll([]Op{
+		{Op: OpWorkItemUpsert, WorkItem: &WorkItemOp{ID: targetID, DependsOn: &deps}},
+		{Op: OpFactSet, Fact: &FactOp{Key: edgeFactKey(targetID), Value: edgeFactValue(targetID, source, runID)}},
+	}, targetID, what, code)
 }
 
-// ask is the fence, or the line for a refusal already known, and whether the op
-// was accepted. code is "" for an op this fold has not refused yet: then the
-// answer is Apply's, on the state the ops accepted so far have made, which is
-// the same reading the commit that lands them makes.
+// ask is the fence for one op, which is every addition the fold makes except an
+// edge and the fact that must land with it.
 func (f *folder) ask(op Op, subject, what, code string) bool {
-	if code == "" && f.room <= 0 {
+	return f.askAll([]Op{op}, subject, what, code)
+}
+
+// askAll is the fence, or the line for a refusal already known, and whether the
+// ops were accepted. code is "" for a change this fold has not refused yet: then
+// the answer is Apply's, on the state the ops accepted so far have made and with
+// the ops read as one patch, which is the same reading the commit that lands them
+// makes — so a change of several ops is accepted whole or refused whole, and the
+// refusal is one line about the change rather than one per op.
+func (f *folder) askAll(ops []Op, subject, what, code string) bool {
+	if code == "" && f.room < len(ops) {
 		code = codeGraphRoom
 	}
 	if code == "" {
-		next, err := Apply(f.state, Patch{BaseRev: f.state.Rev, Ops: []Op{op}}, Actor{Class: Daemon, Now: f.now})
+		next, err := Apply(f.state, Patch{BaseRev: f.state.Rev, Ops: ops}, Actor{Class: Daemon, Now: f.now})
 		if err == nil {
 			f.state = next
-			f.out.ops = append(f.out.ops, op)
-			f.room--
+			f.out.ops = append(f.out.ops, ops...)
+			f.room -= len(ops)
 			return true
 		}
 		code = opRefusal(err)
