@@ -369,6 +369,29 @@ import (
 // and assert that no sentinel survives a run, and both fake servers echo back
 // what they were sent in a hostile mode, so an endpoint's own text can never
 // reach the block.
+// Check 610 is the review-only job's own owner-run check (RJ9 of the review-job
+// plan): one `fugaro review --pr N` on a pull request of a sandbox repository
+// whose `fugaro.yaml` carries no `profiles:` block and a baked workflow, which is
+// the repository a review resolves onto the implicit review-only job for. Its
+// fakes are a fake `fugaro`, `gh`, `gcloud` and `git`, each answering out of the
+// case's own documents and logging every call, so a case says which command read
+// what: the doctor that names the installation and its base image, the checkout's
+// resolved config (a mode for a `profiles:` key of its own, a workflow that is
+// not baked, no workflow at all and an auth that is neither an API key nor
+// Vertex), the published policy (a profiles block, a default account that does
+// not admit the repository, a budget mode of `off`, no mode at all), the job list
+// (no implicit job, two of them, one without the service's address, one naming
+// the secret env or mounting a secret volume, one on another image, one beside a
+// coding project job), the launch document (another job, a named account, no run,
+// no job), the run's own row (still running, failed, another pull request,
+// another run) and the review's artifact (no artifact, another run, another pull
+// request, no verdict, another reviewer account) -- plus the service's own
+// `credsvc: audit` lines, which the fake `gcloud` serves for the run the fake
+// `fugaro` recorded and which a case bends into no served line at all, a first
+// call under another credential, two calls whose earliest by its own timestamp is
+// not the document's first, a line of another run, and a read that fails. The
+// four UNVERIFIED items of the plan are one row each, and every case asserts on
+// that row's own sentence.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -444,6 +467,7 @@ var liveCheckScripts = []struct {
 	{"check127.sh", "check127_test.sh"},
 	{"check590.sh", "check590_test.sh"},
 	{"check591.sh", "check591_test.sh"},
+	{"check610.sh", "check610_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
