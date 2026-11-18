@@ -845,21 +845,23 @@ func TestTaskWithoutExternalDecodes(t *testing.T) {
 
 // resident is the real resident launcher over the fixture's own environment.
 // The opener is the service's own shape (orchestrator_serve.go's `open`: a
-// closure the launcher calls per launch), and it answers the one environment
-// this fixture has, which is what every other launch in this file reads.
+// closure the launcher calls per launch), and it OPENS ONE PER CALL, as the
+// service does — the launcher closes the environment it opened on every way
+// out of a launch, so an opener that handed every launch one shared env would
+// have the second launch of a test read a closed bucket: the fixture has to be
+// the production shape for the close to be exercised at all.
+//
+// The launcher's own reason for one env per launch is the identity it writes
+// onto it, so the two halves of the fixture's shape are the service's two.
 func (f *launcherFixture) resident(t *testing.T) *residentLauncher {
 	t.Helper()
-	ctx := context.Background()
-	lc, _, err := openBudget(ctx, cloudOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	env, err := openCloudFor(ctx, lc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = env.bucket.Close() })
-	return &residentLauncher{open: func(context.Context) (*cloudEnv, error) { return env, nil }}
+	return &residentLauncher{open: func(ctx context.Context) (*cloudEnv, error) {
+		lc, _, err := openBudget(ctx, cloudOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return openCloudFor(ctx, lc)
+	}}
 }
 
 // seedResidentRun stores the task of a run no launcher of this fixture ever

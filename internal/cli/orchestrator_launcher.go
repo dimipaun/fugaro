@@ -62,15 +62,18 @@ import (
 // the walk answers `default` for every repository: a task naming no account at
 // all is admitted here exactly as it is on a machine whose config lists no
 // `claude_accounts`, and a task naming a NAMED Claude account is refused with
-// the command's own sentence every tick ("not one <repo> may use (allowed:
-// default)"). That sentence sends a reader to a key this deployment does not
-// have, so the fix it means is the person's, and it is the same fix the empty
+// the command's own sentence every tick ("named Claude account <name> is not
+// one <repo> may use (allowed: default); ask the operator to add it to
+// claude_accounts in their local config"). That sentence sends a reader to a
+// key this deployment does not have, so the fix it means is the person's, and
+// it is the same fix the empty
 // requested_by refusal below names: `fugaro run --retry <slug>/<run>` from a
 // machine whose config knows the account. What the refusal deliberately is NOT
 // is a guess: the credential a run mounts is the account its stored task names
 // (the job variant is derived from it), so a launcher that resolved another
-// account here — the published policy's per-repository axis is what would answer
-// this, and this revision reads no policy node — would start a run whose review
+// account here — the database node `policy publish` writes per repository, its
+// accounts' admissions under config/policy/repos/$slug, is what would answer it,
+// and this revision reads no policy node — would start a run whose review
 // stages are refused for a token nothing mounted. Fail-closed, loud, once per
 // tick, and TestResidentLauncherRefusesANamedAccountThisDeploymentCannotSee
 // pins it.
@@ -110,6 +113,16 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 	if err != nil {
 		return "", err
 	}
+	// And closed on every way out of this launch, which is the half the
+	// daemon's launcher does not need: that one opens its environment once, at
+	// start-up, and holds it for the daemon's life, while this opener builds
+	// one PER LAUNCH (cloudEnv's own Close releases the bucket and the records
+	// client the opener opened). A resident instance may serve passes for
+	// hours and start a run per re-issue it reads, so an environment per
+	// launch that nothing released is a bucket per launch held open until the
+	// instance dies — which is what every production caller that opens one
+	// does with it (run.go's own launch, watch.go's loop, imagecheck.go).
+	defer env.Close()
 	// retrySpec is the command's --retry reader: the run is located in the
 	// runs bucket by the id the node recorded (a bare id, which is the
 	// whole-bucket listing the launcher's own binding exists for, so a
