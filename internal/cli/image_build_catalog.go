@@ -205,12 +205,12 @@ func runImageBuildCatalog(cmd *cobra.Command, o imageBuildOptions, env *cloudEnv
 	specLC.BaseImages[kind] = cmp.Or(specLC.BaseImages[kind], base)
 	// The App ID reaches infra.Repo as an input rather than being left to its
 	// own lookup of the local config alone: a repository whose ID is only in
-	// the environment has one too (catalogGitHubAppID), and the spec's
+	// the environment has one too (repoGitHubAppID), and the spec's
 	// credential and the provider this command reads the Dockerfile with must
 	// be named from the same answer.
 	appID := ""
 	if cfg.Git.Provider == gitprov.KindGitHub {
-		if appID, err = catalogGitHubAppID(lc, repo, os.Getenv); err != nil {
+		if appID, err = repoGitHubAppID(lc, repo, os.Getenv); err != nil {
 			return err
 		}
 	}

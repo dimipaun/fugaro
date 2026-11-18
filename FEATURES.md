@@ -6,7 +6,7 @@ Fugaro runs each task you hand it as its own throwaway job in your cloud project
 
 A ✓ under Community, Team or Enterprise means the feature is included there, and a dash means it is not.
 
-as_of: v0.25.0
+as_of: v0.26.0
 
 | Feature | What it does | Status | Community | Team | Enterprise |
 | --- | --- | --- | --- | --- | --- |
@@ -29,12 +29,12 @@ as_of: v0.25.0
 | See which work a pull request belongs to | The pull requests Fugaro opens are labelled with the state of the run and the work it came from, so a list of pull requests says at a glance what each one is. | Coming soon | ✓ | ✓ | ✓ |
 | Your credentials stay in your own cloud | Model and forge credentials are held by a service in your own project, and a workflow's own secret is stored once for the project and reaches only the runs allowed to use it. | Available | ✓ | ✓ | ✓ |
 | A run is handed its access, not a stored key | A job is given the access it needs when it starts, through a broker in your own project, rather than a stored key. | Coming soon | ✓ | ✓ | ✓ |
-| Say what counts as security-sensitive | A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such. | Coming soon | ✓ | ✓ | ✓ |
+| Say what counts as security-sensitive | A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such. | Available | ✓ | ✓ | ✓ |
 | Decide who may launch and cancel | A project grants roles — viewer, operator and admin — each with a scope, so a person can read, launch or cancel only within the projects and repositories they were given. | Available | ✓ | ✓ | ✓ |
 | Find out what went wrong | A failed command's log can be read by a local diagnostic agent, and what it finds can be sent to the issue tracker from the command line. An issue already filed can be followed up to see what happened to it. | Available | ✓ | ✓ | ✓ |
 | Explain a failure with your project's own credential | When the machine in front of you holds no model login of its own, the evidence a failed command collected is handed to one bounded job in your own project, and a person standing at that machine still gets the cause and the fix. The job reads the redacted evidence and nothing else. | Coming soon | ✓ | ✓ | ✓ |
 | Reports on how your runs are going | Every run ends with a classified failure, and a periodic digest reports what a project's runs did — the failures, the spend and the patterns worth acting on. | Coming soon | ✓ | ✓ | ✓ |
-| Recorded spend matches what the provider billed | A run's spend is settled on the cost the model provider reports, priced conservatively where the provider reports none, and an alarm is raised when settled and estimated spend drift apart. | Coming soon | ✓ | ✓ | ✓ |
+| Recorded spend matches what the provider billed | A run's spend is settled on the cost the model provider reports, priced conservatively where the provider reports none, and an alarm is raised when settled and estimated spend drift apart. | Available | ✓ | ✓ | ✓ |
 | Runs share a project's jobs | A project's runs share a small pool of jobs and image caches instead of one job per repository, and what each run may reach is decided per job. | Coming soon | ✓ | ✓ | ✓ |
 | Let Fugaro work through your queue | An orchestrator works through a queue of tasks on its own, keeps its state in the cloud rather than on a machine, and pauses when a repository refuses it. | Available | ✓ | ✓ | ✓ |
 | Know when the work will be ready and what it will cost | A task graph shows a range for when the work will be ready and roughly what it will cost, and ad hoc items join the same graph as nodes. The estimate is informational and reserves no budget. | Coming soon | ✓ | ✓ | ✓ |
@@ -45,7 +45,7 @@ as_of: v0.25.0
 | Fugaro on your phone | A mobile app shows your projects, tasks and runs, and pairs a device with your installation to sign in. | Coming soon | — | ✓ | ✓ |
 | Reach a project from any agent | A hosted endpoint exposes a project's tasks, runs and reports to an agent outside Fugaro, over a protocol the agent already speaks. | Coming soon | — | ✓ | ✓ |
 | Group projects into a workspace | Several projects can be grouped into a workspace with its own budget, so a team's projects share one cap and one view. | Available | — | ✓ | ✓ |
-| Catch a runaway run early | Every task carries a tier, and a run that spends far more than its tier expects is stopped and reported instead of running to its cap. | Coming soon | — | ✓ | ✓ |
+| Catch a runaway run early | Every task carries a tier, and a run that spends far more than its tier expects is stopped and reported instead of running to its cap. | Available | — | ✓ | ✓ |
 | Compare models on the same task | Another model can be run against the same task beside the first, and the results are scored and reported together. | Available | — | ✓ | ✓ |
 
 <!-- The table above is rendered from the block below, which the features page on the website reads. The two cannot disagree about a row. -->
@@ -53,7 +53,7 @@ as_of: v0.25.0
 ```json
 {
   "version": 1,
-  "as_of": "v0.25.0",
+  "as_of": "v0.26.0",
   "rows": [
     {
       "id": "run-a-task",
@@ -268,7 +268,7 @@ as_of: v0.25.0
       "id": "project-security-rules",
       "name": "Say what counts as security-sensitive",
       "explanation": "A project names the paths that count as security-sensitive and the executables a run may use, so a change to a sensitive path is escalated and a run nobody reviewed is reported as such.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
@@ -323,7 +323,7 @@ as_of: v0.25.0
       "id": "billed-spend-matches",
       "name": "Recorded spend matches what the provider billed",
       "explanation": "A run's spend is settled on the cost the model provider reports, priced conservatively where the provider reports none, and an alarm is raised when settled and estimated spend drift apart.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": true,
         "team": true,
@@ -444,7 +444,7 @@ as_of: v0.25.0
       "id": "run-governance",
       "name": "Catch a runaway run early",
       "explanation": "Every task carries a tier, and a run that spends far more than its tier expects is stopped and reported instead of running to its cap.",
-      "status": "coming-soon",
+      "status": "available",
       "plans": {
         "community": false,
         "team": true,

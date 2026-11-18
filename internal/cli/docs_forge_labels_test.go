@@ -23,9 +23,12 @@ package cli
 // keeps its words while the code under it moves fails here.
 //
 // What the file does NOT claim is that a pull request carries a label today.
-// The daemon's own half (T4's client, T7's wiring) is not on this tree, and the
-// documents say so: the section, the security bullet and the release note each
-// carry the sentence, and the last test below fails if one of them stops.
+// The daemon's own half is on this tree — T4's client, T7's wiring, and the
+// daemon's identity at the service (F19, O2) — and what no installation has is
+// the live proof, which the documents say in one shared sentence
+// (forgeLabelsNotProven): the section, the security bullet and the release note
+// each carry it, so a reader meets the same claim in all three and a later edit
+// that drops one fails here.
 
 import (
 	"strings"
@@ -47,11 +50,13 @@ const (
 	forgeLabelsReleaseNotes = "docs/releases/v0.26.0.md"
 	// forgeLabelsSection is the heading T6 adds to docs/git-providers.md.
 	forgeLabelsSection = "## Status labels on Fugaro's pull requests"
-	// forgeLabelsNotWired is the one sentence all three documents carry about
-	// the half of the feature that is not on this tree: the daemon's own
-	// client and the tick that would compute the difference. It is written
-	// the same way in each, so the three move together.
-	forgeLabelsNotWired = "the daemon holds no client for the route"
+	// forgeLabelsNotProven is the one sentence all three documents carry about
+	// the half of the feature no installation has exercised: the daemon's
+	// client, its tick and its own identity at the service are on this tree
+	// (T7, F19/O2), and the live check that would show a labelled pull request
+	// is owner-run and not written yet. It is written the same way in each, so
+	// the three move together.
+	forgeLabelsNotProven = "no installation has proven it live"
 )
 
 // TestDocsForgeLabelsStatusSection: docs/git-providers.md carries the
@@ -100,10 +105,14 @@ func TestDocsForgeLabelsStatusSection(t *testing.T) {
 		// The labels are created on first use, so no second command
 		// pre-creates them (D2440, F11).
 		"The service creates its labels on first use, so nothing pre-creates them",
-		// And the half that is not here.
-		"**The daemon's half is not on this tree.**",
-		forgeLabelsNotWired,
+		// And the half no installation has exercised: the client and the tick
+		// are here with the daemon's identity, and the live proof is not.
+		"**The daemon's half is wired in this release, and no installation has proven it live.**",
+		forgeLabelsNotProven,
 		"no pull request carries these labels yet",
+		// The one grant the machine has to hold for the mint, which is the
+		// step no command of Fugaro's takes (F19, O2).
+		"`roles/iam.serviceAccountTokenCreator` on that account before its token can be minted",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s's %q does not say %q: this is the section an operator reads to find out what the labels are and what writes them", forgeLabelsProviders, forgeLabelsSection, want)
@@ -160,8 +169,12 @@ func TestDocsForgeLabelsSecurityStatesTheRoutesReach(t *testing.T) {
 		"relabel **Fugaro's own pull requests**",
 		"cannot write label text",
 		"cannot reach a pull request Fugaro did not open",
-		// And the half that is not here.
-		forgeLabelsNotWired,
+		// And the half no installation has exercised (T7, F19, O2): the
+		// client, the tick and the daemon's own token are here, and the
+		// machine still has to be allowed to mint.
+		forgeLabelsNotProven,
+		"the token the client presents is the daemon's own, minted as that account for this service's URL",
+		"`roles/iam.serviceAccountTokenCreator` on it",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("%s's credentials-service section does not say %q: the label route is a write path on the App key, and its reach is what a reader of this document has to be able to check", forgeLabelsSecurity, want)
@@ -218,14 +231,31 @@ func TestDocsForgeLabelsReleaseNotes(t *testing.T) {
 	if !strings.Contains(operators, "the labels are created by the service on first use") {
 		t.Errorf("%s's `### For operators` does not say that nothing pre-creates the labels: a reader who expects a setup step goes looking for a command that does not exist", forgeLabelsReleaseNotes)
 	}
+	// The daemon's identity at the service (F19, O2): the same one command
+	// renders the class and the invoker grant from the installation's own
+	// orchestrator block, and the one thing it cannot write is the grant the
+	// machine needs to mint the daemon's token — the step an operator
+	// otherwise goes looking for after a refusal.
+	if !strings.Contains(operators, "renders the daemon's account into the service's caller class") {
+		t.Errorf("%s's `### For operators` does not say that `fugaro update` renders the daemon's class from the installation's own block: that is the whole of the installation side of the daemon's identity", forgeLabelsReleaseNotes)
+	}
+	if !strings.Contains(operators, "`roles/iam.serviceAccountTokenCreator` on the daemon's account") {
+		t.Errorf("%s's `### For operators` does not name the grant the machine needs before the daemon's token can be minted, which no Fugaro command writes", forgeLabelsReleaseNotes)
+	}
 
 	// The known limit, which is the same fact the two other documents state.
 	limits := normSpace(docSection(t, forgeLabelsReleaseNotes, doc, "### Known limits"))
 	if !strings.Contains(limits, "no pull request carries") {
 		t.Errorf("%s's `### Known limits` does not say that no pull request carries these labels yet: the notes must not read as a feature a user can see", forgeLabelsReleaseNotes)
 	}
-	if !strings.Contains(limits, "the client the daemon would ask the route with") {
-		t.Errorf("%s's `### Known limits` does not name the half that is missing: the daemon's client and the tick that computes the difference", forgeLabelsReleaseNotes)
+	if !strings.Contains(limits, "the client the daemon asks the route with") {
+		t.Errorf("%s's `### Known limits` does not name the half that is here: the daemon's client and the tick that computes the difference are on this tree, and the limit is the live proof", forgeLabelsReleaseNotes)
+	}
+	if !strings.Contains(limits, forgeLabelsNotProven) {
+		t.Errorf("%s's `### Known limits` does not say %q: the same sentence the other two documents carry about the half no installation has exercised", forgeLabelsReleaseNotes, forgeLabelsNotProven)
+	}
+	if !strings.Contains(limits, "`roles/iam.serviceAccountTokenCreator` on the daemon's account") {
+		t.Errorf("%s's `### Known limits` does not name the grant that has to exist on the machine before the daemon's token can be minted", forgeLabelsReleaseNotes)
 	}
 }
 

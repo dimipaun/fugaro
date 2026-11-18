@@ -45,10 +45,10 @@ import (
 // It is exported and its own constant, and named with the `/api` prefix for the
 // reason `RouteTrial` is (api_trial.go): the SPA posts to this path
 // (ee/portal/src/screens/workspaces/workspaces.tsx), and a path that lives in two
-// files is a path that drifts between them. It is not `RouteOpenSource`, which is
-// the website's form's route and not this one (routes.go): the two doors read
-// different bodies from different clients, and the website's retires with its
-// route in P9.3 while this one is what remains.
+// files is a path that drifts between them. The website's own form posted to a
+// route of its own, `/open-source`, and that door retired with its route in P9.3
+// (service.go): the two bodies differ because the two clients do, and this ask
+// is the one that remains.
 const RouteAPIOpenSource = "/api/open-source"
 
 // maxOpenSourceBodyBytes is what an open-source ask may body: the repositories
@@ -149,8 +149,8 @@ func (s *Service) apiRequestOpenSource(w http.ResponseWriter, r *http.Request) {
 		refuseAPI(w, http.StatusBadRequest, "unreadable_body", openSourceBodyRefusal)
 		return
 	}
-	// An entry that is blank is dropped rather than refused, which is the form's
-	// own reading of the same field (splitLines): a pasted list arrives with a
+	// An entry that is blank is dropped rather than refused, which is `splitLines`'
+	// own reading of the field: a pasted list arrives with a
 	// blank line in it, and that is not a repository. An entry that is a line at
 	// all is one the applicant meant to name, and every one of those is read
 	// below.

@@ -32,7 +32,7 @@ import (
 //
 // Subscription is the merchant's own subscription the key was sold for, and it
 // is empty for a key the merchant did not sell: the free seat's, the
-// open-source programme's, the admin page's and the trial carry none (D2141,
+// open-source programme's, a hand-minted key's and the trial carry none (D2141,
 // §5.5). It is what §7's renewal reads to know whether the licence it is about
 // to mint the term after is still being paid for — nothing else in the record
 // or in the key says so, because a subscription is keyed by an id no claim
@@ -44,7 +44,7 @@ type Record struct {
 	Source string `json:"source"`
 	KeyID  string `json:"key_id"`
 	// EntitlementID is the licence this key was minted for, and it is empty for a
-	// key no licence bought — the admin page's and the mint tool's (P3.6).
+	// key no licence bought — a key minted by hand, the mint tool's (P3.6).
 	//
 	// It is here because a key's life is one licence's and the record was the
 	// only place that did not say so. Renewal reads it to know which licence a
@@ -196,8 +196,8 @@ type Revocation struct {
 //
 // LastSeen is zero for a key that has never called in, which is not the same as
 // a key that called in long ago: the status endpoint's answer is the key's
-// state and not this, and the instant is what the admin page reads when it asks
-// whether a holder is still checking.
+// state and not this, and the instant is what tells whether a holder is still
+// checking.
 type KeyState struct {
 	KeyID             string    `json:"key_id"`
 	WorkspaceID       string    `json:"workspace_id"`
@@ -550,7 +550,7 @@ func (m *Memory) KeyState(_ context.Context, keyID string) (KeyState, bool, erro
 // The instant only moves forward. These are the service's own clock's readings
 // and the deploy's instances are separate machines, so a check that took a
 // second longer to arrive can carry an earlier instant than one already
-// recorded — and what the admin page reads is the last time anybody saw the
+// recorded — and what reads it is the last time anybody saw the
 // key, which an out-of-order arrival does not change.
 func (m *Memory) TouchKey(_ context.Context, keyID string, at time.Time) error {
 	m.mu.Lock()

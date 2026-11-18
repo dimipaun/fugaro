@@ -262,11 +262,16 @@ func TestDocsSayTheInitPromptHasNoRepoFlagAndBitbucketIsPerRepository(t *testing
 // that no one has run the path with such a token yet (D468 = no, Check 180),
 // where the API-root lock stands: unchecked in 0.12.1, D474's in 0.14.0 (D1983
 // corrected the page from 0.13.0), and the operator step it owes (D1984),
-// and what the D490 pointer says now that the proxy is built: the proxy keeps
-// the token out of the run's own git traffic, and the job's mount, with the
-// accessor behind it, leaves only with the flip the empty
-// `config.ProxiedGitSecretNames` has not filled (the 2026-10-27 amendment to
-// plan T1.1, B1.10).
+// and what the D490 pointer says now that the proxy is built and its flip has
+// filled: the proxy keeps the token out of the run's own git traffic, and the
+// job's mount, with the accessor behind it, is gone on a repository the
+// published node admits with `proxy: true`, which is what
+// `config.ProxiedGitSecretNames` names `bitbucket-token` for on this tree
+// (the 2026-10-27 amendment to plan T1.1, B1.10, and B1.13 part two).
+// Both readings of that flip are pinned below and they have to agree: the
+// paragraph that still described the list as empty was the pre-flip one, and
+// S7 of docs/shared-jobs-default is the sweep that brought the page and these
+// pins in step with the code.
 // The sentences wrap in the files, so the assertions are made against the
 // whitespace-normalized text.
 //
@@ -338,8 +343,12 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 		"**Amended 2026-11-10 (D1983): on a proxied repository the job loses its `bitbucket-token` with the flip.**",
 		// The sentence carries its cross-reference in the right direction: the
 		// section it names is below it on the page, as every other reference to
-		// it in this file says.
-		"whose list `config.ProxiedGitSecretNames` is still `[]string{}` on this tree, so \"keeps its own job and its own `bitbucket-token`\" describes the pre-flip state and every non-proxied repository — on a proxied one the run reads no token and the service puts the credential on the wire (\"What the agent gets\" below)",
+		// it in this file says. Its list clause names `bitbucket-token`, as it
+		// has since B1.13 part two filled the list: the paragraph that still
+		// read `[]string{}` described the state before that flip, and a page
+		// whose two readings of one list disagree is the one a reader takes the
+		// weaker half of.
+		"whose list `config.ProxiedGitSecretNames` names `bitbucket-token`, so \"keeps its own job and its own `bitbucket-token`\" describes the pre-flip state and every repository the published node does not admit with `proxy: true` — on a proxied one the run reads no token and the service puts the credential on the wire (\"What the agent gets\" below)",
 		// And the honest half of the API-root story in 0.12.1: the override is
 		// passed unchecked, a launcher can point it at a host of their own (F7),
 		// and the lock is 0.14.0's -- not 0.13.0's, which is what the sentence
@@ -404,13 +413,16 @@ func TestDocsStateTheBitbucketProjectTokenReach(t *testing.T) {
 // have to say the same thing, and a reader who found the model on one and the
 // old ruling on the other would take the weaker reading.
 //
-// What it deliberately does NOT pin is a claim about the tree's own behaviour:
-// the mechanism is on `main` (S1's deployer path, S2's pairing, S4's launcher
-// path — docs/shared-jobs-default), while `internal/infra`'s `sharedJobProviders`
-// still admits `github` alone, so no shared job serves a Bitbucket profile yet.
-// Both halves of that are pinned below, because a page that told a reader the
-// move had shipped would be the lie this test exists to prevent — and one that
-// claimed the flip had landed would fail on the next commit that makes it so.
+// What it deliberately does NOT pin is a claim about the tree's own behaviour,
+// and that half changed with S7 of docs/shared-jobs-default. Until then
+// `internal/infra`'s `sharedJobProviders` admitted `github` alone, so no shared
+// job served a Bitbucket profile and both halves — the model and the fact that
+// it had not shipped — were pinned, because a page that told a reader the move
+// had shipped would be the lie this test exists to prevent. I1 landed the
+// one-line change (the list names `bitbucket` beside `github`, and
+// `TestSharedJobProviderIsTheProvidersList` pins it), so the "not shipped" half
+// is now the false claim: the page has to say the move is what serves a
+// Bitbucket profile, and the sentence that said otherwise may not come back.
 // The sentences wrap in the files, so the assertions are made against the
 // whitespace-normalized text.
 func TestDocsStateBitbucketSharedJobIsolation(t *testing.T) {
@@ -437,26 +449,55 @@ func TestDocsStateBitbucketSharedJobIsolation(t *testing.T) {
 	// docs/git-providers.md is the page that carried the ruling the owner has
 	// since moved, so it carries the amendment, the credential that is now the
 	// service's, the shape of the refusal a profile that mounts the token meets,
-	// and — the half a reader must not have to infer — that the move has not
-	// shipped: the provider list still admits GitHub alone.
+	// and — the half that followed I1 — that the move is what serves a Bitbucket
+	// profile: the provider list the two sides read admits Bitbucket beside
+	// GitHub, and a Bitbucket repository's launch reaches the shared job.
 	for _, want := range []string{
 		"**Amended 2026-11-16 (D460, D2302): a shared Bitbucket job holds no token, and the credentials service's Bitbucket proxy serves it.**",
 		"no new Fugaro-issued token and no mounted `bitbucket-token`",
 		"`projectpolicy.CheckSharedJobProfile`",
 		"asked by the deployer and by `fugaro project policy publish`",
-		"`internal/infra`'s `sharedJobProviders` still admits `github` alone",
-		"docs/shared-jobs-default calls I1",
-		"no shared job serves a Bitbucket profile today",
+		"`internal/infra`'s `sharedJobProviders` admits `bitbucket` beside `github`",
+		"a Bitbucket repository's launch reaches a shared job",
+		// And the half that keeps the claim honest: a *baked* workflow still
+		// keeps a job of its own, for the image rather than for access (D2304's
+		// landing condition, S10). A page that said the move had shipped whole
+		// would be the overclaim this test exists to prevent.
+		"and the workflow is a `clone` one — a `baked` one keeps its own job for the image rather than for access",
 	} {
 		if !strings.Contains(providers, strings.Join(strings.Fields(want), " ")) {
-			t.Errorf("docs/git-providers.md does not say %q: it is the page that carried the 2026-10-15 ruling, and T2.6's amendment is where a reader learns what replaced it", want)
+			t.Errorf("docs/git-providers.md does not say %q: it is the page that carried the 2026-10-15 ruling, and T2.6's amendment plus I1's landed provider list is where a reader learns what replaced it", want)
 		}
 	}
-	// And the reason the old ruling gave is gone rather than left standing
+	// The reason the old ruling gave is gone rather than left standing
 	// beside the amendment: "the shared job ... has no Bitbucket credential to
 	// carry" is the sentence D2302 replaced.
 	if strings.Contains(providers, "the shared job the phase-3 design assumed has no Bitbucket credential to carry") {
 		t.Error("docs/git-providers.md still says the phase-3 design's shared job has no Bitbucket credential to carry: D460 put Bitbucket repositories on shared jobs and D2302 said what the job holds — nothing, with the proxy serving it")
+	}
+	// And the "not shipped" wording is I1's own leftover: the list it names
+	// admits Bitbucket on this tree, so neither page may tell a reader the
+	// move is still owed. Each spelling this sentence had is listed, because
+	// the lie is one clause and it migrates to whichever paragraph survives —
+	// and it is asked of both documents rather than of the page alone,
+	// because SECURITY.md's own paragraph about the shared job ended with the
+	// same clause, which is the misreading the whole-function rule above
+	// exists to prevent: a reader who found the model on one page and the old
+	// ruling on the other takes the weaker reading.
+	for _, doc := range []struct {
+		path string
+		text string
+	}{{"docs/git-providers.md", providers}, {"SECURITY.md", sec}} {
+		for _, wrong := range []string{
+			"still admits `github` alone",
+			"no shared job serves a Bitbucket profile today",
+			"every Bitbucket repository is still on the per-repository path",
+			"every Bitbucket repository is on the per-repository path until I1 lands",
+		} {
+			if strings.Contains(doc.text, wrong) {
+				t.Errorf("%s still says %q: I1 landed the one-line change, so a shared job serves a Bitbucket profile and the page may not read as if the move were owed", doc.path, wrong)
+			}
+		}
 	}
 
 	// SECURITY.md's half is the isolation stated plainly (F12), in the section

@@ -781,6 +781,11 @@ func TestABReplayRefusesALevelTheRunDoesNotRun(t *testing.T) {
 // it ran would be code crossing runs, which is the one thing the fence exists to
 // refuse. The plan states it as "runs the review with the reviewer's read-only
 // tool set" (docs/review-levels-ab-jobmax/implementation-plan.md, B1.2).
+//
+// Mutation (drop the replay arm from agentenv.go's review-posture condition):
+// the posture assertions fail. Mutation (drop Bash, Edit or Write from
+// deniedReviewTools): the named-rule assertion fails, where a loop over
+// ReviewJobDenyRules alone would still pass on the shortened list.
 func TestABReplayRunsTheReviewPosture(t *testing.T) {
 	g, _ := armGWSpec(t, armCfg(t), "50", replayTask(task.ABSlotL2), armLayer)
 	withBucket(g.harness)
@@ -817,6 +822,18 @@ func TestABReplayRunsTheReviewPosture(t *testing.T) {
 	}
 	if s.AllowManagedMcpServersOnly == nil || !*s.AllowManagedMcpServersOnly {
 		t.Errorf("the replay stage's settings do not restrict MCP servers to the managed file's: %s", raw)
+	}
+	// The three rules B1.2's read-only tool set is named for, asserted by name
+	// and not only read off ReviewJobDenyRules: the loop below pins the file to
+	// that function's answer, so a rule dropped from the function — the mutation
+	// this test is here to catch — would leave it green while the arm's reviewer
+	// held the tool. Bash is the shell every other tool can be spelled in, and
+	// Edit and Write are the writes shadowFinalize would commit and upload as
+	// this arm's own patch (B1.2).
+	for _, rule := range []string{"Bash", "Edit", "Write"} {
+		if !slices.Contains(s.Permissions.Deny, rule) {
+			t.Errorf("the replay stage's settings do not deny %q: %v", rule, s.Permissions.Deny)
+		}
 	}
 	for _, rule := range agent.ReviewJobDenyRules() {
 		if !slices.Contains(s.Permissions.Deny, rule) {

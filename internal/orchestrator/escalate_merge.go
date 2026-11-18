@@ -122,8 +122,8 @@ type BeyondSeams struct {
 	// Mint mints the id a rung 3 run is recorded under.
 	Mint MintFunc
 	// ReadyDrafts is `escalation.ready_drafts` (D2041, D2046): off, a stalled
-	// draft whose gate passes waits for a person, which is what a daemon that
-	// was never switched on must do.
+	// draft whose gate passes waits for a person; it ships on, and the owner's
+	// written false is what turns it off.
 	ReadyDrafts bool
 	// Warn is where a failure that must not end the cycle goes: a comment a
 	// host would not take, a notification no sink carried. Nil drops it.

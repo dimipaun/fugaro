@@ -23,7 +23,7 @@ deterministic "merge as-is and file a follow-up" rule; Fugaro never merges excep
 means trivial/small/medium/large; reports have one project-level writer. So the ladder reuses O14's gate, a model judge may
 only veto, the names become rungs and model grades, thresholds are local-only keys that replace `orchestrator.triage_after`,
 and the digest gains an Escalation section. The owner chose, against the recommendation, to let the daemon ready a stalled
-draft and merge it (D2041), behind a local switch that ships off.
+draft and merge it (D2041), behind a local switch that ships on (D2046).
 
 ## Numbers this work holds
 

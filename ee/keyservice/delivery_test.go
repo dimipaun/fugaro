@@ -3,12 +3,12 @@
 
 package keyservice
 
-// What happens when the key cannot be delivered (§7.3 read forwards: a key is
-// mailed to the applicant and never stored). The mail is the only place a key
-// text exists, so a record written for a mail that failed is a licence nobody
-// holds and a source that is spent: the applicant has no link left to follow and
-// the merchant's redelivery finds the event already answered. These tests are
-// that the failure leaves both ways back open.
+// What happens when the key cannot be delivered (§7.3 read forwards: D2182 puts
+// the key in the binding's own mail and this service stores none of it). The mail
+// is the only place a key text exists, so a record written for a mail that failed
+// is a licence nobody holds and an event the merchant's redelivery finds already
+// answered. These tests are that a failed delivery leaves the way back open: the
+// event is stored unapplied, so the retry is the one that completes it.
 
 import (
 	"context"
@@ -18,37 +18,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// TestAnUndeliveredFreeKeyIsNotRecorded: the verification mail failed, so the
-// mint is not recorded and the link the mail carried is not spent — the
-// applicant follows it again and the second try is the one that mints.
-func TestAnUndeliveredFreeKeyIsNotRecorded(t *testing.T) {
-	f := newFixture(t)
-	f.apply(applicantAddress)
-	token := f.mailedToken()
-
-	f.mail.err = errors.New("the mail provider refused the message")
-	rec := f.verify(token)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("a key whose mail failed was answered %d, want 500: the request did not finish, so it is not an answer", rec.Code)
-	}
-	if got := len(f.records()); got != 0 {
-		t.Errorf("a key whose mail failed recorded %d key(s), want none: the record would be a licence the applicant never received", got)
-	}
-
-	// The provider is back, and the link the applicant still holds is live.
-	f.mail.err = nil
-	answerBody(t, f.verify(token))
-	if got := len(f.records()); got != 1 {
-		t.Fatalf("the second follow of the link recorded %d key(s), want one", got)
-	}
-	if got := len(f.mail.sent); got != 2 {
-		t.Errorf("the intake mailed %d message(s) in all, want the verification one and the key", got)
-	}
-	if got := f.mail.sent[1].Subject; got != keySubject {
-		t.Errorf("the second mail's subject is %q, want the key's own (%q)", got, keySubject)
-	}
-}
 
 // TestAnUndeliveredPurchaseNoticeIsRetried: the only thing a purchase mails is
 // the notice carrying the portal link (D2182 — the key is the binding's, and it
@@ -395,16 +364,6 @@ func TestAPurchaseWhoseSubscriptionWriteFailedIsRetried(t *testing.T) {
 		t.Errorf("the retried purchase left %d licence(s) in all, want the one grant the first delivery made", got)
 	}
 
-	// And the state the retry wrote is live: the domain now holds a paid
-	// subscription, which is what §4.3's refusal reads.
-	answerBody(t, f.apply(applicantAddress))
-	if queued := f.queued(); len(queued) != 0 {
-		t.Errorf("a free-seat application from a repaired domain was queued (%+v), want the paid-domain refusal", queued)
-	}
-	if got := len(f.mail.sent); got != mailed+1 {
-		t.Errorf("the free-seat application mailed %d message(s) in all, want none: the domain has bought", got)
-	}
-
 	// A replay of the same purchase does not resurrect state the store has moved
 	// past: a cancellation that lands later is not undone by the redelivery.
 	f.advance(day)
@@ -447,81 +406,6 @@ func TestASeatChangeWhoseSubscriptionWriteFailedIsCompleted(t *testing.T) {
 	}
 	if got := f.signer.calls; got != signed {
 		t.Errorf("the redelivery signed %d key(s) in all, want the reissue's one", got)
-	}
-}
-
-// failingVerifications is the store as a deployment that cannot write a
-// verification's dropped state: §7.3's drop is a bookkeeping write that
-// `dropPersonal` logs and does not answer with a failure, so the write is one a
-// store can lose while the request that made it still succeeds — and what is
-// left behind is a record that still carries the applicant's address.
-type failingVerifications struct {
-	*Memory
-	refused int
-}
-
-func (f *failingVerifications) SaveVerification(ctx context.Context, v Verification) error {
-	if v.Email == "" && v.Domain == "" && v.Organisation == "" && len(v.Repositories) == 0 {
-		f.refused++
-		return errors.New("the store refused the write")
-	}
-	return f.Memory.SaveVerification(ctx, v)
-}
-
-// newUndroppableStore is the fixture whose store refuses exactly the writes that
-// drop a verification's personal data, so that a test can hold what is left when
-// the drop does not land.
-func newUndroppableStore(t *testing.T) (*fixture, *failingVerifications) {
-	t.Helper()
-	f := newFixtureWith(t, Production, func(f *fixture) {
-		f.store = &Memory{}
-		f.deps.Store = &failingVerifications{Memory: f.store}
-	})
-	return f, f.deps.Store.(*failingVerifications)
-}
-
-// TestASpentTokenIsSpentEvenWhenTheDropsWriteFails: the token's own flag is the
-// single-use rule (§7.2), and it is the *only* thing holding it when the drop
-// does not land: with the address, the domain and the organisation still on the
-// record, the mint that follows a second follow would go through — the minter
-// has nothing to refuse, and a record the store already holds is not a second
-// mint but a second *mail*, because `mint` mails before it records. So a leaked
-// link would put a second key in the applicant's mailbox with nothing to show
-// for it. Two follows, one key signed, one key mailed.
-func TestASpentTokenIsSpentEvenWhenTheDropsWriteFails(t *testing.T) {
-	f, store := newUndroppableStore(t)
-	f.applyOpenSource(applicantAddress, repositoryURL)
-	token := f.mailedToken()
-
-	f.verify(token)
-	if got := f.signer.calls; got != 1 {
-		t.Fatalf("the first follow signed %d key(s), want one", got)
-	}
-	if store.refused == 0 {
-		t.Fatal("the store took the drop, want the write this test is about refused")
-	}
-	for _, v := range f.verifications() {
-		if v.ID != digest(token) {
-			continue
-		}
-		if v.Email == "" || v.Organisation == "" {
-			t.Fatal("the record lost the applicant's fields, want them still on it: the flag is the only guard left")
-		}
-		if !v.Used {
-			t.Fatal("the record is not spent, want the spend to be the write that landed")
-		}
-	}
-	mailed, signed := len(f.mail.sent), f.signer.calls
-
-	f.verify(token)
-	if got := f.signer.calls; got != signed {
-		t.Errorf("the second follow of one token signed %d key(s) in all, want the first follow's one: a token is spent by the request that carries it (§7.2)", got)
-	}
-	if got := len(f.mail.sent); got != mailed {
-		t.Errorf("the second follow of one token mailed %d message(s) in all, want the key the first one sent", got)
-	}
-	if got := len(f.records()); got != 1 {
-		t.Errorf("the record holds %d key(s), want one", got)
 	}
 }
 

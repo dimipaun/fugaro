@@ -135,6 +135,21 @@ var planTaskReaders = map[string]string{
 	// nothing is admitted, budgeted or granted by it, and it refuses rather
 	// than guesses when one plan task stands under two items.
 	"internal/orchestrator/planimport.go": "writes a plan's task id as an item's plan_task, and matches on it to link an adopted item rather than duplicate it (D2746)",
+	// The fold of what a finished run reported about the graph (E3): it matches
+	// the id an entry of the run's OWN RECORD carries against the plan task of
+	// the items of the node that run's item is in, and the id decides nothing
+	// beyond which of those items an edge names. Both sides are items the node
+	// already holds -- one written by a plan's import, one adopted from a launch
+	// record -- and the entry arrives through runstore.Discovered, bounded at
+	// write and again at read. What a match can do is add one edge in front of
+	// an item that has not launched, which un-approves that item so a person
+	// reads why and approves again (D2740), and at most one graph_suspect fact
+	// for an item the run said it needed, which reorders nothing. The fold is
+	// add-only, is refused outright for a cycle or a node past its cap (F42) and
+	// crosses into no other node (F44): a forged id draws an edge a screen shows
+	// and a person re-approves, and it admits no run, budgets nothing and
+	// launches nothing.
+	"internal/orchestrator/fold_discovered.go": "matches the id an entry of a run's own record carries against the items' plan tasks in the run's own node, to add one edge in front of an item that has not launched (E3, D2709)",
 }
 
 // TestPlanTaskIsDisplayTextOnly walks every non-test Go file of the module

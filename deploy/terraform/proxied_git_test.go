@@ -99,11 +99,21 @@ output "job_mounts" { value = local.job_mounts }
 		t.Fatal(err)
 	}
 	tfvars := map[string]any{
-		"workflow": map[string]any{"secret_env": map[string]string{
-			"CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-token",
-			"FUGARO_BITBUCKET_TOKEN":  "bitbucket-token",
-			"SANDBOX_PROBE":           "sandbox-probe",
-		}},
+		"workflow": map[string]any{
+			"secret_env": map[string]string{
+				"CLAUDE_CODE_OAUTH_TOKEN": "claude-oauth-token",
+				"FUGARO_BITBUCKET_TOKEN":  "bitbucket-token",
+				"SANDBOX_PROBE":           "sandbox-probe",
+			},
+			// Every job this harness plans is a repository's own, never a mixed
+			// stage account's variant (WorkflowSpec.StageAccount): the field has
+			// to be here all the same, because sa.tf's is_stage_account_token
+			// reads it and this harness inlines that locals block. False is what
+			// the exemption means for the jobs below, and with the cascade arm
+			// (model_secrets_served = "all") it changes nothing either way: the
+			// exception is the anthropic arm's alone.
+			"stage_account": false,
+		},
 		"bitbucket_proxied": proxied,
 		// The arms these tests evaluate are the cascade's, which is what every
 		// switched repository was planned with before B2.3 and what a tfvars

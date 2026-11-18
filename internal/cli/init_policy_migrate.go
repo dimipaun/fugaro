@@ -1244,6 +1244,17 @@ type policyMigrateStage struct {
 	m         *policyMigration
 	published bool
 	err       error
+
+	// sw is the Bitbucket proxy switch this run turns on, read with the plan
+	// and written after the node (update_proxy_switch.go). It is nil for every
+	// run that turns nothing on, which is the ordinary case.
+	sw *bitbucketProxySwitch
+	// swSaid is whether the switch's own line has been printed. It is the one
+	// field of this stage forget() does NOT clear: the line is about this
+	// session's bundle rather than about a read a later pass supersedes, and a
+	// person told once that they hold no token for the workspace does not need
+	// it again from the next pass of the same update.
+	swSaid bool
 }
 
 // policyNoneDetail is what both doors say for a project that has a budget
@@ -1270,7 +1281,49 @@ func (policyMigrateStage) Left() initflow.Left {
 func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, error) {
 	if !s.planned {
 		s.planned = true
-		s.m, s.published, s.err = policyMigrationForIn(ctx, s.e.lc, s.e.path)
+		// The Bitbucket proxy switch is decided before the node is read, and the
+		// node is planned from the config the switch implies: the file and the
+		// node are one decision (update_proxy_switch.go), and a node planned from
+		// the config as it is would carry no bitbucket_token block while the file
+		// this run writes states one — the disagreement resolveBitbucketProxied
+		// stops a run over. A switch that does not turn leaves the config the run
+		// holds exactly where it was.
+		sw, err := s.proxySwitch(ctx)
+		if err != nil {
+			s.m, s.published, s.err = nil, false, err
+			return nil, false, err
+		}
+		lc := s.e.lc
+		if sw != nil {
+			lc = sw.lc
+		}
+		m, published, err := policyMigrationForIn(ctx, lc, s.e.path)
+		if sw != nil && err == nil && m != nil && m.generations != nil {
+			// The node has moved past the generation this machine's config was
+			// written from, so this run is D854's re-seed: the file is written
+			// from the node and the generation is recorded, rather than the node
+			// from the file. The switch has no part in that — it is a member the
+			// re-seed's splice table has no case for, so a plan built from the
+			// switch's config lands on the fallback that refuses the whole
+			// update with "put the published values of bitbucket_token there by
+			// hand", and the operator meets an update that fails and goes on
+			// failing until they edit the file by hand (S6's fix, 2026-11-18).
+			//
+			// So the switch is held back for this run and the plan is taken
+			// again from the config as it is: the generation is recorded, every
+			// other stage of the update runs, and the NEXT update — whose
+			// generation now matches — is the one that turns the switch on.
+			// Dropping it leaves the file and the node in agreement, which is
+			// what the switch may never break: the entry this run does not write
+			// is one the node does not carry, and an absent entry is never a
+			// disagreement for resolveBitbucketProxied.
+			s.proxySwitchSays("this update leaves the Bitbucket proxy switch off: the published policy node has moved past the generation this machine's local config was written from, and this run re-seeds the config from it — the next update turns the switch on")
+			sw = nil
+			lc = s.e.lc
+			m, published, err = policyMigrationForIn(ctx, lc, s.e.path)
+		}
+		s.sw = sw
+		s.m, s.published, s.err = m, published, err
 	}
 	return s.m, s.published, s.err
 }
@@ -1285,7 +1338,12 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, 
 // answered it, and the run refuses its own work with a sentence about rules
 // that are no longer deployed.
 func (s *policyMigrateStage) forget() {
-	s.planned, s.m, s.published, s.err = false, nil, false, nil
+	// The switch goes with the plan: the installation stage's own write is what
+	// puts the credentials_service block in the config this run holds, and a
+	// decision taken before it would be one the config the run now holds does
+	// not support. swSaid is kept — the bundle gate's line is about the session,
+	// not about the read (proxySwitchSays).
+	s.planned, s.m, s.published, s.err, s.sw = false, nil, false, nil, nil
 }
 
 // Check reports what the published node is. A refusal here is the run's, not a
@@ -1489,6 +1547,18 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		// owner reads is that this node was published, and a step that failed
 		// inside the write has published nothing to record.
 		if err := s.e.r.gateApplied(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
+	}
+	// The flip's file half, after the node's own write (update_proxy_switch.go
+	// has the order's whole argument: an absent entry is never a disagreement,
+	// so the file may land after the node and never before it). It is the same
+	// run's apply and no second confirmation: what the operator confirmed is the
+	// node, whose bitbucket_token block is the derived entry this write puts in
+	// their file, and `fugaro secrets set --proxy` writes the same member with
+	// the same edit and the same backup.
+	if s.sw != nil {
+		if err := s.sw.write(s.e, s.e.r.w); err != nil {
 			return initflow.Outcome{}, err
 		}
 	}

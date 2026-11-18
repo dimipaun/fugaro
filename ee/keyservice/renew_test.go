@@ -286,8 +286,8 @@ func setSubscription(t *testing.T, f *fixture, keyID, id string) {
 }
 
 // withoutASubscription takes the subscription out of one key's record, which is
-// the record of a key the licensor minted by hand — the admin page's, the mint
-// tool's, a trial's — rather than sold.
+// the record of a key the licensor minted by hand — the mint tool's, a trial's —
+// rather than sold.
 func withoutASubscription(t *testing.T, f *fixture, keyID string) {
 	t.Helper()
 	setSubscription(t, f, keyID, "")
@@ -1634,8 +1634,8 @@ func TestASupersededKeysChainCarriesTheSubscriptionsSeats(t *testing.T) {
 }
 
 // TestAKeyWithNoSubscriptionIsRefused: a key whose record names no subscription
-// at all is one nothing here can prove was paid for — a key minted by hand, by
-// the admin page or by the mint tool all look the same — so it does not renew,
+// at all is one nothing here can prove was paid for — a key minted by hand and
+// one minted by the mint tool all look the same — so it does not renew,
 // and the owner's ruling of 2026-11-13 says so in as many words: it fails
 // closed. What it is answered is the uniform refusal and not its own state: the
 // state would tell its holder that a renewal is one secret away, and the refusal
@@ -1672,9 +1672,9 @@ func TestAKeyWithNoSubscriptionIsRefused(t *testing.T) {
 
 // TestAKeyWithNoEntitlementIsRefused: the licence is what F27's gate reads, so a
 // record naming none is the state that gate exists for — a key nothing here can
-// prove was granted at all, which is the licensor's own key, the admin page's and
-// the mint tool's, and D2148's reading off the subscription only because the
-// record named nothing else. The answer is the uniform refusal and not the key's
+// prove was granted at all, which is the licensor's own key and the mint tool's,
+// and D2148's reading off the subscription only because the record named nothing
+// else. The answer is the uniform refusal and not the key's
 // own state: the state would tell its holder a renewal is one secret away. It is
 // not the failure an unnamed store read gives either — that read would be of the
 // empty id, and a 500 tells the caller to retry a record that will never name a
