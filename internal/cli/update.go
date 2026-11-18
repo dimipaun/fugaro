@@ -37,6 +37,12 @@ exit codes as fugaro setup, for a project that is set up already (or, with
 CLI: it applies what the release changed, and one with nothing to do says
 "No changes" and exits 0.
 
+Run in a checkout, it is also where a docs/backlog/ folder that is still there
+is folded into the project's backlog: one item per open file, under the file's
+own id, queued and unapproved until a person approves it. The fold happens once
+per checkout — a second update writes nothing — it asks nothing, and outside a
+checkout it does nothing at all.
+
 It is also how a second machine, yours or a teammate's, gets its local config:
 on a machine with no config for the installation, fugaro update --gcp-project
 <id> --region <region> takes the project's name from the installation (at a
