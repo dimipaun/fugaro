@@ -2597,6 +2597,11 @@ func doctorPolicyChecks(ctx context.Context, lc *localcfg.Config, layer doctorRo
 	if c := doctorAllowListUncovered(lc, p); c != nil {
 		checks = append(checks, *c)
 	}
+	// The mobile block's own line (P6 of docs/mobile-identity-pairing, D2796):
+	// what a project that turns sync on stores in the identity project, said on
+	// the node the pairing route reads. A measurement, not a finding, and
+	// silent where the block is absent or the surface is off.
+	checks = append(checks, doctorMobileChecks(lc, p)...)
 	checks = append(checks, doctorCredsRules(ctx, db, p, lc)...)
 	if c := doctorPolicyVsJobs(lc); c != nil {
 		checks = append(checks, *c)

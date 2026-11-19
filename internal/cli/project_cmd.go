@@ -1568,6 +1568,16 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// and what the node is built from.
 		pol.OrchestratorEnabled = old.OrchestratorEnabled
 		pol.IssueSync = old.IssueSync
+		// The mobile block is kept for the same reason (P6 of
+		// docs/mobile-identity-pairing, D2796): no key of this machine's config
+		// states it — the switches are the project's own answers, and the
+		// update's policy stage is what writes the block — and the node is the
+		// only place it exists. A publish that built a node without it would
+		// turn mobile pairing off for a project whose owner turned it on, and
+		// take a written `sync: false` away from a project that chose to store
+		// nothing, silently, from a machine whose config merely predates the
+		// key.
+		pol.Mobile = old.Mobile
 	}
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
@@ -2952,6 +2962,14 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	if new.IssueSync != nil {
 		fmt.Fprintf(out, "  issue_sync kept: %s\n", issueSyncText(new.IssueSync))
 	}
+	// The mobile block is kept too (P6 of docs/mobile-identity-pairing,
+	// D2796), and the line is the two above it: no key of this machine's config
+	// states it, so the member is unchanged and no +/- line above mentions it —
+	// and a person who turned pairing on, or off, or chose to store nothing in
+	// the identity project, would read that silence as "it is gone".
+	if new.Mobile != nil {
+		fmt.Fprintf(out, "  mobile kept: %s\n", mobileText(new.Mobile))
+	}
 	// The crafts, their credentials and their pools are the operator's own
 	// blocks (docs/model-crafts §1–3, MC18, D1667), so a publish that writes
 	// them names them: a credential by its name and its type, a pool by its
@@ -3111,6 +3129,46 @@ func issueSyncText(b *projectpolicy.IssueSync) string {
 		return repos + ", mirror on: an item with no spec and no external id opens an issue"
 	}
 	return repos
+}
+
+// mobileText is the mobile block as one line, the two above it: the two
+// switches and the members a project that narrowed them writes. Only what the
+// block writes is printed, and each member is printed as the reader answers it
+// (projectpolicy's accessors), so the line says what the pairing route will do
+// and not what a node happens to spell — an absent `enabled` inside a written
+// block is on, and an absent `accepted_providers` is the default four.
+func mobileText(b *projectpolicy.Mobile) string {
+	if b == nil {
+		return "none"
+	}
+	enabled, sync := "off", "off"
+	if b.Enabled == nil || *b.Enabled {
+		enabled = "on"
+	}
+	if b.Sync == nil || *b.Sync {
+		sync = "on"
+	}
+	parts := []string{"pairing " + enabled, "sync " + sync}
+	if len(b.AcceptedProviders) > 0 {
+		parts = append(parts, "providers "+strings.Join(b.AcceptedProviders, ", "))
+	}
+	if b.MaxAuthAge != "" {
+		parts = append(parts, "auth age "+b.MaxAuthAge)
+	}
+	if b.StrictNewDevice != nil && *b.StrictNewDevice {
+		parts = append(parts, "a new device needs a QR code")
+	}
+	if len(b.CostlyModes) > 0 {
+		modes := make([]string, 0, len(b.CostlyModes))
+		for _, m := range b.CostlyModes {
+			modes = append(modes, string(m))
+		}
+		parts = append(parts, "costly modes "+strings.Join(modes, ", "))
+	}
+	if b.BiometricOnCostly != nil && *b.BiometricOnCostly {
+		parts = append(parts, "biometric on a costly start")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // binariesText is the binaries block as one line, member by member and only the
