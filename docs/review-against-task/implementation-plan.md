@@ -289,9 +289,9 @@ This line is informational and reserves no budget: it is what the tasks' tiers p
 
 ## Checks
 
-- **Check 740 (owner-run, after the release that carries RA10, not a gate).** After `fugaro update`, on a pull request a Fugaro run opened: `fugaro review --pr <N>`, then `fugaro review show <run>`; it passes when the `against:` line names the opening run, and when a second review of a pull request deliberately missing one item of its brief lists an `unmet` issue with `fix first`. Then `fugaro review --pr <N> --code-only` shows `against: none (--code-only)`.
+- **Check 750 (owner-run, after the release that carries RA10, not a gate).** After `fugaro update`, on a pull request a Fugaro run opened: `fugaro review --pr <N>`, then `fugaro review show <run>`; it passes when the `against:` line names the opening run, and when a second review of a pull request deliberately missing one item of its brief lists an `unmet` issue with `fix first`. Then `fugaro review --pr <N> --code-only` shows `against: none (--code-only)`.
 
-Checks 741–749 stay reserved and unused.
+Checks 751–759 stay reserved and unused.
 
 ## After-deploy steps
 

@@ -1,6 +1,6 @@
 # Reviews check the pull request against its task: reconciliation
 
-Checked against `main` at `0db80aa40` (this branch's base) on 2026-11-18. Findings are **F1–F37**, decisions **D2930–D2935** (block **D2930–D2949**), assumptions **A1–A5**, resolutions **R1–R16**, UNVERIFIED **U1–U3**. Check **740** is the plan's owner-run check (block **740–749**). Review round 1 amended D2932 and D2933 and added F21–F27 and R13–R14; round 2 amended D2932 again, added D2935, F28–F33 and R15–R16, and corrected F8 (in section 3); round 3 added F34–F37 and open item O3 (section 6). **Where this document disagrees with [spec.md](spec.md), this document wins.**
+Checked against `main` at `0db80aa40` (this branch's base) on 2026-11-18. Findings are **F1–F37**, decisions **D2930–D2935** (block **D2930–D2939**), assumptions **A1–A5**, resolutions **R1–R16**, UNVERIFIED **U1–U3**. Check **740** is the plan's owner-run check (block **750–759**). Review round 1 amended D2932 and D2933 and added F21–F27 and R13–R14; round 2 amended D2932 again, added D2935, F28–F33 and R15–R16, and corrected F8 (in section 3); round 3 added F34–F37 and open item O3 (section 6). **Where this document disagrees with [spec.md](spec.md), this document wins.**
 
 ## 1. Assumptions
 
@@ -113,6 +113,6 @@ No tension is open. D2930–D2934 were answered on 2026-11-18 in the conversatio
 
 ## 8. UNVERIFIED
 
-- **U1.** Whether a launched review should use the *latest* follow-up's text or every follow-up's in the chain. R1 takes the latest; settled by reading a follow-up chain's tasks on a real pull request (the owner, or Check 740 if one is wanted).
+- **U1.** Whether a launched review should use the *latest* follow-up's text or every follow-up's in the chain. R1 takes the latest; settled by reading a follow-up chain's tasks on a real pull request (the owner, or Check 750 if one is wanted).
 - **U2.** Whether `r.reviewFile`'s content is redacted on some path not found by grep (F18). Outside this spec; a separate look settles it.
 - **U3.** Whether the issue loop's ingest comment ("the body is read again at launch (B9)") still describes the code: no launch-time read of an issue body into the brief was found. It does not change this design (the task text is what the reviewer gets either way).

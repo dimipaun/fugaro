@@ -8,13 +8,13 @@
 | --- | --- |
 | [spec.md](spec.md) | The spec **verbatim**. No typo was fixed |
 | [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1 to A5, findings F1 to F37, decisions D2930 to D2935 with the owner's dated answers (D2932 and D2933 amended after review), resolutions R1 to R16, open items O1 to O3, UNVERIFIED U1 to U3. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Three slices and 16 tasks with levels, the critical path, the shared-files table, the dependencies broken and kept, the estimate line and the owner-run Check 740. **Nothing in it is approved** |
+| [implementation-plan.md](implementation-plan.md) | Three slices and 16 tasks with levels, the critical path, the shared-files table, the dependencies broken and kept, the estimate line and the owner-run Check 750. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads (schema 3) |
 
 ## Numbers taken
 
-Decisions **D2930 to D2949** (D2930 to D2935 used), checks **740 to 749** (740 used). The highest decision on `main` at `0db80aa40` (this branch's base) was D2929 (the console-improvements block) and no open pull request's documents reserve a higher one; the highest check named was 737. Findings, assumptions, resolutions and UNVERIFIED items are numbered from 1 inside this folder only. One capability, so no module map.
+Decisions **D2930 to D2939** (D2930 to D2935 used), checks **750 to 759** (750 used). The highest decision on `main` at `0db80aa40` (this branch's base) was D2929 (the console-improvements block); run-messages, merged meanwhile, holds D2940–D2959 and Checks 740–744, so this folder takes D2930–D2939 and Checks 750–759. Findings, assumptions, resolutions and UNVERIFIED items are numbered from 1 inside this folder only. One capability, so no module map.
 
 ## What waits on something external
 
-The owner's explicit go for every task; the owner's confirmation of D2932 and D2933 as amended after review (O1, O2) and word on the bucket residual (O3); and Check 740, owner-run after the release that carries RA10 (not a gate).
+The owner's explicit go for every task; the owner's confirmation of D2932 and D2933 as amended after review (O1, O2) and word on the bucket residual (O3); and Check 750, owner-run after the release that carries RA10 (not a gate).

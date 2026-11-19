@@ -51,8 +51,8 @@ As of 2026-11-19 02:00 UTC (night), read from `main` at `0db80aa40` (#3198), the
 | Spec | State |
 | --- | --- |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
-| review-against-task | plan only: 0/16 tasks merged, none approved (docs/review-against-task); owner-run Check 740 after the release |
-| run-messages | plan only: 0/11 tasks merged, none approved (docs/run-messages); D2940–D2947 answered 2026-11-18 as recommended; O1 and O2 answered; owner-run Check 740 after the release |
+| review-against-task | plan only: 0/16 tasks merged, none approved (docs/review-against-task); owner-run Check 750 after the release |
+| run-messages | plan only: 0/11 tasks merged, none approved (docs/run-messages); D2940–D2947 answered 2026-11-18 as recommended; O1 and O2 answered; owner-run Check 750 after the release |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
 
 ## Done
