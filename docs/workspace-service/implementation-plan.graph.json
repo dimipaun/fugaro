@@ -1,0 +1,877 @@
+{
+  "schema_version": 3,
+  "plan": "docs/workspace-service/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the scope contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/scope.go",
+          "internal/credsvc/scope_stub.go",
+          "docs/workspace-service/contract-scope.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/credsvc/scope_stub.go"
+      ]
+    },
+    {
+      "id": "C2",
+      "title": "the wire contract",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/route.go",
+          "internal/creds/route_stub.go",
+          "schemas/credential-route.schema.json",
+          "docs/workspace-service/contract-wire.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/creds/route_stub.go"
+      ]
+    },
+    {
+      "id": "C3",
+      "title": "the node contract, version 2",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/workspace_credentials_v2.go",
+          "schemas/workspace-credentials.schema.json",
+          "docs/workspace-service/contract-node.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": []
+    },
+    {
+      "id": "WS1",
+      "title": "the server on the scope, and the installation's scope",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/server.go",
+          "internal/credsvc/cascade.go",
+          "internal/credsvc/scope_installation.go",
+          "internal/credsvc/scope_installation_test.go",
+          "docs/workspaces/*.md"
+        ]
+      }
+    },
+    {
+      "id": "WS2",
+      "title": "the workspace's scope",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/scope_workspace.go",
+          "internal/credsvc/scope_workspace_test.go",
+          "internal/credsvc/workspace.go",
+          "docs/workspaces/*.md"
+        ]
+      }
+    },
+    {
+      "id": "WS3",
+      "title": "the local config and the fugaro workspace writes",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/cli/workspace.go",
+          "internal/cli/workspace_share.go",
+          "internal/cli/workspace_share_test.go",
+          "schemas/workspace.schema.json",
+          "docs/workspaces/*.md"
+        ]
+      }
+    },
+    {
+      "id": "WS4",
+      "title": "the node's writer",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_workspace.go",
+          "internal/cli/update_workspace_node_test.go",
+          "internal/projectpolicy/workspace_credentials_migrate.go"
+        ]
+      }
+    },
+    {
+      "id": "WS5",
+      "title": "workspace mode in fugaro credentials serve",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/credentials_serve.go",
+          "internal/cli/credentials_serve_workspace_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS6",
+      "title": "the workspace root deploys the service",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/roots/workspace/**",
+          "internal/infra/tf/workspace.go",
+          "internal/infra/tf/workspace_test.go",
+          "deploy/terraform/terraform_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS7",
+      "title": "fugaro update deploys it",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_create.go",
+          "internal/cli/workspace_create_test.go",
+          "internal/cli/update_converge_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS8",
+      "title": "the meter on the paid-call path",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/cascade.go",
+          "internal/credsvc/forward.go",
+          "internal/credsvc/probe.go",
+          "SECURITY.md",
+          "website/content/security.md",
+          "internal/cli/docs_workspaces_security_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS9",
+      "title": "the member publishes the route",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_route.go",
+          "internal/cli/update_route_test.go",
+          "internal/cli/update.go"
+        ]
+      }
+    },
+    {
+      "id": "WS10",
+      "title": "the address reaches the member's jobs",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/projectjobs.go",
+          "internal/infra/tfvars.go",
+          "internal/infra/projectjobs_workspace_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS11",
+      "title": "the run routes each credential",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/gateway.go",
+          "internal/gateway/service.go",
+          "internal/runner/gateway.go",
+          "internal/gateway/workspace_route_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS12",
+      "title": "an unreachable service is waited for",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/service.go",
+          "internal/runner/creds_wait.go",
+          "internal/gateway/service_unreachable_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS13",
+      "title": "the beat, and its switch",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/budget_session.go",
+          "internal/settings/registry.go",
+          "internal/config/defaults.go",
+          "internal/runner/workspace_beat_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS14",
+      "title": "doctor, and the alarm on demand",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/doctor_workspace.go",
+          "internal/cli/workspace_alarm.go",
+          "internal/cli/workspace_json.go",
+          "internal/cli/doctor_workspace_service_test.go",
+          "schemas/workspace.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "WS15",
+      "title": "forge credentials in the pool",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/workspace.go",
+          "internal/credsvc/bundle_workspace.go",
+          "internal/credsvc/bundle_workspace_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS16",
+      "title": "the Bitbucket routes on the scope",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/bitbucketproxy.go",
+          "internal/credsvc/bitbucket.go",
+          "internal/credsvc/bitbucket_workspace_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS17",
+      "title": "the GitHub routes on the scope",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/github.go",
+          "internal/credsvc/githubread.go",
+          "internal/credsvc/mergemint.go",
+          "internal/credsvc/github_workspace_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS18",
+      "title": "the run's forge calls follow the route",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/gitforward.go",
+          "internal/runner/gateway.go",
+          "internal/gateway/gitforward_route_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS19",
+      "title": "all_members",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/workspace_share.go",
+          "internal/cli/update_workspace.go",
+          "internal/credsvc/bundle_workspace.go",
+          "internal/cli/workspace_all_members_test.go"
+        ]
+      }
+    },
+    {
+      "id": "WS20",
+      "title": "the live checks, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check77*.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "WS21",
+      "title": "the documents and the operator note",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/workspaces/*.md",
+          "docs/releases/*.md",
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/scope_stub.go",
+          "internal/creds/route_stub.go",
+          "internal/cli/workspace_end_to_end_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-route-home",
+      "title": "amend the wire contract: the route's home",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/route.go",
+          "docs/workspace-service/contract-wire.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-forge-coverage",
+      "title": "amend the node contract: how a forge entry covers a repository",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/workspace_credentials_v2.go",
+          "schemas/workspace-credentials.schema.json",
+          "docs/workspace-service/contract-node.md"
+        ]
+      },
+      "kind": "contract_change"
+    },
+    {
+      "id": "R-scope-forge",
+      "title": "amend the scope contract: a reader the forge routes need",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/scope.go",
+          "docs/workspace-service/contract-scope.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "WS2",
+      "needs": "C1",
+      "reason": "the seam's shape"
+    },
+    {
+      "task": "WS2",
+      "needs": "C3",
+      "reason": "the node it reads"
+    },
+    {
+      "task": "WS4",
+      "needs": "WS3",
+      "reason": "it reads the local fields WS3 adds to one struct"
+    },
+    {
+      "task": "WS5",
+      "needs": "C1",
+      "reason": "the resolver"
+    },
+    {
+      "task": "WS5",
+      "needs": "C2",
+      "reason": "the environment names"
+    },
+    {
+      "task": "WS7",
+      "needs": "WS6",
+      "reason": "it plans against the root's variables and cover, which are behaviour"
+    },
+    {
+      "task": "WS8",
+      "needs": "WS1",
+      "reason": "both rewrite cascade.go"
+    },
+    {
+      "task": "WS10",
+      "needs": "WS3",
+      "reason": "it reads the pin field WS3 adds"
+    },
+    {
+      "task": "WS11",
+      "needs": "C2",
+      "reason": "the names and the route record"
+    },
+    {
+      "task": "WS12",
+      "needs": "WS11",
+      "reason": "both rewrite service.go and the reason names the upstream WS11 adds"
+    },
+    {
+      "task": "WS13",
+      "needs": "WS11",
+      "reason": "the beat exists only for a run WS11 routed"
+    },
+    {
+      "task": "WS14",
+      "needs": "C2",
+      "reason": "the names"
+    },
+    {
+      "task": "WS14",
+      "needs": "C3",
+      "reason": "the node it reads"
+    },
+    {
+      "task": "WS14",
+      "needs": "WS3",
+      "reason": "both edit schemas/workspace.schema.json"
+    },
+    {
+      "task": "WS15",
+      "needs": "C3",
+      "reason": "the forge entry's shape"
+    },
+    {
+      "task": "WS16",
+      "needs": "C3",
+      "reason": "the coverage"
+    },
+    {
+      "task": "WS16",
+      "needs": "WS1",
+      "reason": "it calls the scope plumbing WS1 puts in Server"
+    },
+    {
+      "task": "WS17",
+      "needs": "C3",
+      "reason": "the coverage"
+    },
+    {
+      "task": "WS17",
+      "needs": "WS1",
+      "reason": "it calls the scope plumbing WS1 puts in Server"
+    },
+    {
+      "task": "WS18",
+      "needs": "WS11",
+      "reason": "it uses the upstream WS11 builds and both edit runner/gateway.go"
+    },
+    {
+      "task": "WS19",
+      "needs": "WS8",
+      "reason": "D2977 allows the key only once the meter binds"
+    },
+    {
+      "task": "WS19",
+      "needs": "WS4",
+      "reason": "one writer at a time of update_workspace.go"
+    },
+    {
+      "task": "WS19",
+      "needs": "WS15",
+      "reason": "one writer at a time of bundle_workspace.go"
+    },
+    {
+      "task": "WS20",
+      "needs": "C2",
+      "reason": "the names"
+    },
+    {
+      "task": "WS21",
+      "needs": "WS3",
+      "reason": "the plugin's tests check each named command against the built CLI"
+    },
+    {
+      "task": "WS21",
+      "needs": "WS19",
+      "reason": "the same, for --all-members"
+    },
+    {
+      "task": "WS21",
+      "needs": "WS8",
+      "reason": "the statements become true only then"
+    },
+    {
+      "task": "I1",
+      "needs": "C1",
+      "reason": "the contract it rejoins"
+    },
+    {
+      "task": "I1",
+      "needs": "C2",
+      "reason": "the contract it rejoins"
+    },
+    {
+      "task": "I1",
+      "needs": "C3",
+      "reason": "the contract it rejoins"
+    },
+    {
+      "task": "I1",
+      "needs": "WS1",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS2",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS4",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS5",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS8",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS9",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS11",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS15",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS16",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS17",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS18",
+      "reason": "it wires this side and deletes the stubs"
+    },
+    {
+      "task": "I1",
+      "needs": "WS6",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS10",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS14",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS20",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "R-route-home",
+      "needs": "C2",
+      "reason": "amends a file C2 creates"
+    },
+    {
+      "task": "R-forge-coverage",
+      "needs": "C3",
+      "reason": "amends a file C3 creates"
+    },
+    {
+      "task": "R-scope-forge",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WS2",
+        "needs": "WS1"
+      },
+      "integration": "I1",
+      "reason": "the workspace's scope needs the seam's shape, not the server's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WS5",
+        "needs": "WS1"
+      },
+      "integration": "I1",
+      "reason": "serve builds a resolver, whichever server reads it"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "WS5",
+        "needs": "WS2"
+      },
+      "integration": "I1",
+      "reason": "serve names the workspace resolver's constructor, not its checks"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WS11",
+        "needs": "WS9"
+      },
+      "integration": "I1",
+      "reason": "the gateway reads the route record, not who publishes it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WS11",
+        "needs": "WS10"
+      },
+      "integration": "I1",
+      "reason": "the gateway reads an environment name, not who sets it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WS5",
+        "needs": "WS6"
+      },
+      "integration": "I1",
+      "reason": "serve and the root agree on names, not on each other"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WS20",
+        "needs": "WS6"
+      },
+      "integration": "I1",
+      "reason": "the scripts name the service, not its Terraform"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "WS2",
+        "needs": "WS4"
+      },
+      "integration": "I1",
+      "reason": "the scope reads the node's shape, not its writer"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "WS14",
+        "needs": "WS4"
+      },
+      "integration": "I1",
+      "reason": "doctor reads the node's shape, not its writer"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "WS15",
+        "needs": "WS4"
+      },
+      "integration": "I1",
+      "reason": "the pool reads the node's shape, not its writer"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "WS16",
+        "needs": "WS15"
+      },
+      "integration": "I1",
+      "reason": "the route reads a forge entry's shape, not the pool's code"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "WS17",
+        "needs": "WS15"
+      },
+      "integration": "I1",
+      "reason": "the route reads a forge entry's shape, not the pool's code"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WS14",
+        "needs": "WS9"
+      },
+      "integration": "I1",
+      "reason": "doctor reads the route record, not who publishes it"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-route-home",
+      "contract": "C2",
+      "raised_by": "WS9",
+      "reason": "if the route must live in the member's policy rather than beside its credential state",
+      "affects": [
+        "WS11",
+        "WS14"
+      ]
+    },
+    {
+      "change": "R-forge-coverage",
+      "contract": "C3",
+      "raised_by": "WS16",
+      "reason": "if a Bitbucket token's coverage or a GitHub App's installation cannot be expressed as written",
+      "affects": [
+        "WS4",
+        "WS15",
+        "WS17"
+      ]
+    },
+    {
+      "change": "R-scope-forge",
+      "contract": "C1",
+      "raised_by": "WS16",
+      "reason": "if the forge routes need a reader the scope does not carry",
+      "affects": [
+        "WS1",
+        "WS2",
+        "WS17"
+      ]
+    }
+  ]
+}
