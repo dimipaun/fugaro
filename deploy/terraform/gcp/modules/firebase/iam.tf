@@ -15,6 +15,41 @@ resource "google_service_account" "signer" {
   depends_on = [google_project_service.this]
 }
 
+# The devices' own signer (mobile plan task P5; D2782 as amended by F31, O8),
+# and the reason there are TWO signers in this project rather than one.
+#
+# Firebase accepts a custom token only from a service account OF the Firebase
+# project: a token signed by an account of the installation's own project is
+# refused by the Auth API. An installation can span two projects — the
+# fixture's aurora-fp beside proj-1234 is exactly that shape, and D2781's
+# dedicated identity project makes it the common one — so a devices' signer
+# that was the signer above would simply not work. The runs' signer keeps its
+# own job (the budget's and the resident orchestrator's rows,
+# modules/installation/orchestrator.tf).
+#
+# What the second account buys is a key that can be disabled alone and an audit
+# trail of its own, and NO narrowing of what may be signed: signJwt signs ANY
+# claim set for ANY uid, and IAM cannot express "device claims only". The
+# control is the mobile service's own fail-closed route allowlist — no route
+# takes a caller-chosen uid or claim — together with the tests over it, and
+# SECURITY.md states the residual risk (O8, D1). This file says it here because
+# this is where a reader meets the account.
+#
+# It is granted NO roles, in the FP or anywhere, like the signer above: signing
+# goes through IAM signJwt AS this account, and nothing on this account's own
+# identity is ever used. Its one grant is the public mobile service's, written
+# in the INSTALLATION root (modules/installation/mobile_service.tf) because that
+# is where the service is created; the ID is a literal on both sides, and
+# deploy/terraform/terraform_test.go holds the two spellings together.
+resource "google_service_account" "device_signer" {
+  project      = var.project
+  account_id   = "fugaro-device-signer"
+  display_name = "Fugaro device token signer"
+  description  = "Signs the custom tokens of the Fugaro project ${var.fugaro_project}'s paired devices. Holds no roles; the installation's public mobile service holds signJwt on it."
+
+  depends_on = [google_project_service.this]
+}
+
 # signJwt and nothing else: narrower than serviceAccountTokenCreator, which
 # would also let its holder mint access tokens as the signer.
 resource "google_project_iam_custom_role" "token_minter" {

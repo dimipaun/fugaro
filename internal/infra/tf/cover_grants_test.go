@@ -233,9 +233,10 @@ func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 		for key, w := range row {
 			// The bits the table may name, enumerated so that a new kind is a
 			// deliberate line here and not a row nobody classified (P5.3.3
-			// added the hop's account; the hop's allUsers binding is
-			// deliberately not a kind — cover.go's toVoice says why).
-			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toLicence|toOrchestrator|toVoice|toBuildIdentity) != 0 {
+			// added the hop's account, P5 the public mobile service's; both of
+			// those accounts' allUsers bindings are deliberately not a kind —
+			// cover.go's toVoice and toMobile say why).
+			if w == 0 || w&^(toPeople|toAccounts|toDeployer|toCredentials|toCoordinator|toVerifier|toCatalogCheck|toMCP|toIntake|toReports|toLicence|toOrchestrator|toVoice|toBuildIdentity|toMobile) != 0 {
 				t.Errorf("%s %s: bad principal kinds %d", typ, key, w)
 			}
 			if id, ok := strings.CutPrefix(key, customKey); ok {
@@ -2888,6 +2889,108 @@ func TestOrchestratorAccountIsItsOwnPrincipalKind(t *testing.T) {
 		ch := rc("google_project_iam_member", map[string]any{"member": member, "role": tc.role, "project": "proj-1"}, map[string]any{}, "create")
 		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); (len(got) == 0) != tc.covered {
 			t.Errorf("listed on the review screen: %s to the resident orchestrator: NotCovered = %q, covered want %v", tc.role, got, tc.covered)
+		}
+	}
+}
+
+// TestMobileAccountIsItsOwnPrincipalKind is the public mobile service's account
+// (mobile plan task P5; D2782 as amended by F31, O8) held to the same shape the
+// resident orchestrator's is: a kind of its own, two pinned cells, and every
+// other role refused.
+//
+// The two cells are P5's acceptance as a property of the table, and the second
+// of them is the reason the test exists at all: iam.serviceAccounts.signJwt is
+// the widest grant of this tree, so the cell is opened to this kind by its ROLE
+// alone — the row cannot see which account a grant is on — and mobileMinterGrant
+// is what closes it again to the devices' signer. Every case below the two
+// covered ones is a grant the module does not make and that a row alone would
+// have admitted.
+func TestMobileAccountIsItsOwnPrincipalKind(t *testing.T) {
+	const member = "serviceAccount:" + MobileAccountID + "@proj-1.iam.gserviceaccount.com"
+	const deviceSigner = DeviceSignerAccountID + "@fp-2.iam.gserviceaccount.com"
+	const runsSigner = "fugaro-token-signer@fp-2.iam.gserviceaccount.com"
+	if slices.Contains(FugaroAccounts, MobileAccountID) {
+		t.Errorf("the public mobile service's account is one of FugaroAccounts, so every toAccounts row accepts it — on the one service anyone on the internet may call, holding signJwt on a signer account (P5, O8)")
+	}
+	if MobileAccountID == VoiceAccountID || MobileAccountID == DeviceSignerAccountID {
+		t.Errorf("the mobile service's account and the signer it mints through are %q and %q: the runtime identity and the key it uses must be different accounts, or the reach that is meant to be one service's is the other's too", MobileAccountID, DeviceSignerAccountID)
+	}
+
+	want := []string{
+		"google_project_iam_member|" + customKey + CredentialsDatabaseRole,
+		"google_service_account_iam_member|" + customKey + "fugaroTokenMinter",
+	}
+	var got []string
+	for typ, row := range grantRules {
+		for key, w := range row {
+			if w&toMobile != 0 {
+				got = append(got, typ+"|"+key)
+			}
+		}
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the cells carrying toMobile are %v, want exactly %v: the account's whole reach is the unchanged database role O1 approved and the signJwt on the devices' signer, and a cell beside them is a grant nobody priced (P5)", got, want)
+	}
+
+	for _, tc := range []struct {
+		what    string
+		typ     string
+		after   map[string]any
+		unknown map[string]any
+		covered bool
+	}{
+		{"the database role on the Firebase project, as credentials.tf writes it", "google_project_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/" + CredentialsDatabaseRole, "project": "fp-2"}, map[string]any{}, true},
+		{"the signJwt on the devices' signer, as mobile_service.tf writes it", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-2/serviceAccounts/" + deviceSigner}, map[string]any{}, true},
+		// The grant the whole function is for: the RUNS' signer. It is the same
+		// role on an account of the same project, and a plan that named it would
+		// make the public mobile service the identity that mints every run's and
+		// every launcher's token.
+		{"the signJwt on the runs' own signer instead of the devices'", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-2/serviceAccounts/" + runsSigner}, map[string]any{}, false},
+		{"the signJwt on a job account", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/proj-1/serviceAccounts/fugaro-history@proj-1.iam.gserviceaccount.com"}, map[string]any{}, false},
+		{"the signJwt on a device signer lookalike in a project that is not this run's", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter", "service_account_id": "projects/fp-9/serviceAccounts/" + DeviceSignerAccountID + "@fp-9.iam.gserviceaccount.com"}, map[string]any{}, false},
+		{"the signJwt on an account the plan leaves unknown", "google_service_account_iam_member",
+			map[string]any{"member": member, "role": "projects/fp-2/roles/fugaroTokenMinter"}, map[string]any{"service_account_id": true}, false},
+		// The roles being a member of var.launchers would have granted, named by
+		// hand: no toMobile cell carries them, which is what the row's kind is
+		// for.
+		{"the rules-bypassing read of every node of the instance", "google_project_iam_member",
+			map[string]any{"member": member, "role": "roles/firebasedatabase.viewer", "project": "fp-2"}, map[string]any{}, false},
+		{"the launcher's project role", "google_project_iam_member",
+			map[string]any{"member": member, "role": "projects/proj-1/roles/fugaroLauncher", "project": "proj-1"}, map[string]any{}, false},
+		{"the project-wide secret accessor the bundle's reader holds", "google_project_iam_member",
+			map[string]any{"member": member, "role": "roles/secretmanager.secretAccessor", "project": "proj-1"}, map[string]any{}, false},
+		// It is the INVOKER binding of its own service that is public, and the
+		// member there is allUsers rather than this account: the bit admits
+		// people, accounts and the classes that call a service, and this kind is
+		// none of them.
+		{"the invoker bit on the credentials service", "google_cloud_run_v2_service_iam_member",
+			map[string]any{"member": member, "role": "roles/run.invoker", "project": "proj-1"}, map[string]any{}, false},
+		{"the database role to a lookalike in another project", "google_project_iam_member",
+			map[string]any{"member": "serviceAccount:" + MobileAccountID + "@fp-2.iam.gserviceaccount.com", "role": "projects/fp-2/roles/" + CredentialsDatabaseRole, "project": "fp-2"}, map[string]any{}, false},
+	} {
+		ch := rc(tc.typ, tc.after, tc.unknown, "create")
+		gotReasons := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
+		if (len(gotReasons) == 0) != tc.covered {
+			t.Errorf("%s: NotCovered = %q, covered want %v", tc.what, gotReasons, tc.covered)
+		}
+	}
+
+	// Listed on the review screen by mistake, it is still not a person: an
+	// operator who put this account's address on var.launchers would give the
+	// public service every grant the list carries, and the account's own kind
+	// is precisely that no row but its two accepts it.
+	listed := Cover{Projects: testCover.Projects, Listed: []string{member}, Region: testCover.Region, Buckets: testCover.Buckets}
+	for _, role := range []string{"projects/proj-1/roles/fugaroLauncher", "roles/firebasedatabase.viewer", "roles/run.invoker"} {
+		ch := rc("google_project_iam_member", map[string]any{"member": member, "role": role, "project": "proj-1"}, map[string]any{}, "create")
+		if got := listed.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
+			t.Errorf("listed on the review screen: %s to the public mobile service's account: NotCovered = %q, want it refused — the account is never a member of var.launchers", role, got)
 		}
 	}
 }
