@@ -46,6 +46,24 @@ schema pins) — deliberately, for the reason the field's own comment gives: a r
 `fugaro.yaml` travels with the checkout a run is handed, so a declaration there would be a way for a
 pull request to add an admin. The plan's sentence is what disagrees with the tree.
 
+**Amended 2026-11-19 — the identity work amends three of this folder's decisions and three of
+[../mobile/README.md](../mobile/README.md)'s, and this note is where a reader of this index meets
+that.** [reconciliation.md](../mobile-identity-pairing/reconciliation.md) of
+[../mobile-identity-pairing/](../mobile-identity-pairing/) takes the owner's answers of
+**2026-11-18** and writes them as amendments to decisions this folder owns. **D232 is amended** by
+**D2790** to add **one secure-store item per signed-in identity** — that identity's provider
+session, never a project credential — while **D221** and **D234** stand. **D226 and D229 are
+amended** by **D2799** so that an **admin may name another member's email**, with **D224**'s role
+resolution and both refusals unchanged and the named person's first pairing — checked by
+**D2785**'s policy — the verification, while D226's rule for one's own address stays the default
+(the owner confirmed it as **O11**). The same work amends three decisions of
+[../mobile/README.md](../mobile/README.md)'s, and the note for those is written there: **D114
+stands** (a paired project is an account), **D162 is amended for costly modes** only (**D2786**)
+and **D171 is amended** by **O6**, which replaces the per-pairing MAC with a **per-message device
+signature** for newly paired phones. **O2** keeps the amended D162 and D232 as worded, and
+**nothing here is built**: the identity work is a plan whose every task is unapproved, so this note
+records what its answers amend rather than a change to this folder or to the app.
+
 The spec is one page of prose and a flow: sign in with an account already on the phone, scan a
 project QR, let the project's allowlist check the verified email. What the repository holds today is
 the **other** half of that — an allowlist that is a **device node keyed by Firebase Auth uid**, an

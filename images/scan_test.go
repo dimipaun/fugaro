@@ -40,6 +40,18 @@ type scanFixture struct {
 	// nothing. The daemon lists each of them under the same diff ID, and a save
 	// stores the content once.
 	repeated int
+	// saveTar is the fixture's own `docker save`, for an image whose layers are
+	// written by the test rather than by writeSave below: the tar
+	// scan_catalog_test.go writes -- the layout and the archive a daemon really
+	// loads -- read here as the image's save, so that the fixture the docker
+	// test loads is the fixture this one reads without a daemon. It replaces
+	// writeSave's synthetic tar whole.
+	saveTar string
+	// diffIDs is what the daemon reports for the image's layers, in order and
+	// with its repeats, which the scan holds its own read to. A fixture whose
+	// save brings its own layers brings its own diff IDs with it, since they
+	// are those layers' digests and nothing here could recompute them.
+	diffIDs []string
 }
 
 // saveLayers is the fixture's layers as docker save hands them over.
@@ -100,8 +112,8 @@ func runScan(t *testing.T, f scanFixture, exit string, args ...string) (string, 
 	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(scanFakeDocker), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := filepath.Join(dir, "env")
-	if err := os.WriteFile(env, []byte(strings.Join(f.env, "\n")+"\n"), 0o644); err != nil {
+	envFile := filepath.Join(dir, "env")
+	if err := os.WriteFile(envFile, []byte(strings.Join(f.env, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rootfs := filepath.Join(dir, "rootfs.tar")
@@ -109,26 +121,43 @@ func runScan(t *testing.T, f scanFixture, exit string, args ...string) (string, 
 		t.Fatal(err)
 	}
 	save := filepath.Join(dir, "save.tar")
-	if err := writeSave(save, f.saveLayers(), f.undecodable); err != nil {
-		t.Fatal(err)
+	switch {
+	case f.saveTar != "":
+		body, err := os.ReadFile(f.saveTar)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(save, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		if err := writeSave(save, f.saveLayers(), f.undecodable); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// The layer count the daemon reports, which the scan holds its own read to:
 	// every layer the save carries, the ones it cannot decode among them.
-	var diffIDs strings.Builder
-	for i := 0; i < len(f.saveLayers())+f.undecodable; i++ {
-		fmt.Fprintf(&diffIDs, "sha256:%064x\n", i+1)
-	}
-	for i := 0; i < f.repeated; i++ {
-		fmt.Fprintf(&diffIDs, "sha256:%064x\n", 1)
+	diffIDs := f.diffIDs
+	if diffIDs == nil {
+		for i := 0; i < len(f.saveLayers())+f.undecodable; i++ {
+			diffIDs = append(diffIDs, fmt.Sprintf("sha256:%064x", i+1))
+		}
+		for i := 0; i < f.repeated; i++ {
+			diffIDs = append(diffIDs, fmt.Sprintf("sha256:%064x", 1))
+		}
 	}
 	layers := filepath.Join(dir, "layers")
-	if err := os.WriteFile(layers, []byte(diffIDs.String()), 0o644); err != nil {
+	if err := os.WriteFile(layers, []byte(strings.Join(diffIDs, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", append([]string{"scan.sh"}, args...)...)
-	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "FAKE_LOG="+log, "FAKE_EXIT="+exit,
-		"FAKE_ROOTFS="+rootfs, "FAKE_SAVE="+save, "FAKE_ENV="+env, "FAKE_LAYERS="+layers,
-		"TRIVY_CACHE_DIR="+t.TempDir())
+	// PATH is set in place rather than appended: a duplicate PATH leaves which
+	// of the two a program reads to the C library, so a test that strips a
+	// program from PATH (pathWithoutProgram) would otherwise hand the scan a
+	// PATH that finds its own docker and a PATH that does not, in either order.
+	cmd.Env = append(envWithPath(dir+string(os.PathListSeparator)+os.Getenv("PATH")),
+		"FAKE_LOG="+log, "FAKE_EXIT="+exit, "FAKE_ROOTFS="+rootfs, "FAKE_SAVE="+save,
+		"FAKE_ENV="+envFile, "FAKE_LAYERS="+layers, "TRIVY_CACHE_DIR="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	logged, _ := os.ReadFile(log)
 	return string(out), string(logged), err
@@ -219,7 +248,12 @@ func filesTar(files map[string]string) (*bytes.Buffer, error) {
 	sort.Strings(names)
 	for _, name := range names {
 		body := files[name]
-		if err := tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))}); err != nil {
+		// The mtime is fixed rather than the zero time, which a daemon applying
+		// the layer onto a real filesystem reads as 1970: a layer built here is
+		// the same bytes whenever it is built, and the same bytes whatever
+		// unpacks it.
+		header := &tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body)), ModTime: scanCatalogEpoch}
+		if err := tw.WriteHeader(header); err != nil {
 			return nil, err
 		}
 		if _, err := tw.Write([]byte(body)); err != nil {

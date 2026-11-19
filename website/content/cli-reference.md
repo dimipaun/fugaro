@@ -3975,6 +3975,11 @@ vouched for, which a session may have pushed itself. --dockerfile alone is
 allowed there as it is anywhere else: it reads the project's own repository
 at its base branch, where the file was committed and reviewed.
 
+--dry-run prints what the add would do and writes nothing: no catalog entry,
+no build, and no step recorded for fugaro apply. --json prints that document,
+in the shape schemas/image-add-plan.schema.json describes, and is accepted
+only with --dry-run.
+
 Usage: `fugaro image add <name>`
 
 Flags:
@@ -3986,10 +3991,12 @@ Flags:
 | `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
 | `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |
 | `--dockerfile` | string | "" | no | a Dockerfile in one of the project's repositories, as owner/name:path |
+| `--dry-run` | bool | `false` | no | print what the add would do and write nothing |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--image` | string | "" | no | a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is |
 | `--inline` | string | "" | no | a file whose contents are the entry's Dockerfile |
+| `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
@@ -5482,16 +5489,35 @@ a run routes by the copy of the providers block in its job's environment — so 
 repository routes to the model once `fugaro update --repo .` has been run in
 its checkout.
 
+--dry-run says what the change would do — the layer and the file it would
+write, the entry it would append to the route's models and to
+budget.allowed_models, the model_prices entry with both rates, and the
+follow-up step it would run or save — and writes nothing: no config file, no
+published policy node and no saved apply step. It is answered with no terminal,
+and a refusal the write would print (an unknown ID, a half-given price) is the
+same refusal. With --json it prints the versioned document
+schemas/models-add-plan.schema.json describes, which is what a caller that
+draws the change reads; --json is the dry run's own shape and is refused
+without --dry-run.
+
+--project and --config name the installation this write lands in, the way
+every settings write does (desktop-console.md §3.4 rule 3); without them the
+selection is the ambient one and a machine with two installations refuses.
+
 Usage: `fugaro models add <id>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what the change would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
 | `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
 
 Subcommands:

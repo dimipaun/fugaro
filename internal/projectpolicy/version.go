@@ -464,7 +464,43 @@ const PolicyRulesVersion = 1
 // release behind keeps writing `micros` and the token leaves, and keeps its
 // records, its ledger and its counters — every write it makes still lands, and
 // it writes no leaf it does not know (docs/design/update-in-flight.md).
-const RulesVersion = 7
+//
+// Generation 8 is the paired device's read of `outcomes` (mobile
+// identity-pairing task J1, finding F30, decision D2797, O3 answered by the
+// owner on 2026-11-18): the `.read` grant `USER` on
+// `outcomes/$day/$slug/$run`, one node, so the phone sees the run record of a
+// run that is still going. A running run is a `spend/$day/runs/$slug/$run`
+// entry with no `outcomes` entry beside it, and the app's read set is fenced to
+// spend, caps and kill state, so without this grant the jobs list has a run's
+// spend and no way to name the run.
+//
+// It is a *read grant* and it bumps for generation 4's reason: a device under
+// the older document is refused every read of the node rather than shown a
+// degraded one, and the marker is the only thing that tells an installation its
+// deployed document is not this binary's. The grant is exactly that node and
+// nothing wider: neither `outcomes` nor `outcomes/$day` is granted, so a device
+// still reads no list of days or runs; `runs/$slug/$run` stays a run's own read
+// and is still refused to a device; `agents/` stays denied. The `.write` on the
+// node does not move (its `RUN && DAYOK && !data.exists()`), so a run that
+// bootstrapped under the release behind keeps writing its outcome and the phone
+// may not write one. What the grant does show is every run's `requestedBy` to
+// any paired device, whatever the role that device's session carries: the rules
+// know a device by its `mu` claim and its device node and read no role out of
+// either, so one node for all of them is what the owner accepted (O3), and the
+// running-jobs view J2 builds shows it to operators, admins and viewers alike.
+//
+// What the bump does to an existing installation is what every bump does, and
+// it is met the same way: `fugaro doctor` reports policy-rules-skew until the
+// owner runs `fugaro update`, whose rules stage deploys this document and
+// records generation 8 in the marker, so an installation at generation 7
+// converges in one run and no second command. The deploy still refuses to write
+// this binary's document under a marker *above* it, so an older CLI cannot take
+// the read away behind a newer one's back. And the update is safe while runs
+// are in flight, which the marker's own write path carries: the change is a
+// read grant on a node a run already writes, so a run that bootstrapped under
+// the release behind keeps its records, its ledger and its counters, and every
+// write it makes still lands (docs/design/update-in-flight.md).
+const RulesVersion = 8
 
 // VersionError is the refusal of a node written in a version this Fugaro does
 // not understand. It carries both versions, so each side prints its own
