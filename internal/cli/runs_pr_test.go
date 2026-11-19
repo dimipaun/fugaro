@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -105,11 +106,13 @@ func seedIndexedReview(t *testing.T, f *cloudFixture, id string, pr int) {
 
 // indexedWindow is seedPRRuns' window with the index an installation that has
 // been through `fugaro update` holds for it: every run of either pull request
-// named by its own entry, and a review of pull request 7 going now, which no
-// entry names.
+// named by its own entry, a review of pull request 7 going now, which no entry
+// names, and a finished review of it older than the recent window, which only
+// an entry can name.
 type indexedWindow struct {
 	prRuns
-	review string
+	review     string // the review of PR 7 that is going now
+	reviewDone string // the review of PR 7 that ended, 25 days ago
 }
 
 func seedIndexedWindow(t *testing.T, f *cloudFixture) indexedWindow {
@@ -121,13 +124,38 @@ func seedIndexedWindow(t *testing.T, f *cloudFixture) indexedWindow {
 	seedPRIndexEntry(t, f, w.other, 8, runstore.PRIndexOpened)
 	w.review = runIDAt(0, "000500", "ffff")
 	seedIndexedReview(t, f, w.review, 7)
+	w.reviewDone = runIDAt(25, "120000", "1234")
+	seedFinishedReview(t, f, w.reviewDone, 7)
+	seedPRIndexEntry(t, f, w.reviewDone, 7, runstore.PRIndexReviewed)
 	return w
+}
+
+// seedFinishedReview seeds a review of pull request pr that ended: its record
+// carries the number the artifact stage wrote, which is what makes its row one
+// `runs ls --pr N` prints, and its task names the pull request it reviewed the
+// way every review's does.
+func seedFinishedReview(t *testing.T, f *cloudFixture, id string, pr int) {
+	t.Helper()
+	spec := firstRunSpec(id)
+	spec.Mode = recipe.ModeReview
+	spec.ReviewPRs = []int{pr}
+	seedSpec(t, f, spec, false)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReviewed, Stage: "review",
+		PR: &runstore.PRRef{Number: pr}})
 }
 
 // TestPRIndexEqualsScan: --pr N reads the index, and returns exactly the rows
 // the scan returns for it, field for field, on a window that holds a pull
-// request with an old run and two of today, a second pull request, and a
-// review of the first one going.
+// request with an old run and two of today, a second pull request, a review of
+// the first one going, and a review of it that ended 25 days ago.
+//
+// The finished review is the row only an entry can name: it is older than the
+// recent window and it is not going, so the index is the one thing that can
+// tell a --pr listing it exists -- and its row is a row the scan prints, since
+// the artifact stage writes the pull request into the review's record (onPR).
+// The entry is seeded rather than written by the runner, which is the writer's
+// own test (internal/runner's TestReviewWritesThePullRequestIndexEntry).
 //
 // The scan is the same listing with the index emptied: the runs are all there,
 // which is what the installation this sped up looks like. The clock is pinned
@@ -146,7 +174,7 @@ func TestPRIndexEqualsScan(t *testing.T) {
 	w := seedIndexedWindow(t, f)
 
 	indexed, errOut := lsJSON(t, "--pr", "7")
-	if want := []string{w.fu2, w.fu1, w.root}; !slices.Equal(runIDs(indexed.Runs), want) {
+	if want := []string{w.fu2, w.fu1, w.reviewDone, w.root}; !slices.Equal(runIDs(indexed.Runs), want) {
 		t.Fatalf("ls --pr 7 = %v, want %v (stderr %q)", runIDs(indexed.Runs), want, errOut)
 	}
 	if strings.Contains(errOut, "pull-request index") {
