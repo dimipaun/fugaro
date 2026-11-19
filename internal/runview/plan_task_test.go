@@ -50,6 +50,15 @@ var planTaskReaders = map[string]string{
 	"internal/task/reviewspec.go": "defines task.ReviewSpec.PlanTask, the copy the launcher carries onto a launched review's spec so its job can quote that plan task's section",
 	// The launch record it is read from, which is the untrusted object.
 	"internal/runstore/launch.go": "defines runstore.Launch.PlanTask, the launch.json field itself",
+	// The launcher that carries the copy above (docs/review-against-task RA5a,
+	// R2): it reads the id off the root run's stored task and puts it on the
+	// spec a launched review is handed, and it applies task.PlanTaskProblem to
+	// it before it does. It decides nothing else by the id -- no path is built
+	// from it, nothing is matched on it -- so what it can reach is what the
+	// copy it writes reaches: the text of a plan document the operator already
+	// holds, shown to a reviewer, and it admits no run, budgets nothing and
+	// grants nothing.
+	"internal/cli/reviewspec.go": "copies the root task's id onto a launched review's spec, after applying task.PlanTaskProblem to it",
 	// The id a run carries out in its own record, which is the field and not a
 	// read of it. runstore.DiscoveredItem.PlanTask is what the run's own agent
 	// reported discovering, bounded at write and again at read, and the daemon

@@ -38,6 +38,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/redact"
 	"github.com/dimipaun/fugaro/internal/rigor"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -867,6 +868,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		// a repeated --run-id against and the whole of what it stores, so a
 		// repeat of this same launch finds the task it stored instead of a
 		// text that differs from it by the findings.
+		//
+		// ownText is the person's own words, kept before the findings are put
+		// in front of them: a review of this pull request quotes them and
+		// leaves the reviewer's report out (from_findings and own_text, R2,
+		// F30).
+		ownText := text
 		if o.reviewRun != "" {
 			repo := o.repo
 			if repo == "" {
@@ -881,6 +888,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			text = findings + text
 		}
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
+		// A stored task that is this same launch keeps what it was launched
+		// with, and a fresh one carries the two fields now: a follow-up
+		// accepted today keeps being accepted, so the person's text is
+		// clipped rather than refused (R2).
+		if err == nil && o.reviewRun != "" && !reused {
+			spec.FromFindings = true
+			spec.OwnText = clipReviewSpecText(redact.Text(ownText, nil))
+			if err := spec.Validate(); err != nil {
+				return userErr("%v", err)
+			}
+		}
 	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 		firstRun = true
@@ -1858,6 +1876,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// (baseBranchSkew). Here, and not with the gates below, because it
 	// decides what the task createTask writes.
 	baseBranchSkew(ctx, env, slug, spec, mode, warn)
+	// The review spec's own gate, beside it and for the same reason: a runner
+	// older than reviewSpecSince refuses a task carrying review_spec,
+	// from_findings or own_text outright, so a review's spec is dropped rather
+	// than the launch, with one line naming `fugaro update` (reviewSpecSkew,
+	// D2933). Here, and not with the gates below, because it decides what the
+	// task createTask writes.
+	reviewSpecSkew(ctx, env, slug, spec, mode, warn)
 	// What this launch asks of its job image's runner about review
 	// levels, resolved once for the two branches below (a derived image
 	// and a checkout: clone workflow), the way compressionGate is: a
@@ -3519,6 +3544,17 @@ func reviewSpec(ctx context.Context, env *cloudEnv, o *runOptions, rr *resolvedR
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, BaseBranch: base, Workflow: workflow, Task: text, Title: o.title, PlanTask: o.planTask,
 		RequestedBy: me, Batch: o.batch, Recipe: rr.taskRecipe(), ReviewPRs: append([]int(nil), o.pr...),
 		Rigor: rigor.Mode(o.rigor), Paths: o.paths, Tier: tier.Tier(o.tier)}
+	// The task the pull request was written for, resolved here rather than by
+	// the job: the launcher is the only side that reads the runs bucket, and
+	// the review job is handed the answer (R1, D2934). A review of a pull
+	// request no run produced, or one whose runs are older than the lookback,
+	// carries a none with the reason instead of no block at all — the review
+	// says so in its artifact, and the person reads why it judged the code
+	// alone.
+	ask := launchSpecAsk{PRs: o.pr}
+	if spec.ReviewSpec, err = resolveLaunchSpec(ctx, env, slug, ask, warn); err != nil {
+		return "", nil, err
+	}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
