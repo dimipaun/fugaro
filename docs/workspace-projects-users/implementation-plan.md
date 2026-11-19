@@ -216,13 +216,20 @@ is reused.
 ### WU3: the SA fallback's account
 - Acceptance: the workspace root creates a workspace IAM account distinct from the credentials
   service's account, with no key, and outputs its email as `workspace_iam_account`; its token
-  creators are not Terraform's (D2818 writes them live); the root's allowed grants stay pinned.
+  creators are not Terraform's (D2818 writes them live); the root's allowed grants stay pinned; and
+  the tftest case and the root's own comment say what "no key" is — **the root writes none**, not that
+  none can exist — naming the two paths that make one anyway on a project Fugaro does not own
+  (`iam.serviceAccounts.actAs`, which `roles/editor` and `roles/iam.serviceAccountUser` carry, and
+  `iam.serviceAccountKeys.create`, which `roles/editor` resolves to), which WU11's `status` takes up
+  and which the organization policy `constraints/iam.disableServiceAccountKeyCreation` is the only
+  control that closes.
 - Files: `deploy/terraform/gcp/roots/workspace/main.tf`, `deploy/terraform/gcp/roots/workspace/outputs.tf`,
   `deploy/terraform/gcp/roots/workspace/tests/workspace.tftest.hcl`,
   `deploy/terraform/terraform_test.go`, `internal/infra/tf/workspace.go`,
   `internal/infra/tf/workspace_test.go`.
 - Interfaces: consumes none; produces the output WU20 reads.
-- Tests: the tftest case "the IAM account is not the service account and has no key";
+- Tests: the tftest case "the IAM account is not the service account and Terraform makes no key for
+  it" (the assertion is about the root's own resources, and no assertion here claims no key can exist);
   `allowedMemberExprs` in `terraform_test.go`; `TestWorkspacePlanIsTheServiceAndItsOneGrant`, renamed
   for two accounts.
 - Command: `terraform -chdir=deploy/terraform/gcp/roots/workspace test` and
@@ -414,13 +421,21 @@ is reused.
   where it says so); "unlinked, grants left" after a member owner's `unlink` (D2822); state repo in
   sync (`LastSaved`, saved by `project save` or `project rm`, D2824); drift (`Drift`); admin tampering
   — an `Admins` entry without the live binding, or a binding holder not in `Admins` (D2823); a single
-  workspace admin (R1); every member-controlled string escaped; `ls` prints one line per member with its worst row; neither writes anything on any path.
+  workspace admin (R1); the workspace IAM account's own **user-managed keys** (`iam.serviceAccountKeys.list`,
+  each with its key id and age) and every principal that can **act as** it (`iam.serviceAccounts.actAs`,
+  read from the account's policy) — both rows carrying a fix that says in one line that a key outlives
+  `rm --admin` and survives until it is deleted on the account or the account disabled, and naming
+  `constraints/iam.disableServiceAccountKeyCreation` as the control Fugaro cannot set for the owner, so
+  the removal commands' own output and `status` agree that a key is not the binding; every
+  member-controlled string escaped; `ls` prints one line per member with its worst row; neither writes anything on any path.
 - Files: `internal/cli/workspace_project_status.go` (new), `internal/cli/workspace_project_status_test.go`
   (new), `schemas/workspace-projects.schema.json` (new).
 - Interfaces: consumes C1 `Store`; C2 `Authority`, `MemberOps`, `StateWriter`, `Drift`,
   `CredentialProbe`; calls `claudeAccountsStoredCheck` and doctor's brokering reads.
 - Tests: `TestStatusRowsInOrder`, `TestStatusWritesNothing`, `TestStatusNotLinked`,
   `TestStatusCheckCredentialsOnlyInOwnTerminal`, `TestStatusSingleAdminWarns`, `TestStatusFlagsAdminTampering`, `TestStatusUnlinkedGrantsLeft`,
+  `TestStatusNamesAccountKeysAndActAsHolders` (the account's user-managed keys and the principals that
+  can act as it are rows; a key outlives `rm --admin`, and `unlink` bounds it for that member alone),
   `TestStatusEscapesMemberStrings`, `TestProjectLsJSONSchema`.
 - Command: `go test ./internal/cli/ -run 'TestStatus|TestProjectLs' -count=1`.
 - Red step: the write-nothing test fails until every read goes through the read-only fake.

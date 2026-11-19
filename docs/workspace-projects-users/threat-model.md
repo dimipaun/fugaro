@@ -134,20 +134,42 @@ against Fugaro's own trail (D2811, WU12). **Nothing here detects a stolen creden
 account, its protection is the owner's (second factor, session lifetime), and no part of this design
 reads how it was used.
 
-### A compromised workspace IAM account is the same reach held as an account, and it holds no key
+### A compromised workspace IAM account is the same reach held as an account, and a key made on it outlives the binding that made it
 
 The service-account fallback's identity (D2803, WU3, WU20) exists only where a member's owner linked
-it through the fallback, it is **used by impersonation alone**, and it carries **no key** — WU3's
-terraform test pins that the account is not the credentials service's and has none. Its token creators
-are the workspace's admins (D2818, R8).
+it through the fallback, and it is **used by impersonation alone**: the root that creates it writes
+**no key**, and WU3's terraform test pins that the account is not the credentials service's and that
+Terraform makes no key for it. That is a fact about what Fugaro writes, and **not a claim that no key
+can exist**. Nobody in this design holds `iam.serviceAccountKeys.create` on purpose, but on GCP
+`roles/editor` on the workspace project resolves to exactly that permission — the repository's own
+`fugaro doctor token-signers` check classifies an editor by it (`internal/infra/tokensigners.go`) — as
+does `roles/iam.serviceAccountKeyAdmin`, and `roles/iam.serviceAccountAdmin` can grant either to
+itself. So the account has **two credential paths that Fugaro does not write and `status` does not
+read today**:
 
-So the account's reach is a stolen workspace-admin credential's, one hop longer: whoever holds one of
-those token-creator bindings — or holds write on the workspace project's IAM, which is what the
-workspace project's own owners and editors hold — reaches every member linked through the account as
-its owner. There is no key to steal and no credential of
-the account's own to leak; the theft paths are an impersonation grant and the workspace project's IAM.
-A member whose owner runs `unlink` takes the account's `roles/owner` away (D2822), and the account
-holds nothing on that member afterwards.
+- **a user-managed key made out of band** — a credential of the account's own, acting as the account
+  wherever it still holds authority, with no token-creator binding, no `Admins` entry and nothing for
+  D2823's intersection to intersect;
+- **`iam.serviceAccounts.actAs`**, which `roles/editor` and `roles/iam.serviceAccountUser` carry — the
+  credentials section of `SECURITY.md` names the editor's pair, `actAs` and `run.services.update` — by
+  which a holder deploys a Cloud Run service, a VM or a Cloud Build that **runs as** the account: no
+  key, no impersonation grant, and no binding for either check to see.
+
+Its token creators are the workspace's admins (D2818, R8), so the account's reach is a stolen
+workspace-admin credential's, one hop longer: whoever holds one of those token-creator bindings, or
+holds `resourcemanager.projects.setIamPolicy` on the workspace project — which is what that project's
+**owners** hold and its **editors do not**, `roles/editor` being unable to write an IAM policy —
+reaches every member linked through the account as its owner. **What D2823's intersection and `status`
+make visible is the binding set and the `Admins` list, and neither path above appears in either.** A
+key the removed admin made under their own credentials survives `rm --admin`, which removes the
+token-creator binding and revokes nothing on the account, so it keeps acting as the account — and
+keeps reaching every member still linked — until it is deleted on the account or the account is
+disabled; `gcloud iam service-accounts keys list` and the account's own IAM policy are what show it.
+A member whose owner runs `unlink` does bound it for that member: it takes the account's `roles/owner`
+away (D2822), and the key can then only act as an account that holds nothing there. **The one control
+that closes key creation outright is the organization policy
+`constraints/iam.disableServiceAccountKeyCreation`**, which no Fugaro root can set on a project it does
+not own.
 
 ### Four accounts can rewrite the workspace's database, `Admins` included
 
@@ -197,10 +219,14 @@ visible; a database that is gone is the workspace's own state lost, not authorit
 The workspace's own project is an installation like any other, so its project IAM reaches the
 workspace's database over IAM, rules bypassed:
 
-- its **owners and editors** can write the roster whole — `Admins` included — and can grant
-  themselves the workspace account's token-creator binding on the workspace's own account. D2823's
-  intersection then *trusts* them, because the binding is real: they are workspace admins with the
-  authority §3 states and the workspace IAM account carries.
+- its **owners and editors** can write the roster whole — `Admins` included. Only its **owners** can
+  then grant themselves a token-creator binding on the workspace's own account, which takes
+  `resourcemanager.projects.setIamPolicy`: `roles/owner` has it and `roles/editor` does not. D2823's
+  intersection *trusts* them once they hold it, because the binding is real — they are workspace admins
+  with the authority §3 states and the workspace IAM account carries. An **editor's** route to that
+  account is the pair the service-account paragraph above states — `iam.serviceAccounts.actAs` and
+  `iam.serviceAccountKeys.create` — which mints no binding and leaves no `Admins` entry, so the
+  intersection that makes a rewritten `Admins` visible sees nothing of it.
 - its **budget admins** hold `roles/firebasedatabase.admin` on that project
   (`deploy/terraform/gcp/modules/firebase/iam.tf`) — `roles/owner`-derived today, D689 — which writes
   the same database nodes and **cannot write IAM**. That is exactly the difference D2823 rests on:
@@ -359,6 +385,15 @@ away, which is the same clock every workspace grant runs on.
 8. **One consent covers an open-ended admin set** (§1): a person made a workspace admin later reaches
    every linked member without the member's owner being asked again. A member owner who wants that
    bounded has `unlink`, which is all-or-nothing for their member.
+9. **The workspace IAM account's own credential paths are outside every check this design builds**
+   (§3): a project editor, or any holder of `roles/iam.serviceAccountKeyAdmin` or
+   `roles/iam.serviceAccountAdmin`, can mint a **user-managed key** on the account — a credential that
+   acts as it until it is deleted on the account or the account is disabled, and that `rm --admin`
+   never revokes; and `iam.serviceAccounts.actAs` lets a holder run a workload **as** the account with
+   no binding and no `Admins` entry at all, so neither D2823's intersection nor `status` sees them.
+   WU11's acceptance takes both up as `status` rows whose fix says a key survives the removal, and the
+   organization policy `constraints/iam.disableServiceAccountKeyCreation` is the only control that
+   closes key creation outright — the project owner's to set, not Fugaro's.
 
 **What is deliberately absent from this list** is anything the addendum does not change: the shared
 credential pool's intersection, the cap and its meter, the stop, and the cross-project read are

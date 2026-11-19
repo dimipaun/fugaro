@@ -208,7 +208,13 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		"**A stolen workspace-admin credential reaches every linked member, and that is the consent's real size.**",
 		"it reads every secret of that member",
 		"**every personal Claude OAuth token**",
-		"**A compromised workspace IAM account is the same reach held as an account, and it holds no key.**",
+		// The account's own credential paths, which the credential-widest reading
+		// of "no key" hid: an out-of-band key and actAs outlive the binding that
+		// made them, so the lead names the key rather than denying it.
+		"**A compromised workspace IAM account is the same reach held as an account, and a key made on it outlives the binding that made it.**",
+		"`iam.serviceAccountKeys.create`",
+		"`iam.serviceAccounts.actAs`",
+		"`rm --admin` removes the token-creator binding and revokes no key",
 		"**The workspace credentials service's account can rewrite the roster, `Admins` included.**",
 		"`workspaceRosters/<name>`",
 		"**What it cannot do is become an admin by writing the list**",
