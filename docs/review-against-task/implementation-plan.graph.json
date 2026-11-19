@@ -5,7 +5,7 @@
   "nodes": [
     {
       "id": "S-TASK",
-      "title": "the review_spec and from_findings task fields",
+      "title": "the review_spec, from_findings and own_text task fields",
       "run": null,
       "version": null,
       "size": 1,
@@ -33,10 +33,14 @@
         "paths": [
           "internal/config/config.go",
           "internal/config/scope.go",
+          "internal/config/review_against_task_test.go",
           "internal/settings/registry.go",
+          "schemas/settings.schema.json",
           "schemas/fugaro.schema.json",
           "docs/project-layer.md",
-          "internal/config/review_against_task_test.go"
+          "internal/cli/docs_config_management_test.go",
+          "docs/config-management/README.md",
+          "docs/config-management/reconciliation.md"
         ]
       }
     },
@@ -59,6 +63,24 @@
       }
     },
     {
+      "id": "RA4",
+      "title": "the policy key and its merge",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/projectpolicy/policy.go",
+          "internal/projectpolicy/policy_test.go",
+          "internal/policy/policy.go",
+          "internal/policy/merge.go",
+          "internal/policy/merge_test.go"
+        ]
+      }
+    },
+    {
       "id": "RA1",
       "title": "resolve the spec and build the reviewer's block",
       "run": null,
@@ -69,27 +91,9 @@
         "prediction": true,
         "paths": [
           "internal/runner/taskspec.go",
-          "internal/runner/planspec.go",
           "internal/runner/taskspec_test.go",
-          "internal/runner/runner.go"
-        ]
-      }
-    },
-    {
-      "id": "RA4",
-      "title": "the policy key and its tighter-only merge",
-      "run": null,
-      "version": null,
-      "size": 1,
-      "tier": "small",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/projectpolicy/policy.go",
-          "internal/policy/policy.go",
-          "internal/policy/merge.go",
-          "internal/policy/merge_test.go",
-          "schemas/project-layer.schema.json"
+          "internal/runner/runner.go",
+          "internal/orchestrator/planimport.go"
         ]
       }
     },
@@ -105,33 +109,13 @@
         "paths": [
           "internal/cli/reviewspec.go",
           "internal/cli/reviewspec_test.go",
-          "internal/cli/run.go",
-          "internal/cli/followup.go"
+          "internal/cli/run.go"
         ]
       }
     },
     {
-      "id": "RA6",
-      "title": "the fix rounds and the rigor table read scope",
-      "run": null,
-      "version": null,
-      "size": 1.5,
-      "tier": "medium",
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/runner/prompts.go",
-          "internal/runner/prompts_test.go",
-          "internal/runner/outcome.go",
-          "internal/rigor/table.go",
-          "internal/rigor/table_test.go",
-          "CLAUDE.md"
-        ]
-      }
-    },
-    {
-      "id": "RA9",
-      "title": "the image gate at launch and at update",
+      "id": "RA6a",
+      "title": "the rigor table and triage read scope",
       "run": null,
       "version": null,
       "size": 1,
@@ -139,10 +123,26 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/recipes_skew.go",
-          "internal/cli/recipes_skew_test.go",
-          "internal/cli/init.go",
-          "docs/release.md"
+          "internal/rigor/table.go",
+          "internal/rigor/table_test.go",
+          "internal/runner/outcome.go",
+          "internal/triage/prompt.go"
+        ]
+      }
+    },
+    {
+      "id": "RA6b",
+      "title": "the fix briefs read scope",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/prompts.go",
+          "internal/runner/prompts_test.go",
+          "CLAUDE.md"
         ]
       }
     },
@@ -157,6 +157,7 @@
         "prediction": true,
         "paths": [
           "internal/runner/runner.go",
+          "internal/runner/abreplay.go",
           "internal/runstore/runstore.go",
           "schemas/result.schema.json",
           "internal/runner/review_taskspec_test.go"
@@ -181,24 +182,27 @@
     },
     {
       "id": "RA5b",
-      "title": "the flags, review show, and the generated reference",
+      "title": "the flags, review show, the skills and the generated reference",
       "run": null,
       "version": null,
-      "size": 1,
-      "tier": "small",
+      "size": 1.5,
+      "tier": "medium",
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/cli/review.go",
           "internal/cli/review_test.go",
           "internal/cli/reviewspec.go",
-          "website/content/cli-reference.md"
+          "internal/cli/run.go",
+          "website/content/cli-reference.md",
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/routing/SKILL.md"
         ]
       }
     },
     {
-      "id": "RA8",
-      "title": "the policy reaches the run and the publisher",
+      "id": "RA8a",
+      "title": "the owner's policy is a gate in the runner",
       "run": null,
       "version": null,
       "size": 1,
@@ -208,15 +212,36 @@
         "paths": [
           "internal/runner/policy.go",
           "internal/runner/policy_test.go",
-          "internal/localcfg/localcfg.go",
-          "internal/localcfg/shared.go",
-          "internal/cli/init_policy_publish.go"
+          "internal/runner/taskspec.go"
         ]
       }
     },
     {
-      "id": "RA7",
-      "title": "documents, skills, release notes",
+      "id": "RA8b",
+      "title": "the local config and the publisher carry the key",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/shared.go",
+          "internal/cli/sharedcfg.go",
+          "internal/cli/project_cmd.go",
+          "internal/cli/init_policy_publish.go",
+          "internal/settings/registry.go",
+          "schemas/settings.schema.json",
+          "internal/cli/docs_config_management_test.go",
+          "docs/config-management/README.md",
+          "docs/config-management/reconciliation.md"
+        ]
+      }
+    },
+    {
+      "id": "RA9",
+      "title": "the image gate at launch, validate and update",
       "run": null,
       "version": null,
       "size": 1,
@@ -224,9 +249,25 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/cli/recipes_skew.go",
+          "internal/cli/recipes_skew_test.go",
+          "internal/cli/init.go",
+          "internal/cli/run.go",
+          "docs/release.md"
+        ]
+      }
+    },
+    {
+      "id": "RA7",
+      "title": "recipes page and release notes",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "trivial",
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "docs/recipes.md",
-          "plugin/skills/working/SKILL.md",
-          "plugin/skills/routing/SKILL.md",
           "docs/releases/*.md"
         ]
       }
@@ -251,47 +292,27 @@
     {
       "task": "RA1",
       "needs": "S-TASK",
-      "reason": "compiles against task.ReviewSpec"
+      "reason": "the type"
     },
     {
       "task": "RA1",
       "needs": "S-KNOB",
-      "reason": "reads the accessor"
-    },
-    {
-      "task": "RA3",
-      "needs": "S-TASK",
-      "reason": "reads spec.ReviewSpec"
+      "reason": "the accessors"
     },
     {
       "task": "RA5a",
       "needs": "S-TASK",
-      "reason": "writes task.ReviewSpec and reads reviewSpecSince"
+      "reason": "it builds on it"
     },
     {
-      "task": "RA9",
-      "needs": "S-TASK",
-      "reason": "the constant's file; S-TASK lands it first"
-    },
-    {
-      "task": "RA9",
-      "needs": "S-KNOB",
-      "reason": "gates the key S-KNOB adds"
-    },
-    {
-      "task": "RA4",
-      "needs": "S-KNOB",
-      "reason": "the merge mirrors the key the repository layer carries"
-    },
-    {
-      "task": "RA6",
+      "task": "RA6a",
       "needs": "S-OUT",
-      "reason": "built against Finding.Scope"
+      "reason": "it builds on it"
     },
     {
-      "task": "RA5b",
+      "task": "RA6b",
       "needs": "S-OUT",
-      "reason": "review show prints the artifact's against, built against the contract's type"
+      "reason": "it builds on it"
     },
     {
       "task": "RA2",
@@ -301,56 +322,96 @@
     {
       "task": "RA3",
       "needs": "RA1",
-      "reason": "its tests assert the block RA1 really builds; a stub would test nothing"
+      "reason": "its tests assert RA1's real block"
     },
     {
-      "task": "RA5b",
-      "needs": "RA5a",
-      "reason": "one file, and the flags feed its resolver"
-    },
-    {
-      "task": "RA8",
-      "needs": "RA4",
-      "reason": "it wires the merged value RA4 defines"
-    },
-    {
-      "task": "RA7",
-      "needs": "RA5b",
-      "reason": "the plugin and docs tests pin the flags against the CLI"
-    },
-    {
-      "task": "RA7",
-      "needs": "RA9",
-      "reason": "the notes describe the gate"
+      "task": "RA3",
+      "needs": "S-TASK",
+      "reason": "it builds on it"
     },
     {
       "task": "RA3",
       "needs": "S-OUT",
-      "reason": "fills the artifact's against"
+      "reason": "the artifact's `against`"
+    },
+    {
+      "task": "RA5b",
+      "needs": "RA5a",
+      "reason": "the flags feed its resolver and share its files"
+    },
+    {
+      "task": "RA5b",
+      "needs": "S-OUT",
+      "reason": "`Against`"
+    },
+    {
+      "task": "RA8a",
+      "needs": "RA1",
+      "reason": "the function it extends"
+    },
+    {
+      "task": "RA8a",
+      "needs": "RA4",
+      "reason": "the accessors"
+    },
+    {
+      "task": "RA8b",
+      "needs": "RA4",
+      "reason": "the published field"
+    },
+    {
+      "task": "RA9",
+      "needs": "S-KNOB",
+      "reason": "it builds on it"
+    },
+    {
+      "task": "RA9",
+      "needs": "S-TASK",
+      "reason": "the constant's file"
+    },
+    {
+      "task": "RA9",
+      "needs": "RA5b",
+      "reason": "both write `run.go`; RA5b lands first"
+    },
+    {
+      "task": "RA7",
+      "needs": "RA5b",
+      "reason": "the flags exist"
+    },
+    {
+      "task": "RA7",
+      "needs": "RA9",
+      "reason": "the gate the notes describe"
     },
     {
       "task": "RA10",
       "needs": "RA2",
-      "reason": "it tests them together"
+      "reason": "it builds on it"
     },
     {
       "task": "RA10",
       "needs": "RA3",
-      "reason": "it tests them together"
+      "reason": "it builds on it"
     },
     {
       "task": "RA10",
       "needs": "RA5b",
-      "reason": "it tests them together"
+      "reason": "it builds on it"
     },
     {
       "task": "RA10",
-      "needs": "RA6",
-      "reason": "it tests them together"
+      "needs": "RA6a",
+      "reason": "it builds on it"
     },
     {
       "task": "RA10",
-      "needs": "RA8",
+      "needs": "RA6b",
+      "reason": "it builds on it"
+    },
+    {
+      "task": "RA10",
+      "needs": "RA8a",
       "reason": "it tests them together"
     }
   ],
