@@ -263,12 +263,21 @@ func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
 		// The yield stopped the stage itself, and the caller did not end
 		// the run under it: that is not a failure. A stage that reached its
 		// own result event was finished whatever the stop raced, so it is
-		// reported as the run it was.
-		if stopped, reason := outcome.get(); stopped && ctx.Err() == nil && !p.found {
-			if u, ok := quiet.LastUsage(); ok {
-				p.res.Usage = u
+		// reported as the run it was -- a stage the stop really cut short is
+		// the only one marked yielded. The stop's own cancellation is
+		// procgroup's context error, so this is the one place it is dropped;
+		// a parse error of the stage's output still stands.
+		if stopped, reason := outcome.get(); stopped && ctx.Err() == nil {
+			if p.err != nil {
+				// ParseStream already wraps this with context.
+				return p.res, p.err
 			}
-			p.res.Yielded, p.res.YieldReason = true, reason
+			if !p.found {
+				if u, ok := quiet.LastUsage(); ok {
+					p.res.Usage = u
+				}
+				p.res.Yielded, p.res.YieldReason = true, reason
+			}
 			return p.res, nil
 		}
 		return p.res, runErr

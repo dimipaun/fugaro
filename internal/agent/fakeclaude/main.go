@@ -29,7 +29,11 @@ type call struct {
 	Subtype    string          `json:"subtype"`
 	Exit       int             `json:"exit"`
 	SleepS     float64         `json:"sleep_s"`
-	NoResult   bool            `json:"no_result"`
+	// LingerS is how long the fake stays alive after its result event, so a
+	// test can hold a process that has already finished its work: the stop a
+	// yield asks for can then land on a stage that reached its own result.
+	LingerS  float64 `json:"linger_s"`
+	NoResult bool    `json:"no_result"`
 	// ModelUsage is the result event's modelUsage, by model: an oauth run
 	// reports its notional spend by model from it.
 	ModelUsage map[string]modelUsage `json:"model_usage,omitempty"`
@@ -165,6 +169,9 @@ func main() {
 			ev["modelUsage"] = c.ModelUsage
 		}
 		emit(ev)
+	}
+	if c.LingerS > 0 {
+		time.Sleep(time.Duration(c.LingerS * float64(time.Second)))
 	}
 	os.Exit(c.Exit)
 }

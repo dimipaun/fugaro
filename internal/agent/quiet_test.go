@@ -352,6 +352,45 @@ func TestYieldedIsNotAnError(t *testing.T) {
 	}
 }
 
+// closeOnResult asks for the yield once the stage's result event has passed
+// through the transcript, which is how a test holds the request off until the
+// stage has finished its work and the fake is only lingering.
+type closeOnResult struct {
+	ask    chan struct{}
+	closed bool
+}
+
+func (c *closeOnResult) Write(p []byte) (int, error) {
+	if !c.closed && bytes.Contains(p, []byte(`"type":"result"`)) {
+		c.closed = true
+		close(c.ask)
+	}
+	return len(p), nil
+}
+
+// TestYieldRacedByTheResultEvent: a stage that reached its own result event
+// as the stop landed was finished, whatever the stop raced, so it is reported
+// as the run it was -- not yielded, and not as the cancellation the stop made.
+// The session it names is a finished one, and resuming it would be wrong.
+func TestYieldRacedByTheResultEvent(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"tools":[{"id":"t1","name":"Bash","sleep_s":0}],"linger_s":10,"text":"finished"}]}`)
+	ask := make(chan struct{})
+	res, err := Claude{Bin: bin, Grace: 100 * time.Millisecond}.Run(context.Background(), Request{
+		Prompt: "work", SessionID: NewSessionID(), Dir: t.TempDir(),
+		Env: []string{"PATH=" + os.Getenv("PATH")}, Transcript: &closeOnResult{ask: ask},
+		Yield: &YieldRequest{Ask: ask, Bound: 20 * time.Second},
+	})
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the stage finished, whatever the stop raced", err)
+	}
+	if res.Yielded {
+		t.Fatal("a stage that reached its own result event was reported as yielded")
+	}
+	if res.Text != "finished" {
+		t.Fatalf("Text = %q, want the stage's own result event", res.Text)
+	}
+}
+
 // TestYieldParentCancelWins: a cancel during the wait is the run's and not a
 // yield: Run reports the cancellation, so a stage a person cancelled is
 // never recorded as a stage that yielded (rule 2).
