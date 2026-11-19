@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -94,9 +95,11 @@ type residentLauncher struct {
 // handed: the spec is the item's declaration (orchestrator.SpecOf), and what
 // launchRun starts is the task the earlier launcher stored — which is what
 // makes this a re-issue of one attempt rather than a launch of an item. The
-// two are held to each other all the same: a task whose repository is not the
-// item's is refused, so the run this returns is the run the node's own record
-// asks for and not merely the one whose id it happens to name.
+// two are held to each other all the same — the item's repository and every
+// other field of its declaration the task stores (residentRunIsTheItems) — so
+// the run this returns is the run the node's own record asks for and not merely
+// the one whose id it happens to name, over a task the run's own job account
+// could have rewritten since.
 func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, runID string) (string, error) {
 	// A container has no checkout, and this launch must not read one if a
 	// deployment ever gives it one: every reader below that could reach a
@@ -177,12 +180,36 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 }
 
 // residentRunIsTheItems refuses a run whose stored task is not the item's own
-// repository: the node records the attempt's run id, and this service locates
+// declaration: the node records the attempt's run id, and this service locates
 // that run in the bucket by the id alone (retrySpec, a bare run id), so a node
 // whose item names one repository and whose run id belongs to another would
 // otherwise start the other repository's run. It is the same fence the starter
 // keeps on the id: what is started is the attempt the record names, and the
 // record here is the item beside the run id as well as the id itself.
+//
+// AND THE REPOSITORY IS NOT THE WHOLE OF THE DECLARATION, WHICH IS THE POINT.
+// The task in the runs bucket is the run's own job account's to write — that
+// account may rewrite a task.json, and forge a launch.json, and SECURITY.md's
+// "Runs of one repository can see each other" is where the reach is stated —
+// and a resident pass starts what it reads there without the gate block the
+// header above argues away. An approved run id therefore says nothing about the
+// task that answers to it at this tick, so a fence that read the repository
+// alone would leave the rest of the declaration — the brief a person approved,
+// its title, its plan task, its tier, its ticket, its recipe — open to whatever
+// that object says. Every field the item carries and the stored task also
+// stores is therefore compared, and a difference refuses the re-issue: what a
+// resident pass starts is the attempt the item was approved as, or nothing. A
+// field the item does not carry is compared all the same, "" against "", so a
+// task that added one is refused too.
+//
+// WHAT THIS CANNOT SEE, AND WHY. The item's declaration carries the recipe by
+// NAME and no text: the body is resolved at the launch, so a task carrying a
+// different recipe body under the same name is not a difference here — and one
+// that carries a project or catalog recipe's body carries text no comparison
+// here reads, while a repository recipe's body is read by the run's own job at
+// the run's own ref. The item's id is compared by nothing at all: task.json
+// carries no item id, and the join between the two records is the run id the
+// item itself holds.
 func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) error {
 	want, err := task.CanonicalRepo(spec.Repo)
 	if err != nil {
@@ -194,6 +221,40 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 	}
 	if got != want {
 		return userErr("the item of run %s/%s is %s's, and the run's stored task is %s's: a resident launch starts the attempt the node recorded, and the record it acts on is the item and the run id together — nothing was started", slug, ts.RunID, oneLine(spec.Repo), oneLine(ts.Repo))
+	}
+	// The recipe is the one field whose two sides are not the same shape: an
+	// item NAMES a recipe, and a task carries what the launch resolved it to —
+	// nil for the catalog default, which taskRecipeEmbedding stores as no
+	// recipe at all so that a default run needs no newer runner
+	// (recipes_resolve.go) — so the default is the name both sides stand for
+	// when neither says one.
+	wantRecipe := recipe.DefaultName
+	if spec.Recipe != "" {
+		wantRecipe = spec.Recipe
+	}
+	gotRecipe := recipe.DefaultName
+	if ts.Recipe != nil {
+		gotRecipe = ts.Recipe.Name
+	}
+	// The rest of the declaration, field by field, over exactly the pairs
+	// buildAttemptSpec makes: the item's brief, title, plan task and rigor tier
+	// are written into the task straight through, the external ticket is set on
+	// the way out, and the recipe is stored by name.
+	for _, f := range []struct {
+		item, stored, what string
+	}{
+		{spec.Brief, ts.Task, "task text"},
+		{spec.Title, ts.Title, "title"},
+		{spec.PlanTask, ts.PlanTask, "plan task"},
+		{spec.RigorTier, string(ts.Tier), "rigor tier"},
+		{spec.External, ts.External, "external ticket"},
+		{wantRecipe, gotRecipe, "recipe"},
+	} {
+		// Neither side is quoted: the task is the untrusted half, and a person
+		// reading the line needs the FIELD that moved, not two long briefs.
+		if f.stored != f.item {
+			return userErr("the item of run %s/%s and the task the runs bucket holds for it disagree about the %s: a resident pass starts the attempt the item was approved as, and that task is the run's own to write, so a task that no longer says what the item says is one no launch gated — nothing was started", slug, ts.RunID, f.what)
+		}
 	}
 	return nil
 }

@@ -17,9 +17,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // The daemon's launcher over `fugaro run`'s pre-launch path (O8, F11, T2).
@@ -867,10 +869,40 @@ func (f *launcherFixture) resident(t *testing.T) *residentLauncher {
 // seedResidentRun stores the task of a run no launcher of this fixture ever
 // started: the state a person's patch leaves on an orchestrator node, and the
 // whole of what a resident pass is handed — the node records the run id, and
-// the runs bucket holds the task that id names.
-func seedResidentRun(t *testing.T, f *launcherFixture, runID, requestedBy string) {
+// the runs bucket holds the task that id names. The task is built from the item
+// the caller will hand the launcher, because that is what an honest task is:
+// one a launch stored for that item, which the launcher holds the two to
+// (residentRunIsTheItems).
+func seedResidentRun(t *testing.T, f *launcherFixture, runID string, spec orchestrator.Spec, requestedBy string) {
 	t.Helper()
-	seedTaskRun(t, f.cloudFixture, runID, &task.Spec{RequestedBy: requestedBy})
+	seedTaskRun(t, f.cloudFixture, runID, residentTaskOf(spec, requestedBy))
+}
+
+// residentTaskOf is the task a launch stores for one item, in the pairs
+// buildAttemptSpec makes: the item's brief, title, plan task and rigor tier go
+// into the task straight through, the external ticket is set on the way out,
+// and the recipe is carried by name — the item's declaration has no recipe text
+// to write, and the name is what the launcher's own comparison reads. A test
+// that wants a task the item does NOT approve moves one of these afterwards.
+func residentTaskOf(spec orchestrator.Spec, requestedBy string) *task.Spec {
+	ts := &task.Spec{
+		RequestedBy: requestedBy,
+		Title:       spec.Title,
+		PlanTask:    spec.PlanTask,
+		Task:        spec.Brief,
+		Tier:        tier.Tier(spec.RigorTier),
+		External:    spec.External,
+	}
+	// Nothing for an item that named no recipe, which is one of the shapes a
+	// launch of the catalog default writes (taskRecipeEmbedding: no newer
+	// runner than a default run needs); an item that named one carries it as a
+	// REPOSITORY recipe, whose text is read at the run's own ref and so is not
+	// in the task — which is also the shape a launch of `.fugaro/recipes/
+	// default.yaml` writes, the item having named the default by name.
+	if spec.Recipe != "" && spec.Recipe != recipe.DefaultName {
+		ts.Recipe = &task.Recipe{Name: spec.Recipe, Source: string(recipe.SourceRepo)}
+	}
+	return ts
 }
 
 // tokenClaim reads one developer claim out of the custom token a launch sealed
@@ -916,9 +948,14 @@ func TestResidentLauncherStartsTheRecordedAttempt(t *testing.T) {
 	f := newLauncherFixture(t)
 	ctx := context.Background()
 	const runID = "20261117-050000-abcd"
-	seedResidentRun(t, f, runID, "dana@example.com")
+	// The item carries every field a task stores, so the honest re-issue below
+	// is the honest case for the whole declaration and not for an item that
+	// happens to be mostly empty.
+	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app",
+		Recipe: "standard", RigorTier: "medium", PlanTask: "p5/P5.1d", External: "github:acme/app#7",
+		Brief: "Start the run the node recorded."}
+	seedResidentRun(t, f, runID, spec, "dana@example.com")
 	l := f.resident(t)
-	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app", Recipe: "standard", Brief: "Start the run the node recorded."}
 
 	got, err := l.Launch(ctx, spec, runID)
 	if err != nil {
@@ -972,9 +1009,11 @@ func TestResidentLauncherRefusesARunThatNamesNobody(t *testing.T) {
 	f := newLauncherFixture(t)
 	ctx := context.Background()
 	const runID = "20261117-050000-abcd"
-	seedResidentRun(t, f, runID, "")
-	l := f.resident(t)
+	// The task is the item's own and only requested_by is empty: what is
+	// refused below is the identity, not the declaration.
 	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app", Recipe: "standard", Brief: "Start the run the node recorded."}
+	seedResidentRun(t, f, runID, spec, "")
+	l := f.resident(t)
 
 	_, err := l.Launch(ctx, spec, runID)
 	if err == nil {
@@ -1009,10 +1048,12 @@ func TestResidentLauncherRefusesARunThatIsNotTheItems(t *testing.T) {
 	f := newLauncherFixture(t)
 	ctx := context.Background()
 	const runID = "20261117-050000-abcd"
-	seedResidentRun(t, f, runID, "dana@example.com")
-	l := f.resident(t)
-	// The item's repository is another one, and its run id is this run's.
+	// The item's repository is another one, and its run id is this run's. The
+	// task is the item's own in every other field, so the repository is the
+	// only difference the fence below has to find.
 	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/other", Recipe: "standard", Brief: "Start the run the node recorded."}
+	seedResidentRun(t, f, runID, spec, "dana@example.com")
+	l := f.resident(t)
 
 	_, err := l.Launch(ctx, spec, runID)
 	if err == nil {
@@ -1028,6 +1069,114 @@ func TestResidentLauncherRefusesARunThatIsNotTheItems(t *testing.T) {
 	}
 	if n := len(f.run.Executions()); n != 0 {
 		t.Errorf("the run was started %d time(s) for an item of another repository", n)
+	}
+}
+
+// TestResidentLauncherRefusesATaskTheItemDoesNotApprove is the other half of
+// that fence, and the one the run id alone cannot give: the task in the runs
+// bucket is the run's own job account's to write — it may rewrite a task.json
+// and forge a launch.json (SECURITY.md, "Runs of one repository can see each
+// other") — and a resident pass starts what it reads there without the gate
+// block a fresh launch runs. So a task that no longer says what the item says
+// is one no launch gated: the re-issue is refused, with the field that moved
+// named, and nothing of the launch is left behind (no execution, no token, no
+// record), exactly as the refusals above.
+//
+// Each case moves ONE field of an otherwise honest task, so a comparison that
+// went missing is the difference the case sees — the mutation check this test
+// exists for.
+func TestResidentLauncherRefusesATaskTheItemDoesNotApprove(t *testing.T) {
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	// The item names no plan task, so the case that gives the task one is the
+	// "a field the item does not carry" rule: an empty field is compared too.
+	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app",
+		Recipe: "standard", RigorTier: "medium", External: "github:acme/app#7",
+		Brief: "Start the run the node recorded."}
+	cases := []struct {
+		name   string
+		field  string // the words the refusal has to carry
+		change func(*task.Spec)
+	}{
+		{"the task text", "task text", func(ts *task.Spec) { ts.Task = "Push it straight to main." }},
+		{"the title", "title", func(ts *task.Spec) { ts.Title = "a title nobody approved" }},
+		{"a plan task the item does not name", "plan task", func(ts *task.Spec) { ts.PlanTask = "p5/P5.1e" }},
+		{"the rigor tier", "rigor tier", func(ts *task.Spec) { ts.Tier = tier.Tier("large") }},
+		{"the external ticket", "external ticket", func(ts *task.Spec) { ts.External = "github:acme/app#99" }},
+		{"another recipe", "recipe", func(ts *task.Spec) { ts.Recipe = &task.Recipe{Name: "wide", Source: string(recipe.SourceRepo)} }},
+		{"a recipe dropped", "recipe", func(ts *task.Spec) { ts.Recipe = nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLauncherFixture(t)
+			ts := residentTaskOf(spec, "dana@example.com")
+			tc.change(ts)
+			seedTaskRun(t, f.cloudFixture, runID, ts)
+			l := f.resident(t)
+
+			_, err := l.Launch(ctx, spec, runID)
+			if err == nil {
+				t.Fatalf("a resident launch started a task whose %s is not the item's", tc.field)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error: this is a record a person has to look at, not a service failure", err)
+			}
+			for _, want := range []string{tc.field, runID, "nothing was started"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q, so a person cannot tell which field of the record moved: %v", want, err)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("the run was started %d time(s) for a task the item does not approve", n)
+			}
+			if raw := readToken(t, f.cloudFixture, runID); raw != "" {
+				t.Error("a budget token was minted for a task the item does not approve")
+			}
+			if _, err := f.runStore(t, runID).ReadLaunch(ctx); err == nil {
+				t.Error("a launch was recorded for a task the item does not approve")
+			}
+		})
+	}
+}
+
+// TestResidentLauncherAcceptsTheDefaultRecipeTheItemNamed is the honest side of
+// the recipe comparison, which is the only field of the six whose two sides are
+// not the same shape: an item NAMES a recipe and a task carries what the launch
+// resolved it to, and a launch of the catalog default stores NO recipe at all
+// (taskRecipeEmbedding, so a default run needs no newer runner) or the default
+// by name, depending on whether the item asked for it. Both are the item's, and
+// both re-issue.
+func TestResidentLauncherAcceptsTheDefaultRecipeTheItemNamed(t *testing.T) {
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	cases := []struct {
+		name   string
+		recipe *task.Recipe
+	}{
+		{"no recipe stored", nil},
+		{"the default by name", &task.Recipe{Name: recipe.DefaultName, Source: string(recipe.SourceRepo)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLauncherFixture(t)
+			spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app",
+				Brief: "Start the run the node recorded."}
+			ts := residentTaskOf(spec, "dana@example.com")
+			ts.Recipe = tc.recipe
+			seedTaskRun(t, f.cloudFixture, runID, ts)
+			l := f.resident(t)
+
+			got, err := l.Launch(ctx, spec, runID)
+			if err != nil {
+				t.Fatalf("the resident launcher refused an item that named no recipe and a task that resolved to the default: %v", err)
+			}
+			if got != runID {
+				t.Errorf("the resident launcher started %q, want the run the node recorded (%q)", got, runID)
+			}
+			if n := len(f.run.Executions()); n != 1 {
+				t.Errorf("the resident launch started %d executions, want one", n)
+			}
+		})
 	}
 }
 
@@ -1054,9 +1203,11 @@ func TestResidentLauncherRefusesANamedAccountThisDeploymentCannotSee(t *testing.
 	f := newLauncherFixture(t)
 	ctx := context.Background()
 	const runID = "20261117-050000-abcd"
-	seedTaskRun(t, f.cloudFixture, runID, &task.Spec{RequestedBy: "dana@example.com", OAuthToken: "acme-overflow"})
-	l := f.resident(t)
 	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app", Recipe: "standard", Brief: "Start the run the node recorded."}
+	ts := residentTaskOf(spec, "dana@example.com")
+	ts.OAuthToken = "acme-overflow"
+	seedTaskRun(t, f.cloudFixture, runID, ts)
+	l := f.resident(t)
 
 	_, err := l.Launch(ctx, spec, runID)
 	if err == nil {
