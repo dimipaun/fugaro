@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "role": "operator",
+  "scope": "repos",
+  "repos": [
+    "github/acme/*"
+  ]
+}
