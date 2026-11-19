@@ -403,18 +403,22 @@ func TestDocsBitbucketRunbookTokenTypes(t *testing.T) {
 		// promise that no run may read a token's reach.
 		"**A rotation writes one copy per credential the proxy and a build both hold, while S4 is open.**",
 		"A **typed** token (`bitbucket-token--<name>`) is the **proxy's alone**",
-		// B4.6 scoped the sentence's subject: a switched repository's build
-		// fetches its credential from the service (B4.5), so the copy the
-		// clone reads is the repository's own secret for a repository that is
-		// NOT switched — which is what the clause now says.
-		"so rotating it is two writes of one new value and a rotation that misses the second leaves every build of a repository that is not switched cloning with the token you just revoked",
+		// B4.6's fact, corrected by its review: the fetch is wired in the step
+		// and the request builder, and nothing hands a repository's build
+		// request or its check job the address, so the rotation's two writes
+		// are still owed for every repository — the sentence scoping them to
+		// one "that is not switched" described a wiring the tree does not
+		// carry.
+		"so rotating it is two writes of one new value and a rotation that misses the second leaves every build of the repository cloning with the token you just revoked",
 		// And the half B4.6 adds: on a switched repository the build's read is
-		// already the service's, the second copy is still the account's until
-		// S4's flip (B4.9) takes it, and from that release a rotation is one
-		// write.
-		"**The copy a build reads is already the service's where the repository is switched on, and S4's flip is what ends the second write.**",
-		"the build account still holds `secretAccessor` on that container and the build request still resolves it into the credential step's environment",
-		"From the release carrying that flip, a rotation of the legacy entry on a switched repository is the **one** bundle write above and the `fugaro secrets set` line is not owed there",
+		// the service's only once its step is handed the address, the second
+		// copy is still the account's until S4's flip (B4.9) takes it, and
+		// from the release carrying both a rotation is one write.
+		"**The copy a build reads is the service's only once its step is handed the service's address, and no build of this tree is.**",
+		"nothing hands a repository's build request or its check job that address on this tree",
+		"while S4 is open the two writes above are the operator's for every repository",
+		"The build account still holds `secretAccessor` on that container and the build request still resolves it into the credential step's environment",
+		"From the release carrying both, a rotation of the legacy entry on a switched repository is the **one** bundle write above and the `fugaro secrets set` line is not owed there",
 	} {
 		if !strings.Contains(section, strings.Join(strings.Fields(want), " ")) {
 			t.Errorf("`%s` of %s does not say %q: the owner rotates and recovers the proxy's tokens from this section, and the order and the recovery are the two things a missing sentence costs them", heading, bitbucketRunbook, want)

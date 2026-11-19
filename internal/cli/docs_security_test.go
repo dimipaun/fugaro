@@ -518,7 +518,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		"**A repository on `backend: cloud-batch` keeps its workflow secrets on the VM (D2075):**",
 		"a Batch VM is not a job account the service admits",
 		"a permanent listed exception",
-		// S4 (B4.6). A build takes its credentials from the service too, and
+		// S4 (B4.6). A build's credential step fetches from the service, and
 		// the claim that matters is D2076's: what moves is where the build
 		// reads the value, not what a Dockerfile can reach — the service
 		// hands the build its repository's own token, and the value lands in
@@ -526,23 +526,38 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// secret was. Pinned separately from S3's sentences, because a reader
 		// who takes "the build fetches from the service" as a narrowing
 		// concludes that a Dockerfile can no longer read the token, which
-		// D2076 (a) does not do — and because a switched repository's build
-		// fetches while still mounting, which the pins below state.
-		"**A build takes its credentials from the service too, and the reach does not change (S4, D2076 (a), D2077).**",
-		"fetches the git credential and every workflow build secret the build mounts",
+		// D2076 (a) does not do.
+		"**A build's credential step fetches from the service when its environment names it, and the reach does not change (S4, D2076 (a), D2077).**",
+		"asks the service's build route for the git credential and for every workflow build secret the build mounts",
+		// The wiring the review found missing: the tree carries the fetch in
+		// the step and the request builder, and no request it submits is
+		// given an address, so a repository's build and check job read their
+		// mounts today. Pinned, because a reader who takes "the build fetches"
+		// as the tree's behaviour would conclude the mount is already unused.
+		"**No repository's build or check job is handed that address on this tree**",
+		"a repository's build and its daily image check therefore still read their mounts",
 		// The check job runs as the same account (E3), so it fetches the same
 		// way: pinned, because a reader who takes "builds" to mean the image
-		// build alone would think the daily check still reads its mount.
-		"the daily image-check job, which runs as that same account, fetches its clone credential the same way",
+		// build alone would think the daily check never fetches.
+		"the daily image-check job, which runs as that same account",
+		"asks the same route for its clone credential when it is handed the address",
 		"the value lands in the volume the build step reads",
 		"a Dockerfile reaches it exactly as it did through BuildKit's mounted secret",
 		// The copy the fetch does not remove: the build account's accessor
 		// and the request's own `availableSecrets` entries are what B4.9's
-		// flip takes, so a build on this tree both fetches and mounts.
+		// flip takes.
 		"**And the build account has not given its copy up yet.**",
 		"the build account keeps its `secretAccessor`",
 		"`availableSecrets`",
 		"until the flip takes them away (B4.9)",
+		// The two classes do not read alike: the git credential's fetched
+		// value is the one the clone uses, while a workflow build secret's
+		// mount is what reaches the Dockerfile until the flip drops the
+		// `availableSecrets` entry the build step prefers over the fetched
+		// file. Pinned because the blanket "the fetched value wins" the first
+		// draft carried was wrong for the second class.
+		"the git credential's fetched value wins over the mounted one",
+		"**a workflow build secret's mounted value wins until B4.9**",
 		// The invariant, spelled as the code enforces it.
 		"an OAuth token is only ever sent to Anthropic's own endpoint",
 		// Unreachable halts rather than falls back (D143) — and the claim is
@@ -710,11 +725,13 @@ func TestSecurityMdNamesTheCredentialsServicesKnownLimits(t *testing.T) {
 		// takes "the runner fetches them" as the whole story would conclude a
 		// switched job no longer holds one.
 		"the read leaves the job only when the flip lands",
-		// S4's own limit (B4.6): the build's fetch is wired, and the copy the
-		// flip ends is still there — the build account keeps its accessor on
-		// the git secret and on the workflow build secrets, and the request
-		// keeps the `availableSecrets` entries, so a build on this tree both
-		// fetches from the service and mounts what it fetched.
+		// S4's own limit (B4.6): the build's fetch is wired and reached by no
+		// repository's build or check job, so the read is still the mount's;
+		// and the copy the flip ends is still there — the build account keeps
+		// its accessor on the git secret and on the workflow build secrets,
+		// and the request keeps the `availableSecrets` entries.
+		"a repository's build and its daily image check still read their mounts on this tree",
+		"nothing hands a repository's build request the URL",
 		"the build's own copy of the git credential and of the workflow build secrets is still there",
 		// And the App key's own limit stays: the mount and the grant are
 		// still there, the runner just no longer reads the key.
@@ -824,12 +841,14 @@ func TestSecurityMdStatesTheBitbucketGitProxy(t *testing.T) {
 		"reads no token at all",
 		"holds no `secretAccessor` on the token",
 		// The build account's copy until S4 — and B4.6's half of the same
-		// fact: the read is already the service's where the repository is
-		// switched on, the service hands the build this repository's own
-		// token, and what the flip ends is the accessor and the mounted copy
+		// fact: the read is the service's once the step is handed the
+		// address, this tree hands one to no repository's build or check job,
+		// the service hands the build this repository's own token when it is
+		// asked, and what the flip ends is the accessor and the mounted copy
 		// rather than the reach (D2076 (a)).
 		"build account still holds the token",
 		"until S4",
+		"hands one to no repository's build or check job",
 		"the service hands the build this repository's own token",
 		"what the flip ends is the account's accessor and the mounted copy, not the reach",
 		// The three token types (T14 of docs/bitbucket-token-types, D2350,
