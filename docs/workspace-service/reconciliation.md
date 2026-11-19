@@ -360,8 +360,8 @@ No two answers pull against each other.
 - **O7.** Turning the feature on is configuration, not an upgrade: the workspace owner declares
   members and shares entries (`fugaro workspace member add`, `fugaro workspace share`) and each
   member pins the address (`fugaro workspace add`), each followed by `fugaro update`. An
-  installation that uses none of it needs only `fugaro update`. The owner is asked to confirm
-  that this reading satisfies the one-command rule.
+  installation that uses none of it needs only `fugaro update`. **Confirmed by the owner on
+  2026-11-19:** opting in to a feature is configuration, and it satisfies the one-command rule.
 - **O3.** The workspaces design's own open checks U1 to U5 (a member job account admitted by a real
   deployment, and the rest) are still open. Checks 771 to 773 cover U1; U5's alarm half waits on the alarm's own spec (D2991); U3 and U4 stay
   that design's.

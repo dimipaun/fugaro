@@ -652,8 +652,8 @@ From the reserved block 770–779. All four are owner-run, as scripts (WS20), af
 **For an installation that does not use the feature: `fugaro update`, and nothing else.** Nothing
 it holds changes.
 
-**Turning the feature on is configuration, and WS21's release note says so plainly** (O7, for the
-owner to confirm against the one-command rule):
+**Turning the feature on is configuration, and WS21's release note says so plainly** (O7, confirmed
+by the owner on 2026-11-19):
 
 - the workspace owner declares each member and its job accounts (`fugaro workspace member add`),
   shares the entries (`fugaro workspace share`), and runs `fugaro update`;
