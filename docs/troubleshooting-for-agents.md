@@ -8,14 +8,60 @@ what it may do, and what its answer has to contain.
 ## What a diagnosis is
 
 `fugaro troubleshoot` explains one Fugaro command that failed on this machine.
-It runs locally and never as a cloud job, because the cloud setup is often
-exactly what is broken. The user typing the command is the consent: Fugaro never
-starts an agent on its own when something fails.
+This machine's own credential answers when it holds one, and when it holds none
+the question goes to the person's own project as one bounded job; the tiers that
+cost nothing are tried first, because the cloud setup is often exactly what is
+broken. The user typing the command is the consent: Fugaro never starts an agent
+on its own when something fails.
 
 The agent explains and prints. It never applies a fix, and nothing it writes is
 executed. Which model answers is a configuration key: `agent.models.diagnose`
 in a repository's `fugaro.yaml`, `defaults.agent.models.diagnose` in the
-project layer that reaches it, and Fugaro's own choice when neither sets it.
+project layer that reaches it, and Fugaro's own choice when neither sets it. It
+is the same key whichever tier asks, so the answer comes from the same model
+either way.
+
+## Which tier answers
+
+The command answers in one of four tiers, and it tries them in this order. The
+first one that can answer does, and the ones after it are never reached:
+
+1. **The rules, with no model at all.** The log or the run record already names
+   the cause, and the command prints it as `cause` and `fix` with the log line
+   it was read from. Nothing is sent anywhere.
+2. **The local diagnosis**, on this machine's own credential: the `claude` login
+   already here, or `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` if the
+   environment sets one. This is the tier this guide is written for. It needs no
+   gcloud and reads no secret of the installation's, so it still works when the
+   cloud is what is broken.
+3. **The cloud diagnosis job**, which is asked for last of the tiers that call a
+   model, and reached only when this machine has nothing of its own to run on:
+   no `claude` at all, and neither variable set. A `claude` that is there but
+   not logged in stays on the local tier, refused there in one sentence naming
+   the login. The evidence goes to the person's own project, where one bounded
+   job reads it and writes the answer, and the command reads that answer back
+   out of the run's own prefix. It spends the project's money rather than the
+   person's, and it says what it cost: the figure the diagnosis run's record
+   holds, printed beside the answer with the run it came from. It is the only
+   tier that can be refused by the project's own state — a job image older than
+   the release that carries this tier, a credentials service that is off, a
+   budget that is spent — and a pre-flight asks all of that before anything is
+   uploaded, so the reason and the command that fixes it are printed instead of
+   a second failure.
+   Outside a repository checkout there is no repository to scope a run to, and
+   the tier declines for that reason too.
+4. **Evidence only.** The evidence is printed where it is, with the reason
+   nothing diagnosed it, and the command exits non-zero.
+
+The cloud tier never runs on the person's own credential. Its job mounts no
+credential of its own — the model call is signed for the project the way
+`fugaro review --pr N` signs its reviewer's — so the person's login never enters
+the container and the CLI reads none of the installation's secrets into itself.
+What leaves the machine is what the local tier would have sent: the redacted
+log, `fugaro doctor`'s output, the effective configuration with secrets removed,
+and a reference to the Fugaro source at the version that failed, never the tree's
+bytes. The one line printed before anything is uploaded names both places the
+evidence goes, the person's own project first.
 
 ## The four outcomes
 
