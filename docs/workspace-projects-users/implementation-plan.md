@@ -325,7 +325,11 @@ is reused.
   `project add`, since a member owner cannot read the roster); `unlink` drops only the authority —
   the folder move back or the SA's owner grant — and writes a member audit entry, and says that the
   workspace admins' stored grants stay until the workspace project owner's `project rm` (D2822);
-  both refuse on a config that is not the member's or whose pin names another workspace.
+  in the folder model `link` reports the policy difference the move makes — the member's project loses
+  the IAM and organization policies it inherited from its old parent and takes on the workspace
+  folder's — naming the policies it can read on both sides, so the member owner sees what the move
+  changes before it is made; both refuse on a config that is not the member's or whose pin names
+  another workspace.
 - Files: `internal/cli/workspace_project_link.go` (new), `internal/cli/workspace_project_link_test.go` (new).
 - Interfaces: consumes C2 `Authority`, `MemberOps.Audit`.
 - Tests: `TestLinkNeedsTheMembersOwnConfig`, `TestLinkRefusesOtherWorkspacePin`, `TestUnlinkDropsOnlyTheAuthority`.

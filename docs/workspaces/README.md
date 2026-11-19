@@ -73,7 +73,11 @@ trusting any finding above it.
   answer of 2026-11-18 superseding three of §9's six rules — `never widens a member`,
   `never writes a member's database` and `never becomes a second permission model` — **for people
   and roles only, on the member owner's own consent at `fugaro workspace project link`** (D2819),
-  with `fugaro update` linking no member and an unlinked member keeping `fugaro user …` whole. The
+  with `fugaro update` linking no member and an unlinked member keeping `fugaro user …` whole — the
+  first two of the three being this folder's own record rather than the addendum's (**F1**'s `never
+  widens a member` and **D1299**'s amended `never writes a member's database`), and all three carried
+  at their real size by the **WU0 acceptance**, the rewritten threat model and the independent
+  security review it is gated on. The
   other three rules of §9 stand, the credential rule above stands, and what the authority puts in
   reach of each actor is stated at its real size in
   [../workspace-projects-users/threat-model.md](../workspace-projects-users/threat-model.md).

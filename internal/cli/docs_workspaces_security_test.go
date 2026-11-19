@@ -232,9 +232,13 @@ func TestSecurityMdStatesTheWorkspaceThreatModel(t *testing.T) {
 		// The disclosure the mirror makes: the group's addresses are readable by
 		// every member's own people, which the design above said they were not.
 		"**Every member's launchers and viewers read the mirror: the workspace's member addresses and external marks.**",
-		// And the lag, which is the half a removed admin's reach outlives.
-		"**The revocation lag is the member's own update.**",
+		// And the lag, which is the half a removed admin's reach outlives -- with
+		// the other half named beside it: what they made while they held the
+		// authority is not taken back by the command that removes them, and the
+		// owner ruled on 2026-11-19 that it is accepted with that said.
+		"**The revocation lag is the member's own update, and removing an admin does not take back what they made while they held the authority.**",
 		"the workspace's stored grants stay in the member's roster",
+		"the owner's ruling of 2026-11-19",
 		// The document the whole statement lives in, so the two are read together.
 		"docs/workspace-projects-users/threat-model.md",
 	} {

@@ -43,8 +43,20 @@ upgrade" is not a thing that happens here; each member's owner decides once, and
 **One consent covers a set that changes.** The owner consents to the workspace's **admins** holding
 authority over their member, and the admin set is the workspace's to change afterwards (WU7): a
 person added as a workspace admin later reaches the member without the member owner being asked
-again. That is the consent's real shape, and §4.1 is its real size. The counterpart is the member
+again. That is the consent's real shape, and §3 is its real size. The counterpart is the member
 owner's own exit: `unlink` drops the authority over their member at once (§6).
+
+**In the folder model the consent also moves policies, and that is a second effect rather than a
+detail of the first** (stated as §7's tenth residual risk). A GCP project takes the IAM and the
+organization policies of the parent it hangs under, so `link` — which moves the member's project into
+the workspace's folder (WU2, WU18) — makes the member **lose whatever its old parent carried and
+inherit the workspace folder's instead**: a key-creation ban, a domain restriction, an
+allowed-locations constraint, an org policy the old parent applied and the workspace's does not, or
+the reverse. Nothing in the model narrows the workspace folder's own policies to make linking
+harmless, and the SA model does not move the project at all (the account is granted on it where it
+stands), so this is the folder's cost and not the addendum's: what `link` does about it is **report
+the difference it can read on both sides before the move is made** (WU18's acceptance), and what it
+cannot do is undo an inheritance it has changed.
 
 ## 2. Which of spec §9's rules the addendum supersedes, and on what consent
 
@@ -73,7 +85,7 @@ superseded, for people and roles only, on the consent of §1** — and the other
 
 **Stated rather than left implied: "for people and roles" is the scope of the commands, not a
 narrowing of the consent.** What the member owner hands over at `link` is `roles/owner` on their
-project, and an owner's reach is wider than people and roles — §4.1 states it, caps and policy nodes
+project, and an owner's reach is wider than people and roles — §3 states it, caps and policy nodes
 included. The phrase is true of every command the plan adds, and it must not be read as a claim that
 the authority itself stops at the roster.
 
@@ -83,9 +95,13 @@ the authority itself stops at the roster.
   workspace's *services and CLI*: no shared credential's value is returned to a run, a CLI, a person,
   an error message or a log line, and the credential service proxies the call. The addendum adds no
   exception to that — and it does not narrow the rule's honest reading either: the rule never claimed
-  that an **IAM holder** cannot read a credential, and after `link` a workspace admin is one. §4.1
+  that an **IAM holder** cannot read a credential, and after `link` a workspace admin is one. §3
   states what that means, because a reader who took "never hands out a credential" for "no one in the
-  workspace can read a member's secrets" would be wrong by a whole Secret Manager.
+  workspace can read a member's secrets" would be wrong by a whole Secret Manager. **The workspace's
+  own project is the same reading once more**: every workspace admin holds `roles/owner` on it (R8,
+  D2818), the workspace's one credentials bundle lives there ([spec.md](../workspaces/spec.md) §4),
+  and a project owner reads any secret in its project — so **the shared pool's keys are readable by
+  every workspace admin**, beside every member secret §3 states.
 - **never owns a repository, a runs bucket, a job or an image.** Unchanged: the workspace still holds
   no runs and launches nothing, and `project rm` deletes no GCP or Firebase resource — it detaches,
   prints the running-cost warning and names the console page for the owner to shut the project down
@@ -280,7 +296,8 @@ a denial of the move back and never a project placed in another workspace's fold
 
 Their reach stops at their own member: they hold no grant on the workspace's project and read no node
 of its database, so the roster, the workspace's cap and the group's audit are not theirs to read. What
-they can read of the group is the mirror, which the last paragraph of this section states — and what they can do to the
+they can read of the group is the mirror, which the paragraph headed **Every member's launchers and
+viewers read the mirror** below states — and what they can do to the
 workspace is make a member look wrong, which `status` reports as "not linked" or as drift.
 
 ### Every member's launchers and viewers read the mirror: the workspace's member addresses and external marks
@@ -302,7 +319,7 @@ project is an installation of its own, so its launchers, operators and viewers h
 role on the workspace's database and read the roster whole, and its budget admins can write it.
 
 **If the external mark's disclosure is unwanted, the fix is a decision and not a rules change** —
-mirroring addresses without the mark, or a narrower reader — and it is recorded in §8 as an accepted
+mirroring addresses without the mark, or a narrower reader — and it is recorded in §7 as an accepted
 risk for the owner rather than settled here.
 
 ## 4. Two things the addendum does not change
@@ -333,13 +350,34 @@ risk for the owner rather than settled here.
 
 **A workspace admin's removal is two acts with two clocks** (D2818 as corrected). `fugaro workspace
 user rm <email> --admin` removes the folder's `roles/owner` or the account's token-creator binding
-**at once, in the same command**, so the authority that reaches everything — every member's secrets,
-IAM, database, bucket and logs — is gone then. What waits is the stored admin grant in every linked
-member's roster and the resource-level bindings that member's own Terraform derives from its admin
-list (D1940): they follow at **that member's own `fugaro update`** (D2801), and `workspace project
-status` shows each member's grants still waiting as a pending row (WU11). So between the two commands
-a removed admin still holds a member's bucket, job, secret and log grants — bounded by the next
-update, and by nothing else.
+**at once, in the same command**, so the authority **Fugaro granted them** is gone then. What waits is
+the stored admin grant in every linked member's roster and the resource-level bindings that member's
+own Terraform derives from its admin list (D1940): they follow at **that member's own `fugaro
+update`** (D2801), and `workspace project status` shows each member's grants still waiting as a
+pending row (WU11). So between the two commands a removed admin still holds a member's bucket, job,
+secret and log grants, bounded by that member's own next update.
+
+**What no command here takes back is what the admin made while they held the authority** (the owner's
+ruling of 2026-11-19, §7's sixth residual risk). Before the command ran they were an owner of the
+member, and an owner can leave three things behind that outlive `rm --admin`, `unlink` and the
+member's own `fugaro update` alike:
+
+- **a key on a member's service account** — the member's own Terraform accounts included. It is a
+  credential of that account's, usable from anywhere, and no Fugaro command revokes it;
+- **an IAM binding they added for themselves outside Terraform.** The member's roots are additive
+  (`google_project_iam_member`): a member's `fugaro update` adds and removes exactly what its own
+  lists name, so a binding none of those lists names is left standing by every update that follows;
+- **the copied value of any secret they could read** — every secret of the member (§3), and the
+  shared pool's keys in the workspace's own project (§2, R8). A value someone has copied is not a
+  grant, and there is nothing to revoke.
+
+So the honest sentence is that removing an admin ends **their Fugaro-granted reach and not their
+access**: what follows the removal is **rotating that member's secrets** — its model keys, the
+personal Claude OAuth tokens its people stored under their own prefixes, its forge credential and the
+run-scoped ones — and **reading the member's IAM policy for bindings the member's own roots did not
+make**. `status` shows half of that: drift reports a member's policy against its roster and names the
+grants the roster did not put there (WU12). It shows nothing of a key or of a copied value, and this
+file adds no row for them — the gap is stated here as the acceptance it is, not built into a check.
 
 **A member owner's `unlink` drops only the authority** (D2822 — not the recommendation). The workspace
 admins' stored grants and the mirror stay in the member's roster, and the member's own `fugaro update`
@@ -376,9 +414,19 @@ away, which is the same clock every workspace grant runs on.
 5. **The audit trail is as tamperable as the roster** (D2811): create-only by construction, rewritable
    by whoever holds the member's database write, and cross-checked against Cloud Audit Logs rather
    than protected.
-6. **The authority outlives a removal until the member's next `fugaro update`** (§6, D2818 as
-   corrected), and a member that has unlinked keeps applying the workspace's stored grants until the
-   workspace owner's `project rm` (D2822).
+6. **A removal does not take back what the removed admin made while they held the authority** (§6,
+   D2818 as corrected, and **the owner's ruling of 2026-11-19** is the consent to accept it): the
+   Fugaro-granted authority goes at once and the stored grants follow at the member's own `fugaro
+   update` — and the member that has unlinked keeps applying those grants until the workspace owner's
+   `project rm` (D2822) — but a **key minted on one of the member's service accounts**, an **IAM
+   binding added outside Terraform** (a member's roots are additive, so its own updates leave it) and
+   the **copied value of any secret the admin could read** (every member secret, and the shared
+   pool's keys in the workspace's own project, §2 R8) all outlive `rm --admin`, `unlink` and the
+   member's own `update`. What the member is left to do is therefore part of the removal, not an
+   afterthought of it: **rotate the member's secrets** and read its IAM policy for bindings its own
+   roots did not make. `status` covers the second half through drift (WU12) and **none of it is a
+   `status` row of its own** — no check is added for a key or for a copied value, and the gap is
+   accepted here rather than closed.
 7. **A member owner's own record can make `unlink` refuse, never aim it** (R14): the recorded parent is
    untrusted input, so the failure it can cause is a denial of the move back, not a project placed in
    another workspace's folder.
@@ -394,8 +442,15 @@ away, which is the same clock every workspace grant runs on.
    WU11's acceptance takes both up as `status` rows whose fix says a key survives the removal, and the
    organization policy `constraints/iam.disableServiceAccountKeyCreation` is the only control that
    closes key creation outright — the project owner's to set, not Fugaro's.
+10. **In the folder model, linking resets the member's inherited policies** (§1): the project moves
+   under the workspace's folder, so it loses the IAM and organization policies its old parent carried
+   — a key-creation ban, a domain restriction, an allowed-locations constraint — and takes on the
+   workspace folder's. `link` reports the difference it can read on both sides before the move (WU18's
+   acceptance); what it cannot do is undo an inheritance it has already changed, and the SA model does
+   not move the project at all.
 
 **What is deliberately absent from this list** is anything the addendum does not change: the shared
-credential pool's intersection, the cap and its meter, the stop, and the cross-project read are
-[docs/workspaces/spec.md](../workspaces/spec.md) §8's accepted risks, stated in `SECURITY.md`'s
-workspaces section, and this file does not restate them.
+credential pool's *intersection* — who is admitted to it, which is unchanged, though what a workspace
+admin's owner role reads of the pool's keys is §2's and item 6's — the cap and its meter, the stop,
+and the cross-project read are [docs/workspaces/spec.md](../workspaces/spec.md) §8's accepted risks,
+stated in `SECURITY.md`'s workspaces section, and this file does not restate them.
