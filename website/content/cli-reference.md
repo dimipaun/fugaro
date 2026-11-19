@@ -5489,16 +5489,35 @@ a run routes by the copy of the providers block in its job's environment — so 
 repository routes to the model once `fugaro update --repo .` has been run in
 its checkout.
 
+--dry-run says what the change would do — the layer and the file it would
+write, the entry it would append to the route's models and to
+budget.allowed_models, the model_prices entry with both rates, and the
+follow-up step it would run or save — and writes nothing: no config file, no
+published policy node and no saved apply step. It is answered with no terminal,
+and a refusal the write would print (an unknown ID, a half-given price) is the
+same refusal. With --json it prints the versioned document
+schemas/models-add-plan.schema.json describes, which is what a caller that
+draws the change reads; --json is the dry run's own shape and is refused
+without --dry-run.
+
+--project and --config name the installation this write lands in, the way
+every settings write does (desktop-console.md §3.4 rule 3); without them the
+selection is the ambient one and a machine with two installations refuses.
+
 Usage: `fugaro models add <id>`
 
 Flags:
 
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--dry-run` | bool | `false` | no | print what the change would do and write nothing |
 | `-h`, `--help` | bool | `false` | no | help for add |
+| `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--price-in` | float64 | `0` | no | input price, dollars per million tokens (required for a model the catalog does not price) |
 | `--price-out` | float64 | `0` | no | output price, dollars per million tokens (required for a model the catalog does not price) |
+| `--project` | string | "" | no | the Fugaro project to act on (default: $FUGARO_PROJECT, else the only project config) |
 | `--route` | string | "" | no | the route that claims the model (default: the route that claims it already, or the only one) |
 
 Subcommands:

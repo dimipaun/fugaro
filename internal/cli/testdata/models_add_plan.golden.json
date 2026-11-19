@@ -1,0 +1,31 @@
+{
+  "allowed_models": {
+    "entry": "vendor/model-z",
+    "key": "budget.allowed_models",
+    "present": true
+  },
+  "changed": true,
+  "claim": {
+    "claimed_by": "",
+    "entry": "vendor/model-z",
+    "key": "providers.openrouter.models"
+  },
+  "layer": "local",
+  "model": "vendor/model-z",
+  "path": "<config>",
+  "prices": {
+    "input_per_m": 1,
+    "key": "model_prices.vendor/model-z",
+    "output_per_m": 2,
+    "source": "given"
+  },
+  "refusal": "",
+  "route": "openrouter",
+  "steps": [
+    {
+      "name": "policy",
+      "state": "run"
+    }
+  ],
+  "version": 1
+}

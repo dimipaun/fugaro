@@ -349,6 +349,19 @@ var jsonCases = map[string]jsonCase{
 			return []string{"mailbox", "sweep", "--dry-run"}
 		},
 	},
+	// models add carries --json only beside --dry-run (MD1): the document is
+	// what one add would do, so the run this pin takes is the write-free one,
+	// which is a read and leaves no log. The route comes from
+	// models_add_test.go's own fixture, because the cloud fixture's config has
+	// no provider for a model to be claimed on.
+	"models add": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			f.appendConfig(t, modelsAddCloudExtra)
+			return []string{"models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--dry-run"}
+		},
+	},
 	"models ls": {
 		reads: true,
 		run: func(t *testing.T) []string {
