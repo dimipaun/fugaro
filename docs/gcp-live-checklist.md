@@ -22109,18 +22109,23 @@ brought to the previous version, upgraded with `fugaro update`, with the consume
 half published; two phones, one of them paired the old way before the upgrade; the roster with a second
 person in it for the roster revoke; and one person's address you may revoke.
 
-**The command.** It is **one command**, the U12 half, and it only reads what KMS answers. `--signature-file`
-is the flag `gcloud` writes the signature into and it is required: without it `gcloud` refuses the invocation
-itself and exits before it calls KMS, so the branch below would print **refused** for every login and the
-reading would be about `gcloud`'s argument check rather than about your role:
+**The command.** It is **one command**, the U12 half, and it only reads what KMS answers. Two things about
+the flags, because on either one `gcloud` would exit before it calls KMS and the branch below would print
+**refused** for every login — including the role that can sign, which is the whole reading: `--signature-file`
+is the flag `gcloud` writes the signature into and it is **required**, and there is **no
+`--digest-algorithm`**, because this key is **Ed25519** (O17: one Ed25519 key per project, in the
+installation project): gcloud passes the file's bytes to KMS as the message
+and KMS refuses a digest for an Ed25519 version, which is why the tree's own signer
+(`ee/licence/mint/kms.go`) runs `asymmetric-sign` with the flags below and its test refuses a
+`--digest-algorithm` in the argv — "a digest algorithm is not what a raw Ed25519 signature takes":
 
 ```sh
-gcloud kms asymmetric-sign --project=<your installation project> --location=<the consumer key location> --keyring=<the consumer key ring> --key=<the consumer key> --version=1 --digest-algorithm=sha512 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own role can sign, so J6 needs no grant' || echo 'refused, as U12 assumes'
+gcloud kms asymmetric-sign --project=<your installation project> --location=<the consumer key location> --keyring=<the consumer key ring> --key=<the consumer key> --version=1 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own role can sign, so J6 needs no grant' || echo 'refused, as U12 assumes'
 ```
 
 **What it reads.** Whether your own login is refused by the consumer key — and it is KMS's own refusal, the
-`PERMISSION_DENIED` the role is read from, that answers: a `gcloud` error about the flags is not this
-reading. **The sequence itself is yours**,
+`PERMISSION_DENIED` the role is read from, that answers: a `gcloud` or KMS error about the flags settles
+nothing and must not be read as either. **The sequence itself is yours**,
 step by step on the two phones, and each step's reading goes into this section: **pair** (the phone ends
 paired), **refresh** (a new token after the hour), **revoke** (access ends on the next request), the **roster
 revoke** (the person's mobile access ends), **restore** (the synced list brings the pairing back), **strict
@@ -22211,19 +22216,23 @@ holds the key**, and **no agent runs any step of it**.
 identity (O15) in place with its one signing grant, the signing command built, and the bucket A3's root
 defines for the signed document — which only the owner writes and the signer service reads.
 
-**The command.** It is **one command**, and it is the refusal that matters. `--signature-file` is the flag
-`gcloud` writes the signature into and it is required: without it `gcloud` refuses the invocation itself and
-exits before it calls KMS, so the branch below would print **refused** for every login — including the one
-that can sign, which is the whole finding this check exists to catch:
+**The command.** It is **one command**, and it is the refusal that matters. Two things about the flags,
+because on either one `gcloud` would exit before it calls KMS and the branch below would print **refused** for
+every login — including the one that can sign, which is the whole finding this check exists to catch:
+`--signature-file` is the flag `gcloud` writes the signature into and it is **required**, and there is **no
+`--digest-algorithm`**, because the root key is the **Ed25519** one A4's root defines (D2792, O7): gcloud
+passes the file's bytes to KMS as the message and KMS refuses a digest for an Ed25519 version. The tree's own
+signer (`ee/licence/mint/kms.go`) runs `asymmetric-sign` the same way, and its test refuses a
+`--digest-algorithm` in the argv — "a digest algorithm is not what a raw Ed25519 signature takes":
 
 ```sh
-gcloud kms asymmetric-sign --project=<the root key project> --location=<the root key location> --keyring=<the root key ring> --key=<the root key> --version=1 --digest-algorithm=sha512 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own login signed with the root key, which O7 forbids' || echo 'refused, as O7 asks'
+gcloud kms asymmetric-sign --project=<the root key project> --location=<the root key location> --keyring=<the root key ring> --key=<the root key> --version=1 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own login signed with the root key, which O7 forbids' || echo 'refused, as O7 asks'
 ```
 
 **What it reads.** Whether your own login can sign with the root key — and the reading is KMS's answer: a
 `PERMISSION_DENIED` is the refusal O7 asks for, while a signature written into the file you named is the
-finding. A `gcloud` error about the flags settles nothing and must not be read as either. The rest — the
-ceremony, the first signed **key set** and the rehearsal — is the signing command you run in your own
+finding. A `gcloud` or KMS error about the flags settles nothing and must not be read as either. The rest —
+the ceremony, the first signed **key set** and the rehearsal — is the signing command you run in your own
 terminal: the command prints the root public key and no private material, refuses a `seq` not above the last
 signed one, and refuses inside an agent session. The readings this section carries are the root public key,
 the `seq` and dates of the first set, and the rehearsal's new version's `kid` — **public values only, never a
