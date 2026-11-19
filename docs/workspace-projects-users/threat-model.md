@@ -150,21 +150,29 @@ holds nothing on that member afterwards.
 
 ### The workspace credentials service's account can rewrite the roster, `Admins` included
 
-The workspace's own service account holds one role on the workspace's own project's database — the
-credentials service's own custom role, `firebasedatabase.instances.get` and `.update` — and the roster
-now lives in that database, at `workspaceRosters/<name>` (R5, D2817). Whole-database read and write is
-what that role is (`deploy/terraform/gcp/roots/workspace/main.tf`: a grant on a Realtime Database has
-no path-level scope), so **a compromised workspace credentials service can rewrite the member list,
-the domains and the `Admins` list whole**, and the workspace's cap, kill switch and its own meter
-figures beside them.
+The roster now lives in the workspace's own database, at `workspaceRosters/<name>` (R5, D2817), and
+two service accounts hold a get-and-update role on that database, neither of them path-scoped:
+
+- the **workspace's credentials service**, whose custom role is `fugaroCredentialsDatabase` —
+  `firebasedatabase.instances.get` and `.update`, the pair every installation's credentials service is
+  given on its own project's database
+  (`deploy/terraform/gcp/modules/installation/credentials.tf`);
+- the **workspace's own service account**, holding `fugaroWorkspaceDatabase`, the same pair, for the
+  workspace's own service (`deploy/terraform/gcp/roots/workspace/main.tf`, whose plan is pinned to that
+  one account and that one grant).
+
+A grant on a Realtime Database has no path-level scope, so either role is a whole-database read and a
+whole-database write: **a compromise of either identity can rewrite the member list, the domains and
+the `Admins` list whole**, and the workspace's cap, kill switch and its own meter figures beside them.
 
 **What it cannot do is become an admin by writing the list.** D2823 is the fence: only an entry of
 `Admins` that also holds the live folder-owner (or service-account token-creator) binding is
 propagated or trusted, `project add` and `reconcile` use that intersection, and `status` flags both
 directions of the difference (WU11 `TestStatusFlagsAdminTampering`, WU12
-`TestDriftTrustsOnlyBoundAdmins`). The service cannot mint a binding: it holds no IAM write on the
-workspace's project and **no write on any member at all** (D1299 — WU3 pins the two accounts apart,
-`TestWorkspacePlanIsTheServiceAndItsOneGrant`). What a compromised service *can* do is make the
+`TestDriftTrustsOnlyBoundAdmins`). Neither account can mint a binding: the credentials service holds
+no IAM write on the workspace's project and **no write on any member at all** (D1299), and the
+workspace root's plan carries its one service account and its one database grant (WU3 keeps the SA
+fallback's new IAM account, D2803, distinct from both). What a compromised service *can* do is make the
 workspace manage the wrong people — drop a member's entry, mark an address external, suspend or
 restore the workspace's own stop — until a workspace admin reads `status`. It is a write the
 intersection makes visible, not one it prevents.
@@ -312,9 +320,10 @@ away, which is the same clock every workspace grant runs on.
    are workspace admins whatever `Admins` says, and its budget admins can rewrite the roster. D2823
    makes the difference visible; nothing makes it impossible. Stated, not closed.
 3. **The workspace credentials service's account can rewrite the roster** (§3): `Admins` included, and
-   the whole workspace database beside it. D2823's intersection is what keeps a rewrite out of
-   authority, and `status` is what shows it; a compromise of the service is a compromise of the
-   workspace's own state either way.
+   the whole workspace database beside it — and the workspace's own service account, which holds the
+   same get-and-update pair on that database, is the same reach. D2823's intersection is what keeps a
+   rewrite out of authority, and `status` is what shows it; a compromise of either identity is a
+   compromise of the workspace's own state either way.
 4. **The mirror discloses the workspace's member addresses and external marks to every member's
    launchers and viewers** (§3), and to the workspace project's own people. Bounded to addresses,
    kinds and marks; no rules change narrows it.
