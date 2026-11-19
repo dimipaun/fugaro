@@ -251,11 +251,23 @@ func tfToLineEnd(src string, i int) int {
 	return len(src)
 }
 
+// tfTopLevelHeaders are the ways a top-level block begins in a root, and the cut
+// list every reader here ends a block at: a block whose text ran on into the one
+// below it would be read as part of that block's body, which is how a `module`
+// granting a role, an `import` adopting a key or a `locals` holding one would be
+// read as the sanctioned block above it. `module`, `import`, `locals`, `moved`,
+// `removed` and `check` are blocks like any other and are cut at like any other.
+var tfTopLevelHeaders = []string{
+	"\nresource \"", "\ndata \"", "\nvariable \"", "\noutput \"", "\nprovider \"",
+	"\nmodule \"", "\nimport {", "\nlocals {", "\nmoved {", "\nremoved {", "\ncheck \"",
+	"\nterraform {",
+}
+
 // tfBlocks answers every block in one file whose header starts with the given
-// text. The cut is the next block header a root declares a name with, which is
-// enough for a sweep over those blocks.
+// text. The cut is the next top-level block header, which is enough for a sweep
+// over those blocks.
 func tfBlocks(src, header string) []string {
-	return tfBlocksUntil(src, header, []string{"\nresource \"", "\ndata \"", "\nvariable \"", "\noutput \"", "\nprovider \"", "\nterraform {"})
+	return tfBlocksUntil(src, header, tfTopLevelHeaders)
 }
 
 // tfBlocksUntil answers every block whose header starts with the given text and
@@ -580,7 +592,7 @@ func tfVarDefault(t *testing.T, name string) string {
 	t.Helper()
 	header := `variable "` + name + `"`
 	for _, rel := range tfFiles(t) {
-		for _, block := range tfBlocksUntil(tfSource(t, rel), header, []string{"\nvariable \"", "\nresource \"", "\ndata \"", "\noutput \"", "\nprovider \"", "\nterraform {"}) {
+		for _, block := range tfBlocksUntil(tfSource(t, rel), header, tfTopLevelHeaders) {
 			value, _ := tfAttr(block, "default")
 			return value
 		}
@@ -651,13 +663,35 @@ func tfIdentChar(c byte) bool {
 }
 
 // TestInfraTheRootIsOneFormOfConfiguration: the root is plain HCL in one form —
-// no `.tf.json`, no override file, no variable file — and its three files are
-// the ones the plan names. A second form is a place the key's algorithm, the
-// signer role or a sign-in provider is decided where no check above changes.
+// no `.tf.json`, no override file, no variable file, and no `module`, `import` or
+// `moved` block — and its three files are the ones the plan names. A second form
+// is a place the key's algorithm, the signer role or a sign-in provider is
+// decided where no check above changes.
 func TestInfraTheRootIsOneFormOfConfiguration(t *testing.T) {
 	want := []string{"auth.tf", "keyring.tf", "main.tf"}
 	if got := tfFiles(t); !slices.Equal(got, want) {
 		t.Errorf("the root's Terraform is %v, want %v: A3 creates these three files, and a file added to this root later — K1's pairedlist.tf is the next the plan names — is added to this list in the same commit, so that the root's whole shape stays something this suite states (A3)", got, want)
+	}
+
+	// A module, an import and a moved block are the same kind of second form,
+	// one block at a time, and each is refused rather than read: a module
+	// creates resources no block here names — the IAM module the key service
+	// uses would grant a role the sweep in TestInfraTheSignerRoleIsTheNarrowestThatSigns
+	// never sees — an import adopts a resource that already exists, a crypto key
+	// whose material was generated outside Cloud KMS among them, past every
+	// attribute check the tests below make, and a moved block renames a resource
+	// those checks look up by name. This root declares none of the three.
+	for _, rel := range tfFiles(t) {
+		src := tfSource(t, rel)
+		for _, kind := range []struct{ header, what string }{
+			{`module "`, "a `module`"},
+			{"import {", "an `import`"},
+			{"moved {", "a `moved`"},
+		} {
+			for _, block := range tfBlocks(src, kind.header) {
+				t.Errorf("%s declares %s block:\n%s\na module, an import and a moved block each change what this root applies with no block below changing, which is why the tests here read the root's blocks by name: a module creates resources no check here can name, an import adopts one that already exists, and a moved block renames one (A3, D2792)", rel, kind.what, strings.TrimSpace(block))
+			}
+		}
 	}
 }
 
@@ -755,9 +789,12 @@ func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 		{"service_account", "google_service_account.signer.email"},
 	}, "the identity a Cloud Run service runs as is the identity it IS, so a template naming another account holds the signer role from wherever that account's code runs (A3)")
 
-	// Every block in this root that grants anything at all is one of the four
-	// grants the assertion signer needs, and the list is the whole of it. A
-	// count of one resource type would miss a second holder written another way
+	// Every block of this root that can grant anything is one of the four grants
+	// the assertion signer needs, and the list is the whole of it. A `resource`
+	// block is every one of them because the root declares no `module`, no
+	// `import` and no `moved` block — TestInfraTheRootIsOneFormOfConfiguration
+	// refuses those, and each of the three is a grant this sweep could not see.
+	// A count of one resource type would miss a second holder written another way
 	// — the signer role granted with google_kms_key_ring_iam_binding or an
 	// `_iam_policy` instead of `_iam_member`, a second custom role, a plain
 	// `user:` added beside the signer's account, a grant whose role is a
@@ -943,7 +980,7 @@ func TestInfraTheServiceSignsWithThisKeyAndServesTheJWKS(t *testing.T) {
 	}, "the image is the one the release builds and the owner deploys, so it is an input rather than a value written here")
 
 	want := map[string]string{
-		"FUGARO_SIGNING_KEY":       `"projects/${var.project}/locations/${var.region}/keyRings/${var.keyring}/cryptoKeys/${var.key}/cryptoVersions/1"`,
+		"FUGARO_SIGNING_KEY":       `"${google_kms_crypto_key.signing.id}/cryptoKeyVersions/1"`,
 		"FUGARO_KEYSET_BUCKET":     "google_storage_bucket.keyset.name",
 		"FUGARO_KEYSET_OBJECT":     "var.keyset_object",
 		"FUGARO_JWKS_PATH":         "var.jwks_path",

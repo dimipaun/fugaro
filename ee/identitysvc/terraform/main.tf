@@ -164,9 +164,13 @@ resource "google_cloud_run_v2_service" "signer" {
     containers {
       image = var.image
 
+      # The key resource's own name, so that the revision waits for the key to
+      # exist and the version's name is written once. Cloud KMS spells the
+      # segment `cryptoKeyVersions`, and a path assembled from the variables is
+      # a second spelling of the key's name and no edge to the key itself.
       env {
         name  = "FUGARO_SIGNING_KEY"
-        value = "projects/${var.project}/locations/${var.region}/keyRings/${var.keyring}/cryptoKeys/${var.key}/cryptoVersions/1"
+        value = "${google_kms_crypto_key.signing.id}/cryptoKeyVersions/1"
       }
       env {
         name  = "FUGARO_KEYSET_BUCKET"
