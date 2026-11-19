@@ -1811,6 +1811,7 @@ describe('no module under src/renderer writes an inline style', () => {
     // the walk has nothing to find there.
     expect([...RENDERER_FILES]).toEqual([
       'app.ts',
+      'cache-invalidate.ts',
       'checkout.ts',
       'confirm.ts',
       'entry.ts',
