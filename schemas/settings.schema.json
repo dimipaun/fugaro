@@ -357,6 +357,9 @@
         "agent.review": {
           "default": "unset = none"
         },
+        "agent.review_against_task": {
+          "default": "unset = on (config.Agent.ReviewAgainstTaskOn)"
+        },
         "agent.review_rounds": {
           "default": "unset = the run's rigor mode decides (rigor.DefaultRounds)"
         },
