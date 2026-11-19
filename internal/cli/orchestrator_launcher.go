@@ -236,19 +236,20 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 	if ts.Recipe != nil {
 		gotRecipe = ts.Recipe.Name
 	}
-	// The external ticket is the one pair with a THIRD state, and it is not a
-	// bug in the launch that writes it: externalSkew, the field's only writer,
-	// DROPS the item's id rather than refusing the attempt when the job image
-	// predates the release that reads the field (a task an older runner refuses
-	// is a paid-for attempt that never started, that gate's own reason). So a
-	// stored task carrying no ticket where the item names one is a task a launch
-	// really wrote, and refusing it would strand an approved attempt on every
-	// tick. An empty task field is read as the item's own; a task naming a
-	// DIFFERENT ticket is refused like any other field, and so is one naming a
-	// ticket the item does not. What that admits is an attacker clearing the
-	// ticket, which costs the run its `Fixes` line — where the fields around it
-	// are the attempt itself, and where the same attacker could always have
-	// replaced the whole task.
+	// The external ticket is the other such pair, with a THIRD state, and it is
+	// not a bug in the launch that writes it: the daemon's launch copies the
+	// item's id into the task, and externalSkew — the one thing that ever clears
+	// it — DROPS it rather than refusing the attempt when the job image predates
+	// the release that reads the field (a task an older runner refuses is a
+	// paid-for attempt that never started, that gate's own reason). So a stored
+	// task carrying no ticket where the item names one is a task a launch really
+	// wrote, and refusing it would strand an approved attempt on every tick. An
+	// empty task field is read as the item's own; a task naming a DIFFERENT
+	// ticket is refused like any other field, and so is one naming a ticket the
+	// item does not. What that admits is an attacker clearing the ticket, and
+	// the ticket is a link in the pull request's body and nothing else (the
+	// runner's only reader of the field is prflow's Fixes line): the fields
+	// around it are the attempt itself.
 	storedTicket := ts.External
 	if storedTicket == "" {
 		storedTicket = spec.External
