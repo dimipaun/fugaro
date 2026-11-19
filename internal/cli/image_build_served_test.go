@@ -104,8 +104,8 @@ func TestBuildServiceURLReadsThePlanAndTheAppliedRoot(t *testing.T) {
 			wantURL: "https://c.example.invalid",
 		},
 		{
-			name: "a served repository this config has no address for",
-			lc: &localcfg.Config{Repos: map[string]localcfg.Repo{"acme/app": {CredentialsServiceReady: on}}},
+			name:    "a served repository this config has no address for",
+			lc:      &localcfg.Config{Repos: map[string]localcfg.Repo{"acme/app": {CredentialsServiceReady: on}}},
 			plan:    true,
 			wantErr: "records no address for it",
 		},
