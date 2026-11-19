@@ -1899,6 +1899,30 @@ var runAccountGrants = setOf(
 	// installation's own (it is not the runs bucket and not a prefix the
 	// deployer's fence admits).
 	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.credentials_bundle[0].secret_id | google_service_account.credentials[0].member | for_each= | perms=`,
+	// Reviewed for P5.3.5 (the voice hop's forwarding half, the voice design's
+	// section 4.4 point 4): the hop's own account, on the ONE provider-key
+	// container the installation module creates for it (secrets.tf's
+	// google_secret_manager_secret.voice_provider_keys, the literal ID
+	// gcp.VoiceProviderKeysSecret, count-gated on the same var.voice_service as
+	// the account) and on nothing else. It is the row above in every respect —
+	// roles/secretmanager.secretAccessor carries no storage permission, nothing
+	// that grants itself a role, no actAs and no token minting; it reads the
+	// VALUE of a container that already exists — and the target is neither the
+	// runs bucket nor a prefix any fence of this tree admits: the container is
+	// the installation's own, created empty by `fugaro update`, carrying the
+	// keys an operator typed by hand and never a value Terraform, a repository
+	// or a job wrote.
+	//
+	// What it deliberately IS, and what this row is the record of: the account
+	// behind an endpoint anyone on the internet may call can read every
+	// admitted provider's key (voice.tf's allUsers binding, SECURITY.md's voice
+	// section). That reach is the design's — the device holds no provider
+	// credential, the owner's ruling of 2026-10-19 — and what bounds it is the
+	// container being this one, the process's own code (internal/voicesvc's
+	// callLog, which logs no byte of any header or body) and the register of
+	// what each provider's terms are. A second container, a wider role or a
+	// second member on this one is the finding this allowlist is for.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=google_secret_manager_secret.voice_provider_keys[0].secret_id | google_service_account.voice[0].member | for_each= | perms=`,
 	// Reviewed for 0.10.1: the credentials service's own account, on its own
 	// custom role in the Firebase project the database lives in
 	// (modules/installation/credentials.tf, D6's cross-project grant: the
