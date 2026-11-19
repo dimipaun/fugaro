@@ -32,8 +32,10 @@ import (
 // provider this installation cannot read a file out of, and catalog.Resolve,
 // which is what `fugaro image build` resolves an entry through — the ref, the
 // file at it, and the definition's own refusals (bounded, and the credential a
-// definition may not carry, which is where a secret mount is refused). No
-// second spelling of any of them lives here.
+// definition may not carry, which is where a secret mount is refused), with
+// catalog.ResolveRef for the ref on its own, which is what tells a branch the
+// repository no longer has from a definition this release refuses. No second
+// spelling of any of them lives here.
 //
 // It touches nothing in the installation's cloud: no write, no plan, no apply,
 // no bucket, no job — which is what makes it safe while runs are in flight, and
@@ -152,15 +154,23 @@ func (g *catalogGuard) check(ctx context.Context, ent config.Entry) {
 	if err == nil {
 		return
 	}
-	// The pin is the whole problem exactly when the same entry without it
-	// resolves: the default branch has the file, this release reads it, and
-	// nothing the pin gave the owner is lost by taking it out.
+	// The pin is the whole problem exactly when the branch it names is not one
+	// the repository has — the ref read on its own (catalog.ResolveRef), so a
+	// definition this release refuses and a read that failed for any other
+	// reason are never read as a branch that is gone — and the same entry
+	// without it resolves: the default branch has the file, this release reads
+	// it, and nothing the pin gave the owner is lost by taking it out. Anything
+	// else is named and left where it is: a pin this run took out over one of
+	// those would move the entry onto the default branch's revision and report
+	// a branch the repository still has as one it does not.
 	if ent.Source.Branch != "" {
 		unpinned := probe
 		unpinned.Source.Branch = ""
-		if _, derr := catalog.Resolve(ctx, open, r.Provider, unpinned); derr == nil {
-			g.unpin(ent)
-			return
+		if _, rerr := catalog.ResolveRef(ctx, open, r.Provider, probe); rerr != nil {
+			if _, derr := catalog.Resolve(ctx, open, r.Provider, unpinned); derr == nil {
+				g.unpin(ent)
+				return
+			}
 		}
 	}
 	g.name(ent, err)
@@ -217,9 +227,10 @@ func (g *catalogGuard) name(ent config.Entry, err error) {
 
 // unpin removes a stale pin from the owner's file, or names the edit it could
 // not make. The condition the caller checked is the whole of why this is
-// unambiguous: the pinned branch has no such file and the default branch has
-// it, so the pin is the difference between an entry this release refuses and
-// one it reads.
+// unambiguous: the branch the pin names is not one the repository has, and the
+// same entry without the pin resolves — the default branch has the file and
+// this release reads it — so the pin is the difference between an entry this
+// release refuses and one it reads.
 //
 // The edit is one splice, the file is backed up first, and the config the run
 // holds follows it — so every later write of this file, this run's own

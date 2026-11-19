@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 )
@@ -18,7 +20,9 @@ import (
 //
 // The fixture is the update door's own project fixture (newProjectFixture, the
 // local config the door reads) with a catalog appended to it, and the catalog
-// build's provider seam pointed at a fake repository (catalogOpen): the read the
+// build's provider seam pointed at a fake repository (stubGuardRepository: the
+// build's own seam, with the repository's ref read answering as the host does
+// for a branch the repository no longer has — guardRepository). The read the
 // guard makes is the build's own, so the test drives it through the same seam.
 // The credential is in the environment (EnvGitHubAppID and EnvGitHubAppKey), so
 // no secret is read and no policy node is consulted — the two reads
@@ -70,8 +74,8 @@ const guardSecretYAML = `image_catalog:
 `
 
 // guardState is a repository whose default branch holds guardDef at both paths
-// and whose only branch is main: a read at any other ref fails, as a branch the
-// repository no longer has does (fake.Provider.treeOf).
+// and whose only branch is main: a ref it does not name is a branch the
+// repository no longer has (guardRepository.Commit).
 func guardState() fake.State {
 	files := map[string]string{"docker/agent.Dockerfile": guardDef, "docker/plain.Dockerfile": guardDef}
 	return fake.State{
@@ -79,6 +83,37 @@ func guardState() fake.State {
 		Commits:  map[string]string{"": guardSHA},
 		Trees:    map[string]map[string]string{guardSHA: files},
 	}
+}
+
+// guardRepository is the repository the guard's reads happen on: a fake.Provider
+// whose ref read refuses a ref the state models no branch and no commit for —
+// the host's 404 for a branch the repository no longer has. The fake's own
+// Commit answers a commit derived from any ref, so a test that does not care
+// which commit a branch is at writes no entry; the guard's unpin condition is
+// exactly that read, so the repository has to say it here.
+type guardRepository struct{ *fake.Provider }
+
+func (p guardRepository) Commit(ctx context.Context, ref string) (string, error) {
+	if _, ok := p.State.Branches[ref]; ok {
+		return p.Provider.Commit(ctx, ref)
+	}
+	if _, ok := p.State.Commits[ref]; ok {
+		return p.Provider.Commit(ctx, ref)
+	}
+	return "", fmt.Errorf("fake repository %s has no branch %q", p.Repo, ref)
+}
+
+// stubGuardRepository is stubCatalogProviderState with the repository above: a
+// catalog entry whose branch is gone is what the guard's one edit is about, and
+// the fixture is what says the branch is gone.
+func stubGuardRepository(t *testing.T, state fake.State) {
+	t.Helper()
+	p := guardRepository{Provider: &fake.Provider{Repo: "acme/app", State: state}}
+	was := openCatalogProvider
+	openCatalogProvider = func([]string, func(string)) (string, gitprov.Opener, error) {
+		return "", func(context.Context, string, string) (gitprov.Provider, []string, error) { return p, nil, nil }, nil
+	}
+	t.Cleanup(func() { openCatalogProvider = was })
 }
 
 // stubCatalogCredential puts the credential the catalog build's seam resolves
@@ -101,7 +136,7 @@ func newGuardRig(t *testing.T, catalog string, state fake.State) (*migrationRig,
 	f := newProjectFixture(t, "")
 	appendConfig(t, catalog)
 	stubCatalogCredential(t)
-	stubCatalogProviderState(t, state)
+	stubGuardRepository(t, state)
 	h := newMigrationRig(t, f, &initOptions{})
 	before, err := os.ReadFile(f.path)
 	if err != nil {
@@ -183,19 +218,47 @@ func TestUpdateCatalogGuardRemovesAStalePin(t *testing.T) {
 }
 
 // TestUpdateCatalogGuardNamesWhatItCannotFix is the other half: an entry this
-// release will refuse whose fix is not the guard's to make — a pin whose branch
-// has no such file (the default branch does not have it either), the issue's own
-// entry, a definition that asks a build for a secret of its own, which the pin
-// is not the reason for, and the same definition written inline. Each is named
-// in one line with the edit, and the file is left exactly as it was.
+// release will refuse whose fix is not the guard's to make — a branch the
+// repository no longer has whose file the default branch does not have either,
+// a branch that is there whose file is not (the file moved or was deleted on
+// it), the issue's own entry, whose definition asks a build for a secret the
+// pin is not the reason for, and the same definition written inline. Each is
+// named in one line with the edit, and the file is left exactly as it was: a
+// pin this run removed over one of these would move the entry onto the default
+// branch's revision and report a branch the repository still has as one it
+// does not.
 func TestUpdateCatalogGuardNamesWhatItCannotFix(t *testing.T) {
 	const asksForASecret = "FROM example.invalid/base\nRUN --mount=type=secret,id=npm true\n"
-	// The repository the pinned branch has no file on, and whose default branch
-	// does not have it either: only docker/other.Dockerfile is there.
+	// The branch is gone and the default branch does not have the file either:
+	// only docker/other.Dockerfile is there.
 	elsewhere := fake.State{
 		Branches: map[string]map[string]string{"main": {"docker/other.Dockerfile": guardDef}},
 		Commits:  map[string]string{"": guardSHA},
 		Trees:    map[string]map[string]string{guardSHA: {"docker/other.Dockerfile": guardDef}},
+	}
+	// The branch is there and its file is not: the file was moved on it, which
+	// is not a branch the repository no longer has, so the pin is not this run's
+	// to remove — the entry would read the default branch's revision without a
+	// word about what was wrong.
+	movedFile := fake.State{
+		Branches: map[string]map[string]string{
+			"main":                  {"docker/agent.Dockerfile": guardDef},
+			"fugaro/2026-11-01-abc": {"docker/other.Dockerfile": guardDef},
+		},
+		Commits: map[string]string{"": guardSHA},
+		Trees:   map[string]map[string]string{guardSHA: {"docker/agent.Dockerfile": guardDef}},
+	}
+	// The pinned branch is there and its definition asks for a secret, while the
+	// default branch's definition is one this release reads: the pin is not what
+	// the entry is refused for, and the run that took it out would say the
+	// repository no longer has the branch and never say the real finding.
+	pinnedRefused := fake.State{
+		Branches: map[string]map[string]string{
+			"main":                  {"docker/agent.Dockerfile": guardDef},
+			"fugaro/2026-11-01-abc": {"docker/agent.Dockerfile": asksForASecret},
+		},
+		Commits: map[string]string{"": guardSHA},
+		Trees:   map[string]map[string]string{guardSHA: {"docker/agent.Dockerfile": guardDef}},
 	}
 	// The issue's shape: the pinned branch has the file, and the file asks for a
 	// secret — so the pin is not what this release refuses, and taking it out
@@ -211,11 +274,19 @@ func TestUpdateCatalogGuardNamesWhatItCannotFix(t *testing.T) {
 		want          []string
 	}{
 		{
-			name: "a pin whose branch has no such file", catalog: guardPinnedYAML, state: elsewhere,
+			name: "a pin whose branch is gone and whose file the default branch has not either", catalog: guardPinnedYAML, state: elsewhere,
+			want: []string{"image catalog:", "catalog entry agent", "fugaro/2026-11-01-abc"},
+		},
+		{
+			name: "a pin whose branch is there and has no such file", catalog: guardPinnedYAML, state: movedFile,
 			want: []string{"image catalog:", "catalog entry agent", "docker/agent.Dockerfile"},
 		},
 		{
-			name: "a definition that asks for a secret", catalog: guardPinnedYAML, state: bothBranches,
+			name: "a definition that asks for a secret", catalog: guardPinnedYAML, state: pinnedRefused,
+			want: []string{"image catalog:", "catalog entry agent", "asks for a secret"},
+		},
+		{
+			name: "a definition that asks for a secret on both branches", catalog: guardPinnedYAML, state: bothBranches,
 			want: []string{"image catalog:", "catalog entry agent", "asks for a secret"},
 		},
 		{
@@ -300,7 +371,7 @@ func TestUpdateConvergesWithACatalog(t *testing.T) {
 	r.appendConfig(t, guardPinnedYAML)
 	registerInstallation(t, r.initRig)
 	stubCatalogCredential(t)
-	stubCatalogProviderState(t, guardState())
+	stubGuardRepository(t, guardState())
 
 	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
