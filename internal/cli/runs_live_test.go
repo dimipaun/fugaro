@@ -253,6 +253,37 @@ func TestLiveSetOneExecutionList(t *testing.T) {
 	}
 }
 
+// TestLiveSetMissesARelaunchUnderAnOlderRunID pins the one run the live query
+// can miss, so the divergence is a fact a reader can see rather than a hole
+// nobody wrote down: a relaunch under an older run ID -- `run --retry`, or a
+// re-issue by the resident launcher -- takes a fresh claim on a run minted long
+// before, and the claim pass is bounded by the claim window's run IDs, which do
+// not reach it. The scan reads it as launching; the live query does not.
+//
+// The bound is deliberate: a claim says nothing about the run it is on, so
+// finding one on an older run ID means probing every run of the window, on
+// --state running as well, which is the cost these two states exist to avoid
+// (F2, D2960). The opposite test is the window's own mixed fixture, where the
+// two readings are equal.
+//
+// Mutation caught: bounding the claim pass by anything wider (the window's own
+// run IDs) while leaving this pinned divergence unrecorded in liveRuns' comment
+// and in the --state help.
+func TestLiveSetMissesARelaunchUnderAnOlderRunID(t *testing.T) {
+	f := newCloudFixture(t)
+	id := recentRunID(t, time.Hour, "ffff")
+	now := lsNow()
+	seedLiveRun(t, f, id, nil, &now)
+
+	scan := scanState(t, f, runview.StatusLaunching)
+	if len(scan) != 1 || scan[0].RunID != id {
+		t.Fatalf("the scan reads the relaunched run as %v, want the one launching run %s: this test pins the divergence below, so a scan that stopped reading it would leave the pin saying nothing", runIDs(scan), id)
+	}
+	if got, _ := lsJSON(t, "--state", "launching"); len(got.Runs) != 0 {
+		t.Errorf("--state launching = %v, want none: the claim is on a run ID older than the claim window, and this test pins that the live query does not reach it", runIDs(got.Runs))
+	}
+}
+
 // TestLiveStateWithPRFold: the fold's live word comes from the live set too. A
 // run going on a pull request carries `live` on its own row, without reading
 // the runs of that pull request that ended (D2967) — and the word --state

@@ -288,7 +288,11 @@ func newLsCmd() *cobra.Command {
 			"run whose launch is in flight, are answered from the live set -- the\n" +
 			"executions the backend is still running, and the claims a launch in flight\n" +
 			"holds -- so those two read only the runs that set names, never every run of\n" +
-			"the window (D2960).\n\n" +
+			"the window (D2960). One run launching can miss: a relaunch under an older\n" +
+			"run ID (run --retry, or a re-issue by the resident launcher) holds a fresh\n" +
+			"claim on a run older than the claim window, which is what bounds the\n" +
+			"listing those claims are found by, so a scan shows that run and this query\n" +
+			"does not.\n\n" +
 			"The fourth state of a pull request, orphan (no run ever produced or follows\n" +
 			"it), is one no listing of runs can name: such a pull request has no run and\n" +
 			"so no row here, and telling one from every other would take a call to the\n" +

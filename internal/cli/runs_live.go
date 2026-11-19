@@ -57,6 +57,17 @@ type liveSet struct {
 // settle it otherwise) and a live query leaves it out -- the reading of a run
 // the platform has lost, whose only witness is the record it wrote before it
 // died.
+//
+// Nor can it see a claim on a run ID minted before the claim window: a
+// relaunch under an older run ID -- `run --retry`, or a re-issue by the
+// resident launcher, both of which launch an attempt's stored run id again --
+// holds a fresh claim on a run the claim-window listing of run ids does not
+// reach, so a scan reads that run as `launching` and this query leaves it out.
+// The claim pass is bounded by the claim window because that is the only bound
+// a claim's own staleness allows (F2): a claim says nothing about the run it is
+// on, so the alternative -- the window's own run ids, one claim probe each --
+// spends a probe on every run of the window, on --state running too, which is
+// the cost these two states exist to avoid (D2960).
 func liveRuns(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) (liveSet, error) {
 	lf := backend.ListFilter{ActiveOnly: true}
 	if !f.since.IsZero() {
@@ -101,9 +112,11 @@ func liveRuns(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) (li
 			r := lsRef{slug, id}
 			// A run the executions already found is a run whose claim is the
 			// one that launch took and kept (a claim is released only when the
-			// launch failed), so it is not read again here, and a claim made
-			// on a run the mint window leaves out is not one a listing bounded
-			// by --since means to read.
+			// launch failed), so it is not read again here; a run the --since
+			// window leaves out is not one this listing means to read; and a
+			// run ID older than the claim window is not listed at all, which
+			// is the one run the two states can miss -- a relaunch under it
+			// (liveRuns' comment).
 			if seen[r] || !inLiveWindow(r, f.since) {
 				continue
 			}
