@@ -1820,6 +1820,8 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/model.ts',
       'graph/move.ts',
       'installations.ts',
+      'manage/command.ts',
+      'manage/types.ts',
       'new-bridge.ts',
       'screens/accountkeys.ts',
       'screens/coordinator.ts',
