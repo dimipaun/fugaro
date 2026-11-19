@@ -106,6 +106,16 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		"repo":                 {"user:launcher@example.com", "user:operator@example.com"},
 		"firebase":             {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 		"firebase-coordinator": {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
+		// The Firebase root with the runtime account handed over as
+		// mobile_account (mobile plan task P5; D2782 as amended by F31, O8): the
+		// device-only signer and the one signJwt on it — the public mobile
+		// service's whole reach over the Firebase project — are planned and
+		// covered here, and this is the plan internal/infra's
+		// TestCredentialsMobileSignerIsInTheFirebaseProject reads them off. Every
+		// other Firebase golden plans neither, which is the convergence the
+		// update owes (TestMobileServiceIsOffUntilTheSwitchIsOn: the tfvars
+		// hand no account over, and the signer does not exist).
+		"firebase-mobile": {"user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
@@ -151,17 +161,23 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 			// really emits.
 			// The public mobile service's own invoker binding (mobile plan task
 			// P5; D2782 as amended by F31, O8) is the same state one service
-			// over, and it is in every plan of this root whose fixture turns the
-			// credentials service on — that one switch creates the mobile
-			// service, its account and this binding beside the private service
-			// (mobile_service.tf). The three plans below are exactly the
-			// fixtures that carry it. The member is on purpose, the cover names
-			// no kind for `allUsers` (the front door's and the hop's state), and
+			// over, and it is in ONE plan of this root: installation-credentials,
+			// whose tfvars carry the mobile switch beside the credentials
+			// service the fixture already turns on. The switch is what creates
+			// the mobile service, its account and this binding
+			// (mobile_service.tf), and the script adds the key rather than a
+			// fixture writing it, because `fugaro update` writes no key for it
+			// until a released image runs the mode the service is started in.
+			// installation-review and installation-voice carry the credentials
+			// service and NOT the switch, which is the shape a
+			// previous-version installation's plan has: no service, no public
+			// binding, no finding. The member is on purpose, the cover names no
+			// kind for `allUsers` (the front door's and the hop's state), and
 			// what refuses the member everywhere else is deploy/terraform's
 			// TestAllUsersIsRefusedOnEveryOtherResource. The two appends are in
 			// the order the plans emit their changes, sorted by address.
 			want := []string{}
-			if name == "installation-credentials" || name == "installation-review" || name == "installation-voice" {
+			if name == "installation-credentials" {
 				want = append(want, `module.installation.google_cloud_run_v2_service_iam_member.mobile_public[0] (grants to allUsers, who is not on the review screen)`)
 			}
 			if name == "installation-voice" {

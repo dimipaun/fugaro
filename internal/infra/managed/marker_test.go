@@ -1954,9 +1954,15 @@ var runAccountGrants = setOf(
 	// installation's project (modules/installation/mobile_service.tf) and the
 	// service runs as it; the database row is the SAME custom role on the SAME
 	// whole-instance binding as the row above, written in credentials.tf beside
-	// it; the signJwt is on the DEVICE-ONLY signer the Firebase root creates
-	// (modules/firebase/iam.tf — an account with no roles at all: "It is granted
-	// NO roles, in the FP or anywhere"); and the invoker row is the tree's third
+	// it; the signJwt is on the DEVICE-ONLY signer the Firebase root creates,
+	// and it is written in THAT module's own iam.tf beside the account — not in
+	// the installation root that creates the service, because `fugaro update`
+	// applies the installation root before the Firebase stage and a row naming
+	// an account of the later root would 404 the apply that first carried it.
+	// The member is therefore the installation's own account as a tfvars string
+	// (var.mobile_account) rather than a reference to a resource this module
+	// creates; the signer holds no roles at all ("It is granted NO roles, in the
+	// FP or anywhere"); and the invoker row is the tree's third
 	// allUsers binding, the front door's and the hop's shape.
 	//
 	// Why none of the three is a write path to the marker, re-derived here
@@ -1984,7 +1990,7 @@ var runAccountGrants = setOf(
 	// row, a second grant to this account, or a wider role here is the finding
 	// this list is for.
 	`google_project_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase" | project=var.credentials_service.firebase_project | google_service_account.mobile[0].member | for_each= | perms=firebasedatabase.instances.get,firebasedatabase.instances.update`,
-	`google_service_account_iam_member | "projects/${var.credentials_service.firebase_project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.credentials_service.firebase_project}/serviceAccounts/fugaro-device-signer@${var.credentials_service.firebase_project}.iam.gserviceaccount.com" | google_service_account.mobile[0].member | for_each= | perms=?`,
+	`google_service_account_iam_member | "projects/${var.project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.project}/serviceAccounts/fugaro-device-signer@${var.project}.iam.gserviceaccount.com" | "serviceAccount:${var.mobile_account}" | for_each= | perms=?`,
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=google_cloud_run_v2_service.mobile[0].name | "allUsers" | for_each= | perms=`,
 	// Reviewed for O16b (D2020 (a)) and, for the row after it, for P5.3.3:
 	// the two readers' own accounts, on the get-only role the same module

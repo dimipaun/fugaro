@@ -95,6 +95,24 @@ func (p credentialsMobilePlan) mobileMember() string {
 // second spelling of it in Go, is what the rows below come from.
 func credentialsMobilePlanOf(t *testing.T) credentialsMobilePlan {
 	t.Helper()
+	spec := credentialsMobileSpecOf(t)
+	fp := spec.CredentialsService.FirebaseProject
+	// enable_mobile_service is the module's switch (mobile_service.tf), and the
+	// plan is the plan of an installation that has turned it ON: no Go field and
+	// no fixture carries it, because `fugaro update` writes no key for it until
+	// the release that lands the mode the service is started in (I1), so the key
+	// is written here and nowhere else — exactly as an operator's own hand-edited
+	// tfvars would carry it.
+	_, rows := installationPlanWith(t, spec, map[string]any{enableMobileServiceVar: true})
+	return credentialsMobilePlan{rows: rows, project: spec.Project, firebaseProject: fp}
+}
+
+// credentialsMobileSpecOf is the credentials fixture as this package writes it:
+// the one installation whose plan reaches the mobile service at all, and the one
+// whose Firebase project is not its own — the shape the second signer exists
+// for.
+func credentialsMobileSpecOf(t *testing.T) InstallationSpec {
+	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "installation-credentials.tfvars.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +128,7 @@ func credentialsMobilePlanOf(t *testing.T) credentialsMobilePlan {
 	if fp == "" || fp == spec.Project {
 		t.Fatalf("the credentials fixture names Firebase project %q beside the installation's own %q: this task's whole shape is a signer in the FIREBASE project, and a same-project fixture could not tell the two apart", fp, spec.Project)
 	}
-	return credentialsMobilePlan{rows: installationPlanFor(t, spec), project: spec.Project, firebaseProject: fp}
+	return spec
 }
 
 // afterStr is one planned attribute as a string, "" when the plan left it
@@ -266,8 +284,8 @@ func tplContainer(t *testing.T, svc plannedResource) map[string]any {
 // and nothing else of this run's.
 func TestCredentialsMobileSignerIsInTheFirebaseProject(t *testing.T) {
 	p := credentialsMobilePlanOf(t)
-	fb := firebaseGoldenRows(t)
-	const signerAddr = "module.firebase.google_service_account.device_signer"
+	fb := firebaseGoldenRows(t, "firebase-mobile")
+	const signerAddr = "module.firebase.google_service_account.device_signer[0]"
 	signer, ok := fb[signerAddr]
 	if !ok {
 		t.Fatalf("the Firebase root creates no %s: Firebase accepts a custom token only from a service account of the Firebase project, so a signer created in the installation's own project could not sign one (O8, F31)", signerAddr)
@@ -281,10 +299,21 @@ func TestCredentialsMobileSignerIsInTheFirebaseProject(t *testing.T) {
 	// ... and it holds no role of its own: what the mobile service may do with
 	// it is the signJwt grant below, and an account with roles of its own would
 	// be reach beyond the one this task announced.
-	const grantAddr = "module.installation.google_service_account_iam_member.mobile_token_minter[0]"
-	grant, ok := p.rows[grantAddr]
+	//
+	// The grant is read off the FIREBASE root's golden and not off the
+	// installation plan, and that is the fix of a review finding rather than a
+	// preference: `fugaro update` applies the installation root BEFORE the
+	// Firebase stage (internal/cli/init_stages.go), so a grant written in the
+	// installation root would name an account the Firebase root had not created
+	// yet on the first update carrying it — a 404 in the middle of an apply. It
+	// is written where the signer is created (modules/firebase/iam.tf), and the
+	// Firebase golden whose tfvars hand the runtime account over
+	// (firebase-mobile, scripts/gen-golden-plans.sh) is the plan that carries
+	// it.
+	const grantAddr = "module.firebase.google_service_account_iam_member.mobile_token_minter[0]"
+	grant, ok := fb[grantAddr]
 	if !ok {
-		t.Fatalf("the plan grants no signJwt to the mobile account (%s): the service cannot mint the custom token a pairing hands a phone, and the endpoints it serves answer refusals", grantAddr)
+		t.Fatalf("the Firebase plan grants no signJwt to the mobile account (%s): the service cannot mint the custom token a pairing hands a phone, and the endpoints it serves answer refusals", grantAddr)
 	}
 	wantPath := "projects/" + p.firebaseProject + "/serviceAccounts/" + deviceSignerAccountID + "@" + p.firebaseProject + ".iam.gserviceaccount.com"
 	if got := afterStr(grant, "service_account_id"); got != wantPath {
@@ -294,14 +323,15 @@ func TestCredentialsMobileSignerIsInTheFirebaseProject(t *testing.T) {
 		t.Errorf("%s grants the role %q, want %q: the permission is iam.serviceAccounts.signJwt and nothing else, and the role is a literal of the Firebase project's own custom role", grantAddr, got, want)
 	}
 	if got := afterStr(grant, "member"); got != p.mobileMember() {
-		t.Errorf("%s is granted to %q, want the mobile runtime account %q", grantAddr, got, p.mobileMember())
+		t.Errorf("%s is granted to %q, want the mobile runtime account %q — the account the INSTALLATION's plan creates and hands to this root as var.mobile_account, which is why the same address is read off two plans of two roots here", grantAddr, got, p.mobileMember())
 	}
 	// The Firebase root grants the new account nothing, which is the other half
-	// of "device-only": every grant of the Firebase root that names it is the
-	// account resource itself.
+	// of "device-only": every row of the Firebase root that names it is the
+	// account resource itself and the ONE grant above, which is on the account
+	// rather than held by it.
 	for addr, row := range fb {
-		if strings.Contains(row.json(), deviceSignerAccountID) && addr != signerAddr {
-			t.Errorf("the Firebase root's %s names %s: the device-only signer is granted no role of its own — what the mobile service may do with it is the installation root's signJwt grant, and anything else here is reach nobody announced", addr, deviceSignerAccountID)
+		if strings.Contains(row.json(), deviceSignerAccountID) && addr != signerAddr && addr != grantAddr {
+			t.Errorf("the Firebase root's %s names %s: the device-only signer is granted no role of its own — what the mobile service may do with it is the one signJwt grant above, and anything else here is reach nobody announced", addr, deviceSignerAccountID)
 		}
 	}
 }
@@ -323,13 +353,16 @@ func TestCredentialsMobileAccountHoldsTheDatabaseRoleOnly(t *testing.T) {
 	}
 	slices.Sort(grants)
 	const dbAddr = "module.installation.google_project_iam_member.mobile_database[0]"
-	want := []string{
-		"module.installation.google_service_account_iam_member.mobile_token_minter[0]",
-		dbAddr,
-	}
-	slices.Sort(want)
+	// The installation plan's WHOLE reach for this account, and it is one row:
+	// the database binding below. The signJwt on the device-only signer is in
+	// the Firebase root's plan (TestCredentialsMobileSignerIsInTheFirebaseProject
+	// above), because that root is where the signer is created and `fugaro
+	// update` applies this one first — a row here would name an account the
+	// Firebase stage had not created yet. testdata/golden/firebase-mobile.plan.json
+	// is the other half, and the two plans' one shared string is the member.
+	want := []string{dbAddr}
 	if !slices.Equal(grants, want) {
-		t.Fatalf("the plan grants the mobile account %v, want exactly %v: its reach is the database role O1 announced and the signJwt on the device-only signer, and a further grant here — a project role, a bucket, a secret, an invoker on either service — is reach nobody priced for the one endpoint anyone on the internet may call", grants, want)
+		t.Fatalf("the installation plan grants the mobile account %v, want exactly %v: its reach is the database role O1 announced and, in the Firebase root's own plan, the signJwt on the device-only signer — and a further grant here, a project role, a bucket, a secret or an invoker on either service, is reach nobody priced for the one endpoint anyone on the internet may call", grants, want)
 	}
 	db, ok := p.rows[dbAddr]
 	if !ok {
@@ -363,15 +396,21 @@ func TestCredentialsMobileAccountHoldsTheDatabaseRoleOnly(t *testing.T) {
 	}
 }
 
-// firebaseGoldenRows is the committed Firebase golden plan's rows by address —
-// a real plan of the Firebase root against internal/infra/testdata/
-// firebase.tfvars.json, the fixture whose project is aurora-fp, which is the
-// Firebase project the credentials fixture names too. It is read as a plan
-// rather than as the module's text because "the signer is in the Firebase
-// project" is a fact of the plan the Firebase root applies.
-func firebaseGoldenRows(t *testing.T) map[string]plannedResource {
+// firebaseGoldenRows is a committed Firebase golden plan's rows by address —
+// a real plan of the Firebase root, whose project is aurora-fp in the fixture
+// the credentials fixture names too (internal/infra/testdata/firebase.tfvars.json).
+// It is read as a plan rather than as the module's text because "the signer is
+// in the Firebase project" is a fact of the plan the Firebase root applies.
+//
+// name is a golden of its own and not always "firebase": the signer and its one
+// grant exist only when the installation hands the runtime account over as
+// mobile_account, so firebase-mobile is the plan that carries them — made by
+// scripts/gen-golden-plans.sh from the same fixture plus that one key, and the
+// plan a previous-version installation's Firebase project converges to holds
+// neither (TestMobileServiceIsOffUntilTheSwitchIsOn below).
+func firebaseGoldenRows(t *testing.T, name string) map[string]plannedResource {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("tf", "testdata", "golden", "firebase.plan.json"))
+	b, err := os.ReadFile(filepath.Join("tf", "testdata", "golden", name+".plan.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,3 +432,66 @@ func firebaseGoldenRows(t *testing.T) map[string]plannedResource {
 	}
 	return out
 }
+
+// TestMobileServiceIsOffUntilTheSwitchIsOn is the update's own promise, and the
+// convergence test the two switches owe the release that carries them: an
+// installation that has not opted in — which is every installation `fugaro
+// update` reaches, because the binary writes no key for either switch — plans
+// NOTHING new, in both roots, on the first update after this change. The mobile
+// service, its account, its two bindings, the device-only signer and its signJwt
+// are all opt-in facts; a row of any of them in a default plan is a resource an
+// installation that never asked for a public endpoint acquires, and the public
+// endpoint is the one F31 exists to prevent.
+//
+// The four assertions read the two facts from both ends. The tfvars the binary
+// writes carry neither key — the installation root's own tfvars for
+// enable_mobile_service, and the Firebase root's for mobile_account — so the
+// switches are reachable only by an operator's hand-edited file this release,
+// and the release that lands the mode (I1) is the one that gives them a writer.
+// The two default PLANS then carry no mobile row at all: the installation plan
+// of the very fixture the mobile golden is made from, and the committed Firebase
+// golden whose tfvars have no mobile_account.
+func TestMobileServiceIsOffUntilTheSwitchIsOn(t *testing.T) {
+	spec := credentialsMobileSpecOf(t)
+	vars, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(vars), enableMobileServiceVar) {
+		t.Errorf("the installation tfvars the binary writes carry %s: the module's switch is off by default for a reason — a released credentials image runs no `mobile` mode yet, so a service started with it never becomes ready and the apply that created it fails (mobile_service.tf's header, and internal/cli's TestMobileServiceIsOffUntilThisBinaryRunsIt reads the argv against the command tree)", enableMobileServiceVar)
+	}
+	fs, err := Firebase(spec, FirebaseInputs{FP: spec.CredentialsService.FirebaseProject, Admins: []string{"user:owner@example.com"}, BudgetAdmins: []string{"user:extra@example.com"}, HistoryAccount: "fugaro-history@" + spec.Project + ".iam.gserviceaccount.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fbVars, err := FirebaseVars(fs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(fbVars), "mobile_account") {
+		t.Errorf("the Firebase tfvars the binary writes carry mobile_account: the device signer and the one signJwt on it exist exactly when an installation hands its runtime account over, and `fugaro update` hands nothing over until the release that turns the switch on in the same change (modules/firebase/iam.tf)")
+	}
+
+	// The installation plan of the fixture the mobile golden is made from, with
+	// the switch NOT written: no row of the opt-in is in it, and nothing in it
+	// names the runtime account.
+	_, rows := installationPlan(t, spec)
+	for _, rc := range rows {
+		if strings.Contains(rc.Address, ".mobile") || strings.Contains(rc.json(), mobileAccountID) {
+			t.Errorf("the plan of an installation that wrote no enable_mobile_service holds %s: the mobile service, its account, its public binding and its database binding are four resources an installation acquires only by asking for them, and the first update after this change must plan exactly what it planned before", rc.Address)
+		}
+	}
+
+	// ... and the Firebase root's own default golden, whose tfvars have no
+	// mobile_account: no device signer, and no row naming the runtime account.
+	for addr, row := range firebaseGoldenRows(t, "firebase") {
+		if strings.Contains(addr, "device_signer") || strings.Contains(row.json(), mobileAccountID) {
+			t.Errorf("the Firebase golden of an installation that handed no account over holds %s: the device-only signer and the signJwt on it are created exactly when var.mobile_account is set, so a previous-version installation's Firebase project plans neither", addr)
+		}
+	}
+}
+
+// enableMobileServiceVar is the module's and the root's switch, spelled once:
+// the tfvars key, the variable name and the local's name are one word, and this
+// test is about the key the binary writes.
+const enableMobileServiceVar = "enable_mobile_service"
