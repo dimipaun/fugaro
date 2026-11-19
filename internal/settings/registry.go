@@ -276,6 +276,13 @@ var yamlMeta = map[string]Row{
 	"agent.triage": {
 		Default: unset("on (startup and pro only, config.TriageMode)"),
 	},
+	// The review-against-task switch (R7 of docs/review-against-task/): an
+	// absent key is the check running — every review stage is handed the task
+	// the pull request was written for — so the DEFAULT column says so rather
+	// than reading "none", which a reader would take for the check being off.
+	"agent.review_against_task": {
+		Default: unset("on (config.Agent.ReviewAgainstTaskOn)"),
+	},
 
 	"agent.recipe":      {Owner: "models", Default: unset("the built-in recipe"), Doc: "docs/recipes.md"},
 	"agent.oauth_token": {Default: unset("the job's own credential")},
