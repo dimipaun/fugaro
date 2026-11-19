@@ -320,4 +320,6 @@ resource "google_cloud_run_v2_service_iam_member" "intake_invoker" {
   name     = var.intake.service
   role     = "roles/run.invoker"
   member   = each.value
+
+  depends_on = [google_cloud_run_v2_service.intake]
 }
