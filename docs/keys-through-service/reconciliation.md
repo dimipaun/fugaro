@@ -2,7 +2,8 @@
 
 Checked against `origin/main` at `45658d8a8` on 2026-11-19. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D3000–D3002**, all answered by the owner on 2026-11-19. It reverses **D1634** and **D1670**
+**D3000–D3007**, all answered by the owner on 2026-11-19 (D3003–D3007 were added by review round
+1). It reverses **D1634** and **D1670**
 ([model crafts](../model-crafts/reconciliation.md)) and narrows the code behind **D150**
 ([credentials service](../credentials-service/reconciliation.md)); each is marked where it bites.
 
@@ -19,16 +20,18 @@ Checked against `origin/main` at `45658d8a8` on 2026-11-19. **Where this file di
 ## 2. Assumptions
 
 - **A1.** "Keys" means model credentials: Claude OAuth tokens, Anthropic keys and provider keys.
+  The voice provider keys' container is not one of them.
   Git tokens, the GitHub App key, workflow secrets and signing keys are not in scope; secrets
   brokering owns them (B4.9, B5.7's git half, C2.3).
 - **A2.** Vertex is not a key and nothing is mounted for it (D498). "Served through the service"
   has nothing to move, so Vertex is unchanged.
 - **A3.** A local run (`fugaro exec`, `fugaro troubleshoot`) uses the developer's own environment
   and is unchanged (D149).
-- **A4.** "No key is mounted" is the end state for every repository whose job image is at or after
-  the release that carries this work. A repository on an older image keeps its mounts until its
-  image is rebuilt, which `fugaro update` does (secrets brokering's rule G17: a job never loses a
-  mount before the service serves that credential to the image it runs).
+- **A4.** *(Corrected by review round 1, F25.)* The work ships in two releases, as the earlier
+  flips did. The first serves every model key through the service while the mounts are still
+  there. The second drops the mounts, behind a launch gate that refuses a run on a job image older
+  than the first with the fix printed (secrets brokering's rule G17: a job never loses a mount
+  before the service serves that credential to the image it runs).
 - **A5.** The provider models a project uses today keep working with no config change by the
   owner: the same `providers:` and `credentials:` blocks, the same pins.
 
@@ -49,11 +52,13 @@ entry (`Bundle.providerKey`), where the runner path holds one key per declared p
 `fugaro creds set` refuses the key of an `openrouter` credential (`credsKeyCredentialHalfRefusal`),
 and `fugaro accounts add --type openrouter` writes the job's own container. Consequence: KS1, KS2.
 
-**F4 — Rule: the gateway does the provider's work, and the service does none of it.** For a
-provider model the run's gateway routes by model pattern (`routeFor`), refuses unpriced fields
-(`checkRequest`), adds the route's fee (`Route.FeePct`), settles on the provider's reported cost
-(`fromUsage`), applies `RequireZDR`, `PricePolicy` and `allow_data_to`, and keeps a ledger per
-route (`internal/gateway/forward.go`, `route.go`). The service's `providerRoute`
+**F4 — Rule: the gateway does the provider's work, and the service does none of it.** *(Corrected
+by review round 1, F17.)* For a provider model the run's gateway routes by model pattern
+(`routeFor`), refuses unpriced fields (`checkRequest`), adds the route's fee (`Route.FeePct`),
+settles on the provider's reported cost (`fromUsage`) and keeps a ledger per route
+(`internal/gateway/forward.go`, `route.go`). `allow_data_to` is applied by the runner
+(`internal/runner/providers.go`), and the zero-retention and price-tier rules by the config and
+policy code, before the run. The service's `providerRoute`
 (`internal/credsvc/forward.go`) leaves the models and the fee at zero by its own comment. The
 gateway forbids the combination: `validateRoutes` and `errServiceOnRoute` say a provider route is
 never reached through the service. Consequence: R1.
@@ -72,7 +77,7 @@ a non-Claude model. Consequence: D3000, KS3.
   `internal/cli/run.go`; `TestSwitchedMixedRepositoryKeepsItsStageAccountToken`).
 - Every shared project job mounts its account's token (`projectAccountMount`,
   `internal/infra/projectjobs.go`), which is secrets brokering's B5.7, not started.
-Consequence: D3002, KS6, KS7, and KS12 waits on B5.7.
+Consequence: D3002, D3004, KS7 to KS10, and KS16 follows B5.7.
 
 **F7 — Gap: budget mode off has no path to the service.** With the budget off the run has no
 gateway, and `agent.BuildEnv` (`internal/agent/env.go`) puts the key in the agent's own
@@ -83,7 +88,7 @@ repository in that mode. Consequence: D3002.
 An installation's existing keys sit in per-repository containers
 (`google_secret_manager_secret.this`, `modules/repo/secrets.tf`, with `prevent_destroy`) and in
 the project-wide ones (`google_secret_manager_secret.project`, `modules/installation/secrets.tf`).
-Consequence: D3001, KS8.
+Consequence: D3001, KS12.
 
 **F9 — Rule: what Terraform holds per credential.** Per repository: one container and two operator
 grants per operator. Per job: one accessor for the job's account
@@ -91,11 +96,11 @@ grants per operator. Per job: one accessor for the job's account
 account where it reads the mount (`.service`, D2074), and one env entry (`modules/workflow/job.tf`).
 The selection among them is `var.model_secrets_served` and the locals `is_run_model_secret`,
 `is_served_model_secret` and `is_service_held`. Shared jobs repeat it in `modules/project`.
-Consequence: KS10 and KS11 remove the model half of all of it.
+Consequence: KS14 and KS15 remove the model half of all of it.
 
 **F10 — Rule: an older image.** A job image built before a release cannot use a route that release
 adds, and `internal/cli/recipes_skew.go` already gates on it (`serviceAuthSince`,
-`providerEntrySince`, `keyCredentialSince`). Consequence: A4, R5.
+`providerEntrySince`, `keyCredentialSince`). Consequence: A4 and R5, both corrected by F25.
 
 **F11 — Rule: a run in flight.** An execution runs the job template it started with
 (`docs/design/update-in-flight.md`), so a dropped mount reaches the next execution, never a
@@ -113,7 +118,7 @@ it and its test.
 
 **F13 — Rule: Check 50 is not a script and has not been run.** It is inline shell in
 `docs/gcp-live-checklist.md`, marked not run, and it exercises the runner's gateway route, not the
-service. Consequence: KS13 writes it as a script, and D3000 keeps only Claude-through-a-provider
+service. Consequence: KS17 writes it as a script, and D3000 keeps only Claude-through-a-provider
 behind it.
 
 **F14 — Rule: another plan edits the same files.** The workspace-service plan rewrites
@@ -125,6 +130,78 @@ so that a pool's secrets would not all sit in one job (its F20). Served by the s
 in any job. A pool's failover between provider members stays at a stage boundary, as today; this
 work does not change it.
 
+**F16 — Rule (review round 1).** `SECURITY.md` treats every request as hand-built: the agent holds
+the run's identity and can mint the job's token, so it can call the service without the gateway.
+The service's own check (`requestRefusal`, `internal/credsvc/request.go`) runs
+`gateway.RequestRefusal` with no routes, so the route rules cannot fire there, and an honest
+routed model would be refused as unpinned. Consequence: D3003, and KS4 builds the routes from the
+published policy.
+
+**F17 — Wrong (review round 1), corrects F4.** As F4 now says. `internal/gateway/forward.go` also
+holds `upstreamRequest`'s provider arm and every branch a service call takes (refusals, the
+unreachable halt, retry), so KS5 edits it.
+
+**F18 — Gap (review round 1).** A budget-off run has no identity: `startBudgetBackend` returns
+before it opens a session, `serviceUpstream` refuses with no run identity, and the launcher mints
+no token when the mode is off or the installation has no database
+(`internal/cli/launch_budget.go`). The service also refuses a project that publishes no
+`budget.allowed_models`. Consequence: D3004.
+
+**F19 — Rule (review round 1).** `CredentialsServiceServes` calls `ready` "the condition that
+makes the switch safe", and `credentialsBundleServes` (`internal/cli/init_credentials.go`) judges
+it. Consequence: R10 keeps it, and it comes to require each named provider entry.
+
+**F20 — Wrong (review round 1), corrects R7.** `internal/infra/tf/retire.go` lists
+`google_secret_manager_secret` among its retained types, on the owner's ruling of 2026-11-06 that
+fugaro never deletes a secret or a secret version. `prevent_destroy` is a literal on the whole
+`for_each` resource, and the installation module unions every labelled live container back in.
+The retirement table cannot remove one. Consequence: D3005.
+
+**F21 — Settles U1 (review round 1).** Operators hold `secretVersionAdder` and `viewer` on the
+containers and never read a value; the bundle has one grant, the service's. Only a project owner
+can read a container's value or write the bundle. Consequence: D3006.
+
+**F22 — Rule (review round 1).** The bundle decodes strictly, and a deployed service older than a
+new entry kind would refuse the whole document. The writes are already guarded for that
+(`bundleReaderRequirement`, `refuseAnEntryTheServiceCannotRead` in `internal/cli/creds.go`, with
+the since-constants of `recipes_skew.go`). Consequence: every writer of a named provider entry
+uses the guard, and the copy runs after the stage that deploys the service.
+
+**F23 — Gap (review round 1).** The mixed stage account is more than a runner change:
+`narrowToRepoAuth` (`internal/credsvc/cascade.go`) keeps the paid tier only for an `api-key`
+record and refuses an account declared beside it; the gateway's `Upstream` carries one auth mode
+and one account, not one per stage; and `agent.BuildEnv` hands the stage's token to the agent
+outside the gateway. Consequence: two tasks, KS9 and KS10.
+
+**F24 — Gap (review round 1).** `config.CredentialServingPath`
+(`internal/config/stage_accounts.go`) still answers `runner` for `openrouter`, and it is read by
+the accounts commands, the craft and pool code and `infra/spec.go`. Consequence: KS11 flips it and
+moves its readers. A pool's failover between provider members stays at a stage boundary, because
+the gateway names one provider per route (R1).
+
+**F25 — Wrong (review round 1), corrects A4 and R5.** The fact "this job's image is at or after a
+release" exists per workflow, in the build record's base (`checkImageSince`), and it is read at
+launch, not when the mounts are computed. A catalog image is rebuilt by `fugaro image build`, not
+by `fugaro update`. The earlier flips used release separation and a launch gate. Consequence: A4
+and R5 as amended.
+
+**F26 — Rule (review round 1).** `internal/gateway` cannot import `internal/credsvc`. Consequence:
+the wire's names live in a gateway file the contract owns.
+
+**F27 — Gap (review round 1).** A provider key has more writers and more homes than F3 named:
+`fugaro secrets set` of a provider's secret (`internal/cli/secrets.go`, `initsecrets.go`) writes a
+container; a provider key is declared in the owner's local config and can come from the
+repository's container, a project-wide one or `credential-<name>-key` (`runnerKeyCredential`); and
+a shared project job can mount one as a profile secret (`projectSecretEnv`). Consequence: KS2
+covers every writer, R2 every source, KS16 the shared job's.
+
+**F28 — Rule (review round 1).** More plans share these files than F14 named: workspace service's
+WS11 writes `internal/runner/gateway.go` and `SECURITY.md` and its WS1 `credsvc/server.go`;
+secrets brokering's B4.9 and B5.7 write `internal/config/providers.go`, the rules file,
+`secret-readers.md`, `deploy/terraform/terraform_test.go` and `modules/project`, and B5.7 itself
+drops the shared job's mounted token. Consequence: R8 as amended, and KS16 is what is left after
+B5.7.
+
 ## 4. Decisions
 
 All answered by the owner on 2026-11-19.
@@ -134,6 +211,19 @@ All answered by the owner on 2026-11-19.
 | **D3000** | Which provider calls wait for Check 50 (F5)? | Only a Claude model through a provider key. A non-Claude provider model is served by the service without waiting | as recommended. **It replaces the owner's answer of earlier the same day** ("run Check 50 first" for every provider key), given on the first reading of the gate; the two facts of F5 were found afterwards |
 | **D3001** | Where do model keys live at the end, and how do they get there (F8)? | In the project's one bundle. `fugaro update` copies each existing key there itself, in memory on the owner's machine, and then retires the per-repository containers | as recommended |
 | **D3002** | What happens to budget mode off (F7)? | The gateway always runs: with the budget off it is a pass-through to the service, with no budget enforced and no key in the job | as recommended |
+
+| **D3003** | A hand-built call can reach the service without the gateway, where the cap and the fee are applied (F16). Acceptable? | Yes. The service enforces the policy's model and provider rules on every call; the cap stays in the gateway, and `SECURITY.md` states the limit | added by review round 1; as recommended |
+| **D3004** | A budget-off run has no identity (F18). What then? | It opens its identity like any other run. An installation with no database cannot, keeps its mounted keys, and `fugaro update` says so | added by review round 1; as recommended |
+| **D3005** | What happens to an old key secret once its value is in the bundle (F20)? | **`fugaro update` deletes it.** | added by review round 1; **not the recommendation** (which was to drop it from Terraform and keep it). **It reverses the owner's ruling of 2026-11-06 for this class of secret** |
+| **D3006** | Who runs the copy, and who sets a provider key afterwards (F21)? | A project owner only. An operator's `fugaro update` skips the copy, keeps the mounts and says the owner must run it. Operators still never read a value | added by review round 1; as recommended |
+| **D3007** | May a repository on another auth mode pin a provider model? | **The owner's own answer:** "There shouldn't be any repo tie-in to keys. Api-keys, oauth tokens etc are there for the models only which should use the most appropriate way to authenticate." | added by review round 1; **not either option** |
+
+**What D3007 means here, and what it leaves open.** In this plan: a provider model may be pinned
+under every auth the service serves, and no check ties a provider key to a repository's auth mode
+(KS6). The answer is wider than that: read in full it says a repository should not choose an auth
+mode at all, and each model should authenticate the way that suits it. Retiring `agent.auth` as a
+repository's setting is a config change of its own, with its own readers, and is **not** in this
+plan. It is O4, for the owner.
 
 **Reversed by the owner's ruling D2975:** D1634 (provider members on the runner path) and D1670 (an
 `openrouter` key goes to the job's own mounts). D498's Vertex is untouched (A2).
@@ -147,61 +237,86 @@ All answered by the owner on 2026-11-19.
   it is for, and the service attaches that key and forwards to the provider's own address. The
   service checks the name against the member's published policy for the calling repository before
   it attaches anything, so a run cannot name a credential its policy does not give it. Contract C1.
-- **R2. One entry per provider credential, named for its owner.** The bundle carries one key per
-  declared provider credential. A project-wide one keeps the name `credential-<name>-key`; a
-  repository's own provider secret is entered under a name that carries the repository, so two
-  repositories that use one name for different keys never collide and `fugaro update` never has to
-  choose between them.
+- **R2. One entry per provider credential, and the caller never names an entry.** *(Amended by
+  review round 1.)* The bundle carries one key per provider credential from each of its three
+  sources (F27): a project-wide one keeps `credential-<name>-key`, and a repository's own is
+  entered under a name that carries the repository, so two repositories with one name for
+  different keys never collide. The wire carries the provider's name only. The service derives the
+  entry from the run's verified repository, so a run cannot ask for another repository's key.
 - **R3. The gate, narrowed.** The service refuses a provider credential for a Claude model until
   Check 50 passes, with the refusal that names the check, and serves it for any other model
   (D3000). Which models are Claude's is the existing pin vocabulary, not a new list.
-- **R4. The copy.** `fugaro update` gains one stage that, for each model key the installation
-  holds outside the bundle, reads the newest version, writes it into the bundle under R2's name
-  and records that it did, holding the value only in memory and printing none of it. It is
-  idempotent, it never overwrites a bundle entry that differs without saying so, and it runs
-  before any stage that drops a mount. It asks nothing (D3001).
-- **R5. A mount goes only when its image can do without it.** For each repository the mounts are
-  dropped by the `fugaro update` that finds its job image at or after this release, using the
-  existing skew gate; until then the repository keeps working on its mounts (A4, F10).
+- **R4. The copy.** *(Amended by review round 1.)* `fugaro update` gains one stage, after the stage
+  that deploys the service, that for each model key the installation holds outside the bundle
+  reads the newest version and writes it into the bundle under R2's name, through the existing
+  guard for an older service (F22). It holds the value only in memory and prints none of it. It is
+  idempotent; it copies again when a container holds a newer version than the one it copied; it
+  never overwrites a bundle entry it did not write without saying so. It runs only for a project
+  owner: an operator's update skips it and says who must run it (D3006). It asks nothing.
+- **R5. The mounts go in a second release, behind a launch gate.** *(Amended by review round 1,
+  F25.)* The release that drops the mounts refuses to launch a run on a job image older than the
+  release that served the keys, with the command that rebuilds it. A repository is never left with
+  neither a mount nor a service that serves its image.
 - **R6. Runs in flight.** A running execution keeps its template and so its mounts. `fugaro update`
-  names, in one short line, the step that can reach a run: none of the copy, and the retirement of
-  a container only after no job references it.
-- **R7. Containers are retired through the update's own retirement.** A per-repository model
-  container is removed by the mechanism `tf.RetirableTypes` already gives the accessors, after R4
-  has copied its value and no job mounts it. No flag, no other command.
-- **R8. Two plans, one set of files.** A task of this plan that edits `internal/credsvc/cascade.go`,
-  `forward.go` or `internal/gateway/service.go` is not launched while a workspace-service task
-  that edits the same file is live, and whichever lands second rebases. Neither plan waits for the
-  other as a whole.
+  names, in one short line each, the two steps that can reach a run: none for the copy, and the
+  deletion of an old secret, which happens only when no job references it.
+- **R7. An old secret is deleted by the update, once copied and unmounted.** *(Amended by review
+  round 1, D3005.)* The retirement table cannot do it (F20). `fugaro update` takes a model
+  container out of Terraform's state and deletes it through the API, in the retirement code
+  (`internal/infra/retire.go`, `internal/cli/init_retire.go`), and only when its newest value is
+  in the bundle, no job mounts it and the person running the update is a project owner. Every
+  other secret stays under the ruling of 2026-11-06.
+- **R8. Several plans, one set of files.** *(Amended by review round 1, F28.)* A task of this plan
+  is not launched while a task of workspace service or secrets brokering that edits the same file
+  is live, and whichever lands second rebases. The files are `internal/credsvc/cascade.go`,
+  `forward.go` and `server.go`, `internal/gateway/service.go`, `internal/runner/gateway.go`,
+  `internal/config/providers.go`, `SECURITY.md`, the rules file, `secret-readers.md`,
+  `deploy/terraform/terraform_test.go` and `modules/project`. No plan waits for another as a whole.
 - **R9. The stage account goes through the service.** The mixed variant's second account is
   selected by the service like any named account, through the gateway, so the runner holds no
   token for it (F6).
-- **R10. One switch for every auth but Vertex.** `CredentialsServiceServes` stops depending on the
-  budget mode (D3002) and on the bundle's readiness as a separate fact: the copy of R4 is what
-  makes a bundle ready.
+- **R10. One switch for every auth but Vertex.** *(Amended by review round 1, F19, D3004.)*
+  `CredentialsServiceServes` stops depending on the budget mode. It keeps depending on `ready`,
+  which comes to mean that the bundle holds every key the repository needs, the named provider
+  entries included. An installation with no database is never ready and keeps its mounts.
+- **R11. The service checks the route itself.** The service builds the provider routes from the
+  published policy and refuses a call the policy's model and provider rules do not allow, whoever
+  built the request (D3003, F16).
+- **R12. The gateway uses the service when it can and the mount when it must.** Between the two
+  releases a run whose image and bundle are ready sends a routed call through the service, and
+  any other run uses its mounted key as today.
 
 ## 6. Open tensions and open items
 
 No two answers pull against each other.
 
 - **O1.** D3000 replaces an answer the owner gave earlier the same day. It is recorded in
-  [workspace credentials](../workspace-credentials/spec.md) as "D150's gate stays"; KS14 amends that
+  [workspace credentials](../workspace-credentials/spec.md) as "D150's gate stays"; KS18 amends that
   sentence to the narrowed gate.
 - **O2.** D3001 has `fugaro update` read secret values on the owner's machine. The precedent is the
   doctor's token check, which reads the bundle in memory in the owner's terminal. It is named here
-  for the independent security review of KS8.
-- **O3.** Shared project jobs lose their mounted token only when secrets brokering's B5.7 lands,
-  which is not started. Until then "no model key is mounted" is true of every job but those.
+  for the independent security review of KS12. The precedent is stronger than first written:
+  `fugaro creds set` itself reads and rewrites the bundle on the owner's machine.
+- **O3.** Shared project jobs lose their mounted token when secrets brokering's B5.7 lands, which
+  is not started. KS16 does what is left after it. Until then "no model key is mounted" is true of
+  every job but those.
+
+- **O4.** D3007 read in full retires `agent.auth` as a repository's setting. This plan does only
+  the part that touches provider keys. Whether the rest becomes its own spec is the owner's.
+- **O5.** Which models are Claude's is decided by pattern, so a provider's own alias for a Claude
+  model would pass R3's gate. The exposure is cost (an uncached Claude call), not access.
+- **O6.** After this work only a project owner can set or rotate a provider key; an operator could
+  before (D3006).
+- **O7.** A hand-built call escapes the cap for a provider model (D3003), stated in `SECURITY.md`.
 
 ## 7. UNVERIFIED
 
-- **U1.** Whether the owner's account can read the existing per-repository containers' values (the
-  operator grants in `modules/repo/secrets.tf` were not read role by role). If it cannot, R4 needs
-  a grant applied by the same update. Settled by KS8's first step, and live by Check 780.
+- **U1.** *Settled by review round 1 (F21):* only a project owner can read a container's value.
+  Check 780 confirms it live.
 - **U2.** How a repository's own provider secret is declared against a project-wide credential of
   the same name, and so the exact form of R2's repository-carrying name. Settled by contract C1.
 - **U3.** Whether a running execution survives its job's template being replaced
   (`docs/design/update-in-flight.md` marks it unverified). Settled by Check 780, owner-run.
-- **U4.** Which files hold the stage account's selection in the runner. Settled by KS7's first step.
+- **U4.** *Settled by review round 1 (F23).*
 - **U5.** The bundle's size against Secret Manager's limit for one secret, for an installation with
   many provider keys. Settled by KS1's test of a bundle at a stated worst case.
