@@ -2,8 +2,8 @@
 // session and restore work is built against (plan task C1 of
 // docs/mobile-identity-pairing). It declares the shapes the sides of that work
 // call while they are written in parallel, and nothing here decides anything:
-// the stubs in stub.go return a shape and refuse every question, I1 wires the
-// real sides and delegates this file's stubs and their test.
+// the stubs in stub.go return a shape and decide nothing, and I1 wires the real
+// sides and deletes that file.
 //
 // The sides, and what each one owes or reads:
 //
@@ -566,7 +566,7 @@ const (
 	// switch is on (D2784): the device must pair by QR instead.
 	CodeStrictNewDeviceNeedsQR Code = "strict_new_device_needs_qr"
 	// CodeDeviceRevoked is a refresh whose device node is gone or whose family
-	// was revoked - the answer after an admin revoke, a sign-out everywhere, a
+	// was revoked -- the answer after an admin revoke, a sign-out everywhere, a
 	// replayed token or a membership re-check that failed (F32, D2794). The
 	// screen signs the project out.
 	CodeDeviceRevoked Code = "device_revoked"
