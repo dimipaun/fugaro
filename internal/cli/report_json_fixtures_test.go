@@ -232,6 +232,20 @@ var jsonCases = map[string]jsonCase{
 			return []string{"followups", mergedParent(t, f, allDeferred(t))}
 		},
 	},
+	"image add": {
+		// The dry run is the one arm a fixture here can reach and the one the
+		// console spawns (O4): the real add builds, redeploys and publishes,
+		// and writes its own document under a name that is one command's. It
+		// is a read — the run writes nothing and files no log — and the
+		// catalog is seeded so the document carries an entry rather than the
+		// note about a file that names none.
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			f.appendConfig(t, catalogYAML)
+			return []string{"image", "add", "app", "--tags", "node", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--no-apply", "--dry-run"}
+		},
+	},
 	"image build": {
 		why: "the run's confirmation is typed at a terminal, and --json never gives one, so the command refuses before it prints any document",
 	},

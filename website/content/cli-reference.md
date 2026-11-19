@@ -3975,6 +3975,11 @@ vouched for, which a session may have pushed itself. --dockerfile alone is
 allowed there as it is anywhere else: it reads the project's own repository
 at its base branch, where the file was committed and reviewed.
 
+--dry-run prints what the add would do and writes nothing: no catalog entry,
+no build, and no step recorded for fugaro apply. --json prints that document,
+in the shape schemas/image-add-plan.schema.json describes, and is accepted
+only with --dry-run.
+
 Usage: `fugaro image add <name>`
 
 Flags:
@@ -3986,10 +3991,12 @@ Flags:
 | `--default` | bool | `false` | no | the entry a job whose repositories name no needs runs (one entry, or none) |
 | `--description` | string | "" | no | what the entry is for, printed by fugaro image ls |
 | `--dockerfile` | string | "" | no | a Dockerfile in one of the project's repositories, as owner/name:path |
+| `--dry-run` | bool | `false` | no | print what the add would do and write nothing |
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for add |
 | `--image` | string | "" | no | a prebuilt image reference, such as ghcr.io/owner/image:1.2: nothing is built and the image is used as it is |
 | `--inline` | string | "" | no | a file whose contents are the entry's Dockerfile |
+| `--json` | bool | `false` | no | print the dry run's document (with --dry-run) |
 | `--no-apply` | bool | `false` | no | save the change and run none of its follow-up steps: fugaro apply runs them later |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
