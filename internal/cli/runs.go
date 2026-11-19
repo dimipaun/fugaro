@@ -284,7 +284,11 @@ func newLsCmd() *cobra.Command {
 			"ends: while it is going, its row reads that pull request's state though\n" +
 			"its pr is still empty. A run's own state is in its result.json, so this\n" +
 			"filter reads every run it filters -- it narrows the listing, never the\n" +
-			"reads.\n\n" +
+			"reads. running and launching are the exception: a run that is going, and a\n" +
+			"run whose launch is in flight, are answered from the live set -- the\n" +
+			"executions the backend is still running, and the claims a launch in flight\n" +
+			"holds -- so those two read only the runs that set names, never every run of\n" +
+			"the window (D2960).\n\n" +
 			"The fourth state of a pull request, orphan (no run ever produced or follows\n" +
 			"it), is one no listing of runs can name: such a pull request has no run and\n" +
 			"so no row here, and telling one from every other would take a call to the\n" +
@@ -515,13 +519,23 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		warn = io.Discard
 	}
 	var refs []lsRef
-	if f.runRef != "" {
+	// live is set when --state named one of the two live states: the refs are
+	// then the live set, and its executions are the join's (liveRuns).
+	var live *liveSet
+	switch {
+	case f.runRef != "":
 		slug, id, err := parseRunRef(f.runRef)
 		if err != nil {
 			return nil, err
 		}
 		refs = append(refs, lsRef{slug, id})
-	} else {
+	case liveState(f.state):
+		set, err := liveRuns(ctx, env, f, now)
+		if err != nil {
+			return nil, err
+		}
+		live, refs = &set, set.refs
+	default:
 		for _, slug := range f.slugs {
 			ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, f.since)
 			if err != nil {
@@ -538,7 +552,12 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// run's three objects' generations, so the runs the previous listing
 	// already read are answered locally and the reads that leave the machine
 	// are the objects that changed.
-	readers := lsReaders(ctx, env, !f.noCache, refs)
+	//
+	// A live listing reads the bucket: an index is built from a listing of
+	// every object of the repository, which is the cost the live set was read
+	// to avoid, and a repository with a long history is exactly where a live
+	// run would be answered from a cache it took a full listing to build.
+	readers := lsReaders(ctx, env, live == nil && !f.noCache, refs)
 	runs := make([]runObjects, len(refs))
 	errs := make([]error, len(refs))
 	parallel(len(refs), func(i int) {
@@ -584,8 +603,15 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// One listing covers most runs' executions; it reaches an hour further
 	// back than the runs, since a run ID is minted before its launch only
 	// by moments, but clocks differ.
+	//
+	// A live listing made that call already, and the runs it read are the runs
+	// that listing found: its answer is the join's, so the two states cost one
+	// backend call and never two (U2).
 	execs := map[string]backend.Execution{}
-	if f.runRef == "" && slices.ContainsFunc(runs, func(r runObjects) bool { return r.execution != "" }) {
+	switch {
+	case live != nil:
+		execs = live.execs
+	case f.runRef == "" && slices.ContainsFunc(runs, func(r runObjects) bool { return r.execution != "" }):
 		lf := backend.ListFilter{}
 		if !f.since.IsZero() {
 			lf.Since = f.since.Add(-time.Hour)
