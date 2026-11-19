@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	managedmode "github.com/dimipaun/fugaro/internal/managed"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/settings"
 )
 
@@ -169,6 +170,79 @@ func TestStageTimeoutRaiseRefusedInAnAgentSession(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(recs[0].Rules, " "), "typed confirmation") {
 		t.Errorf("the refused record's rules (%v) do not name the typed class", recs[0].Rules)
+	}
+}
+
+// TestStageBudgetAboveAShippedFigureIsRefusedInAnAgentSession: the half of the
+// ceiling fence no test could reach, and the half that fails open. A layer that
+// states no figure for a governance key gets Fugaro's own, and those figures
+// arrive through the policy hook, whose default is the zero block in a build
+// that links no edition (D522) — so in this untagged test binary
+// settingsGovernanceBuiltIn answers "unset" for every key of the block, and
+// nothing here compares a write against a figure a run really starts under. A
+// shipped figure that failed open — the implement stage's fraction swapped for a
+// larger stage's, a tier's expectation inflated — would let a coding agent's
+// session write a value above the ceiling it starts under with nothing typed in
+// the way, and no test would fail. This one installs the figures a tagged build
+// ships (settingsShippedGovernance) and pins both directions: a first write
+// ABOVE a shipped figure is the widening that only the owner's own hand makes,
+// and one below it lands.
+//
+// The tightening is the half that discriminates. Over the untagged build's
+// "unset" every value is unprovable, so settingsLoosens calls it a loosening and
+// the write takes the typed class whatever the figure — a fence reading the zero
+// block refuses both values alike. Only one that knows the shipped figure lets
+// the tighter value through, so the pair of writes is what says the branch ran.
+//
+// The writes are the repository's own (--layer repo), which is the layer this
+// session may write at all: the widening is refused by the session's own refusal
+// (settingsWrite), where a project-layer write in a managed project meets the
+// gate's allowlist first and would be refused for a reason that is not this
+// fence's. The value each write is measured against is the same either way — no
+// layer states one, so it is the shipped figure.
+func TestStageBudgetAboveAShippedFigureIsRefusedInAnAgentSession(t *testing.T) {
+	shipped := policy.Governance{
+		StageBudget: policy.StageBudget{Implement: 0.4, Review: 0.15, Fix: 0.25},
+		Tiers: policy.TierExpectations{
+			Small: policy.TierExpectation{ExpectedUSD: 1, ExpectedMinutes: 30, MaxSubagents: 3},
+		},
+	}
+	old := settingsShippedGovernance
+	settingsShippedGovernance = func() policy.Governance { return shipped }
+	t.Cleanup(func() { settingsShippedGovernance = old })
+
+	for _, tc := range []struct {
+		what  string
+		key   string
+		above string
+		below string
+		land  string
+	}{
+		{"a stage's budget", "governance.stage_budget.implement", "0.75", "0.25", "implement: 0.25"},
+		{"a tier's expectation", "governance.tiers.small.expected_usd", "4", "0.5", "expected_usd: 0.5"},
+	} {
+		t.Run(tc.what, func(t *testing.T) {
+			settingsWriteHome(t)
+			settingsWriteLayerFile(t, "")
+			repoPath := settingsWriteCheckout(t, settingsRepoYAML(""))
+			agentSession(t)
+
+			if out, _, err := execute(t, "settings", "set", tc.key, tc.above, "--layer", "repo"); err == nil {
+				t.Fatalf("%s was raised over the figure Fugaro ships for it in a coding agent's session:\n%s", tc.what, out)
+			} else if !strings.Contains(err.Error(), "coding agent's session") {
+				t.Errorf("the raise was refused, and not by the session fence: %v", err)
+			}
+			if got := readFileString(t, repoPath); strings.Contains(got, tc.land) {
+				t.Errorf("the refused raise wrote the repository's file anyway:\n%s", got)
+			}
+
+			if out, _, err := execute(t, "settings", "set", tc.key, tc.below, "--layer", "repo"); err != nil {
+				t.Fatalf("%s was tightened under the figure Fugaro ships for it and was refused: %v\n%s", tc.what, err, out)
+			}
+			if got := readFileString(t, repoPath); !strings.Contains(got, tc.land) {
+				t.Errorf("the tightening did not land in the repository's file:\n%s", got)
+			}
+		})
 	}
 }
 

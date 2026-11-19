@@ -1807,14 +1807,27 @@ func settingsCeilingBuiltIn(key string) string {
 	return ""
 }
 
+// settingsShippedGovernance is the source of the figures Fugaro ships for the
+// governance block (settingsGovernanceBuiltIn reads it by key). It is a
+// variable for the reason those figures arrive through a hook at all:
+// `policy.Governance{}.WithDefaults()` answers the zero block in a build that
+// links no edition (D522), so an untagged test binary reads "unset" for every
+// governance key and the branch comparing a write against a shipped figure is
+// one no test could reach — the fence could fail open, a stage's fraction
+// swapped for a larger stage's or a tier's expectation inflated, with nothing
+// to fail. A test installs the figures a tagged build ships; nothing else
+// swaps it, and the released binary has the one source, the hook's.
+var settingsShippedGovernance = func() policy.Governance { return policy.Governance{}.WithDefaults() }
+
 // settingsGovernanceBuiltIn is what a run gets today for one key of the
 // governance block that no layer states: the figure Fugaro ships for it, or
 // settingsCeilingUnset for a key Fugaro ships no figure for.
 //
-// The figures are `policy.Governance{}.WithDefaults()`'s, read by key, so the
-// registry's DEFAULT column, the ceiling a run starts under and this fence name
-// one source — and an untagged build, whose hook ships nothing, reads its own
-// truth rather than a 0 every write would then be tighter than.
+// The figures are `policy.Governance{}.WithDefaults()`'s, read by key through
+// settingsShippedGovernance, so the registry's DEFAULT column, the ceiling a run
+// starts under and this fence name one source — and an untagged build, whose
+// hook ships nothing, reads its own truth rather than a 0 every write would then
+// be tighter than.
 //
 // stage_tokens and stage_timeout are the keys with no figure of their own, and
 // their unset is a bound of another kind rather than a missing number: a stage
@@ -1825,7 +1838,7 @@ func settingsCeilingBuiltIn(key string) string {
 // write over it takes the typed name for the reason D846 gives: nobody can
 // prove it tightens.
 func settingsGovernanceBuiltIn(key string) string {
-	g := policy.Governance{}.WithDefaults()
+	g := settingsShippedGovernance()
 	switch key {
 	case policy.KeyReviewRatio:
 		return settingsBuiltInFigure(float64(g.ReviewRatio))
