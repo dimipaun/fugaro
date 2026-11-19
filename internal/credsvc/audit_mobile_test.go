@@ -199,9 +199,7 @@ func TestAuditMobilePurposesKeptTheRulesTheRestOfTheFileHolds(t *testing.T) {
 }
 
 // mobilePurposes is the four purposes the mobile routes answer under, in the
-// order the plan names them (pair, refresh, restore, revoke). It is a function
-// and not a package-level slice so that a purpose dropped from the set fails
-// every test above rather than one of them.
+// order the plan names them (pair, refresh, restore, revoke).
 func mobilePurposes() []string {
 	return []string{PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke}
 }
