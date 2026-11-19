@@ -27,6 +27,14 @@ import (
 // and not the header's (auth.go's verifyJob), so the run's own claim is
 // recorded beside the verified one rather than instead of it.
 //
+// A mobile route's act (the four mobile purposes) is the one act class whose
+// line names no credential and no run: it is a person's session rather than a
+// use of a secret, and the caller's own email is the who it records
+// (callerWithoutJobPurpose, credentiallessPurpose). It is audited here like
+// every other act because the rule F12 puts on this service is about the
+// record an operator reads and not about which fields a given act has: one
+// line per act and one per refusal, whatever the act touched.
+//
 // Two more name the slip a call was admitted under and the launcher that asked
 // for it (slip and owner, DS1.6, R5): a credential served under a grant is
 // served under a named grant, and an operator reading the line has to be able
@@ -407,16 +415,59 @@ const (
 	// purpose is what tells an operator that a run read beyond its own
 	// repository at that instant.
 	PurposeContextToken = "context_token"
+	// The four mobile purposes are one family: the acts of the phone's routes
+	// (P3, P4, K2), which credsvc's code answers through the second, public
+	// Cloud Run service of the same image (D2782 as amended, F31). A purpose of
+	// its own per route is what tells a mobile act from a run's in a line an
+	// operator greps, and the set below is closed, so a route whose purpose is
+	// not a member of it is a route none of whose refusals this service could
+	// record at all.
+	//
+	// Their caller is the member's own email address — the address the
+	// identity project's assertion was verified for, which is the account this
+	// file's validAccount holds a caller to — and never a job of this
+	// installation: a phone is not a job, so all four are
+	// callerWithoutJobPurpose's and their line carries no run and no job.
+	//
+	// And their act touches no credential of the installation's at all: the
+	// service verifies an assertion, reads and writes the installation's own
+	// records and issues a session token of its own, so nothing on this path
+	// reads a bundle entry, presents a secret to another system or names one a
+	// line could carry. A mobile line therefore names no credential either,
+	// which is what credentiallessPurpose says and the only shape in this file
+	// that does.
+	//
+	// PurposeMobilePair is a phone pairing with a project: the invite's nonce
+	// consumed once, the assertion's policy applied, and a device node, a
+	// refresh token and a first custom token issued (D2785).
+	PurposeMobilePair = "mobile_pair"
+	// PurposeMobileRefresh is a phone's session refresh: the device-key-bound
+	// refresh token rotated, membership and role re-checked, and a one-hour
+	// custom token minted through the device-only signer account (D2783, O8).
+	PurposeMobileRefresh = "mobile_refresh"
+	// PurposeMobileRestore is a new device restoring a session without a QR:
+	// the single-use challenge consumed, the assertion bound to it verified and
+	// the same policy applied as pairing applies, the project's strict switch
+	// being what refuses it instead (D2784).
+	PurposeMobileRestore = "mobile_restore"
+	// PurposeMobileRevoke is a phone revoking its own session (the contract's
+	// revoke-self): the caller's refresh family revoked, so the session it was
+	// holding ends (D2794, F32).
+	PurposeMobileRevoke = "mobile_revoke"
 )
 
-// ValidPurpose reports whether purpose is one this service issues a credential
-// for.
+// ValidPurpose reports whether purpose is one this service records an act
+// under. Most are purposes it issues a credential for; the mobile four are
+// acts of its own that issue a session and touch no credential
+// (credentiallessPurpose), and they are in this one set because the line
+// carries one purpose field either way.
 func ValidPurpose(purpose string) bool {
 	switch purpose {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
 		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue,
 		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
-		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken, PurposeBuild:
+		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken, PurposeBuild,
+		PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke:
 		return true
 	}
 	return false
@@ -472,7 +523,9 @@ func credentialWithoutTier(purpose string) bool {
 // route answers under and the three a build's proxy calls are recorded under.
 // A REPOSITORY's build is the seventh (B4.3): its caller is the account one
 // repository's image build and daily check run as, which holds no run identity
-// either, so its one purpose is here too.
+// either, so its one purpose is here too. The mobile routes' four are the
+// eighth (P0): their caller is the member's own email address the assertion was
+// verified for, and a phone is not a job of this installation either.
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
@@ -480,7 +533,31 @@ func callerWithoutJobPurpose(purpose string) bool {
 		purpose == PurposeIssue ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGrant ||
 		purpose == PurposeBuildGit || purpose == PurposeBuildBitbucket ||
-		purpose == PurposeBuildProxy || purpose == PurposeBuild
+		purpose == PurposeBuildProxy || purpose == PurposeBuild ||
+		purpose == PurposeMobilePair || purpose == PurposeMobileRefresh ||
+		purpose == PurposeMobileRestore || purpose == PurposeMobileRevoke
+}
+
+// credentiallessPurpose reports whether a purpose's line names no credential at
+// all: the mobile four, whose acts are a person's session rather than a use of
+// one. The service verifies an assertion the identity project signed, reads and
+// writes the installation's own records and issues a token of its own, and
+// nothing on that path reads a bundle entry or presents a secret to another
+// system — so there is no name for the line to carry, and a credential on one
+// would be an entry this service never read.
+//
+// It is NOT credentialWithoutTier, which is the opposite shape and is
+// deliberately kept apart from it: that one's purposes DO name a credential and
+// have no tier to pair with it, while a credentialless purpose names neither
+// half. So the both-or-neither rule below holds the mobile line's two empty
+// fields unchanged, and only the OK line's own requirement has to know about
+// this set.
+func credentiallessPurpose(purpose string) bool {
+	switch purpose {
+	case PurposeMobilePair, PurposeMobileRefresh, PurposeMobileRestore, PurposeMobileRevoke:
+		return true
+	}
+	return false
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
@@ -553,7 +630,9 @@ func validErrorType(s string) bool {
 // refused — a call refused before the run identity was verified has no run to
 // name, and one refused because the operator stopped the service names the
 // credential it would have used — and a field that is set is held to its rule
-// either way.
+// either way. A mobile act is the one OK line whose act uses no credential at
+// all: it names the purpose and the caller and no credential and no tier (see
+// credentiallessPurpose).
 type AuditEvent struct {
 	// Run is the run id the service verified (Identity.Run) and Repository is
 	// its repository's slug (Identity.Slug). They are empty only for a call
@@ -585,6 +664,9 @@ type AuditEvent struct {
 	// key), a sign and a verify (the review-signing key), none of which is a
 	// model credential: each carries a credential and no tier, and a tier on
 	// one of them is refused rather than recorded. See credentialWithoutTier.
+	// The mobile purposes name neither half, and a line of one that carried
+	// either is refused rather than recorded: their act reads no credential, so
+	// there is no name to pair with a tier. See credentiallessPurpose.
 	Credential string
 	Tier       string
 	// Purpose is what the credential was issued for (PurposeForward,
@@ -880,14 +962,22 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 		return AuditEvent{}, auditRefusal{"caller", refusalMalformed}
 	case (ev.Job == "") != (ev.Caller == "") && !callerWithoutJobPurpose(ev.Purpose):
 		// The identity carries both, so a line that names one names the other.
-		// A person's act — a verifier's, a read mint's — is the exception, and
-		// it is only about WHO may be recorded: it is not a run in a job of
-		// this installation, so its line carries the verified account as the
-		// caller and no job — and a job-purpose line that dropped its job is
-		// still refused here.
+		// A person's act — a verifier's, a read mint's, a phone's — is the
+		// exception, and it is only about WHO may be recorded: it is not a run
+		// in a job of this installation, so its line carries the verified
+		// account as the caller and no job — and a job-purpose line that
+		// dropped its job is still refused here.
 		return AuditEvent{}, auditRefusal{"job", refusalMissing}
 	case ev.Credential != "" && !ValidCredentialName(ev.Credential):
 		return AuditEvent{}, auditRefusal{"credential", refusalMalformed}
+	case credentiallessPurpose(ev.Purpose) && ev.Credential != "":
+		// The mobile act reads no credential (credentiallessPurpose), so a name
+		// here is a record of a bundle entry this service never read, which a
+		// reader would take for a credential the act used. A tier is refused
+		// beside it for the same reason: nothing assigned one.
+		return AuditEvent{}, auditRefusal{"credential", refusalUnexpected}
+	case credentiallessPurpose(ev.Purpose) && ev.Tier != "":
+		return AuditEvent{}, auditRefusal{"tier", refusalUnexpected}
 	case credentialWithoutTier(ev.Purpose) && ev.Tier != "":
 		// The credential a mint names (the App key) and the one a sign line
 		// names (the review-signing key) are not model credentials of the
@@ -930,6 +1020,14 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 	// only thing on that line that says what the mint was for. A run's line — a
 	// sign's, a mint's, a model call's — is unchanged, and the run identity's
 	// own rule (a Run with no Repository is refused above) is untouched.
+	//
+	// A mobile act is the second and narrower exception, and it is about the
+	// CREDENTIAL rather than about the who: it is a caller's act like a
+	// verifier's (so the run and the job are not demanded of it), and it is one
+	// that touches no credential at all (credentiallessPurpose), so its line
+	// names none. Every other purpose's OK line still has to say which
+	// credential it used, and a mobile line that named one would have been
+	// refused above, before this branch was reached.
 	if ev.Status == StatusOK {
 		person := callerWithoutJobPurpose(ev.Purpose)
 		switch {
@@ -943,7 +1041,7 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 			// A read mint is for one repository (G11), so a line that names
 			// none records a token issued for nothing.
 			return AuditEvent{}, auditRefusal{"repository", refusalMissing}
-		case ev.Credential == "":
+		case ev.Credential == "" && !credentiallessPurpose(ev.Purpose):
 			return AuditEvent{}, auditRefusal{"credential", refusalMissing}
 		}
 	}
