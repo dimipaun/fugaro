@@ -1479,6 +1479,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
     expect([...SHARED_FILES]).toEqual([
       '../../shared/availability.ts',
       '../../shared/launcher.ts',
+      '../../shared/new-ops.ts',
       '../../shared/notice.ts',
       '../../shared/replay.ts',
       '../../shared/rigor.ts',
@@ -1818,6 +1819,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'graph/model.ts',
       'graph/move.ts',
       'installations.ts',
+      'new-bridge.ts',
       'screens/accountkeys.ts',
       'screens/coordinator.ts',
       'screens/credentialsservice.ts',
@@ -1838,6 +1840,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/spend.ts',
       'section.ts',
       'skeleton.ts',
+      'stubs/bridge-stub.ts',
       'writes.ts',
     ])
   })
