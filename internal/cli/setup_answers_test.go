@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -479,6 +480,27 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 		}
 	})
 
+	t.Run("the document fills the questions and nothing else of the run", func(t *testing.T) {
+		// Read off the product rather than trusted: a whole document applied to
+		// a run changes its five question fields and not one other thing. A
+		// handler that also set --yes, or recorded a creation, or named a
+		// billing account would be a document giving a consent, and this is
+		// where that fails.
+		o := &initOptions{asJSON: true}
+		r, out := wizardRun(t, "", o)
+		r.o.answersFile = answersFile(t, fullAnswers())
+		before := *r.o
+		if err := r.applySetupAnswers(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		after := *r.o
+		after.cloud.gcpProject, after.cloud.region, after.name, after.rigor = "", "", "", ""
+		after.bakeRepos, after.bakeReposChanged = false, false
+		if !reflect.DeepEqual(after, before) {
+			t.Errorf("the document changed something of the run besides the questions it answers:\n%+v\nwant\n%+v", after, before)
+		}
+	})
+
 	for _, tc := range []struct {
 		name  string
 		o     *initOptions
@@ -491,7 +513,9 @@ func TestSetupAnswersFileGrantsNoConsent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Every question is in hand from the file, and the run is still one
 			// nobody can confirm a step for: the answers fill the questions and
-			// none of the run's own conditions.
+			// none of the run's conditions, which is what the arm above reads
+			// field by field — so the apply path this run reaches is the one
+			// TestInitInAnAgentSessionAppliesNothing pins.
 			for _, k := range agentMarkers {
 				t.Setenv(k, "")
 			}
