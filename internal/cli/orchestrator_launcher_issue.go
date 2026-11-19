@@ -74,15 +74,17 @@ type orchestratorIssueReads struct {
 
 // issueReadSeam is the read a daemon's launcher carries, or nil where this
 // installation has nothing to reach the route with: no credentials service URL
-// in its own records, or no identity to present (orchestratorLabelIdentity —
+// in its own records, or no daemon account to present (orchestratorIdentityOf —
 // the daemon's own token to the service, which is one identity for every route
-// of it and not one per route).
+// of it and not one per route, the label seams' own).
 func issueReadSeam(d *orchestratorDaemon) *orchestratorIssueReads {
-	if d.lc == nil || d.lc.CredentialsService == nil || d.lc.CredentialsService.URL == "" || orchestratorLabelIdentity == nil {
+	id := orchestratorIdentityOf(d.lc)
+	identity := orchestratorIdentityToken(id)
+	if identity == nil {
 		return nil
 	}
 	return &orchestratorIssueReads{
-		url: d.lc.CredentialsService.URL, env: d.env, identity: orchestratorLabelIdentity,
+		url: id.url, env: d.env, identity: identity,
 		opened: map[string]*creds.ServiceIssues{},
 	}
 }

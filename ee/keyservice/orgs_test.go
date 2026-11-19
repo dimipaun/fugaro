@@ -132,7 +132,8 @@ func (d unstorableDocs) Get(ctx context.Context, collection, id string) (Doc, er
 }
 
 // burstCountDocs is the fixture's store with the day's count widened, the shape
-// burstMints has for the mint: the memberships read a sign-up takes before its
+// `together` and burstGate give a burst of requests (keyservice_test.go): the
+// memberships read a sign-up takes before its
 // write waits for the burst it is part of, and a read that arrives alone waits
 // the window out. That window — a count taken, then a record written — is the
 // whole of what signUpMu closes, and a burst that ran one sign-up after another

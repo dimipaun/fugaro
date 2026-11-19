@@ -38,6 +38,7 @@ import { MIN_ENDING } from '../../shared/shortid'
 import type {
   GraphReleaseBox,
   GraphView,
+  PlanEstimateView,
   PlanNodeView,
   PlanReleaseView,
   PlanState,
@@ -280,7 +281,15 @@ export interface GraphEdge {
 }
 
 /** GraphPlan is one plan's picture: its open release boxes, its nodes and its
- * edges. Its finished releases are the model's chips. */
+ * edges, and the estimate of what it has left to take and what it costs. Its
+ * finished releases are the model's chips.
+ *
+ * `estimate` is the document's own block, carried through unchanged: the two
+ * ranges are already `Reading`s and the block holds no text, so there is nothing
+ * here to sanitise, bound or derive -- what a reader is shown of it is the
+ * screen's (`screens/graph.ts`'s `estimateText`). `null` is a plan whose
+ * document carries no estimate at all, which is a CLI older than the release
+ * that added one (the estimates plan's S3); a screen draws nothing for it. */
 export interface GraphPlan {
   readonly id: string
   readonly title: Sanitized
@@ -289,6 +298,7 @@ export interface GraphPlan {
   readonly nodes: readonly GraphNode[]
   readonly edges: readonly GraphEdge[]
   readonly notShown: number
+  readonly estimate: PlanEstimateView | null
 }
 
 /** GraphColumn is one stream's column: the plans that name it, or -- for the
@@ -549,6 +559,7 @@ function graphPlan(plan: PlanView, index: number, room: number): { plan: GraphPl
       nodes,
       edges,
       notShown,
+      estimate: plan.estimate,
     },
     chips,
   }

@@ -87,11 +87,15 @@ type IssueRequest struct {
 // The reach of the text is therefore bounded by the class that may call this
 // route (the orchestrator daemon alone) and by nothing in this file.
 //
-// AuthorLogin, AuthorID and AppSlug are B11's own two signals for "this
-// installation's App opened this issue" (D2728): the App's bot login, and the
-// slug of the App the action was performed through, which is empty for an
-// issue a person's own account opened. The marker rule is the sync's and not
-// this route's; what the route does is refuse to hide the fact the rule needs.
+// AuthorLogin, AuthorID, AppSlug and AppID are B11's own signals for "this
+// installation's App opened this issue" (D2728): the App's bot login, the slug
+// of the App the action was performed through, and that App's id — all three
+// empty for an issue a person's own account opened. The id is the one that
+// says WHICH App: a slug names an App within the host, and any App the
+// repository has installed opens issues with a bot login that looks like ours,
+// so the marker rule needs the id the installation recorded its App by. The
+// rule itself is the sync's and not this route's; what the route does is
+// refuse to hide the fact the rule needs.
 //
 // There is no field here for the token GitHub answered with, the permissions
 // the service asked for, or anything else the service holds: the act is
@@ -114,6 +118,11 @@ type Issue struct {
 	// AppSlug is the slug of the GitHub App an action was performed through,
 	// empty when it was performed by a person's own account.
 	AppSlug string `json:"app_slug,omitempty"`
+	// AppID is that App's id, as the host reports it and as the installation
+	// records its own App (localcfg's github_app_id): the value that tells
+	// THIS installation's App from any other App the repository has
+	// installed, whose bot login and slug would otherwise read the same.
+	AppID string `json:"app_id,omitempty"`
 }
 
 // IssueAnswer is one issue call's answer: what a read read, and the issue a

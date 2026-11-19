@@ -157,6 +157,14 @@ const credsServiceSince = "0.10.0"
 // false wherever there was no reading and wherever the bundle holds no
 // document, which is the fact said twice rather than a fourth state.
 //
+// credsBitbucketTyped is the same fact about the NAMED token family (D2350):
+// the proxy serves a typed record as readily as the legacy entry (R5, T15 —
+// "any mix within one workspace"), so the gate S6's flip is held by reads both
+// and answers "the bundle holds a Bitbucket token" for either. It is false
+// wherever credsBitbucket is and for the same three reasons, and neither is a
+// question about which token the proxy would pick for a request: that selection
+// is the service's own (internal/credsvc/bitbucketproxy.go).
+//
 // The marker of a session that may not open the bundle is remembered beside
 // them (credsUnreadMarker), because a caller has to tell that no-reading from a
 // read that FAILED: the first is a question the session may not answer at all,
@@ -237,6 +245,7 @@ func (r *initRun) readCredentialsBundle(ctx context.Context, lc *localcfg.Config
 	// false, which is what they say: an empty container, a DISABLED newest
 	// version and a config with no service hold nothing to fetch.
 	_, r.credsBitbucket = b.BitbucketToken()
+	r.credsBitbucketTyped = len(b.BitbucketTokens()) > 0
 	creds := b.Credentials()
 	names = make(map[string]bool, len(creds))
 	for _, c := range creds {

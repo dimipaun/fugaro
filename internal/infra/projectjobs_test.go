@@ -115,6 +115,91 @@ func projectJobsFor(t *testing.T, lc string) map[string]ProjectJob {
 	return jobs
 }
 
+// prebuiltDefaultImage is the reference catalogDefaultLCBlock's entry carries:
+// a prebuilt image, the shape D2305's entry has.
+const prebuiltDefaultImage = "ghcr.io/dimipaun/aurora-base:1.0"
+
+// catalogDefaultLCBlock is a catalog whose default entry is a prebuilt image:
+// D2305's shape, an entry `fugaro update` writes for a project, which is a
+// reference this installation builds nothing from. The entry `update` writes
+// is the pinned base image itself, so this fixture's reference is deliberately
+// ANOTHER prebuilt image: a job that runs the entry and a job that runs the
+// base image have to be told apart by the reference the deployer wrote.
+const catalogDefaultLCBlock = `image_catalog:
+  entries:
+    - name: base
+      default: true
+      source: { kind: image, image: ` + prebuiltDefaultImage + ` }
+`
+
+// TestProjectJobsDeployTheCatalogDefaultImage: a shared job runs the project's
+// own image, which is the catalog's default entry (D2305, S10) — the entry the
+// project states, and the installation's base image only when it states none.
+//
+// A profile has no image field (R1), so the catalog's default is the one place
+// a project says which image its shared jobs run, and the deployer asks the
+// one resolver for it (catalog.JobImage, F21) rather than spelling the base
+// image: a shared job that kept the bare base image would run an image the
+// project's catalog does not name, and the baked image the spec describes as a
+// cache would be one no job of this project ever ran.
+func TestProjectJobsDeployTheCatalogDefaultImage(t *testing.T) {
+	// m5Additions' two image facts, spelled once here: the base image every
+	// repository builds from and the registry host the installation's images
+	// live under.
+	const baseImage = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
+	const registryHost = "us-east5-docker.pkg.dev/proj-1234"
+	const built = `image_catalog:
+  entries:
+    - name: team
+      default: true
+      source: { kind: dockerfile, repo: acme/webapp, path: .fugaro/team.Dockerfile }
+`
+	for _, tt := range []struct{ name, block, want string }{
+		// A prebuilt entry's image is its own reference, exactly as the
+		// per-repository path runs it (repoCtx.catalogImage).
+		{"a prebuilt default", catalogDefaultLCBlock, prebuiltDefaultImage},
+		// An entry this installation builds is the image the catalog build
+		// pushes it to: the one shared registry, named catalog-<entry> with the
+		// moving :latest tag the job spec names (D1152).
+		{"a default this installation builds", built,
+			registryHost + "/" + gcp.SharedRegistryRepoID() + "/catalog-team:latest"},
+		// A project that marks no default runs the installation's base image,
+		// which is what every shared job ran before the catalog decided
+		// anything (O4 b).
+		{"no default at all", "", baseImage},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock+tt.block)
+			if len(jobs) != 2 {
+				t.Fatalf("%d jobs, want the two the fixture's profiles deploy: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
+			}
+			for name, j := range jobs {
+				if got := j.Image; got != tt.want {
+					t.Errorf("the shared job %s runs %s, want %s: a shared job runs the project's own image, which the catalog's default entry is (D2305)", name, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestImplicitReviewJobRunsTheCatalogDefault: the implicit review-only job is
+// a shared job of the project like any other, and a project that declares no
+// profile has no coding job for it to inherit an image from (S10, D2305). Such
+// a project's implicit jobs are the only jobs it has, so the deployer asks the
+// resolver for the image itself.
+func TestImplicitReviewJobRunsTheCatalogDefault(t *testing.T) {
+	jobs := projectReviewJobsFor(t, implicitReviewLC()+catalogDefaultLCBlock)
+	if len(jobs) != len(ImplicitReviewProviders) {
+		t.Fatalf("review jobs = %v, want one implicit default job per provider %v", sortedJobNames(jobs), ImplicitReviewProviders)
+	}
+	for name, j := range jobs {
+		want := prebuiltDefaultImage
+		if j.Image != want {
+			t.Errorf("the implicit review job %s runs %s, want the project's default entry %s: it is a shared job of this project, and a project with no profile has no coding job to inherit an image from", name, j.Image, want)
+		}
+	}
+}
+
 // One job and one job service account per (profile, provider, account) — the
 // resource set the whole phase rests on (plan task 3.2 step 1).
 func TestProjectJobsAreOnePerProfileProviderAccount(t *testing.T) {

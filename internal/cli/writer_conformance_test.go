@@ -208,6 +208,12 @@ func newWriterRig(t *testing.T) *writerRig {
 // and the runs bucket whose marker names the project the database belongs to.
 // Without them a cap write is refused for the installation rather than for the
 // row, and the conformance test would measure the fixture.
+//
+// Every mapping is a block, for writerRepoYAML's own reason: yamledit cannot
+// splice a member into a flow collection, and the budget rows default to THIS
+// file now (settingsDefaultLayer's merge rule, D2605), so a `budget: { ... }`
+// written for compactness would measure the fixture's shape rather than the
+// row's writer — which is what it did the day the default moved here.
 func writerLocalBudget(db *gcpfake.RTDB, home string) string {
 	db.Set("fugaro/project", "aurora")
 	db.Set(budget.PathMark, auroraMark())
@@ -222,8 +228,12 @@ func writerLocalBudget(db *gcpfake.RTDB, home string) string {
 	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(infra.ProjectMarkerObject)), marker, 0o600); err != nil {
 		panic(err)
 	}
-	return "budget: { mode: observe, firebase_project: proj-1234, rtdb_url: " + db.URL + " }\n" +
-		"bucket_url: file://" + dir + "\nuser: someone@example.com\nendpoints: { no_auth: true }\n"
+	return "budget:\n" +
+		"  mode: observe\n" +
+		"  firebase_project: proj-1234\n" +
+		"  rtdb_url: " + db.URL + "\n" +
+		"bucket_url: file://" + dir + "\nuser: someone@example.com\n" +
+		"endpoints:\n  no_auth: true\n"
 }
 
 // writerLayerYAML is this machine's layer file, the body under the header

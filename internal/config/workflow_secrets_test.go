@@ -51,7 +51,7 @@ func TestWorkflowSecretRefusesANameNoSecretMayCarry(t *testing.T) {
 // braces, and it is what keeps the forwarding feature from acquiring a second
 // spelling: a proxy written here would be a setting nothing reads.
 func TestWorkflowSecretRefusesTheProxySwitch(t *testing.T) {
-	ps := ValidateWorkflowSecrets(map[string]ProjectSecret{"deploy-token": {AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: true}})
+	ps := ValidateWorkflowSecrets(map[string]ProjectSecret{"deploy-token": {AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: ProxyFlag(true)}})
 	if len(ps) != 1 || ps[0].Path != "workflow_secrets.deploy-token.proxy" {
 		t.Fatalf("ValidateWorkflowSecrets = %+v, want one problem at workflow_secrets.deploy-token.proxy", ps)
 	}

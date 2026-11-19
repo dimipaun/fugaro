@@ -276,7 +276,11 @@ func initStages(e *initEngine) []initflow.Stage {
 	// local config when it does not carry what the config states — and the
 	// stages before it are what those runs are launched against (see the
 	// stage's own file for why it is a migration and never a delete and a
-	// republish).
+	// republish). Its write and the Bitbucket proxy switch S6 turns on in the
+	// local config are ONE step for the reason the switch's file gives: the node
+	// and the entry have to agree for every reader of this same update, and the
+	// repository stage, which is the reader that refuses a disagreement, is
+	// earlier in this list.
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
 	// The rules stage before the policy stage: the deployed security rules
 	// generation is what a published policy node is read under, and the policy
@@ -446,7 +450,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 	// providers in use, and before the loop for the reason syncAccess is
 	// below it: the config every stage of this run reads is the one this run
 	// writes.
-	e.createDefaultProfiles()
+	e.createDefaultProfiles(ctx)
 	// The managed project's read, once for the whole run: it is what the run's
 	// one confirmation and the steps the gate does not judge ask about
 	// (update_managed.go's gateRun), and it is made before the first stage so
@@ -584,11 +588,21 @@ func (e *initEngine) outcome(ctx context.Context, res *initflow.Result, runErr e
 	// this run leaves behind — and it returns no error either: the list is a derived
 	// object, and failing an upgrade over one is what the HARD RULE forbids.
 	e.writeAdminList(ctx)
-	// And T-RU5's, the fifth and last: what this release fixes about the
+	// And D2716's: the checkout's docs/backlog/ folder, folded into the
+	// project's standing backlog once (update_backlog.go). It is here for the
+	// reason the four above are — the converge has applied everything it had, so
+	// the installation it writes into is the one this run leaves behind — and it
+	// returns no error either: the folder is history the moment it is folded, and
+	// a checkout whose folder could not be folded is a warning on a run that
+	// otherwise converged, never a reason to fail one (the HARD RULE). It is the
+	// one step here that reads the checkout this run was started in, and the one
+	// that does nothing at all outside one.
+	e.foldBacklog(ctx)
+	// And T-RU5's, the sixth and last: what this release fixes about the
 	// project's filed issues, which is a step of the run and not of the door
 	// (update_resolved.go) because --json's document carries it and is printed
-	// on the next line. It is reached on the same path the four above are —
-	// the converge applied everything it had — and it is the one of the five
+	// on the next line. It is reached on the same path the five above are —
+	// the converge applied everything it had — and it is the one of the six
 	// that no mode has to exclude twice: what it writes to the shared store is
 	// the store's own guarded write, and what it prints is a line nobody has
 	// to act on.
@@ -1752,9 +1766,10 @@ func newFirebaseStage(e *initEngine) *engineStage {
 
 // newInstallation2Stage is stage 6: the installation root once more, deploying
 // what only the images stage's own work makes deployable — the history job,
-// whose image that stage mirrors, and the installation's two scheduled jobs,
-// which run FROM the base image it pins: the catalog check job (#1843) and the
-// reports job (R7).
+// whose image that stage mirrors, the installation's two scheduled jobs, which
+// run FROM the base image it pins: the catalog check job (#1843) and the
+// reports job (R7) — and the shared project jobs, whose image is the project's
+// catalog default and so the same base image (S10, D2305).
 func newInstallation2Stage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
 		skip: func() string {
@@ -1780,12 +1795,21 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			// the reason the repository stage reads it that way too: a config
 			// this run cannot compose the default profile's job from must not
 			// stop a stage of a converging update.
+			//
+			// The shared project jobs are read again with them (S10): their
+			// image is the project's catalog default, and the images stage is
+			// what moves that — the entry is written on the base image the run
+			// started with, before the stage that pins this release's, so the
+			// first apply's jobs carry the image the run started with. The same
+			// lag, and the same apply to close it, as the scheduled jobs beside
+			// them.
 			next, err := installSpec(e.r.o, e.lc, e.r.warn)
 			if err != nil {
 				return err
 			}
 			e.spec.CatalogCheck = next.CatalogCheck
 			e.spec.Reports = next.Reports
+			e.spec.ProjectJobs = next.ProjectJobs
 			if e.r.o.firebase != "" {
 				return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 			}

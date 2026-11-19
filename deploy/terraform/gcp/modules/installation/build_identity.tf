@@ -98,6 +98,8 @@ resource "google_cloud_run_v2_service_iam_member" "credentials_build_identity" {
   name     = var.credentials_service.service
   role     = "roles/run.invoker"
   member   = google_service_account.build_identity[0].member
+
+  depends_on = [google_cloud_run_v2_service.credentials]
 }
 
 # What a catalog build's own push needs, on the installation's ONE shared
@@ -292,4 +294,6 @@ resource "google_service_account_iam_member" "operator_build_identity" {
   service_account_id = "projects/${var.project}/serviceAccounts/fugaro-build-identity@${var.project}.iam.gserviceaccount.com"
   role               = "roles/iam.serviceAccountUser"
   member             = each.value
+
+  depends_on = [google_service_account.build_identity]
 }

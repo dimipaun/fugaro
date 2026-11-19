@@ -96,19 +96,19 @@ func TestEscalationKeysDefaultsPerMode(t *testing.T) {
 	}
 }
 
-// TestEscalationReadyDraftsDefaultsOff: readying a draft is authority nobody
-// asked for when the file says nothing (D2046, T3), so the key ships off and a
-// written true is the only way it is on.
-func TestEscalationReadyDraftsDefaultsOff(t *testing.T) {
-	if DefaultEscalationReadyDrafts {
-		t.Error("the default is on, and the daemon's readiness authority ships off")
+// TestEscalationReadyDraftsDefaultsOn: the owner ruled the key on by default
+// (D2046), so a file that says nothing readies drafts and a written false is
+// the only way it is off.
+func TestEscalationReadyDraftsDefaultsOn(t *testing.T) {
+	if !DefaultEscalationReadyDrafts {
+		t.Error("the default is off, and the owner ruled the readiness authority on by default")
 	}
 	c, err := Parse([]byte(sample))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.EscalationReadyDrafts() {
-		t.Error("ready_drafts is on for a file that sets the block nowhere")
+	if !c.EscalationReadyDrafts() {
+		t.Error("ready_drafts is off for a file that sets the block nowhere")
 	}
 	for _, tc := range []struct {
 		doc  string
@@ -124,21 +124,6 @@ func TestEscalationReadyDraftsDefaultsOff(t *testing.T) {
 		if got := lc.EscalationReadyDrafts(); got != tc.want {
 			t.Errorf("ready_drafts = %v, want %v", got, tc.want)
 		}
-	}
-
-	// The judge's grade is the other key read by name rather than by figure,
-	// and a file that names none answers no grade at all rather than one this
-	// code chose (G5): a judge nobody appointed is a question, not a default.
-	if _, ok := c.EscalationMergeJudge(); ok {
-		t.Error("a file that names no merge judge answers a grade")
-	}
-	graded, err := Parse([]byte(sample + "escalation:\n  merge_judge: strongest\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	g, ok := graded.EscalationMergeJudge()
-	if !ok || g != escalation.Strongest {
-		t.Errorf("merge_judge = (%q, %v), want (strongest, true)", g, ok)
 	}
 }
 

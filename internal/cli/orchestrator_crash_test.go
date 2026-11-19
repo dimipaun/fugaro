@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
+	"github.com/dimipaun/fugaro/internal/plan"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -421,6 +422,72 @@ func TestRunViewFoldsAHaltedRunAsRefused(t *testing.T) {
 	}
 	if execs := f.run.Executions(); len(execs) != 1 {
 		t.Errorf("a halted run was answered with %d execution(s) in all, want the one the crash left: a refusal is never retried", len(execs))
+	}
+}
+
+// TestRunViewCarriesWhatTheRunReportedAboutTheGraph: what a finished run says
+// about the graph it worked in — the dependencies its own agent discovered and
+// the paths it met a conflict on — is the whole of the fold's input (E3), and
+// the run's record is the only place it is written. So the view has to project
+// both fields onto the report, and the fold reads them from there: a view that
+// dropped them would leave a real installation folding nothing at all, with
+// every test of the fold still green.
+func TestRunViewCarriesWhatTheRunReportedAboutTheGraph(t *testing.T) {
+	f, d, cs := crashDaemon(t, true, true)
+	ctx := context.Background()
+	// One more item of the same repository, standing for the work the run said
+	// it blocks: queued and unapproved, so the edge the fold adds in front of it
+	// is the whole of what this cycle does to it. It is named the way the fold
+	// names an item of a run that stands for no plan task — by a path its
+	// footprint covers (F33: the footprints arrive as the tick's own input, and
+	// no node carries one).
+	st := f.state(t)
+	st.WorkItems = append(st.WorkItems, orchestrator.WorkItem{
+		ID: "wi-2", Title: "land the schema", Repo: "acme/app", Recipe: "standard",
+		RigorTier: "medium", Brief: "Land the schema the daemon's run blocks on.",
+		Phase: orchestrator.PhaseQueued,
+	})
+	f.putState(t, st)
+	d.tick.Footprints = orchestrator.Footprints{"wi-2": plan.NewFootprint([]string{"go.mod"})}
+	discovered := runstore.NewDiscovered(
+		[]runstore.DiscoveredItem{{Path: "go.mod", Reason: "the schema has to land first"}},
+		[]runstore.DiscoveredItem{{Path: "internal/gateway", Reason: "the proxy is what it needs"}},
+	)
+	if discovered == nil {
+		t.Fatal("the block this test writes came to nothing, so the test would pin nothing")
+	}
+	conflicts := runstore.NewConflictPaths([]string{"go.mod"})
+	if err := f.runStore(t, cs.runID).WriteRecord(ctx, &runstore.Record{
+		Version: 1, RunID: cs.runID, Execution: "exec-1", Status: runstore.StatusSucceeded,
+		Stage: "writeback", Outcome: runstore.OutcomeNone, Gate: "clean", StartedAt: f.now,
+		Discovered: discovered, ConflictPaths: conflicts,
+	}); err != nil {
+		t.Fatalf("writing the record a run that reported what it discovered carries: %v", err)
+	}
+
+	reports, err := d.tick.Runs.Runs(ctx, []string{cs.runID})
+	if err != nil {
+		t.Fatalf("reading the runs the state recorded: %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("the view answered %d report(s) for one run, want one: %+v", len(reports), reports)
+	}
+	if got := reports[0].Discovered; !reflect.DeepEqual(got, discovered) {
+		t.Errorf("the report carries %+v, and the record reported %+v: the fold adds the edges the blocks ask for, and this is where it reads them", got, discovered)
+	}
+	if got := reports[0].ConflictPaths; !reflect.DeepEqual(got, conflicts) {
+		t.Errorf("the report carries %q, and the record reported %q: the fold holds these against the footprints of the items merged since the attempt began", got, conflicts)
+	}
+
+	if _, err := d.tick.Step(ctx); err != nil {
+		t.Fatalf("the cycle over a run that reported what it discovered: %v", err)
+	}
+	// And the fold really ran on them: the item the run said it blocks now
+	// waits for the run's own item, in the one edge the fold adds and never
+	// removes.
+	after := f.item(t, "wi-2")
+	if want := []string{cs.item.ID}; !reflect.DeepEqual(after.DependsOn, want) {
+		t.Errorf("the item the run reported blocking carries dependencies %q, want %q: the projection reached no fold", after.DependsOn, want)
 	}
 }
 

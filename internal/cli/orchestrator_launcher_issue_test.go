@@ -15,7 +15,7 @@ package cli
 //
 // The service is a fake for the reason the label path's tests state
 // (orchestrator_labels_test.go): this tree has no daemon identity to reach the
-// real service with (orchestratorLabelIdentity, F19 and O2 of the plan), and
+// real service with (orchestratorIdentityOf, F19 and O2 of the plan), and
 // withLabelIdentity supplies it so that the whole path runs. What that leaves
 // unproven is the same half the label tests leave: that the installation's
 // daemon account is admitted by the service's own orchestrator class.
@@ -24,179 +24,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/creds"
-	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/orchestrator"
 )
-
-// issueService is the installation's credentials service as a daemon reaches
-// it for one issue: the route's own path and shapes (creds.IssuePath,
-// creds.IssueRequest, creds.IssueAnswer) over the tickets a test seeded, so one
-// cycle exercises the whole path — the launcher's seam, the client's call and
-// the route's read act — with neither GitHub nor a service behind it.
-//
-// It answers the read act alone. The route's list and open acts are the
-// ingest's and the mirror's (B4, B11) and nothing on this path asks for them,
-// so a call naming one is a refusal here rather than an answer a test would
-// read as its own.
-type issueService struct {
-	srv *httptest.Server
-
-	// mu guards the two records below, which the server's own goroutines write
-	// and the test's reads.
-	mu sync.Mutex
-	// issues are the tickets the repository holds, by number.
-	issues map[int]creds.Issue
-	// calls is every call the service was presented with, in order.
-	calls []issueCall
-}
-
-// issueCall is one call as the route read it: the repository and act it names,
-// the App ID the service would sign as, the number a read is for, and the ID
-// token the daemon presented.
-type issueCall struct {
-	repo   string
-	act    string
-	appID  string
-	number int
-	token  string
-}
-
-func newIssueService(t *testing.T) *issueService {
-	t.Helper()
-	s := &issueService{issues: map[int]creds.Issue{}}
-	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
-	t.Cleanup(s.srv.Close)
-	return s
-}
-
-// put is one ticket of the repository, as the service would read it back.
-func (s *issueService) put(number int, title, body string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.issues[number] = creds.Issue{Number: number, Title: title, Body: body, State: "open", URL: issueTicketURL(number)}
-}
-
-// serve is one issue call as the route serves it: the read act answers the one
-// ticket it named, and every other act is refused — the acts this path does not
-// use are not silently answered as reads.
-func (s *issueService) serve(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != creds.IssuePath {
-		http.Error(w, "no such route", http.StatusNotFound)
-		return
-	}
-	var req creds.IssueRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "the call is not one this route reads", http.StatusBadRequest)
-		return
-	}
-	s.mu.Lock()
-	s.calls = append(s.calls, issueCall{
-		repo: req.Repository, act: req.Action, appID: req.AppID, number: req.Number,
-		token: strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "),
-	})
-	iss, found := s.issues[req.Number]
-	s.mu.Unlock()
-	if req.Action != creds.IssueActionGet {
-		http.Error(w, "this path performs the read act alone", http.StatusBadRequest)
-		return
-	}
-	if !found {
-		http.Error(w, "no such issue", http.StatusNotFound)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(creds.IssueAnswer{Issues: []creds.Issue{iss}})
-}
-
-// callsOf is every call the service was presented with for one act.
-func (s *issueService) callsOf(act string) []issueCall {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []issueCall
-	for _, c := range s.calls {
-		if c.act == act {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-// issueFixture is one installation whose daemon reaches a fake credentials
-// service's issue route: the daemon fixture's own cloud (gcpfake, a budget
-// database and a runs bucket under the test's own directory) with the
-// installation's own records naming the service, and the fake service the
-// repository's tickets are read from.
-type issueFixture struct {
-	*daemonFixture
-	service *issueService
-}
-
-func newIssueFixture(t *testing.T) *issueFixture {
-	t.Helper()
-	withLabelIdentity(t)
-	return &issueFixture{daemonFixture: newDaemonFixture(t), service: newIssueService(t)}
-}
-
-// running is the fixture's daemon after its start-up — the lease taken and the
-// tick built — with the installation's own records naming the service before
-// either happens: the tick's launcher is built with the seam the records decide
-// (issueReadSeam), so the URL and the App ID have to be there first.
-//
-// The two records are what a real installation has in its local config and what
-// this fixture's own config file cannot carry: the file holds the URL to an
-// https shape, and the fake service is loopback http, which is the one other
-// shape the client's own check admits (the label fixture's daemon, for the same
-// reason).
-func (f *issueFixture) running(t *testing.T) *orchestratorDaemon {
-	t.Helper()
-	return f.start(t, labelAppID)
-}
-
-// runningWithoutAppID is the same daemon over an installation that records no
-// GitHub App ID for the repository. The seam is built — the service's URL is
-// there — and the read is refused before any call is made, because the service
-// signs its own token as that App and there is none to sign as.
-func (f *issueFixture) runningWithoutAppID(t *testing.T) *orchestratorDaemon {
-	t.Helper()
-	return f.start(t, "")
-}
-
-// start is the daemon both of the two above are, with the App ID the
-// installation records for the repository — labelAppID, or none at all.
-func (f *issueFixture) start(t *testing.T, appID string) *orchestratorDaemon {
-	t.Helper()
-	d, _ := f.daemonFixture.daemon(t, "")
-	d.lc.CredentialsService = &localcfg.CredentialsService{URL: f.service.srv.URL}
-	if appID != "" {
-		repo := d.lc.Repos[labelRepo]
-		repo.GitHubAppID = appID
-		d.lc.Repos[labelRepo] = repo
-	}
-
-	state, err := d.lease.Acquire(f.ctx)
-	if err != nil || !state.Held {
-		t.Fatalf("taking the lease: %+v, %v", state, err)
-	}
-	tick, err := d.newTick(f.ctx)
-	if err != nil {
-		t.Fatalf("building the daemon's tick: %v", err)
-	}
-	d.tick = tick
-	return d
-}
 
 // issueItem is one item of a test's node that came from the ticket number names:
 // the external id and the body's SHA-256 the ingest writes, the ticket's own
@@ -219,13 +57,6 @@ func issueItem(t *testing.T, number int, body string) orchestrator.WorkItem {
 // repository, in the one shape the state accepts.
 func issueExternal(number int) string {
 	return "github:" + labelRepo + "#" + strconv.Itoa(number)
-}
-
-// issueTicketURL is where the ticket is, as the service reads it: nothing on this path
-// opens the URL, and it is on the answer so that a test's fixture is a ticket
-// and not a shape with two fields filled in.
-func issueTicketURL(number int) string {
-	return "https://github.com/" + labelRepo + "/issues/" + strconv.Itoa(number)
 }
 
 // issueHash is the SHA-256 of a ticket's body, lower-case hex, as the ingest
@@ -311,8 +142,8 @@ func TestIssueItemBriefFromBody(t *testing.T) {
 	if got.repo != labelRepo || got.number != 7 {
 		t.Errorf("the read names %s#%d, want the item's own ticket (%s#7)", got.repo, got.number, labelRepo)
 	}
-	if got.appID != labelAppID {
-		t.Errorf("the read names App ID %q, want the App the installation records for %s (%s)", got.appID, labelRepo, labelAppID)
+	if got.appID != issueAppID {
+		t.Errorf("the read names App ID %q, want the App the installation records for %s (%s)", got.appID, issueRepo, issueAppID)
 	}
 	if got.token != labelIdentity {
 		t.Errorf("the service was presented %q, want the daemon's own identity", got.token)

@@ -51,10 +51,10 @@ func escalationModeNames() string {
 const DefaultEscalationCriticalPathFactor = 0.5
 
 // DefaultEscalationReadyDrafts is whether the orchestrator may ready a stalled
-// draft on its own: off (D2046, T3). The daemon readying a draft is new
-// authority over work a person left alone, so it ships off and the owner
-// switches it on once, in their own file.
-const DefaultEscalationReadyDrafts = false
+// draft on its own: on (D2046, T3). The owner ruled it on by default, so a
+// machine that states nothing readies a stalled draft whose gate passes, and
+// a written false in the owner's own file is the way to turn it off.
+const DefaultEscalationReadyDrafts = true
 
 // Escalation is the `escalation:` block. Every field is a pointer for the
 // Issues block's reason: a file that writes one key leaves the rest of the

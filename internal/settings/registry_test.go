@@ -230,6 +230,14 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// rule, so `fugaro project clone-url` is where the two are checked
 		// against each other (settings spec §5.6, D842).
 		"project clone-url",
+		// The binary admission's family (K2 of docs/config-ownership, D2613):
+		// both members are the owner's grant over the bytes a run may add, and
+		// each is held to a rule no scalar write can apply — a pattern to the
+		// node's own glob rule and the cap to a ceiling a project may only
+		// lower — so `fugaro project binaries` writes them, and the row names
+		// that command rather than `fugaro project`, whose other keys this
+		// block is not.
+		"project binaries",
 	}
 	for _, r := range Rows() {
 		ok := false

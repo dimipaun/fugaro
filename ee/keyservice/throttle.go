@@ -3,7 +3,7 @@
 
 package keyservice
 
-// The intake's throttle (§7.2): per-address and per-IP, so the forms cannot be
+// The intake's throttle (§7.2): per-address and per-IP, so the intake cannot be
 // used to mail-bomb a third party's address or to walk a list of domains asking
 // whether each holds a key.
 //

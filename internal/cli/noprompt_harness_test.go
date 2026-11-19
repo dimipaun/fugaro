@@ -287,6 +287,36 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 	// the registry's nearest-name refusal, and a fixture that stopped there would
 	// call the leaf quiet without the write having begun. The unset needs a value
 	// to remove, which its seed sets.
+	// The three access grants of docs/config-ownership A2 are the same kind of
+	// edit as the pool and alias writes above, and each fixture is what stands
+	// between its run and a refusal rather than a write: the craft pair needs a
+	// credential the set may point at and a craft the rm has to take away, the
+	// grade needs the layer file and a model beside the access it is set on (a
+	// grade written with an access and no model is a document no reader loads),
+	// and the repository write needs the entry the list lives in, provider and
+	// all. Each sentence is the diff line or the naming of the key that was
+	// written, which is the proof the run reached the write with the stdin
+	// closed and asked nothing.
+	"fugaro accounts craft set": {
+		args:    []string{"coder", "--access", "team-b"},
+		reaches: "crafts.coder.access = team-b",
+		seed:    closedStdinCraftSeed,
+	},
+	"fugaro accounts craft rm": {
+		args:    []string{"coder"},
+		reaches: "remove crafts.coder",
+		seed:    closedStdinCraftSeed,
+	},
+	"fugaro accounts grade set": {
+		args:    []string{"strong", "--access", "vertex", "--layer", "project"},
+		reaches: "defaults.model_grades.strong.access = vertex",
+		seed:    closedStdinGradeLayerSeed,
+	},
+	"fugaro accounts repo add": {
+		args:    []string{"acme/app", "team-a"},
+		reaches: "repos.acme/app.claude_accounts gains it",
+		seed:    closedStdinRepoAddSeed,
+	},
 	"fugaro settings set":   {args: []string{"base_branch", "main"}, reaches: "write base_branch in"},
 	"fugaro settings unset": {args: []string{"base_branch"}, reaches: "remove base_branch from", seed: closedStdinSetBaseBranch},
 	// The two workflow writes are repository-scoped, so their fixture's world
@@ -318,6 +348,27 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		args:    []string{"github/acme/app"},
 		reaches: "remove clone_urls[github/acme/app] from",
 		seed:    closedStdinCloneURLSeed,
+	},
+	// The three binaries writes are the same kind over another block of the same
+	// file (K2 of docs/config-ownership). The allow states the block itself, so
+	// its fixture needs no seed; the deny and the lowering max-bytes take a
+	// member away from a block the seed writes first, whose entry the deny names
+	// and whose cap the fixture lowers — a removal from a file that states no
+	// block is this command's own refusal, and a sentence naming the change is
+	// the proof each run reached its write rather than one of them.
+	"fugaro project binaries allow": {
+		args:    []string{"brand/*.png"},
+		reaches: "add brand/*.png to binaries.allow in",
+	},
+	"fugaro project binaries deny": {
+		args:    []string{"brand/*.png"},
+		reaches: "remove brand/*.png from binaries.allow in",
+		seed:    closedStdinBinariesSeed,
+	},
+	"fugaro project binaries max-bytes": {
+		args:    []string{"1048576"},
+		reaches: "set binaries.max_bytes to 1048576 in",
+		seed:    closedStdinBinariesSeed,
 	},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
@@ -517,8 +568,11 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 var closedStdinNoFixture = map[string]string{
 	"fugaro ab":                "refuses: the edition is not in this build",
 	"fugaro apply":             "owes nothing in this world, which holds no record: the whole of what a bare run does is the answer of a run with nothing to apply, and it reaches its own body to print it",
-	"fugaro accounts":          "is a name for its four subcommands: a bare run prints its own usage and returns",
+	"fugaro accounts":          "is a name for the twelve subcommands beside it: a bare run prints its own usage and returns",
 	"fugaro accounts alias":    "is a name for set and rm: a bare run prints its own usage and returns",
+	"fugaro accounts craft":    "is a name for set and rm: a bare run prints its own usage and returns",
+	"fugaro accounts grade":    "is a name for set: a bare run prints its own usage and returns",
+	"fugaro accounts repo":     "is a name for add: a bare run prints its own usage and returns",
 	"fugaro accounts ls":       "selects no project and names the two ways to (--repo, an origin remote)",
 	"fugaro accounts pool":     "is a name for ls, add and rm: a bare run prints its own usage and returns",
 	"fugaro accounts pool ls":  "reads the selected project's own config, which this world's has no pools in, and prints that none are defined",
@@ -876,6 +930,15 @@ func closedStdinCloneURLSeed(t *testing.T, f *budgetFixture) {
 	f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n  github/acme/other: https://github.com/acme/other.git\n")
 }
 
+// closedStdinBinariesSeed gives the world the binaries block the two narrowing
+// writes take a member out of: the pattern the deny removes, and a cap above
+// the one the fixture writes, so the write is the lowering direction — the one
+// a session may make and the one whose sentence names the member (D2617).
+func closedStdinBinariesSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "binaries:\n  allow:\n    - brand/*.png\n  max_bytes: 2097152\n")
+}
+
 // closedStdinPoolSeed gives the world the two things a pool write needs to
 // reach its own edit: a credential a member may name (two of them, so the
 // declaration the fixture asks for is a change) and a pool to remove.
@@ -931,6 +994,46 @@ func closedStdinProjectSecretAllowListSeed(repos ...string) func(*testing.T, *bu
 		}
 		f.appendConfig(t, body)
 	}
+}
+
+// closedStdinCraftSeed gives the world's own config the two things the craft
+// writes need to reach their own edit: the credentials the set's access may name
+// (one it moves onto, one the craft already holds, so the write is a move and
+// not the "already reads" answer) and a craft for the removal to take away. A
+// craft the config does not state and a credential it does not declare are the
+// two refusals before the write, and a fixture that stopped at either would call
+// the leaf quiet without the write having begun.
+func closedStdinCraftSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "credentials:\n  - name: team-a\n    type: claude-oauth\n  - name: team-b\n    type: claude-oauth\ncrafts:\n  coder:\n    access: team-a\n")
+}
+
+// closedStdinGradeLayerSeed gives the world the file the grade write edits —
+// this machine's own project layer file, carrying the world's own anchors and
+// the model the access is set beside. Without it the run refuses the missing
+// file (D830's step 4, naming `fugaro update`), and without the model it refuses
+// the access a grade cannot be written with alone: both are refusals before the
+// write rather than the write this fixture is for.
+func closedStdinGradeLayerSeed(t *testing.T, _ *budgetFixture) {
+	t.Helper()
+	settingsManagedLayerFile(t, minimalAnchored+"defaults:\n  model_grades:\n    strong:\n      model: claude-sonnet-5-5\n")
+}
+
+// closedStdinRepoAddSeed gives the world's own config the account the
+// repository write's list is to gain, under the repository the world already
+// holds — which carries the provider every such entry needs. The entry is
+// rewritten from the flow map the world writes it as into the block form the
+// list is spliced into: a list added to a flow collection is the edit's own
+// refusal (yamledit), which would stop the fixture short of its write for a
+// spelling of the config rather than for anything the command decides. An
+// account the config does not declare is the run's one refusal before the
+// write, and a second repos key would be a config no reader loads.
+func closedStdinRepoAddSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.rewriteConfig(t,
+		"  acme/app: { provider: github, base_branch: main, workflows: [web] }\n",
+		"  acme/app:\n    provider: github\n    base_branch: main\n    workflows: [web]\n")
+	f.appendConfig(t, "claude_accounts:\n  team-a: {}\n")
 }
 
 // closedStdinRigorLayerSeed gives the world the file `fugaro rigor set` edits:

@@ -1113,6 +1113,95 @@ func TestDigestRunsRefusedWithoutDigestRecipe(t *testing.T) {
 	}
 }
 
+// TestTaskSpecCarriesTheStoredReports covers Spec.Reports — the objects a
+// commit run was handed (periodic-reviews R9, D2754) — and the decoder's arm
+// for them: each entry's own claims are shape-checked, and a list is accepted
+// only under a recipe whose first step is commit_reports, the one step that
+// reads them.
+//
+// What this arm deliberately does NOT check is the mirror's own name shape:
+// that is the step's check, applied where a name becomes a path in the
+// repository (internal/runner/reports_commit.go), and a dot-prefixed name —
+// which task.InputNameProblem admits on purpose for an --attach input — is a
+// name this decoder accepts, so the step's refusal is the live one.
+//
+// Mutation (drop the recipe switch from Validate): a report list under the
+// digest recipe's own text parses and this test fails. Mutation (accept a
+// blank name or a bad hash): the two shape cases below fail.
+func TestTaskSpecCarriesTheStoredReports(t *testing.T) {
+	commitText, ok := recipe.CatalogText("commit-reports")
+	if !ok {
+		t.Fatal("commit-reports is not in the catalog")
+	}
+	digestText, ok := recipe.CatalogText("run-digest")
+	if !ok {
+		t.Fatal("run-digest is not in the catalog")
+	}
+	commit := &Recipe{Name: "commit-reports", Source: "catalog", SHA256: recipe.Sum(commitText), YAML: string(commitText)}
+	digest := &Recipe{Name: "run-digest", Source: "catalog", SHA256: recipe.Sum(digestText), YAML: string(digestText)}
+	const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	// A slug of the storage shape: only such a name can be a repository's
+	// report, which is what the step's own check reads.
+	const slug = "acme-app-0123456789abcdef"
+	file := func(name string) InputFile { return InputFile{Name: name, Bytes: 4096, SHA256: hash} }
+	base := func(r *Recipe, files ...InputFile) *Spec {
+		return &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", Task: "x",
+			Recipe: r, Reports: files}
+	}
+	if !RecipeUsesCommitReports(string(commitText)) || RecipeUsesCommitReports(string(digestText)) || RecipeUsesCommitReports("") {
+		t.Fatal("RecipeUsesCommitReports does not answer for the catalog's own texts")
+	}
+	if err := base(commit, file(slug+"/2026/2026-11-18.md"), file("2026/2026-11-18.md")).Validate(); err != nil {
+		t.Errorf("a commit run's reports: %v", err)
+	}
+	// A repository recipe carries no text: accepted, judged where it is read.
+	if err := base(&Recipe{Name: "commit", Source: "repo"}, file("2026/2026-11-18.md")).Validate(); err != nil {
+		t.Errorf("a repository recipe: %v", err)
+	}
+	// The name's shape is the step's, so the dot-prefixed name the input rule
+	// admits is a name this decoder accepts.
+	if err := base(commit, file(".git/hooks/pre-commit")).Validate(); err != nil {
+		t.Errorf("the name shape is checked here, and it belongs to the step: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		spec *Spec
+		want string
+	}{
+		{"no recipe at all", base(nil, file("2026/2026-11-18.md")), "needs a recipe whose first step is commit_reports"},
+		{"a report run's recipe", base(digest, file("2026/2026-11-18.md")), "needs a recipe whose first step is commit_reports"},
+		{"recipe text that is not a recipe", base(&Recipe{Name: "commit-reports", Source: "catalog", SHA256: recipe.Sum([]byte("x")), YAML: "x"}, file("2026/2026-11-18.md")), "needs a recipe whose first step is commit_reports"},
+		{"a name of nothing but whitespace", base(commit, file("   ")), "reports[0].name is required"},
+		{"no name at all", base(commit, file("")), "reports[0].name is required"},
+		{"a negative size", base(commit, InputFile{Name: "2026/2026-11-18.md", Bytes: -1, SHA256: hash}), "reports[0].bytes must not be negative"},
+		{"an upper-case hash", base(commit, InputFile{Name: "2026/2026-11-18.md", Bytes: 1, SHA256: strings.ToUpper(hash)}), "must be 64 lower-case hex digits"},
+		{"no hash", base(commit, InputFile{Name: "2026/2026-11-18.md", Bytes: 1}), "must be 64 lower-case hex digits"},
+	} {
+		err := tc.spec.Validate()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+	// The member is omitted when there is nothing to commit, so a spec that is
+	// not a commit run is byte-identical to what the previous release wrote, and
+	// a stored one parses back.
+	data, err := json.Marshal(base(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"reports"`) {
+		t.Fatalf("an absent list is written: %s", data)
+	}
+	raw, err := json.Marshal(base(commit, file(slug+"/2026/2026-11-18.md")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Parse(raw)
+	if err != nil || len(out.Reports) != 1 || out.Reports[0] != (InputFile{Name: slug + "/2026/2026-11-18.md", Bytes: 4096, SHA256: hash}) {
+		t.Fatalf("round trip: %+v, %v", out, err)
+	}
+}
+
 // manyIDs is n run IDs of the one shape, for the bound's own case.
 func manyIDs(n int) []string {
 	ids := make([]string, n)

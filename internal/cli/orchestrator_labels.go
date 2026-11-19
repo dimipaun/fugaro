@@ -29,41 +29,23 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
-// orchestratorLabelIdentity mints the daemon's own Google ID token for the
-// installation's credentials service: the identity the service's orchestrator
-// class is gated on (credsvc's AuthConfig.OrchestratorAccounts) and the one
-// thing this file cannot build.
-//
-// It is nil on this tree, and that is the whole of what is missing: the daemon
-// account the service's list names, the invoker grant that lets that account
-// call the service and the mint that turns the account into a token are one
-// piece of work this plan does not carry (F19, O2: the prerequisite outside
-// docs/forge-labels, shared with the merge mint; SECURITY.md's "the route ships
-// inert on this tree"). T7 wires the path and leaves the live half unproven, as
-// the plan says it must.
-//
-// A daemon with no identity builds no label seams at all rather than seams that
-// cannot present one: every call of the syncer's would refuse, and the daemon
-// would leave a line in the log each cycle for a capability the installation
-// does not have yet — which is the direction R7 gives a host with no labels at
-// all.
-//
-// It is a variable so that a test replaces it, which is how T7's own end-to-end
-// test drives the whole path against a fake service (the plan: "until it lands
-// the end-to-end test runs against a fake service and only the live path stays
-// unproven").
-var orchestratorLabelIdentity func(ctx context.Context) (string, error)
-
 // orchestratorLabelSeams is the label seams this daemon's tick carries: the
 // hosts each repository's labels are kept through, the reader of the pull
 // request behind a run, and the daemon's own warning stream. All three or none,
 // as LabelSeams.Set asks.
 //
 // None is the answer where the installation has nothing to reach the route
-// with: no credentials service URL in the installation's own configuration, or
-// no identity to present (orchestratorLabelIdentity). A tick with no seams
-// labels nothing at all and says nothing about it, which is the state this tree
-// is in and the state a project on a host without labels is in for ever (R7).
+// with: no credentials service URL, or no daemon account to mint a token as
+// because the installation's tfvars carry no orchestrator block — an identity
+// that is incomplete (orchestratorIdentityToken's nil). A tick with no seams
+// labels nothing at all and says nothing about it, which is the state a project
+// with no credentials service is in, the state an installation that never opted
+// in is in, and the state a project on a host without labels is in for ever
+// (R7). A daemon that HAS an identity and fails
+// to mint one is a different thing, and never this: the refusal travels back
+// through the client and the syncer writes it as one line (the caller's own
+// ErrLabelIdentity), because a daemon silently labelling nothing with the
+// installation configured for it would be the failure nobody reads.
 //
 // The URL is read from the installation's own records rather than from the
 // environment, the way every other reader of it does (serviceReadTarget): the
@@ -71,20 +53,18 @@ var orchestratorLabelIdentity func(ctx context.Context) (string, error)
 // same string the service's audience check wants, so a daemon that read it from
 // anywhere else could mint a token for an audience no revision answers to.
 func orchestratorLabelSeams(d *orchestratorDaemon) orchestrator.LabelSeams {
-	url := ""
-	if d.lc != nil && d.lc.CredentialsService != nil {
-		url = d.lc.CredentialsService.URL
-	}
-	if url == "" || orchestratorLabelIdentity == nil {
+	id := orchestratorIdentityOf(d.lc)
+	identity := orchestratorIdentityToken(id)
+	if identity == nil {
 		return orchestrator.LabelSeams{}
 	}
 	return orchestrator.LabelSeams{
 		Labelers: &orchestratorLabelHosts{
-			env: d.env, url: url, identity: orchestratorLabelIdentity,
+			env: d.env, url: id.url, identity: identity,
 			opened: map[string]gitprov.Labeler{},
 		},
 		PRs: &orchestratorLabelPRs{bucket: d.env.bucket.Bucket, numbers: map[string]int{}},
-		Log: orchestratorLabelLog{id: d.id, w: d.warn},
+		Log: orchestratorDaemonLog{id: d.id, w: d.warn},
 	}
 }
 
@@ -262,18 +242,22 @@ func (r *orchestratorLabelPRs) PRNumber(ctx context.Context, runID string) (int,
 	return rec.PR.Number, true, nil
 }
 
-// orchestratorLabelLog is where the syncer's failures go: one cleaned line on
+// orchestratorDaemonLog is where a feature's failures go: one cleaned line on
 // this daemon's own warning stream, prefixed with the id it drives, which is
 // what every other seam of this daemon does with a line (orchestratorTriage's
-// warnOnce). The syncer's lines already say what failed and why.
-type orchestratorLabelLog struct {
+// warnOnce). The lines already say what failed and why, so the one shape serves
+// every seam that has one (the label syncer, the issue sync).
+type orchestratorDaemonLog struct {
 	id string
 	w  io.Writer
 }
 
-var _ orchestrator.LabelLog = orchestratorLabelLog{}
+var (
+	_ orchestrator.LabelLog     = orchestratorDaemonLog{}
+	_ orchestrator.IssueSyncLog = orchestratorDaemonLog{}
+)
 
-func (l orchestratorLabelLog) Warn(_ context.Context, line string) {
+func (l orchestratorDaemonLog) Warn(_ context.Context, line string) {
 	if l.w == nil {
 		return
 	}

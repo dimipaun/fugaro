@@ -1995,6 +1995,18 @@ var runAccountGrants = setOf(
 	// carries no storage permission, no permission to grant a role, no actAs and
 	// no token minting; the target is that one Cloud Run service.
 	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | google_service_account.build_identity[0].member | for_each= | perms=`,
+	// Reviewed for B4.4: a repository's build account invokes the service too,
+	// on the same switch the job rows above read (modules/repo/build.tf, which
+	// reads var.installation.credentials_service where the workflow module
+	// reads its own var.credentials_service). It is the same row once more —
+	// the same role on the same service, to an account the repository's root
+	// creates — and roles/run.invoker carries no storage permission, no
+	// permission to grant a role, no actAs and no token minting; the target is
+	// that one Cloud Run service, not a job and not the runs bucket. Inert
+	// until B4.5 points the build's clone and its secret fetch at the service:
+	// today the build reads its credential exactly as it did before, and this
+	// row is the grant that makes the move possible.
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.installation.credentials_service.name | google_service_account.build.member | for_each= | perms=`,
 	// Reviewed for B6: the identity's other reach, and the whole of it — the
 	// writer and the installation's tag mover on the ONE shared registry every
 	// catalog image is pushed into, which are the two roles the per-repository
@@ -2574,7 +2586,7 @@ var runAccountGrants = setOf(
 	// var.launchers (the design's eleventh never-rule: that list is what the
 	// Firebase root binds roles/firebasedatabase.viewer with, an IAM read that
 	// bypasses the Realtime Database rules). Its reach is therefore here one
-	// grant at a time, and none of the six reaches fugaro/managed.json:
+	// grant at a time, and none of the seven reaches fugaro/managed.json:
 	//
 	//   - the launcher project role (fugaroLauncher) is metadata: run.jobs.get,
 	//     run.jobs.list, run.executions.get/list/cancel, run.operations.get and
@@ -2618,11 +2630,25 @@ var runAccountGrants = setOf(
 	//     is an object at that bucket's root, which this reaches no more than the
 	//     two list permissions above do — and the container holds pairing keys
 	//     and nothing else.
+	//   - and the credentials-service invoker grant F19 and O2 add
+	//     (docs/forge-labels): the daemon presents its own identity at that
+	//     service for every label read and write, so the module grants this
+	//     account the row every job's own account already holds above —
+	//     roles/run.invoker on the credentials service, the right to send a
+	//     request to that one Cloud Run service. It carries no storage
+	//     permission at all, no permission to grant a role, no
+	//     iam.serviceAccounts.actAs and no token minting, and its target is the
+	//     service and not the runs bucket, the project or a job. The grant is
+	//     made only where the installation carries BOTH switches — its own
+	//     orchestrator block and the credentials service (orchestrator.tf's
+	//     orchestrator_credentials_on) — so an installation with either off
+	//     plans exactly what it planned before.
 	`google_project_iam_member | "projects/${var.project}/roles/fugaroLauncher" | project=var.project | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=run.executions.cancel,run.executions.get,run.executions.list,run.jobs.get,run.jobs.list,run.operations.get,secretmanager.secrets.list,secretmanager.versions.list`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectViewer" | bucket=google_storage_bucket.runs.name | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	`google_service_account_iam_member | "projects/${var.orchestrator.firebase_project}/roles/fugaroTokenMinter" | service_account_id="projects/${var.orchestrator.firebase_project}/serviceAccounts/${var.orchestrator.signer_account_id}@${var.orchestrator.firebase_project}.iam.gserviceaccount.com" | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=?`,
 	`google_cloud_run_v2_job_iam_member | "projects/${var.project}/roles/fugaroJobRunner" | name=module.project[each.key].job | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each=var.orchestrator == null ? {} : var.project_jobs | perms=?`,
+	`google_cloud_run_v2_service_iam_member | "roles/run.invoker" | name=var.credentials_service.service | "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com" | for_each= | perms=`,
 	// Reviewed for P5.1c (the resident orchestrator's service and the tick that
 	// wakes it, the mobile design's section 4.1). This row is the one of the
 	// block that is not a grant to var.orchestrator.account_id: it is made TO

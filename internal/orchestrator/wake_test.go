@@ -200,6 +200,16 @@ func TestHeartbeatWithAPathKeyDoesNotWake(t *testing.T) {
 // entry going, the next run's start — and they are one cycle's business. The
 // wake waits out the burst it was raised in, and does not restart its wait for
 // each write that joins it.
+//
+// The five writes go in back to back and are NOT paced by sleeps, which is what
+// makes this read the same thing on every machine: a sleep-paced burst is one
+// burst only where the scheduler lets this test's own goroutine run, and `fugaro
+// verify test` starts three `go test` invocations at once. Under that load the
+// sleeps stretched past the debounce, the writes straddled the window instead of
+// joining it, and the wake the later ones then raised is the wait working rather
+// than a failure — a test that read red on the machine and not on the code. The
+// five sends land in the source's buffered channel in microseconds, so the
+// burst is the window's own whatever the load.
 func TestWakesAreDebounced(t *testing.T) {
 	f := newWakeFixture(t)
 	f.open()
@@ -207,7 +217,6 @@ func TestWakesAreDebounced(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < 5; i++ {
 		f.put(f.outcomes(), fmt.Sprintf("/%s/run-%d", wakeSlug, i), `{"status":"succeeded"}`)
-		time.Sleep(wakeDebounce / 8)
 	}
 	f.expectWake(2 * time.Second)
 	if d := time.Since(start); d < wakeDebounce {

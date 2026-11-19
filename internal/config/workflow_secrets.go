@@ -48,7 +48,7 @@ func ValidateWorkflowSecrets(secrets map[string]ProjectSecret) []Problem {
 		// entry of this block is a setting nothing reads — the failure mode
 		// this block's checks exist to prevent, an operator who wrote it
 		// believing their installation is proxied (D1275).
-		if secrets[name].Proxy {
+		if secrets[name].Proxying() {
 			ps = append(ps, Problem{Path: at + ".proxy", Message: fmt.Sprintf("%s is the Bitbucket token's switch: no workflow_secrets entry may set it, because the credentials service forwards that token alone and reads its switch from project_secrets.%s (D493, D1275)", pluginwire.Printable("proxy"), BitbucketSecret)})
 		}
 	}

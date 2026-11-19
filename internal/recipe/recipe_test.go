@@ -1145,7 +1145,7 @@ func TestUnregisteredStepRefused(t *testing.T) {
 		t.Errorf("problems = %s: a paid step is reported as an unknown one", text)
 	}
 	_, ps = Parse([]byte("version: 1\nname: judge\nmode: evaluate\nsteps:\n  - judge_it: {}\n"))
-	if text := ProblemsText(ps); !strings.Contains(text, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase, merge_judge and diagnose)") {
+	if text := ProblemsText(ps); !strings.Contains(text, "is not a step type (version 1 has first_line, review, adversarial, check, digest, commit_reports, plan, render, rebase, merge_judge and diagnose)") {
 		t.Errorf("problems = %s, want version 1's own list for an unknown kind", text)
 	}
 }

@@ -2388,6 +2388,156 @@ func TestInstallationServiceAccountGrantsNameTheirAccount(t *testing.T) {
 	}
 }
 
+// TestStringNamedResourcesAreWaitedFor: a resource that names another resource
+// of its own module or root by a string — a literal, or an expression built
+// from the same inputs the named resource is built from — carries no reference
+// to it, so Terraform has no edge between the two and applies them in
+// parallel. Where the naming call's API resolves the name, the resource that
+// runs first fails with notFound: the first `fugaro update` of an installation
+// that gains an account failed exactly that way on the grants that ran before
+// it existed (0.25.0 -> 0.26.0, the build identity — the incident this test
+// grew out of, when it covered the installation module's service accounts
+// alone).
+//
+// Every resource whose body spells such an identity must therefore name the
+// resource it spells, in depends_on or otherwise, in every module and root
+// under this tree. The unit is the DIRECTORY: a module's resource is named by a
+// root that calls the module through an output, which is a reference and not a
+// string, so a resource is held to the resources created beside it.
+//
+// A name a plan can read is why these strings exist at all (the installation
+// module's account grants must be literals — cover.onDeployer refuses a
+// computed one), so the spelling is a deliberate choice and not an oversight;
+// what it must never lose is the edge that the reference would have carried.
+//
+// What the guard does not see is a name a local builds: logging.tf's
+// local.log_bucket_path, which the log view's own bucket attribute takes, is a
+// path wrapped around the identity and not the identity expression itself.
+// Those are few and each carries its own depends_on; a new one has to be
+// written with the same care rather than caught here.
+func TestStringNamedResourcesAreWaitedFor(t *testing.T) {
+	type nameable struct {
+		idAttr string   // the attribute holding the created resource's identity
+		named  []string // the attributes a naming resource spells that identity in
+	}
+	// Every type whose instances a sibling can name by a string, and the
+	// attribute that holds the identity. A service account is the one whose
+	// spelling is not an attribute value but an address inside one (an email,
+	// in member, service_account_id or service_account_email), so it carries
+	// no `named`; the two types with a path form of their own — a secret and a
+	// custom role — are handled in namesByIdentity beside their bare id.
+	nameableByType := map[string]nameable{
+		"google_service_account":               {idAttr: "account_id"},
+		"google_secret_manager_secret":         {idAttr: "secret_id", named: []string{"secret_id", "secret"}},
+		"google_storage_bucket":                {idAttr: "name", named: []string{"bucket"}},
+		"google_project_iam_custom_role":       {idAttr: "role_id", named: []string{"role"}},
+		"google_artifact_registry_repository":  {idAttr: "repository_id", named: []string{"repository"}},
+		"google_cloud_run_v2_job":              {idAttr: "name", named: []string{"name"}},
+		"google_cloud_run_v2_service":          {idAttr: "name", named: []string{"name"}},
+		"google_logging_project_bucket_config": {idAttr: "bucket_id", named: []string{"bucket"}},
+		"google_logging_log_view":              {idAttr: "name", named: []string{"name"}},
+		"google_firebase_database_instance":    {idAttr: "instance_id", named: []string{"instance", "name"}},
+		"google_apikeys_key":                   {idAttr: "name", named: []string{"name"}},
+	}
+	type unit struct {
+		path  string
+		block block
+	}
+	byDir := map[string][]unit{}
+	seen := map[string]bool{}
+	var dirs []string
+	walk(t, func(path string, b []byte) {
+		if !strings.HasSuffix(path, ".tf") {
+			return
+		}
+		dir := filepath.Dir(path)
+		if !seen[dir] {
+			seen[dir] = true
+			dirs = append(dirs, dir)
+		}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			byDir[dir] = append(byDir[dir], unit{path, blk})
+		}
+	})
+	slices.Sort(dirs)
+
+	created, spelled := 0, 0
+	for _, dir := range dirs {
+		units := byDir[dir]
+		for _, u := range units {
+			spec, ok := nameableByType[u.block.typ]
+			if !ok {
+				continue
+			}
+			idExpr := firstAttr(u.block.body, spec.idAttr)
+			// A resource created per instance of a set spells itself
+			// each.value: there is no one address a sibling could name, and a
+			// sibling that reaches one of them does it through the collection.
+			if idExpr == "" || strings.HasPrefix(idExpr, "each.") || strings.HasPrefix(idExpr, "count.") {
+				continue
+			}
+			created++
+			// The identity as it reads inside a "${...}" string: a literal
+			// stays itself, an expression (var.x.account_id) is interpolated.
+			id := strings.Trim(idExpr, `"`)
+			if !strings.HasPrefix(idExpr, `"`) {
+				id = "${" + id + "}"
+			}
+			for _, u2 := range units {
+				if u2.block.name == u.block.name {
+					continue
+				}
+				if !namesByIdentity(u.block.typ, spec.named, idExpr, id, u2.block.body) {
+					continue
+				}
+				spelled++
+				if strings.Contains(u2.block.body, u.block.name) {
+					continue
+				}
+				t.Errorf("%s: %s names %s by the string %s and never references it, so Terraform applies the two in parallel and this one fails with notFound when it runs before the resource exists; add depends_on = [%s]", u2.path, u2.block.name, u.block.name, id, u.block.name)
+			}
+		}
+	}
+	if created < 40 {
+		t.Errorf("found only %d resources a string can name across %d directories: the scan is not seeing the tree", created, len(dirs))
+	}
+	if spelled < 25 {
+		t.Errorf("found only %d resources that spell a module-created resource by string: the scan is not seeing the grants it exists for", spelled)
+	}
+}
+
+// namesByIdentity reports whether body names a resource of typ whose identity
+// attribute reads idExpr (its raw text, quotes and all), the way a string names
+// it: inside the path or address form the named resource's own API spells it
+// with, or as the whole value of one of the attributes that carry its identity.
+func namesByIdentity(typ string, named []string, idExpr, id, body string) bool {
+	switch typ {
+	// A service account is named inside an email address, in whatever
+	// attribute holds one (member, service_account_id, service_account_email),
+	// as serviceAccount:<id>@, <path>/serviceAccounts/<id>@ or the bare
+	// address.
+	case "google_service_account":
+		return strings.Contains(body, ":"+id+"@") || strings.Contains(body, "/"+id+"@") || strings.Contains(body, `"`+id+"@")
+	// A secret and a custom role are named by the path their API takes as
+	// well as by the bare id: projects/<p>/secrets/<id> and
+	// projects/<p>/roles/<id>.
+	case "google_secret_manager_secret":
+		if strings.Contains(body, "secrets/"+id+`"`) {
+			return true
+		}
+	case "google_project_iam_custom_role":
+		if strings.Contains(body, "roles/"+id+`"`) {
+			return true
+		}
+	}
+	for _, attr := range named {
+		if firstAttr(body, attr) == idExpr {
+			return true
+		}
+	}
+	return false
+}
+
 // REGRESSION (same-project layout): the project-level roles any job, build or
 // scheduler account holds are exactly these, in every module and IAM resource
 // type. None gives access to the RTDB, Firestore, Identity Platform or the
@@ -4643,6 +4793,104 @@ func TestProjectJobAccountGetsTheInvokerGrant(t *testing.T) {
 	}
 }
 
+// TestBuildAccountInvokesOnlyTheService is B4.4's Terraform half: a
+// repository's build account is the member of the installation's credentials
+// service invoker binding, and of nothing else that would let it start a
+// container. B4.3's build route serves that class, B4.5 is what points the
+// build's clone and its secret fetch at the service, and until then the grant
+// is inert — so what this test pins is the shape of the one resource that
+// makes the move possible: the installation's own switch, the service's name
+// and region and never a URL, roles/run.invoker, the build account's own
+// member, no condition (the service's own ID-token check is the fence behind
+// the binding, Q6), and no second invoker grant anywhere in the module.
+//
+// Mutation (run, restore): delete the resource block — the service is a
+// service no build can call, and B4.5's fetch has no binding to arrive at:
+// this test fails on the count of service-invoker resources. And add a second
+// invoker binding naming the build account some other way (a job binding whose
+// member is google_service_account.build.email): the module-wide scan below
+// fails on it, so the "only the service" half is not vacuous either.
+func TestBuildAccountInvokesOnlyTheService(t *testing.T) {
+	const path = "gcp/modules/repo/build.tf"
+	const name = "google_cloud_run_v2_service_iam_member.build_credentials"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := resourceBlocks(t, path, b, "google_cloud_run_v2_service_iam_member")
+	names := make([]string, 0, len(blocks))
+	for _, blk := range blocks {
+		names = append(names, blk.name)
+	}
+	if len(blocks) != 1 || blocks[0].name != name {
+		t.Fatalf("%s holds %d service-invoker resources %v, want exactly %s: the build account's one binding on the installation's own service", path, len(blocks), names, name)
+	}
+	body := blocks[0].body
+	for _, want := range []string{
+		// Null is the switch's own answer on this side, and the whole of it:
+		// an installation that has not opted in plans no binding at all, and
+		// one that has plans this one.
+		"count = var.installation.credentials_service == null ? 0 : 1",
+		// The service's own name and the region it runs in: the two values
+		// internal/infra writes (infra.CredentialsServiceName and the
+		// installation's region), and never a URL.
+		"location = var.installation.credentials_service.region",
+		"name     = var.installation.credentials_service.name",
+		`role     = "roles/run.invoker"`,
+		// The build account and no other member, ever.
+		"member   = google_service_account.build.member",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("%s: %s does not hold %q:\n%s", path, name, want, body)
+		}
+	}
+	if strings.Contains(body, `"allUsers"`) || strings.Contains(body, `"allAuthenticatedUsers"`) || strings.Contains(body, "**:") {
+		t.Errorf("%s: the invoker grant names something wider than the build account:\n%s", path, body)
+	}
+	// No IAM condition: the grant is the front door the service admits a build
+	// caller at, and the service's own class check is the fence behind it
+	// (B4.3, Q6) — a condition here would be a second place for the reach to
+	// be wrong.
+	if strings.Contains(body, "condition {") || strings.Contains(body, "condition =") {
+		t.Errorf("%s: the invoker grant carries a condition, want none: the service's own name is what it reaches:\n%s", path, body)
+	}
+
+	// The other half of the name, and the reason the account's reach is a
+	// sentence of one clause: across every file of the repository module, the
+	// build account is the member of no other service or job invoker binding.
+	// The workflow submodule's job grant is the submodule's (the workflow
+	// module's own test pins it), and the check job's invoker is the
+	// scheduler's — so this module's one binding of the type is the whole of
+	// what a build account may send a request to.
+	files, err := filepath.Glob("gcp/modules/repo/*.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("gcp/modules/repo holds no .tf file: the glob is not looking where the module is")
+	}
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, blk := range allResourceBlocks(t, f, src) {
+			if blk.typ != "google_cloud_run_v2_service_iam_member" && blk.typ != "google_cloud_run_v2_job_iam_member" {
+				continue
+			}
+			// The account however a plan would name it — .member, .email,
+			// .name — so a second binding written the other way round is
+			// caught as well.
+			if !strings.Contains(blk.body, "google_service_account.build.") {
+				continue
+			}
+			if blk.name != name {
+				t.Errorf("%s: %s names the build account, want the build account in %s alone", f, blk.name, name)
+			}
+		}
+	}
+}
+
 // customRolePermissions is the snapshot of the permissions Google allows in a
 // custom role (GA, customRolesSupportLevel empty), for the service prefixes
 // the modules use. See the header of the file for how it is made and refreshed.
@@ -5640,8 +5888,30 @@ func TestServiceHeldSecretsMatchTheCredentialsService(t *testing.T) {
 	if !strings.Contains(squash(code), "env => local.is_served_model_secret[env] || contains(local.service_held_secret_names, logical)") {
 		t.Errorf("%s: is_service_held must be `local.is_served_model_secret[env] || contains(service_held_secret_names, logical)`; a missing clause leaves that credential's accessor with the job (review m1, C2.3):\n%s", path, code)
 	}
-	if !strings.Contains(squash(code), "env => var.model_secrets_served != \"none\" && (contains(local.model_secret_env_names, env) || (var.model_secrets_served == \"all\" && startswith(env, local.model_secret_env_prefix)))") {
+	if !strings.Contains(squash(code), "env => local.is_run_model_secret[env] || (var.model_secrets_served == \"all\" && startswith(env, local.model_secret_env_prefix))") {
 		t.Errorf("%s: is_served_model_secret must be the input's three arms — `all` the named model credentials AND every provider key, `anthropic` the named ones alone, `none` neither; a clause that ignores the input takes a provider key's accessor away from a repository the service serves no provider credential to (D2072, G17, R6):\n%s", path, code)
+	}
+
+	// And the one mount those arms leave standing, with Go's half of it: a
+	// mixed stage account's own variant job keeps its Claude OAuth mount,
+	// because that token is the STAGE's — the runner hands it straight to
+	// Anthropic for `review`, `adversarial` and `triage`, the run's gateway
+	// never sees those calls, and the service therefore serves nothing of
+	// theirs. Taking it would leave the stage with a variable nothing mounted,
+	// which every run of such a repository would halt on. The exemption is the
+	// `anthropic` arm's alone (Go's dropModelMounts reads it there too), it is
+	// keyed on the stage-account fact Go passes down, and the two sides are ONE
+	// rule: an account keeping an accessor its mount no longer has is a job
+	// Cloud Run refuses to create (C1.20).
+	tok := regexp.MustCompile(`claude_oauth_token_env\s*=\s*"([^"]*)"`).FindStringSubmatch(code)
+	if tok == nil || tok[1] != config.ReservedSecrets[config.ClaudeOAuthToken] {
+		t.Errorf("%s: claude_oauth_token_env = %v, config.ReservedSecrets[config.ClaudeOAuthToken] = %q: the exemption has to read the variable Go exempts, or the module keeps a token Go's drop takes away (C1.20):\n%s", path, tok, config.ReservedSecrets[config.ClaudeOAuthToken], code)
+	}
+	if !strings.Contains(squash(code), "env => var.workflow.stage_account && env == local.claude_oauth_token_env") {
+		t.Errorf("%s: is_stage_account_token must be the stage-account fact AND the Claude token's variable — the fact alone exempts every mount of that job, the variable alone every job's token:\n%s", path, code)
+	}
+	if !strings.Contains(squash(code), "env => var.model_secrets_served != \"none\" && contains(local.model_secret_env_names, env) && !(var.model_secrets_served == \"anthropic\" && local.is_stage_account_token[env])") {
+		t.Errorf("%s: is_run_model_secret must drop the named model credentials and exempt the stage account's Claude OAuth mount from the `anthropic` arm alone — `all` is the cascade, which holds that token too (D143, C1.18):\n%s", path, code)
 	}
 
 	// The drop is gated on the opt-in, in the same expression that reads the
@@ -5910,6 +6180,33 @@ func TestModelSecretsServedValidationMatchesGo(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("%s: model_secrets_served accepts %v, config.ModelSecretsServedValues = %v", path, got, want)
+	}
+
+	// And B2.7's half: the `anthropic` arm stopped being hypothetical when
+	// config.ServiceServedAuths was filled, so the module's own account of
+	// WHICH auths get it is held to that list, the way
+	// TestServiceHeldSecretsMatchTheCredentialsService holds a names list and
+	// TestProxiedGitSecretNamesMatchTheModule holds a per-repository one.
+	// Terraform cannot ask Go, so the module's `api-key`/`oauth` is a literal,
+	// and the two sides drift in both directions: an auth added to the list and
+	// not to the module's words is a repository whose root drops mounts the
+	// module's own description does not know about, and a name the module
+	// promises and the list does not carry is a claim about a job that keeps
+	// every mount. Neither is a plan that fails — which is why nothing else
+	// would catch it — and both are wrong where a reader looks.
+	var promised []string
+	m2 := regexp.MustCompile("`anthropic` for (.*?) one it admits").FindStringSubmatch(string(b))
+	if m2 == nil {
+		t.Fatalf("%s: the model_secrets_served variable's description no longer says which auths the anthropic arm is for (`anthropic` for an `api-key` or `oauth` one it admits): the flip list is held to that sentence, and a rewrite that drops it removes the only place the module names them", path)
+	}
+	for _, q := range regexp.MustCompile("`([^`]*)`").FindAllStringSubmatch(m2[1], -1) {
+		promised = append(promised, q[1])
+	}
+	flip := slices.Clone(config.ServiceServedAuths)
+	slices.Sort(promised)
+	slices.Sort(flip)
+	if !slices.Equal(promised, flip) {
+		t.Errorf("%s: the anthropic arm's description names %v, config.ServiceServedAuths = %v: B2.7's flip is the list that decides which auths get that arm, so the two have to name the same ones", path, promised, flip)
 	}
 }
 

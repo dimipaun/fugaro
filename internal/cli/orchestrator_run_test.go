@@ -987,6 +987,92 @@ func TestDaemonStartsNothingWhenItsGuardrailsCannotBeRead(t *testing.T) {
 	}
 }
 
+// TestDisabledPolicyLaunchesNothing: the project's own switch reaches the
+// daemon on every caps refresh, and while it is off the daemon launches
+// nothing (D2701, D2739). The state below is one a daemon starts a run from —
+// a queued item under a standing approval — and the policy the project
+// published is what holds it: the cycle commits no attempt, starts no run and
+// leaves the item where it was, and the daemon says once why.
+func TestDisabledPolicyLaunchesNothing(t *testing.T) {
+	f := newDaemonFixture(t)
+	// A policy that admits the fixture's repository and turns the project's
+	// orchestrator off: the switch is the one thing between the item and a run.
+	publishPolicy(t, f.launchBudgetFixture, fmt.Sprintf(`{"version":%d,"orchestrator_enabled":false,"allow_repos":["github/acme/app"]}`, projectpolicy.Version))
+	d, out := f.running(t, "")
+	d.once = true
+	now := f.serverNow(t)
+	item := approvedItem("wi-1", now)
+	f.putState(t, orchestrator.State{
+		SchemaVersion: orchestrator.SchemaVersion, AgentID: "aurora", Role: orchestrator.RoleOrchestrator,
+		Goal: "keep the work moving", WorkItems: []orchestrator.WorkItem{item},
+	})
+	d.tick.Launcher = f.launcher(t)
+
+	if err := d.loop(context.Background()); err != nil {
+		t.Fatalf("a cycle over a project that turned its orchestrator off: %v", err)
+	}
+	if !d.tick.Caps.KillSwitch {
+		t.Fatal("the project's switch is off and the caps are open, so what this cycle did proves nothing")
+	}
+	if execs := f.run.Executions(); len(execs) != 0 {
+		t.Errorf("a project that turned its orchestrator off started %d run(s): %v", len(execs), execs)
+	}
+	if intents := f.state(t).Intents; len(intents) != 0 {
+		t.Errorf("the cycle committed %d attempt(s) under the project's own switch: %+v", len(intents), intents)
+	}
+	if w, ok := f.state(t).Item("wi-1"); !ok || w.Phase != orchestrator.PhaseQueued {
+		t.Errorf("wi-1 is %+v, and the switch holds it rather than deciding about it", w)
+	}
+	// The switch is read at start-up and again before every cycle, and it is
+	// said once: a daemon under a login unit writes to a log nobody watches, and
+	// one sentence per reading is a log of one sentence.
+	if n := strings.Count(out.String(), "orchestrator_enabled"); n != 1 {
+		t.Errorf("the daemon said the project's orchestrator is off %d times, and one reading of the switch is one line: %q", n, out.String())
+	}
+}
+
+// TestUnreadableSwitchKeepsLastValue: the project's switch is a key of the
+// policy node, and a policy read that fails is not a switch that is on. What
+// the daemon keeps is the value it last read (D2701, D2739): a project that
+// turned its orchestrator off and then lost the node the key lives in is still
+// a project that turned it off, so the reading survives a failure that the
+// caps themselves do not — refreshCaps keeps the caps it had and turns the
+// kill switch on, and the reading it kept is what the daemon would go on
+// saying.
+//
+// The reading is the daemon's own and not the caps', which is why it is
+// asserted here: the caps a failed read leaves behind have the kill switch on
+// whatever the project wrote, so they cannot say whether the project turned its
+// orchestrator off or the daemon simply could not tell.
+func TestUnreadableSwitchKeepsLastValue(t *testing.T) {
+	f := newDaemonFixture(t)
+	d, _ := f.running(t, "")
+	if d.orchestratorOff {
+		t.Fatal("the fixture's daemon starts with the project's orchestrator off, so this test proves nothing")
+	}
+	publishPolicy(t, f.launchBudgetFixture, fmt.Sprintf(`{"version":%d,"orchestrator_enabled":false}`, projectpolicy.Version))
+	d.refreshCaps(context.Background())
+	if !d.orchestratorOff {
+		t.Fatal("a policy that writes orchestrator_enabled false did not reach the daemon's reading of the switch")
+	}
+	if !d.tick.Caps.KillSwitch {
+		t.Fatalf("the switch read as off left the caps open: %+v", d.tick.Caps)
+	}
+	lastRead := d.tick.Caps
+
+	f.db.DenyRead(projectpolicy.PathRulesMarker())
+	d.refreshCaps(context.Background())
+	if !d.orchestratorOff {
+		t.Error("a read that failed turned the project's orchestrator back on, and a switch that cannot be read is not one that is off")
+	}
+	if !d.tick.Caps.KillSwitch {
+		t.Error("an unreadable policy left the kill switch off, and a guardrail that cannot be read is not one that is off")
+	}
+	if d.tick.Caps.MaxRunning != lastRead.MaxRunning || d.tick.Caps.MaxPerCycle != lastRead.MaxPerCycle {
+		t.Errorf("an unreadable policy replaced the caps the daemon had with %+v, want %+v", d.tick.Caps, lastRead)
+	}
+}
+
 // TestRunOnceReportsAFailedCycle: --once is the one cycle a person or a harness
 // holds the daemon to, so its exit code is the answer to "did that cycle run".
 // A cycle that failed — a launch the project's policy refuses, a lease that

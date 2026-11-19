@@ -123,6 +123,11 @@ type launchResult struct {
 	// block wherever the read could answer one at all, even with nothing but an
 	// empty chain in it.
 	*ChainLimits
+	// Error is the refusal this launch is answered with, nil for a launch
+	// that was not refused: a --retry of a run that already started starts
+	// nothing, and the document carries the refusal the command exits with,
+	// under one stable code (retryAlreadyStarted), beside the run it names.
+	Error *launchRefusal `json:"error,omitempty"`
 	// account is the account this launch resolved and the alias it read it
 	// through, which the launch's own line prints as ALIAS -> ACCOUNT
 	// (docs/account-aliases/spec.md §7, D2099). It is unexported on purpose:
@@ -131,6 +136,19 @@ type launchResult struct {
 	// resolved account alone and no alias at all (F4).
 	account launchAccount
 }
+
+// launchRefusal is a refusal a launch is answered with, in the text reply and
+// in the --json document's error object: the same message the command exits
+// with, and a code a consumer branches on without reading the prose.
+type launchRefusal struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// retryAlreadyStarted is launchRefusal's one code so far: a --retry named a run
+// that already started, so the launch started nothing. It is stable, and a
+// consumer reads it in place of the message's wording.
+const retryAlreadyStarted = "retry_already_started"
 
 // launchAccount is the Claude account a launch resolved and the alias it read
 // it through. Alias is "" when the flag or the key named the account itself, or
@@ -410,7 +428,10 @@ func newRunCmd() *cobra.Command {
 		Long: "Launch a task in the cloud. The task is TEXT or --task-file (- for stdin).\n\n" +
 			"A repeated --run-id reports the existing launch instead of starting another, so\n" +
 			"a caller that is unsure whether its launch went through can simply repeat it.\n" +
-			"--retry RUN launches a run whose task was stored but never started.\n\n" +
+			"--retry RUN launches a run whose task was stored but never started: a run that\n" +
+			"already started is refused with nothing launched, which names the way on from\n" +
+			"the run's own record — continue the pull request it left with fugaro run --pr N,\n" +
+			"launch a new run once it has ended without one, or wait while it is still going.\n\n" +
 			"--pr N continues Fugaro's pull request N: the run acts on the PR's review comments\n" +
 			"by the authors fugaro.yaml's followup.trusted lists, on the PR's own branch, with\n" +
 			"the base branch and workflow of the runs before it. TEXT, or --task-file, is\n" +
@@ -483,7 +504,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.planTask, "plan-task", "", "record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway)")
 	f.BoolVar(&o.allowDuplicate, "allow-duplicate", false, "launch even though the plan task named by --plan-task is already being worked on: a run of it in flight, or a pull request a run of it left behind. It turns that one refusal off, for a second attempt that is deliberate (the redundant attempts of a hard task); it records nothing, and with no --plan-task there is nothing to duplicate and it changes nothing")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
-	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means")
+	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run that already started is refused with nothing launched, which names the way on from the run's own record — the pull request to continue, a new run once it has ended without one, or the wait while it is still going; a run an ending names is never launched, since the bucket cannot vouch for which run an ending means")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.StringVar(&o.maxUSD, "max-usd", "", "cap this chain's model spend at X dollars, such as 5 or 12.5: it may only tighten the ceiling this launch resolves (fugaro refuses a looser value and names the layer that set the lower one), and it is recorded in the task's overrides, beside the total_timeout that is there today. A chain is the run that sets it and the runs that continue it; a launch that names no such limit gets today's per-run caps and no chain at all")
 	f.StringVar(&o.maxTokens, "max-tokens", "", "cap this chain's token total at N tokens, such as 900000: tighten-only, like --max-usd, and recorded in the task's overrides")
@@ -909,6 +930,22 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return failStep(rep, step, err)
 	}
+	// A --retry that found the run already started is a refusal and not a
+	// launch: it starts nothing (finishLaunch's own answer, "already-launched",
+	// is the same one a repeated --run-id reports), so the command exits
+	// non-zero with the ways on named, and a caller that read the old exit 0 as
+	// a successful launch is not told again that nothing went. The document is
+	// printed first, so --json carries the same refusal in its error object.
+	if o.retry != "" && res.Status == "already-launched" {
+		refusal := retryStartedRefusal(ctx, env, slug, res)
+		res.Error = refusal
+		if o.asJSON {
+			if err := printLaunch(loggedOut(cmd.OutOrStdout(), sink), res, true); err != nil {
+				return failStep(rep, step, err)
+			}
+		}
+		return failStep(rep, step, userErr("%s", refusal.Message))
+	}
 	if res.Status == "already-launched" {
 		// The launch the caller asked for is the one that already ran: there
 		// is nothing to wait for, and the run it names is the run to look at,
@@ -1216,11 +1253,9 @@ func finishLaunch(ctx context.Context, env *cloudEnv, o *runOptions, slug string
 	if err != nil {
 		return launchResult{}, err
 	}
-	if o.retry != "" && res.Status == "already-launched" {
-		fmt.Fprintf(warn, "%s launched already; --retry only starts a run that never launched. "+
-			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n",
-			task.ShortRun(oneLine(res.Run)), task.ShortRun(oneLine(res.Run)))
-	}
+	// A --retry that found the run already started writes nothing here: its
+	// refusal is built where the whole answer is (runRun), and a line on this
+	// path would be a second telling of it on a launch that never happened.
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
 	if spec.ProjectLayer != nil {
@@ -2376,6 +2411,15 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	// and before the claim and the task like every gate here — a launch
 	// that is not proxied is not judged at all (G9).
 	if err := env.proxyGate(ctx, slug, spec, kind, clone, warn); err != nil {
+		return config.Inputs{}, err
+	}
+	// The model credential's gate (B2.7, G17): a run of a repository whose
+	// model calls the credentials service serves holds no Anthropic key and
+	// no Claude OAuth token of its own, so the job image has to be one whose
+	// runner knows to call the service for them. Judged from the same build
+	// record and the same local config as the gate above, and like it not at
+	// all for a launch the service does not serve.
+	if err := env.serviceAuthGate(ctx, slug, spec, kind, clone, warn); err != nil {
 		return config.Inputs{}, err
 	}
 	if err := checkMaxParallel(ctx, env); err != nil {
@@ -5367,6 +5411,47 @@ func launchWhat(res launchResult) string {
 	return what
 }
 
+// retryStartedRefusal is the refusal a --retry of a run that already started is
+// answered with, built where the whole answer is (runRun). --retry starts a
+// stored task that never started, and this run's launch is recorded, so the
+// launch starts nothing and says so first: the caller reads that nothing went,
+// then the one way on the run's own record supports. No way on is a --retry:
+// the run id is spent, and a second retry of it would find the same launch and
+// refuse the same way.
+//
+// What is named comes from the run's own record — the one place a run that
+// started says where it stands: its pull request (result.json's pr, as
+// prflow.go writes it for a first run and followup.go for a follow-up) and its
+// status, which tells a run still going from one that has ended. The still
+// going case is why the status is read at all: the ambiguous-launch message
+// (launchRun) sends the caller into a --retry, and telling that caller to start
+// a new run would start a second container for a task the first one is working
+// on — so a run that has not ended is told to wait, and pointed at the read
+// that says where it has got to (fugaro diagnose), never at a new run. Only a
+// run whose record says it has ended is offered a new run.
+//
+// A record that is absent, or that cannot be read, is neither ending: the
+// refusal is still true — nothing was launched — but a claim about a run whose
+// record the CLI could not read would be one it cannot support, so that caller
+// is pointed at fugaro diagnose too, and a failed read is not turned into a
+// remote error, which would refuse the retry for a reason that is not about the
+// retry.
+func retryStartedRefusal(ctx context.Context, env *cloudEnv, slug string, res launchResult) *launchRefusal {
+	short := task.ShortRun(oneLine(res.Run))
+	msg := fmt.Sprintf("nothing launched: run %s has already started, and --retry only starts a stored task that never started. ", short)
+	switch rec, err := runstore.Open(env.bucket.Bucket, slug, res.RunID).ReadRecord(ctx); {
+	case err == nil && rec.PR != nil:
+		msg += fmt.Sprintf("Continue the pull request it left with fugaro run --pr %d, or launch the task again as a new run with fugaro run.", rec.PR.Number)
+	case err == nil && !rec.Status.Terminal():
+		msg += fmt.Sprintf("It is still going, so wait for it (fugaro runs ls, or fugaro watch) instead of starting a second run for the same task: fugaro diagnose %s says where it has got to.", short)
+	case err == nil:
+		msg += fmt.Sprintf("The run left no pull request to continue, so the way on is a new run: fugaro run. fugaro diagnose %s says how it ended.", short)
+	default:
+		msg += fmt.Sprintf("Nothing here says whether it is still going, since its own record cannot be read: fugaro diagnose %s is the read that can.", short)
+	}
+	return &launchRefusal{Code: retryAlreadyStarted, Message: msg}
+}
+
 // launchDetail prints what is under a launch's line — the branch it cut, the
 // chain it joined and the run's own cloud log when the launcher named one —
 // which is the same whatever that line was.
@@ -5868,7 +5953,15 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	// shared job itself, which mounts the App key the review container exists
 	// to be without, and always marked, so the run records its verdict in the
 	// artifact instead of writing a comment on the pull request it read.
-	reviewJob := spec.Mode == recipe.ModeReview
+	//
+	// The class marker is the same decision (T-TC12, D2411): the launcher
+	// writes it on the runs that are a review class without being a review
+	// recipe — a cloud diagnosis is one, and reads a bundle rather than a pull
+	// request — and the runner takes the variant from the same field
+	// (projectjob.go's runClass reads Mode == review || ReviewClass). A
+	// launcher that read the mode alone would start such a run on the job that
+	// mounts the App key and halt it at bootstrap for a marker it wrote.
+	reviewJob := spec.Mode == recipe.ModeReview || spec.ReviewClass
 	if reviewJob {
 		if job, err = env.reviewJobFor(ctx, job, spec, slug); err != nil {
 			return res, err
@@ -6136,7 +6229,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		// execution may exist. Keep the claim, and the token object: an
 		// execution that did start needs it (a --retry mints another); the runner's result.json tells
 		// the truth, and --retry reads it.
-		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s then reports the execution if it started, or launches it",
+		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s launches the task only if it never started, and refuses with nothing launched, naming the run's pull request, if it did",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
 	// The backend the launch actually used, from the seam, as above: the
@@ -6434,7 +6527,7 @@ var slipGrant = slipGrantOverService
 // slipIdentity mints the launcher's own Google ID token for serviceURL, which
 // is the identity the service's launcher class verifies (DS1.2, D1938).
 //
-// It is the PLAIN mint the read path presents (reviewReadIdentity), for the
+// It is the PLAIN mint the read path presents (serviceReadIdentity), for the
 // audience rather than for the token: a plain mint's audience is gcloud's own
 // client id (credsvc.GcloudAudience), which the launcher class admits and which
 // is the only one a person's account can mint — gcloud refuses --audiences for

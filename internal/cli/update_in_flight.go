@@ -29,7 +29,7 @@ import (
 // internal/budget/rules); and no step of the update writes a run's registry
 // entry, its ledger, its day counters or its record.
 //
-// Six steps can still reach one, and the note names every one of them this run
+// Seven steps can still reach one, and the note names every one of them this run
 // can take — naming a step, rather than either claiming a safety that is not
 // there or dropping the claim: the budget mode's raise to enforce, which a
 // session re-reads on every lease and every report while the policy node is read
@@ -38,15 +38,19 @@ import (
 // (`internal/credsvc`), so a run in flight is held to the node this update
 // publishes from its next call; the Bitbucket tokens that node's write carries,
 // which a proxied call re-reads per request, so the call after the publish may
-// be served by a different token than the call before it; the window between
-// that write and the credentials service's own replacement, which is the release
-// before this one's service meeting a node it cannot read for the length of one
-// apply; the creation fact, which a run of the release behind re-reads per
-// command and refuses once it is rewritten, so that run keeps the typed
-// confirmation it would have applied without; and a retirement, which deletes an
-// orphaned Cloud Run job and takes the executions running on it with it
-// (`deleteOrphanedJob`, init_retire.go). None of the six is the update stopping
-// a run, and none of them is asked to wait.
+// be served by a different token than the call before it; the Bitbucket proxy
+// switch the same stage turns on in the local config (S6), which no run in
+// flight reads — its runner decided proxiedness once, at bootstrap — and which
+// makes every LATER launch of the repository fetch its git credential from the
+// service (bitbucketProxySwitchTurns); the window between that write and the
+// credentials service's own replacement, which is the release before this one's
+// service meeting a node it cannot read for the length of one apply; the
+// creation fact, which a run of the release behind re-reads per command and
+// refuses once it is rewritten, so that run keeps the typed confirmation it
+// would have applied without; and a retirement, which deletes an orphaned Cloud
+// Run job and takes the executions running on it with it (`deleteOrphanedJob`,
+// init_retire.go). None of the seven is the update stopping a run, and none of
+// them is asked to wait.
 //
 // The note is the count's own line and then ONE SHORT LINE PER STEP, because the
 // owner met it with fourteen runs in flight and could not find what they were
@@ -174,6 +178,10 @@ func (e *initEngine) inFlightSteps(ctx context.Context, db *rtdb.Client) []inFli
 	if e.tokensPublishReachesRuns(ctx, db) {
 		steps = append(steps, inFlightStep{
 			line: "bitbucket tokens: a proxied call after the publish may use a different token"})
+	}
+	if e.bitbucketProxySwitchTurns() {
+		steps = append(steps, inFlightStep{
+			line: "bitbucket proxy switch: the address is set; the job's mount drops next update"})
 	}
 	if e.markerConverges(ctx) {
 		steps = append(steps, inFlightStep{
@@ -355,6 +363,41 @@ func (e *initEngine) tokensPublishReachesRuns(ctx context.Context, db *rtdb.Clie
 		return false
 	}
 	return p.BitbucketToken.Proxy
+}
+
+// bitbucketProxySwitchTurns is whether this update turns the credentials
+// service's Bitbucket proxy on for the project's local config and publishes the
+// block it implies (S6, D2306, R7): the cheap half of the flip
+// (bitbucketProxyFlip), which the policy stage's plan asks again as the whole of
+// its decision.
+//
+// A run in flight is not proxied by this write. Its job's execution carries the
+// address the flip needs — and a repository whose job does not carry one is not
+// proxied however the node reads — and its runner computed proxiedness ONCE, at
+// bootstrap, from the node it memoized (proxiedBitbucket, internal/runner), so
+// the run going on now keeps the credential it started with, mounted token and
+// all. What the flip sets is the ADDRESS the repository's jobs are admitted by
+// (the node's bitbucket_token block, derived from the entry the same run writes)
+// and not the job's own shape: the mount comes off at the NEXT update's
+// repository stage (the drop, update_proxied.go), so the launch that fetches its
+// credential from the service is the one after that update and not this step's
+// neighbour. The line says what this run leaves behind — the address, and the
+// mount still on the job — because that is the state a person watching a project
+// converge has to read correctly: nothing of the run in flight changes, and a
+// launch under the mount it still holds is a run that goes on mounting its own
+// token.
+//
+// It asks the cheap half rather than the whole flip, as every clause here asks
+// the question its step is gated on and not the whole of its decision: whether
+// the credentials service's bundle holds a token to forward (R7) and whether
+// the config's entry can be published as it stands are the stage's own reads,
+// and both leave the switch off with a line of their own. Naming the step over
+// an update whose flip is then held back is the direction this note errs in —
+// and the other direction is the one it must never take, since a project that
+// does turn the switch on has every launch after it proxied.
+func (e *initEngine) bitbucketProxySwitchTurns() bool {
+	_, turn := e.bitbucketProxyFlip()
+	return turn
 }
 
 // markerConverges is whether this update rewrites the installation's creation

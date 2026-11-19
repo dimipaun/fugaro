@@ -98,17 +98,30 @@ same records and verdicts always give the same table. A pair at Critical counts
 only once a judge has decided it (D561), and every other mode shows the judge's
 verdict beside the hard signals it is ranked on.
 
-Rows are one per rigor mode x tier x model pair. A pair the arms do not make --
-a different start commit, mode, tier or recipe, or an arm that never started --
-is in no figure at all. WINS and LOSSES are the challenger's; a TIE decided
-nothing and no figure is drawn from one. HALTS is each arm's halt count: a halt
-is already a loss, and the count says how often a limit rather than the work
-decided a pair. COST is the median pair cost ratio, the challenger's model
-dollars over the champion's. JUDGE FAMILY is the family of the model that judged
-the group's pairs -- a Claude ID is anthropic, a provider model's family is its
-ID's vendor prefix -- and SAME FAMILY says one of them is an arm's own, which
-blindness does not remove (D553). UNJUDGED counts the pairs no judge has decided
-and TRUNCATED those whose patch was cut short and can never be judged.
+Rows are one per rigor mode x tier x slot x model and effort pair. A pair the
+arms do not make -- a different start commit, mode, tier, recipe or slot, or an
+arm that never started -- is in no figure at all. WINS and LOSSES are the
+challenger's; a TIE decided nothing and no figure is drawn from one. HALTS is
+each arm's halt count: a halt is already a loss, and the count says how often a
+limit rather than the work decided a pair. COST is the median pair cost ratio,
+the challenger's over the champion's, of the review level itself for a reviewer
+row. JUDGE FAMILY is the family of the model that judged the group's pairs -- a
+Claude ID is anthropic, a provider model's family is its ID's vendor prefix --
+and SAME FAMILY says one of them is an arm's own, which blindness does not
+remove (D553). UNJUDGED counts the pairs no judge has decided and TRUNCATED
+those whose patch was cut short and can never be judged.
+
+SLOT is what a pair varies: coder for a pair of whole runs, and review level 1,
+2 or 3 for a pair whose challenger replayed the champion's recorded patch at
+that level (D728). Such a row's CHAMPION and CHALLENGER are that level's two
+reviewers and EFFORT is theirs; its signals are the two rounds -- the word each
+answered, and the halt before it -- and not the coder facts a pair of runs is
+ranked on. MISSES and FALSE ALARMS are what a judge matched of the two finding
+sets, - until a judge matches one: nothing here reads a finding's text, and no
+judge run matches two sets yet. MISS RATE is therefore not a figure either,
+and the cell says so rather than printing a number nothing has checked:
+whether the blind judge can match two finding sets reliably is the A5 judge's
+own agreement check (Check 211), which has not been run.
 
 ADVICE is D565's rule at the mode's exchange rate: the challenger is recommended
 when it is clearly better (the lower bound of its win share above a half) and its
@@ -118,17 +131,21 @@ row with fewer than 20 decisive pairs says no conclusion rather than
 approximating one. Nothing here changes a default: this is a report, not a
 switch.
 
-No person, repository or task text reaches the output: a row is a mode, a tier and
-two coder models, with the family of the model that judged them.
+No person, repository or task text reaches the output: a row is a mode, a tier, a
+slot and two models, with the family of the model that judged them.
 
 --since is how far back the read goes (default 30d: a day count, a Go duration,
 or 0 for no bound). --json prints {project, source, since, until, rows[{mode,
-tier, champion, challenger, pairs, wins, losses, ties, champion_halts,
-challenger_halts, champion_follow_ups, judge_families, judge_same_family,
-unjudged, truncated, recommendation{decision, rule, decisive, p, win_share_lo,
-win_share_hi, median_cost_ratio, exchange_rate}}], warnings};
-median_cost_ratio is null when no pair of the group carried both arms' costs,
-and judge_families is empty when no judge has decided a pair of the group.
+tier, slot, champion, challenger, champion_effort, challenger_effort, pairs,
+wins, losses, ties, champion_halts, challenger_halts, champion_follow_ups,
+judge_families, judge_same_family, misses, false_alarms, unjudged, truncated,
+recommendation{decision, rule, decisive, p, win_share_lo, win_share_hi,
+median_cost_ratio, exchange_rate}}], warnings};
+median_cost_ratio, misses and false_alarms are null when no pair of the group
+carried both arms' costs or no judge matched its two finding sets, the two
+efforts are empty for a coder row, and judge_families is empty when no judge
+has decided a pair of the group. A report holding a reviewer row warns that
+the miss rate is not reported as a figure, for the Check 211 reason above.
 
 Usage: `fugaro ab`
 
@@ -167,9 +184,12 @@ Subcommands:
 - `fugaro accounts alias` -- Point a name at one named Claude account, so the keys naming it choose that account
 - `fugaro accounts allow` -- Add repositories to a named Claude account's allow-list (claude_accounts.NAME.allow_data_to)
 - `fugaro accounts clear` -- Clear one account's broken or exhausted credential mark, after replacing its token
+- `fugaro accounts craft` -- Point a craft at the credential or pool its calls go out on
 - `fugaro accounts deny` -- Remove repositories from a named Claude account's allow-list
+- `fugaro accounts grade` -- Point an escalation grade at the credential its rung's calls go out on
 - `fugaro accounts ls` -- List the named Claude accounts (claude_accounts in the local config) a repository may use with fugaro run --token
 - `fugaro accounts pool` -- List, declare and remove the named pools a craft's access may name
+- `fugaro accounts repo` -- Give a repository the Claude accounts its own runs may be served by
 - `fugaro accounts rm` -- Remove a named Claude account, its secret and the job that served it
 - `fugaro accounts switch` -- Move every key of this machine's config that names FROM as an account choice to TO
 
@@ -462,6 +482,112 @@ Subcommands:
 
 This command has no subcommands.
 
+## `fugaro accounts craft`
+
+Point a craft at the credential or pool its calls go out on
+
+Point one craft of this installation at the credential or pool its stages spend.
+
+The five crafts are coder, review, senior-review, security-review and
+merge-judge (fugaro craft ls lists what each one resolves to today). The two
+halves of a craft inherit separately: a craft that sets no access of its own
+keeps the one it follows, and the project's default credential when nothing sets
+one, so this command writes the one half and leaves the craft's model alone.
+
+A craft is declared in this installation's own config, so it has that one layer:
+--layer with any other layer is refused naming the one it does have.
+
+A craft decides which credential a stage's calls go out on, so it is a widening
+grant and this command says so: run it at your own terminal. A coding agent's
+session is refused whatever the managed gate answers (D2617).
+
+Usage: `fugaro accounts craft`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for craft |
+
+Subcommands:
+
+- `fugaro accounts craft rm` -- Take a craft out of this project's config
+- `fugaro accounts craft set` -- Point one craft's calls at a credential or a pool
+
+## `fugaro accounts craft rm`
+
+Take a craft out of this project's config
+
+Remove crafts.<NAME> from this installation's own config: the craft's model and
+its access go together, because a craft is one block and half of it left behind
+is a craft no layer states.
+
+The removal is recorded beside the block, and the record is what takes the craft
+off the published node (F22, D2607): silence in this file keeps the node's own
+copy, so a craft taken away without the record would go on being served. A craft
+of this installation's own config owes the policy stage, and this command runs
+that stage before it returns, so the node stops stating the craft as this command
+returns; a craft the file no longer states and the node no longer holds leaves the
+record behind as nothing, and that same publish clears it.
+
+Nothing here removes the credential the craft named: a credential is removed by
+fugaro accounts rm, which clears the access of every craft that named it.
+
+A craft is declared in this installation's own config, so it has that one layer:
+--layer with any other layer is refused naming the one it does have.
+
+Run it at your own terminal: this command changes which credential a stage's
+calls go out on.
+
+Usage: `fugaro accounts craft rm NAME`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for rm |
+| `--layer` | string | "" | no | the layer to write (local, project, repo); a craft is this installation's own config, so local is the layer it has |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts craft set`
+
+Point one craft's calls at a credential or a pool
+
+Write crafts.<NAME>.access in this installation's own config: the credential or
+pool every stage of that craft sends its calls out on.
+
+The name must be a credential this installation defines, a pool it defines, or
+the built-in vertex, which needs no declaration. A name it defines nowhere is
+refused before the file is touched, and the refusal lists what it does define.
+Nothing else in the file changes: the craft's model, every comment and every
+other byte are kept.
+
+A craft declared here is not a removed one: a name this command writes is
+cleared from node_removals.crafts on the same bytes, so a craft you took away
+and then declared again is served by the node rather than dropped by the record
+of the removal (F22).
+
+An access is a spending and data-egress grant, so it is a widening write: a
+coding agent's session is refused whatever the managed gate answers (D2617).
+Run it at your own terminal.
+
+Usage: `fugaro accounts craft set NAME --access CREDENTIAL|POOL`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--access` | string | "" | no | the credential or pool this craft's calls go out on (fugaro accounts ls lists the accounts; fugaro accounts pool ls the pools) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | the layer to write (local, project, repo); a craft is this installation's own config, so local is the layer it has |
+
+Subcommands:
+
+This command has no subcommands.
+
 ## `fugaro accounts deny`
 
 Remove repositories from a named Claude account's allow-list
@@ -491,6 +617,72 @@ Flags:
 | Flag | Type | Default | Required | Description |
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for deny |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts grade`
+
+Point an escalation grade at the credential its rung's calls go out on
+
+Point one of the escalation ladder's grades at the credential its rung's calls go
+out on.
+
+The two grades are strong and strongest (docs/model-escalation). A grade is a
+rung of the ladder: when a run escalates to it, the model and the credential it
+resolves are what serve the rest of that run, so its access is the credential the
+escalated calls are spent on.
+
+Usage: `fugaro accounts grade`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for grade |
+
+Subcommands:
+
+- `fugaro accounts grade set` -- Point one escalation grade's calls at a credential or a pool
+
+## `fugaro accounts grade set`
+
+Point one escalation grade's calls at a credential or a pool
+
+Write model_grades.<GRADE>.access: the credential or pool the rung's escalated
+calls go out on.
+
+The name must be a credential this installation defines, a pool it defines, or
+the built-in vertex, which needs no declaration; a name it defines nowhere is
+refused before the file is touched, naming what it does define.
+
+--layer repo, the default, writes the repository's own fugaro.yaml in the
+checkout's working tree for you to review and commit — a repository's change
+reaches runs when your own branch is merged to the base branch, which is what
+every run reads. --layer project writes this machine's project layer file
+(layer.defaults.model_grades.<GRADE>.access), where the grade is every repository
+of the project's default.
+
+A grade states the model its rung runs as well, and a grade written with no model
+is one no reader can resolve: this command writes the access alone, so it refuses
+where the grade's own model is not already stated in the document it is aimed at.
+Write model_grades.<GRADE>.model there first (there is no command for it in this
+release) and set the access on it.
+
+An access is a spending and data-egress grant, so it is a widening write: a
+coding agent's session is refused whatever the managed gate answers (D2617). Run
+it at your own terminal.
+
+Usage: `fugaro accounts grade set strong|strongest --access CREDENTIAL|POOL`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--access` | string | "" | no | the credential or pool this grade's calls go out on (fugaro accounts ls lists the accounts; fugaro accounts pool ls the pools) |
+| `-h`, `--help` | bool | `false` | no | help for set |
+| `--layer` | string | "" | no | where the write lands: local, project, repo (repo is the default) |
 
 Subcommands:
 
@@ -706,6 +898,70 @@ Flags:
 | --- | --- | --- | --- | --- |
 | `-h`, `--help` | bool | `false` | no | help for rm |
 | `--layer` | string | "" | no | the layer to write (local, project, repo) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro accounts repo`
+
+Give a repository the Claude accounts its own runs may be served by
+
+Give a repository of this project the accounts its own runs may be served by.
+
+A repository's runs reach an account by two roads: the profile its jobs land on
+names the accounts (fugaro accounts add does that as well), and a repository that
+has no profile — every one a workflow sends to a per-repository job, and every
+Bitbucket repository — names them in its own entry. This command writes the
+second one.
+
+Usage: `fugaro accounts repo`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for repo |
+
+Subcommands:
+
+- `fugaro accounts repo add` -- Add an account to a repository's own claude_accounts list
+
+## `fugaro accounts repo add`
+
+Add an account to a repository's own claude_accounts list
+
+Write repos.<REPO>.claude_accounts: the accounts a repository's own runs may be
+served by, for the repositories no profile's job serves
+(docs/project-claude-accounts.md §3).
+
+An account named there must cover the repository — its own allow_data_to, or the
+default account's project_secrets entry, must list it — and the publish that
+derives the policy's accounts block refuses one that does not: add the repository
+to the account's own list as well, or leave the account off this one.
+
+The repository's entry must state its provider, because the published entry is
+provider-qualified and this list is the only place a per-repository job's
+provider is stated: an entry that names accounts and no provider is refused
+before the file is touched. `fugaro update --repo .` writes the entry from a
+checkout of the repository.
+
+--layer picks the layer the write lands in. This list lives in this
+installation's own config and in no fugaro.yaml and no layer file, so local is
+the only layer it has, and --layer with any other is refused naming it.
+
+Naming an account here widens what that repository's runs may spend, so it is a
+widening write: a coding agent's session is refused whatever the managed gate
+answers (D2617). Run it at your own terminal.
+
+Usage: `fugaro accounts repo add REPO ACCOUNT`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for add |
+| `--layer` | string | "" | no | the layer to write (local, project, repo); this list is this installation's own config, so local is the layer it has |
 
 Subcommands:
 
@@ -1584,7 +1840,7 @@ Flags:
 | `--json` | bool | `false` | no | print machine-readable output |
 | `--mode` | string | "" | no | the rigor mode to preview: poc, startup, pro, critical, hotfix; it may raise the mode the repository resolves (its rigor: block, the project layer) and never lower it, so a mode below the resolved one changes nothing — except hotfix, which is taken whole and needs no opt-in, as it is for a run. This is the rigor mode, not the accounting mode budget set --mode takes (observe or enforce) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | yes | the recipe to preview (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot) |
+| `--recipe` | string | "" | yes | the recipe to preview (ab-judge, commit-reports, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository (owner/name, or a path inside its checkout); default: the checkout's origin |
 | `--runs` | int | `0` | yes | how many runs to estimate |
@@ -3539,6 +3795,14 @@ reason are fenced and indented as data in the brief.
 A group a run already covers is skipped, found through the run list, so a
 second call files only what is left and an interrupted one can simply be run
 again.
+
+Where it runs is where fugaro run runs: your own terminal, or a coding
+agent's session, with no difference between the two. The pull request is read
+with whatever credential is there -- your terminal's own, the repository's
+configured App ID with the App's key or the project's Bitbucket token, or, in
+a session, the installation's credentials service minting one read-only token
+for that repository -- and a session reads no App key and no Secret Manager
+value.
 
 Usage: `fugaro followups RUN`
 
@@ -6195,6 +6459,7 @@ Flags:
 
 Subcommands:
 
+- `fugaro project binaries` -- The paths a run may add a binary at, and the cap one is held to
 - `fugaro project clone-url` -- The clone URL each of the project's repositories clones from
 - `fugaro project policy` -- The project's published policy (config/policy/shared)
 - `fugaro project profile` -- The project's job profiles: the shapes its jobs are deployed as
@@ -6202,6 +6467,104 @@ Subcommands:
 - `fugaro project routing` -- The project's Claude routing switch: where a run's Claude calls go
 - `fugaro project show` -- Show the effective project: caps, policy, allow-list, repositories running now
 - `fugaro project sync` -- Offer the provider's repositories that the allow-list does not admit
+
+## `fugaro project binaries`
+
+The paths a run may add a binary at, and the cap one is held to
+
+Write the binaries block this machine's project config carries: the paths a run of the project may add a binary at, and how large one may be.
+
+The block is the owner's grant, and a run of the project is the only reader: `fugaro update` publishes it into the project's policy node, where the run's finalize holds an added file to it — one at a path no pattern admits, or one above the cap, fails the run and is held out of the commit. No branch can widen the grant: `fugaro.yaml` carries no such key, and the shared config refuses it.
+
+`allow PATTERN` admits the paths one doublestar glob matches, relative to the repository root; `deny PATTERN` takes one pattern away. Admitting is the widening write, so it is refused in a coding agent's session whatever the gate says and written at your own terminal, where it says what it widens and asks nothing. Taking a pattern away narrows the grant and is not the widening step, so what it meets is the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write.
+
+`max-bytes N` writes the cap in bytes. It may only be lowered, to at most 2097152 (2 MiB, the ceiling the rule ships); lowering it from a cap this file states narrows the grant and meets the fence every write to this file meets, while raising it back, or writing a cap into a file that states no block at all, is the widening direction and refused in a session whatever the gate says — the published cap and grant cannot be read off this file, so that write is the owner's own step.
+
+The block this file states is the whole block `fugaro update` publishes: a file that carries a `binaries:` block replaces the published one, while a file that says nothing keeps it.
+
+Usage: `fugaro project binaries`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for binaries |
+
+Subcommands:
+
+- `fugaro project binaries allow` -- Admit the paths one pattern of the project's grant matches
+- `fugaro project binaries deny` -- Take one pattern away from the project's binary admission
+- `fugaro project binaries max-bytes` -- Write the cap an added binary is held to
+
+## `fugaro project binaries allow`
+
+Admit the paths one pattern of the project's grant matches
+
+Add one pattern to the binaries.allow list of this machine's project config: the paths a run of the project may add a file at, one doublestar glob relative to the repository root.
+
+The pattern is held to the rule the node itself is held to (`projectpolicy.ValidBinariesAllow`): non-empty, relative, with no parent component, at most 128 characters, and a glob the matcher reads. A misspelt pattern is refused here rather than written, because a pattern the matcher cannot read is a lock that is not there — it admits nothing while looking like a grant.
+
+Admitting paths is the widening direction: the write is refused in a coding agent's session, whatever the gate would have said, and your own terminal writes it and asks nothing.
+
+The block this file states is the whole block the next `fugaro update` publishes, so a file that stated none replaces the published one with this list — which is why the sentence beside this write names the paths it admits.
+
+Usage: `fugaro project binaries allow <pattern>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for allow |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project binaries deny`
+
+Take one pattern away from the project's binary admission
+
+Remove one pattern from the binaries.allow list of this machine's project config, so a run may no longer add a file at the paths it matches. Every other pattern stands.
+
+The pattern is taken away whole and compared as written, so it is the exact entry the file carries — `fugaro project binaries deny brand/*.png` removes that entry and does not re-aim another one at those paths.
+
+A pattern this file does not carry is not a failure and nothing is written: the list this file states is the grant a publish carries, so a file that states one admits no path but the ones in it. A file that states no `binaries:` block at all is refused instead, because there is no entry beside the node's to take away: the published list is what stands until this file states one, and the only edit a removal could make there would take the whole admission away rather than one pattern.
+
+Taking a pattern away narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. The block this file states is the whole block `fugaro update` publishes, and the change reaches a run through that publish.
+
+Usage: `fugaro project binaries deny <pattern>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for deny |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro project binaries max-bytes`
+
+Write the cap an added binary is held to
+
+Write binaries.max_bytes in this machine's project config: the largest a single file a run adds may be, in bytes.
+
+The cap may only be lowered. `projectpolicy.ValidBinariesMaxBytes` is the rule and it refuses anything above 2097152 (2 MiB), which is the ceiling the rule ships; a project that writes no cap at all is held to that ceiling, and a cap of zero is refused rather than read as the absent member, because zero is the one value that would silently raise the cap to it.
+
+Lowering the cap from the one this file states narrows the grant and is not the widening step, so it meets the fence every write to this file meets: a coding agent's session is refused it unless the project's own marks admit a removing write. Raising it back, or writing a cap into a file that states no binaries block at all, is the widening direction, refused in a session whatever the gate says: the published cap is what a file that states none leaves in force and cannot be read here, so that write is the owner's own step — and the block this file states is the whole block `fugaro update` publishes, so a first write of one member beside it is a statement about the other member as well.
+
+Usage: `fugaro project binaries max-bytes <n>`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `-h`, `--help` | bool | `false` | no | help for max-bytes |
+
+Subcommands:
+
+This command has no subcommands.
 
 ## `fugaro project clone-url`
 
@@ -6367,7 +6730,8 @@ qualified by its profile's provider, and by a repository's own
 repos.<owner/name>.claude_accounts, qualified by that entry's provider:
 an account this config defines but neither names admits nothing a run
 could read — a repository whose runs are not on a profile job (a
-per-repository job, which is every Bitbucket repository) names its
+per-repository job — what a repository the published policy serves no
+profile for, and a `checkout: baked` one, keep) names its
 accounts there, because a profile is not the only kind of job its runs
 land on. The two are a union, so nothing a profile admits is narrowed by
 a repository's entry.
@@ -7144,7 +7508,7 @@ List, show, validate and publish recipes, the task loop a run follows after impl
 
 A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the
 project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog
-(ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot). See docs/recipes.md.
+(ab-judge, commit-reports, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot). See docs/recipes.md.
 
 Usage: `fugaro recipes`
 
@@ -7811,7 +8175,10 @@ Launch a task in the cloud. The task is TEXT or --task-file (- for stdin).
 
 A repeated --run-id reports the existing launch instead of starting another, so
 a caller that is unsure whether its launch went through can simply repeat it.
---retry RUN launches a run whose task was stored but never started.
+--retry RUN launches a run whose task was stored but never started: a run that
+already started is refused with nothing launched, which names the way on from
+the run's own record — continue the pull request it left with fugaro run --pr N,
+launch a new run once it has ended without one, or wait while it is still going.
 
 --pr N continues Fugaro's pull request N: the run acts on the PR's review comments
 by the authors fugaro.yaml's followup.trusted lists, on the PR's own branch, with
@@ -7908,11 +8275,11 @@ Flags:
 | `--plan-task` | string | "" | no | record the plan task this run works on, as <plan>/<task> (for example setup-wizard/W1.3): the id the console's graph joins this run to a node by; it changes nothing about what the run does, and a follow-up (--pr) records one only when given. A plan task that a run in flight, or a pull request a run of it left behind, already holds is refused (--allow-duplicate launches it anyway) |
 | `--pr` | intSlice | `[]` | no | continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions); with a mode: review --recipe, review PR N instead (repeatable, 1 to 4, any open PR) |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
-| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
+| `--recipe` | string | "" | no | the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (ab-judge, commit-reports, default, escalate, lint-fix, merge-judge, pick, premium, rebase, review-only, run-digest, solo, standard, test-and-fix, troubleshoot); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's |
 | `--ref` | string | "" | no | base branch or ref the run is cut from (default: the branch this checkout is on, when origin has it and it is not the base branch; else the base branch (fugaro.yaml git.base_branch, then the local config's, then the project's base_branch, then main)) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | stringArray | `[]` | no | repository as owner/name, or a path inside its checkout (default: this checkout's origin); repeatable only with --change-set, which launches one run per repository named, 2 to 5 |
-| `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
+| `--retry` | string | "" | no | launch the stored task of RUN (a full run ID, or <repo-slug>/<run-id>) that never started: a run that already started is refused with nothing launched, which names the way on from the run's own record — the pull request to continue, a new run once it has ended without one, or the wait while it is still going; a run an ending names is never launched, since the bucket cannot vouch for which run an ending means |
 | `--review-levels` | string | "" | no | read the run's own review levels from this YAML file, or - for stdin: the block the task stores as review_levels (l1, l2, l3, each of model, effort, none and focus), decoded strictly, with no key on no level meaning the configuration decides it. Asking for levels needs a job image whose runner acts on them, so a launch on an older one is refused and names fugaro image refresh; without the flag the run resolves its levels from its configuration and its mode alone |
 | `--run-id` | string | "" | no | run ID to use; repeating one reports its launch instead of starting another |
 | `--security` | bool | `false` | no | ask for the strongest review this run can get: it turns review level 3 on for the run whatever paths it changed, over the repository's own security: rows and the project layer's always_level_3. It only ever turns the level on — there is no way to ask for less — as --mode raises a mode and never lowers one, and a run that says nothing resolves its levels from its configuration alone |
@@ -9346,9 +9713,11 @@ file, or a repository's fugaro.yaml.
 
 The layers are `local` (the local project config), `project` (the local
 project layer file) and `repo` (a checkout's fugaro.yaml); `default` is never
-a target. With no --layer the narrowest layer the key may be set in is the
-target. --layer repo without --repo uses the current directory's checkout and
-refuses when the directory is not one.
+a target. With no --layer a ceiling — a key whose layers tighten each other,
+so the smaller value wins — lands in the project layer when the key may be set
+there and in the local project config when it may not, and every other key
+lands in the narrowest layer it may be set in. --layer repo without --repo uses
+the current directory's checkout and refuses when the directory is not one.
 
 A string-list key takes --add V or --remove V instead of a value. A map or an
 object list takes --add-entry and --remove-entry instead: --add-entry carries
@@ -9963,6 +10332,15 @@ exit codes as fugaro setup, for a project that is set up already (or, with
 --repo, for the repository of the checkout at PATH). Run it after upgrading the
 CLI: it applies what the release changed, and one with nothing to do says
 "No changes" and exits 0.
+
+Run in a checkout, it is also where a docs/backlog/ folder that is still there
+is folded into the project's backlog: one item per open file, under the file's
+own id, queued and unapproved until a person approves it. The fold happens once
+per checkout — an id the backlog already knows, in its work list or among the
+ids it has archived, is not filed again — it asks nothing, and outside a
+checkout it does nothing at all. What the node knows is bounded: a folded item
+that finished long ago and has aged out of that archive is filed again by a much
+later update, queued and unapproved like the first.
 
 It is also how a second machine, yours or a teammate's, gets its local config:
 on a machine with no config for the installation, fugaro update --gcp-project

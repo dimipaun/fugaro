@@ -15,7 +15,7 @@ import (
 // run's shape rather than a knob, or escalate's single round, which is the
 // escalation's own shape: one pass and the verdict, with no round after it.
 func TestCatalogIsTheStarterSet(t *testing.T) {
-	want := []string{"default", "escalate", "lint-fix", "merge-judge", "pick", "premium", "rebase", "review-only", "run-digest", "solo", "standard", "test-and-fix", "troubleshoot"}
+	want := []string{"commit-reports", "default", "escalate", "lint-fix", "merge-judge", "pick", "premium", "rebase", "review-only", "run-digest", "solo", "standard", "test-and-fix", "troubleshoot"}
 	if got := CatalogNames(); !slices.Equal(got, want) {
 		t.Fatalf("catalog = %v", got)
 	}
@@ -29,9 +29,12 @@ func TestCatalogIsTheStarterSet(t *testing.T) {
 		if n != DefaultName && r.UseWhen == "" {
 			t.Errorf("%s has no use_when", n)
 		}
-		digest := len(r.Steps) > 0 && r.Steps[0].Kind == StepDigest
+		// A digest recipe and a commit-reports one pin their single review
+		// round for the same reason: the step before it is the runner's own
+		// work, so the review is the recipe's shape rather than a knob.
+		deterministic := len(r.Steps) > 0 && (r.Steps[0].Kind == StepDigest || r.Steps[0].Kind == StepCommitReports)
 		for _, s := range r.Steps {
-			if s.MaxRounds != 0 && r.Mode != ModeReview && !digest && !onePass[n] {
+			if s.MaxRounds != 0 && r.Mode != ModeReview && !deterministic && !onePass[n] {
 				t.Errorf("%s pins max_rounds: catalog recipes take the knobs (G6)", n)
 			}
 		}
@@ -41,6 +44,66 @@ func TestCatalogIsTheStarterSet(t *testing.T) {
 	}
 	if _, ok := CatalogText("../catalog/default"); ok {
 		t.Fatal("a path is a catalog name")
+	}
+}
+
+// TestCommitReportsRecipeIsInTheCatalog: the catalog holds a commit-reports
+// recipe and it is the shape the step requires of one (E5, D2750) -- the
+// deterministic step first and the recipe's one senior review after it, with
+// no options on either -- and the bound a run of it can start is that review
+// alone: the step asks no model for anything.
+func TestCommitReportsRecipeIsInTheCatalog(t *testing.T) {
+	data, ok := CatalogText("commit-reports")
+	if !ok {
+		t.Fatal("the catalog has no commit-reports recipe")
+	}
+	r, ps := Parse(data)
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	if !UsesCommitReports(r) {
+		t.Fatal("the recipe holds no commit_reports step")
+	}
+	if len(r.Steps) != 2 || r.Steps[0].Kind != StepCommitReports || r.Steps[1].Kind != StepReview || r.Steps[1].MaxRounds != 1 {
+		t.Fatalf("steps = %+v, want commit_reports then one review", r.Steps)
+	}
+	if r.Mode != ModeImplement {
+		t.Fatalf("mode = %s, want %s: the step takes implement's place", r.Mode, ModeImplement)
+	}
+	// The review and its fix at most, whatever the knobs say: the step before
+	// it is not a stage.
+	if got := StageBound(r, 3, 10, n3Default); got != 2 {
+		t.Fatalf("bound = %d, want 2 (the one review and its fix)", got)
+	}
+	for name, src := range map[string]string{
+		"commit_reports after a first_line loop": "version: 1\nname: x\nsteps:\n  - first_line: {}\n  - commit_reports: {}\n  - review: {}\n",
+		"commit_reports twice":                   "version: 1\nname: x\nsteps:\n  - commit_reports: {}\n  - commit_reports: {}\n  - review: {}\n",
+		"commit_reports with no review":          "version: 1\nname: x\nsteps:\n  - commit_reports: {}\n",
+		"commit_reports with options":            "version: 1\nname: x\nsteps:\n  - commit_reports: { max_rounds: 2 }\n  - review: {}\n",
+		"commit_reports in mode: review":         "version: 1\nname: x\nmode: review\nsteps:\n  - commit_reports: {}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ps := Parse([]byte(src)); len(ps) == 0 {
+				t.Fatalf("%s parses clean, want a refusal", name)
+			}
+		})
+	}
+}
+
+// TestCommitReportsStepRunsNoModelStage: the stage a run of the recipe
+// records is the review's alone -- the bound is 2 at every knob, the way an
+// escalate run's is -- because the step before it is the runner's own work:
+// no implement stage, no first-line loop and no model call of its own.
+func TestCommitReportsStepRunsNoModelStage(t *testing.T) {
+	data, _ := CatalogText("commit-reports")
+	r, ps := Parse(data)
+	if len(ps) != 0 {
+		t.Fatalf("problems: %s", ProblemsText(ps))
+	}
+	for _, knobs := range [][3]int{{0, 0, 0}, {3, 10, 5}} {
+		if got := StageBound(r, knobs[0], knobs[1], knobs[2]); got != 2 {
+			t.Errorf("bound at %v = %d, want 2", knobs, got)
+		}
 	}
 }
 

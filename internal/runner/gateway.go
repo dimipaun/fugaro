@@ -372,9 +372,11 @@ func (r *run) gatewayOn() bool {
 // this job's environment carries the service's URL
 // (credentialsServiceURLEnv). The URL is the whole of it — it is what the
 // installation's own root hands a switched repository's job (B2.3, D2072), and
-// the flip list (config.ServiceServedAuths) is not read here on purpose: it is
-// empty until B2.7 fills it, and a run keyed on it would ignore the URL that
-// arrived first, which is exactly the rollout D2072 orders.
+// the flip list (config.ServiceServedAuths) is not read here on purpose: the
+// URL is what the rollout orders first — B2.3 handed it out while every mount
+// was still there — so a run keyed on the list would ignore the URL that
+// arrived first, and the flip that filled the list (B2.7) left this answer
+// exactly what it was.
 //
 // A local run is never switched (D149, as for cascade): `fugaro exec` runs on
 // the developer's own credentials, has no installation identity and no path to

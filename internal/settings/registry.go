@@ -1065,7 +1065,7 @@ var localRows = []Row{
 	locLocal("crafts.merge-judge.access", "the coder's access", "accounts", docCrafts),
 
 	loc("project_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
-	loc("project_secrets.*.proxy", "none", "secrets", docSetup),
+	loc("project_secrets.*.proxy", "none: an entry that says nothing about the switch is the state `fugaro update` turns on, and a written false is a hold it never lifts", "secrets", docSetup),
 
 	loc("workflow_secrets.*.allow_data_to", "nobody", "secrets", docSetup),
 	loc("workflow_secrets.*.proxy", "none: refused, D1275", "secrets", docSetup),
@@ -1198,14 +1198,18 @@ var localRows = []Row{
 	// payload to every teammate's runs (D986; Shared nils it besides, and
 	// sharedForbidden refuses the key).
 	//
-	// The owner is the project family because `fugaro project policy publish`
-	// is the door that carries the block onto the node — the run reads it
-	// there and nowhere else — and because no generic write reaches these
-	// leaves: an entry is a doublestar path glob held to the node's own rule
+	// The owner is `fugaro project binaries` (K2 of docs/config-ownership): it
+	// writes both members into this file, and the update it ends on publishes
+	// the block onto the node — the run reads it there and nowhere else. It is
+	// a token of its own rather than the `project` family's because that family
+	// writes the project's other policy keys and neither member of this block:
+	// an entry is a doublestar path glob held to the node's own rule
 	// (projectpolicy.ValidBinariesAllow) and the cap to its ceiling, which are
-	// checks no scalar write can make.
-	locLocal("binaries.allow", "none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there", "project", docBinaryAllow),
-	locLocal("binaries.max_bytes", "2097152 (2 MiB): the largest a single added file may be, and a project may lower it", "project", docBinaryAllow),
+	// checks no generic write can make, and a refusal for one of the two binds
+	// names the command that works rather than `fugaro project`, which does not
+	// write it.
+	locLocal("binaries.allow", "none: no path is admitted, so a run that adds a binary anywhere fails finalize and the person reads the reason there", "project binaries", docBinaryAllow),
+	locLocal("binaries.max_bytes", "2097152 (2 MiB): the largest a single added file may be, and a project may lower it", "project binaries", docBinaryAllow),
 
 	// The reports_commit block is the owner's designation of the one repository
 	// a report run may commit into and of the folder inside it (D2750, D2751;
@@ -1228,10 +1232,10 @@ var localRows = []Row{
 	// projectpolicy.ValidReportsCommitDir's, which are checks no scalar write
 	// can make. The default of `dir` is the node's own
 	// (projectpolicy.DefaultReportsCommitDir), because a block that designates
-	// a repository and names no folder commits into the folder the reports
-	// already live in (D960).
+	// a repository and names no folder commits into a folder run-digest never
+	// writes (owner ruling 2026-11-18).
 	locLocal("reports_commit.repo", "none: the project commits no report anywhere, and a written empty block is how the owner takes a designation away", "project", docPeriodicReviews),
-	locLocal("reports_commit.dir", "docs/fugaro-reviews: the report layout's own folder, which a designation that names no folder commits into (D960)", "project", docPeriodicReviews),
+	locLocal("reports_commit.dir", "docs/fugaro-reviews-mirror: a folder the report layout never writes, so a designated repository's own reports and the mirror cannot meet", "project", docPeriodicReviews),
 
 	// The node-only blocks' local carriers (config-ownership plan task N1,
 	// D2607, F22, F23): the cascade, and the record that states an explicit
@@ -1397,11 +1401,10 @@ var localRows = []Row{
 	// (docs/project-claude-accounts.md §3), so it is local-only, and it is
 	// stripped from the published copy of this map besides
 	// (localcfg.withoutRepoLocalKeys, internal/cli/sharedcfg.go's refusal on
-	// the key). The owner is the accounts family, whose `accounts rm` is what
-	// edits the list: it clears a name with the declaration it names, and this
-	// release gives no command a write that ADDS one — the list is written by
-	// hand, and `repos.*.claude_accounts` is not a `settings set` path, which
-	// is what the read's owner column may say rather than a bare command.
+	// the key). The owner is the accounts family: `fugaro accounts repo add`
+	// adds to the list and `accounts rm` clears a name with the declaration it
+	// names, and neither is a `settings set` path — which is what the read's
+	// owner column may say rather than a bare command.
 	locLocal("repos.*.claude_accounts", "nobody: the repository's runs are served by the accounts the profiles of its jobs name", "accounts", docAccounts),
 	loc("repos.*.provider", "none", "settings set", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),
@@ -1638,9 +1641,9 @@ var defaultValues = map[string]Default{
 	"issues.nudge_recurrence": value("3", "localcfg.DefaultIssuesNudgeRecurrence"),
 	// The ladder's own two (E3): the scale a critical-path item's times are
 	// multiplied by, and the switch that decides whether the orchestrator may
-	// ready a stalled draft itself (off, D2046).
+	// ready a stalled draft itself (on, D2046).
 	"escalation.critical_path_factor": value("0.5", "localcfg.DefaultEscalationCriticalPathFactor"),
-	"escalation.ready_drafts":         value("false", "localcfg.DefaultEscalationReadyDrafts"),
+	"escalation.ready_drafts":         value("true", "localcfg.DefaultEscalationReadyDrafts"),
 }
 
 // sensitiveKeys are the keys whose value is never printed (spec §2.3): the

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -14,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -139,8 +141,9 @@ func (r *run) verifiedHead(ctx context.Context) (string, bool) {
 // on a clean tree, pushes later verified tips, and keeps the status section
 // current. A report run pushes nothing here: a fix stage's commit is a
 // stage's, and the bytes a report run's pull request carries must be the
-// generator's (digest.go, T3.3), so its branch reaches the remote at finalize
-// and nowhere else. Nothing here fails the run.
+// step's own — the digest generator's (digest.go, T3.3), the store's for a
+// commit run (reports_commit.go, R9) — so its branch reaches the remote at
+// finalize and nowhere else. Nothing here fails the run.
 func (r *run) afterStage(ctx context.Context, stage string) {
 	defer func() {
 		// Whatever goes wrong here must not fail the run: finalize still
@@ -155,8 +158,10 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 	}
 	if r.follow == nil {
 		// A report run's only push is finalize's: checkpointsOn() is false
-		// for it, so the boundary checkpoint below pushes nothing.
-		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && (stage == "implement" || stage == "fix") {
+		// for it, so the boundary checkpoint below pushes nothing, and no
+		// draft is opened on a stage's commit either -- the pull request
+		// carries the step's bytes and nothing else.
+		if r.cfg.Git.PR.EarlyDraftOn() && !r.digest && !r.commitReports && (stage == "implement" || stage == "fix") {
 			if sha, ok := r.verifiedHead(ctx); ok {
 				if r.rec.PR == nil {
 					r.openDraft(ctx, sha, stage)
@@ -416,7 +421,61 @@ func (r *run) earlyPRText() (string, string) {
 		title = string(runes[:maxTitleRunes-1]) + "…"
 	}
 	body = clipBody(body, min(maxBodyBytes, r.statusOptions().Limit-statusReserve))
-	return title, body
+	return title, r.withFixes(body)
+}
+
+// ticketRE is a work item's external id as this file reads it back:
+// `github:<owner>/<repo>#<n>`, the ticket outside Fugaro the run's item came
+// from. The shape is the orchestrator's (its externalRE, applied where the id
+// is written and again where the node is read), and the field on the task is
+// a copy of an id already admitted there — but a task is a document this
+// runner reads from its own bucket, so a hand-written one can carry anything,
+// and what is put in a pull request's body is published: this is the read of
+// the copy, not a second rule about what a ticket is. The owner, the name and
+// the number are the classes the daemon writes, so an id outside them names
+// no issue this run can honestly claim and no text it could use to mention
+// anyone.
+var ticketRE = regexp.MustCompile(`^github:([a-z0-9][a-z0-9._-]*)/([a-z0-9][a-z0-9._-]*)#([1-9][0-9]{0,18})$`)
+
+// fixesLine is the line the pull request of a run for a GitHub item carries
+// so that merging it closes the issue the run was launched for (D2727, B5):
+// GitHub's own closing keyword in the pull request's body, and no daemon
+// write. `Fixes #<n>` names an issue in the run's own repository, which is
+// what GitHub closes on a merge into the default branch; another
+// repository's issue is spelled out whole, `Fixes <owner>/<repo>#<n>`, so a
+// reader lands on the ticket even where the two repositories do not share
+// one.
+//
+// "" for a task that carries no external id — every run a person starts, and
+// a daemon launch whose job image cannot read the field (internal/cli's
+// externalSkew drops it there) — and for one whose id is not a ticket
+// (ticketRE): the run opens its pull request without a closing line rather
+// than failing over a link, exactly as the launch does.
+func (r *run) fixesLine() string {
+	if r.spec.External == "" {
+		return ""
+	}
+	m := ticketRE.FindStringSubmatch(r.spec.External)
+	own, err := task.CanonicalRepo(r.spec.Repo)
+	if m == nil || err != nil {
+		r.d.Log.Warn("the task's external id is not a ticket this run can name, so its pull request carries no closing line", "external", safetext.OneLine(r.spec.External))
+		return ""
+	}
+	if m[1]+"/"+m[2] == own {
+		return "Fixes #" + m[3]
+	}
+	return "Fixes " + m[1] + "/" + m[2] + "#" + m[3]
+}
+
+// withFixes appends the closing line to a finished body: the line goes after
+// the clip rather than before it, so a description that fills the bound
+// cannot cut the one line the issue's closing depends on.
+func (r *run) withFixes(body string) string {
+	line := r.fixesLine()
+	if line == "" {
+		return body
+	}
+	return body + "\n\n" + line
 }
 
 // ---- the section's text ----

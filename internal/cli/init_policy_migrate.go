@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -1244,6 +1245,17 @@ type policyMigrateStage struct {
 	m         *policyMigration
 	published bool
 	err       error
+
+	// sw is the Bitbucket proxy switch this run turns on, read with the plan
+	// and written after the node (update_proxy_switch.go). It is nil for every
+	// run that turns nothing on, which is the ordinary case.
+	sw *bitbucketProxySwitch
+	// swSaid is whether the switch's own line has been printed. It is the one
+	// field of this stage forget() does NOT clear: the line is about this
+	// session's bundle rather than about a read a later pass supersedes, and a
+	// person told once that they hold no token for the workspace does not need
+	// it again from the next pass of the same update.
+	swSaid bool
 }
 
 // policyNoneDetail is what both doors say for a project that has a budget
@@ -1270,7 +1282,49 @@ func (policyMigrateStage) Left() initflow.Left {
 func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, error) {
 	if !s.planned {
 		s.planned = true
-		s.m, s.published, s.err = policyMigrationForIn(ctx, s.e.lc, s.e.path)
+		// The Bitbucket proxy switch is decided before the node is read, and the
+		// node is planned from the config the switch implies: the file and the
+		// node are one decision (update_proxy_switch.go), and a node planned from
+		// the config as it is would carry no bitbucket_token block while the file
+		// this run writes states one — the disagreement resolveBitbucketProxied
+		// stops a run over. A switch that does not turn leaves the config the run
+		// holds exactly where it was.
+		sw, err := s.proxySwitch(ctx)
+		if err != nil {
+			s.m, s.published, s.err = nil, false, err
+			return nil, false, err
+		}
+		lc := s.e.lc
+		if sw != nil {
+			lc = sw.lc
+		}
+		m, published, err := policyMigrationForIn(ctx, lc, s.e.path)
+		if sw != nil && err == nil && m != nil && m.generations != nil {
+			// The node has moved past the generation this machine's config was
+			// written from, so this run is D854's re-seed: the file is written
+			// from the node and the generation is recorded, rather than the node
+			// from the file. The switch has no part in that — it is a member the
+			// re-seed's splice table has no case for, so a plan built from the
+			// switch's config lands on the fallback that refuses the whole
+			// update with "put the published values of bitbucket_token there by
+			// hand", and the operator meets an update that fails and goes on
+			// failing until they edit the file by hand (S6's fix, 2026-11-18).
+			//
+			// So the switch is held back for this run and the plan is taken
+			// again from the config as it is: the generation is recorded, every
+			// other stage of the update runs, and the NEXT update — whose
+			// generation now matches — is the one that turns the switch on.
+			// Dropping it leaves the file and the node in agreement, which is
+			// what the switch may never break: the entry this run does not write
+			// is one the node does not carry, and an absent entry is never a
+			// disagreement for resolveBitbucketProxied.
+			s.proxySwitchSays("this update leaves the Bitbucket proxy switch off: the published policy node has moved past the generation this machine's local config was written from, and this run re-seeds the config from it — the next update turns the switch on")
+			sw = nil
+			lc = s.e.lc
+			m, published, err = policyMigrationForIn(ctx, lc, s.e.path)
+		}
+		s.sw = sw
+		s.m, s.published, s.err = m, published, err
 	}
 	return s.m, s.published, s.err
 }
@@ -1285,7 +1339,12 @@ func (s *policyMigrateStage) plan(ctx context.Context) (*policyMigration, bool, 
 // answered it, and the run refuses its own work with a sentence about rules
 // that are no longer deployed.
 func (s *policyMigrateStage) forget() {
-	s.planned, s.m, s.published, s.err = false, nil, false, nil
+	// The switch goes with the plan: the installation stage's own write is what
+	// puts the credentials_service block in the config this run holds, and a
+	// decision taken before it would be one the config the run now holds does
+	// not support. swSaid is kept — the bundle gate's line is about the session,
+	// not about the read (proxySwitchSays).
+	s.planned, s.m, s.published, s.err, s.sw = false, nil, false, nil, nil
 }
 
 // Check reports what the published node is. A refusal here is the run's, not a
@@ -1489,6 +1548,18 @@ func (s *policyMigrateStage) Apply(ctx context.Context, env initflow.Env) (initf
 		// owner reads is that this node was published, and a step that failed
 		// inside the write has published nothing to record.
 		if err := s.e.r.gateApplied(ctx); err != nil {
+			return initflow.Outcome{}, err
+		}
+	}
+	// The flip's file half, after the node's own write (update_proxy_switch.go
+	// has the order's whole argument: an absent entry is never a disagreement,
+	// so the file may land after the node and never before it). It is the same
+	// run's apply and no second confirmation: what the operator confirmed is the
+	// node, whose bitbucket_token block is the derived entry this write puts in
+	// their file, and `fugaro secrets set --proxy` writes the same member with
+	// the same edit and the same backup.
+	if s.sw != nil {
+		if err := s.sw.write(s.e, s.e.r.w); err != nil {
 			return initflow.Outcome{}, err
 		}
 	}
@@ -1881,22 +1952,33 @@ func defaultProfileNameList(names []string) string {
 // the profiles this run wrote (the same reason syncAccess is where it is), and
 // it runs after makeOnboardingRepoEntry so that the repository this run onboards
 // counts among the providers in use.
-func (e *initEngine) createDefaultProfiles() {
+//
+// The project's default catalog entry is written in the same step and after the
+// profiles above, because the entry is written only when every repository this
+// config lists is admitted by one of them (writeDefaultCatalogEntry).
+func (e *initEngine) createDefaultProfiles(ctx context.Context) {
 	r, o := e.r, e.r.o
 	if e.lc == nil || o.doorName() != updateDoor.name || o.planOnly {
 		return
 	}
 	providers, repos := usedProviders(e.lc)
 	created := writtenDefaultProfiles(e.lc, defaultProfileProviders(providers, servedProviders(e.lc)), repos)
+	hadBlock := e.lc.Profiles != nil
+	if len(created) > 0 {
+		if !hadBlock {
+			e.lc.Profiles = map[string]config.JobProfile{}
+		}
+		for _, d := range created {
+			e.lc.Profiles[d.Name] = d.jobProfile()
+		}
+	}
+	// The entry joins the config before the spec below is composed, so the
+	// installation stage deploys the shared jobs with the image this run just
+	// gave the project (projectJobImage reads the default entry), and so that
+	// the spec this run holds is the one its own config yields.
+	e.writeDefaultCatalogEntry(ctx)
 	if len(created) == 0 {
 		return
-	}
-	hadBlock := e.lc.Profiles != nil
-	if !hadBlock {
-		e.lc.Profiles = map[string]config.JobProfile{}
-	}
-	for _, d := range created {
-		e.lc.Profiles[d.Name] = d.jobProfile()
 	}
 	// The written config is held to the deployer's own reading before it is
 	// kept, and withdrawn whole when the deployer would refuse it: `fugaro
@@ -1928,4 +2010,355 @@ func (e *initEngine) createDefaultProfiles() {
 		fmt.Fprintf(r.w, "%swrote the default profile %s (%s) to the local config: it is the job a %s workflow that names no profile runs on, and it admits %s\n",
 			o.programPrefix(), d.Name, d.Provider, d.Provider, strings.Join(d.Repos, ", "))
 	}
+}
+
+// defaultCatalogEntryName is the name of the entry `fugaro update` writes into
+// a project's image catalog: the installation's pinned base image, as a
+// prebuilt entry marked default (D2305, S10). The name is the base image kind's
+// because that is what the entry holds, and `fugaro image ls` reads the two
+// side by side.
+const defaultCatalogEntryName = "base"
+
+// writeDefaultCatalogEntry writes the project's default catalog entry into the
+// local config, so that the shared project jobs of every profile have an image
+// the project's own catalog names (internal/infra's projectJobImage resolves
+// exactly this entry for them, F21) and so that the project has a default an
+// operator can curate a baked image into.
+//
+// The entry is a reference to the base image this config pins, and nothing
+// builds it (D2305): the write says which image the project's jobs run today
+// and gives the catalog a place to grow, and it needs no build, no bucket and
+// no cloud call of its own.
+//
+// It writes nothing, and says why, in every state where the entry would make
+// this run refuse something it converges today. The entry is the image of every
+// job whose repository names no image, so a project that keeps a per-repository
+// job for any reason would meet the deployer's refusal for a bare `checkout:
+// baked` workflow (internal/infra's unbuiltOnBaked, D1191) — and a repository
+// keeps one whenever no profile admits it, whenever this run holds no checkout
+// of it (RepoSpec.Shared is a mark no root reads yet, M7), or, for the checkout
+// this run does hold, whenever its own workflows are such a workflow: the three
+// states defaultCatalogEntryRefusal reads, and the reason a repository admitted
+// to a profile is still read here. The other states are the project's own: a
+// catalog this machine's config does not hold is not one to write into, and an
+// entry the config already has under this name is the operator's.
+//
+// Every line it prints is a reason and a remedy, and it is silent in the one
+// state where there is nothing to say: a project that already marks a default
+// has the entry this write is for, whether an earlier update or the operator
+// put it there.
+func (e *initEngine) writeDefaultCatalogEntry(ctx context.Context) {
+	r := e.r
+	// The published node, once per run and through the run's own memo
+	// (policyReadOnce), because it is where the project's catalog is when this
+	// machine's config names none (the keep rule, D1140): an entry written over
+	// a published catalog would replace it rather than be added to it, which is
+	// the note `fugaro image add` prints for the same write.
+	//
+	// An older node is tolerated rather than reported, as it is everywhere else
+	// this run reads one (init.go's effectiveVerifiers): it is the node this
+	// same run migrates in place, so it is a state `fugaro update` has to
+	// converge through and not a fact about the project's catalog.
+	p, _, err := r.policy.read(ctx, e.lc)
+	if err != nil && !olderPolicyNode(err) {
+		e.withholdDefaultCatalogEntry(fmt.Sprintf("the project's published policy could not be read (%s)", oneLineCLI(policyReadErr(err).Error())))
+		return
+	}
+	var published *config.Catalog
+	var publishedMap map[string]string
+	if p != nil {
+		published, publishedMap = p.ImageCatalog, p.ImageMap
+	}
+	cat := e.lc.ImageCatalogEffective(published)
+	if cat != nil {
+		if _, ok := catalog.Default(*cat); ok {
+			// The project has a default entry, so there is nothing to write and
+			// nothing to say: this write is for the project that has none.
+			return
+		}
+	}
+	if e.lc.ImageCatalog == nil && published != nil && len(published.Entries) > 0 {
+		e.withholdDefaultCatalogEntry("this machine's project config names no image catalog, and the project has one published, so an entry written here would replace that catalog rather than be added to it")
+		return
+	}
+	base := e.lc.BaseImage(config.BaseKind)
+	if base == "" {
+		e.withholdDefaultCatalogEntry("this config records no base image for the base kind, so there is no reference to write the entry on")
+		return
+	}
+	entry := config.Entry{
+		Name:    defaultCatalogEntryName,
+		Default: true,
+		Source:  config.Source{Kind: config.SourceImage, Image: base},
+	}
+	if slices.ContainsFunc(catalogEntries(cat), func(x config.Entry) bool { return x.Name == entry.Name }) {
+		e.withholdDefaultCatalogEntry(fmt.Sprintf("this project's catalog already has an entry named %s, and an entry of the operator's is never written over: mark the entry you want as the default in the project config, or rename that one, and a later %s writes this entry",
+			entry.Name, selfCommand()+" update"))
+		return
+	}
+	if why := e.defaultCatalogEntryRefusal(cat, e.lc.ImageMapEffective(publishedMap), entry, p); why != "" {
+		e.withholdDefaultCatalogEntry(why)
+		return
+	}
+	next := config.Catalog{Entries: append(catalogEntries(cat), entry)}
+	if problems := config.ValidateCatalog("image_catalog", next); len(problems) > 0 {
+		e.withholdDefaultCatalogEntry(fmt.Sprintf("the entry is not one this project's catalog can carry (%s: %s)", problems[0].Path, problems[0].Message))
+		return
+	}
+	e.lc.ImageCatalog = &next
+	fmt.Fprintf(r.w, "%swrote the default catalog entry %s (%s) to the local config: it is the image every shared job of this project runs, and a %s that gives it a baked image moves every job of the project onto it\n",
+		r.o.programPrefix(), entry.Name, base, selfCommand()+" image add")
+}
+
+// repinDefaultCatalogEntry moves the project's default catalog entry onto the
+// base image this run pinned, in the config the images stage is about to write.
+//
+// The entry write above runs before the loop, where the base image this config
+// records is still the release behind — the pin moves in the images stage, which
+// is the only step that resolves it — so an entry written there and never moved
+// would name the runner image of the release behind, for every shared job of the
+// project, and the early return above would keep it there: the entry is the
+// image the jobs run, and this is the step that knows where the base moved to.
+//
+// It moves only what this tool put in place, by the rule the same stage applies
+// to base_images (isManaged, and never downgraded): an entry an operator gave a
+// baked image, or one whose image is not a base pin of this kind, is theirs and
+// is left alone.
+func (e *initEngine) repinDefaultCatalogEntry(next *localcfg.Config, host, owner, kind, pin, version string) {
+	if kind != config.BaseKind || next.ImageCatalog == nil || len(next.ImageCatalog.Entries) == 0 {
+		return
+	}
+	entries := slices.Clone(next.ImageCatalog.Entries)
+	moved := false
+	for i, entry := range entries {
+		if !entry.Default || entry.Source.Kind != config.SourceImage {
+			continue
+		}
+		cur := entry.Source.Image
+		if !isManaged(cur, host, kind, owner) || newer(curVersion(cur, host, kind, owner), version) || cur == pin {
+			continue
+		}
+		entries[i].Source.Image = pin
+		moved = true
+		fmt.Fprintf(e.r.w, "  the default catalog entry %s = %s (the base image this run pinned)\n", entry.Name, pin)
+	}
+	if !moved {
+		return
+	}
+	next.ImageCatalog = &config.Catalog{Entries: entries}
+}
+
+// withholdDefaultCatalogEntry is the one sentence this write says when it does
+// not write: the reason, and what the project keeps in the meantime. It names
+// no command but `fugaro update`, because every reason is a fact about the
+// project's own configuration that the operator edits.
+func (e *initEngine) withholdDefaultCatalogEntry(why string) {
+	e.r.warn(fmt.Sprintf("no default catalog entry was written: %s; the shared jobs of this project keep the image they run today, and a later %s writes the entry once that is fixed",
+		why, selfCommand()+" update"))
+}
+
+// catalogEntries is the entries of a catalog a config may not have at all, as a
+// list a caller appends to: the copy is what keeps the config's own slice out
+// of the write below.
+func catalogEntries(cat *config.Catalog) []config.Entry {
+	if cat == nil {
+		return nil
+	}
+	return slices.Clone(cat.Entries)
+}
+
+// defaultCatalogEntryRefusal is why the entry must not be written, "" when
+// nothing holds it back: the three states in which the entry would be the image
+// of a job this run has to deploy and the deployer would refuse that job.
+//
+// The first is a repository the project does not admit. Such a repository runs
+// on the per-repository job its own root deploys, and that job's image is the
+// catalog's default — so a bare `checkout: baked` workflow of it, which carries
+// no image of its own to keep instead, meets unbuiltOnBaked. The write waits
+// for the whole list: the entry is the project's, and half a project on it is a
+// project whose next update refuses.
+//
+// The second is every repository this run holds no checkout of, which is the
+// same refusal one step earlier and the reason the two are separate: a
+// repository admitted to a profile still deploys the per-repository job of its
+// own root (RepoSpec.Shared is a mark no root reads yet, M7), and the entry is
+// that job's image too — so a bare `checkout: baked` workflow of a repository
+// this machine does not hold is refused by the deployer at its own repository
+// stage, in a run this one cannot warn. Nothing about that file is readable
+// from here (a checkout's workflows live in its own fugaro.yaml, and this
+// machine holds one checkout), so the entry waits until the project lists no
+// repository but this checkout's — the state in which the per-repository jobs
+// the entry could be the image of are the ones this run reads.
+//
+// The third is the checkout's own workflows, which are the ones this run
+// really builds (the repository stage and the images stage run for this
+// checkout alone): the entry is asked of the one resolver here, so that a
+// workflow that pins an entry, needs tags, or writes an image of its own — the
+// three ways a job keeps an image that is not the default — is not read as one
+// that would take it. What is left is the workflow the entry would be handed to
+// and the deployer would refuse, and the workflow whose own resolution the
+// entry would break: a project with no catalog has one the moment this entry is
+// written, and a workflow's image_name, its needs and the project's image_map
+// are read only against a catalog, so a job that runs the base image today can
+// be refused the moment the entry lands.
+func (e *initEngine) defaultCatalogEntryRefusal(cat *config.Catalog, imageMap map[string]string, entry config.Entry, node *projectpolicy.Policy) string {
+	if repos := unadmittedRepos(e.lc, node); len(repos) > 0 {
+		return fmt.Sprintf("this project does not admit %s — a repository is admitted when the project's published allow_repos names it and a profile of its provider admits it — and a repository it does not admit runs on the per-repository job its own root deploys, so the entry would be the image of that job: a checkout: baked workflow of it that writes no image of its own is refused there (unbuiltOnBaked, D1191)",
+			strings.Join(repos, ", "))
+	}
+	cfg, slug := e.checkoutWorkflows()
+	if repos := unvouchedRepos(e.lc, e.heldCanonical()); len(repos) > 0 {
+		return fmt.Sprintf("this project's config lists %s: a repository this run holds no checkout of keeps the per-repository job its own root deploys, whose image is this project's catalog default — where a checkout: baked workflow that writes no image of its own is refused (unbuiltOnBaked, D1191), and this run cannot read those workflows from here",
+			strings.Join(repos, ", "))
+	}
+	if cfg == nil {
+		return ""
+	}
+	asked := config.Catalog{Entries: append(catalogEntries(cat), entry)}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+		req := catalog.ImageRequest{ImageMap: imageMap, Canonical: slug, Workflow: cfg.Workflows[name], Backend: catalog.Backend(e.lc.Backend())}
+		// The workflow's image is asked of the resolver twice, with the catalog
+		// this project has (nil for a project with none) and with the one the
+		// entry would give it, because the entry is what makes a catalog exist at
+		// all and the resolver reads a workflow's image_name, its needs and the
+		// project's image_map only against one: a pin naming an entry this project
+		// does not have is inert today and a refusal the moment the entry is
+		// written, so the write is held back by it rather than turning a job that
+		// runs the base image into one the deployer refuses.
+		req.Catalog = cat
+		if _, err := catalog.JobImage(req); err != nil {
+			// A workflow whose image is already unresolvable is not what holds the
+			// write back: the entry did not break it, and a project refused for it
+			// would never get a default entry at all.
+			continue
+		}
+		req.Catalog = &asked
+		sel, err := catalog.JobImage(req)
+		if err != nil {
+			return fmt.Sprintf("workflow %s of %s would stop resolving once this project has a catalog: %v — a workflow's image_name, its needs and the project's image_map are read only against one, and the entry is what makes one exist, so a job that runs the base image today would be refused the moment the entry is written",
+				name, slug, err)
+		}
+		if sel.Source != catalog.SourceCatalog || sel.Entry.Name != entry.Name {
+			continue
+		}
+		return fmt.Sprintf("workflow %s of %s writes no image of its own, so the entry would be the image of a job that cannot run it and the deployer would refuse it (unbuiltOnBaked, D1191)",
+			name, slug)
+	}
+	return ""
+}
+
+// checkoutWorkflows is the checkout's own fugaro.yaml and the repository it is
+// about, nil when this run holds no checkout (a converge from a machine that
+// does not hold the repository, which has no workflow to read). The repository
+// is the checkout's own name (owner/name), which is the form the image
+// selection is asked about; heldCanonical is the form the project's lists
+// spell.
+func (e *initEngine) checkoutWorkflows() (*config.Config, string) {
+	if e.repo == nil || e.repo.tg == nil {
+		return nil, ""
+	}
+	return e.repo.tg.cfg, e.repo.tg.repo
+}
+
+// heldCanonical is the checkout's repository as this project's allow-lists
+// spell it ("github/acme/app"), "" when this run holds no checkout or nothing
+// here names the repository's provider: the name unvouchedRepos compares the
+// project's repositories against.
+//
+// The provider is the config's own for the checkout's entry, canonicalized
+// exactly as usedProviders canonicalizes the list that comparison walks, so
+// that the two spellings cannot disagree about one repository.
+func (e *initEngine) heldCanonical() string {
+	if e.repo == nil || e.repo.tg == nil {
+		return ""
+	}
+	key := repoConfigKey(e.lc, e.repo.tg.repo)
+	r, ok := e.lc.Repos[key]
+	if !ok || r.Provider == "" {
+		return ""
+	}
+	c, err := projectpolicy.Canonical(r.Provider, key)
+	if err != nil {
+		return ""
+	}
+	return c
+}
+
+// unadmittedRepos is the repositories this project's config lists that no
+// profile of it admits, in the order the config names them: the repositories
+// whose runs are per-repository ones.
+//
+// A repository is admitted when the project admits it on a profile of its
+// provider — projectpolicy.Admits' answer, which is the gate a run of a shared
+// job is held to (internal/runner's admissionCheck, and internal/credsvc's
+// pairShared on the serving side), read here on the config this run is about to
+// publish rather than on the node: the profile's own allow_repos when it names
+// one, and the project's own enrolment otherwise.
+func unadmittedRepos(lc *localcfg.Config, node *projectpolicy.Policy) []string {
+	_, used := usedProviders(lc)
+	var out []string
+	for _, name := range config.Providers {
+		for _, canonical := range used[name] {
+			if !admittedByAProfile(lc, node, name, canonical) {
+				out = append(out, canonical)
+			}
+		}
+	}
+	return out
+}
+
+// unvouchedRepos is the repositories this project's config lists that are not
+// the checkout this run holds — held is that repository as the project's lists
+// spell it — in the order the config names them: the ones whose own root this
+// run does not read, and which therefore keep the per-repository job that root
+// deploys — a repository the entry would be the image of just as much as one
+// the project does not admit, and whose workflows nothing here can read.
+//
+// A held of "" is a run with no checkout, or one whose repository this config
+// does not name: it vouches for no repository, so every one the config lists is
+// unvouched.
+func unvouchedRepos(lc *localcfg.Config, held string) []string {
+	_, used := usedProviders(lc)
+	var out []string
+	for _, name := range config.Providers {
+		for _, canonical := range used[name] {
+			if canonical != held {
+				out = append(out, canonical)
+			}
+		}
+	}
+	return out
+}
+
+// admittedByAProfile reports whether the project admits the repository on a
+// profile of this provider, which is what projectpolicy.Admits answers: the
+// project's own enrolment and the profile's list, both of them.
+//
+// The enrolment is the node's allow_repos, and reading it is not a formality: a
+// publish keeps the list the node holds and never re-seeds it from this config
+// (publishAllowRepos), so a repository this config lists and the node does not
+// admit is one whose runs every shared job refuses — the state `fugaro doctor`
+// reports as allow-list-uncovered — and it keeps the per-repository job its own
+// root deploys whatever the profiles say.
+//
+// A profile that names no allow_repos admits what the enrolment admits, so the
+// node's list is the one that decides for it. A node that is not there at all
+// has no list to read, and this run's own publish is what seeds one from the
+// repositories this config lists (publishAllowRepos seeds a node that is
+// absent): those are the repositories the caller walked, so the enrolment half
+// admits them.
+func admittedByAProfile(lc *localcfg.Config, node *projectpolicy.Policy, provider, canonical string) bool {
+	if node != nil && !projectpolicy.AdmitRepo(node.AllowRepos, canonical) {
+		return false
+	}
+	for _, name := range slices.Sorted(maps.Keys(lc.Profiles)) {
+		pr := lc.Profiles[name]
+		if pr.Provider != provider {
+			continue
+		}
+		if len(pr.AllowRepos) == 0 || projectpolicy.AdmitRepo(pr.AllowRepos, canonical) {
+			return true
+		}
+	}
+	return false
 }

@@ -342,6 +342,61 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	for _, member := range accountChoiceNames(fileAccounts, nodeAccounts) {
 		add(member, fileAccounts[member], nodeAccounts[member], false)
 	}
+	// The Bitbucket token's own block is derived from the local config as the
+	// typed family below it is, and it is the block the credentials service's
+	// proxy is admitted by (G3): whether a repository's git credential is
+	// brokered instead of mounted is the published node's answer alone, so a
+	// config that forwards while the node carries no block — or one that carries
+	// a block the config does not state — is a project whose runs and whose
+	// operator disagree about where the credential comes from.
+	//
+	// The row is what makes `fugaro update` turn the proxy on for a project at
+	// the previous version (S6, D2306). The switch is written in the local config
+	// by that same step (update_proxy_switch.go), and the release that writes it
+	// does NOT move the node's version: a node already at this version has no
+	// migration step that would carry the block, so without this comparison the
+	// update would leave the file stating a switch the node does not carry — and
+	// resolveBitbucketProxied reads exactly that pair, refusing the run of every
+	// repository of the project until an operator repaired it by hand.
+	//
+	// It is compared by the derivation rather than by the entry as written, as
+	// the typed family is and for the same reason: the node spells allow_repos
+	// provider-qualified and the file's allow_data_to does not, so comparing the
+	// file's own form would report a difference on every run. The two states
+	// DeriveBitbucketToken answers nil for — no entry at all, and one whose list
+	// is empty — are the two that publish no block (D493: "shared with nobody"),
+	// and a node that carries one is then a difference this stage closes:
+	// removing the block is how an operator takes the credential away, and a node
+	// left proxying for a repository the config no longer names is a run that
+	// fetches its git credential from a service holding nothing for it (D143).
+	// A derivation the config cannot state is NOT reported here, and that is the
+	// one place this row parts company with the typed family's: DeriveBitbucketToken
+	// is reached through this comparison for every project, entry or no entry,
+	// while the migration path of this stage discards its refusal for a node
+	// already at this version (a config only a publish would refuse is not the
+	// migration's to fail over: TestUpdateCurrentNodeWithUnderivableBitbucketDoesNotFail).
+	// A member reported here would send that config to a publish that refuses it,
+	// so a run that used to converge would stop needing a second command — and the
+	// operator's entry is named by the publish that does refuse it, which is where
+	// they meet it (S6's flip warns and holds itself back rather than publishing
+	// one; update_proxy_switch.go's bitbucketProxyBlock).
+	//
+	// The row is reported only where this machine's config STATES the entry, and
+	// that gate is load-bearing (S6's fix, 2026-11-18): an absent entry is no
+	// statement about the switch at all, while the derivation answers nil for it
+	// exactly as it does for an entry whose list is empty — so a machine that
+	// holds no entry (a second operator's config, a config whose secrets live
+	// elsewhere, one whose entry an operator removed) would publish the node
+	// WITHOUT bitbucket_token and turn the whole project's proxy off, stranding
+	// the proxied runs in flight over a file that never mentioned the switch.
+	// An entry that is there and whose list is empty is the takedown above and
+	// still reports: that is the operator's own act, and the node has to follow
+	// it.
+	if _, stated := lc.ProjectSecrets[config.BitbucketSecret]; stated {
+		if token, err := bitbucketProxyBlock(lc); err == nil {
+			add(bitbucketTokenKey, token, p.BitbucketToken, false)
+		}
+	}
 	// The typed Bitbucket tokens are DERIVED from the local config, like the
 	// accounts block and for a stronger reason: the node is the only place the
 	// credentials service learns what each token reaches (R5), and this key is

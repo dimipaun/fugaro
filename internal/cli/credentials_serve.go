@@ -62,7 +62,7 @@ import (
 // audience its callers' ID tokens are minted for -- the service resource's own
 // uri) and FUGARO_JOB_ACCOUNTS (the installation's per-repository jobs as
 // {"provider","repo","workflow"} triples, from which the job service accounts
-// are derived). Seven more names are read beside those seven, each OPTIONAL
+// are derived). Eight more names are read beside those seven, each OPTIONAL
 // because the module renders it only where it applies: FUGARO_VERIFIER_ACCOUNTS
 // (C3.9g2), FUGARO_PERSON_ACCOUNTS and FUGARO_COORDINATOR_ACCOUNT (the read
 // mint's two classes, BB4 and BB5), FUGARO_REVIEW_JOB_ACCOUNTS (the
@@ -73,9 +73,13 @@ import (
 // reach the intake, which is a class of those two routes and of none the seven
 // above serve), FUGARO_SHARED_JOB_ACCOUNTS (the shared project jobs the coding
 // half of the review class runs in, B5.1: the same document kind again, over
-// the coding axis) and FUGARO_BUILD_ACCOUNTS (the build class,
+// the coding axis), FUGARO_BUILD_ACCOUNTS (the build class,
 // B5: the addresses of the installation's build identities, one per project,
-// which are the one caller class of the build route and of nothing else). The
+// which are the one caller class of the build route and of nothing else) and
+// FUGARO_ORCHESTRATOR_ACCOUNTS (the resident daemon's own class,
+// E16/D2049 and F19/O2: the one address that may ask the label route for a
+// label write and the merge mint for a merge token, rendered only on an
+// installation that runs a daemon). The
 // names are held by a second thing:
 // internal/infra/tf's credentialsServiceEnv is the allow-list init's cover
 // applies to the service's container, so a name outside it is refused at plan
@@ -313,6 +317,30 @@ const (
 	// this installation is a build (D143 is about a run halting, and a run
 	// never asks this route).
 	envBuildAccounts = "FUGARO_BUILD_ACCOUNTS"
+	// envOrchestratorAccounts is the resident orchestrator daemon's own class
+	// (E16, D2049; F19 and O2 of docs/forge-labels): the accounts that may ask
+	// the label route for a pull request's label write and the merge mint for a
+	// merge token, as a JSON array of bare addresses — one address, the daemon's
+	// own, which is what the module renders from the account its own
+	// orchestrator.tf creates (modules/installation/credentials.tf). It is
+	// credsvc's AuthConfig.OrchestratorAccounts.
+	//
+	// It is read as an OPTIONAL value, the build class's own rule and for the
+	// same reason: the module renders the entry only on an installation that
+	// runs a resident orchestrator, so a service deployed by a release before
+	// this one -- every installation today -- must start with a class that
+	// admits nobody and answer both routes with the class's own refusal, rather
+	// than refuse to bind a port. A deployment that carries the entry and not
+	// the address shape is refused by name.
+	//
+	// The class is one of the two the daemon's token reaches: Cloud Run's front
+	// end admits it by the invoker grant orchestrator.tf makes on this service,
+	// and this list is what the container then admits. The audience is the other
+	// half of the rule and the reason a person's ambient credentials are not
+	// this class whatever list they would match (credsvc.VerifyOrchestrator):
+	// the token has to be minted FOR THIS SERVICE'S URL, which no plain
+	// `gcloud auth print-identity-token` does.
+	envOrchestratorAccounts = "FUGARO_ORCHESTRATOR_ACCOUNTS"
 )
 
 // credentialsServiceEnvNames is the whole of this command's REQUIRED
@@ -321,8 +349,8 @@ const (
 // serving. The class-specific entries it reads beside them are OPTIONAL and
 // live outside this list, because the module renders each of those only where
 // it applies (envReviewJobAccounts, envSharedJobAccounts, envVerifierAccounts,
-// envPersonAccounts, envCoordinatorAccount, envLauncherAccounts and
-// envBuildAccounts).
+// envPersonAccounts, envCoordinatorAccount, envLauncherAccounts,
+// envBuildAccounts and envOrchestratorAccounts).
 // internal/infra/tf's credentialsServiceEnv is init's cover's allow-list, which
 // is these seven plus those seven: a name outside it is a container the cover
 // refuses, which is what makes the module's list a boundary rather than a
@@ -532,6 +560,17 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
+	// The resident daemon's own class (E16, D2049; F19, O2), read by the build
+	// class's rule and for the same reason: the entry arrives with the daemon
+	// account the installation module creates, so a service deployed by a
+	// release that renders none starts with an empty class and answers the
+	// label route and the merge mint with the class's own refusal rather than
+	// refusing to bind a port (`envOrchestratorAccounts` states the direction
+	// and why it matters, and the audience is the second half of the gate).
+	orchestrators, err := credentialsServiceOrchestrators(getenv(envOrchestratorAccounts))
+	if err != nil {
+		return credsvc.Config{}, userErr("%v", err)
+	}
 	// The database's shape, then the database itself: a URL that is not a
 	// Firebase Realtime Database at all is a different refusal from one that
 	// names another installation's database.
@@ -544,7 +583,7 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 	if err := credentialsServiceAudience(env[envCredentialsServiceURL]); err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
-	accounts, repos, err := credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
+	accounts, repos, repoBuilds, err := credentialsServiceJobAccounts(env[envJobAccounts], env[envProject], env[envGCPProject])
 	if err != nil {
 		return credsvc.Config{}, userErr("%v", err)
 	}
@@ -628,9 +667,26 @@ func credentialsServiceConfig(ctx context.Context, getenv func(string) string, e
 		// rendered the entry starts in, and the route then answers every caller
 		// with the class's refusal.
 		BuildAccounts: builds,
-		Keys:          credsvc.NewGoogleKeys(),
-		JobKeys:       credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
-		Outcomes:      credsvc.RTDBOutcomes{DB: db},
+		// The resident daemon's class (E16, D2049; F19, O2): the one account
+		// that may ask this service for a pull request's label write and for a
+		// merge token, and the class of those two routes and of nothing else.
+		// Empty is the state an installation that runs no daemon starts in —
+		// and the state every installation is in until the module renders the
+		// entry — and both routes then answer every caller with the class's
+		// refusal.
+		OrchestratorAccounts: orchestrators,
+		// The repositories' build class (B4.3, R5, G20): one row per repository
+		// this deployment holds jobs for, bound to that one repository, its slug
+		// and its provider. It is the one caller class of the build-credentials
+		// route, and the binding is the whole of what that route serves: a
+		// build of one repository is answered that repository's credentials and
+		// never a name its call carries. Empty is the state an installation
+		// whose job document is empty starts in — which the reader above
+		// refuses — and a caller of the class is then no class at all.
+		RepoBuildAccounts: repoBuilds,
+		Keys:              credsvc.NewGoogleKeys(),
+		JobKeys:           credsvc.NewGoogleKeys(credsvc.WithKeysEndpoint(credsvc.GoogleOAuthCertsURL)),
+		Outcomes:          credsvc.RTDBOutcomes{DB: db},
 	})
 	if err != nil {
 		return credsvc.Config{}, userErr("the credentials service cannot verify its callers, so it will not start: %v", err)
@@ -856,6 +912,44 @@ func credentialsServiceBuildAccounts(raw string) ([]string, error) {
 	return builds, nil
 }
 
+// credentialsServiceOrchestrators turns FUGARO_ORCHESTRATOR_ACCOUNTS into the
+// resident daemon's class (E16, D2049; F19 and O2 of docs/forge-labels): a
+// JSON array of bare addresses, which is what the module renders from the
+// account its own orchestrator.tf creates — one address, in the same array
+// shape every list of a class is read in so that a second daemon is a
+// deployment the module can state rather than a shape this process has to grow
+// for.
+//
+// credentialsServiceBuildAccounts' rule word for word, and for the same
+// reason: an absent or empty value is an EMPTY class and not a refusal,
+// because the module renders the entry only on an installation that runs a
+// resident orchestrator, and a release before this one renders none — a
+// service deployed by it must still start, with both routes answering every
+// caller with the class's own refusal, which is the fail-closed state rather
+// than a service that will not bind a port. A value that is present and is not
+// that array is a deployment that is wrong, and the refusal names the variable
+// and never an entry: the entries are service accounts of the installation's
+// own project (the no-echo rule).
+//
+// The class is not a widening of what a list of addresses usually admits: the
+// address is matched against a token minted FOR THIS SERVICE'S URL alone
+// (credsvc.VerifyOrchestrator), so a person's ambient credentials are refused
+// whatever list they would have matched, and NewAuthenticator refuses an
+// address that is also a person's, a launcher's, a job's, a shared job's or a
+// review job's — the daemon is an automation of its own, and a run's own token
+// admitted here would be exactly the credential C2.2 and F28 keep out of the
+// mint.
+func credentialsServiceOrchestrators(raw string) ([]string, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var orchestrators []string
+	if err := json.Unmarshal([]byte(raw), &orchestrators); err != nil {
+		return nil, fmt.Errorf("%s is not the installation's orchestrator list: it must be a JSON array of the bare email addresses a Google ID token carries, one per resident orchestrator daemon that may ask the service for a label write and for a merge token. Nothing was started and no credential was issued", envOrchestratorAccounts)
+	}
+	return orchestrators, nil
+}
+
 // credentialsServiceCoordinator turns FUGARO_COORDINATOR_ACCOUNT into the read
 // mint's second class (BB5): the coordinator Cloud Run job's own service
 // account, as the bare address a Google ID token's email claim carries.
@@ -885,14 +979,20 @@ func credentialsServiceCoordinator(raw string) (string, error) {
 	return raw, nil
 }
 
-// credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the two things
+// credentialsServiceJobAccounts turns FUGARO_JOB_ACCOUNTS into the three things
 // NewServer is given that this variable holds: the binding table, one account
 // per (repository, workflow), derived from the triple by the one derivation
 // the deployer used (credsvc.JobAccountsFor over task.Slug and
-// gcp.ServiceAccountID), and the repository table, which is those same rows
+// gcp.ServiceAccountID); the repository table, which is those same rows
 // read the other way round (credsvc.RepositoryTableFor: the slug a run
 // identity carries to the canonical repository name the published policy
-// speaks).
+// speaks); and the repositories' build class, one row per repository, derived
+// from the same per-provider list by the derivation the repository root deploys
+// the account with (credsvc.RepoBuildAccountsFor over gcp.BuildServiceAccountID,
+// B4.3). The third is the same input read a third way rather than a second
+// document: a repository's build exists exactly where its jobs do, so the class
+// the build-credentials route admits cannot drift from the repositories this
+// deployment holds.
 //
 // The repository table is what pairs a review caller with a run (C3.9a): a
 // review job's account names no repository, so the run identity's own slug is
@@ -912,7 +1012,7 @@ func credentialsServiceCoordinator(raw string) (string, error) {
 // An empty array is refused here rather than left to NewServer: the two agree
 // (NewServer refuses a table that binds nothing), and refusing it by name says
 // which variable was empty, which is the thing an operator has to fix.
-func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]credsvc.JobAccount, map[string]string, error) {
+func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]credsvc.JobAccount, map[string]string, []credsvc.RepoBuildAccount, error) {
 	var jobs []struct {
 		Provider string `json:"provider"`
 		Repo     string `json:"repo"`
@@ -921,10 +1021,10 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&jobs); err != nil {
-		return nil, nil, fmt.Errorf("%s is not the installation's job accounts: it must be a JSON array of {\"provider\": ..., \"repo\": ..., \"workflow\": ...} objects, one per job whose service account may call the service. Nothing was started and no credential was issued", envJobAccounts)
+		return nil, nil, nil, fmt.Errorf("%s is not the installation's job accounts: it must be a JSON array of {\"provider\": ..., \"repo\": ..., \"workflow\": ...} objects, one per job whose service account may call the service. Nothing was started and no credential was issued", envJobAccounts)
 	}
 	if len(jobs) == 0 {
-		return nil, nil, fmt.Errorf("%s names no job, so the service would bind no run to a repository: an empty table refuses every caller, and a service that admits nobody is one an operator would read as healthy while every run halted. Nothing was started and no credential was issued", envJobAccounts)
+		return nil, nil, nil, fmt.Errorf("%s names no job, so the service would bind no run to a repository: an empty table refuses every caller, and a service that admits nobody is one an operator would read as healthy while every run halted. Nothing was started and no credential was issued", envJobAccounts)
 	}
 	byProvider := map[string][]credsvc.RepoJob{}
 	for i, j := range jobs {
@@ -933,11 +1033,12 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 			// one value in this environment that can hold a name an operator
 			// would not want in a log, and the refusal has to be actionable
 			// without it.
-			return nil, nil, fmt.Errorf("%s: entry %d has no provider, repository or workflow (all three are required: the account's name is derived from the repository and the workflow, and the repository's slug from the provider and the repository)", envJobAccounts, i)
+			return nil, nil, nil, fmt.Errorf("%s: entry %d has no provider, repository or workflow (all three are required: the account's name is derived from the repository and the workflow, and the repository's slug from the provider and the repository)", envJobAccounts, i)
 		}
 		byProvider[j.Provider] = append(byProvider[j.Provider], credsvc.RepoJob{Repo: j.Repo, Workflow: j.Workflow})
 	}
 	out := make([]credsvc.JobAccount, 0, len(jobs))
+	builds := make([]credsvc.RepoBuildAccount, 0, len(jobs))
 	repos := make(map[string]string, len(jobs))
 	for _, provider := range slices.Sorted(maps.Keys(byProvider)) {
 		accts, err := credsvc.JobAccountsFor(fugaroProject, gcpProject, provider, byProvider[provider])
@@ -946,7 +1047,7 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 			// is left is actionable because the entry above has been checked
 			// for its three fields, so what can be wrong here is the provider
 			// or the repository's shape.
-			return nil, nil, fmt.Errorf("%s names a job whose service account cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name, because the account's name is derived from the two rather than configured. Nothing was started and no credential was issued", envJobAccounts)
+			return nil, nil, nil, fmt.Errorf("%s names a job whose service account cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name, because the account's name is derived from the two rather than configured. Nothing was started and no credential was issued", envJobAccounts)
 		}
 		table, err := credsvc.RepositoryTableFor(fugaroProject, gcpProject, provider, byProvider[provider])
 		if err != nil {
@@ -954,12 +1055,24 @@ func credentialsServiceJobAccounts(raw, fugaroProject, gcpProject string) ([]cre
 			// branch is here rather than a second copy of the table's rule,
 			// because a table spelled anywhere but RepositoryTableFor would be
 			// a slug resolved one way for a binding and another for a review.
-			return nil, nil, fmt.Errorf("%s names a job whose repository cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name. Nothing was started and no credential was issued", envJobAccounts)
+			return nil, nil, nil, fmt.Errorf("%s names a job whose repository cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name. Nothing was started and no credential was issued", envJobAccounts)
+		}
+		// A repository's build class is derived from the SAME document and the
+		// same per-provider list (B4.3, G20): the repositories whose jobs this
+		// deployment holds are exactly the repositories whose builds it runs,
+		// so the class the build-credentials route admits is the set the
+		// deployer created rather than a second list that can drift from it.
+		// The derivation's own error quotes the repository, so it is respelled
+		// for the same reason JobAccountsFor's is.
+		repoBuilds, err := credsvc.RepoBuildAccountsFor(gcpProject, provider, byProvider[provider])
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("%s names a job whose repository's build service account cannot be derived: the provider must be a provider kind (lower case, starting with a letter) and the repository a canonical path this build can name, because the account's name is derived from the two rather than configured. Nothing was started and no credential was issued", envJobAccounts)
 		}
 		out = append(out, accts...)
+		builds = append(builds, repoBuilds...)
 		maps.Copy(repos, table)
 	}
-	return out, repos, nil
+	return out, repos, builds, nil
 }
 
 // credentialsServiceReviewJobAccounts turns FUGARO_REVIEW_JOB_ACCOUNTS into the

@@ -86,6 +86,7 @@ func Run(t *testing.T, open Factory) {
 	t.Run("AFilterComparesTheValueItWrites", func(t *testing.T) { testFilterTypes(t, open) })
 	t.Run("ATransactionCommitsTogether", func(t *testing.T) { testCommitTogether(t, open) })
 	t.Run("ATransactionThatFailsWritesNothing", func(t *testing.T) { testFailedTransaction(t, open) })
+	t.Run("ATransactionRemovesWithItsWrites", func(t *testing.T) { testTransactionDelete(t, open) })
 	t.Run("ATransactionReadsBeforeItWrites", func(t *testing.T) { testReadAfterWrite(t, open) })
 	t.Run("ATransactionQueriesTheCollectionItReads", func(t *testing.T) { testTransactionQuery(t, open) })
 	t.Run("ATransactionIsNotNested", func(t *testing.T) { testNestedTransaction(t, open) })
@@ -377,6 +378,83 @@ func testFailedTransaction(t *testing.T, open Factory) {
 	held, err := s.Get(ctx(), collection, "one", nil)
 	if err != nil || held {
 		t.Errorf("after a transaction whose function failed, Get = (%v, %v), want the document the transaction staged to be gone: a transaction that does not commit writes nothing", held, err)
+	}
+}
+
+// testTransactionDelete is a transaction's removal, on both backends: it lands
+// with the writes the same commit carries, it is a write for the rule above it,
+// and a function that fails after one removes nothing.
+//
+// It is here because a seam that staged the removal to be swept once the
+// transaction had committed would pass every other case in this suite — the
+// documents do go — while removing them one at a time and after the fact. That
+// is not the same act: a caller removing a group to land one change (an
+// organisation with its memberships, its invitations and its workspaces) is left
+// half gone by a store that failed in the middle, and no retry can be made of a
+// state that is neither the one before nor the one after.
+func testTransactionDelete(t *testing.T, open Factory) {
+	s := open(t)
+	doc(t, s, "one", sample())
+	doc(t, s, "two", sample())
+
+	err := s.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+		held, err := tx.Get(ctx, collection, "one", nil)
+		if err != nil || !held {
+			return fmt.Errorf("Get inside the transaction = (%v, %v), want the document the store holds", held, err)
+		}
+		if err := tx.Delete(ctx, collection, "one"); err != nil {
+			return err
+		}
+		return tx.Put(ctx, collection, "three", map[string]any{"name": "gamma"})
+	})
+	if err != nil {
+		t.Fatalf("RunTransaction = %v, want nil", err)
+	}
+	var gone widget
+	if held, err := s.Get(ctx(), collection, "one", &gone); err != nil || held {
+		t.Errorf("Get of the removed document after the commit = (%v, %v), want (false, nil): a transaction's removal lands with its commit, or it is not a removal the caller can have asked for", held, err)
+	}
+	if !reflect.DeepEqual(gone, widget{}) {
+		t.Errorf("Get of the removed document filled the caller's value with %+v: nothing was read, so nothing may be written", gone)
+	}
+	var written map[string]any
+	if held, err := s.Get(ctx(), collection, "three", &written); err != nil || !held {
+		t.Errorf("Get of the document written beside the removal = (%v, %v), want the document the same commit wrote", held, err)
+	}
+	if held, err := s.Get(ctx(), collection, "two", nil); err != nil || !held {
+		t.Errorf("Get of the document the removal did not name = (%v, %v), want it untouched", held, err)
+	}
+
+	// A removal is a write of the transaction, so a function may not read after
+	// it any more than after a Put.
+	err = s.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+		if err := tx.Delete(ctx, collection, "two"); err != nil {
+			return err
+		}
+		if _, err := tx.Get(ctx, collection, "two", nil); err != nil {
+			return err
+		}
+		return errors.New("the transaction read a document it had already removed and the store said nothing")
+	})
+	if !errors.Is(err, docstore.ErrReadAfterWrite) {
+		t.Errorf("Get after Delete inside a transaction = %v, want docstore.ErrReadAfterWrite: a removal is a write of the attempt, and a store that answered the read would let a function decide on a document it had just asked to be rid of", err)
+	}
+
+	// And a function that fails after a removal removes nothing, which is what
+	// makes the retry of a caller whose group of removals went wrong possible at
+	// all: the records are still there to be removed by the next attempt.
+	refused := errors.New("the caller gave up")
+	err = s.RunTransaction(ctx(), func(ctx context.Context, tx docstore.Transaction) error {
+		if err := tx.Delete(ctx, collection, "two"); err != nil {
+			return err
+		}
+		return refused
+	})
+	if !errors.Is(err, refused) {
+		t.Fatalf("RunTransaction = %v, want the error its function returned", err)
+	}
+	if held, err := s.Get(ctx(), collection, "two", nil); err != nil || !held {
+		t.Errorf("after a transaction whose function failed, Get = (%v, %v), want the document it had staged a removal of still there", held, err)
 	}
 }
 
