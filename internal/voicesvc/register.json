@@ -1,0 +1,98 @@
+{
+  "rows": [
+    {
+      "name": "google",
+      "provider": "Google Cloud Speech-to-Text and Text-to-Speech",
+      "directions": ["tts"],
+      "read_at": "2026-10-19",
+      "note": "docs/mobile/design/voice-evaluation-switch.md §7 read this provider for both directions. This hop forwards TEXT only for it: Google's streaming audio path is the v2 gRPC API and this service's callers speak HTTP request/response, so the stt direction has no engine here and a call for it is refused (mobile P5.3.5).",
+      "terms": {
+        "retention": {
+          "state": "read",
+          "value": "By default, Cloud Speech-to-Text does not log customer audio data or transcripts. The opt-in data-logging programme does, and logged data is not deleted when the project is deleted. That programme is not enabled for this feature, which is what makes this the strongest of the three rows.",
+          "source": "https://cloud.google.com/speech-to-text/docs/data-logging"
+        },
+        "training": {
+          "state": "read",
+          "value": "Not on by default. The opt-in data-logging programme trains on logged customer data and Google retains ownership of the models trained from it, which is the second reason the programme stays off.",
+          "source": "https://cloud.google.com/speech-to-text/docs/data-logging"
+        },
+        "price": {
+          "state": "read",
+          "value": "Text-to-Speech: Chirp 3: HD voices US$0.00003 per character (US$30 per 1,000,000 characters), free for the first 1,000,000 characters; Instant custom voice US$0.00006 per character (US$60 per 1,000,000 characters), free tier not available. The rest of that rate card and the whole Speech-to-Text rate card are UNVERIFIED.",
+          "source": "https://cloud.google.com/text-to-speech/pricing"
+        },
+        "languages": {
+          "state": "read",
+          "value": "ro-RO (Romanian, Romania) is listed for Speech-to-Text, with the chirp and chirp_2 models.",
+          "source": "https://cloud.google.com/speech-to-text/v2/docs/speech-to-text-supported-languages"
+        },
+        "latency": {
+          "state": "unverified",
+          "value": "UNVERIFIED: chirp and chirp_2 are Google's streaming-capable models and no latency figure was read."
+        }
+      }
+    },
+    {
+      "name": "deepgram",
+      "provider": "Deepgram",
+      "directions": ["stt"],
+      "read_at": "2026-10-19",
+      "note": "The hop forwards AUDIO to this one, which is the direction the whole streaming half is about: the caller's bytes go on as they arrive and nothing here holds them.",
+      "terms": {
+        "retention": {
+          "state": "unverified",
+          "value": "UNVERIFIED: its privacy policy was not retrievable on 2026-10-19 (the URL fetched returned a 404), and this register does not state a provider's terms from memory."
+        },
+        "training": {
+          "state": "unverified",
+          "value": "UNVERIFIED: the same page, the same 404, on 2026-10-19."
+        },
+        "price": {
+          "state": "read",
+          "value": "Streaming, pay-as-you-go, per minute: Flux English US$0.0065/min (regular US$0.0077), Flux Multilingual US$0.0078/min, Nova-3 Monolingual US$0.0048/min (regular US$0.0077), Nova-3 Multilingual US$0.0058/min (regular US$0.0092).",
+          "source": "https://deepgram.com/pricing"
+        },
+        "languages": {
+          "state": "unverified",
+          "value": "UNVERIFIED: Nova-3 Multilingual advertises automatic language detection, and Romanian specifically was not read."
+        },
+        "latency": {
+          "state": "unverified",
+          "value": "UNVERIFIED: \"ultra-low latency\" is the vendor's phrase and not a number, and Check 85 is where a number comes from."
+        }
+      }
+    },
+    {
+      "name": "elevenlabs",
+      "provider": "ElevenLabs",
+      "directions": ["tts"],
+      "read_at": "2026-10-19",
+      "note": "TTS only. §7 proposes it for the direction on voice quality alone, and records that this retention is the weakest of the three rows: the trade-off is the reason the register exists.",
+      "terms": {
+        "retention": {
+          "state": "read",
+          "value": "Open-ended and with no window: \"We generally keep your personal information for as long as necessary to provide you with our Services or as otherwise required or permitted by law … After this we will either securely delete or de-identify it\".",
+          "source": "https://elevenlabs.io/privacy-policy"
+        },
+        "training": {
+          "state": "read",
+          "value": "The policy describes training on \"publicly available or third-party information\" rather than on customer audio.",
+          "source": "https://elevenlabs.io/privacy-policy"
+        },
+        "price": {
+          "state": "unverified",
+          "value": "UNVERIFIED: its pricing page fetched but rendered client-side on 2026-10-19, so no number was read."
+        },
+        "languages": {
+          "state": "unverified",
+          "value": "UNVERIFIED."
+        },
+        "latency": {
+          "state": "unverified",
+          "value": "UNVERIFIED."
+        }
+      }
+    }
+  ]
+}
