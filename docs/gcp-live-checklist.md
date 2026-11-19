@@ -21900,14 +21900,20 @@ answers the other half and is worth recording as such).
 **The command.** It is **one command**, and it only reads:
 
 ```sh
-curl -fsS -H "Authorization: Bearer $(gcloud auth print-access-token --quiet)" https://identitytoolkit.googleapis.com/admin/v2/projects/<the identity project>/config | jq -c '{password: .signIn.email.enabled, idps: [.defaultSupportedIdpConfigs // {} | to_entries[] | select(.value.enabled) | .key]}'
+curl -fsS -H "Authorization: Bearer $(gcloud auth print-access-token --quiet)" https://identitytoolkit.googleapis.com/admin/v2/projects/<the identity project>/config | jq -c '{password: (.signIn.email.enabled // false), idps: [.defaultSupportedIdpConfigs[]? | select(.enabled) | (.name | split("/") | last)], idpsFieldPresent: has("defaultSupportedIdpConfigs")}'
 ```
 
 **What it reads.** The same document `infra.PublicSignUp` parses and Check 361 reads for a workspace's own
 project — one GET with your own credentials, nothing written, idempotent — and from it the enabled providers
-and whether password sign-in is on. **No model call and nothing billable.** The U8 and U9 halves are not in
-this document: they are real sign-ins you make, and what they produce goes into this section as the claims
-and the account shape, never as a token.
+and whether password sign-in is on. The field is the **list** the tree reads it as: entries of `name` and
+`enabled`, where `name` is the full resource path and the provider id (`google.com`, `microsoft.com`,
+`apple.com`) is its last segment, which is what the `jq` above prints — never the list's indices, which is
+what reading it as an object's keys would print. **`idpsFieldPresent` is read with the list**: a `false`
+there means the project's answer carries no such field at all, which is a different finding from an empty
+`idps` with the field present, and the one reading this check must not lose — a field that is absent is not
+"no provider enabled", it is a configuration the console has not written. **No model call and nothing
+billable.** The U8 and U9 halves are not in this document: they are real sign-ins you make, and what they
+produce goes into this section as the claims and the account shape, never as a token.
 
 **What waits on it.** The app's sign-in path (**M1** to **M3**) and the plan's release: the provider set is
 what the app may offer, and U8's answer is what its identity records are keyed by. A provider enabled here
@@ -21944,21 +21950,25 @@ this tree.
   exists to prevent.
 
 **What has to exist before it runs.** Your own Claude Code session on the machine you operate from, an OAuth
-login whose token the read may use (a subscription login, as the plan assumes), and — for U1's second half —
-a session idle enough that an injected command can be seen to be honoured rather than queued behind output.
+login whose token the read may use (a subscription login, as the plan assumes) with that token exported in
+the shell you run the command from as `CLAUDE_CODE_OAUTH_TOKEN` (the variable it reads, and the only place
+the value is), and — for U1's second half — a session idle enough that an injected command can be seen to be
+honoured rather than queued behind output.
 
 **The command.** It is **one command**, the machine-read half, and it only reads:
 
 ```sh
-curl -fsS -H "Authorization: Bearer <the Claude Code session OAuth token>" https://api.anthropic.com/api/oauth/usage | jq -c '{five_hour, seven_day}'
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$CLAUDE_CODE_OAUTH_TOKEN") https://api.anthropic.com/api/oauth/usage | jq -c '{five_hour, seven_day}'
 ```
 
 **What it reads.** Two windows for the token, if the answer carries them: the five-hour one and the weekly
 one. A `401`, a `403` or a document without them is recorded as **not readable by this route** — which is
 U3's finding rather than a failure of the check — and what the session itself shows is then the only reading
 the meter could use. **No model call and nothing billable.** Nothing is written; the token is read from your
-own session and is **never printed, logged or put in a file** — the command takes it from a variable you set
-in your own shell, and the block here carries the placeholder, never a value.
+own session and is **never printed, logged, written to a file or put on a command line** — it is taken from
+`CLAUDE_CODE_OAUTH_TOKEN` in your own shell and handed to `curl` through a `--config` process substitution,
+the register's own rule for a credential at your terminal, so the value is never in `curl`'s argv where `ps`
+would show it to every user of the machine, and the block here carries the variable's name, never a value.
 
 **What waits on it.** Z0's result document, and through it **Z1 to Z3**: the gauge's source, the compaction's
 mechanism and the meter's route are each chosen from this reading, and the plan's U-items are answered by it
@@ -22099,13 +22109,18 @@ brought to the previous version, upgraded with `fugaro update`, with the consume
 half published; two phones, one of them paired the old way before the upgrade; the roster with a second
 person in it for the roster revoke; and one person's address you may revoke.
 
-**The command.** It is **one command**, the U12 half, and it only reads what KMS answers:
+**The command.** It is **one command**, the U12 half, and it only reads what KMS answers. `--signature-file`
+is the flag `gcloud` writes the signature into and it is required: without it `gcloud` refuses the invocation
+itself and exits before it calls KMS, so the branch below would print **refused** for every login and the
+reading would be about `gcloud`'s argument check rather than about your role:
 
 ```sh
-gcloud kms asymmetric-sign --project=<your installation project> --location=<the consumer key location> --keyring=<the consumer key ring> --key=<the consumer key> --version=1 --digest-algorithm=sha512 --input-file=<a small file of your own> && echo 'SIGNED: your own role can sign, so J6 needs no grant' || echo 'refused, as U12 assumes'
+gcloud kms asymmetric-sign --project=<your installation project> --location=<the consumer key location> --keyring=<the consumer key ring> --key=<the consumer key> --version=1 --digest-algorithm=sha512 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own role can sign, so J6 needs no grant' || echo 'refused, as U12 assumes'
 ```
 
-**What it reads.** Whether your own login is refused by the consumer key. **The sequence itself is yours**,
+**What it reads.** Whether your own login is refused by the consumer key — and it is KMS's own refusal, the
+`PERMISSION_DENIED` the role is read from, that answers: a `gcloud` error about the flags is not this
+reading. **The sequence itself is yours**,
 step by step on the two phones, and each step's reading goes into this section: **pair** (the phone ends
 paired), **refresh** (a new token after the hour), **revoke** (access ends on the next request), the **roster
 revoke** (the person's mobile access ends), **restore** (the synced list brings the pairing back), **strict
@@ -22120,8 +22135,8 @@ point here.
 
 **Restore.** The outage's change is undone — the route is reachable again and a pairing after it succeeds —
 the second phone is unpaired, and the roster grant you revoked is restored if the person needs it. On disk
-there is nothing: the command writes only the signature file you named, and the sandbox's own state is what
-the sequence changed, step by step.
+there is nothing to undo: the command writes only the signature file you named, and you delete it with the
+input file you made; the sandbox's own state is what the sequence changed, step by step.
 
 ## Check 736: the Firebase Auth, KMS and Cloud Run quotas at the stated scale (the identity project only, never `belong`; run by you; NOT RUN)
 
@@ -22196,17 +22211,23 @@ holds the key**, and **no agent runs any step of it**.
 identity (O15) in place with its one signing grant, the signing command built, and the bucket A3's root
 defines for the signed document — which only the owner writes and the signer service reads.
 
-**The command.** It is **one command**, and it is the refusal that matters:
+**The command.** It is **one command**, and it is the refusal that matters. `--signature-file` is the flag
+`gcloud` writes the signature into and it is required: without it `gcloud` refuses the invocation itself and
+exits before it calls KMS, so the branch below would print **refused** for every login — including the one
+that can sign, which is the whole finding this check exists to catch:
 
 ```sh
-gcloud kms asymmetric-sign --project=<the root key project> --location=<the root key location> --keyring=<the root key ring> --key=<the root key> --version=1 --digest-algorithm=sha512 --input-file=<a small file of your own> && echo 'SIGNED: your own login signed with the root key, which O7 forbids' || echo 'refused, as O7 asks'
+gcloud kms asymmetric-sign --project=<the root key project> --location=<the root key location> --keyring=<the root key ring> --key=<the root key> --version=1 --digest-algorithm=sha512 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own login signed with the root key, which O7 forbids' || echo 'refused, as O7 asks'
 ```
 
-**What it reads.** Whether your own login can sign with the root key. The rest — the ceremony, the first
-signed **key set** and the rehearsal — is the signing command you run in your own terminal: the command
-prints the root public key and no private material, refuses a `seq` not above the last signed one, and refuses
-inside an agent session. The readings this section carries are the root public key, the `seq` and dates of
-the first set, and the rehearsal's new version's `kid` — **public values only, never a key**.
+**What it reads.** Whether your own login can sign with the root key — and the reading is KMS's answer: a
+`PERMISSION_DENIED` is the refusal O7 asks for, while a signature written into the file you named is the
+finding. A `gcloud` error about the flags settles nothing and must not be read as either. The rest — the
+ceremony, the first signed **key set** and the rehearsal — is the signing command you run in your own
+terminal: the command prints the root public key and no private material, refuses a `seq` not above the last
+signed one, and refuses inside an agent session. The readings this section carries are the root public key,
+the `seq` and dates of the first set, and the rehearsal's new version's `kid` — **public values only, never a
+key**.
 
 **What waits on it.** **P8** (the production root key, the signing keys and the `seq` floor pinned into the
 build), and through it **P1** and the verifier every client trusts; the alert A3's root defines 30 days before
