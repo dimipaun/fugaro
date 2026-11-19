@@ -285,17 +285,20 @@ func (r *run) takeMessages(ctx context.Context, stage string) []runmsg.Message {
 }
 
 // deliver records that message seq reached stage, for the record's block. It
-// edits the entry the read wrote, which is what keeps one entry per message.
+// replaces the entry the read wrote, which is what keeps one entry per message
+// and what drops the reason a pending one carried: nothing here sets a field of
+// a published entry, so no reader of a block already handed out sees it change.
 func (r *run) deliver(seq int, stage string, at time.Time) {
 	for i := range r.msgs.dels {
-		if r.msgs.dels[i].Seq != seq {
+		d := r.msgs.dels[i]
+		if d.Seq != seq {
 			continue
 		}
 		stamp := at
-		r.msgs.dels[i].State = runmsg.StateDelivered
-		r.msgs.dels[i].Stage = stage
-		r.msgs.dels[i].DeliveredAt = &stamp
-		r.msgs.dels[i].Reason = ""
+		r.msgs.dels[i] = runmsg.Delivery{
+			Seq: seq, SentAt: d.SentAt, SentBy: d.SentBy, Flags: d.Flags,
+			State: runmsg.StateDelivered, Stage: stage, DeliveredAt: &stamp,
+		}
 		return
 	}
 }
