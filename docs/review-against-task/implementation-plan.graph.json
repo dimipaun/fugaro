@@ -5,7 +5,7 @@
   "nodes": [
     {
       "id": "S-TASK",
-      "title": "the review_spec task field",
+      "title": "the review_spec and from_findings task fields",
       "run": null,
       "version": null,
       "size": 1,
@@ -17,13 +17,13 @@
           "internal/task/reviewspec.go",
           "internal/task/reviewspec_test.go",
           "schemas/task.schema.json",
-          "internal/cli/reviewspec_since.go"
+          "internal/cli/recipes_skew.go"
         ]
       }
     },
     {
       "id": "S-KNOB",
-      "title": "the review_against_task setting's types",
+      "title": "the agent.review_against_task key",
       "run": null,
       "version": null,
       "size": 1,
@@ -33,14 +33,15 @@
         "paths": [
           "internal/config/config.go",
           "internal/config/scope.go",
-          "internal/policy/policy.go",
+          "internal/settings/registry.go",
           "schemas/fugaro.schema.json",
+          "docs/project-layer.md",
           "internal/config/review_against_task_test.go"
         ]
       }
     },
     {
-      "id": "C-OUT",
+      "id": "S-OUT",
       "title": "the per-issue scope and the artifact's against",
       "run": null,
       "version": null,
@@ -52,14 +53,10 @@
           "internal/runner/reviewartifact.go",
           "internal/runner/verdict.go",
           "internal/runner/reviewscope.go",
-          "internal/runner/against_stub.go",
+          "internal/runner/reviewscope_test.go",
           "schemas/review.schema.json"
         ]
-      },
-      "kind": "contract",
-      "stubs": [
-        "internal/runner/against_stub.go"
-      ]
+      }
     },
     {
       "id": "RA1",
@@ -80,7 +77,7 @@
     },
     {
       "id": "RA4",
-      "title": "merge the setting tighter-only and gate it",
+      "title": "the policy key and its tighter-only merge",
       "run": null,
       "version": null,
       "size": 1,
@@ -88,16 +85,17 @@
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/projectpolicy/policy.go",
+          "internal/policy/policy.go",
           "internal/policy/merge.go",
           "internal/policy/merge_test.go",
-          "internal/cli/recipes_skew.go",
-          "internal/cli/recipes_skew_test.go"
+          "schemas/project-layer.schema.json"
         ]
       }
     },
     {
-      "id": "RA5",
-      "title": "the launcher: default, --code-only, --spec FILE",
+      "id": "RA5a",
+      "title": "the launcher resolves a pull request's spec",
       "run": null,
       "version": null,
       "size": 2,
@@ -105,29 +103,46 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/cli/review.go",
-          "internal/cli/run.go",
           "internal/cli/reviewspec.go",
           "internal/cli/reviewspec_test.go",
-          "internal/cli/review_test.go"
+          "internal/cli/run.go",
+          "internal/cli/followup.go"
         ]
       }
     },
     {
       "id": "RA6",
-      "title": "the fix round and the rigor table read scope",
+      "title": "the fix rounds and the rigor table read scope",
       "run": null,
       "version": null,
       "size": 1.5,
-      "tier": "small",
+      "tier": "medium",
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/runner/prompts.go",
+          "internal/runner/prompts_test.go",
           "internal/runner/outcome.go",
           "internal/rigor/table.go",
           "internal/rigor/table_test.go",
           "CLAUDE.md"
+        ]
+      }
+    },
+    {
+      "id": "RA9",
+      "title": "the image gate at launch and at update",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/recipes_skew.go",
+          "internal/cli/recipes_skew_test.go",
+          "internal/cli/init.go",
+          "docs/release.md"
         ]
       }
     },
@@ -150,7 +165,7 @@
     },
     {
       "id": "RA3",
-      "title": "the review job and pick runs read the task",
+      "title": "the review job reads the spec it was handed",
       "run": null,
       "version": null,
       "size": 1.5,
@@ -159,13 +174,49 @@
         "prediction": true,
         "paths": [
           "internal/runner/reviewmode.go",
+          "internal/runner/reviewartifact.go",
           "internal/runner/reviewmode_taskspec_test.go"
         ]
       }
     },
     {
+      "id": "RA5b",
+      "title": "the flags, review show, and the generated reference",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/review.go",
+          "internal/cli/review_test.go",
+          "internal/cli/reviewspec.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "RA8",
+      "title": "the policy reaches the run and the publisher",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/policy.go",
+          "internal/runner/policy_test.go",
+          "internal/localcfg/localcfg.go",
+          "internal/localcfg/shared.go",
+          "internal/cli/init_policy_publish.go"
+        ]
+      }
+    },
+    {
       "id": "RA7",
-      "title": "documents, skills, website, release notes",
+      "title": "documents, skills, release notes",
       "run": null,
       "version": null,
       "size": 1,
@@ -176,14 +227,13 @@
           "docs/recipes.md",
           "plugin/skills/working/SKILL.md",
           "plugin/skills/routing/SKILL.md",
-          "website/content/cli-reference.md",
           "docs/releases/*.md"
         ]
       }
     },
     {
-      "id": "I-RA",
-      "title": "wire against, retire the stub, prove it end to end",
+      "id": "RA10",
+      "title": "prove it end to end",
       "run": null,
       "version": null,
       "size": 1.5,
@@ -191,26 +241,10 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/runner/against_stub.go",
-          "internal/runner/against.go",
           "internal/runner/review_against_e2e_test.go",
           "internal/cli/review_against_e2e_test.go"
         ]
-      },
-      "kind": "integration"
-    },
-    {
-      "id": "R-OUT",
-      "title": "amend C-OUT: an against reason or scope value a consumer needs",
-      "run": null,
-      "version": null,
-      "size": 0.5,
-      "tier": "small",
-      "footprint": {
-        "prediction": true,
-        "paths": []
-      },
-      "kind": "contract_change"
+      }
     }
   ],
   "edges": [
@@ -222,7 +256,7 @@
     {
       "task": "RA1",
       "needs": "S-KNOB",
-      "reason": "reads agent.review_against_task"
+      "reason": "reads the accessor"
     },
     {
       "task": "RA3",
@@ -230,29 +264,34 @@
       "reason": "reads spec.ReviewSpec"
     },
     {
-      "task": "RA4",
-      "needs": "S-KNOB",
-      "reason": "merges the policy field S-KNOB declares"
-    },
-    {
-      "task": "RA4",
-      "needs": "S-TASK",
-      "reason": "gates on reviewSpecSince"
-    },
-    {
-      "task": "RA5",
+      "task": "RA5a",
       "needs": "S-TASK",
       "reason": "writes task.ReviewSpec and reads reviewSpecSince"
     },
     {
-      "task": "RA5",
-      "needs": "C-OUT",
-      "reason": "review show prints the artifact's against, built against the contract's type"
+      "task": "RA9",
+      "needs": "S-TASK",
+      "reason": "the constant's file; S-TASK lands it first"
+    },
+    {
+      "task": "RA9",
+      "needs": "S-KNOB",
+      "reason": "gates the key S-KNOB adds"
+    },
+    {
+      "task": "RA4",
+      "needs": "S-KNOB",
+      "reason": "the merge mirrors the key the repository layer carries"
     },
     {
       "task": "RA6",
-      "needs": "C-OUT",
+      "needs": "S-OUT",
       "reason": "built against Finding.Scope"
+    },
+    {
+      "task": "RA5b",
+      "needs": "S-OUT",
+      "reason": "review show prints the artifact's against, built against the contract's type"
     },
     {
       "task": "RA2",
@@ -265,77 +304,56 @@
       "reason": "its tests assert the block RA1 really builds; a stub would test nothing"
     },
     {
+      "task": "RA5b",
+      "needs": "RA5a",
+      "reason": "one file, and the flags feed its resolver"
+    },
+    {
+      "task": "RA8",
+      "needs": "RA4",
+      "reason": "it wires the merged value RA4 defines"
+    },
+    {
       "task": "RA7",
-      "needs": "RA5",
+      "needs": "RA5b",
       "reason": "the plugin and docs tests pin the flags against the CLI"
     },
     {
       "task": "RA7",
-      "needs": "RA4",
-      "reason": "the docs name the key the CLI gates"
+      "needs": "RA9",
+      "reason": "the notes describe the gate"
     },
     {
-      "task": "I-RA",
-      "needs": "C-OUT",
-      "reason": "integrates the contract and deletes its stub"
+      "task": "RA3",
+      "needs": "S-OUT",
+      "reason": "fills the artifact's against"
     },
     {
-      "task": "I-RA",
-      "needs": "RA1",
-      "reason": "wires reviewAgainst to the resolver"
-    },
-    {
-      "task": "I-RA",
+      "task": "RA10",
       "needs": "RA2",
-      "reason": "integration"
+      "reason": "it tests them together"
     },
     {
-      "task": "I-RA",
+      "task": "RA10",
       "needs": "RA3",
-      "reason": "integration"
+      "reason": "it tests them together"
     },
     {
-      "task": "I-RA",
-      "needs": "RA5",
-      "reason": "integration"
+      "task": "RA10",
+      "needs": "RA5b",
+      "reason": "it tests them together"
     },
     {
-      "task": "I-RA",
+      "task": "RA10",
       "needs": "RA6",
-      "reason": "integration"
-    }
-  ],
-  "decoupling": [
-    {
-      "contract": "C-OUT",
-      "was": {
-        "task": "RA6",
-        "needs": "RA3"
-      },
-      "integration": "I-RA",
-      "reason": "the fix round needs the scope field, not a reviewer that fills it"
+      "reason": "it tests them together"
     },
     {
-      "contract": "C-OUT",
-      "was": {
-        "task": "RA5",
-        "needs": "RA3"
-      },
-      "integration": "I-RA",
-      "reason": "review show needs the against field's shape, not the job that writes it"
+      "task": "RA10",
+      "needs": "RA8",
+      "reason": "it tests them together"
     }
   ],
-  "contract_changes": [
-    {
-      "change": "R-OUT",
-      "contract": "C-OUT",
-      "raised_by": "RA6",
-      "reason": "an against reason or scope value a consumer needs",
-      "affects": [
-        "RA5",
-        "RA6",
-        "I-RA"
-      ]
-    }
-  ]
+  "decoupling": [],
+  "contract_changes": []
 }

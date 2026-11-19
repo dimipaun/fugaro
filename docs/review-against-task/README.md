@@ -7,8 +7,8 @@
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec **verbatim**. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1 to A5, findings F1 to F20, decisions D2930 to D2934 with the owner's dated answers, resolutions R1 to R12, UNVERIFIED U1 to U3. **Where it disagrees with the spec, it wins** |
-| [implementation-plan.md](implementation-plan.md) | Three slices and 11 tasks with levels, the critical path, the shared-files table, the dependencies broken and kept, the estimate line and the owner-run Check 740. **Nothing in it is approved** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1 to A5, findings F1 to F27, decisions D2930 to D2934 with the owner's dated answers (D2932 and D2933 amended after review), resolutions R1 to R14, open items O1 and O2, UNVERIFIED U1 to U3. **Where it disagrees with the spec, it wins** |
+| [implementation-plan.md](implementation-plan.md) | Three slices and 14 tasks with levels, the critical path, the shared-files table, the dependencies broken and kept, the estimate line and the owner-run Check 740. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads (schema 3) |
 
 ## Numbers taken
@@ -17,4 +17,4 @@ Decisions **D2930 to D2949** (D2930 to D2934 used), checks **740 to 749** (740 u
 
 ## What waits on something external
 
-The owner's explicit go for every task; and Check 740, owner-run after the release that carries I-RA (not a gate).
+The owner's explicit go for every task; the owner's confirmation of D2932 and D2933 as amended after review (O1, O2); and Check 740, owner-run after the release that carries RA10 (not a gate).
