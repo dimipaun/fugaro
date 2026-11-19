@@ -217,6 +217,77 @@ func TestStatementSumsTheMonth(t *testing.T) {
 	}
 }
 
+// TestStatementMonthsSumToTheTerm: the months a term is billed over add up to
+// the term, wherever in the day it was sold (D2189).
+//
+// A term starts at the instant it was sold and almost no sale happens at
+// midnight, so the part day a term starts on is one of its days. Pricing each
+// month by clipping the term to the month's own window rounds that day up in the
+// month of the sale and the part day at the far end up in the last month, which
+// bills a year sold at noon as 366 days of 365 — every sale, in both directions.
+//
+// The case sells one seat for exactly a year from noon on the 15th of September,
+// so the term touches thirteen months, and runs the job for every one of them,
+// which is what the deployment does over a year. The assertions are the two
+// edges a rounding rule shows up at — September's sixteen days, the last
+// September's fourteen — and the sum against the whole term the credit limit
+// reads.
+func TestStatementMonthsSumToTheTerm(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.priceRows(resellerID, statementsCap,
+		WireResellerRate{Row: PolicyTeamAnnual, DailyRateMicros: resellerRate})
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+
+	// One seat for a year from noon, which is 365 days: the first of them is the
+	// day it was sold on and the last the day it runs out on.
+	sold := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	f.now = sold
+	bought := f.soldBy("Acme Ltd")
+	f.saleOf(bought.ID, f.soldWorkspace(bought.ID, "ws-year"), PolicyTeamAnnual, 1, sold.AddDate(1, 0, 0))
+	whole := f.unpaid(resellerID)
+	if want := int64(365) * resellerRate; whole != want {
+		t.Fatalf("the year's whole accrual is %d micros, want its own %d", whole, want)
+	}
+
+	// A run states the month before its own, so the thirteen months from the
+	// month of the sale to the month the term runs out in are each stated by a
+	// run in the month after them.
+	for run := sold.AddDate(0, 1, 0); !run.After(sold.AddDate(1, 1, 0)); run = run.AddDate(0, 1, 0) {
+		f.now = run
+		if rec := f.runStatementJob(); rec.Code != http.StatusNoContent {
+			t.Fatalf("the statement run at %s answered %d: %s", run, rec.Code, rec.Body)
+		}
+	}
+
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	months := f.statementsOf()
+	if len(months) != 13 {
+		t.Fatalf("a year from September touches thirteen months and left %d statement(s): %v", len(months), months)
+	}
+
+	sum := int64(0)
+	for _, statement := range months {
+		sum += statement.AccruedMicros
+	}
+	if sum != whole {
+		t.Errorf("the term's statements accrued %d micros between them, want the term's own %d: a part day at either end belongs to the term once",
+			sum, whole)
+	}
+
+	// The term's own two ends, which is where the rounding shows: noon on the
+	// 15th of September is fifteen and a half days of it, and the year that
+	// starts there leaves fourteen and a half days of the September it ends in.
+	if newest := months[0]; newest.Month != "2027-09" || newest.AccruedMicros != int64(14)*resellerRate {
+		t.Errorf("the term's last month is %q of %d micros, want 2027-09 of the %d its last fourteen days come to",
+			newest.Month, newest.AccruedMicros, int64(14)*resellerRate)
+	}
+	if oldest := months[len(months)-1]; oldest.Month != "2026-09" || oldest.AccruedMicros != int64(16)*resellerRate {
+		t.Errorf("the term's first month is %q of %d micros, want 2026-09 of the %d its first sixteen days come to",
+			oldest.Month, oldest.AccruedMicros, int64(16)*resellerRate)
+	}
+}
+
 // TestStatementMonthIsTheMonthBeforeTheRun: the run states the previous UTC
 // month, whatever day of the month it fires on.
 //

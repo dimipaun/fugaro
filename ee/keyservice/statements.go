@@ -248,24 +248,38 @@ func (s *Service) statementCustomerMicros(ctx context.Context, customerOrganisat
 
 // statementMonthAccrualMicros is one licence's accrual over the part of its term
 // inside the window, by the accrual's own arithmetic rather than a second one:
-// the term is clipped to the window and handed to resellerAccrualMicros, so the
-// days a month is charged for, the part day at either edge and the saturation
-// are the rules the credit limit already reads.
+// it is what the licence has accrued by the window's end less what it had
+// accrued by the window's start, so the days a month is charged for and the
+// saturation are the rules the credit limit already reads.
 //
-// A licence starting inside the month keeps its own start and one ending inside
-// it keeps its own end; only the edges outside the window move, and a term that
-// lies wholly outside it is left with an end before its start, which prices no
-// day. The licence is copied and never written back: the window is the
-// statement's, and the record stays the term the reseller sold.
+// **The two figures are cumulative from the term's own start, which is what
+// keeps the months from overbilling the term.** The accrual rounds a part day up
+// (daysBetween: a term is what a key has to cover), so pricing a term clipped to
+// the window would round at both of the window's edges: the day a term was sold
+// on would be charged in full in the month of the sale and the day it ends on in
+// full in its last month, and a year sold at noon would be billed 366 days of
+// 365 — every month of a term that does not start at midnight, which is nearly
+// every term. The difference of the two cumulative accruals puts the rounding on
+// the term's own instants instead, so the months telescope — each one's upper
+// figure is the next one's lower — and the last month is left with whatever the
+// term's own end still owes: the months of a term sum to the term exactly
+// (TestStatementMonthsSumToTheTerm).
+//
+// A lower instant past the term's end is the term's own end, and one before the
+// term's start prices no day, so a term lying wholly outside the window answers
+// nothing and no month is ever charged a negative. The licence is copied and
+// never written back: the window is the statement's, and the record stays the
+// term the reseller sold.
 func statementMonthAccrualMicros(licence WireEntitlement, rate int64, stopped *time.Time, start, end time.Time) int64 {
-	inMonth := licence
-	if inMonth.StartsAt.Before(start) {
-		inMonth.StartsAt = start
+	by := licence
+	if by.EndsAt.After(end) {
+		by.EndsAt = end
 	}
-	if inMonth.EndsAt.After(end) {
-		inMonth.EndsAt = end
+	before := licence
+	if before.EndsAt.After(start) {
+		before.EndsAt = start
 	}
-	return resellerAccrualMicros(inMonth, rate, stopped)
+	return resellerAccrualMicros(by, rate, stopped) - resellerAccrualMicros(before, rate, stopped)
 }
 
 // issueStatement is one reseller's month as the store holds it, and whether this
