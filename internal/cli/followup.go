@@ -541,8 +541,11 @@ func writePRIndex(ctx context.Context, env *cloudEnv, slug string, spec *task.Sp
 	}
 	e := runstore.PRIndexEntry{RunID: spec.RunID, Slug: slug, PR: spec.PR, Kind: runstore.PRIndexFollowed, At: now.UTC()}
 	if err := runstore.PutPRIndex(ctx, env.bucket.Bucket, e); err != nil {
-		fmt.Fprintf(warn, "warning: no pull-request index entry was written for %s, so runs ls --pr %d may have to scan for it: %s\n",
-			oneLine(slug+"/"+spec.RunID), spec.PR, oneLine(err.Error()))
+		// The run by its ending, as a person reads one (spec.md §1): the launch
+		// has just named the repository, and the ending is what tells this run
+		// from the next one.
+		fmt.Fprintf(warn, "warning: no pull-request index entry was written for run %s in %s, so runs ls --pr %d may have to scan for it: %s\n",
+			task.ShortRun(spec.RunID), oneLine(slug), spec.PR, oneLine(err.Error()))
 	}
 }
 
