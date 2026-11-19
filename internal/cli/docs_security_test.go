@@ -105,17 +105,22 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 }
 
 // knownEnvName reports whether name appears, as a whole word, in one of the
-// files that build the agent's or the runner's environment or mint its
-// tokens: internal/agent/env.go, internal/runner/*.go,
-// internal/gitops/credentials.go, internal/gitprov/github/github.go and
-// deploy/terraform. A variable renamed in all of them makes a SECURITY.md
-// mention of its old name, and so this test, fail.
+// files that build the agent's, the runner's or a build step's environment or
+// mint its tokens: internal/agent/env.go, internal/runner/*.go,
+// internal/gitops/credentials.go, internal/gitprov/github/github.go,
+// internal/backend/gcp/build.go (the Cloud Build request's own env, which is
+// where the credential step's mounted variables are declared),
+// internal/cli/gitcred.go (the step that reads them) and deploy/terraform. A
+// variable renamed in all of them makes a SECURITY.md mention of its old name,
+// and so this test, fail.
 func knownEnvName(t *testing.T, name string) bool {
 	t.Helper()
 	files := []string{
 		"../agent/env.go",
 		"../gitops/credentials.go",
 		"../gitprov/github/github.go",
+		"../backend/gcp/build.go",
+		"gitcred.go",
 	}
 	runnerGo, err := filepath.Glob("../runner/*.go")
 	if err != nil {
@@ -525,12 +530,16 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// fetches while still mounting, which the pins below state.
 		"**A build takes its credentials from the service too, and the reach does not change (S4, D2076 (a), D2077).**",
 		"fetches the git credential and every workflow build secret the build mounts",
+		// The check job runs as the same account (E3), so it fetches the same
+		// way: pinned, because a reader who takes "builds" to mean the image
+		// build alone would think the daily check still reads its mount.
+		"the daily image-check job, which runs as that same account, fetches its clone credential the same way",
 		"the value lands in the volume the build step reads",
 		"a Dockerfile reaches it exactly as it did through BuildKit's mounted secret",
 		// The copy the fetch does not remove: the build account's accessor
 		// and the request's own `availableSecrets` entries are what B4.9's
 		// flip takes, so a build on this tree both fetches and mounts.
-		"**The build account has not given its copy up yet.**",
+		"**And the build account has not given its copy up yet.**",
 		"the build account keeps its `secretAccessor`",
 		"`availableSecrets`",
 		"until the flip takes them away (B4.9)",
