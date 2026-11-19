@@ -748,13 +748,76 @@
         "governance.stage_budget": {
           "default": "unset = Fugaro's own stage budgets"
         },
+        "governance.stage_budget.fix": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "governance.stage_budget.implement": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
+        "governance.stage_budget.review": {
+          "default": "unset = Fugaro's own stage budgets"
+        },
         "governance.stage_timeout": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.fix": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.implement": {
+          "default": "unset = Fugaro's own stage timeouts"
+        },
+        "governance.stage_timeout.review": {
           "default": "unset = Fugaro's own stage timeouts"
         },
         "governance.stage_tokens": {
           "default": "unset = Fugaro's own stage token caps"
         },
+        "governance.stage_tokens.fix": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "governance.stage_tokens.implement": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
+        "governance.stage_tokens.review": {
+          "default": "unset = Fugaro's own stage token caps"
+        },
         "governance.tiers": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.large.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.medium.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.small.max_subagents": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.expected_minutes": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.expected_usd": {
+          "default": "unset = Fugaro's own tiers"
+        },
+        "governance.tiers.trivial.max_subagents": {
           "default": "unset = Fugaro's own tiers"
         },
         "image_catalog.entries.*.default": {
