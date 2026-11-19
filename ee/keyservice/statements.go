@@ -22,9 +22,17 @@ package keyservice
 // posts to the run's route once a month (P1.5's scheduler.tf, created paused and
 // turned on by the deploy that ships the route), and the statement's own id —
 // the reseller and the month — is what makes a second run ask for the statement
-// that exists rather than write a second one. The month is the previous UTC
-// calendar month: a month is whole only once it is over, and the run's whole
-// business is a month nobody can still add a day to.
+// that exists rather than write a second one. The month the run is about is the
+// previous UTC calendar month: a month is whole only once it is over, and the
+// run's whole business is a month nobody can still add a day to.
+//
+// **A run also states the months before that one that are still owed**, which is
+// what keeps a month from being lost: the job posts three times and then gives up
+// (scheduler.tf's retry count and its one-day period), so a first of the month the
+// service never answered — or a month that failed on a licence the reseller was
+// not priced for until operations set the terms a week later — would leave days no
+// statement ever billed, and the months of a term would come to less than the
+// term. A month already stated is answered by its own id and changes nothing.
 //
 // **Nothing here is a payment.** Operations records what arrives
 // (api_statements.go's route) and this file keeps the two figures apart: a
@@ -64,6 +72,12 @@ const (
 	statementOpen = "open"
 	statementPaid = "paid"
 )
+
+// statementMonthLayout is how a month is written everywhere one is named: the
+// statement's own field and the id derived from it. It is fixed width, so the
+// months of a reseller's statements order as strings and a run can step through
+// them by adding a month to a first instant.
+const statementMonthLayout = "2006-01"
 
 // actionStatementPayment is the operations act that records money arriving. It
 // is the one act of this area that writes a log line, and it is operations'
@@ -137,10 +151,18 @@ func statementSendID(statement, recipient string) string {
 // it. A month boundary is a time zone's opinion (the schema's own sentence), so
 // every boundary here is UTC.
 func statementMonthWindow(now time.Time) (string, time.Time, time.Time) {
-	utc := now.UTC()
-	first := time.Date(utc.Year(), utc.Month(), 1, 0, 0, 0, 0, time.UTC)
+	first := statementMonthStart(now)
 	start := first.AddDate(0, -1, 0)
-	return start.Format("2006-01"), start, first
+	return start.Format(statementMonthLayout), start, first
+}
+
+// statementMonthStart is the first instant of the month an instant falls in: where
+// a window begins, and the step a run walks the months it owes a reseller by.
+// A month boundary is a time zone's opinion (the schema's own sentence), so it is
+// UTC.
+func statementMonthStart(at time.Time) time.Time {
+	utc := at.UTC()
+	return time.Date(utc.Year(), utc.Month(), 1, 0, 0, 0, 0, time.UTC)
 }
 
 // resellerOrganisations is every reseller organisation the portal holds, ordered
@@ -347,11 +369,26 @@ func (s *Service) issueStatement(ctx context.Context, reseller WireOrganisation,
 	return issued, fresh, nil
 }
 
-// runStatements issues the previous month for every reseller the portal holds
-// and mails each statement to that reseller's owners, once.
+// runStatements issues every month each reseller is owed up to the one that is
+// over, and mails each statement to that reseller's owners, once.
 //
-// The order is the resellers' own (by organisation id), so two runs over one
-// store issue and mail in one order.
+// **The month that is over is the last one a run states, not the only one.** A
+// reseller's months are walked from the oldest it is owed (statementFirstMonth)
+// to the previous month, so a month whose run failed — or whose run never happened
+// — is stated by the next run that reaches the service rather than lost, and the
+// months of a term still come to the term. Each month is asked for by its own
+// derived id (issueStatement), so a month already stated is answered with the
+// statement that exists and a catch-up issues nothing twice.
+//
+// **The same walk retries the mails that did not go out.** A statement's sends are
+// recorded per owner (mailStatement), and a run that reaches a month an owner was
+// never told about tells them and writes the record: the outage that swallowed the
+// mail is repaired by the next run instead of leaving an owner with a statement
+// nobody sent them. A statement whose owners are all recorded is a month the run
+// reads and leaves alone.
+//
+// The order is the resellers' own (by organisation id) and, inside one, the
+// months' own, so two runs over one store issue and mail in one order.
 //
 // **A failure is carried, not thrown** (runReminders' own reading): one
 // reseller's unreadable month — a licence on a row its terms do not price, an
@@ -359,14 +396,14 @@ func (s *Service) issueStatement(ctx context.Context, reseller WireOrganisation,
 // returned at the first of them would never reach the resellers the store files
 // after it, which is every run until somebody fixed it by hand. What failed is
 // joined into the answer, so the retry F33 gives the job is asked again about
-// exactly what is missing, and nothing is issued twice: the month's own id and
-// the send records are what the retry reads.
+// exactly what is missing, and a month that failed is inside the walk's range
+// again on the next run because its statement was never written.
 func (s *Service) runStatements(ctx context.Context) (statementRun, error) {
 	origin, err := portalOrigin(s.cfg.URL)
 	if err != nil {
 		return statementRun{}, err
 	}
-	month, start, end := statementMonthWindow(s.now())
+	over := statementMonthStart(s.now()).AddDate(0, -1, 0)
 	held, err := s.resellerOrganisations(ctx)
 	if err != nil {
 		return statementRun{}, err
@@ -374,26 +411,108 @@ func (s *Service) runStatements(ctx context.Context) (statementRun, error) {
 	var run statementRun
 	var failures []error
 	for _, reseller := range held {
-		statement, fresh, err := s.issueStatement(ctx, reseller, month, start, end)
+		first, err := s.statementFirstMonth(ctx, reseller.ID)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("keyservice: the %s statement of the reseller %s was not issued: %w",
-				month, reseller.ID, err))
+			failures = append(failures, fmt.Errorf("keyservice: the months owed to the reseller %s were not read: %w", reseller.ID, err))
 			continue
 		}
-		if statement.ID == "" {
-			continue
+		for at := first; !at.IsZero() && !at.After(over); at = at.AddDate(0, 1, 0) {
+			month := at.Format(statementMonthLayout)
+			statement, fresh, err := s.issueStatement(ctx, reseller, month, at, at.AddDate(0, 1, 0))
+			if err != nil {
+				failures = append(failures, fmt.Errorf("keyservice: the %s statement of the reseller %s was not issued: %w",
+					month, reseller.ID, err))
+				continue
+			}
+			if statement.ID == "" {
+				continue
+			}
+			if fresh {
+				run.Issued++
+			}
+			mailed, err := s.mailStatement(ctx, origin, reseller, statement)
+			if err != nil {
+				failures = append(failures, fmt.Errorf("keyservice: the %s statement of the reseller %s was not mailed to everybody: %w",
+					month, reseller.ID, err))
+			}
+			run.Mailed += mailed
 		}
-		if fresh {
-			run.Issued++
-		}
-		mailed, err := s.mailStatement(ctx, origin, reseller, statement)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("keyservice: the %s statement of the reseller %s was not mailed to everybody: %w",
-				month, reseller.ID, err))
-		}
-		run.Mailed += mailed
 	}
 	return run, errors.Join(failures...)
+}
+
+// statementFirstMonth is the oldest month a statement is owed for a reseller: the
+// month of the oldest statement it holds, or the month of the oldest licence a
+// reseller sold that one of its customers still holds, whichever is earlier. The
+// zero time is a reseller that has neither — one that has sold nothing and
+// carries no statement is owed no month.
+//
+// **The oldest licence is what keeps a failed month inside the walk.** A month
+// whose statement could not be written stands behind the months issued after it,
+// and a walk that began after the newest statement would step over it for good:
+// the licence's own month is never after the first month that licence accrues in,
+// so a month that was never stated is inside the range until it is stated. The
+// months between are walked too, which is what closes a gap older than the newest
+// statement as well.
+//
+// The statements and the licences are read the way the accrual reads them — the
+// reseller's own links and the licences a reseller's sale wrote — so the months
+// the walk covers are the months a statement can be about.
+func (s *Service) statementFirstMonth(ctx context.Context, resellerOrganisationID string) (time.Time, error) {
+	held, err := recordsWhere[WireStatement](ctx, s.docs, statementsCollection,
+		Where{Field: "reseller_organisation_id", Value: resellerOrganisationID})
+	if err != nil {
+		return time.Time{}, err
+	}
+	first := time.Time{}
+	for _, statement := range held {
+		at, err := time.Parse(statementMonthLayout, statement.Month)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("keyservice: the statement %s carries the month %q: %w", statement.ID, statement.Month, err)
+		}
+		if first.IsZero() || at.Before(first) {
+			first = at
+		}
+	}
+	sold, err := s.resellerOldestSale(ctx, resellerOrganisationID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !sold.IsZero() && (first.IsZero() || sold.Before(first)) {
+		first = sold
+	}
+	return first, nil
+}
+
+// resellerOldestSale is the first instant of the month the oldest licence a
+// reseller sold was granted in, or the zero time when it has sold none that a
+// customer still holds.
+func (s *Service) resellerOldestSale(ctx context.Context, resellerOrganisationID string) (time.Time, error) {
+	links, err := recordsWhere[WireResellerCustomer](ctx, s.docs, resellerCustomersCollection,
+		Where{Field: "reseller_organisation_id", Value: resellerOrganisationID})
+	if err != nil {
+		return time.Time{}, err
+	}
+	oldest := time.Time{}
+	for _, link := range links {
+		held, err := recordsWhere[WireEntitlement](ctx, s.docs, entitlementsCollection,
+			Where{Field: "organisation_id", Value: link.OrganisationID})
+		if err != nil {
+			return time.Time{}, err
+		}
+		for _, licence := range held {
+			if licence.Source != entitlementSourceReseller {
+				continue
+			}
+			if oldest.IsZero() || licence.StartsAt.Before(oldest) {
+				oldest = licence.StartsAt
+			}
+		}
+	}
+	if oldest.IsZero() {
+		return time.Time{}, nil
+	}
+	return statementMonthStart(oldest), nil
 }
 
 // mailStatement mails one statement to the reseller's owners it has not already

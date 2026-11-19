@@ -17,6 +17,7 @@ package keyservice
 // month the run is about.
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -70,6 +71,26 @@ func (f *fixture) runAndRead() WireStatement {
 		f.t.Fatalf("the run left %d statement(s), want the one it issued: %v", len(held), held)
 	}
 	return held[0]
+}
+
+// runAndStatement runs one job and answers the statement for the month named.
+//
+// A run states every month its reseller is owed and not only the one that is
+// over (runStatements), so a case that sold a licence before the month it reads
+// has the months in between beside it and cannot be about "the one statement".
+func (f *fixture) runAndStatement(month string) WireStatement {
+	f.t.Helper()
+	if rec := f.runStatementJob(); rec.Code != http.StatusNoContent {
+		f.t.Fatalf("the statement run answered %d: %s", rec.Code, rec.Body)
+	}
+	held := f.statementsOf()
+	for _, statement := range held {
+		if statement.Month == month {
+			return statement
+		}
+	}
+	f.t.Fatalf("the run left no statement for %s, want it among %v", month, held)
+	return WireStatement{}
 }
 
 // statementsOf reads the caller's own statements through the route the
@@ -152,7 +173,7 @@ func TestStatementSumsTheMonth(t *testing.T) {
 	// The run's own instant, which is the month after the one it states.
 	f.now = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	f.actsAs(sellerUID, sellerMail, signInGoogle)
-	statement := f.runAndRead()
+	statement := f.runAndStatement(statedMonth)
 
 	if statement.Month != statedMonth {
 		t.Errorf("the statement is for %q, want %q: a run states the month that is over", statement.Month, statedMonth)
@@ -467,6 +488,146 @@ func TestStatementRunIsIdempotent(t *testing.T) {
 	}
 	if len(f.mail.sent) != mailed {
 		t.Errorf("the second run mailed %d message(s), want none: the statement was issued and mailed once", len(f.mail.sent)-mailed)
+	}
+}
+
+// TestStatementRunCatchesUpAMonthItMissed: a month whose run failed is stated by
+// the next run, beside the month that run is for.
+//
+// The failure is one a run really meets: operations set the reseller's terms so
+// that a licence it sold is on a row its terms no longer price, which fails the
+// whole month that licence accrues in (statementCustomerMicros) and writes no
+// statement. The job posts three times and then the month is behind it
+// (scheduler.tf's retry count), so the days of that month would never be billed
+// and the months of the term would come to less than the term — which is what the
+// sums below are asserted against.
+//
+// The rates are set again and the next month's run states both months: the walk
+// starts at the oldest licence the reseller's customer still holds
+// (statementFirstMonth), and the failed month is inside it because the statement
+// it never got is not there to move the range past it.
+func TestStatementRunCatchesUpAMonthItMissed(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.priceRows(resellerID, statementsCap,
+		WireResellerRate{Row: PolicyTeamAnnual, DailyRateMicros: resellerRate},
+		WireResellerRate{Row: PolicyTeamMonthly, DailyRateMicros: resellerRate})
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+
+	// A year sold from noon on the 15th of September, which has days in September
+	// and in every month after it.
+	sold := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	f.now = sold
+	bought := f.soldBy("Acme Ltd")
+	f.saleOf(bought.ID, f.soldWorkspace(bought.ID, "ws-year"), PolicyTeamAnnual, 1, sold.AddDate(1, 0, 0))
+
+	// Operations prices the monthly row alone, so the year's month cannot be read
+	// and the run from October is the run that fails.
+	f.priceRows(resellerID, statementsCap,
+		WireResellerRate{Row: PolicyTeamMonthly, DailyRateMicros: resellerRate})
+	f.now = time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	if rec := f.runStatementJob(); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a run over a month its terms cannot price answered %d, want 500: %s", rec.Code, rec.Body)
+	}
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	if held := f.statementsOf(); len(held) != 0 {
+		t.Fatalf("the failed run left %d statement(s), want none: %v", len(held), held)
+	}
+
+	// The row is priced again, and the next month's run states the month that
+	// failed beside its own.
+	f.priceRows(resellerID, statementsCap,
+		WireResellerRate{Row: PolicyTeamAnnual, DailyRateMicros: resellerRate},
+		WireResellerRate{Row: PolicyTeamMonthly, DailyRateMicros: resellerRate})
+	f.now = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if rec := f.runStatementJob(); rec.Code != http.StatusNoContent {
+		t.Fatalf("the run after the rates were set again answered %d: %s", rec.Code, rec.Body)
+	}
+
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	held := f.statementsOf()
+	// September is fifteen and a half days rounded up to sixteen, and October is
+	// all thirty-one of its days: one seat, so the days are the micros' thousands.
+	want := map[string]int64{
+		"2026-09": int64(16) * resellerRate,
+		"2026-10": int64(31) * resellerRate,
+	}
+	if len(held) != len(want) {
+		t.Fatalf("the run left %d statement(s) %v, want September and October", len(held), held)
+	}
+	for _, statement := range held {
+		amount, known := want[statement.Month]
+		if !known {
+			t.Errorf("the run issued a statement for %q, want the two months the term had days in", statement.Month)
+			continue
+		}
+		if statement.AccruedMicros != amount {
+			t.Errorf("%s accrued %d micros, want %d", statement.Month, statement.AccruedMicros, amount)
+		}
+		delete(want, statement.Month)
+	}
+	if len(want) != 0 {
+		t.Errorf("the run left no statement for %v", want)
+	}
+	// Both months are the reseller's, so the month that failed is not only stated
+	// but told: the mail the failed run never sent goes out with the catch-up.
+	if mailed := len(f.mail.sent); mailed != len(held) {
+		t.Errorf("the run mailed %d message(s) for its %d statement(s), want one each", mailed, len(held))
+	}
+}
+
+// TestStatementRunRetriesAMailItCouldNotSend: an owner a statement never reached
+// is told by the next run.
+//
+// The mail is the run's other half and it fails on its own: the provider refuses,
+// the statement is written and no send record is, and the run answers a failure.
+// Without the walk that retries it, the owner would hold a statement nobody sent
+// them for good — the month is behind the run that comes next, and a run that only
+// ever looked at the month before its own would never read it again. The next run
+// reads the same id (issueStatement), mails the owners with no send record and
+// writes nothing a second time.
+func TestStatementRunRetriesAMailItCouldNotSend(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.priceRows(resellerID, statementsCap,
+		WireResellerRate{Row: PolicyTeamMonthly, DailyRateMicros: resellerRate})
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+
+	f.now = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	bought := f.soldBy("Acme Ltd")
+	f.saleOf(bought.ID, f.soldWorkspace(bought.ID, "ws-october"), PolicyTeamMonthly, saleSeats, f.now.Add(30*24*time.Hour))
+
+	f.mail.err = errors.New("the mail provider refused the message")
+	f.now = time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if rec := f.runStatementJob(); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("a run whose mail the provider refused answered %d, want 500: %s", rec.Code, rec.Body)
+	}
+	f.mail.err = nil
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	held := f.statementsOf()
+	if len(held) != 1 || held[0].Month != statedMonth || held[0].AccruedMicros != statedMicros {
+		t.Fatalf("the run that could not mail left %v, want the month's one statement", held)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Fatalf("a mail the provider refused was recorded as sent: %v", f.mail.sent)
+	}
+
+	// The next run is a month later still, so October is behind the month that run
+	// is for: what reaches the owner is the walk over the months owed and not the
+	// month being stated.
+	f.now = time.Date(2026, 12, 12, 12, 0, 0, 0, time.UTC)
+	if rec := f.runStatementJob(); rec.Code != http.StatusNoContent {
+		t.Fatalf("the next run answered %d: %s", rec.Code, rec.Body)
+	}
+	if mailed := len(f.mail.sent); mailed != 1 {
+		t.Fatalf("the next run mailed %d message(s), want the owner's one", mailed)
+	}
+	if msg := f.mail.sent[0]; msg.To != sellerMail || !strings.Contains(msg.Body, statedMonth) {
+		t.Errorf("the retried mail is to %q about %q:\n%s", msg.To, msg.Subject, msg.Body)
+	}
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	if again := f.statementsOf(); len(again) != 1 || again[0].ID != held[0].ID || !again[0].IssuedAt.Equal(held[0].IssuedAt) {
+		t.Errorf("the run that mailed left %v, want the statement the first run wrote", again)
 	}
 }
 
