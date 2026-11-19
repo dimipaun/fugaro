@@ -27,6 +27,7 @@
 package identitysvc
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -251,16 +252,31 @@ func tfToLineEnd(src string, i int) int {
 	return len(src)
 }
 
-// tfTopLevelHeaders are the ways a top-level block begins in a root, and the cut
-// list every reader here ends a block at: a block whose text ran on into the one
-// below it would be read as part of that block's body, which is how a `module`
-// granting a role, an `import` adopting a key or a `locals` holding one would be
-// read as the sanctioned block above it. `module`, `import`, `locals`, `moved`,
-// `removed` and `check` are blocks like any other and are cut at like any other.
-var tfTopLevelHeaders = []string{
-	"\nresource \"", "\ndata \"", "\nvariable \"", "\noutput \"", "\nprovider \"",
-	"\nmodule \"", "\nimport {", "\nlocals {", "\nmoved {", "\nremoved {", "\ncheck \"",
-	"\nterraform {",
+// tfBlockHeaders are the ways a top-level block begins in a root, and the kinds
+// every sweep here walks: a block whose text ran on into the one below it would
+// be read as part of that block's body, which is how a `module` granting a role,
+// an `import` adopting a key or a `locals` holding one would be read as the
+// sanctioned block above it. `module`, `import`, `locals`, `moved`, `removed`
+// and `check` are blocks like any other.
+var tfBlockHeaders = []string{
+	`resource "`, `data "`, `variable "`, `output "`, `provider "`,
+	`module "`, `import {`, `locals {`, `moved {`, `removed {`, `check "`,
+	`terraform {`,
+}
+
+// tfTopLevelHeaders is the same list as a cut list, preceded by the newline that
+// makes a header a header: the byte in front of a top-level block is the end of
+// the block above it, and a cut found mid-line would end a block at a name that
+// only looks like one.
+var tfTopLevelHeaders = tfCutHeaders(tfBlockHeaders)
+
+// tfCutHeaders puts a newline in front of each header.
+func tfCutHeaders(headers []string) []string {
+	out := make([]string, 0, len(headers))
+	for _, header := range headers {
+		out = append(out, "\n"+header)
+	}
+	return out
 }
 
 // tfBlocks answers every block in one file whose header starts with the given
@@ -278,19 +294,74 @@ func tfBlocksUntil(src, header string, cuts []string) []string {
 	code := tfCodeMask(src)
 	var out []string
 	for i := 0; ; {
-		start := tfFindCode(src, code, header, i)
+		start, end := tfFindHeader(src, code, header, i)
 		if start < 0 {
 			return out
 		}
-		end := len(src)
+		stop := len(src)
 		for _, cut := range cuts {
-			if k := tfFindCode(src, code, cut, start+len(header)); k >= 0 && k < end {
-				end = k
+			if k, _ := tfFindHeader(src, code, cut, end); k >= 0 && k < stop {
+				stop = k
 			}
 		}
-		out = append(out, src[start:end])
-		i = start + len(header)
+		out = append(out, src[start:stop])
+		i = end
 	}
+}
+
+// tfFindHeader answers the index of the next header at or after from that writes
+// the given header's tokens, and the index just past it, or -1, -1 for none. The
+// tokens are the keyword and each name it writes, and what may stand between
+// them is any whitespace HCL reads as one — including none at all, because HCL
+// does not need a space: `resource"google_x""y"{` is
+// `resource "google_x" "y" {` written another way, `terraform validate` accepts
+// both, and this suite reads a root as text rather than through a parser, so a
+// finder that looked for the space alone would say nothing at all about a grant,
+// an import or a module written the cramped way. The first token is matched as a
+// word of its own — a name ending in a keyword, `google_resource"x"{`, is no
+// resource block — and a leading newline is the cut list's way of saying the
+// header begins a line, so it is read as that rather than as part of the word.
+func tfFindHeader(src string, code []bool, header string, from int) (int, int) {
+	tokens := strings.Fields(header)
+	if len(tokens) == 0 {
+		return -1, -1
+	}
+	for i := from; i < len(src); {
+		start := tfFindCode(src, code, tokens[0], i)
+		if start < 0 {
+			return -1, -1
+		}
+		keyword := start
+		if tokens[0][0] == '\n' {
+			keyword++
+		}
+		end := start + len(tokens[0])
+		ok := keyword == 0 || !tfIdentChar(src[keyword-1])
+		for _, token := range tokens[1:] {
+			if !ok {
+				break
+			}
+			for end < len(src) && tfSpace(src[end]) {
+				end++
+			}
+			if !strings.HasPrefix(src[end:], token) {
+				ok = false
+				break
+			}
+			end += len(token)
+		}
+		if ok {
+			return start, end
+		}
+		i = start + 1
+	}
+	return -1, -1
+}
+
+// tfSpace reports whether c is whitespace HCL reads as a separator between two
+// tokens.
+func tfSpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
 // tfCodeMask marks every byte of src that is CODE: the bytes inside a quoted
@@ -347,12 +418,35 @@ func tfFindCode(src string, code []bool, needle string, from int) int {
 	return -1
 }
 
-// tfHeader answers a block's first line — its kind and its name.
+// tfHeader answers a block's header — its kind and the names it writes — in one
+// spelling, one space between those tokens, however the file spaced them:
+// `resource"google_x""y"{` and `resource "google_x" "y" {` are one block, and
+// the blocks below are looked up and sanctioned by this spelling.
 func tfHeader(block string) string {
-	if i := strings.Index(block, "{"); i >= 0 {
-		block = block[:i]
+	var tokens []string
+	for i := 0; i < len(block); {
+		switch c := block[i]; {
+		case c == '{':
+			return strings.Join(tokens, " ")
+		case tfSpace(c):
+			i++
+		case c == '"':
+			j, ok := tfSkipString(block, i)
+			if !ok {
+				j = len(block)
+			}
+			tokens = append(tokens, block[i:j])
+			i = j
+		default:
+			j := i
+			for j < len(block) && !tfSpace(block[j]) && block[j] != '{' && block[j] != '"' {
+				j++
+			}
+			tokens = append(tokens, block[i:j])
+			i = j
+		}
 	}
-	return strings.TrimSpace(block)
+	return strings.Join(tokens, " ")
 }
 
 // tfBlock answers the one block a root declares under the given header,
@@ -640,6 +734,22 @@ func tfGrants(header, compact string) bool {
 	return false
 }
 
+// tfListCounts renders the blocks that may name an identity and how often each
+// may, sorted, so that a failure names the whole list rather than only the block
+// it refused.
+func tfListCounts(refs map[string]int) string {
+	lines := make([]string, 0, len(refs))
+	for header, n := range refs {
+		times := fmt.Sprintf("%d times", n)
+		if n == 1 {
+			times = "once"
+		}
+		lines = append(lines, "  "+header+" — "+times)
+	}
+	slices.Sort(lines)
+	return strings.Join(lines, "\n")
+}
+
 // tfList renders the grants this root is allowed to hold, one per line and
 // sorted, so that a failure names the whole list rather than only the block it
 // refused: the point of the list is that a person reads it.
@@ -660,6 +770,17 @@ func tfIdentStart(c byte) bool {
 // tfIdentChar reports whether c can continue one.
 func tfIdentChar(c byte) bool {
 	return tfIdentStart(c) || c >= '0' && c <= '9' || c == '-' || c == '.'
+}
+
+// tfSecondForms are the whole of what a root of one form of configuration never
+// holds, whichever way the block is spaced: a module creates resources no check
+// in this suite can name, an import adopts a resource that already exists, and a
+// moved block renames one, and each changes what an apply does with no block
+// below changing.
+var tfSecondForms = []struct{ header, what string }{
+	{`module "`, "a `module`"},
+	{"import {", "an `import`"},
+	{"moved {", "a `moved`"},
 }
 
 // TestInfraTheRootIsOneFormOfConfiguration: the root is plain HCL in one form —
@@ -683,11 +804,7 @@ func TestInfraTheRootIsOneFormOfConfiguration(t *testing.T) {
 	// those checks look up by name. This root declares none of the three.
 	for _, rel := range tfFiles(t) {
 		src := tfSource(t, rel)
-		for _, kind := range []struct{ header, what string }{
-			{`module "`, "a `module`"},
-			{"import {", "an `import`"},
-			{"moved {", "a `moved`"},
-		} {
+		for _, kind := range tfSecondForms {
 			for _, block := range tfBlocks(src, kind.header) {
 				t.Errorf("%s declares %s block:\n%s\na module, an import and a moved block each change what this root applies with no block below changing, which is why the tests here read the root's blocks by name: a module creates resources no check here can name, an import adopts one that already exists, and a moved block renames one (A3, D2792)", rel, kind.what, strings.TrimSpace(block))
 			}
@@ -767,8 +884,10 @@ func TestInfraTheSigningKeyIsNonExportable(t *testing.T) {
 // (cloudkms.signerVerifier also verifies; owner and editor reach the ring), a
 // second member on the grant, a second grant anywhere in the root — under
 // another header, another IAM resource type, a `user:` member, or a role named
-// by a variable whose default is a predefined one — and the service's template
-// naming another account.
+// by a variable whose default is a predefined one — the service's template
+// naming another account, a second block naming the signer's account (a job or a
+// service running as it is the signer), an exported account key, and a grant on
+// the account itself.
 func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 	role := tfBlock(t, `resource "google_project_iam_custom_role" "signer"`)
 	tfAttrsAre(t, role, "the signer role", []tfWant{
@@ -789,37 +908,100 @@ func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 		{"service_account", "google_service_account.signer.email"},
 	}, "the identity a Cloud Run service runs as is the identity it IS, so a template naming another account holds the signer role from wherever that account's code runs (A3)")
 
-	// Every block of this root that can grant anything is one of the four grants
-	// the assertion signer needs, and the list is the whole of it. A `resource`
-	// block is every one of them because the root declares no `module`, no
-	// `import` and no `moved` block — TestInfraTheRootIsOneFormOfConfiguration
-	// refuses those, and each of the three is a grant this sweep could not see.
-	// A count of one resource type would miss a second holder written another way
-	// — the signer role granted with google_kms_key_ring_iam_binding or an
-	// `_iam_policy` instead of `_iam_member`, a second custom role, a plain
-	// `user:` added beside the signer's account, a grant whose role is a
-	// variable defaulting to a predefined role — so the discriminator is "this
-	// block grants a role", whatever it is called, and the answer for a grant
-	// nobody has reviewed is this list's absence. Each of the four is read as
-	// the attributes it writes above, because a header is not a role.
-	sanctioned := map[string]string{
-		`resource "google_project_iam_custom_role" "signer"`:                "the signer role itself, and the whole of what signing takes",
-		`resource "google_kms_key_ring_iam_member" "signer_signs"`:          "its one grant, to the signer's own account",
-		`resource "google_storage_bucket_iam_member" "signer_reads"`:        "the service's read of the signed key set, which holds no key",
-		`resource "google_cloud_run_v2_service_iam_member" "signer_public"`: "the signer's public invoker, which reaches no key at all",
-	}
-
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
 			header := tfHeader(block)
 			if !tfGrants(header, tfCompact(block)) {
 				continue
 			}
-			if _, ok := sanctioned[header]; !ok {
-				t.Errorf("%s holds a grant this root is not allowed:\n%s\nthe signer role is the only route to useToSign and it reaches one account, the service's own, so that a reader of the plan sees every identity that can mint an assertion (A3, D2792, O7). The whole list of grants this root may hold is:\n%s", rel, strings.TrimSpace(block), tfList(sanctioned))
+			if _, ok := tfSanctionedGrants[header]; !ok {
+				t.Errorf("%s holds a grant this root is not allowed:\n%s\nthe signer role is the only route to useToSign and it reaches one account, the service's own, so that a reader of the plan sees every identity that can mint an assertion (A3, D2792, O7). The whole list of grants this root may hold is:\n%s", rel, strings.TrimSpace(block), tfList(tfSanctionedGrants))
 			}
 		}
 	}
+
+	// The account the signer runs as is named in exactly three places: the
+	// service's template, which is the whole of what makes the service that
+	// identity, and the two grants that name it as the member. Any other
+	// reference is an identity able to mint that no block above would show — a
+	// second Cloud Run service or job running as the same account IS the signer,
+	// and the account key and account-IAM routes refused below are the two ways
+	// to become it from outside.
+	for _, rel := range tfFiles(t) {
+		src := tfSource(t, rel)
+		for _, kind := range tfBlockHeaders {
+			for _, block := range tfBlocks(src, kind) {
+				header := tfHeader(block)
+				named := strings.Count(tfCompact(block), "google_service_account.signer.")
+				if named == 0 {
+					continue
+				}
+				if want, ok := tfSignerRefs[header]; !ok || want != named {
+					t.Errorf("%s holds a reference to the signer's account this root is not allowed:\n%s\nthe signer role reaches one account, and every block naming it is a block that runs as it, grants it or exports it — so the whole list of places this root may name it is:\n%s", rel, strings.TrimSpace(block), tfListCounts(tfSignerRefs))
+				}
+			}
+		}
+	}
+
+	// The service's one reference is its template's `service_account`, which is
+	// read above: the same count one block further out would allow the reference
+	// to move anywhere else in the service — an env value, a second nested
+	// block — and the service would stop being the account while the count above
+	// stayed at one.
+	if got := strings.Count(tfCompact(template), "google_service_account.signer."); got != 1 {
+		t.Errorf("the signer service's template names the signer's account %d times, want exactly 1, in its service_account attribute: the template's account is what the service IS, and a reference to the account anywhere else in it is a use of the signer role that no check here reads (A3)", got)
+	}
+
+	// Three ways to the account are refused outright rather than counted, because
+	// none of them is a block this root may write however it is spelled, and the
+	// third is the one the sweep above cannot see at all: an account key exports
+	// the account's private half into the state file, a grant on the account
+	// itself is a second identity that mints with the signer role — an
+	// impersonator's token carries it — and an address written as text is an
+	// identity named by no reference, which is what a job or a service running as
+	// the signer would be.
+	for _, rel := range tfFiles(t) {
+		compact := tfCompact(tfSource(t, rel))
+		for _, route := range []struct{ needle, what string }{
+			{"google_service_account_key", "an exported key of the account puts a private half of it in the state file, where whoever reads the state holds the account"},
+			{"google_service_account_iam", "a grant on the account itself is a second identity that mints with the signer role"},
+			{"iam.gserviceaccount.com", "a service account address written as text names an identity the sweep above cannot see, and a job or a service handed it runs as the signer"},
+		} {
+			if strings.Contains(compact, route.needle) {
+				t.Errorf("%s writes %s: the signer's account is the only holder of the signer role and the private half of the signing key never leaves Cloud KMS — %s (A3, D2792, O7, .claude/rules/ee.md)", rel, route.needle, route.what)
+			}
+		}
+	}
+}
+
+// tfSanctionedGrants is every block of this root that may grant a role, and the
+// whole of it. A `resource` block is every one of them because the root declares
+// no `module`, no `import` and no `moved` block —
+// TestInfraTheRootIsOneFormOfConfiguration refuses those, and each of the three
+// is a grant this sweep could not see. A count of one resource type would miss a
+// second holder written another way — the signer role granted with
+// google_kms_key_ring_iam_binding or an `_iam_policy` instead of `_iam_member`,
+// a second custom role, a plain `user:` added beside the signer's account, a
+// grant whose role is a variable defaulting to a predefined role — so the
+// discriminator is "this block grants a role", whatever it is called, and the
+// answer for a grant nobody has reviewed is this list's absence. Each of the
+// four is read as the attributes it writes above, because a header is not a
+// role.
+var tfSanctionedGrants = map[string]string{
+	`resource "google_project_iam_custom_role" "signer"`:                "the signer role itself, and the whole of what signing takes",
+	`resource "google_kms_key_ring_iam_member" "signer_signs"`:          "its one grant, to the signer's own account",
+	`resource "google_storage_bucket_iam_member" "signer_reads"`:        "the service's read of the signed key set, which holds no key",
+	`resource "google_cloud_run_v2_service_iam_member" "signer_public"`: "the signer's public invoker, which reaches no key at all",
+}
+
+// tfSignerRefs is every block of this root that may name the signer's account,
+// and how many times: the service's template makes the service that identity,
+// and the two grants name it as their member. A block that names it and is not
+// on this list is a block that runs as the signer, grants it or exports it.
+var tfSignerRefs = map[string]int{
+	`resource "google_cloud_run_v2_service" "signer"`:            1,
+	`resource "google_kms_key_ring_iam_member" "signer_signs"`:   1,
+	`resource "google_storage_bucket_iam_member" "signer_reads"`: 1,
 }
 
 // TestInfraTheKeysetBucketIsOwnerWrittenAndServiceRead: the signed key set lives
@@ -1039,5 +1221,65 @@ func TestInfraTheServiceSignsWithThisKeyAndServesTheJWKS(t *testing.T) {
 	value, _ := tfAttr(url, "value")
 	if !strings.Contains(tfCompact(value), "google_cloud_run_v2_service.signer.uri") || !strings.Contains(value, "var.jwks_path") {
 		t.Errorf("jwks_url is %s, want the service's own URI with the path the service serves on: a URL written here by hand is one nobody applied (A2, P8)", value)
+	}
+}
+
+// TestInfraTheReadersSeeEverySpellingOfAHeader: HCL does not need a space
+// between a block's keyword and its name — `resource"google_x""y"{` is
+// `resource "google_x" "y" {` written another way, and `terraform validate`
+// accepts both — while every check above reads the root as text rather than
+// through a parser. A block written the cramped way is therefore a block those
+// checks say nothing about unless the finders here see it, and nothing in CI
+// normalises the spacing: this root is outside the terraform job's roots and
+// `terraform fmt` never runs on it.
+//
+// This test is the finders' own, and the failure it is here to show is a sweep
+// that comes back empty-handed: the fixture holds a cramped grant of
+// roles/cloudkms.admin, which TestInfraTheSignerRoleIsTheNarrowestThatSigns
+// refuses once the finder answers the block, a cramped import and a cramped
+// module, which TestInfraTheRootIsOneFormOfConfiguration refuses the same way,
+// and no file in this root is written that way — so the seven tests above cannot
+// show any of it by themselves.
+func TestInfraTheReadersSeeEverySpellingOfAHeader(t *testing.T) {
+	const src = `resource "google_kms_crypto_key" "signing" {
+  purpose = "ASYMMETRIC_SIGN"
+}
+
+resource"google_project_iam_member""admin"{
+  role   = "roles/cloudkms.admin"
+  member = "user:someone@example.com"
+}
+
+import{ to = google_kms_crypto_key.signing, id = "projects/p/locations/l/keyRings/r/cryptoKeys/k" }
+
+module"extra"{ source = "./x" }
+
+moved{ from = google_kms_crypto_key.older, to = google_kms_crypto_key.signing }
+`
+	blocks := tfBlocks(src, `resource "`)
+	var got []string
+	for _, block := range blocks {
+		got = append(got, tfHeader(block))
+	}
+	want := []string{
+		`resource "google_kms_crypto_key" "signing"`,
+		`resource "google_project_iam_member" "admin"`,
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("the reader answers the resources %q, want %q: the fixture's second resource is written with no space after its keyword, and a finder that did not see it would leave the grant it holds in the plan and in no check above", got, want)
+	}
+
+	grant := blocks[1]
+	if !tfGrants(tfHeader(grant), tfCompact(grant)) {
+		t.Errorf("the reader does not read the cramped block as a grant:\n%s\nthe discriminator is what a block writes rather than how it is spaced", strings.TrimSpace(grant))
+	}
+	if _, sanctioned := tfSanctionedGrants[tfHeader(grant)]; sanctioned {
+		t.Errorf("the fixture's cramped grant (%s) is on the list of grants this root may hold, want a grant the sweep refuses: the fixture is what shows that the sweep reads a block written this way at all", tfHeader(grant))
+	}
+
+	for _, kind := range tfSecondForms {
+		if found := tfBlocks(src, kind.header); len(found) != 1 {
+			t.Errorf("%s: the reader finds %d blocks in a source that writes one, want exactly 1 — HCL does not need the space a search for %q used to look for, and a root-form check that missed the block would call a tree with a module, an import or a moved block one form of configuration (A3)", kind.what, len(found), kind.header)
+		}
 	}
 }
