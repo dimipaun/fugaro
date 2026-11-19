@@ -822,7 +822,9 @@ const (
 //
 // The class list is a list rather than a boolean so a class can be added or
 // held back one at a time, and it carries both classes since the flip's second
-// commit filled it. The inert state is the empty list: with it empty no build
+// commit filled it — the state this release ships, with B4.5's fetch (which is
+// what reads from the service) a release behind it. The inert state is the
+// empty list: with it empty no build
 // names a service, every request mounts exactly what it mounted before, and
 // the tree plans and runs what the release before this one did (D147's "with
 // it off nothing changes"). Filled, what it moves is one build account's
@@ -841,7 +843,7 @@ const (
 // only for a repository whose own switch is on (so the build account may
 // invoke the service and the service is deployed), and the request names the
 // service's address in the same tfvars answer.
-var BuildServedSecretClasses = []string{}
+var BuildServedSecretClasses = []string{BuildSecretClassGit, BuildSecretClassBuild}
 
 // BuildServesClass reports whether the credentials service serves the secrets
 // of this class to a repository's builds. A class this release does not know

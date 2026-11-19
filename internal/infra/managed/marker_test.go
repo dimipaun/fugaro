@@ -2277,7 +2277,13 @@ var runAccountGrants = setOf(
 	`google_artifact_registry_repository_iam_member | var.installation.role_ids.tag_mover | repository=var.installation.shared_registry | google_service_account.build.member | for_each= | perms=artifactregistry.tags.delete`,
 	`google_project_iam_member | "roles/logging.logWriter" | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=`,
 	`google_project_iam_member | var.installation.role_ids.build_submitter | project=var.project | google_service_account.build.member | for_each={ log_writer = "roles/logging.logWriter" build_submitter = var.installation.role_ids.build_submitter } | perms=cloudbuild.builds.create,cloudbuild.builds.get`,
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(var.repo.build_secrets) | perms=`,
+	// Since B4.9 (the S4 flip) the list goes whole for a repository the
+	// credentials service serves: the build's credential and its workflow
+	// secrets come from the service, so the request names no secret and this
+	// accessor list is empty. A repository the service does not serve keeps
+	// every accessor — var.installation.credentials_service is null for it,
+	// which is what the gate reads (G9).
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=local.secrets[each.value] | google_service_account.build.member | for_each=toset(local.build_mounts_served ? [] : var.repo.build_secrets) [local.build_mounts_served=var.installation.credentials_service != null && contains(local.build_served_secret_classes, "build")] | perms=`,
 	`google_service_account_iam_member | "roles/iam.serviceAccountUser" | service_account_id=google_service_account.build.name | google_service_account.build.member | for_each= | perms=`,
 	`google_storage_bucket_iam_member | "roles/storage.objectUser" | bucket=var.installation.runs_bucket | google_service_account.build.member | for_each= | perms=`,
 	// Reviewed for PIC4, the project image catalog: the same account's

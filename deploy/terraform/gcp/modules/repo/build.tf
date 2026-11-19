@@ -16,14 +16,16 @@ locals {
   # TestBuildServedClassesMatchTheModule, the way the module's other flip lists
   # are held to theirs: Terraform cannot ask Go.
   #
-  # It is EMPTY until the flip's second commit fills it, and the empty list is
-  # the state the release before this one planned: with it empty both gates
+  # It is FILLED, which is the flip itself, and it carries both classes since
+  # the flip's second commit filled it. The empty list is the inert state, and
+  # it is what the release before this one planned: with it empty both gates
   # below are false whatever Go wrote, so this file plans exactly what it
   # planned before it knew about the service. Filled, what it moves is one
   # accessor list and one check mount, and only for a repository the service
   # serves — var.installation.credentials_service is null for every other one
-  # (G9, D147).
-  build_served_secret_classes = []
+  # (G9, D147) — whose build fetches both credentials at the address Go writes
+  # into its request (B4.5, D2076).
+  build_served_secret_classes = ["git", "build"]
 
   # The build's own mounts leave with the class "build" (D2077): the build
   # account's accessor list, the request's availableSecrets and the build

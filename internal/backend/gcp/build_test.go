@@ -477,7 +477,12 @@ func TestSwitchedBuildRequestHasNoAvailableSecrets(t *testing.T) {
 	saved := config.BuildServedSecretClasses
 	config.BuildServedSecretClasses = nil
 	t.Cleanup(func() { config.BuildServedSecretClasses = saved })
-	bi, err := BuildRequest("proj-1234", spec)
+	// The spec's own ID comes back with the list: an empty list is the state
+	// every build resolved its ID in, which is why the id is what a served
+	// request stops naming rather than what it never had.
+	prev := spec
+	prev.GitSecretID = buildSpec(t).GitSecretID
+	bi, err := BuildRequest("proj-1234", prev)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2640,6 +2640,30 @@ func (rs RepoSpec) DropsBitbucketToken() bool {
 		slices.Contains(config.ProxiedGitSecretNames, config.BitbucketSecret)
 }
 
+// BuildMountsServed reports whether this root's plan takes the BUILD's own
+// mounts away: the build account's accessor list (RepoSpec.BuildSecrets, which
+// Addresses turns into one google_secret_manager_secret_iam_member.build per
+// name, and modules/repo/build.tf's for_each reads beside it) and, with it, the
+// request's availableSecrets and the build step's own secrets
+// (internal/backend/gcp's BuildRequest, D2077).
+//
+// It is buildServes(config.BuildSecretClassBuild) for a caller that has to
+// decide from the finished spec rather than while building it — the guard's own
+// allowance for the flip's accessor deletes (BuildAccessorAllowDelete) — and it
+// is stated from the tfvars' side of the same switch: Installation's
+// credentials_service block is null for every repository the switch holds off
+// (repoCredentialsService), which is what modules/repo/build.tf's
+// local.build_mounts_served reads out of var.installation, so this answer and
+// the module's for_each are one answer about one plan.
+//
+// It is the class "build" alone and not either class: the check job's own mount
+// leaves with the class "git" as well (check.tf's local.check_mount_served), and
+// that mount is a container's secret_key_ref and no IAM member, so no plan
+// carries a delete of it for a guard to weigh.
+func (rs RepoSpec) BuildMountsServed() bool {
+	return rs.Installation.CredentialsService != nil && config.BuildServesClass(config.BuildSecretClassBuild)
+}
+
 // serviceReadsSecret reports whether the credentials service's own account is
 // granted this logical secret's container in this repository's root (D2074,
 // B3.3): the module's service_secret_names is the values of its job_mounts

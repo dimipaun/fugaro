@@ -5716,12 +5716,14 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 			// ordinary path — the one a project that is not managed takes —
 			// may not owe the user a flag or a second command for it (the
 			// proxied token's is infra.ProxiedTokenAccessorAllowDelete, the
-			// fetched class's is infra.VaultAccessorAllowDelete; CLAUDE.md's
-			// HARD RULE, and the switch in init_retire.go's retireManaged is
-			// the managed path's own). Every other change in this plan is
-			// judged exactly as it was.
+			// fetched class's is infra.VaultAccessorAllowDelete, the S4
+			// flip's are infra.BuildAccessorAllowDelete; CLAUDE.md's HARD
+			// RULE, and the switch in init_retire.go's retireManaged is the
+			// managed path's own). Every other change in this plan is judged
+			// exactly as it was.
 			allowed := append(slices.Clone(r.o.allowDelete), infra.ProxiedTokenAccessorAllowDelete(plan, spec)...)
 			allowed = append(allowed, infra.VaultAccessorAllowDelete(plan, spec)...)
+			allowed = append(allowed, infra.BuildAccessorAllowDelete(plan, spec)...)
 			if err := r.guard(ctx, c, plan, allowed); err != nil {
 				return plan, err
 			}
