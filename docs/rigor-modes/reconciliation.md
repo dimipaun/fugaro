@@ -945,6 +945,17 @@ switched repository's workflow secrets off its job — added `vaultSince` to
 `internal/cli/recipes_skew.go` as well, which moved the *Image-skew `Since` constants* row from 55 to
 56. Same row, same reason for naming it.)
 
+(Amended 2026-11-19: the review-against-task plan's S-OUT added
+`internal/runner/issuescope.go`, whose reader refuses an `unmet` or `differs`
+issue below `major` (that plan's R6), which moved the *Sites that compare a
+finding's severity to a value* row from 0 to 1 and the *Files in `internal/runner`
+that mention `Severity` at all* row from 4 to 5. The comparison reads the
+artifact's closed three-word enum, not the in-run format's free-form label, and
+the two paragraphs below say what each row measures now. Both are rows held to
+their own command rather than to another folder's guard, so they are named here
+for the reason the two above are: a reader who finds a figure stale should find
+who moved it.)
+
 (Amended 2026-11-19: the review-against-task plan's S-TASK — the task fields a launched review is
 judged against, `review_spec`, `from_findings` and `own_text` — added `reviewSpecSince` to
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 56 to 57.
@@ -960,8 +971,8 @@ Same row, same reason for naming it.)
 | Blocks the project layer's `defaults:` may set | 5 | `sed -n '/type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -c 'yaml:'` |
 | Fields of `task.Spec.Overrides` | 8 | `sed -n '/type Overrides struct {/,/^}/p' internal/task/task.go \| grep -cE 'yaml:\|json:'` |
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
-| Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
-| Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
+| Sites that compare a finding's severity to a value | 1 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
+| Files in `internal/runner` that mention `Severity` at all | 5 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
 | Image-skew `Since` constants | 57 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
 | Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 151 | `ls internal/cli/docs_*_test.go \| wc -l` |
@@ -980,15 +991,22 @@ command prints `file:count`, which is not the figure the row states.
 
 Three of those rows are worth reading rather than counting.
 
-The **zero** is F1 and F2 in one figure: `internal/runner/prompts.go` and
-`internal/runner/reviewmode.go` each read `f.Severity` only to print it as a
-label, and no comparison against any value exists in the package. A mode
-threshold table has nothing to attach to today.
+The **one** is F1 and F2's row after the review-against-task plan's S-OUT on
+2026-11-19, and it is not a mode threshold table attaching to a label:
+`internal/runner/issuescope.go`'s reader refuses an issue whose scope is `unmet`
+or `differs` below `major` (that plan's R6), and the artifact's `severity` is the
+closed three-word enum this folder's own amendment above describes rather than
+the in-run format's free-form string. Every other read of `f.Severity` in the
+package still prints a label and compares nothing, so an in-run threshold table
+still has nothing to attach to: D2's rule is about the format whose severity is a
+word the reviewer chose, and it is intact.
 
-The **three** files are `verdict.go` (the schema string, the field, the
-fallback), `prompts.go` (the label) and `reviewmode.go` (the label again) — that
-is the entire surface a scoring change touches inside the runner, which is why D3
-is as small as it is.
+The **five** files are `verdict.go` (the schema string, the field, the
+fallback), `prompts.go` (the label), `reviewmode.go` (the label again),
+`reviewartifact.go` (the artifact's severity enum, the field it is required on,
+and the reader that closes it) and `issuescope.go` (that one rule) — that is the
+entire surface a scoring change touches inside the runner, which is why D3 is as
+small as it is.
 
 The four layering rows the 2026-10-20 amendment added are these: **4** layers a
 key may be set in (F37), **3** blocks the project layer's closed `defaults:` may
