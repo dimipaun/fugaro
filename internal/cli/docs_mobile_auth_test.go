@@ -18,7 +18,7 @@ import (
 // action follows from any of them.
 //
 // This pin is P0 of that plan, and the plan says what it holds. Each of the
-// nine tests below is one claim, and every one of them is a sentence a later
+// ten tests below is one claim, and every one of them is a sentence a later
 // edit can quietly falsify:
 //
 //   - TestDocsMobileAuthDocumentsExist -- the five documents are in the tree,
@@ -64,6 +64,11 @@ import (
 //     as a ruling"*, and "the owner has decided" is a sentence a later edit can
 //     add by accident -- in a folder whose other documents write decisions as
 //     `### D<n> — …` with an answer under each.
+//   - TestDocsMobileAuthAmendmentNoteIsWrittenInBothIndexes -- the identity
+//     work amends six decisions written in two folders, and its amendment note
+//     is written in the index of each: this half of the note here, and the
+//     other half in docs/mobile/README.md. That second read is the one
+//     exception to the scope below, and it is named there.
 //
 // **What this guard does not hold, said rather than left to be found.** It
 // checks paths, and symbols only where a document pairs each one with the path
@@ -76,7 +81,12 @@ import (
 // and their numbering instead. It reads **this folder's
 // documents, and the files those documents cite**: it makes no claim about
 // docs/mobile/, docs/central-orchestrator/, docs/coordinator/ or the check
-// register, each of which its own pin holds. A citation into another folder's
+// register, each of which its own pin holds -- with **one exception the
+// amendment pin names on purpose**, the mirror image of the census's two:
+// `TestDocsMobileAuthAmendmentNoteIsWrittenInBothIndexes` reads
+// `docs/mobile/README.md` as well, because the identity work's amendment note
+// is one note written in both indexes, and half a note would leave the folder a
+// reader starts from reading as though nothing had amended it. A citation into another folder's
 // *document* is held to that path resolving and to nothing about what the
 // sentence there says -- with **two exceptions the census below names on
 // purpose**, because both are text another folder's maintainer can edit: one
@@ -970,6 +980,90 @@ func TestDocsMobileAuthAnswersAreRecorded(t *testing.T) {
 	} {
 		if !strings.Contains(want.text, want.sentence) {
 			t.Errorf("%s no longer says %q: the answers opened P0 and P1 and nothing else, and a reader who cannot tell which parts wait will plan work the Phase 6 tasks have to land first", want.path, want.sentence)
+		}
+	}
+}
+
+// mobileAmendmentReadme is the other index the identity work's amendment note is
+// written in. It is the one document outside this folder that this guard reads
+// about what a sentence says, and the exception is named where the guard's
+// scope is stated: the six decisions the identity work amends are written in two
+// folders, and the note is one note in both indexes, so a guard that held only
+// this folder's half would pass while `docs/mobile/README.md` went on reading as
+// though nothing had amended D114, D162 and D171.
+const mobileAmendmentReadme = "docs/mobile/README.md"
+
+// mobileAuthAmendmentNoteReadmes is the note's two halves, and
+// mobileAuthAmendmentNoteDate the day it is dated. The identity work's answers
+// are of 2026-11-18, so the note that records them is written under a date after
+// them: a note carrying no date is one a reader cannot place beside the answers
+// it amends, which is the shape every amendment in these two folders uses.
+var (
+	mobileAuthAmendmentNoteReadmes = []string{mobileAuthReadme, mobileAmendmentReadme}
+	mobileAuthAmendmentNoteDate    = "2026-11-19"
+)
+
+// mobileAuthAmendmentSentences is what each half of the note says, sentence by
+// sentence: the six decisions the identity work touches, and the answers of
+// 2026-11-18 that touch them. D2790 keeps D114 (a paired project is an account)
+// and amends D232 to one secure-store item per signed-in identity; D2786 amends
+// D162 for costly modes only; O6 amends D171, replacing the MAC for a newly
+// paired phone with a per-message device signature; D2799 amends D226 and D229
+// so an admin may name another member's email. The path is the folder the
+// answers live in, so a reader who takes the note's word for it is sent to the
+// document that decides.
+var mobileAuthAmendmentSentences = []string{
+	"D114 stands",
+	"D232 is amended",
+	"D162 is amended for costly modes",
+	"D171 is amended",
+	"D226 and D229 are amended",
+	"D2786",
+	"D2790",
+	"D2799",
+	"O6",
+	"mobile-identity-pairing",
+}
+
+// TestDocsMobileAuthAmendmentNoteIsWrittenInBothIndexes: the identity work
+// (docs/mobile-identity-pairing/) amends six decisions that these two folders
+// write -- D114, D162 and D171 in docs/mobile/, D232, D226 and D229 here -- and
+// its reconciliation records the answers that do it (D2786, D2790, D2799 and
+// O6, of 2026-11-18). The note that says so is owed to the indexes of both
+// folders, because a decision is read where it is written: an index that still
+// reads as though nothing had amended it sends its reader to wording the work
+// has already replaced, and the replacement lives in a folder they may never
+// open. This is the plan's DA, whose red step is this check -- it fails until
+// both READMEs carry the note -- and the note is held as one paragraph rather
+// than as loose fragments, so the date, the six decisions and the four answers
+// stay one statement a reader meets together.
+//
+// Mutation (verified, run and restored): drop the words "for costly modes" from
+// either half of the note and this test fails naming the document and the
+// sentence it no longer makes.
+func TestDocsMobileAuthAmendmentNoteIsWrittenInBothIndexes(t *testing.T) {
+	for _, path := range mobileAuthAmendmentNoteReadmes {
+		note := ""
+		for _, paragraph := range strings.Split(readDoc(t, path), "\n\n") {
+			// The paragraph is flattened before it is searched: these documents
+			// are hard-wrapped, and a sentence split across two lines is still
+			// the sentence the note makes.
+			if flat := normSpace(paragraph); strings.Contains(flat, "D226 and D229 are amended") {
+				note = flat
+				break
+			}
+		}
+		if note == "" {
+			t.Errorf("%s carries no paragraph saying \"D226 and D229 are amended\": the identity work amends six decisions written in these two folders, and the note owed to an index is written in it, not only in the folder that decided", path)
+			continue
+		}
+		if !strings.Contains(note, mobileAuthAmendmentNoteDate) {
+			t.Errorf("%s's amendment note carries no %q: an amendment is a dated record -- every other one in these two folders is written that way -- and an undated note cannot be placed beside the answers of 2026-11-18 it records", path, mobileAuthAmendmentNoteDate)
+		}
+		for _, want := range mobileAuthAmendmentSentences {
+			if !strings.Contains(note, want) {
+				t.Errorf("%s's amendment note does not say %q: the note is the record of the identity work's amendments in the folder whose decision it touches, and a reader who finds it missing has only the older wording to go on", path, want)
+			}
 		}
 	}
 }
