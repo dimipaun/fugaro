@@ -192,6 +192,21 @@ func TestModelsAddDryRunWritesNothing(t *testing.T) {
 			t.Errorf("the dry run's answer does not name %q:\n%s", want, out)
 		}
 	}
+
+	// The dry run is a read, so the fence that refuses this write in a coding
+	// agent's session (D789) does not refuse it — the difference a caller that
+	// asks what a change would do before it asks for the change relies on — and
+	// the write itself is still refused there.
+	t.Setenv("CLAUDECODE", "1")
+	if out, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--dry-run"); err != nil {
+		t.Errorf("the dry run was refused in a coding agent's session, and it is a read: %v\n%s", err, out)
+	}
+	if got := readFileString(t, path); got != before {
+		t.Errorf("the dry run wrote the config in a coding agent's session:\n%s", got)
+	}
+	if _, _, err := execute(t, "models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2"); err == nil || !strings.Contains(err.Error(), "CLAUDECODE") {
+		t.Errorf("the write was not refused in a coding agent's session: %v", err)
+	}
 }
 
 // TestModelsAddDryRunDocument is the document itself: one versioned JSON
