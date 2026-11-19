@@ -1864,8 +1864,13 @@ var runAccountGrants = setOf(
 	// (Bitbucket's token and a workflow's own secrets stay, D145/F7), the
 	// account is the same, and the target is still the secret-level container:
 	// with the opt-in off (credentials_service unset, the default) the set is
-	// unchanged.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_service_held[env] ])] | perms=`,
+	// unchanged. Reviewed again for B3.8: the third clause drops the names Go
+	// answered in var.workflow.vault_secret_names — the workflow secrets whose
+	// values the run fetches from the service instead (the S3 flip, B3.4) — and
+	// it is empty for every repository whose own root was not re-applied with
+	// the switch on, so what it takes from this account is exactly what the row
+	// below gives the service, on the same container.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | google_service_account.job.member | for_each=local.job_secret_names [local.job_secret_names=toset([ for env, logical in var.workflow.secret_env : logical if var.credentials_service == null || !local.is_service_held[env] && !contains(local.vault_secret_names, logical) ])] | perms=`,
 	// Reviewed for D2074 (B3.3): the SAME account the row above is about, the
 	// other way round — the credentials service's own account reads each
 	// container the workflow's job still mounts, so that the value a run asks
@@ -1890,8 +1895,14 @@ var runAccountGrants = setOf(
 	// with G19 fencing the service to each repository's own job account and
 	// workflow at fetch time). The for_each is empty on an installation whose
 	// outputs carry no account, and empty while the opt-in is off, so nothing
-	// is granted where the service is not.
-	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))] | perms=`,
+	// is granted where the service is not. Reviewed again for B3.8: the concat
+	// adds local.vault_secret_names, the workflow secrets whose mounts the job
+	// gave up and whose values the run fetches from the service instead, so the
+	// set is the job's mounts plus exactly the containers this account has to go
+	// on reading — the one flip that does not narrow it (D2074). The variable is
+	// empty unless that repository's own root was re-applied with the switch on
+	// and the class is fetched, so nothing is added where the flip is off.
+	`google_secret_manager_secret_iam_member | "roles/secretmanager.secretAccessor" | secret_id=var.secrets[each.value] | "serviceAccount:${var.credentials_service.account}" | for_each=local.service_secret_names [local.service_secret_names=try(var.credentials_service.account, "") == "" ? toset([]) : toset(concat(values(local.job_mounts), local.vault_secret_names))] | perms=`,
 	// Reviewed for C1.18: the credentials service's own account, on the one
 	// bundle container C1.18 creates, and on nothing else. secretAccessor on
 	// a secret the installation creates is not a write path to the marker:
