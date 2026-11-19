@@ -91,7 +91,8 @@
           "internal/runner/yield.go",
           "internal/runner/yield_test.go",
           "internal/runner/runner.go",
-          "internal/runner/prompts.go"
+          "internal/runner/prompts.go",
+          "internal/runner/followup.go"
         ]
       }
     },
@@ -124,6 +125,8 @@
           "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
           "deploy/terraform/gcp/modules/project/sa.tf",
           "internal/budget/token/object.go",
+          "deploy/terraform/gcp/modules/installation/variables.tf",
+          "docs/releases/v0.27.0.md",
           "internal/infra/msglifecycle_test.go",
           "internal/infra/tf/testdata/golden/installation*.plan.json"
         ]
@@ -159,6 +162,8 @@
         "paths": [
           "scripts/live-checks/check-740-run-messages.sh",
           "scripts/live-checks/check-740-run-messages_test.sh",
+          "scripts/live_checks_test.go",
+          "internal/cli/docs_check740_test.go",
           "docs/gcp-live-checklist.md"
         ]
       }
@@ -210,7 +215,7 @@
     {
       "task": "RM5",
       "needs": "RM0",
-      "reason": "reads the record type and runmsg.ShellQuote; a contract gains nothing"
+      "reason": "reads the record type and internal/shellword; a contract gains nothing"
     },
     {
       "task": "RM6",
@@ -220,12 +225,17 @@
     {
       "task": "RM10",
       "needs": "RM0",
-      "reason": "reads the record type, runmsg.Path and runmsg.ShellQuote; a contract gains nothing"
+      "reason": "reads the record type, runmsg.Path and internal/shellword; a contract gains nothing"
     },
     {
       "task": "RM9",
       "needs": "RM1",
       "reason": "the plugin test checks the command a skill names exists"
+    },
+    {
+      "task": "RM9",
+      "needs": "RM4",
+      "reason": "the skill describes --now and --wrap-up, which only RM4 makes true"
     },
     {
       "task": "RM4",
@@ -240,7 +250,7 @@
     {
       "task": "RM4",
       "needs": "RM5",
-      "reason": "it wires RM5's section into finalize, in runner.go, which RM5 leaves alone"
+      "reason": "it wires RM5's section into finalize, in runner.go and followup.go, which RM5 leaves alone"
     },
     {
       "task": "RM7",
