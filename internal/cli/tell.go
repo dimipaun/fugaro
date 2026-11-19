@@ -181,7 +181,7 @@ func tellRun(ctx context.Context, env *cloudEnv, o *tellOptions, ref, text strin
 	// storage.buckets.getIamPolicy, which is the usual case), the message is
 	// sent and one line says the grant was not checked: this never refuses for
 	// want of access to the policy.
-	if err := tellTokenGrant(ctx, env, slug, id, runRef, errOut); err != nil {
+	if err := tellTokenGrant(ctx, env, runRef, errOut); err != nil {
 		return err
 	}
 	// The sender's name is display only and self-declared (D2940): the bucket's
@@ -259,7 +259,7 @@ func tellFlagsList(flags []string) string {
 // A configuration with no storage endpoint (a test's fake, or a project whose
 // endpoints name none) has no policy to read at all and is passed over in
 // silence, exactly as doctor's own check is.
-func tellTokenGrant(ctx context.Context, env *cloudEnv, slug, id, runRef string, errOut io.Writer) error {
+func tellTokenGrant(ctx context.Context, env *cloudEnv, runRef string, errOut io.Writer) error {
 	lc := env.lc
 	if lc.Endpoints.NoAuth && lc.Endpoints.Storage == "" {
 		return nil
@@ -269,8 +269,12 @@ func tellTokenGrant(ctx context.Context, env *cloudEnv, slug, id, runRef string,
 		return nil
 	}
 	unchecked := func(err error) {
-		fmt.Fprintf(errOut, "note: whether this repository's job accounts may read %s was not checked: the bucket policy of gs://%s could not be read (%s). If the repository's root was never re-applied since the budget token moved under tokens/, the run reads this message as missing\n",
-			runmsg.Prefix(slug, id), bucket, oneLineCLI(err.Error()))
+		// The shape of the path, not this run's: a person reads the run by its
+		// ending (D1705), and the operator who checks the grant needs the
+		// prefix the message was written under, which the store's own builder
+		// spells once (RM0).
+		fmt.Fprintf(errOut, "note: whether this repository's job accounts may read %s's messages was not checked: the bucket policy of gs://%s could not be read (%s). Messages live under %s in that bucket; if the repository's root was never re-applied since the budget token moved under tokens/, the run reads this message as missing\n",
+			task.ShortRun(runRef), bucket, oneLineCLI(err.Error()), runmsg.Prefix("<repo-slug>", "<run-id>"))
 	}
 	svc, err := storage.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.Storage)...)
 	if err != nil {
