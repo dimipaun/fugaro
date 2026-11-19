@@ -867,6 +867,50 @@
       "maxItems": 64,
       "items": { "type": "string", "minLength": 1, "maxLength": 200 },
       "description": "The paths a rebase or a push of this run met a conflict on, in the order it met them (X2, D2709, D2710): the sign the graph the run worked from was wrong, which the daemon reads beside the footprints of the items merged since the attempt began. Bounded at 64 paths (runstore.MaxConflictPaths), each clipped to 200 runes (runstore.MaxDiscoveredText), and emptied of empty paths by runstore.NewConflictPaths. Absent — never an empty list — for a run that met none, which is every record written before this field existed: the field is additive, so an old reader sees the record it always saw and `version` stays 1."
+    },
+    "messages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accepting", "format"],
+      "description": "The run's part in the message channel (docs/run-messages, F13, F24, F25): whether this run reads messages, the format and flags its runner knows, and what became of each message it saw. Written at bootstrap, so a sender can tell a run whose runner predates the feature (no block, refused with the reason) from one that will read the message. It carries no message text — the record is writable by the run's own agent, so it is an audit trail and never the message — and `diagnose` labels the fates 'as the run recorded them' and cross-checks them against the objects under tokens/. Absent — never an empty block — for a run written before this field existed, so an old reader sees the record it always saw and `version` stays 1.",
+      "properties": {
+        "accepting": {
+          "type": "boolean",
+          "description": "Whether this run reads messages at all: true only for a run whose recipe has a coder stage, and false for a review-only, artifact, merge-judge, evaluate or rebase-only run, which has nowhere to deliver one (F24)."
+        },
+        "format": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The highest message format this run's runner reads, which a sender writes into the message it sends (F25)."
+        },
+        "flags": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["now", "wrap_up"] },
+          "description": "The flags this run's runner honours, so a sender refuses one the run does not list rather than sending a flag the runner would treat as ordinary text (F25). Absent means it honours none, which is what a release carrying the command before the runner honours a flag writes."
+        },
+        "messages": {
+          "type": "array",
+          "maxItems": 20,
+          "description": "What became of each message, in number order. At most 20, the number of messages a run reads (runmsg.MaxMessages).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["seq", "state"],
+            "properties": {
+              "seq": { "type": "integer", "minimum": 1, "maximum": 20, "description": "The message's number, the same number its object's name carries under tokens/." },
+              "sent_at": { "type": "string", "format": "date-time", "description": "When the object was written; absent for a number the runner found missing, which has no object to read it from." },
+              "sent_by": { "type": "string", "maxLength": 256, "description": "The sender as the message stated itself: display only and never a decision (D2940)." },
+              "flags": { "type": "array", "maxItems": 2, "uniqueItems": true, "items": { "enum": ["now", "wrap_up"] }, "description": "The flags the message carried." },
+              "state": { "enum": ["delivered", "undelivered", "refused", "missing"], "description": "What became of the message (runmsg.State): delivered into the stage beside it; undelivered because the run ended before a coder stage could carry it (D2944); refused because the object is not a message this build reads (rule 6); missing because the number was never written, or was written and deleted, and the runner saw a later one (F10)." },
+              "stage": { "enum": ["implement", "fix"], "description": "The coder stage the message reached, for a delivered one: rule 1's two delivery points, which are the only stages that take a message — a review, a triage, a merge judge, a rebase conflict stage and every stage added later carry none." },
+              "delivered_at": { "type": "string", "format": "date-time", "description": "When it reached that stage." },
+              "reason": { "type": "string", "description": "Why, for a refused or undelivered message." }
+            }
+          }
+        }
+      }
     }
   },
   "dependentRequired": {

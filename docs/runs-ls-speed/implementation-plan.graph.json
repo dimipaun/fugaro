@@ -1,0 +1,206 @@
+{
+  "schema_version": 3,
+  "plan": "docs/runs-ls-speed/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "RL1",
+      "title": "--state running and launching read the live set",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/runs.go",
+          "internal/cli/runs_live.go",
+          "internal/cli/runs_live_test.go",
+          "internal/runview/runview.go"
+        ]
+      }
+    },
+    {
+      "id": "RL2",
+      "title": "the pull-request index format and store",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runstore/prindex.go",
+          "internal/runstore/prindex_test.go",
+          "schemas/pr-index.schema.json",
+          "schemas/schemas_test.go",
+          "internal/runstore/list.go"
+        ]
+      }
+    },
+    {
+      "id": "RL2W",
+      "title": "the runner and the launcher write their entry",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/prindex.go",
+          "internal/runner/prindex_test.go",
+          "internal/runner/runner.go",
+          "internal/cli/followup.go",
+          "internal/cli/followup_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RL2B",
+      "title": "fugaro update backfills the index",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_prindex.go",
+          "internal/cli/update_prindex_test.go",
+          "internal/cli/update.go",
+          "docs/design/update-in-flight.md"
+        ]
+      }
+    },
+    {
+      "id": "RL3",
+      "title": "runs ls --pr N reads the index",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/runs.go",
+          "internal/cli/runs_pr.go",
+          "internal/cli/runs_pr_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RL4",
+      "title": "the per-run summary object (optional, gated on Check 760)",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runstore/summary.go",
+          "internal/runstore/summary_test.go",
+          "schemas/run-summary.schema.json",
+          "internal/runner/runner.go",
+          "internal/cli/runs.go"
+        ]
+      }
+    },
+    {
+      "id": "RL5",
+      "title": "documents, plugin skills and the release line",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/design/bucket-iam.md",
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/landing/SKILL.md",
+          "docs/releases/v0.27.0.md",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "RL6",
+      "title": "Check 760, the owner's timing check",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-760-runs-ls-speed.sh",
+          "scripts/live-checks/check-760-runs-ls-speed_test.sh",
+          "scripts/live_checks_test.go",
+          "internal/cli/docs_check760_test.go",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "RL2W",
+      "needs": "RL2",
+      "reason": "calls PutPRIndex; RL2 is so small a contract would be nearly all of it"
+    },
+    {
+      "task": "RL2B",
+      "needs": "RL2",
+      "reason": "calls PutPRIndex; same reason"
+    },
+    {
+      "task": "RL3",
+      "needs": "RL2",
+      "reason": "calls ListPRIndex; same reason"
+    },
+    {
+      "task": "RL3",
+      "needs": "RL1",
+      "reason": "both edit loadRows in internal/cli/runs.go"
+    },
+    {
+      "task": "RL4",
+      "needs": "RL3",
+      "reason": "the same loader file, and its gate reads the result of RL1 to RL3"
+    },
+    {
+      "task": "RL5",
+      "needs": "RL1",
+      "reason": "the documents describe the live set as built"
+    },
+    {
+      "task": "RL5",
+      "needs": "RL3",
+      "reason": "the documents describe the index read as built"
+    },
+    {
+      "task": "RL5",
+      "needs": "RL2B",
+      "reason": "the release line names the backfill"
+    },
+    {
+      "task": "RL6",
+      "needs": "RL1",
+      "reason": "the check times the live query"
+    },
+    {
+      "task": "RL6",
+      "needs": "RL3",
+      "reason": "the check times the index read"
+    },
+    {
+      "task": "RL6",
+      "needs": "RL2B",
+      "reason": "the real project's index must be backfilled first"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}
