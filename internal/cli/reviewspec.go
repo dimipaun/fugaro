@@ -27,8 +27,8 @@ const (
 )
 
 // launchSpecAsk is what a launched review asks the launcher's resolver beyond
-// the pull requests themselves: --code-only, the one flag that answers before
-// the bucket is read at all (R1, RA5b adds --spec beside it).
+// the pull requests themselves: --code-only, the one answer that comes before
+// the bucket is read at all (R1, R11).
 type launchSpecAsk struct {
 	PRs      []int
 	CodeOnly bool
@@ -89,10 +89,11 @@ func resolveLaunchSpec(ctx context.Context, env *cloudEnv, slug string, ask laun
 	return specs[0], nil
 }
 
-// specReadBy is what two pulls of one pick run have to share to be redundant
-// attempts of one task: the source, the reason a none carries, and the three
-// texts a reviewer reads. Run is blanked rather than compared, since it names
-// the root run of one of them and each attempt has its own (R9).
+// specReadBy is what two pull requests of one pick run have to share to be
+// redundant attempts of one task: the source, the reason a none carries, and
+// the three texts a reviewer reads. Run is blanked rather than compared, since
+// each attempt has a root run of its own and the id a spec carries is one of
+// them (R9).
 func specReadBy(rs *task.ReviewSpec) task.ReviewSpec {
 	read := *rs
 	read.Run = ""
@@ -135,7 +136,7 @@ func launchSpecForPR(ctx context.Context, env *cloudEnv, slug string, pr int, wa
 
 	// The root, read newest first: the first row that names a run and holds a
 	// task the pull request was written for is the answer, and two rows that
-	// name different branches are the same disagreement a follow-up refuses.
+	// name different branches are no single pull request at all.
 	//
 	// A row that names the review run of this very pull request is left out:
 	// such a run's branch is its own lock key, never a branch it pushed
@@ -143,6 +144,14 @@ func launchSpecForPR(ctx context.Context, env *cloudEnv, slug string, pr int, wa
 	// reviews this pull request rather than having written it. It is read
 	// from the task and not from the row, because a row carries no recipe
 	// mode: the name of a review recipe is a repository's to choose.
+	//
+	// Neither a disagreement nor a record that does not read back as this
+	// pull request's own refuses the launch: they are the bucket saying it
+	// cannot name one root run, which is what a none with `no run found`
+	// answers, and one line on stderr says which rows or which record it was.
+	// resolvePR refuses both, and rightly — a follow-up that wrote to the
+	// wrong branch would spend a run on the wrong pull request — while a
+	// review that judges the code alone costs nothing (R1, D2933).
 	var (
 		branch string
 		rootID string
@@ -170,18 +179,23 @@ func launchSpecForPR(ctx context.Context, env *cloudEnv, slug string, pr int, wa
 		case rootID == "":
 			branch, rootID, root = r.Branch, id, spec
 		case branch != r.Branch:
-			return nil, userErr("the runs on PR #%d disagree on its branch (%s, %s); the pull request is not one Fugaro opened, so review it with --code-only", pr, oneLine(branch), oneLine(r.Branch))
+			fmt.Fprintf(warn, "warning: the runs on PR #%d name different branches (%s, %s), so the review judges the pull request's code alone\n", pr, oneLine(branch), oneLine(r.Branch))
+			return launchSpecNone(launchSpecNoRun), nil
 		}
 	}
 	if rootID == "" {
 		return launchSpecNone(launchSpecNoRun), nil
 	}
-	// The branch's own root is checked the way a follow-up checks it: a pull
-	// request whose rows name a run whose record is on another branch is not
-	// the pull request that run opened, and a review is not launched against a
-	// task the bucket cannot be asked about (checkRoot's refusal).
+	// The branch's own root is checked with checkRoot's comparison, the one a
+	// follow-up launch makes: a pull request whose rows name a run whose record
+	// is on another branch is not the pull request that run opened, so no task
+	// here is the one it was written for.
 	if err := checkRoot(ctx, env, slug, rootID, branch, pr); err != nil {
-		return nil, err
+		if ExitCode(err) == ExitRemoteError {
+			return nil, err
+		}
+		fmt.Fprintf(warn, "warning: %s\n", oneLine(err.Error()))
+		return launchSpecNone(launchSpecNoRun), nil
 	}
 	// A recipe whose first step is the runner's own (digest, commit_reports)
 	// has a launcher label where a brief would be ("periodic run review"), so

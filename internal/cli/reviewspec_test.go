@@ -136,7 +136,8 @@ func TestLaunchSpecFromBucketRows(t *testing.T) {
 // opened the pull request's choice, so a pull request from a branch named
 // after another run must not make the reviewer judge against that run's task.
 // The root comes from the rows alone, and the fake forge below answers with a
-// branch naming another run — the answer the resolver must never act on.
+// branch naming a run that really exists and really wrote something else: the
+// answer the resolver must never act on.
 //
 // Mutation (resolve the root from the forge's head ref instead of the rows'
 // branch, as the pre-R1 reading did): the spec names the other run's id and
@@ -145,9 +146,11 @@ func TestLaunchSpecIgnoresSpoofedHeadBranch(t *testing.T) {
 	f := newCloudFixture(t)
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+reviewSpecSince)
 	seedLaunchRoot(t, f, rootID, "Rename the gadget", 7, time.Now().Add(-72*time.Hour))
+	// The run whose name the pull request's opener borrowed: a real run, of
+	// this repository, that opened another pull request and was asked for
+	// something else. Nothing but the head ref name connects it to PR 7.
 	spoofed := wallRunIDAt(2, "080000", "dead")
-	// The pull request's own head, as the forge reports it: the opener's
-	// choice, and the name of a run that has nothing to do with this one.
+	seedLaunchRoot(t, f, spoofed, "Clean the widget", 9, time.Now().Add(-48*time.Hour))
 	followUpTitleStub(t, fake.PRState{
 		PR:   gitprov.PR{Number: 7, URL: "https://forge.example/acme/app/pull/7"},
 		Spec: gitprov.PRSpec{Branch: "fugaro/" + spoofed, Base: "main", Title: "Rename the gadget"},
@@ -157,11 +160,17 @@ func TestLaunchSpecIgnoresSpoofedHeadBranch(t *testing.T) {
 	if rs.Source != task.ReviewSpecRun || rs.Run != rootID {
 		t.Fatalf("review spec = %+v, want the root the rows recorded (%s) and never %s", rs, rootID, spoofed)
 	}
+	if rs.Text != "Rename the gadget" {
+		t.Fatalf("review spec text = %q, want the task PR 7 was written for", rs.Text)
+	}
 }
 
 // TestLaunchSpecOrphanIsNone: a pull request no run of this repository
 // produced — a person's own, or one whose runs fell out of the lookback — is
-// reviewed code-only, with the reason (R1, D2933's shape for an orphan).
+// reviewed code-only, with the reason (R1, D2933's shape for an orphan). So is
+// a pull request whose rows name no one branch, or name a run whose own record
+// places it elsewhere: the bucket cannot name one root run, and a review is
+// never refused over that — one line says which rows or which record it was.
 //
 // Mutation (treat a row whose branch is not a Fugaro branch as a root): the
 // second case resolves a spec instead of none, and this test fails.
@@ -182,6 +191,42 @@ func TestLaunchSpecOrphanIsNone(t *testing.T) {
 		rec.Branch = "feature/gadget"
 		writeRecord(t, f, "20261116-100000-bbbb", rec)
 		wantLaunchSpecNone(t, launchSpecOf(t, f, 7), launchSpecNoRun)
+	})
+	t.Run("rows that name different branches", func(t *testing.T) {
+		f := newCloudFixture(t)
+		// Two runs with records of their own, each naming PR 7 and a branch
+		// of its own: the state a forged row or a stale record leaves behind.
+		seedLaunchRoot(t, f, wallRunIDAt(3, "090000", "aaaa"), "Rename the gadget", 7, time.Now().Add(-72*time.Hour))
+		seedLaunchRoot(t, f, wallRunIDAt(2, "100000", "bbbb"), "Rename the gadget", 7, time.Now().Add(-48*time.Hour))
+		rs, warn, err := resolveSpecOn(t, f, 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantLaunchSpecNone(t, rs, launchSpecNoRun)
+		if !strings.Contains(warn, "different branches") {
+			t.Fatalf("stderr = %q, want one line saying the rows disagree on the branch", warn)
+		}
+	})
+	t.Run("a run whose own record is on another branch", func(t *testing.T) {
+		f := newCloudFixture(t)
+		// root opened PR 9 on a branch naming another run; a run that never
+		// launched continues PR 7 on the branch that names root, so PR 7's
+		// rows point at a run whose record says it is not the run that opened
+		// this pull request (checkRoot's own comparison).
+		root := wallRunIDAt(3, "090000", "aaaa")
+		seedLaunchRoot(t, f, root, "Rename the gadget", 9, time.Now().Add(-90*time.Hour))
+		rec := prRecord(root, "", 9, 1)
+		rec.Branch, rec.StartedAt = "fugaro/20261115-090000-cccc", time.Now().Add(-90*time.Hour)
+		writeRecord(t, f, root, rec)
+		seedSpec(t, f, followUpSpec("20261118-100000-bbbb", root, root, 7), false)
+		rs, warn, err := resolveSpecOn(t, f, 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantLaunchSpecNone(t, rs, launchSpecNoRun)
+		if !strings.Contains(warn, "records branch") {
+			t.Fatalf("stderr = %q, want one line naming the branch the run's record holds", warn)
+		}
 	})
 }
 
@@ -285,6 +330,15 @@ func TestLaunchSpecPickSharedAndDiffering(t *testing.T) {
 		other := wallRunIDAt(3, "091000", "bbbb")
 		seedLaunchRoot(t, f, other, "Fix the flaky test", 8, time.Now().Add(-72*time.Hour))
 		wantLaunchSpecNone(t, launchSpecOf(t, f, 7, 8), launchSpecPick)
+		// The same two pull requests through the launch that reviews several
+		// at once: what the job reads is one task carrying the none, so the
+		// rule holds at the launch and not only in the resolver.
+		writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+reviewSpecSince)
+		if _, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "pick", "--pr", "7", "--pr", "8", "--run-id", "20261119-100000-abcd"); err != nil {
+			t.Fatalf("launching a pick review of PRs 7 and 8: %v", err)
+		}
+		spec := readSpec(t, f, "20261119-100000-abcd").ReviewSpec
+		wantLaunchSpecNone(t, spec, launchSpecPick)
 	})
 }
 
