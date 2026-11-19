@@ -716,24 +716,26 @@ span.live-meter-word {
 }
 
 /* The hour line is drawn where `screens.css` draws the burn line's own `ol`,
- * because the redesign's tokens are this file's: the height, the tick width, the
- * gap's mark **and the box** are the same facts, in the palette the rest of the
- * panel is painted on. The hour line's window is the wider of the two and so the
- * one that reaches a cap first (`LIVE_HOUR_MAX_SAMPLES`), which is why the fixed
- * box and the clip are stated here rather than left to the burn line's own rule:
- * a tick a person cannot see costs nothing, and a tick that widens the panel
- * costs a figure (D2901). */
+ * because the redesign's tokens are this file's: the height, the box's width, the
+ * tick's cap and floor, the gap's mark **and the box** are the same facts, in the
+ * palette the rest of the panel is painted on. The hour line's window is the
+ * wider of the two and so the one that reaches a cap first
+ * (`LIVE_HOUR_MAX_SAMPLES`), which is why the fixed box and the clip are stated
+ * here rather than left to the burn line's own rule: a tick a person cannot see
+ * costs nothing, and a tick that widens the panel costs a figure (D2901). */
 ol.live-hour {
   display: flex;
   align-items: flex-end;
   justify-content: flex-end;
   gap: 1px;
+  width: calc(8 * var(--row-height));
   height: var(--row-height);
   overflow: hidden;
 }
 
 li.live-hour-bar {
   flex: 1 1 0;
+  min-width: 1px;
   max-width: 12px;
   height: 100%;
   overflow: hidden;

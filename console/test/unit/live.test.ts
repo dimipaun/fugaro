@@ -1266,28 +1266,36 @@ describe('the Live stylesheets', () => {
   })
 
   it('is one fixed-size box per sparkline, so a window of samples cannot widen the pane', () => {
-    // The line is a single element with a fixed height that clips and packs to
+    // The line is a single element with a fixed size that clips and packs to
     // its end, and its ticks are capped: the newest samples are the ones kept, and
     // a window of a thousand is the same box as a window of three. Every
-    // declaration is asserted by name, because each is one of the four ways the
-    // row grew before -- an untamed `height`, an `overflow` that spilled into the
-    // panel, a tick that followed its text's width, and a box that packed from
-    // the start and so hid the newest sample when it clipped.
+    // declaration is asserted by name, because each is one of the ways the row
+    // grew or vanished before -- an untamed `height`, an `overflow` that spilled
+    // into the panel, a tick that followed its text's width, a box that packed
+    // from the start and so hid the newest sample when it clipped, and, once the
+    // text was gone, a box with **no width of its own**: a flex item sized to its
+    // content, whose content was empty ticks of zero width, resolved to its gaps
+    // alone -- every tick 0 px and the box still 1 px wider per sample. The width
+    // is a constant and the tick has a floor, which is what those two are.
     const burn = liveRule('screens.css', 'ol.live-burn')
     expect(burn.get('display')).toBe('flex')
+    expect(burn.get('width')).toBe('calc(8 * var(--row-height))')
     expect(burn.get('height')).toBe('var(--row-height)')
     expect(burn.get('overflow')).toBe('hidden')
     expect(burn.get('justify-content')).toBe('flex-end')
     const burnBar = liveRule('screens.css', 'li.live-burn-bar')
     expect(burnBar.get('height')).toBe('100%')
+    expect(burnBar.get('min-width')).toBe('1px')
     expect(burnBar.get('max-width')).toBe('12px')
     expect(burnBar.get('overflow')).toBe('hidden')
     const hour = liveRule('flight-deck.css', 'ol.live-hour')
+    expect(hour.get('width')).toBe('calc(8 * var(--row-height))')
     expect(hour.get('height')).toBe('var(--row-height)')
     expect(hour.get('overflow')).toBe('hidden')
     expect(hour.get('justify-content')).toBe('flex-end')
     const hourBar = liveRule('flight-deck.css', 'li.live-hour-bar')
     expect(hourBar.get('height')).toBe('100%')
+    expect(hourBar.get('min-width')).toBe('1px')
     expect(hourBar.get('max-width')).toBe('12px')
   })
 
