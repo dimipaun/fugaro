@@ -204,6 +204,30 @@ var secretReaderExceptions = []struct {
 			"deploy/terraform/gcp/modules/installation/orchestrator.tf google_secret_manager_secret_iam_member.orchestrator_pairing_key",
 		},
 	},
+	// The voice hop (mobile plan tasks P5.3.3 and P5.3.5, the voice design's
+	// section 4.4 point 4 with Q2 answered 2026-10-19). It is a row of this
+	// table for the reason E22 is -- the guard keys on the import, so the two Go
+	// files are hits like any grant, and the client's constructor is one of them
+	// although no method of it reads a payload -- and it is the one reader here
+	// behind an endpoint ANYONE on the internet may call (voice.tf's allUsers
+	// binding), so what it reads is bounded by its own code as much as by the
+	// grant: the JSON object of register names to provider keys, five minutes of
+	// cache at a time (internal/voicesvc's providerKeyTTL), and no byte of a
+	// caller's body. The grant is the SECRET row and never the project row
+	// (internal/infra/tf's cover refuses a project-wide accessor for every
+	// principal but the credentials service's), on the one container
+	// `fugaro-voice-provider-keys` whose ID the module writes as a literal and
+	// this tree's Go carries as a constant; `update` creates it empty and the
+	// person who holds the provider keys adds the version, so no provider key
+	// reaches Terraform or its state.
+	{
+		id: "E31",
+		keys: []string{
+			"internal/voicesvc/provider.go",
+			"internal/cli/voice_serve.go",
+			"deploy/terraform/gcp/modules/installation/secrets.tf google_secret_manager_secret_iam_member.voice_provider_keys",
+		},
+	},
 }
 
 // A key under this prefix names a rule the scan enforces rather than a hit it

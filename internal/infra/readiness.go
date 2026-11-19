@@ -170,6 +170,75 @@ func dropModelMounts(ws *WorkflowSpec, served string) {
 	}
 }
 
+// dropVaultMounts removes from a job's mounts the variables that carry the
+// workflow's OWN secrets when the credentials service fetches them for it
+// (B3.8, S3; D2072's shape, G17) — the repository is one the switch serves
+// (the caller's own condition, CredentialsServiceServes) and
+// config.VaultFetchedSecretClasses names the class secrets of this kind belong
+// to (config.VaultSecretClassWorkflow, which the list has carried since the
+// flip's second commit; with the list empty this call is a no-op).
+//
+// The names go into ws.VaultSecretNames, which is the half the tfvars carry to
+// the module: it drops the job's accessor on each of them and keeps the
+// credentials service's own grant, which is what makes the fetch possible at
+// all. Read beside dropModelMounts, this is the same two-halves rule: the mount
+// this drops and the accessor the module takes away are one answer, read from
+// one list.
+//
+// It is deliberately not dropMount: the CONTAINER has to stay. The service
+// reads it, D2074's grant is on it, and B3.1's record names it as the container
+// a run's fetch is served from — dropping it from the spec would plan its
+// destruction (prevent_destroy refuses that, failing the whole plan), leave the
+// record naming a container that is gone, and make Retirements report a live
+// container as retired.
+//
+// Which of the workflow's secrets are on this path is not "every name it
+// declares": a repository-level name D2313 leaves storeless for this repository
+// (config.RepoSecretsOff, ignoredRepoSecret) is not mounted either — Readiness
+// drops that mount below — and B3.1's record holds no row for it, so the
+// service has no value to answer with and a job that gave up the mount would be
+// a run with nothing to read. Those names are skipped here, and the test is
+// projectWide: the same eligibility ignoredRepoSecret reads off
+// RepoSpec.ProjectSecretCandidates (ProjectSecretCandidate, which is what the
+// record's own rows are built from), and not a narrower reading of the local
+// config's project_secrets block — a name admitted through workflow_secrets, a
+// swept reserved name, an account's or a provider's own key is one the record
+// does hold a row for, and the flip is about every name the service can serve.
+// Every other name is fetched — with the ruling's door off, that is every one
+// of them.
+//
+// An empty class list returns before the loop rather than leaving it empty: the
+// flip's inert state must leave the job exactly as it found it, the redaction
+// list included, whatever the job happens to mount (D147's shape for a
+// repository the switch holds off).
+func dropVaultMounts(ws *WorkflowSpec, w config.Workflow, projectWide func(string) bool) {
+	// A repository with no service, or one whose switch is off, never reaches
+	// this call: the caller asks CredentialsServiceServes, which is the same
+	// answer the runner reads off its own environment — no address, no fetch.
+	if !config.VaultFetchesClass(config.VaultSecretClassWorkflow) {
+		return
+	}
+	for _, s := range w.Secrets {
+		if config.RepoSecretsOff && config.RepoLevelSecret(s.Name) && !projectWide(s.Name) {
+			continue
+		}
+		if _, mounted := ws.SecretEnv[s.Env]; !mounted {
+			// A mount an earlier drop already took (the model credentials'
+			// class is keyed by variable, so a name declared under `secrets:`
+			// cannot be one of those) is not one to grant the service on: the
+			// module's set is one grant per container the job mounts (D2074).
+			continue
+		}
+		delete(ws.SecretEnv, s.Env)
+		ws.VaultSecretNames = append(ws.VaultSecretNames, s.Name)
+	}
+	slices.Sort(ws.VaultSecretNames)
+	ws.VaultSecretNames = slices.Compact(ws.VaultSecretNames)
+	if ws.Env != nil {
+		ws.Env[runner.SecretEnvsVar] = redactionEnvs(ws.SecretEnv)
+	}
+}
+
 // Readiness decides, from what exists, what the plan may deploy. It
 // returns a deep copy of spec with the gates applied (spec itself is not
 // changed, and shares no map or slice with the result) and what is still
@@ -798,6 +867,7 @@ func cloneRepoSpec(spec RepoSpec) RepoSpec {
 		ws.Labels = maps.Clone(ws.Labels)
 		ws.SecretIDs = maps.Clone(ws.SecretIDs)
 		ws.BuildSecrets = slices.Clone(ws.BuildSecrets)
+		ws.VaultSecretNames = slices.Clone(ws.VaultSecretNames)
 		out.Workflows[name] = ws
 	}
 	if spec.Check != nil {
