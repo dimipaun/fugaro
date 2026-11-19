@@ -533,7 +533,7 @@ func TestIssueClientTellsAGoneIssueFromAnOutage(t *testing.T) {
 		want   error
 		other  error
 	}{
-		{name: "the repository holds no such issue", status: http.StatusNotFound, want: ErrIssueGone, other: ErrIssue},
+		{name: "the repository holds no such issue", status: IssueGoneStatus, want: ErrIssueGone, other: ErrIssue},
 		{name: "the service is unavailable", status: http.StatusServiceUnavailable, want: ErrIssue, other: ErrIssueGone},
 		{name: "the service refused the call", status: http.StatusForbidden, want: ErrIssue, other: ErrIssueGone},
 		{name: "the service failed", status: http.StatusInternalServerError, want: ErrIssue, other: ErrIssueGone},

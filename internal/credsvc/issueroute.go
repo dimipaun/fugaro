@@ -18,7 +18,9 @@ package credsvc
 //     which is what the daemon's sync ingests from (B4, D2720).
 //   - `get` reads one issue back by number, an open or a closed one, which is
 //     what a run's brief is built from and what tells a closed issue's item
-//     that its issue is gone (B4, B9, D2720).
+//     that its issue is gone (B4, B9, D2720). A number the repository does not
+//     hold at all is answered as 404 and not as an outage (ErrIssueGone): it is
+//     the one failure of this route that asking again cannot clear.
 //   - `open` creates one issue from a title and a body, which is what the
 //     mirror writes when an item becomes an issue (D2719), and whose answer's
 //     number the item's external id is written from (D2728).
@@ -127,6 +129,13 @@ var (
 	// ErrIssueGitHub is GitHub refusing a read, a creation or a mint, or the
 	// call to any of them failing.
 	ErrIssueGitHub = errors.New("credsvc: GitHub did not answer the issue call")
+	// ErrIssueGone is GitHub answering a single read with "no such issue": the
+	// number names no issue the repository holds, because the ticket was deleted
+	// or moved. It is apart from ErrIssueGitHub because it is the one failure of
+	// this route that asking again cannot clear, and the caller acts on it
+	// rather than retrying (B9, D2720): it is answered as 404, which is what the
+	// daemon's issue client reads a gone ticket by (creds.IssueGoneStatus).
+	ErrIssueGone = errors.New("credsvc: the repository holds no such issue")
 	// ErrIssueUnaudited is an act GitHub performed and C1.13's auditor could not
 	// record. The read acts change nothing and the one write is not idempotent
 	// — a second creation is a second issue — so a caller told its creation was
@@ -436,6 +445,15 @@ func (s *Server) issueRoute(ctx context.Context, w http.ResponseWriter, r *http.
 	})
 	ans, err := s.issuePerform(ctx, provider, req)
 	if err != nil {
+		// The read of an issue the repository does not hold is the one refusal
+		// of this route that is not an outage, and it is answered as the host's
+		// own 404 so the daemon can tell the two apart (B9, D2720): the status
+		// is the evidence its issue client reads (creds.IssueGoneStatus), and
+		// the error type beside it is for the operator's line.
+		if errors.Is(err, ErrIssueGone) {
+			s.refuseIssue(ctx, w, caller, slug, credential, StatusIssueGone, ErrorIssueGone, err.Error())
+			return
+		}
 		s.issueUpstreamRefusal(ctx, w, caller, slug, purpose, credential, "the issue call was not performed", err)
 		return
 	}
@@ -467,6 +485,11 @@ func (s *Server) issueUpstreamRefusal(ctx context.Context, w http.ResponseWriter
 // An issue GitHub answers with no number is refused by the adapter itself
 // (github.OpenIssue): the external id the sync writes is built from it, and an
 // id of "#0" is one every later read would miss (D2728).
+//
+// The read's own 404 is apart from every other failure here and is answered as
+// ErrIssueGone (issueGone): it is the one refusal of this route asking again
+// cannot clear, and the daemon acts on it rather than retrying the launch
+// (B9, D2720).
 func (s *Server) issuePerform(ctx context.Context, p *github.Provider, req creds.IssueRequest) (creds.IssueAnswer, error) {
 	switch req.Action {
 	case creds.IssueActionList:
@@ -482,6 +505,9 @@ func (s *Server) issuePerform(ctx context.Context, p *github.Provider, req creds
 	case creds.IssueActionGet:
 		issue, err := p.ReadIssue(ctx, req.Number)
 		if err != nil {
+			if issueGone(err) {
+				return creds.IssueAnswer{}, fmt.Errorf("%w: the read named issue #%d", ErrIssueGone, req.Number)
+			}
 			return creds.IssueAnswer{}, fmt.Errorf("%w: the issue could not be read: %w", ErrIssueGitHub, err)
 		}
 		return creds.IssueAnswer{Issues: []creds.Issue{issueRead(issue)}}, nil
@@ -497,6 +523,27 @@ func (s *Server) issuePerform(ctx context.Context, p *github.Provider, req creds
 		// empty answer, which a caller reads as an act that was performed.
 		return creds.IssueAnswer{}, fmt.Errorf("%w: the call names no act this route performs", ErrIssueGitHub)
 	}
+}
+
+// issueGone reports whether one single read failed because GitHub holds no
+// issue with the number it named. The host's own 404 is the whole of the
+// evidence, and nothing else is one: a 5xx, a rate limit, an authentication
+// failure and a transport error are all outages the caller retries, and a
+// number the adapter refuses without asking GitHub (one that names a pull
+// request, or an answer that is for another issue) is an ErrIssueGitHub too —
+// this route has no word for those, and inventing one here would tell the
+// daemon to block an item over a read the host never refused.
+//
+// The status reaches this service as httpjson's own typed error, which carries
+// the response's status code and none of its text: the failing request carried
+// the App's JWT and an installation token, so GitHub's bytes stay where they
+// are (issueUpstreamRefusal).
+func issueGone(err error) bool {
+	var refusal *httpjson.StatusError
+	if errors.As(err, &refusal) {
+		return refusal.Status == http.StatusNotFound
+	}
+	return false
 }
 
 // issueRead is one issue as the adapter read it, in the wire's own shape. The

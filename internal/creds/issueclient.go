@@ -245,7 +245,7 @@ func (s *ServiceIssues) call(ctx context.Context, req IssueRequest) (IssueAnswer
 		// telling two things at once — and the `get` act is the one it is answered
 		// for: the listing and the creation name no one issue. Every other status,
 		// and every answer to the other two acts, stays the route's own refusal.
-		if req.Action == IssueActionGet && resp.StatusCode == http.StatusNotFound {
+		if req.Action == IssueActionGet && resp.StatusCode == IssueGoneStatus {
 			return IssueAnswer{}, fmt.Errorf("%w: the service answered %d%s", ErrIssueGone, resp.StatusCode, refusalCode(data))
 		}
 		return IssueAnswer{}, fmt.Errorf("%w: the service answered %d%s", ErrIssue, resp.StatusCode, refusalCode(data))

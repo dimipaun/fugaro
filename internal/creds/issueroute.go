@@ -29,11 +29,30 @@ package creds
 // (D2727). A close act here would be a second way to close one, and the one
 // the design chose leaves the record in the pull request.
 
-import "errors"
+import (
+	"errors"
+	"net/http"
+)
 
 // IssuePath is the path one issue call is asked for on, spelled as the service
 // spells it (credsvc.IssuePath).
 const IssuePath = "/v1/github/issues"
+
+// IssueGoneStatus is the status the service answers a `get` for an issue its
+// repository does not hold (404): the ticket a read named is gone — deleted, or
+// moved to another repository. It is the whole of the evidence this client
+// reads it by, and it is spelled here rather than only in the service because
+// the CLIENT is what switches on it (issueclient.go's call); credsvc imports
+// creds and not the other way round, so the service's own spelling
+// (credsvc.StatusIssueGone) is held to this one by
+// TestIssueRouteGoneMatchesClient in the service's package, which can read this
+// one and which this one cannot read back.
+//
+// It is apart from the 503 every other refusal is answered with, and that is
+// the whole of why it exists: a refusal the service could answer again is an
+// outage to retry, and a ticket that is no longer there is a fact about the
+// item the read was made for (B9, D2720).
+const IssueGoneStatus = http.StatusNotFound
 
 // The three acts the route performs, spelled as its own action field carries
 // them. `list` reads the repository's open issues, which is what the daemon's
