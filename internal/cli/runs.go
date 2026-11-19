@@ -500,6 +500,24 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 	return slugs, nil
 }
 
+// windowRefs is every run of the window f names, per repository: one listing
+// per slug, which is the listing every other path narrows -- the live set by
+// the executions that are still running, --pr by the pull request's index.
+// What it answers is what a listing read before either of those paths existed.
+func windowRefs(ctx context.Context, env *cloudEnv, f lsFilter) ([]lsRef, error) {
+	var refs []lsRef
+	for _, slug := range f.slugs {
+		ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, f.since)
+		if err != nil {
+			return nil, remote(err)
+		}
+		for _, id := range ids {
+			refs = append(refs, lsRef{slug, id})
+		}
+	}
+	return refs, nil
+}
+
 // loadRows reads the runs f selects, joins each with its execution, and
 // returns the rows newest first. It reads the whole window whatever the
 // listing goes on to print: the totals cover every row it read, so a page is
@@ -508,8 +526,14 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 // error row with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
 //
-// It reads every run's objects first -- but the two f.pr cannot need, for a
-// run whose own task names another pull request (taskOnOtherPR) -- keeps the
+// Which runs it reads is the filter's: every run of the window, the live set
+// for the two live states, one run for a run reference, and for f.pr the runs
+// the pull request's index names, the runs of the last day and the runs that
+// are going (prRefs) -- falling back to the window when the index has nothing
+// to say about the pull request.
+//
+// Each run is read objects first -- but the two f.pr cannot need, for a
+// run whose own task names another pull request (taskOnOtherPR) -- and keeps the
 // runs f.pr selects, and the review run going on that pull request, which the
 // fold needs and the listing does not print, and only then asks the backend
 // about executions, so a PR's listing costs no backend call for the runs off
@@ -521,6 +545,12 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	warn := f.warn
 	if warn == nil {
 		warn = io.Discard
+	}
+	var mu sync.Mutex // guards warn
+	warnf := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
 	}
 	var refs []lsRef
 	// live is set when --state named one of the two live states: the refs are
@@ -539,16 +569,29 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 			return nil, err
 		}
 		live, refs = &set, set.refs
-	default:
-		for _, slug := range f.slugs {
-			ids, err := runstore.ListRunIDs(ctx, env.bucket.Bucket, slug, f.since)
-			if err != nil {
-				return nil, remote(err)
-			}
-			for _, id := range ids {
-				refs = append(refs, lsRef{slug, id})
+	case f.pr != 0:
+		// --pr reads the pull request's index, the runs of the last day and the
+		// runs that are going; only what those name is read, and every run of
+		// them is checked against its own records below (D2962, D2963, D2964).
+		// A pull request the index does not know -- everything that ran before
+		// it, an installation that has not been through an update -- reads the
+		// window as it always did, and prRefs says so in one line on stderr.
+		r, err := prRefs(ctx, env, f, now, warnf)
+		if err != nil {
+			return nil, err
+		}
+		if r == nil {
+			if r, err = windowRefs(ctx, env, f); err != nil {
+				return nil, err
 			}
 		}
+		refs = r
+	default:
+		r, err := windowRefs(ctx, env, f)
+		if err != nil {
+			return nil, err
+		}
+		refs = r
 	}
 
 	// The bucket's objects, for every run, through the run cache when this
@@ -631,12 +674,6 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 		}
 	}
 
-	var mu sync.Mutex // guards warn
-	warnf := func(format string, args ...any) {
-		mu.Lock()
-		defer mu.Unlock()
-		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
-	}
 	// The price book warns through warnf too: a VM run whose region or
 	// machine type the price table does not carry is listed with compute not
 	// estimated, and this is where the operator reads why (design
