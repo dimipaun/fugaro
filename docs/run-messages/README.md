@@ -1,6 +1,6 @@
 # Messaging a running run
 
-**Status (2026-11-18): plan only; nothing is implemented; no task approved.** The current state is in [docs/status.md](../status.md). Every decision (D2940–D2947) and open item O1 is answered, all as recommended; O2 (how long message text stays readable through bucket versioning) waits on the owner.
+**Status (2026-11-18): plan only; nothing is implemented; no task approved.** The current state is in [docs/status.md](../status.md). Every decision (D2940–D2947) and open item O1 is answered, all as recommended; O2 (about 14 days of readable text through bucket versioning) is accepted.
 
 **Spec owner: the owner (Dimi Paun). Date: 2026-11-18.** The spec was drafted by Claude from the owner's conversation of that day and committed as written. Checked against `origin/main` at `0db80aa40`.
 
