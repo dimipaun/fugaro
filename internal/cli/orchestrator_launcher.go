@@ -351,6 +351,8 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 		{ts.CompressionOff, "a compression override"},
 		{ts.Debt, "the debt mark"},
 		{ts.Security, "the security mark"},
+		{ts.ReviewSpec != nil, "a review spec"},
+		{ts.FromFindings || ts.OwnText != "", "a findings follow-up"},
 		{ts.Overrides.ReviewRounds != nil || ts.Overrides.MaxBudgetUSD != nil || ts.Overrides.Model != "" ||
 			ts.Overrides.MaxUSD != nil || ts.Overrides.MaxTokens != nil || ts.Overrides.MaxTime != "" ||
 			ts.Overrides.MaxReviewRounds != nil, "a run limit"},

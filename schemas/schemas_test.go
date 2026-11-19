@@ -7775,3 +7775,92 @@ func TestMergeJudgeSchemaMatchesTheDocument(t *testing.T) {
 		})
 	}
 }
+
+// TestPRIndexSchemaRoundTrip: the entry runstore writes is the document
+// schemas/pr-index.schema.json describes, both ways. The Go type's own
+// encoding validates, the schema's kind enum is the two kinds the Go
+// constants spell (so a kind added to one and not the other fails here), and
+// the reader's strict decode gets the entry back unchanged. The index is
+// written by the untrusted job account, so the reader is deliberately
+// stricter than the contract: an unknown member the schema tolerates — which
+// a newer writer's entry needs — is refused by the strict decode, and the
+// entry is skipped rather than half-read (D2963, F8).
+func TestPRIndexSchemaRoundTrip(t *testing.T) {
+	sch := compile(t, "pr-index.schema.json")
+	at := time.Date(2026, 11, 19, 13, 0, 0, 0, time.UTC)
+	for _, kind := range []runstore.PRIndexKind{runstore.PRIndexOpened, runstore.PRIndexFollowed} {
+		e := runstore.PRIndexEntry{Version: runstore.PRIndexVersion, RunID: "20261119-130000-abcd", Slug: "acme-app", PR: 42, Kind: kind, At: at}
+		data, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err != nil {
+			t.Fatalf("the schema rejects the entry runstore writes (%s): %v\n%s", kind, err, data)
+		}
+		var back runstore.PRIndexEntry
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&back); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(e, back) {
+			t.Fatalf("round trip = %+v, want %+v", back, e)
+		}
+	}
+
+	// The schema's kind list is the Go vocabulary and nothing else.
+	raw, err := os.ReadFile("pr-index.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Properties struct {
+			Kind struct {
+				Enum []string `json:"enum"`
+			} `json:"kind"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{string(runstore.PRIndexOpened), string(runstore.PRIndexFollowed)}; !slices.Equal(doc.Properties.Kind.Enum, want) {
+		t.Errorf("pr-index.schema.json's kind enum = %v, want %v", doc.Properties.Kind.Enum, want)
+	}
+
+	// The schema refuses what the reader refuses: another version, another
+	// kind, a number below 1, a run ID that is not one, a missing time.
+	for _, bad := range []string{
+		`{"version":2,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"other","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":0,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"nope","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"Acme-App","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z"}`,
+		`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened"}`,
+	} {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(bad))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); err == nil {
+			t.Errorf("the schema accepts %s", bad)
+		}
+	}
+
+	extra := []byte(`{"version":1,"run_id":"20261119-130000-abcd","slug":"acme-app","pr":42,"kind":"opened","at":"2026-11-19T13:00:00Z","extra":1}`)
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("the schema refuses a member it does not know, which a newer writer's entry needs: %v", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(extra))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(new(runstore.PRIndexEntry)); err == nil {
+		t.Error("the reader's strict decode accepted an unknown member")
+	}
+}
