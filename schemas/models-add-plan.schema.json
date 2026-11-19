@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/models-add-plan.schema.json",
+  "title": "Fugaro models add plan",
+  "description": "The document `fugaro models add <id> --dry-run --json` prints: the change one add would make and nothing written — no config file, no backup, no policy node and no step saved for `fugaro apply` (D1565's read, and O4's shape for this command). Every fact in it is one the write path itself computed for the same arguments, so a consumer computes nothing: the window the console's Manage section draws shows this document and then runs the same command without `--dry-run` (MW1). Members are only ever added within a version (D848), so a renamed or re-meant member is a new member under a new name and the old one is kept, and removing or retyping one bumps version. No object here is closed for that reason: additionalProperties is left true everywhere, because a consumer that refused a member this schema does not know would refuse a newer CLI's document, which D848 promises to keep readable under the same version. A refusal is not this document: an add the write would refuse — an unknown id, a Claude id on a provider route, a half-given price — is refused under `--dry-run` with the write's own sentence, a non-zero exit and no document at all, which is what a consumer branches on. `refusal` is written out for the shape's sake and is empty in every document this CLI prints.",
+  "type": "object",
+  "required": [
+    "version",
+    "layer",
+    "path",
+    "model",
+    "route",
+    "changed",
+    "claim",
+    "allowed_models",
+    "prices",
+    "steps",
+    "refusal"
+  ],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "modelsAddPlanVersion in internal/cli/models_add.go."
+    },
+    "layer": {
+      "const": "local",
+      "description": "The layer the change would land in, which is always the local project config: this command edits the selected installation's own file and no other (D780). It is one word of the same vocabulary the settings write's `layer` uses, so a consumer reads both the same way.",
+      "$comment": "settingsLayerLocal in internal/cli/settings_set.go."
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The file the change would be written to, as the caller's own read or --config resolved it — the installation the aiming pair selected, which is why a caller that needs the write aimed passes --project or --config rather than letting the CLI guess."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The model id the command was given, exactly as it would be written. It is never a pattern: a claim is the one model the owner named (D785)."
+    },
+    "route": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The provider entry the model would be claimed on: the route the id's own prefix resolves to, or the one --route named."
+    },
+    "changed": {
+      "type": "boolean",
+      "description": "Whether the file would change at all: the write path's own comparison of the bytes it read against the bytes it built. False is a classification and not an error — the command exits 0 with this document — and it is the answer to an add whose claim, price and allow-list entry the file already holds, whose `steps` is then empty."
+    },
+    "claim": {
+      "$ref": "#/$defs/claim",
+      "description": "The providers.<route>.models entry the change would append: the key it lands on, the exact id that lands there, or the existing entry or pattern that already covers the model — the two are never both set, and one of them always is."
+    },
+    "allowed_models": {
+      "$ref": "#/$defs/allowedModels",
+      "description": "The budget.allowed_models entry the change would append, and whether that key is set at all: an absent list stays absent rather than becoming a list of one (D786), so a consumer reads `present` before it reads `entry`."
+    },
+    "prices": {
+      "$ref": "#/$defs/prices",
+      "description": "The price the model would be charged at, with both rates and where they come from: the rates the caller gave, the built-in catalog's row, or the file's own model_prices entry. The entry is written only in the first case — a model the catalog or the file already prices needs none."
+    },
+    "steps": {
+      "type": "array",
+      "description": "The follow-up the change owes, in the order it would run: the apply chain's own step names, each with its state. Empty exactly when `changed` is false, because a change that writes nothing owes nothing.",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    },
+    "refusal": {
+      "type": "string",
+      "description": "Empty in every document this CLI prints: a refused add is this program's own sentence with a non-zero exit and no document at all, and the member is here because the shape is the contract."
+    }
+  },
+  "$defs": {
+    "claim": {
+      "type": "object",
+      "required": [
+        "key",
+        "entry",
+        "claimed_by"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "providers.<route>.models, spelled as the project config's own path spells it."
+        },
+        "entry": {
+          "type": "string",
+          "description": "The exact id appended to that list. Empty when nothing is appended, which is the case `claimed_by` answers."
+        },
+        "claimed_by": {
+          "type": "string",
+          "description": "The existing entry or pattern that already covers the model, as the config holds it — `vendor/model-x`, or `deepseek/*`. Empty when the change appends the claim instead."
+        }
+      }
+    },
+    "allowedModels": {
+      "type": "object",
+      "required": [
+        "key",
+        "entry",
+        "present"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "const": "budget.allowed_models"
+        },
+        "entry": {
+          "type": "string",
+          "description": "The exact id appended to the list. Empty when nothing is appended — either the list already names it, or the key is not set and stays absent."
+        },
+        "present": {
+          "type": "boolean",
+          "description": "Whether budget.allowed_models is set and non-empty in the file this change was judged against: false is the project where every model a route opens is allowed, and a change there writes no list (D786)."
+        }
+      }
+    },
+    "prices": {
+      "type": "object",
+      "required": [
+        "key",
+        "input_per_m",
+        "output_per_m",
+        "source"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "model_prices.<id>, the key the rates would land on when they are written."
+        },
+        "input_per_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "US dollars per million input tokens: the caller's own --price-in where it was given, else the rate the model is charged at today."
+        },
+        "output_per_m": {
+          "type": "number",
+          "minimum": 0,
+          "description": "US dollars per million output tokens, on the same rule as input_per_m."
+        },
+        "source": {
+          "enum": [
+            "given",
+            "catalog",
+            "local"
+          ],
+          "description": "Where the two rates come from: the flags the caller passed (which is when a model_prices entry is written), the built-in provider price catalog's row for the model, or the file's own model_prices entry. The last two are the models read's own words (modelsSourceCatalog, modelsSourceLocal), so one vocabulary describes both surfaces.",
+          "$comment": "modelsAddPriceGiven, modelsAddPriceCatalog and modelsAddPriceLocal in internal/cli/models_add.go."
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "name",
+        "state"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The step's own name from the apply chain's table, `policy` today: the published policy node's migration in place, which is what a model change owes.",
+          "$comment": "initflow.Policy in internal/initflow/stage.go."
+        },
+        "state": {
+          "enum": [
+            "run",
+            "saved"
+          ],
+          "description": "What the write would do with the step: `run` when it runs it now, and `saved` under --no-apply, which leaves it for `fugaro apply` (D1565). The console's window shows the saved state, because main sets the flag and then runs the same command without --dry-run (MW1).",
+          "$comment": "modelsAddPlanStepRun and modelsAddPlanStepSaved in internal/cli/models_add.go."
+        }
+      }
+    }
+  }
+}

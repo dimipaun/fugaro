@@ -1498,9 +1498,10 @@ func TestDocsCheck81GrantListNamesTheTemplatesOwnPredicates(t *testing.T) {
 		{134, `(TOKEN && auth.token.fs == $slug) || USER`},
 		{206, `"RUN || USER"`},
 		{61, `"RUN"`}, {236, `"RUN"`},
-		{340, `"MAILBOX"`}, {402, `"MAILBOX"`},
+		{341, `"MAILBOX"`}, {403, `"MAILBOX"`},
 		{53, `"PAIRING"`},
 		{11, `".read": "USER"`},
+		{271, `".read": "USER"`},
 	} {
 		if want.n < 1 || want.n > len(lines) {
 			t.Fatalf("rules.json.tmpl has %d lines and the paragraph cites line %d", len(lines), want.n)
@@ -2130,7 +2131,7 @@ func TestDocsCheck81TemplateCountsMatchTheTemplate(t *testing.T) {
 }
 
 // TestDocsCheck81Step6CountsItsReadColumns: step 6's FACT line counts its two
-// columns -- "the first thirteen are **200** ... the second twenty-six are
+// columns -- "the first fourteen are **200** ... the second twenty-six are
 // **401**" -- and the Passes paragraph above the section repeats both numbers.
 // The counts are the step's own two `for p in ...; do` loops, and nothing
 // derived them, so a path added to one column would leave the prose counting
@@ -2147,7 +2148,7 @@ func TestDocsCheck81Step6CountsItsReadColumns(t *testing.T) {
 		t.Fatalf("check 81 step 6 has %d `for p in ...; do` loops and its FACT line counts two columns: this test reads the granted column and the denied one out of those loops", len(loops))
 	}
 	granted, denied := len(loops[0]), len(loops[1])
-	words := map[int]string{13: "thirteen", 26: "twenty-six"}
+	words := map[int]string{14: "fourteen", 26: "twenty-six"}
 	gw, ok := words[granted]
 	if !ok {
 		t.Fatalf("check 81 step 6's first loop reads %d paths and this test has no word for that count: write one", granted)

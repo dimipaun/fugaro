@@ -302,7 +302,7 @@ func TestImagesSkillEntryBuildAsksForNoSecret(t *testing.T) {
 	// definition's own text for a secret of its own, and answers by name and
 	// line, which is the sentence an agent can rely on.
 	fetch := readRepoFile(t, "internal/catalog/fetch.go")
-	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "return SecretRefusal(e.Name, line.line)") {
+	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "err := SecretRefusal(e.Name, line.line)") {
 		t.Error("refuseCredentialIn no longer refuses a definition that asks for a secret of its own by name and line, which is the refusal the skill states")
 	}
 	// And the refusal is not a text guard standing in front of a build that

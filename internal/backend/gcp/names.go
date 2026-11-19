@@ -236,6 +236,33 @@ func CredsBundleSecretID(fugaroProject string) string {
 	return ProjectSecretID(fugaroProject, "creds-bundle")
 }
 
+// VoiceProviderKeysSecret is the Secret Manager secret holding the voice hop's
+// provider-key document (P5.3.5, design
+// docs/mobile/design/voice-evaluation-switch.md §4.4 point 4): one JSON object
+// of register names to keys — `{"deepgram":"…","elevenlabs":"…"}` — created by
+// deploy/terraform/gcp/modules/installation/secrets.tf and read by the hop
+// (internal/voicesvc's SecretManagerKeys) as its own service account, which is
+// the only principal its one accessor grant names.
+//
+// A LITERAL, unlike CredsBundleSecretID, and the difference is where each name
+// is read from. The credentials service derives its container from the Fugaro
+// project name in its environment, because `fugaro creds set` — a process that
+// never reads the installation module — has to find the same container. The
+// hop is the only reader here: it learns the installation's GCP project from
+// FUGARO_GCP_PROJECT and the container from this constant, so no secret ID is
+// an environment variable of this tree. Terraform could not compute a
+// ProjectSecretID anyway (the suffix is a hash), so a derived name would be a
+// value pasted into a hand-written tfvars block — the hop's opt-in is written
+// by hand — and a wrong paste is a process that starts and then refuses every
+// call. One literal in the module and one in this constant is the same fact
+// written twice, and deploy/terraform's
+// TestVoiceProviderKeysContainerIsTheGoSpelling holds the two spellings
+// together.
+//
+// It cannot collide with a project-wide logical secret: ProjectSecretID names
+// those `fugaro-project-<fugaro project>-<logical>`, which this is not.
+const VoiceProviderKeysSecret = "fugaro-voice-provider-keys"
+
 // DynamicSecretNamesConditionTitle is the title of the dynamic class's one
 // name-prefix condition (D1931, DS2.2), as the installation module writes it
 // beside the local that holds the expression. internal/infra/tf reads a plan's

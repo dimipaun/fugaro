@@ -14,12 +14,30 @@
 # P5.3.5's half, at a later level, and no part of that half is deployed here.
 #
 # OFF BY DEFAULT, like the other two services and for the same reason (D147):
-# with var.voice_service null this file creates nothing — no account and no
+# with var.voice_service null none of this is created — no account and no
 # service — and the installation is exactly what it was before the hop existed.
-# Nothing here reads a value and nothing here carries a prevent_destroy:
-# turning the hop off removes a service, an account and a public binding, and
-# touches no data (there is no container, no store and no node of the hop's own
-# — what it reads is the database and the policy node, and both outlive it).
+# Nothing in this file reads a value. Turning the hop off removes a service, an
+# account, a public binding and its database read, and it takes no data of the
+# database it reads with it: the store and the policy node outlive the hop.
+#
+# IT IS NOT A DATA-FREE REMOVAL ANY MORE (P5.3.5). The hop now owns one
+# container of its own — secrets.tf's provider-key container, created and
+# removed on the same local.voice_on as the resources below — and a secret is a
+# data-bearing type (D1551, internal/infra/tf's dataBearingTypes), so the plan
+# that removes the hop carries a delete the guard refuses until the address is
+# named on the command line. Terraform refuses one step earlier, and that
+# refusal answers to no flag: the container carries prevent_destroy, so with it
+# in state the plan fails whole ("Instance cannot be destroyed") and applies
+# nothing — the service, its account and their grants cannot be removed in that
+# plan either. Taking the hop out for good is therefore two owner steps, the
+# credentials bundle's order (credentials.tf and C1.22's runbook): forget the
+# container first, then an ordinary update with this switch written as null.
+# There is no route through a code edit, and it would be self-defeating: the
+# workdir this file is read from is re-extracted on every run
+# (internal/infra/workdir.go), so an edit here is gone before the plan that
+# would use it, and the plan an edit unblocked is the one that destroys the
+# container and every key typed into it. SECURITY.md carries the two commands
+# and the addresses.
 #
 # WHY THE SERVICE'S OWN ACCOUNT HOLDS EXACTLY ONE GRANT, and why that grant is
 # in state_read.tf and not here. Verifying a Firebase ID token needs no IAM at
@@ -27,7 +45,10 @@
 # (internal/credsvc's GoogleKeys, which the hop reaches through its own key
 # source), and a published certificate is a fact of the internet rather than a
 # grant of this installation. Calling a provider is plain network egress, which
-# is not IAM either. The one thing the process reaches in this installation is
+# is not IAM either — its one condition is that the provider's API is on, and
+# apis.tf enables the one of them this hop calls (Cloud Text-to-Speech, for the
+# google engine) on the same local.voice_on as everything here. The one thing
+# the process reaches in this installation is
 # its Realtime Database — the device node and the project policy node, two
 # reads, D166 — so the account's whole reach is the instance-wide read role
 # fugaroStateRead, bound to it in state_read.tf beside the front door's own
@@ -35,13 +56,17 @@
 # node and internal/voicesvc's own paths are what narrow it: internal/voicesvc/
 # status.go, policy.go). SECURITY.md states it.
 #
-# AND NO PROVIDER KEY, YET. This file sets no secret, grants no accessor and
-# puts no key in the container's environment: at P5.3.3 the hop holds no
-# credential beyond its own identity, so a compromised revision of it brings
-# the database read above and nothing else. P5.3.5's forwarding half is what
-# adds the provider credential — a secret in secrets.tf and an accessor grant
-# beside it, this file's account on both — and that change is the one that has
-# to say what a revision of this process can then reach.
+# THE PROVIDER KEY (P5.3.5). The forwarding half gives this process the one
+# credential it holds: secrets.tf creates the provider-key container and binds
+# roles/secretmanager.secretAccessor on it to the account below, and the third
+# environment name here is the GCP project that container lives in — never the
+# container's ID, which the process reads from its own constant
+# (internal/backend/gcp's VoiceProviderKeysSecret, secrets.tf's literal), so no
+# secret ID is an environment variable of this tree. What a compromised
+# revision reaches is therefore the database read above AND the provider keys,
+# and nothing else: it can spend at the providers the register admits, which is
+# the spend SECURITY.md discloses as outside every cap. It still reaches no
+# bundle, no job account and no operator's credential.
 
 locals {
   # The whole file is gated on the one variable, like credentials.tf's and
@@ -172,14 +197,16 @@ resource "google_cloud_run_v2_service" "voice" {
         }
       }
 
-      # The process's whole configuration, and it is TWO names
+      # The process's whole configuration, and it is THREE names
       # (internal/cli/voice_serve.go reads exactly these and no other): the
       # installation's Firebase project — the audience and the issuer a
       # device's ID token must carry, which is also the project whose database
-      # the two reads are — and that database's URL. They are the same two
-      # facts the credentials service is configured with, under the same names,
-      # and neither is a credential: the process's identity is the account
-      # above, and its only other input is the caller's own token.
+      # the two reads are — that database's URL, and the installation's GCP
+      # project, which is where the provider-key container lives. The first two
+      # are the same facts the credentials service is configured with, under
+      # the same names, and the third is that service's own name too; none is a
+      # credential: the process's identity is the account above, and its only
+      # other input is the caller's own token.
       #
       # A process that does not know which project mints the identities it
       # admits, or which database the device nodes live in, must not serve at
@@ -197,6 +224,17 @@ resource "google_cloud_run_v2_service" "voice" {
       env {
         name  = "FUGARO_RTDB_URL"
         value = local.voice_rtdb_url
+      }
+      # The installation's GCP project, and the one name the forwarding half
+      # adds (P5.3.5): it is the project the provider-key container lives in
+      # (secrets.tf), which the hop names by its own constant and reads as this
+      # account. It is the credentials service's own value under its own name,
+      # and it is NOT the Firebase project above: an installation's database
+      # may belong to another project's Firebase instance, and this service
+      # already carries both for that reason.
+      env {
+        name  = "FUGARO_GCP_PROJECT"
+        value = var.project
       }
     }
   }
