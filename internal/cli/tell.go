@@ -100,7 +100,7 @@ func newTellCmd() *cobra.Command {
 func checkTellText(ref, text string) error {
 	switch {
 	case text == "":
-		return userErr(`the message has no text: tell takes the words as its second argument, so quote them — fugaro tell %s "check the flaky test before the fix"`, ref)
+		return userErr(`the message has no text: tell takes the words as its second argument, so quote them — fugaro tell %q "check the flaky test before the fix"`, ref)
 	case len(text) > runmsg.MaxText:
 		return userErr("the message is %d bytes and a run reads at most %d (finding F12): send the part that matters, or put the rest in a follow-up run", len(text), runmsg.MaxText)
 	}
@@ -181,7 +181,7 @@ func tellRun(ctx context.Context, env *cloudEnv, o *tellOptions, ref, text strin
 	// storage.buckets.getIamPolicy, which is the usual case), the message is
 	// sent and one line says the grant was not checked: this never refuses for
 	// want of access to the policy.
-	if err := tellTokenGrant(ctx, env, runRef, errOut); err != nil {
+	if err := tellTokenGrant(ctx, env, slug, runRef, errOut); err != nil {
 		return err
 	}
 	// The sender's name is display only and self-declared (D2940): the bucket's
@@ -247,19 +247,23 @@ func tellFlagsList(flags []string) string {
 // tellTokenGrant refuses a message the run's own job account could not read
 // (F21), and says so on errOut when it cannot tell.
 //
-// The check is doctor's, narrowed to one prefix: the bucket's policy must show
-// an object read on tokens/, where the message is written, either with no
-// condition at all or bounded to a tokens/ path — the two shapes the
-// installation's Terraform writes (gcp.TokenBucketCondition for a repository's
-// own job account, gcp.ProjectTokenBucketCondition for a shared project job's).
-// It is deliberately loose in the other direction: a policy granting the read
-// some third way is read as granting it, because a refusal here would take the
-// recovery channel away from an installation whose runs do read their tokens.
+// It runs doctor's own check, asked about this one repository: the bucket's
+// policy, read from the launcher's side, is held to the two grants that make
+// tokens/<slug>/ readable — the repository's job account's per-repository read
+// (gcp.TokenBucketCondition, modules/workflow/sa.tf) and the shared project
+// job's whole-tokens/ one (gcp.ProjectTokenBucketCondition, plan task 3.2) —
+// which is the state infra.JobTokenGrantFindings reports per account. When the
+// policy is readable and neither is there, the message would be written into a
+// run that reads nothing and says so to nobody, and this refuses with the
+// update that writes the grant. When the policy cannot be read at all — a
+// launcher holds no storage.buckets.getIamPolicy, which is the usual case —
+// the message is sent and one line says the grant was not checked: this never
+// refuses for want of access to the policy.
 //
 // A configuration with no storage endpoint (a test's fake, or a project whose
 // endpoints name none) has no policy to read at all and is passed over in
 // silence, exactly as doctor's own check is.
-func tellTokenGrant(ctx context.Context, env *cloudEnv, runRef string, errOut io.Writer) error {
+func tellTokenGrant(ctx context.Context, env *cloudEnv, slug, runRef string, errOut io.Writer) error {
 	lc := env.lc
 	if lc.Endpoints.NoAuth && lc.Endpoints.Storage == "" {
 		return nil
@@ -286,29 +290,43 @@ func tellTokenGrant(ctx context.Context, env *cloudEnv, runRef string, errOut io
 		unchecked(err)
 		return nil
 	}
-	if tellReadGranted(p) {
+	if tellReadGranted(p, bucket, slug) {
 		return nil
 	}
-	return userErr("nothing was sent: the bucket policy of gs://%s shows no read on tokens/, where %s's messages are written, so its job account would read the message as missing and the run would never see it (finding F21). The repository's root has not been re-applied since the budget token moved under tokens/: an operator runs fugaro update --repo <owner/name> in its checkout", bucket, task.ShortRun(runRef))
+	return userErr("nothing was sent: the bucket policy of gs://%s shows no read of tokens/%s/ for the job accounts of this repository, where %s's messages are written, so the run's own job account would read the message as missing and the run would never see it (finding F21). The repository's root has not been re-applied since the budget token moved under tokens/: an operator runs fugaro update --repo <owner/name> in its checkout", bucket, slug, task.ShortRun(runRef))
 }
 
-// tellReadGranted reports whether p is a policy under which an object under the
-// bucket's tokens/ may be read: a binding that carries an object read, held by
-// anybody, with no condition or one that names tokens/ (the per-repository and
-// the project-wide grants the Terraform writes are both of that second shape).
+// tellReadGranted reports whether p is a policy under which this run's message
+// can be read: a binding that carries an object read, carries a condition, and
+// whose condition is one of the two grants that reach tokens/<slug>/ — the
+// repository's own job grant (gcp.TokenBucketCondition, whose expression names
+// the slug) or a shared project job's whole-tokens/ grant
+// (gcp.ProjectTokenBucketCondition, under which any run of a repository that
+// profile serves reads its messages).
 //
-// Whose read it is does not matter here on purpose. The account this run's
-// messages are read by is derived from the repository's own root, not from this
-// policy, and a check that guessed at it would refuse an installation whose job
-// account is named in a way this build does not know. What it can tell from the
-// policy alone is whether the read exists at all, which is the state F21 is
-// about: a repository root never re-applied has no such binding.
-func tellReadGranted(p *storage.Policy) bool {
+// The condition is what is judged, not the member, and that is the whole point:
+// the expression names the prefix, so only an account this fugaro granted the
+// run's own read to can hold it, while the bindings a *caller* holds — every
+// operator is bound roles/storage.objectAdmin on the whole bucket and every
+// launcher and viewer roles/storage.objectViewer, unconditionally
+// (modules/installation/iam.tf) — carry no such condition and are therefore not
+// this run's read. Judging the caller's bindings instead is what would make the
+// refusal below unreachable on every real installation: a person who may tell a
+// run anything is, in every installation, also a person who may read the whole
+// bucket.
+//
+// A read granted some third way — the roles the project level carries, a
+// hand-written condition this build does not write — is not read as granting
+// it, and the refusal's own fix is the one that settles the question for good,
+// because a repository root this build did write the grant in is the only state
+// under which its runs read their messages.
+func tellReadGranted(p *storage.Policy, bucket, slug string) bool {
+	perRepository, project := gcp.TokenBucketCondition(bucket, slug), gcp.ProjectTokenBucketCondition(bucket)
 	for _, bd := range p.Bindings {
-		if len(bd.Members) == 0 || !tellReadRoles[bd.Role] {
+		if len(bd.Members) == 0 || !tellReadRoles[bd.Role] || bd.Condition == nil {
 			continue
 		}
-		if bd.Condition == nil || strings.Contains(bd.Condition.Expression, "/objects/"+gcp.TokenBucketPrefix+"/") {
+		if bd.Condition.Expression == perRepository || bd.Condition.Expression == project {
 			return true
 		}
 	}
@@ -316,11 +334,8 @@ func tellReadGranted(p *storage.Policy) bool {
 }
 
 // tellReadRoles are the predefined roles whose permissions include
-// storage.objects.get, so a binding of one of them is a read of the object the
-// condition allows. The project-level roles are here for the same reason
-// infra's own tables list them: they bypass the bucket's policy rather than
-// replace it, and a policy that grants one of them is not a policy showing no
-// read.
+// storage.objects.get, so a binding of one of them is a read of the objects the
+// condition allows.
 var tellReadRoles = map[string]bool{
 	"roles/storage.objectViewer":       true,
 	"roles/storage.objectAdmin":        true,

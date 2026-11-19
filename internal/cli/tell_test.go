@@ -448,31 +448,70 @@ func tellStorageRig(t *testing.T, policy ...gcpfake.Binding) *cloudFixture {
 
 const tellRunsBucket = "unused-bucket"
 
-// tellJobGrant is a repository's job account holding the runs/, cache/ and
-// locks/ write the hardened Terraform writes, with no tokens/ read: a
-// repository root that has not been re-applied since the budget token moved
-// under tokens/ (F21).
-func tellJobGrant() gcpfake.Binding {
-	return gcpfake.Binding{Role: "roles/storage.objectUser",
-		Members:   []string{"serviceAccount:fugaro-" + appSlug + "@proj-1234.iam.gserviceaccount.com"},
-		Condition: &gcpfake.IAMCondition{Title: gcp.BucketConditionTitle(appSlug), Expression: gcp.BucketCondition(tellRunsBucket, gcp.JobBucketPrefixes, appSlug)}}
+// tellJobSA is the account a run of the fixture's workflow runs as
+// (gcp.ServiceAccountID, design §6.1), and tellJobMember is its IAM member.
+func tellJobSA() string { return gcp.ServiceAccountID(appSlug, "web") }
+
+func tellJobMember() string {
+	return "serviceAccount:" + tellJobSA() + "@proj-1234.iam.gserviceaccount.com"
 }
 
-// tellTokenGrantBinding is the read the same job account holds once its
-// repository's root has been re-applied.
-func tellTokenGrantBinding() gcpfake.Binding {
+// tellJobGrant is the repository's job account holding the runs/, cache/ and
+// locks/ write its root writes (modules/workflow/sa.tf), with no tokens/ read:
+// a repository root that has not been re-applied since the budget token moved
+// under tokens/ (F21).
+func tellJobGrant() gcpfake.Binding {
+	return gcpfake.Binding{Role: "roles/storage.objectUser", Members: []string{tellJobMember()},
+		Condition: &gcpfake.IAMCondition{Title: gcp.BucketConditionTitle(tellJobSA()), Expression: gcp.BucketCondition(tellRunsBucket, gcp.JobBucketPrefixes, appSlug)}}
+}
+
+// tellTokenRead is the read the same job account holds once its repository's
+// root has been re-applied (modules/workflow/sa.tf's job_tokens).
+func tellTokenRead() gcpfake.Binding {
+	return gcpfake.Binding{Role: "roles/storage.objectViewer", Members: []string{tellJobMember()},
+		Condition: &gcpfake.IAMCondition{Title: gcp.TokenBucketConditionTitle(tellJobSA()), Expression: gcp.TokenBucketCondition(tellRunsBucket, appSlug)}}
+}
+
+// tellProjectJobGrants are a shared project job account's two grants (plan task
+// 3.2): the widened runs/, cache/ and locks/ write, and the whole-tokens/ read
+// that covers every repository its profile serves. A run launched on that job
+// reads its messages through the second, whatever its own repository's root
+// says — which is why the check accepts either.
+func tellProjectJobGrants(saID string) gcpfake.Binding {
 	return gcpfake.Binding{Role: "roles/storage.objectViewer",
-		Members:   []string{"serviceAccount:fugaro-" + appSlug + "@proj-1234.iam.gserviceaccount.com"},
-		Condition: &gcpfake.IAMCondition{Title: gcp.TokenBucketConditionTitle(appSlug), Expression: gcp.TokenBucketCondition(tellRunsBucket, appSlug)}}
+		Members:   []string{"serviceAccount:" + saID + "@proj-1234.iam.gserviceaccount.com"},
+		Condition: &gcpfake.IAMCondition{Title: gcp.ProjectTokenBucketConditionTitle(saID), Expression: gcp.ProjectTokenBucketCondition(tellRunsBucket)}}
+}
+
+// tellInstallationPolicy is a bucket policy shaped like the installation
+// module's (modules/installation/iam.tf): every operator writes the whole
+// bucket through an unconditional roles/storage.objectAdmin, every launcher and
+// viewer reads it through an unconditional roles/storage.objectViewer, and a
+// launcher writes runs/, tokens/ and issues/ through a conditioned objectUser.
+// Those are the caller's bindings, and every real installation has them: a
+// check that judged them instead of the run's own read would pass on all of
+// them and never refuse a repository whose job account reads nothing.
+func tellInstallationPolicy(extra ...gcpfake.Binding) []gcpfake.Binding {
+	return append([]gcpfake.Binding{
+		{Role: "roles/storage.objectAdmin", Members: []string{"user:operator@example.com"}},
+		{Role: "roles/storage.objectViewer", Members: []string{"user:viewer@example.com"}},
+		{Role: "roles/storage.objectUser", Members: []string{"user:viewer@example.com"},
+			Condition: &gcpfake.IAMCondition{Title: gcp.LauncherBucketConditionTitle, Expression: gcp.LauncherBucketCondition(tellRunsBucket)}},
+		tellJobGrant(),
+	}, extra...)
 }
 
 func TestTellRefusesNoTokenGrant(t *testing.T) {
-	f := tellStorageRig(t, tellJobGrant())
+	// The repository's job account holds its runs/ write and no tokens/ read,
+	// and the policy carries the installation's own operator and launcher
+	// bindings beside it: the refusal is about the run's read, not the
+	// caller's, which every installation grants.
+	f := tellStorageRig(t, tellInstallationPolicy()...)
 	_, _, err := execute(t, "tell", tellRef(tellRunID), "carry on")
 	if err == nil || ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v (exit %d), want a refusal", err, ExitCode(err))
 	}
-	for _, want := range []string{"no read on tokens/", "F21", "fugaro update --repo"} {
+	for _, want := range []string{"no read of tokens/" + appSlug + "/", "F21", "fugaro update --repo"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal does not say %q: %v", want, err)
 		}
@@ -483,24 +522,19 @@ func TestTellRefusesNoTokenGrant(t *testing.T) {
 }
 
 // The same repository once its root has been re-applied: the read is there and
-// the message is sent. And a shared project job's whole-tokens/ read is the
-// read for the same reason.
+// the message is sent. And a shared project job's whole-tokens/ read is a read
+// of this run's messages for the same reason, since a run launched on that job
+// reads through it.
 func TestTellSendsWithTheTokenGrant(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		bind   gcpfake.Binding
-		policy []gcpfake.Binding
+		name  string
+		extra []gcpfake.Binding
 	}{
-		{"the repository's own grant", tellTokenGrantBinding(), nil},
-		{"a shared project job's grant", gcpfake.Binding{Role: "roles/storage.objectViewer",
-			Members:   []string{"serviceAccount:fugaro-shared@proj-1234.iam.gserviceaccount.com"},
-			Condition: &gcpfake.IAMCondition{Title: gcp.ProjectTokenBucketConditionTitle("shared"), Expression: gcp.ProjectTokenBucketCondition(tellRunsBucket)}}, nil},
-		{"a pre-hardening unconditional read", gcpfake.Binding{Role: "roles/storage.objectViewer",
-			Members: []string{"user:o@example.com"}}, nil},
+		{"the repository's own read", []gcpfake.Binding{tellTokenRead()}},
+		{"a shared project job's read", []gcpfake.Binding{tellProjectJobGrants(gcp.ProjectServiceAccountID("standard", "github", "team-a"))}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			policy := append([]gcpfake.Binding{tellJobGrant(), tc.bind}, tc.policy...)
-			tellStorageRig(t, policy...)
+			tellStorageRig(t, tellInstallationPolicy(tc.extra...)...)
 			out, errOut, err := execute(t, "tell", tellRef(tellRunID), "carry on")
 			if err != nil {
 				t.Fatalf("tell with the grant in place: %v (%s)", err, errOut)
