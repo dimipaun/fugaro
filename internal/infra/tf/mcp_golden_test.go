@@ -47,11 +47,13 @@ func TestNoGoldenPlanCreatesTheFrontDoor(t *testing.T) {
 			}
 			if rc.Type == "google_cloud_run_v2_service_iam_member" {
 				// The mobile service's binding (mobile plan task P5) is the one
-				// `allUsers` member these goldens legitimately carry: the
-				// credentials service's own switch creates that service and its
-				// public binding, and installation-credentials and
-				// installation-review pass that switch, so the member is named
-				// here rather than those plans dropped from the list. The hop's
+				// `allUsers` member these goldens legitimately carry: the mobile
+				// switch creates that service and its public binding, and
+				// installation-credentials is the ONE golden whose tfvars pass
+				// it — the script adds the key rather than a fixture writing it,
+				// because `fugaro update` writes none until a released image can
+				// run the mode the service is started in — so the member is
+				// named here rather than that plan dropped from the list. The hop's
 				// binding — the tree's other designed public endpoint — is why
 				// installation-voice is not in this list at all, and the front
 				// door's is what this test is about: it is refused above by
