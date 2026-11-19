@@ -399,7 +399,7 @@ p.live-note {
  * **No text and no `live-num` on a tick.** Both would give every bar a minimum
  * width of its own -- the six-character floor of the number hook most of all --
  * and a line whose width follows its sample count is the row of blue squares the
- * report was about (`putBar`, `live.ts`). The bar is geometry: the share in
+ * report was about (`spark()`, `live.ts`). The bar is geometry: the share in
  * `data-height`, the state in `data-state`, the rate in `title`. */
 ol.live-burn {
   display: flex;
