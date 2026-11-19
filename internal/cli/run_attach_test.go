@@ -890,6 +890,44 @@ func TestAttachRefusesANonArtifactRecipe(t *testing.T) {
 	wantNoUpload(t, f, n)
 }
 
+// TestRunCommitReportsRefusesAttachAndTheRecipeRefusesItToo (R16, D2754): the
+// two flags of the commit run's recipe are decided once, in both directions,
+// before the first byte leaves the machine.
+//
+// A `--commit-reports` launch refuses `--attach`: the reports the launcher
+// hands in are the task's own member (task.Spec.Reports) and never a recipe
+// input, so a launch carrying both would name the same run's inputs twice —
+// the report objects in reports/ the runner's step reads, and copies of them
+// in inputs/ nothing reads — under caps that would then have to answer for
+// them. The refusal is the launcher's, and it is here rather than on the
+// recipe because the person typed both flags.
+//
+// The other direction is the recipe's own, unchanged: `commit-reports` is
+// mode: implement, so `--recipe commit-reports --attach` is refused by
+// checkAttachRecipe before anything is uploaded. Both refusals leave the run
+// id with no object and no execution, and the recipe is the CATALOG's here —
+// a commit run is launched on the designated repository's checkout by the
+// project's routine, so no project recipe is needed to reach it.
+//
+// Mutation (let both flags ride: drop the pair refusal from
+// commitReportsLaunch): the first launch uploads into inputs/ and this test
+// fails on the uploader count. Mutation (accept --attach on this recipe):
+// --attach stops refusing it and checkAttachRecipe's own sentence, "needs an
+// artifact recipe", is gone from the second half.
+func TestRunCommitReportsRefusesAttachAndTheRecipeRefusesItToo(t *testing.T) {
+	f := artifactAttachFixture(t)
+	n := guardAttach(t)
+	shot := attachShot(t, "shot.png", "png")
+	wantRefused(t, f, "--commit-reports hands the project's stored reports to the run and --attach adds files to a recipe's inputs",
+		"run", "--repo", "acme/app", "--recipe", "commit-reports", "--run-id", "20261119-100000-cr01",
+		"--attach", shot, "--commit-reports", "Commit the stored reports")
+	wantNoUpload(t, f, n)
+	wantRefused(t, f, "--attach needs an artifact recipe; commit-reports is mode: "+recipe.ModeImplement,
+		"run", "--repo", "acme/app", "--recipe", "commit-reports", "--run-id", "20261119-100000-cr01",
+		"--attach", shot, "Commit the stored reports")
+	wantNoUpload(t, f, n)
+}
+
 // TestAttachOnAFollowUpResolvesTheRecipeTheRunnerWill: a follow-up does not
 // take agent.recipe from fugaro.yaml — the runner's resolveRecipe consults it
 // only for a first run (`r.follow == nil && cfg.Agent.Recipe != ""`,
