@@ -151,6 +151,11 @@ func TestUpdateNamesTheStaleCatalogImageOfAnotherCheckout(t *testing.T) {
 		// not cover, and it leaves the command as the step for the user.
 		"not covered: 1 catalog image(s)",
 		"left for you (images, command): this run did not rebuild 1 catalog image(s)",
+		// The step's reason, on the line under it: the stage applied what it
+		// could, so its own line is a success line and not one — the catalog
+		// half sets this itself (catalogLeftFor), and the loop takes no reason
+		// from an applying stage's detail.
+		"    not covered: 1 catalog image(s) are on a base older than this release's and this run did not rebuild them",
 	} {
 		if !strings.Contains(all, want) {
 			t.Errorf("the run does not name %q, so the entry is passed over in silence:\n%s", want, all)

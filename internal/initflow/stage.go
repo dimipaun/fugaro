@@ -437,16 +437,19 @@ type Left struct {
 	// Why is the reason this step was not done, one line, in the refusal's own
 	// words: what the run reads under the step it leaves, and the fact a reader
 	// who was not at the terminal has no other way to get. The loop fills it
-	// from the stage's own result when the stage set none — a stage that only
-	// said "run this in your own terminal" has said what it owes and not why —
-	// so a stage that knows why it stopped says so once, for the log and for
-	// --json, and not only in the line it printed in flight.
+	// from the stage's own result when the stage set none and the stage
+	// stopped before applying — a stage that only said "run this in your own
+	// terminal" has said what it owes and not why — so a stage that knows why
+	// it stopped says so once, for the log and for --json, and not only in the
+	// line it printed in flight.
 	//
-	// It is empty when there is no reason beside the step's own Text: a stage
+	// It is empty when there is no reason beside the step's own Text. A stage
 	// that leaves a step by returning NeedsYouError carries that sentence and
 	// nothing else — the error type has no detail of its own, where
-	// BillingPausedError does — and a reason equal to Text is dropped by one
-	// rather than printed twice.
+	// BillingPausedError does; a reason equal to Text is dropped by one rather
+	// than printed twice; and a stage that applied work and left a step sets
+	// this itself or not at all, because its detail is a success line ("No
+	// changes", "installed v0.26.0") and a success line is not a reason.
 	Why string `json:"why,omitempty"`
 	// Brief is a refusal's account as the terminal prints it, one part per
 	// line: what was refused, why in a clause, what to do (the owner's

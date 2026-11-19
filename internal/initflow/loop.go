@@ -319,9 +319,16 @@ func oneLine(s string) string {
 
 // left is one step a stage leaves for the person, as the run records it: the
 // stage's name, a kind and a first line that are always there, and the reason
-// the step was not done — the stage's own detail, when the step carries none of
-// its own (a stage that only said "run this in your own terminal" has said what
-// it owes and not why).
+// the step was not done — the detail the caller passes, when the step carries
+// none of its own (a stage that only said "run this in your own terminal" has
+// said what it owes and not why).
+//
+// The callers that read a stage's check pass that check's detail: the stop a
+// needs-you check makes, and the pause a billing-pending one makes. The
+// applying path passes none, because the detail of a stage that applied work
+// is its success line — "No changes", "installed v0.26.0" — and a success
+// line is not why the step beside it was left; a step on that path carries a
+// reason only where the stage set one itself.
 func (l *loop) left(stage string, lf Left, why string) Left {
 	lf.Stage = stage
 	if lf.Kind == "" {
@@ -717,8 +724,15 @@ func (l *loop) applied(stage string, out Outcome) {
 	// The Left first: the stage's own line is a left-for-you marker when the
 	// stage applied what this session may do and left the rest (G3), and the
 	// line prints the moment it is recorded.
+	//
+	// No reason is taken from the detail here, and that is the rule rather
+	// than an omission: a stage that applied work says a success line in it
+	// ("No changes", "installed v0.26.0 for this machine"), which is not why
+	// the step was left. A step on this path carries a reason only where the
+	// stage set one itself — the images stage's catalog half does, where what
+	// it left is a stale image and not a success.
 	if out.Left != nil {
-		l.res.Left = append(l.res.Left, l.left(stage, *out.Left, out.Detail))
+		l.res.Left = append(l.res.Left, l.left(stage, *out.Left, ""))
 	}
 	l.record(r)
 }

@@ -307,7 +307,7 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) 
 				pluginwire.Printable(m.entry.entry.Name), m.why, catalogBuildCommand(m.entry.entry.Name), pluginwire.Printable(m.entry.repo.Repo))
 		}
 		fmt.Fprintf(w, "  not covered: %d catalog image(s) of this installation are on a base older than this release's and this run did not rebuild them — the lines above name each one and what rebuilding it takes\n", len(missed))
-		parts = append(parts, fmt.Sprintf("not covered: %d catalog image(s) are on a base older than this release's and this run did not rebuild them", len(missed)))
+		parts = append(parts, catalogNotCovered(len(missed)))
 	}
 	if set.unread != "" {
 		parts = append(parts, "the catalog images' build records could not be read ("+set.unread+"), so this run cannot say whether they are on this release's base")
@@ -335,6 +335,12 @@ func (s *imagesStage) catalogOutcome(set catalogStaleSet, out initflow.Outcome) 
 // build reads — so the command stays in the sentence the reader acts on:
 // change the definition, then `fugaro update` again, which is the step this
 // run is.
+//
+// The step's reason is set here and not left to the loop: this stage applied
+// what it could before it left this, so its own line is a success line and not
+// a reason (loop.applied reads none from it), and what the reader is owed is
+// the fact the stage's own line carries — the images are on an older base and
+// this run did not rebuild them.
 func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 	if len(missed) == 0 {
 		return nil
@@ -359,7 +365,17 @@ func catalogLeftFor(missed []catalogLeft) *initflow.Left {
 		Kind:     initflow.LeftCommand,
 		Text:     text,
 		Commands: cmds,
+		Why:      catalogNotCovered(len(missed)),
 	}
+}
+
+// catalogNotCovered is the fact the stage's own line and the step it leaves
+// both carry: the images are on a base older than this release's and this run
+// did not rebuild them. It is one sentence in two places — the stage's line,
+// where it follows what it did rebuild, and the step's reason, where it stands
+// alone — so the two can never disagree about what was left behind.
+func catalogNotCovered(n int) string {
+	return fmt.Sprintf("not covered: %d catalog image(s) are on a base older than this release's and this run did not rebuild them", n)
 }
 
 // catalogRebuildWhy is why one of this checkout's entries was not rebuilt, in
