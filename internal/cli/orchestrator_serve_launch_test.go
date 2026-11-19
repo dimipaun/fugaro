@@ -453,7 +453,8 @@ func TestOrchestratorTickReadsNothingForARecentAttempt(t *testing.T) {
 // carried only through one — a service with no launcher would read a node and
 // refuse every attempt it found, and would be refused at start-up rather than
 // serving (newResidentOrchestrator). The launcher the configuration builds is
-// the resident one, which is `fugaro run`'s own path behind it
+// the resident one, which is `fugaro run`'s own path behind it — one of the two
+// bindings this tree has of that path, the resident one, and not the daemon's
 // (orchestrator_launcher.go).
 func TestOrchestratorServiceConfigBuildsALauncher(t *testing.T) {
 	orchestratorTest = &orchestratorWiring{tokens: func(context.Context) (oauth2.TokenSource, error) {
@@ -466,7 +467,7 @@ func TestOrchestratorServiceConfigBuildsALauncher(t *testing.T) {
 		t.Fatalf("a complete environment was refused: %v", err)
 	}
 	if _, ok := cfg.launch.(*residentLauncher); !ok {
-		t.Fatalf("the configuration carries %T, and the one launcher this tree has is the resident one over the command's own path", cfg.launch)
+		t.Fatalf("the configuration carries %T, and the launcher this service builds is the resident one — the resident binding of the command's own launch path, not the daemon's", cfg.launch)
 	}
 	if _, err := newResidentOrchestrator(cfg); err != nil {
 		t.Fatalf("the configuration does not build the service: %v", err)

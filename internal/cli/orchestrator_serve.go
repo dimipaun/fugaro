@@ -731,7 +731,7 @@ const orchestratorPassLine = "tick read the node and carried the re-issues it re
 // not be read is ON — Caps' own rule, and the half of the zero Caps that is a
 // reading. The ceilings stay zero, which is the fail-closed direction for them
 // rather than an omission: the guardrails live in the installation's published
-// policy, which this revision does not read (the header's three names are not
+// policy, which this revision does not read (the header's six names are not
 // where it lives), and a pass that cannot read a cap plans no first launch —
 // while the re-issues still come back, an attempt that was committed and counted
 // spending nothing a cap is there to bound.

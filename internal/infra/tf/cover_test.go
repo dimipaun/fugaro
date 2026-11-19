@@ -1776,7 +1776,7 @@ func orchestratorAccount(acts ...string) ResourceChange {
 // orchestratorService is the resident orchestrator as
 // modules/installation/orchestrator.tf writes it: one container at
 // template[0].containers[0] running the RELEASED image with the module's argv,
-// its three environment variables and the account the module creates for it.
+// its six environment variables and the account the module creates for it.
 // The address is what tells the three services apart in the cover
 // (cloudRunServiceName), so it carries the module's own resource name.
 //
@@ -1792,6 +1792,11 @@ func orchestratorService(image string) ResourceChange {
 		map[string]any{"name": "FUGARO_PROJECT", "value": "aurora", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_FIREBASE_PROJECT", "value": "aurora-fp", "value_source": []any{}},
 		map[string]any{"name": "FUGARO_RTDB_URL", "value": "https://aurora-fp-default-rtdb.firebaseio.com", "value_source": []any{}},
+		// The launch's three (P5.1d), which the module sets beside the node's
+		// own three: the same three names a run's own container carries.
+		map[string]any{"name": "FUGARO_GCP_PROJECT", "value": "proj-1", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_REGION", "value": "us-east5", "value_source": []any{}},
+		map[string]any{"name": "FUGARO_BUCKET", "value": "gs://aurora-runs", "value_source": []any{}},
 	}}
 	r := rc("google_cloud_run_v2_service", map[string]any{"invoker_iam_disabled": false,
 		"template": []any{map[string]any{"service_account": orchestratorAccountEmail, "containers": []any{c}}}}, map[string]any{}, "create")
@@ -1925,7 +1930,7 @@ func TestCoverRefusesAnOrchestratorServiceThatIsNotTheModules(t *testing.T) {
 			r.Change.AfterUnknown = map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"args": true}}}}}
 			return r
 		}, false},
-		// The environment, which is a list of three and nothing else.
+		// The environment, which is a list of six and nothing else.
 		"an environment the module does not set": {func() ResourceChange {
 			r := svc()
 			c := container(r)

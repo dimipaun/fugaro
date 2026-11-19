@@ -160,13 +160,13 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 	// config in a container that has neither a person nor a checkout, and a
 	// resident launch is not nobody's: the task says who asked for the run
 	// (requested_by, written by the launch that stored it), the launch record
-	// says the same name (launched_by), and the token's RB claim — its own
-	// self-asserted attribution, which nothing in the rules reads — says it
-	// too rather than a service account's. So the config this launch's env
-	// carries is given that name here, on a config the opener made for this
+	// this launch writes carries that same name, and the token's RB claim —
+	// its own self-asserted attribution, which nothing in the rules reads —
+	// says it too rather than a service account's. So the config this launch's
+	// env carries is given that name here, on a config the opener made for this
 	// launch alone.
 	if ts.RequestedBy == "" {
-		return "", userErr("run %s/%s names nobody who asked for it, and a resident launch gives the run the budget identity of the person its own record carries: the task's requested_by is what the launch record's launched_by says beside it, and this service will not mint a run's identity under a name it invented. Launch it from a machine of your own (fugaro run --retry %s/%s), or patch the item's attempt so that it names a run whose task does", slug, runID, slug, runID)
+		return "", userErr("run %s/%s names nobody who asked for it, and a resident launch gives the run the budget identity of the person its own record carries: the task's requested_by is the name the run's own launch record is written with, and this service will not mint a run's identity under a name it invented. Launch it from a machine of your own (fugaro run --retry %s/%s), or patch the item's attempt so that it names a run whose task does", slug, runID, slug, runID)
 	}
 	env.lc.User = ts.RequestedBy
 	res, err := launchRun(ctx, env, slug, ts, time.Now())
