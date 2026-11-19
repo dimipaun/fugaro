@@ -141,9 +141,10 @@ it through the fallback, it is **used by impersonation alone**, and it carries *
 terraform test pins that the account is not the credentials service's and has none. Its token creators
 are the workspace's admins (D2818, R8).
 
-So the account's reach is the paragraph above, one hop longer: whoever holds one of those bindings —
-or write on the workspace project's IAM, which can add one (§3, the paragraph after next) — reaches
-every member linked through the account as its owner. There is no key to steal and no credential of
+So the account's reach is a stolen workspace-admin credential's, one hop longer: whoever holds one of
+those token-creator bindings — or holds write on the workspace project's IAM, which is what the
+workspace project's own owners and editors hold — reaches every member linked through the account as
+its owner. There is no key to steal and no credential of
 the account's own to leak; the theft paths are an impersonation grant and the workspace project's IAM.
 A member whose owner runs `unlink` takes the account's `roles/owner` away (D2822), and the account
 holds nothing on that member afterwards.
@@ -185,7 +186,7 @@ workspace's database over IAM, rules bypassed:
 - its **owners and editors** can write the roster whole — `Admins` included — and can grant
   themselves the workspace account's token-creator binding on the workspace's own account. D2823's
   intersection then *trusts* them, because the binding is real: they are workspace admins with the
-  authority §4.1 and the account above carry.
+  authority §3 states and the workspace IAM account carries.
 - its **budget admins** hold `roles/firebasedatabase.admin` on that project
   (`deploy/terraform/gcp/modules/firebase/iam.tf`) — `roles/owner`-derived today, D689 — which writes
   the same database nodes and **cannot write IAM**. That is exactly the difference D2823 rests on:
@@ -239,7 +240,7 @@ a denial of the move back and never a project placed in another workspace's fold
 
 Their reach stops at their own member: they hold no grant on the workspace's project and read no node
 of its database, so the roster, the workspace's cap and the group's audit are not theirs to read. What
-they can read of the group is the mirror, which is the next paragraph — and what they can do to the
+they can read of the group is the mirror, which the last paragraph of this section states — and what they can do to the
 workspace is make a member look wrong, which `status` reports as "not linked" or as drift.
 
 ### Every member's launchers and viewers read the mirror: the workspace's member addresses and external marks
