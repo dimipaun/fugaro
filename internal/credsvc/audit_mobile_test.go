@@ -92,9 +92,13 @@ func TestAuditMobilePurposesRecordOneLinePerRefusal(t *testing.T) {
 // credential of the installation's at all: the service verifies an assertion
 // and issues a session token, reading no bundle entry and presenting no secret
 // to anyone, so its OK line names the purpose, the caller and the status and
-// has no credential to name. The run identity's own rule is untouched: the
-// case beside this one pins a run with no repository refused for a mobile
-// purpose exactly as for the rest.
+// has no credential to name. The credential is the only field it gives up: the
+// caller is the whole of what a mobile line says about whose act it records (a
+// run's who is its run identity, a repository's is its repository, and a phone
+// is neither), so the subtest below pins a mobile line with no caller refused
+// rather than recorded. The run identity's own rule is untouched: the case
+// beside this one pins a run with no repository refused for a mobile purpose
+// exactly as for the rest.
 func TestAuditMobilePurposesCarryTheCallerWithoutAJobOrACredential(t *testing.T) {
 	for _, purpose := range mobilePurposes() {
 		a, buf := newAudit(t)
@@ -130,6 +134,30 @@ func TestAuditMobilePurposesCarryTheCallerWithoutAJobOrACredential(t *testing.T)
 			}
 		}
 	}
+
+	// The caller is the one field a mobile line may not drop. It is the who, and
+	// a line with no caller carries neither a run nor a repository nor a
+	// credential to say whose act it records: an operator reading it would learn
+	// that a session was paired and nothing about the member it was paired for.
+	t.Run("a mobile line with no caller is refused", func(t *testing.T) {
+		for _, purpose := range mobilePurposes() {
+			a, buf := newAudit(t)
+			err := a.Write(context.Background(), AuditEvent{
+				Purpose: purpose,
+				Status:  StatusOK,
+			})
+			if err == nil {
+				t.Fatalf("Write accepted a %s line with no caller", purpose)
+			}
+			lines := auditLines(t, buf)
+			if len(lines) != 1 {
+				t.Fatalf("the refused %s line wrote %d audit lines, want exactly 1: %v", purpose, len(lines), lines)
+			}
+			if got := lines[0]["field"]; got != "caller" {
+				t.Errorf("the refusal of %s names field %v, want the caller", purpose, got)
+			}
+		}
+	})
 }
 
 // TestAuditMobilePurposesKeptTheRulesTheRestOfTheFileHolds: the relaxations are

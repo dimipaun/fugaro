@@ -1028,11 +1028,20 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 	// names none. Every other purpose's OK line still has to say which
 	// credential it used, and a mobile line that named one would have been
 	// refused above, before this branch was reached.
+	//
+	// The credential is the ONE thing a mobile line gives up: the caller is not,
+	// because it is the whole of what such a line says about whose act it
+	// records. A run's who is its run identity and a repository's is its
+	// repository, but a phone is neither, so a mobile line with no caller would
+	// record that a session was paired, refreshed, restored or revoked and
+	// nothing at all about whose.
 	if ev.Status == StatusOK {
 		person := callerWithoutJobPurpose(ev.Purpose)
 		switch {
 		case ev.Purpose == "":
 			return AuditEvent{}, auditRefusal{"purpose", refusalMissing}
+		case ev.Caller == "" && credentiallessPurpose(ev.Purpose):
+			return AuditEvent{}, auditRefusal{"caller", refusalMissing}
 		case ev.Run == "" && !person:
 			return AuditEvent{}, auditRefusal{"run", refusalMissing}
 		case ev.Job == "" && !person:
