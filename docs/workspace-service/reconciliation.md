@@ -81,7 +81,9 @@ account, and no address. `projectpolicy.Workspace` carries none either. Conseque
 **F9 — Exists.** The run's gateway already reads the workspace's headers (`noteWorkspaceHeadroom`,
 `WorkspaceRefusal`), and `DeliveredHeadroom` and `WorkspaceStop` exist with no caller outside tests.
 The service-side writers `SetWorkspaceHeadroom` and `SetWorkspaceRefusal` have none either.
-Consequence: WS8 and WS11 wire the two ends.
+Consequence: WS8 writes the headers the gateway already reads. `WorkspaceStop` stays without a
+caller: its own comment says ending a run needs a halt reason and a scope the run record's closed
+vocabulary does not have, which is a wire change of its own (declined here, plan §10).
 
 **F10 — Gap.** The paid-call path takes no reservation: `Server.forward` loops the candidates,
 `Server.send` makes the call and `Server.answer` builds the answer (`cascade.go`, `forward.go`).
@@ -109,12 +111,12 @@ tier) plus `Projects`. The Bitbucket routes choose from `Bundle.BitbucketToken` 
 `BitbucketTokens` with coverage from the installation's published node and `cfg.Repos`; the GitHub
 routes use `Bundle.AppKey` with the repository from the installation's `JobAccount`. Consequence:
 D2978's "every kind" needs the pool and the node to carry forge credentials, and the forge routes
-to take their tables from the per-call seam. D2984, tasks WS14 to WS16.
+to take their tables from the per-call seam. D2984, tasks WS15 to WS18.
 
 **F16 — Rule.** The keep-warm beat is the run's: `startSlipBeat` and `beatSlip`
 (`internal/runner/budget_session.go`) at `slipBeatEvery`, started only when the run claimed a slip.
 The service's Terraform has `min_instance_count = 0` and no maximum instance count or concurrency
-written. Consequence: D2985, D2986, WS12, WS6.
+written. Consequence: D2985, D2986, WS13, WS6.
 
 **F17 — Gap.** Each member job account needs `roles/run.invoker` on the workspace's service. For an
 installation that grant is `google_cloud_run_v2_service_iam_member.credentials` in the job's own
@@ -192,6 +194,30 @@ records what the workspace paid for it, and a member grants its read only to the
 service account. The alarm of D2987 cannot be computed from the owner's machine. Consequence:
 D2991.
 
+**F32 — Gap (review round 2).** A repository's own job is not given the service's address by
+Terraform: the launcher sets it at launch (`credentialsServiceLaunchEnv`, `internal/cli/run.go`),
+and only shared project jobs and review variants get it from `internal/infra/projectjobs.go`. An
+address a launcher supplies is an address a launcher can move, and the run sends its own token
+there (F30). Consequence: R3 as amended: the run reads the address from the member's own published
+record, never from its environment, and the first draft's task WS10 is dropped.
+
+**F33 — Gap (review round 2).** The beat posts the slip's id and claim secret (`beatSlip`,
+`internal/runner/budget_session.go`) and starts only when a slip was claimed, and R14 refuses the
+slip routes in workspace mode. Reusing it would send a member's slip secret to a service outside
+the member, to be refused. Consequence: R14 adds a keep-warm route that carries no secret.
+
+**F34 — Gap (review round 2).** Admission is per repository (R5), and a route per project and kind
+would send every repository of a project to `project` as soon as one of them is covered there.
+Consequence: R4 as amended: the route is per repository and kind.
+
+**F35 — Gap (review round 2).** `ContextTokenPath` (a run's GitHub context tokens, signed with the
+App key) and `VerifyPath` (review verification) were in neither list of R14. Consequence: R14 as
+amended.
+
+**F36 — Gap (review round 2).** A member job account with no invoke grant yet (F17's expected
+case) is answered by the platform with a bare 403, which is neither a typed refusal nor an
+unreachable service. Consequence: R16.
+
 ## 4. Decisions
 
 All answered by the owner on 2026-11-19.
@@ -225,18 +251,24 @@ Each has one defensible answer given the decisions and the owner's constraints.
   `Workspace.Verify` and `Workspace.database`. No route is written twice. Contract C1.
 - **R2. The mode.** One environment name selects workspace mode in `fugaro credentials serve`.
   Without it the process is exactly today's.
-- **R3. The address.** The workspace's service address is a fifth field of the member's own pin,
-  written by `fugaro workspace add`, and never read from anything the workspace publishes: a
-  workspace must not be able to move a member's calls by publishing a different address. The
-  member's `fugaro update` puts it in its jobs' environment. A pin without it is valid and means
-  "this member takes no workspace credential", so an existing pin converges with no edit.
-- **R4. The route, published, by kind.** A model call names no credential, so the route is per
-  kind of credential: model, Bitbucket, GitHub. The member's `fugaro update` works out, for each
-  kind, whether the project's own bundle holds a credential its policy admits, and publishes
-  `project` or `workspace` in a policy-side leaf that a run may read and no run may write (F23).
-  The run reads it at bootstrap and keeps it for the run (D2982, D2989). The project's copy wins
-  when both exist (D2973), and `fugaro update` reports a project copy that shadows a workspace one.
-  A kind with no route is served by the project, as today.
+- **R3. The address.** *(Amended after review round 2, F32.)* The workspace's service address is a
+  fifth field of the member's own pin, written by `fugaro workspace add`, and never read from
+  anything the **workspace** publishes: a workspace must not be able to move a member's calls. The
+  member's own `fugaro update` publishes it inside the route record of R4, and the run reads it
+  there at bootstrap. It is never a job or launch variable, so no launcher can move it. A pin
+  without it is valid and means "this member takes no workspace credential", so an existing pin
+  converges with no edit.
+- **R4. The route, published, by repository and kind.** *(Amended after review rounds 1 and 2,
+  F23, F34.)* A model call names no credential, so the route is per kind of credential (model,
+  Bitbucket, GitHub), and admission is per repository, so it is per repository too. The member's
+  `fugaro update` works out, for each repository and kind, whether the project's own bundle holds
+  a credential the member's policy admits for that repository, and publishes `project` or
+  `workspace`, with the address of R3, in one policy-side record that a run may read and no token
+  but the member's admins' may write. The run reads it once at bootstrap and keeps it (D2982,
+  D2989). The project's copy wins when both exist (D2973), and `fugaro update` reports a project
+  copy that shadows a workspace one. A repository and kind with no route is served by the project,
+  as today. `fugaro creds set` ends by naming `fugaro update`, and `fugaro doctor` flags a route
+  the bundle no longer matches.
 - **R5. The fallback is still fenced.** A call routed to the workspace passes the workspace
   entry's allow-list, the member's own policy and the repository's admission, exactly as
   `Workspace.Shared` intersects them today (D1298, D2978).
@@ -267,15 +299,24 @@ Each has one defensible answer given the decisions and the owner's constraints.
   it is older than 60 seconds, conditionally, so a member added or an entry shared or unshared
   takes effect within a minute with no new revision (F26). A member's new repository still needs
   the workspace owner's `fugaro update`, for the invoke grant (F17).
-- **R14. What workspace mode serves.** The model routes, and the forge routes a run calls (the git
-  proxy and a run's own token mint). Every other route (review signing, slips, workflow secrets,
-  build tokens, the read mints, the merge, label and issue routes) is refused in workspace mode
-  with a typed refusal, and a member's run keeps calling its own project's service for them (A2,
-  D2988).
+- **R14. What workspace mode serves.** *(Amended after review round 2, F33, F35.)* The model
+  routes; the forge routes a run calls (the git proxy, a run's own token mint and its context
+  tokens); and a keep-warm route that takes the job's identity and carries no secret. Every other
+  route (review signing and verification, slips, workflow secrets, build tokens, the read mints,
+  the merge, label and issue routes) is refused in workspace mode with a typed refusal, and a
+  member's run keeps calling its own project's service for them (A2, D2988).
 - **R15. What is reserved.** For a paid credential the reservation is the call's worst case from
-  the price table (`internal/pricing`), settled on the answer's usage. A call on a subscription
-  token reserves nothing and is counted in the notional figures, as an OAuth run is today (D1300,
-  D2965). A reservation whose call never settles expires at `budget.WorkspaceReservationTTL`.
+  the price table (`internal/pricing`), settled on the answer's usage. A stream cut before its
+  usage arrives settles at the worst case. A model with no price is refused. A call on a
+  subscription token reserves nothing and is counted in the notional figures, as an OAuth run is
+  today (D1300, D2965). A reservation whose call never settles expires at
+  `budget.WorkspaceReservationTTL`.
+- **R16. A missing invoke grant is a refusal that names the fix.** *(Review round 2, F36.)* The
+  gateway reads a platform 403 from the workspace's service as "this repository's job is not yet
+  granted": the run halts at once with a reason that names the workspace owner's `fugaro update`.
+  It is not waited for.
+- **R17. A node that cannot be re-read refuses.** When R13's re-read fails and the copy held is
+  older than 60 seconds, the scope refuses the call; it never serves from a stale table.
 
 ## 6. Open tensions and open items
 
@@ -294,6 +335,11 @@ No two answers pull against each other.
   ready column.
 - **O6.** One member can use up the workspace's cap for the others (D2990). Stated in
   `SECURITY.md` by WS8.
+- **O7.** Turning the feature on is configuration, not an upgrade: the workspace owner declares
+  members and shares entries (`fugaro workspace member add`, `fugaro workspace share`) and each
+  member pins the address (`fugaro workspace add`), each followed by `fugaro update`. An
+  installation that uses none of it needs only `fugaro update`. The owner is asked to confirm
+  that this reading satisfies the one-command rule.
 - **O3.** The workspaces design's own open checks U1 to U5 (a member job account admitted by a real
   deployment, and the rest) are still open. Checks 771 to 773 cover U1; U5's alarm half waits on the alarm's own spec (D2991); U3 and U4 stay
   that design's.

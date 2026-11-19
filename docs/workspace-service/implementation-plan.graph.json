@@ -114,7 +114,6 @@
           "internal/cli/workspace.go",
           "internal/cli/workspace_share.go",
           "internal/cli/workspace_share_test.go",
-          "schemas/workspace.schema.json",
           "docs/workspaces/*.md"
         ]
       }
@@ -221,23 +220,8 @@
         "paths": [
           "internal/cli/update_route.go",
           "internal/cli/update_route_test.go",
-          "internal/cli/update.go"
-        ]
-      }
-    },
-    {
-      "id": "WS10",
-      "title": "the address reaches the member's jobs",
-      "run": null,
-      "version": null,
-      "tier": "small",
-      "size": 1,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/infra/projectjobs.go",
-          "internal/infra/tfvars.go",
-          "internal/infra/projectjobs_workspace_test.go"
+          "internal/cli/update.go",
+          "internal/cli/creds.go"
         ]
       }
     },
@@ -296,7 +280,8 @@
           "internal/config/defaults.go",
           "schemas/fugaro.schema.json",
           "schemas/settings.schema.json",
-          "docs/config-management/**"
+          "docs/config-management/**",
+          "website/content/**"
         ]
       }
     },
@@ -348,7 +333,7 @@
     },
     {
       "id": "WS17",
-      "title": "a run's GitHub mint on the scope",
+      "title": "a run's GitHub mint and context tokens on the scope",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -439,7 +424,8 @@
         "prediction": true,
         "paths": [
           "internal/budget/rules/**",
-          "internal/projectpolicy/paths.go",
+          "internal/projectpolicy/version.go",
+          "internal/cli/docs_mobile_auth_test.go",
           "internal/cli/update_converge_test.go"
         ]
       }
@@ -556,11 +542,6 @@
       "task": "WS8",
       "needs": "WS1",
       "reason": "both rewrite cascade.go, and the meter is read from the scope WS1 threads"
-    },
-    {
-      "task": "WS10",
-      "needs": "WS3",
-      "reason": "it reads the pin field WS3 adds"
     },
     {
       "task": "WS11",
@@ -709,11 +690,6 @@
     },
     {
       "task": "I1",
-      "needs": "WS10",
-      "reason": "it is a side of an edge a contract broke, re-joined here"
-    },
-    {
-      "task": "I1",
       "needs": "WS11",
       "reason": "it is a side of an edge a contract broke, re-joined here"
     },
@@ -771,6 +747,16 @@
       "task": "R-scope-forge",
       "needs": "C1",
       "reason": "amends a file C1 creates"
+    },
+    {
+      "task": "WS9",
+      "needs": "WS3",
+      "reason": "it reads the pin field WS3 adds"
+    },
+    {
+      "task": "WS14",
+      "needs": "WS3",
+      "reason": "it reads the pin field WS3 adds"
     }
   ],
   "decoupling": [
@@ -809,15 +795,6 @@
       },
       "integration": "I1",
       "reason": "the gateway reads the route record, not who publishes it"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WS11",
-        "needs": "WS10"
-      },
-      "integration": "I1",
-      "reason": "the gateway reads an environment name, not who sets it"
     },
     {
       "contract": "C2",

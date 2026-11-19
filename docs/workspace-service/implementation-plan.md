@@ -16,7 +16,7 @@ for every kind (D2978), the holder proxies (D2979).
 ## 1. Conventions every task follows
 
 Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every task under
-`internal/creds`, `internal/credsvc`, `SECURITY.md`), `.claude/rules/terraform.md` (WS6, WS7, WS10),
+`internal/creds`, `internal/credsvc`, `SECURITY.md`), `.claude/rules/terraform.md` (WS6, WS7),
 `docs/no-prompt-policy/`, `docs/design/update-in-flight.md`.
 
 - **Always.** Targeted tests, never a whole package. Hermetic: `internal/gcpfake`, `anthropicfake`,
@@ -45,8 +45,13 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 | Workspace mode serves only the model routes and a run's forge routes | WS2 `TestWorkspaceModeRefusesEveryOtherRoute` |
 | The workspace's service writes nothing to a member | WS2 and WS8 run against a member database fake that fails on any write |
 | A reservation precedes every paid call, probes included, and a failed settle refuses | WS8 `TestEveryPaidCallIsReserved`, `TestAFailedSettleRefuses` |
-| No run token can write the route | WS22 `TestNoRunWritesTheRoute` |
-| A project with no credential of a kind is never called for that kind | WS11 `TestARunRoutedToTheWorkspaceNeverCallsTheProject` |
+| No token but the member's admins' can write the route or the address in it | WS22 `TestNoRunWritesTheRoute`, `TestNoOtherTokenWritesTheRoute` |
+| The address is read from the member's published record, never from the run's environment | WS11 `TestTheAddressIsNeverReadFromTheEnvironment` |
+| A stream cut early settles at the worst case, and a model with no price is refused | WS8 `TestACutStreamSettlesAtTheWorstCase`, `TestAModelWithNoPriceIsRefused` |
+| A node that cannot be re-read refuses rather than serve a stale table | WS2 `TestAFailedRereadRefuses` |
+| One member's job never reaches a repository covered for another member | WS16, WS17 `TestAnotherMembersRepositoryIsRefused` |
+| The beat carries no slip | WS13 `TestTheWorkspaceBeatCarriesNoSlip` |
+| A repository with no project credential of a kind never calls the project for that kind | WS11 `TestARunRoutedToTheWorkspaceNeverCallsTheProject` |
 | A pin without an address converges untouched, and an address is `https` with no query | WS3 `TestAPinWithoutAnAddressIsValid`, `TestAPinAddressMustBeHTTPS`; WS7 `TestUpdateConvergesAWorkspaceFromThePreviousRelease` |
 | Version 2 of the node is published only after the service that reads it is deployed | WS4 `TestNodeIsPublishedOnlyAfterTheServiceDeploys` |
 | Removing a member needs no operator repair | WS6 `TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant` |
@@ -61,8 +66,8 @@ of WS11 is asked the question of O4 by name.
 
 ### C1: the scope contract
 - Acceptance: `credsvc` declares the per-call scope a route needs (the verified caller; the
-  policy, kill, state, outcome, table, offering and meter readers for that caller; and which
-  routes the scope serves, R14), the resolver that returns one for a request, and the signature of
+  policy, kill, state, outcome, table, offering and meter readers for that caller; which routes
+  the scope serves, R14; and the keep-warm route's path), the resolver that returns one for a request, and the signature of
   the workspace resolver's constructor. A stub resolver returns a scope that refuses every call.
 - Files: `internal/credsvc/scope.go` (new), `internal/credsvc/scope_stub.go` (new, stub),
   `docs/workspace-service/contract-scope.md` (new).
@@ -76,15 +81,15 @@ of WS11 is asked the question of O4 by name.
 - Reviewer tier: opus, mandatory independent review.
 
 ### C2: the wire contract
-- Acceptance: one place names the service's workspace-mode environment name, the job's
-  workspace-address environment name, the pin's address field, the beat's setting key, and the
-  route record: one of `project` or `workspace` per kind (model, Bitbucket, GitHub), at a
-  policy-side path a run may read (R4, F23). The record has a JSON Schema and decodes strictly. A
-  stub reader answers "every kind is the project's".
+- Acceptance: one place names the service's workspace-mode environment name, the workspace
+  service's Cloud Run name, the pin's address field, the beat's setting key, and the route record:
+  the workspace's address, and one of `project` or `workspace` per repository and kind (model,
+  Bitbucket, GitHub), at a policy-side path a run may read (R3, R4). The record has a JSON Schema
+  and decodes strictly. A stub reader answers "every repository and kind is the project's".
 - Files: `internal/creds/route.go` (new), `internal/creds/route_stub.go` (new, stub),
   `schemas/credential-route.schema.json` (new), `docs/workspace-service/contract-wire.md` (new).
 - Interfaces: produces `creds.Route`, `creds.RouteReader` and the names; consumed by WS5, WS11,
-  WS14, WS20, WS22. WS3, WS6, WS9 and WS10 build its other side.
+  WS14, WS20, WS22. WS3, WS6 and WS9 build its other side.
 - Tests: `TestRouteRecordDecodesStrictly`, `TestStubRouteIsAlwaysTheProject`.
 - Command: `go test ./internal/creds/ -run Route -count=1`.
 - Red step: an unknown key in the record is accepted until the strict decode lands.
@@ -114,7 +119,8 @@ of WS11 is asked the question of O4 by name.
 
 **Slice A, the service (inert until a member pins an address):** WS1, WS2, WS5, WS6, WS7, WS8.
 **Slice B, the workspace owner's side:** WS3, WS4, WS14, WS19.
-**Slice C, the member's side:** WS9 to WS13, WS22.
+**Slice C, the member's side:** WS9, WS11 to WS13, WS22 (WS10 was dropped after review round 2 and
+its number is not reused).
 **Slice D, forge credentials:** WS15 to WS18.
 **Slice E, checks and documents:** WS20, WS21. **Integration:** I1.
 
@@ -140,7 +146,8 @@ of WS11 is asked the question of O4 by name.
   readers are that member's own database and whose offering is `Workspace.Shared` over
   `WorkspaceShared` of the bundle and the published node; it holds the run's verified slug to the
   repository of the calling job account (F28); it re-reads the node when older than 60 seconds
-  (R13); it serves only the routes of R14; state is read and written in the workspace's database
+  (R13) and refuses when that re-read fails (R17); it serves only the routes of R14, the
+  keep-warm route among them; state is read and written in the workspace's database
   only (R8). The `SECURITY.md` sentence on the O3 gap says it is closed.
 - Files: `internal/credsvc/scope_workspace.go` (new), `internal/credsvc/scope_workspace_test.go`
   (new), `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`, `SECURITY.md` with
@@ -148,6 +155,7 @@ of WS11 is asked the question of O4 by name.
 - Interfaces: consumes C1, C3; produces the workspace's `ScopeResolver`.
 - Tests: `TestWorkspaceScopeIgnoresADeclaredMember`, `TestWorkspaceScopeOffersOnlyTheIntersection`,
   `TestWorkspaceScopeHoldsTheSlugToTheCallingAccount`, `TestWorkspaceScopeRereadsItsNode`,
+  `TestAFailedRereadRefuses`, `TestTheKeepWarmRouteCarriesNoSecret`,
   `TestWorkspaceModeRefusesEveryOtherRoute`, `TestWorkspaceScopeWritesNothingToAMember`.
 - Command: `go test ./internal/credsvc/ -run 'WorkspaceScope|WorkspaceMode|Workspace' -count=1 && go test ./internal/cli/ -run 'DocsWorkspaces|SecurityMd' -count=1`.
 - Red step: the intersection test fails while the offering is the whole bundle.
@@ -163,9 +171,9 @@ of WS11 is asked the question of O4 by name.
   local shared list; every write is a local edit that ends by naming `fugaro update`, and none
   asks a question.
 - Files: `internal/localcfg/localcfg.go`, `internal/cli/workspace.go`,
-  `internal/cli/workspace_share.go` (new), `internal/cli/workspace_share_test.go` (new),
-  `schemas/workspace.schema.json`.
-- Interfaces: builds the pin and table side of C2 and C3; produces the local fields WS4 and WS10 read.
+  `internal/cli/workspace_share.go` (new), `internal/cli/workspace_share_test.go` (new).
+- Interfaces: builds the pin and table side of C2 and C3; produces the local fields WS4, WS9 and
+  WS14 read. It changes local config only: nothing here reaches a published record.
 - Tests: `TestAPinWithoutAnAddressIsValid`, `TestAPinAddressMustBeHTTPS`,
   `TestMemberAddTakesRegionAndRepositories`, `TestShareRefusesAProjectThatIsNotAMember`,
   `TestShareAsksNothing`.
@@ -179,13 +187,15 @@ of WS11 is asked the question of O4 by name.
 - Acceptance: the workspace owner's `fugaro update` publishes the node from the local member table
   and shared list, conditionally and migrated in place, and only after its own deploy of the
   service succeeded in the same update (R7); it refuses a shared entry naming a project that is not
-  a member (F13); when runs are in flight it names, in one short line, an entry unshared or a
+  a member (F13), and a cap removed while an `all_members` entry exists; when runs are in flight
+  it names, in one short line, an entry unshared or a
   member removed (R11).
 - Files: `internal/cli/update_workspace.go`, `internal/cli/update_workspace_node_test.go` (new),
   `internal/projectpolicy/workspace_credentials_migrate.go` (new).
 - Interfaces: builds C3's writer side; consumes WS3's local fields; produces the published node.
 - Tests: `TestUpdatePublishesTheNode`, `TestNodeIsPublishedOnlyAfterTheServiceDeploys`,
-  `TestNodeMigratesInPlace`, `TestUpdateNamesAnUnshareWhenRunsAreInFlight`.
+  `TestNodeMigratesInPlace`, `TestUpdateNamesAnUnshareWhenRunsAreInFlight`,
+  `TestWriterRefusesAllMembersWithoutACap`.
 - Command: `go test ./internal/cli/ -run 'UpdatePublishesTheNode|NodeIsPublishedOnlyAfter|UpdateNamesAnUnshare' -count=1 && go test ./internal/projectpolicy/ -run NodeMigrates -count=1`.
 - Red step: no node is written by an update that publishes the record.
 - Depends on: C3 (it starts after C3 merges); WS3 (kept: it reads the local fields WS3 adds to one struct).
@@ -255,7 +265,8 @@ of WS11 is asked the question of O4 by name.
 ### WS8: the meter on the paid-call path
 - Acceptance: for a paid credential the server reserves the call's worst case from the price
   table through the scope's meter before every upstream call, probes included, settles on the
-  answer's usage and refuses the call when the settle fails; a call on a subscription token
+  answer's usage and refuses the call when the settle fails; a stream cut before its usage settles
+  at the worst case, and a model with no price is refused; a call on a subscription token
   reserves nothing (R15); a call at the ceiling is refused with the workspace's refusal header and
   every answer carries the headroom header; an installation's scope has no meter and is unchanged.
   `SECURITY.md` says the cap now binds, that the alarm still runs nowhere (D2991), and that one
@@ -266,59 +277,51 @@ of WS11 is asked the question of O4 by name.
 - Interfaces: consumes the meter C1 puts in the scope.
 - Tests: `TestEveryPaidCallIsReserved`, `TestAFailedSettleRefuses`, `TestACallAtTheCeilingIsRefused`,
   `TestASubscriptionCallReservesNothing`, `TestAStalledReservationExpires`,
+  `TestACutStreamSettlesAtTheWorstCase`, `TestAModelWithNoPriceIsRefused`,
   `TestSecurityMdStatesTheWorkspaceThreatModel`.
-- Command: `go test ./internal/credsvc/ -run 'EveryPaidCall|AFailedSettle|ACallAtTheCeiling|ASubscriptionCall|AStalledReservation' -count=1 && go test ./internal/cli/ -run 'SecurityMd|DocsWorkspaces' -count=1 && (cd website && npm run check)`.
+- Command: `go test ./internal/credsvc/ -run 'EveryPaidCall|AFailedSettle|ACallAtTheCeiling|ASubscriptionCall|AStalledReservation|ACutStream|AModelWithNoPrice' -count=1 && go test ./internal/cli/ -run 'SecurityMd|DocsWorkspaces' -count=1 && (cd website && npm run check)`.
 - Red step: `TestEveryPaidCallIsReserved` fails on the probe path.
 - Depends on: WS1 (kept: both rewrite `cascade.go`, and the meter is read from the scope WS1 threads).
 - Commit: `credsvc: the workspace cap binds, metered at the proxy (WS8, D1301, F10, F18, R15)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WS9: the member publishes the route
-- Acceptance: a member's `fugaro update` publishes, per kind, `project` when the project's own
-  bundle holds a credential of that kind its policy admits and `workspace` otherwise (R4); it
-  reports a project copy that shadows a workspace one (D2973); a member in no workspace, or with
-  no address in its pin, publishes nothing. The first step settles what is left of U1.
+- Acceptance: a member's `fugaro update` publishes one record: the address from its pin, and per
+  repository and kind `project` when the project's own bundle holds a credential its policy admits
+  for that repository and `workspace` otherwise (R3, R4); it reports a project copy that shadows a
+  workspace one (D2973); a member in no workspace, or with no address in its pin, publishes
+  nothing and removes a record it published before; `fugaro creds set` ends by naming
+  `fugaro update`. The first step settles what is left of U1.
 - Files: `internal/cli/update_route.go` (new), `internal/cli/update_route_test.go` (new),
-  `internal/cli/update.go`.
-- Interfaces: builds C2's publishing side.
-- Tests: `TestUpdatePublishesTheRoute`, `TestTheProjectsCopyWins`,
-  `TestUpdateReportsAShadowingCopy`, `TestNoWorkspaceNoRoute`.
-- Command: `go test ./internal/cli/ -run 'UpdatePublishesTheRoute|TheProjectsCopyWins|UpdateReportsAShadowing|NoWorkspaceNoRoute' -count=1`.
+  `internal/cli/update.go`, `internal/cli/creds.go`.
+- Interfaces: builds C2's publishing side; consumes WS3's pin field.
+- Tests: `TestUpdatePublishesTheRoute`, `TestTheRouteIsPerRepository`, `TestTheProjectsCopyWins`,
+  `TestUpdateReportsAShadowingCopy`, `TestNoWorkspaceNoRoute`, `TestLeavingRemovesTheRoute`.
+- Command: `go test ./internal/cli/ -run 'UpdatePublishesTheRoute|TheRouteIsPerRepository|TheProjectsCopyWins|UpdateReportsAShadowing|NoWorkspaceNoRoute|LeavingRemovesTheRoute' -count=1`.
 - Red step: no route is published for a member whose bundle is empty.
-- Depends on: C2 (it starts after C2 merges).
-- Commit: `update: a member publishes where each kind of credential is served (WS9, D2973, D2982, R4)`.
-- Reviewer tier: opus, mandatory independent review.
-
-### WS10: the address reaches the member's jobs
-- Acceptance: a member's `fugaro update` sets the workspace-address environment name on its jobs
-  from the pin; a pin without an address sets nothing; a run in flight is untouched.
-- Files: `internal/infra/projectjobs.go`, `internal/infra/tfvars.go`,
-  `internal/infra/projectjobs_workspace_test.go` (new).
-- Interfaces: builds C2's job side; consumes WS3's pin field.
-- Tests: `TestJobsCarryTheWorkspaceAddress`, `TestNoAddressNoVariable`.
-- Command: `go test ./internal/infra/ -run 'JobsCarryTheWorkspaceAddress|NoAddressNoVariable' -count=1`.
-- Red step: the job's environment lacks the name.
-- Depends on: WS3 (kept: it reads the pin field WS3 adds).
-- Commit: `infra: a member's jobs learn the workspace's address (WS10, R3)`.
+- Depends on: C2 (it starts after C2 merges); WS3 (kept: it reads the pin field WS3 adds).
+- Commit: `update: a member publishes where each repository's credentials are served (WS9, D2973, D2982, R3, R4)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WS11: the run routes each kind
-- Acceptance: at bootstrap the run reads the route; the gateway holds a second upstream for the
-  workspace's service, with an ID token whose audience is that service's address; a model call
-  goes to the service the model route names and never to the other, exhausted or not (D2989); the
-  workspace's stop and headroom headers are acted on (`WorkspaceStop`, `DeliveredHeadroom` get
-  their callers); a run with no address behaves as today. The `SECURITY.md` sentence on what the
-  workspace's service can write names the run's token (F30, O4).
+- Acceptance: at bootstrap the run reads the route record for its repository; the gateway holds a
+  second upstream for the address in that record, with an ID token whose audience is that address,
+  and never takes the address from the run's environment (R3); a model call goes to the service
+  the model route names and never to the other, exhausted or not (D2989); a platform 403 from the
+  workspace's service halts the run at once with a reason naming the workspace owner's
+  `fugaro update` (R16); a run with no record behaves as today. The `SECURITY.md` sentence on what
+  the workspace's service can write names the run's token (F30, O4).
 - Files: `internal/gateway/gateway.go`, `internal/gateway/service.go`, `internal/runner/gateway.go`,
   `internal/gateway/workspace_route_test.go` (new), `SECURITY.md` with `website/content/security.md`.
 - Interfaces: consumes C2.
 - Tests: `TestARunRoutedToTheWorkspaceNeverCallsTheProject`,
   `TestAnExhaustedProjectDoesNotFallThrough`, `TestTheWorkspaceUpstreamHasItsOwnAudience`,
-  `TestNoAddressIsTodaysRun`, `TestTheWorkspaceStopHaltsTheRun`.
-- Command: `go test ./internal/gateway/ -run 'ARunRouted|AnExhaustedProject|TheWorkspaceUpstream|NoAddressIsTodays|TheWorkspaceStop' -count=1 && go test ./internal/runner/ -run Gateway -count=1 && go test ./internal/cli/ -run SecurityMd -count=1`.
+  `TestTheAddressIsNeverReadFromTheEnvironment`, `TestAMissingInvokeGrantNamesTheFix`,
+  `TestNoRecordIsTodaysRun`.
+- Command: `go test ./internal/gateway/ -run 'ARunRouted|AnExhaustedProject|TheWorkspaceUpstream|TheAddressIsNever|AMissingInvokeGrant|NoRecordIsTodays' -count=1 && go test ./internal/runner/ -run Gateway -count=1 && go test ./internal/cli/ -run SecurityMd -count=1`.
 - Red step: the routed call reaches the project's fake.
 - Depends on: C2.
-- Commit: `gateway: a run routes each kind of credential to its holder (WS11, D2981, D2982, D2989)`.
+- Commit: `gateway: a run routes each kind of credential to its holder (WS11, D2981, D2982, D2989, R16)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WS12: an unreachable service is waited for
@@ -339,34 +342,35 @@ of WS11 is asked the question of O4 by name.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WS13: the beat, and its switch
-- Acceptance: a run that routed a kind to the workspace beats the workspace's service at the slip
-  beat's interval; a setting turns that beat off and on is the default; a run that routed nothing
-  there sends none. A setting is past five files because its registry, schemas and documents move
-  together.
+- Acceptance: a run that routed a kind to the workspace calls the workspace's keep-warm route at
+  the slip beat's interval, with the job's identity and no slip id or secret (F33); a setting
+  turns that beat off and on is the default; a run that routed nothing there sends none. A setting
+  is past five files because its registry, schemas and documents move together.
 - Files: `internal/runner/budget_session.go`, `internal/runner/workspace_beat_test.go` (new),
   `internal/settings/registry.go`, `internal/config/config.go`, `internal/config/defaults.go`,
-  `schemas/fugaro.schema.json`, `schemas/settings.schema.json`, the settings page under
-  `docs/config-management/` with its test.
-- Interfaces: reads the setting's key from C2.
-- Tests: `TestARoutedRunBeatsTheWorkspace`, `TestTheBeatCanBeTurnedOff`, `TestNoRouteNoBeat`.
-- Command: `go test ./internal/runner/ -run 'ARoutedRunBeats|TheBeatCanBeTurnedOff|NoRouteNoBeat' -count=1 && go test ./internal/settings/ ./internal/config/ -run 'Registry|Settings|Default' -count=1 && go test ./internal/cli/ -run Docs -count=1`.
+  `schemas/fugaro.schema.json`, `schemas/settings.schema.json`, and each document the settings
+  tests require a new setting to appear in.
+- Interfaces: reads the setting's key from C2 and the keep-warm route's path from C1.
+- Tests: `TestARoutedRunBeatsTheWorkspace`, `TestTheWorkspaceBeatCarriesNoSlip`,
+  `TestTheBeatCanBeTurnedOff`, `TestNoRouteNoBeat`.
+- Command: `go test ./internal/runner/ -run 'ARoutedRunBeats|TheWorkspaceBeatCarries|TheBeatCanBeTurnedOff|NoRouteNoBeat' -count=1 && go test ./internal/settings/ ./internal/config/ -run 'Registry|Settings|Default' -count=1 && go test ./internal/cli/ -run Docs -count=1`.
 - Red step: no beat reaches the workspace's fake.
 - Depends on: WS11 (kept: the beat exists only for a run WS11 routed).
-- Commit: `runner: the workspace beat and its switch (WS13, D2985, R10)`.
-- Reviewer tier: standard.
+- Commit: `runner: the workspace beat and its switch (WS13, D2985, R10, F33)`.
+- Reviewer tier: opus, mandatory independent review.
 
 ### WS14: doctor for the workspace's service
 - Acceptance: `fugaro doctor` on the workspace owner's machine reports the service deployed, the
   node published and readable, and each shared entry present in the bundle; on a member's it
-  reports the pin's address and the published route. It reads and writes nothing else, and it
-  reports no alarm (D2991).
+  reports the pin's address and the published route, and flags a route the bundle no longer
+  matches (R4). It reads and writes nothing else, and it reports no alarm (D2991).
 - Files: `internal/cli/doctor_workspace.go`, `internal/cli/doctor_workspace_service_test.go` (new).
 - Interfaces: consumes C2, C3.
 - Tests: `TestDoctorReportsTheWorkspaceService`, `TestDoctorReportsAMembersRoute`,
-  `TestDoctorWritesNothing`.
-- Command: `go test ./internal/cli/ -run 'DoctorReportsTheWorkspace|DoctorReportsAMembers|DoctorWritesNothing' -count=1`.
+  `TestDoctorFlagsAStaleRoute`, `TestDoctorWritesNothing`.
+- Command: `go test ./internal/cli/ -run 'DoctorReportsTheWorkspace|DoctorReportsAMembers|DoctorFlagsAStale|DoctorWritesNothing' -count=1`.
 - Red step: doctor passes a workspace with no service.
-- Depends on: C2, C3.
+- Depends on: C2, C3; WS3 (kept: it reads the pin field WS3 adds).
 - Commit: `doctor: the workspace's service, node and route (WS14, F20)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -392,32 +396,36 @@ of WS11 is asked the question of O4 by name.
 - Files: `internal/credsvc/bitbucketproxy.go`, `internal/credsvc/bitbucket_workspace_test.go` (new).
 - Interfaces: consumes C3 and the scope plumbing of WS1.
 - Tests: `TestWorkspaceProxyServesOnlyACoveredRepository`,
-  `TestARepositoryNamedOnlyByTheMemberIsRefused`, `TestWorkspaceProxyStreamsAndHoldsNothing`, the
+  `TestARepositoryNamedOnlyByTheMemberIsRefused`, `TestAnotherMembersRepositoryIsRefused`,
+  `TestWorkspaceProxyStreamsAndHoldsNothing`, the
   existing Bitbucket suites unchanged.
-- Command: `go test ./internal/credsvc/ -run 'WorkspaceProxy|ARepositoryNamedOnly|Bitbucket' -count=1`.
+- Command: `go test ./internal/credsvc/ -run 'WorkspaceProxy|ARepositoryNamedOnly|AnotherMembersRepository|Bitbucket' -count=1`.
 - Red step: a repository outside the coverage is served.
 - Depends on: C3; WS1 (kept: it calls the scope plumbing WS1 puts in `Server`).
 - Commit: `credsvc: the Bitbucket git proxy reads the scope (WS16, D2978, D2979, D2988)`.
 - Reviewer tier: opus, mandatory independent review.
 
-### WS17: a run's GitHub mint on the scope
-- Acceptance: the run's token mint takes the App key and the repository from the scope, with the
-  same three fences as WS16; the read mint, the merge mint and the label and issue routes stay
-  installation-only (D2988); an installation's behaviour is unchanged.
+### WS17: a run's GitHub mint and context tokens on the scope
+- Acceptance: the run's token mint and its context tokens (`ContextTokenPath`) take the App key and
+  the repository from the scope, with the same three fences as WS16; the read mint, the merge mint
+  and the label and issue routes stay installation-only (D2988); an installation's behaviour is
+  unchanged.
 - Files: `internal/credsvc/github.go`, `internal/credsvc/github_workspace_test.go` (new).
 - Interfaces: consumes C3 and the scope plumbing of WS1.
 - Tests: `TestWorkspaceMintServesOnlyACoveredRepository`,
-  `TestARepositoryNamedOnlyByTheMemberIsRefusedAMint`, the existing GitHub suites unchanged.
-- Command: `go test ./internal/credsvc/ -run 'WorkspaceMint|ARepositoryNamedOnly|GitHub|Mint' -count=1`.
+  `TestARepositoryNamedOnlyByTheMemberIsRefusedAMint`, `TestAnotherMembersRepositoryIsRefusedAMint`,
+  `TestWorkspaceContextTokensAreFenced`, the existing GitHub suites unchanged.
+- Command: `go test ./internal/credsvc/ -run 'WorkspaceMint|ARepositoryNamedOnly|AnotherMembersRepository|WorkspaceContextTokens|GitHub|Mint' -count=1`.
 - Red step: a repository outside the coverage is minted for.
 - Depends on: C3; WS1 (kept: as WS16).
-- Commit: `credsvc: a run's GitHub mint reads the scope (WS17, D2978, D2979, D2988)`.
+- Commit: `credsvc: a run's GitHub mint reads the scope (WS17, D2978, D2979, D2988, F35)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WS18: the run's forge calls follow the route
 - Acceptance: the run's git traffic and its own forge token requests go to the service the route
   names for that kind; with no route they go to the project's, as today; an unreachable service on
-  the git path gets the same bounded wait as WS12.
+  the git path is retried for the same bound as WS12, by a retry of its own where no stage is in
+  flight (the bootstrap clone and the final push).
 - Files: `internal/gateway/gitforward.go`, `internal/runner/gateway.go`,
   `internal/runner/runner.go`, `internal/gitprov/providers/providers.go`,
   `internal/gateway/gitforward_route_test.go` (new).
@@ -427,7 +435,7 @@ of WS11 is asked the question of O4 by name.
 - Command: `go test ./internal/gateway/ -run 'GitTrafficFollows|NoRouteGitGoes|AnUnreachableGit' -count=1 && go test ./internal/gitprov/providers/ -count=1`.
 - Red step: a push routed to the workspace reaches the project's fake.
 - Depends on: WS11 (kept: it uses the upstream WS11 builds and both edit `runner/gateway.go`);
-  WS12 (kept: it reuses WS12's wait).
+  WS12 (kept: it reuses WS12's bound and reason).
 - Commit: `gateway: git traffic follows the credential's route (WS18, D2979, D2984)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -483,14 +491,18 @@ of WS11 is asked the question of O4 by name.
 - Reviewer tier: opus, mandatory independent review (a plugin skill).
 
 ### WS22: the route's rule
-- Acceptance: the database rules let a run's token read the route's leaf and let no run's token
-  write it; `RulesVersion` moves; an installation at the previous rules version converges through
-  `fugaro update` with a run in flight.
-- Files: `internal/budget/rules/rules.json.tmpl`, the rules test beside it,
-  `internal/projectpolicy/paths.go` (the version), `internal/cli/update_converge_test.go`.
-- Interfaces: consumes C2 (the leaf's path).
-- Tests: `TestARunReadsTheRoute`, `TestNoRunWritesTheRoute`, `TestRulesConvergeFromThePreviousVersion`.
-- Command: `go test ./internal/budget/rules/ -run 'ARunReadsTheRoute|NoRunWritesTheRoute' -count=1 && go test ./internal/cli/ -run RulesConvergeFromThePrevious -count=1`.
+- Acceptance: the database rules let a run's token read its repository's route record and let no
+  token but the member's admins' write it: not a run's, an orchestrator's, a coordinator's, a
+  device's or a launcher's; `RulesVersion` moves, with the documents test that pins its value; an
+  installation at the previous rules version converges through `fugaro update` with a run in
+  flight.
+- Files: `internal/budget/rules/rules.json.tmpl`, a rules emulator test beside it (new),
+  `internal/projectpolicy/version.go`, `internal/cli/docs_mobile_auth_test.go`,
+  `internal/cli/update_converge_test.go`.
+- Interfaces: consumes C2 (the record's path).
+- Tests: `TestARunReadsTheRoute`, `TestNoRunWritesTheRoute`, `TestNoOtherTokenWritesTheRoute`,
+  `TestRulesConvergeFromThePreviousVersion`.
+- Command: `go test -tags firebase ./internal/budget/rules/ -run 'ARunReadsTheRoute|NoRunWritesTheRoute|NoOtherTokenWritesTheRoute' -count=1 && go test ./internal/cli/ -run 'RulesConvergeFromThePrevious|Docs|RulesVersion' -count=1`.
 - Red step: a run's token is refused the read.
 - Depends on: C2.
 - Commit: `rules: a run reads its credential route and cannot write it (WS22, F23, R4)`.
@@ -499,7 +511,7 @@ of WS11 is asked the question of O4 by name.
 ### I1: integration
 - Acceptance: the stubs `scope_stub.go` and `route_stub.go` are deleted; one hermetic end-to-end
   test drives a member's run through its gateway to a workspace-mode server over fakes: a model
-  call and a Bitbucket push on a workspace credential, metered, with the project's service never
+  call, a Bitbucket push and a GitHub token mint on workspace credentials, the model call metered, with the project's service never
   called for either; and the same run with the project holding its own copy never calls the
   workspace.
 - Files: `internal/credsvc/scope_stub.go` (deleted), `internal/creds/route_stub.go` (deleted),
@@ -508,7 +520,7 @@ of WS11 is asked the question of O4 by name.
 - Tests: `TestWorkspaceServesAMemberRunEndToEnd`, `TestTheProjectsOwnCopyKeepsTheWorkspaceUntouched`.
 - Command: `go test ./internal/cli/ -run 'WorkspaceServesAMemberRun|TheProjectsOwnCopyKeeps' -count=1 && go build ./... && go vet ./...`.
 - Red step: the test fails to build while a stub is still referenced.
-- Depends on: C1, C2, C3 and every side of an edge they broke: WS1, WS2, WS4, WS5, WS6, WS9, WS10,
+- Depends on: C1, C2, C3 and every side of an edge they broke: WS1, WS2, WS4, WS5, WS6, WS9,
   WS11, WS14, WS15, WS16, WS17, WS20, WS22; and WS8 and WS18 (kept: the test meters a call and
   pushes through the routed git path).
 - Commit: `workspace: the service, wired end to end (I1)`.
@@ -524,32 +536,32 @@ repository's mode is `startup`, so the pass is applied aggressively.
 | Level | Tasks |
 | --- | --- |
 | 0 | C1, C2, C3 |
-| 1 | WS1, WS2, WS3, WS5, WS6, WS9, WS11, WS14, WS15, WS20, WS22 |
-| 2 | WS4, WS7, WS8, WS10, WS12, WS13, WS16, WS17 |
+| 1 | WS1, WS2, WS3, WS5, WS6, WS11, WS15, WS20, WS22 |
+| 2 | WS4, WS7, WS8, WS9, WS12, WS13, WS14, WS16, WS17 |
 | 3 | WS18, WS19 |
 | 4 | WS21, I1 |
 
 **Critical path.** By these levels the longest chain is C2, WS11, WS12, WS18, I1: five steps. The
-graph read reports `critical path (5 tasks): C2 -> WS11 -> WS12 -> WS18 -> I1`, with C2 the bottleneck, and `gain: 15 broken, 17 kept, 7 added; before 5 tasks, weight 10; after 5 tasks, weight 9.5;
+graph read reports `critical path (5 tasks): C2 -> WS11 -> WS12 -> WS18 -> I1`, with C2 the bottleneck, and `gain: 14 broken, 18 kept, 7 added; before 5 tasks, weight 11; after 5 tasks, weight 9.5;
 improves`.
 
 **Where the graph and this table differ (O5).** The graph format records a contract's consumers
 only: a task may wait on a contract in the graph only where a broken edge names it as the
-dependent. The tasks that build a contract's other side (WS1 for C1; WS3, WS6, WS9 and WS10 for
-C2; WS3 and WS4 for C3) therefore carry no edge to their contract in the graph, and the graph's
+dependent. The tasks that build a contract's other side (WS1 for C1; WS3, WS6 and WS9 for C2; WS3
+and WS4 for C3) therefore carry no edge to their contract in the graph, and the graph's
 ready column shows them ready at once. **They are not:** each starts after its contract has
 merged, as its own Depends-on line and this table say.
 
 **Edges broken, each by a contract and rejoined in I1.**
 - WS2 after WS1, WS5 after WS1, WS5 after WS2: each needs the scope's shape, not the other's code (C1).
-- WS11 after WS9, WS11 after WS10, WS14 after WS9, WS22 after WS9, WS5 after WS6, WS20 after WS6:
-  each needs a name or the route record, not who writes it (C2).
+- WS11 after WS9, WS14 after WS9, WS22 after WS9, WS5 after WS6, WS20 after WS6: each needs a name
+  or the route record, not who writes it (C2).
 - WS2 after WS4, WS5 after WS4, WS14 after WS4, WS15 after WS4, WS16 after WS15, WS17 after WS15:
   each needs the node's shape, not its writer or the pool's code (C3).
 
 **Edges kept.** Each is stated in its task: a shared file (WS8, WS16 and WS17 after WS1; WS12 after
 WS11; WS7 after WS22; WS19 after WS4 and WS15), a field one task adds to a struct another reads
-(WS4 and WS10 after WS3), behaviour (WS7 after WS6, WS13 and WS18 after WS11, WS18 after WS12, I1
+(WS4, WS9 and WS14 after WS3), behaviour (WS7 after WS6, WS13 and WS18 after WS11, WS18 after WS12, I1
 after WS8 and WS18), the owner's ordering (WS19 after WS8) and the built CLI (WS21).
 
 **Shared files.** No level holds two writers of one file, with the two exceptions named below the
@@ -566,14 +578,14 @@ table.
 | `internal/gateway/service.go` | WS11 (1), WS12 (2) |
 | `internal/runner/gateway.go` | WS11 (1), WS18 (3) |
 | `internal/gateway/gateway.go` | WS11 (1) |
-| `internal/localcfg/localcfg.go`, `internal/cli/workspace.go`, `schemas/workspace.schema.json` | WS3 (1) |
+| `internal/localcfg/localcfg.go`, `internal/cli/workspace.go` | WS3 (1) |
 | `internal/cli/workspace_share.go` | WS3 (1), WS19 (3) |
 | `internal/cli/workspace_create.go` | WS6 (1), WS7 (2) |
 | `internal/cli/update_workspace.go` | WS4 (2), WS19 (3) |
 | `internal/cli/update_converge_test.go` | WS22 (1), WS7 (2) |
-| `internal/cli/update.go` | WS9 (1) |
+| `internal/cli/update.go`, `internal/cli/creds.go` | WS9 (2) |
 | `internal/cli/credentials_serve.go` | WS5 (1) |
-| `internal/cli/doctor_workspace.go` | WS14 (1) |
+| `internal/cli/doctor_workspace.go` | WS14 (2) |
 | `internal/config/*.go`, `internal/settings/registry.go`, the settings schemas | WS13 (2) |
 | `docs/gcp-live-checklist.md` | WS20 (1) |
 
@@ -587,10 +599,10 @@ and resolves a conflict locally; none is a reason to order two tasks.
 
 As `fugaro plan graph --plan docs/workspace-service/implementation-plan.md` printed it:
 
-`ready in 285–1140 min, no history yet for 29 tasks (29 tasks; seeds for 29; from the seeds: no history is cached on this machine yet)`
+`ready in 285–1140 min, no history yet for 28 tasks (28 tasks; seeds for 28; from the seeds: no history is cached on this machine yet)`
 
-The graph counts 29 nodes: the 26 runs of this plan (three contracts, WS1 to WS22 and I1) and the
-three contract changes of §7, which run only if raised.
+The graph counts 28 nodes: the 25 runs of this plan (three contracts, WS1 to WS22 without the
+dropped WS10, and I1) and the three contract changes of §7, which run only if raised.
 
 It is informational and reserves no budget: it is what the tasks' tiers and this machine's history
 predict, and it moves as runs finish.
@@ -613,18 +625,25 @@ From the reserved block 770–779. All four are owner-run, as scripts (WS20), af
 
 | Check | What it measures |
 | --- | --- |
-| **770** | Load: 100 concurrent runs across at least two members, model calls and git pushes and clones on workspace credentials. Records instance count, latency added per call, refusals, and whether R9's limits hold (D2986, O1) |
+| **770** | Load: 100 concurrent runs across at least two members, model calls and git pushes and clones on workspace credentials. Records instance count, latency added per call, refusals, reservations left unsettled, and whether R9's limits hold (D2986, O1) |
 | **771** | A member's job account is admitted by a real deployment and reads the member's database with `fugaroWorkspaceRead` alone; a call at the ceiling is refused; a member removed is refused within a minute (U3; the workspaces design's U1) |
 | **772** | Cold start of the workspace's service with the beat on and off, and a run's behaviour across a forced outage shorter and longer than the bound (D2983, D2985, U4) |
 | **773** | `fugaro update` on a workspace and on a member at the previous release, with a run in flight on each: both converge with no other step and the run finishes (R11) |
 
 ## 9. After-deploy steps
 
-None beyond `fugaro update`. WS21's release note says: the workspace owner runs `fugaro update`;
-each member runs `fugaro workspace add` with the address once (a pin without one keeps working and
-takes no workspace credential) and then `fugaro update`; a member that later adds a repository
-needs the workspace owner's next `fugaro update` before that repository's runs reach the
-workspace's service (F17).
+**For an installation that does not use the feature: `fugaro update`, and nothing else.** Nothing
+it holds changes.
+
+**Turning the feature on is configuration, and WS21's release note says so plainly** (O7, for the
+owner to confirm against the one-command rule):
+
+- the workspace owner declares each member and its job accounts (`fugaro workspace member add`),
+  shares the entries (`fugaro workspace share`), and runs `fugaro update`;
+- each member pins the address (`fugaro workspace add`) and runs `fugaro update`;
+- a member that later adds a repository needs the workspace owner to declare its job account and
+  run `fugaro update` before that repository's runs reach the workspace's service (F17); until
+  then such a run halts with a reason that names that step (R16).
 
 ## 10. Considered and declined
 
@@ -643,4 +662,10 @@ workspace's service (F17).
 - **A minimum of one instance** (D2985's other option): it bills all month and the managed cost
   gate blocks it.
 - **A route per credential name** (the first draft of R4): a model call names no credential, so the
-  route is per kind.
+  route is per kind, and per repository because admission is.
+- **The address as a job or launch variable** (the first draft's WS10, dropped after review round
+  2): a launcher could move it, and the run sends its own token there. The run reads the member's
+  published record instead.
+- **Wiring `WorkspaceStop` and `DeliveredHeadroom`**: ending a run on the workspace's stop needs a
+  halt reason the run record's closed vocabulary does not have, a wire change with its own
+  readers. It stays the workspaces design's open check U4.
