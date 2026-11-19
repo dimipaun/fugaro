@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "command": "image add",
+  "project": "aurora",
+  "entry": {
+    "name": "app",
+    "tags": [
+      "node",
+      "redis"
+    ],
+    "description": "the app image",
+    "default": false,
+    "source": "dockerfile acme/app:.fugaro/app.Dockerfile@release-1.0"
+  },
+  "steps": [
+    {
+      "name": "catalog-build",
+      "saved": true
+    },
+    {
+      "name": "repository",
+      "saved": true
+    },
+    {
+      "name": "policy",
+      "saved": true
+    }
+  ]
+}

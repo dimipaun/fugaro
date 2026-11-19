@@ -232,6 +232,14 @@ standard.
   the preload surface, a Members view fixture, the Go tests that hold the two halves equal, `docs/design/desktop-console.md` §5.1 row.
 - **Interfaces:** consumes RS5's `fugaro user ls --json` (roles.md D691(b), a read-only Members view).
   No reader of its own and no role logic in the renderer.
+  **Amended 2026-11-18 (D2907 of [docs/console-improvements/reconciliation.md](../console-improvements/reconciliation.md),
+  confirmed by that plan's O2):** a caller may read their **own** role. `fugaro user ls --me --json` (WH1 of
+  [docs/console-improvements/implementation-plan.md](../console-improvements/implementation-plan.md)) prints
+  `{version, role, scope, repos}` for the caller alone, resolved by `internal/access.Self` over the same input
+  the gates judge with; the console maps it to a disabled control and adds no reader. So this section's
+  "no reader of its own and no role logic in the renderer" reads as **no user-data reader of its own and no
+  role decision in the renderer beyond mapping the CLI's own read** — the console still decides no role, and
+  the CLI still refuses server-side whatever the console draws.
 - **Tests:** `TestConsoleAllowListedReadsWriteNothing` (`internal/cli/checkouts_test.go`) and `TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode` (`docs_desktop_console_test.go`); `npm run typecheck`, `npm run test:unit -- --maxWorkers=2`.
 - **Command:** `GOFLAGS=-p=1 go test ./internal/cli/ -run 'TestConsoleAllowListedReadsWriteNothing|TestDocsDesktopConsoleDesignAllowListIsReadOnlyInTheCode' -count=1` then the console commands.
 - **Depends on:** RS5. **Tier:** opus + level 3 (console spawn/IPC allow-list). **OWNER-RUN:** no.

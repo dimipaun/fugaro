@@ -433,6 +433,15 @@ func stagesNamed(e *initEngine, names ...string) (stages []initflow.Stage, unans
 // decides is what is applied and in what order — the canonical one
 // (initflow.Names), not the order the questions were asked in.
 func (e *initEngine) converge(ctx context.Context) error {
+	// The owner's own local config, read before anything else this run does and
+	// before the first stage plans (update_catalog_guard.go): every image
+	// catalog entry this release will refuse is named here, and the one entry
+	// whose fix is unambiguous — a pin to a branch the repository no longer has
+	// whose file the default branch also has — is fixed in the file itself. It
+	// touches nothing in the installation's cloud and it can fail nothing, so it
+	// is safe with runs in flight and never a step the one command the upgrade
+	// is can be stopped at.
+	e.guardCatalogEntries(ctx)
 	e.announceAlreadySetUp()
 	stages := initStages(e)
 	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}

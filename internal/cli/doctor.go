@@ -3168,11 +3168,15 @@ func doctorRulesSkew(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) 
 		// mailbox and only the coordinator's read grant is new to it, a
 		// coordinator-generation marker already has that grant too and only the
 		// voice policy node is new to it, a voice-generation marker already has
-		// that node and only the registration kind's fields are new to it, and a
+		// that node and only the registration kind's fields are new to it, a
 		// registration-generation marker already has those fields and only the
-		// four day-counter leaves a stage report writes per model are new to it.
+		// four day-counter leaves a stage report writes per model are new to it,
+		// and a spend-leaves-generation marker already has those leaves and only
+		// the paired device's read of a run's outcome is new to it.
 		adds := "the mailbox, the device binding and the coordinator's read grant"
 		switch {
+		case gen >= rulesSpendLeavesGeneration:
+			adds = "the paired device's read of a run's outcome"
 		case gen >= rulesRegistrationGeneration:
 			adds = "the four day-counter leaves a run's stage report writes per model"
 		case gen >= rulesVoiceGeneration:

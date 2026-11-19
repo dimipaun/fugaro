@@ -6,14 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/voicesvc"
 
 	"github.com/spf13/pflag"
 	"golang.org/x/oauth2"
+	secretmanager "google.golang.org/api/secretmanager/v1"
 )
 
 // The voice hop's entry point (P5.3.3) is not a command anyone is offered: it
@@ -49,52 +52,87 @@ func TestVoiceServeHidden(t *testing.T) {
 	}
 }
 
-// voiceServeEnv is a complete hop environment: the two names voice.tf sets on
-// the service, with the database named after the Firebase project that owns it
-// (which is the pair credentialsServiceDatabase holds together). FUGARO_* is
-// the only thing here that is not a name of this repository's own.
+// voiceServeEnv is a complete hop environment: the three names voice.tf sets
+// on the service, with the database named after the Firebase project that owns
+// it (which is the pair credentialsServiceDatabase holds together). FUGARO_* is
+// the only thing here that is not a name of this repository's own, and the GCP
+// project is a different project from the Firebase one on purpose: an
+// installation's database may belong to another project's Firebase instance,
+// and the hop's two env blocks are read from two places (voice.tf).
 var voiceServeEnv = map[string]string{
 	envFirebaseFP: "proj-1234",
 	envRTDBURL:    "https://proj-1234-default-rtdb.firebaseio.com",
+	envGCPProject: "proj-1234",
 }
 
-// fakeVoice replaces the one constructor that would need Application Default
-// Credentials -- the token source the database is read with -- with a fixed
-// token. Nothing is reached: the client is built and no call is made through
-// it, which is the whole of what this file pins (the three parts of the
-// service and which names reach them; the calls themselves are
-// internal/voicesvc's own tests', over a database fake).
+// fakeVoice replaces the constructors that would need Application Default
+// Credentials -- the token source the database is read with, the Secret Manager
+// client the provider keys come from, and this service's own access-token
+// source -- with fixed stand-ins. Nothing is reached: the clients are built and
+// no call is made through them, which is the whole of what this file pins (the
+// parts of the service and which names reach them; the calls themselves are
+// internal/voicesvc's own tests', over a database fake and a faked provider).
 func fakeVoice(t *testing.T) {
 	t.Helper()
 	voiceTest = &voiceWiring{
 		tokens: func(context.Context) (oauth2.TokenSource, error) {
 			return oauth2.StaticTokenSource(&oauth2.Token{TokenType: "Bearer"}), nil
 		},
-	}
-	t.Cleanup(func() { voiceTest = nil })
-}
-
-// refuseVoiceWiring stands in for that constructor so that it cannot be
-// reached quietly: an environment the builder should have refused by name is
-// refused before anything is built, and a case that only asked for "an error"
-// would pass on a failure that came from Google instead.
-func refuseVoiceWiring(t *testing.T) {
-	t.Helper()
-	voiceTest = &voiceWiring{
-		tokens: func(context.Context) (oauth2.TokenSource, error) {
-			t.Error("the builder reached for a credential for an environment it must refuse first")
-			return nil, errors.New("reached Application Default Credentials")
+		secrets: func(context.Context) (*secretmanager.Service, error) {
+			return &secretmanager.Service{}, nil
+		},
+		mint: func(context.Context) (voicesvc.TokenSource, error) {
+			return stubToken{}, nil
 		},
 	}
 	t.Cleanup(func() { voiceTest = nil })
 }
 
-// TestVoiceServeConfigBuildsFromAFullEnvironment: the two names build a
+// stubToken is this service's own access-token source, fixed: the builder's
+// only question about it is whether it was built at all (a real one is
+// voicesvc.GoogleTokenSource, which reaches the metadata server at its first
+// Token call and not before -- the builder never calls it).
+type stubToken struct{}
+
+func (stubToken) Token(context.Context) (string, error) { return "stub", nil }
+
+// refuseVoiceWiring stands in for those constructors so that they cannot be
+// reached quietly: an environment the builder should have refused by name is
+// refused before anything is built, and a case that only asked for "an error"
+// would pass on a failure that came from Google instead.
+func refuseVoiceWiring(t *testing.T) {
+	t.Helper()
+	refuse := func(what string) error {
+		t.Errorf("the builder reached for %s for an environment it must refuse first", what)
+		return errors.New("reached Application Default Credentials")
+	}
+	voiceTest = &voiceWiring{
+		tokens: func(context.Context) (oauth2.TokenSource, error) {
+			return nil, refuse("a credential for the installation's database")
+		},
+		secrets: func(context.Context) (*secretmanager.Service, error) {
+			return nil, refuse("a Secret Manager client")
+		},
+		mint: func(context.Context) (voicesvc.TokenSource, error) {
+			return nil, refuse("a token source for this service's own identity")
+		},
+	}
+	t.Cleanup(func() { voiceTest = nil })
+}
+
+// TestVoiceServeConfigBuildsFromAFullEnvironment: the three names build a
 // configuration the hop's own server accepts, and each piece reaches where it
 // is meant to. The verifier is checked by asking it to refuse something: a
 // string that is not a JWT is refused by the verifier's own shape rule and
 // before any key is looked up, so this proves the verifier is the one the
 // environment built without reaching Google's certificate endpoint.
+//
+// The four pieces P5.3.5 added are checked as the things they are rather than
+// as non-nil pointers: the key source names the container this BINARY carries
+// (internal/backend/gcp's constant, and never the environment's value), the
+// project it reads the container in is the environment's third name, the client
+// is the provider client the process builds (three decisions, in the open) and
+// it follows no redirect, and the token source is the one the wiring built.
 func TestVoiceServeConfigBuildsFromAFullEnvironment(t *testing.T) {
 	fakeVoice(t)
 	cfg, err := voiceServiceConfig(context.Background(), envFrom(voiceServeEnv), io.Discard)
@@ -108,14 +146,40 @@ func TestVoiceServeConfigBuildsFromAFullEnvironment(t *testing.T) {
 		{"Auth", cfg.Auth != nil},
 		{"Devices", cfg.Devices != nil},
 		{"Enforcer", cfg.Enforcer != nil},
+		{"Keys", cfg.Keys != nil},
+		{"Tokens", cfg.Tokens != nil},
+		{"Client", cfg.Client != nil},
 		{"Log", cfg.Log != nil},
 	} {
 		if !piece.set {
 			t.Errorf("the configuration has no %s: the hop cannot serve without it", piece.name)
 		}
 	}
+	keys, ok := cfg.Keys.(*voicesvc.SecretManagerKeys)
+	if !ok {
+		t.Fatalf("the key source is a %T, want *voicesvc.SecretManagerKeys: the keys come out of Secret Manager and nowhere else", cfg.Keys)
+	}
+	if keys.Secret != gcp.VoiceProviderKeysSecret {
+		t.Errorf("the key source reads the container %q, want %q: the ID is this binary's constant, so no deployment can point the hop at another container of the project", keys.Secret, gcp.VoiceProviderKeysSecret)
+	}
+	if keys.Project != voiceServeEnv[envGCPProject] {
+		t.Errorf("the key source reads in the project %q, want %q: the third name is where the container lives and nothing else about it is the environment's", keys.Project, voiceServeEnv[envGCPProject])
+	}
 	if _, err := voicesvc.NewServer(cfg); err != nil {
 		t.Fatalf("NewServer refused the configuration a complete environment builds: %v", err)
+	}
+	// The provider client's own decisions, and the redirect one is the
+	// security-relevant half: a followed 307 or 308 would carry the provider's
+	// key to whatever host the Location named.
+	req, err := http.NewRequest(http.MethodGet, "https://api.example.invalid/v1/speak", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Client.CheckRedirect(req, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Errorf("the provider client's redirect policy answered %v, want http.ErrUseLastResponse: the request carries the installation's provider key and a followed redirect would hand it to another host", err)
+	}
+	if cfg.Client.Timeout != 0 {
+		t.Errorf("the provider client carries a whole-call timeout of %s, want none: the answer is a stream that ends when the caller stops speaking, and the caller's own context is what bounds it", cfg.Client.Timeout)
 	}
 	_, err = cfg.Auth.VerifyDevice(context.Background(), "not.a.jwt")
 	if got := voicesvc.ReasonOf(err); got != voicesvc.ReasonTokenUnverified {
@@ -123,13 +187,14 @@ func TestVoiceServeConfigBuildsFromAFullEnvironment(t *testing.T) {
 	}
 }
 
-// TestVoiceServeRefusesWithoutItsEnvironment: the two names the hop cannot
+// TestVoiceServeRefusesWithoutItsEnvironment: the three names the hop cannot
 // serve without are refused BY NAME and before anything is built. Each is a
-// fact of the installation that cannot be derived from the other, and a hop
-// that guessed either would admit identities it cannot verify or read a
-// database that is not its installation's.
+// fact of the installation that cannot be derived from the others, and a hop
+// that guessed any of them would admit identities it cannot verify, read a
+// database that is not its installation's, or answer every forwarded call with
+// a key it cannot find.
 func TestVoiceServeRefusesWithoutItsEnvironment(t *testing.T) {
-	for _, k := range []string{envFirebaseFP, envRTDBURL} {
+	for _, k := range []string{envFirebaseFP, envRTDBURL, envGCPProject} {
 		t.Run(k, func(t *testing.T) {
 			refuseVoiceWiring(t)
 			for n, v := range voiceServeEnv {

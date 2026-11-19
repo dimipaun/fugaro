@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/failure"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -1994,6 +1995,17 @@ type Record struct {
 	// written before this field existed, so an old reader sees the record it
 	// always saw.
 	ConflictPaths []string `json:"conflict_paths,omitempty"`
+	// Messages is the run's part in the message channel
+	// (docs/run-messages, F13, F24, F25): whether this run reads messages at
+	// all, the format and the flags its runner knows, and what became of each
+	// message it saw. The block is written at bootstrap, so a sender can tell
+	// a run whose runner predates the feature from one that will read the
+	// message, and it carries no message text: the record is writable by the
+	// run's own agent, so it is an audit trail and never the message. Absent —
+	// never an empty block — for a run written before this field existed, so
+	// an old reader sees the record it always saw: the field is additive, and
+	// the format's version stays 1.
+	Messages *runmsg.Record `json:"messages,omitempty"`
 }
 
 // PatchName is a run's patch object under its own prefix:

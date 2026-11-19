@@ -80,6 +80,7 @@ import type {
   RefusedState,
 } from '../../src/renderer/screens/degraded'
 import { itHostRoute } from '../support/hostRoute'
+import { EMPTY_CLASS, EMPTY_RUNS } from '../../src/renderer/section'
 
 const consoleDir = join(__dirname, '..', '..')
 const fixturePath = join(consoleDir, 'test', 'fixtures', 'degraded.ndjson')
@@ -391,6 +392,26 @@ describe('the no-Firebase screen', () => {
     const notionalRows = walk(tree).filter((node) => node.getAttribute('data-notional-model') === 'true')
     expect(notionalRows).toHaveLength(1)
     expect(notionalRows[0]?.getAttribute('data-notional-model')).toBe('true')
+  })
+
+  it('says a project with no run has none, rather than drawing an empty list (R1)', () => {
+    // An `<ol>` with nothing in it is a section that looks like one still being
+    // read: the console's own sentence is the difference between "nothing is
+    // running" and "nothing has arrived", and the words are `section.ts`'s so
+    // that no two screens word the same fact differently.
+    const document = { ...theDegradedDocument(), runs: [] }
+    const tree = renderNoFirebase(factory, buildNoFirebaseModel(document), 'light')
+    expect(all(tree, 'degraded-run')).toEqual([])
+    const sentence = one(tree, EMPTY_CLASS)
+    expect(sentence.tag).toBe('p')
+    expect(sentence.textContent).toBe(EMPTY_RUNS)
+    expect(drawn(tree)).toContain(EMPTY_RUNS)
+    // The list is still drawn -- it is this section's own block -- and it holds
+    // the sentence and nothing else: no row, no ending, no column header for a
+    // table with no rows.
+    expect(all(tree, 'degraded-run-id')).toEqual([])
+    const list = walk(tree).find((node) => node.tag === 'ol' && node.classes.includes('degraded-runs'))
+    expect(list?.nodes).toEqual([sentence])
   })
 
   it('extends two endings that collide, and only those', () => {

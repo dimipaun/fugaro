@@ -232,6 +232,20 @@ var jsonCases = map[string]jsonCase{
 			return []string{"followups", mergedParent(t, f, allDeferred(t))}
 		},
 	},
+	"image add": {
+		// The dry run is the one arm a fixture here can reach and the one the
+		// console spawns (O4): the real add builds, redeploys and publishes,
+		// and writes its own document under a name that is one command's. It
+		// is a read — the run writes nothing and files no log — and the
+		// catalog is seeded so the document carries an entry rather than the
+		// note about a file that names none.
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			f.appendConfig(t, catalogYAML)
+			return []string{"image", "add", "app", "--tags", "node", "--dockerfile", "acme/app:.fugaro/app.Dockerfile", "--no-apply", "--dry-run"}
+		},
+	},
 	"image build": {
 		why: "the run's confirmation is typed at a terminal, and --json never gives one, so the command refuses before it prints any document",
 	},
@@ -333,6 +347,19 @@ var jsonCases = map[string]jsonCase{
 			f := newMailboxFixture(t, "")
 			f.announce(t, "p-old", time.Now().Add(-73*time.Hour).UnixMilli())
 			return []string{"mailbox", "sweep", "--dry-run"}
+		},
+	},
+	// models add carries --json only beside --dry-run (MD1): the document is
+	// what one add would do, so the run this pin takes is the write-free one,
+	// which is a read and leaves no log. The route comes from
+	// models_add_test.go's own fixture, because the cloud fixture's config has
+	// no provider for a model to be claimed on.
+	"models add": {
+		reads: true,
+		run: func(t *testing.T) []string {
+			f := jsonCloud(t)
+			f.appendConfig(t, modelsAddCloudExtra)
+			return []string{"models", "add", "vendor/model-z", "--price-in", "1", "--price-out", "2", "--dry-run"}
 		},
 	},
 	"models ls": {

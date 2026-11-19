@@ -926,7 +926,10 @@ pin, moved the table's row from 148 to 149.) (Amended 2026-11-18:
 owner-run Check 640 in the register — the status labels on a real pull request,
 with its row and its section, the sibling test `scripts/live_checks_test.go`
 drives, and the two questions the check settles, U1 and U3 — moved the table's
-row from 148 to 149.) They
+row from 148 to 149.) (Amended 2026-11-19:
+`internal/cli/docs_mobile_identity_pairing_test.go`, the mobile-identity-pairing
+folder's pin over the four documents, the decision and task numbering and the
+register's Checks 730 to 737, moved the table's row from 150 to 151.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
@@ -936,6 +939,11 @@ switched `api-key` or `oauth` repository's job — added `serviceAuthSince` to
 `internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 54 to 55. That
 row is held to its own command rather than to another folder's guard, so it is named here only because a
 reader who finds the figure stale should find who moved it.)
+
+(Amended 2026-11-18, the same day: the same plan's B3.8 — the S3 flip, which takes the mounts of a
+switched repository's workflow secrets off its job — added `vaultSince` to
+`internal/cli/recipes_skew.go` as well, which moved the *Image-skew `Since` constants* row from 55 to
+56. Same row, same reason for naming it.)
 
 | Construct | Count | Command |
 | --- | --- | --- |
@@ -949,9 +957,9 @@ reader who finds the figure stale should find who moved it.)
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 55 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 56 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 150 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 151 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |

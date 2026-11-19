@@ -1802,12 +1802,18 @@ var (
 	// google_service_account.voice[0] is the voice hop's own account
 	// (P5.3.3, modules/installation/voice.tf): the account the service the
 	// installation's phones call runs as, created on the same one switch
-	// (var.voice_service) as that service. Its own reach in this tree is ONE
-	// row — the get-only state-reader role on the Firebase project's database,
-	// bound in state_read.tf beside the front door's own binding of the same
-	// role — and it is a member here for the same reason the credentials
-	// service's account is: the account is created by a module and named by a
-	// grant.
+	// (var.voice_service) as that service. Its own reach in this tree is TWO
+	// rows and no more — the get-only state-reader role on the Firebase
+	// project's database, bound in state_read.tf beside the front door's own
+	// binding of the same role, and (P5.3.5) the secretAccessor on the
+	// installation's provider-key container alone, bound in secrets.tf — and it
+	// is a member here for the same reason the credentials service's account
+	// is: the account is created by a module and named by a grant. It is the
+	// one account of this tree behind an endpoint anyone on the internet may
+	// call (voice.tf's allUsers binding), so the second of those two rows is
+	// narrowed in internal/infra/tf (voiceProviderKeyGrant, which reads the
+	// plan's secret_id) and the two spellings of the container's ID are held
+	// together by TestVoiceProviderKeysContainerIsTheGoSpelling below.
 	//
 	// "allUsers" is deliberately NOT on this list, and the absence is the
 	// point: a member expression admitted here is admitted for every IAM
@@ -5270,6 +5276,300 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	}
 }
 
+// TestVoiceProviderKeysContainerIsTheGoSpelling is the one string this tree
+// spells twice: the provider-key container's ID is a literal in the module
+// (`secrets.tf`, because Terraform cannot compute a gcp.ProjectSecretID — the
+// suffix is a hash) and a constant of the Go binary that reads it
+// (internal/backend/gcp's VoiceProviderKeysSecret, which the hop passes to the
+// Secret Manager API). The deployment names neither: voice.tf's third
+// environment value is the GCP PROJECT the container lives in, and the process
+// reads the ID from its own constant, so a drift between the two spellings is
+// not a plan anybody sees — it is a hop that finds no container and refuses
+// every forwarded call, in production, with a green plan. Nothing but this
+// test can hold them together: the module cannot read Go, and the Go side
+// cannot read the module at build time.
+//
+// The falsifiable half is the grep below, and it is deliberately narrow: the
+// secret_id inside the google_secret_manager_secret.voice_provider_keys block,
+// and not any other "fugaro-voice-provider-keys" in the file, so the comment
+// that documents the gcloud line cannot satisfy it — the blocks are read with
+// comments stripped (resourceBlocks) for exactly that reason, since the
+// operator's command is written in the header and a test that read the comment
+// would pass while the resource said something else.
+//
+// Mutation (verified, run and restored): changing the module's literal to
+// "fugaro-voice-provider-key" (one word short — the near miss
+// internal/infra/tf's voice test names) fails this test and this test alone.
+// The golden plan carries whatever the module said when it was generated, and
+// its own check compares the plan with the Go constant rather than with the
+// module, so a drift of the module's literal from Go's is silent everywhere
+// but here.
+func TestVoiceProviderKeysContainerIsTheGoSpelling(t *testing.T) {
+	const path = "gcp/modules/installation/secrets.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var container string
+	for _, blk := range resourceBlocks(t, path, b, "google_secret_manager_secret") {
+		if blk.name != "google_secret_manager_secret.voice_provider_keys" {
+			continue
+		}
+		m := regexp.MustCompile(`secret_id\s*=\s*"([^"]*)"`).FindStringSubmatch(blk.body)
+		if m == nil {
+			t.Fatalf("%s: google_secret_manager_secret.voice_provider_keys has no literal secret_id:\n%s", path, squash(blk.body))
+		}
+		container = m[1]
+	}
+	if container == "" {
+		t.Fatalf("%s declares no google_secret_manager_secret.voice_provider_keys: the hop's key container is what the process reads by name (P5.3.5)", path)
+	}
+	if container != gcp.VoiceProviderKeysSecret {
+		t.Errorf("%s: the provider-key container is %q, internal/backend/gcp's VoiceProviderKeysSecret is %q. The process reads the container by the Go constant and the deployment never names it, so these two are one fact in two languages and a drift between them is silent",
+			path, container, gcp.VoiceProviderKeysSecret)
+	}
+	// And the grant names that same resource rather than a second spelling of
+	// the ID: an accessor on a string that happens to read the same is a grant
+	// on a container whose deletion the module does not track.
+	grant := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_secret_manager_secret_iam_member") {
+		if blk.name == "google_secret_manager_secret_iam_member.voice_provider_keys" {
+			grant = squash(blk.body)
+		}
+	}
+	if grant == "" {
+		t.Fatalf("%s declares no google_secret_manager_secret_iam_member.voice_provider_keys: the hop reads no provider key without it", path)
+	}
+	for _, want := range []string{
+		"secret_id = google_secret_manager_secret.voice_provider_keys[0].secret_id",
+		`role = "roles/secretmanager.secretAccessor"`,
+		"member = google_service_account.voice[0].member",
+		"count = local.voice_on ? 1 : 0",
+	} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("%s: the provider-key grant does not hold %q:\n%s", path, want, grant)
+		}
+	}
+	if strings.Contains(grant, "condition") {
+		t.Errorf("%s: the provider-key grant carries a condition. The container is the fence and Secret Manager scopes a binding per secret (secrets.tf), so a condition here narrows nothing and hides the reach from internal/infra/tf's voiceProviderKeyGrant:\n%s", path, grant)
+	}
+}
+
+// TestVoiceProviderKeyOptOutIsTwoSteps is the hop's side of
+// TestCredentialsServiceOptOutIsTwoSteps, and it exists because the first
+// version of this text named a route that does not exist — "a code edit, the
+// lifecycle block taken out of secrets.tf, and then the update again" — in
+// SECURITY.md and in voice.tf, the two places a reader who writes
+// voice_service: null looks. That route fails twice over. internal/infra's
+// PrepareWorkdir RemoveAlls the tree and re-extracts the embedded modules on
+// every run, so the edited file is deleted before the plan that would use it
+// (docs/design/config-transitions.md:57 states the same of a repository root:
+// "no supported path at all"), and the apply the edit unblocked is one carrying
+// the addresses of exactly that plan — the destroy of the container and of
+// every hand-typed provider key in it, which is the loss prevent_destroy is
+// there to stop (secrets.tf). What works is the credentials bundle's pattern
+// one container over: forget the container in the workdir before the plan,
+// which deletes nothing in GCP, keeps the keys, and lets the service, its
+// account, its accessor and its public binding go.
+func TestVoiceProviderKeyOptOutIsTwoSteps(t *testing.T) {
+	// The address is the installation ROOT's and is written the way an owner
+	// types it: module-prefixed, because the container is a resource of
+	// `module "installation"` (roots/installation/main.tf) and the bare address
+	// names nothing in that state (terraform state rm refuses it), and
+	// single-quoted, because `[0]` is a glob to zsh, which fails the command
+	// with "no matches found" before terraform runs — the two rules
+	// credentials.tf states for the bundle (re-review N1 there).
+	const step = "terraform state rm 'module.installation.google_secret_manager_secret.voice_provider_keys[0]'"
+	// The two files the wrong route was written in, and what each of them owes a
+	// reader: SECURITY.md the command an owner types, voice.tf the two steps in
+	// the order that works (its own comment is where the switch is read, and it
+	// carries no address of its own — SECURITY.md carries them).
+	for _, tc := range []struct{ path, wanted, what string }{
+		{"../../SECURITY.md", step, "the opt-out's first step"},
+		{"gcp/modules/installation/voice.tf", "forget the container first, then an ordinary update with this switch written as null", "the opt-out's two steps and their order"},
+	} {
+		b, err := os.ReadFile(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The comment in voice.tf is wrapped, so the sentences pinned below are
+		// read against the text with its comment markers, line breaks and
+		// indentation flattened: a phrase that spans two comment lines is the
+		// same sentence to a reader. Nothing pinned here carries a `#`.
+		text := strings.Join(strings.Fields(strings.ReplaceAll(string(b), "#", "")), " ")
+		if !strings.Contains(text, tc.wanted) {
+			t.Errorf("%s does not document %s (%q): a reader who writes voice_service: null is left with Terraform's plan failure and no path", tc.path, tc.what, tc.wanted)
+		}
+		// The forms that must not come back: the unprefixed address (it names
+		// nothing in the root's state) and the prefixed one unquoted (zsh
+		// refuses it before terraform ever sees it).
+		for _, wrong := range []string{
+			"terraform state rm google_secret_manager_secret.voice_provider_keys[0]",
+			"terraform state rm module.installation.google_secret_manager_secret.voice_provider_keys[0]",
+		} {
+			if strings.Contains(text, wrong) {
+				t.Errorf("%s carries the opt-out's first step as %q: the address needs the module prefix and single quotes, %q", tc.path, wrong, step)
+			}
+		}
+		// And the route that is not one: editing secrets.tf. The next run
+		// deletes the edit, and the plan the edit unblocked destroys the keys.
+		for _, wrong := range []string{
+			"the way out is a code edit",
+			"the lifecycle block taken out of",
+			"the lifecycle block's removal first",
+		} {
+			if strings.Contains(text, wrong) {
+				t.Errorf("%s still documents the hop's opt-out as a code edit (%q): internal/infra's PrepareWorkdir re-extracts the tree on every run, so the edit is gone before the plan that would use it, and the plan it unblocked destroys the container", tc.path, wrong)
+			}
+		}
+	}
+
+	// The addresses are not written out here: they are READ OFF THE PLAN, which
+	// is the only thing that can keep them honest. The two goldens are one
+	// installation with the hop and without it — the voice fixture is the
+	// credentials fixture plus its voice_service block and nothing else
+	// (internal/infra/testdata) — so the addresses the voice-on plan carries and
+	// the voice-off plan does not are exactly the removals the null plans, and
+	// the guard refuses each of them until it is named (tf.Guard, the function
+	// internal/cli's own guard step calls). The document's own list is read the
+	// same way, off its command lines: step 2's six, plus the one address the
+	// paragraph after it adds for the installation whose front door is already
+	// off — every --allow-delete address SECURITY.md carries, and no other. Two
+	// directions, and both matter: a removal the list leaves out stops the
+	// update, and an address the plan does not remove is one a reader is being
+	// told to approve for nothing. Writing the addresses out instead is how this
+	// test first came to document one short — P5.3.5's google engine added a
+	// google_project_service gated on the same local.voice_on (apis.tf), and a
+	// hand-written five could not notice.
+	const container = "module.installation.google_secret_manager_secret.voice_provider_keys[0]"
+	removals := voiceRemovals(t)
+	if !removals[container] {
+		t.Fatalf("the voice-on golden carries no %s, so the two goldens this test reads are not the pair that differs by the hop: %v", container, removals)
+	}
+	// The container is the one address the list must NOT name: the first step
+	// forgets it before the plan, so the plan carries no change there and naming
+	// it would tell a reader it is deleted rather than left behind with its keys.
+	delete(removals, container)
+	sec, err := os.ReadFile("../../SECURITY.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := documentedAllowDeletes(string(sec))
+	for a := range removals {
+		if !named[a] {
+			t.Errorf("SECURITY.md does not name %q in --allow-delete, and the null removes it: the guard refuses an unnamed delete, so the update stops and the hop stays up", a)
+		}
+	}
+	for a := range named {
+		if !removals[a] {
+			t.Errorf("SECURITY.md names %q in --allow-delete, and turning the hop off removes nothing there: an address the plan carries no change at is an approval a reader is asked for nothing", a)
+		}
+	}
+	// And the guard itself, over that exact plan and that exact list: it must
+	// admit the documented removal, and must refuse it as soon as one of the
+	// documented addresses is dropped — the experiment that found this gap.
+	list := slices.Sorted(maps.Keys(named))
+	plan := &tf.Plan{ResourceChanges: make([]tf.ResourceChange, 0, len(removals))}
+	for a := range removals {
+		plan.ResourceChanges = append(plan.ResourceChanges, tf.ResourceChange{Address: a, Mode: "managed", Change: tf.Change{Actions: []string{"delete"}}})
+	}
+	slices.SortFunc(plan.ResourceChanges, func(a, b tf.ResourceChange) int { return strings.Compare(a.Address, b.Address) })
+	if err := tf.Guard(plan, list); err != nil {
+		t.Errorf("the guard refuses the removal SECURITY.md documents: %v", err)
+	}
+	if len(list) < 2 {
+		t.Fatalf("SECURITY.md's second step names %d addresses (%v), too few to be the plan's removal set", len(list), list)
+	}
+	if err := tf.Guard(plan, list[1:]); err == nil {
+		t.Errorf("the guard admits the removal with %q left out: the addresses SECURITY.md names are the plan's own removal set, so each of them is there because leaving it out refuses the update", list[0])
+	}
+
+	// The container's prevent_destroy is what makes the first step necessary
+	// rather than optional, so the two-step text above is true only while it
+	// stands (the credentials test's own last check, one container over).
+	const path = "gcp/modules/installation/secrets.tf"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containerBlock := false
+	for _, blk := range resourceBlocks(t, path, data, "google_secret_manager_secret") {
+		if blk.name != "google_secret_manager_secret.voice_provider_keys" {
+			continue
+		}
+		containerBlock = true
+		if !hasAttr(blk.body, "prevent_destroy", "true") {
+			t.Errorf("%s: the provider-key container holds no prevent_destroy = true, and the state rm step is necessary because it does:\n%s", path, squash(blk.body))
+		}
+	}
+	if !containerBlock {
+		t.Fatalf("%s declares no google_secret_manager_secret.voice_provider_keys: the hop's key container is what the process reads by name (P5.3.5)", path)
+	}
+}
+
+// voiceRemovals is the removal the hop's opt-out plans, read off the tree's own
+// plans rather than written down: the addresses of
+// testdata/golden/installation-voice.plan.json (the hop on) that
+// installation-credentials.plan.json (the same installation with the hop off —
+// the voice fixture is that fixture plus its voice_service block,
+// internal/infra/testdata) does not carry. Every one of them is a resource the
+// hop's switch creates, so writing the switch as null is a plan that deletes
+// each of them, which is what SECURITY.md's second step has to name.
+func voiceRemovals(t *testing.T) map[string]bool {
+	t.Helper()
+	addresses := func(name string) map[string]bool {
+		b, err := os.ReadFile(filepath.Join("..", "..", "internal", "infra", "tf", "testdata", "golden", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var p tf.Plan
+		if err := json.Unmarshal(b, &p); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		out := make(map[string]bool, len(p.ResourceChanges))
+		for _, rc := range p.ResourceChanges {
+			out[rc.Address] = true
+		}
+		return out
+	}
+	on, off := addresses("installation-voice.plan.json"), addresses("installation-credentials.plan.json")
+	// The difference is the hop's own resources only while the hop's switch ADDS
+	// them: an address the hop-off plan carries and the hop-on one does not would
+	// be a resource the switch counts down or renames, and the answer below would
+	// then be missing a removal rather than the plan's own set. The next reader
+	// meets that as a failing derivation rather than as a list one short.
+	for a := range off {
+		if !on[a] {
+			t.Fatalf("the hop-off plan carries %q and the hop-on one does not, so these two plans are not a pair that differs by the hop's own resources: voiceRemovals' answer would be missing it", a)
+		}
+	}
+	removals := map[string]bool{}
+	for a := range on {
+		if !off[a] {
+			removals[a] = true
+		}
+	}
+	return removals
+}
+
+// allowDeleteRE reads an address off a command line in a document: the token
+// after --allow-delete, with the single quotes an address carrying characters
+// the shell would otherwise read (double quotes in an index, a `[0]` glob)
+// stripped off.
+var allowDeleteRE = regexp.MustCompile("--allow-delete '?([^\\s'`]+)'?")
+
+// documentedAllowDeletes is every address a document names that way — for
+// SECURITY.md the hop's own removal, which is the only removal this document
+// gives as a command line.
+func documentedAllowDeletes(doc string) map[string]bool {
+	out := map[string]bool{}
+	for _, m := range allowDeleteRE.FindAllStringSubmatch(doc, -1) {
+		out[m[1]] = true
+	}
+	return out
+}
+
 // TestCredentialsServiceResourcesAreCounted reads the sentence that counts
 // this file's own resources — locals' "a single boolean keeps the six
 // resources of this file in step" — against the file. It said five while the
@@ -6015,14 +6315,17 @@ func TestServiceWorkflowSecretGrantsMatchTheJobsMounts(t *testing.T) {
 	}
 	code := squash(stripComments(string(b)))
 
-	// The set is the mounts' values and nothing else: the same map job.tf
-	// iterates, read here rather than recomputed. The gate is a `try`, and not
+	// The set is the mounts' values — the same map job.tf iterates, read here
+	// rather than recomputed — plus the one class of secret B3.8's flip takes
+	// off the job while the service keeps reading it: a workflow secret's value
+	// is fetched from THIS job's container (B3.4), so its container is in the
+	// set whether or not the job still mounts it. The gate is a `try`, and not
 	// the obvious `var.credentials_service == null || var.credentials_service.account == ""`:
 	// Terraform's `||` does not short-circuit before 1.12 while these modules
 	// require 1.9 (versions.tf), so the `||` form reads an attribute of a null
 	// value and fails the plan of every repository root whose switch is off.
-	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(values(local.job_mounts))`) {
-		t.Errorf("%s: service_secret_names must be `toset(values(local.job_mounts))` behind a `try(...) == \"\"` gate — a set built any other way can drift from the mounts it has to equal (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
+	if !strings.Contains(code, `service_secret_names = try(var.credentials_service.account, "") == "" ? toset([]) : toset(concat(values(local.job_mounts), local.vault_secret_names))`) {
+		t.Errorf("%s: service_secret_names must be the mounts' own values, plus local.vault_secret_names (empty only while the class list is), behind a `try(...) == \"\"` gate — a set built any other way can drift from the containers it has to cover (D2074), and a gate that reads var.credentials_service.account under an `||` fails on Terraform 1.9-1.11:\n%s", path, code)
 	}
 
 	grants := workflowSecretGrants(t)
@@ -6250,8 +6553,8 @@ func TestAppKeyAndProxiedGitClausesStayOnTheVariable(t *testing.T) {
 	if got := local("is_service_held"); !strings.Contains(got, "contains(local.service_held_secret_names, logical)") || !strings.Contains(got, "|| local.is_proxied_git[env]") {
 		t.Errorf("%s: is_service_held = %s; the App key's clause and the proxied repository's must stay keyed on the installation's opt-in, or the App key outlives the service that mints with it (#907) and a proxied repository's token goes with it (G9)", path, got)
 	}
-	if got := local("job_mounts"); got != "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env]" {
-		t.Errorf("%s: job_mounts = %s, want the opt-in, the App key's name and the proxied repository's clause and nothing else: the model mounts are dropped by Go's own spec from the tfvars this module plans (C1.20's pairing), and a mount removed here for a runner that cannot read the service yet breaks every run", path, got)
+	if got := local("job_mounts"); got != "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)" {
+		t.Errorf("%s: job_mounts = %s, want the opt-in, the App key's name, the proxied repository's clause and B3.8's fetched class and nothing else: the model mounts are dropped by Go's own spec from the tfvars this module plans (C1.20's pairing), a mount removed here for a runner that cannot read the service yet breaks every run, and the fetched class's clause is the rule written down where the accessor is decided (a tfvars that still names one of those cannot be applied into a job that reads it)", path, got)
 	}
 	if !strings.Contains(squash(code), "logical if var.credentials_service == null || !local.is_service_held[env]") {
 		t.Errorf("%s: the job's accessor set must still be gated on the installation's opt-in (D147):\n%s", path, code)
@@ -6335,8 +6638,104 @@ func TestProxiedGitSecretNamesMatchTheModule(t *testing.T) {
 	// create. The drop is the list AND the input, inside the same opt-in gate
 	// as the service-held names — a non-proxied repository of an opted-in
 	// installation still mounts its Bitbucket token (G9).
-	if got, want := local("job_mounts"), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env]"; got != want {
-		t.Errorf("%s: job_mounts = %s, want %s: the mount must go with the accessor, for a proxied repository only", path, got, want)
+	if got, want := local("job_mounts"), "env => logical if var.credentials_service == null || !contains(local.service_held_secret_names, logical) && !local.is_proxied_git[env] && !contains(local.vault_secret_names, logical)"; got != want {
+		t.Errorf("%s: job_mounts = %s, want %s: the mount must go with the accessor, for a proxied repository only, with B3.8's fetched class as the one further clause", path, got, want)
+	}
+}
+
+// TestVaultFetchedClassesMatchTheModule pins the S3 flip's class list to the
+// module that has to spell it out — config.VaultFetchedSecretClasses and
+// modules/workflow/sa.tf's vault_fetched_secret_classes — and the clauses it
+// drives to the two halves they are made of (B3.8, D2072, G17).
+//
+// It is the same guard as TestProxiedGitSecretNamesMatchTheModule, for a list
+// whose member is a CLASS rather than a secret's name: the class is a property
+// of the secret (a workflow's own `secrets:`), and whether a class is fetched
+// is the flip itself. Go drops the mount (internal/infra's dropVaultMounts,
+// whose answer is WorkflowSpec.VaultSecretNames) and the module drops the
+// accessor off the same names while KEEPING the credentials service's own
+// grant, so the two sides have to agree on one thing twice over: which class is
+// fetched at all, and which names of it this workflow contributed.
+//
+// The two lists are filled in one commit, and the drift this test refuses is
+// silent in both directions: a class filled in Go and not in the module leaves
+// a dropped mount whose container the service was never granted (a fetch that
+// fails for the run the flip meant to serve), and a class the module names and
+// Go does not is a claim about a job that keeps every mount.
+//
+// The empty list is a state of its own and it is asserted as one: with it empty
+// the module's local reads nothing, so the two clauses it feeds cannot drop
+// anything — that is the inertness the release before the flip plans, and the
+// reason a reader may apply this module before the flip's second commit.
+func TestVaultFetchedClassesMatchTheModule(t *testing.T) {
+	const path = "gcp/modules/workflow/sa.tf"
+	b, err := fs.ReadFile(FS, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := stripComments(string(b))
+
+	m := regexp.MustCompile(`vault_fetched_secret_classes\s*=\s*\[([^\]]*)\]`).FindStringSubmatch(code)
+	if m == nil {
+		t.Fatalf("%s declares no vault_fetched_secret_classes list: the class the credentials service fetches for a switched repository's job is Go's config.VaultFetchedSecretClasses, and this is the module's only account of it", path)
+	}
+	var got []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+		got = append(got, q[1])
+	}
+	want := slices.Clone(config.VaultFetchedSecretClasses)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: vault_fetched_secret_classes = %v, config.VaultFetchedSecretClasses = %v: the two are filled in one commit, and a list on one side an empty one on the other plans a drop the other does not produce", path, got, config.VaultFetchedSecretClasses)
+	}
+
+	// The local is the class gate: the module reads the names Go answered
+	// THROUGH the class list, so a list that lost its member (or a local that
+	// stopped asking it) leaves the variable unread and the job mounting a
+	// secret whose value the runner fetches instead.
+	local := func(name string) string {
+		t.Helper()
+		re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*(contains\([^\n]+)`)
+		found := re.FindStringSubmatch(code)
+		if found == nil {
+			t.Fatalf("%s declares no %s local of the class-gated shape", path, name)
+		}
+		return squash(found[1])
+	}
+	if got, want := local("vault_secret_names"), `contains(local.vault_fetched_secret_classes, "workflow") ? var.workflow.vault_secret_names : []`; got != want {
+		t.Errorf("%s: vault_secret_names = %s, want %s: the names Go answers for this workflow are read through the class list, so an empty list leaves every mount and every accessor exactly where B3.3 put them (D147, D2072)", path, got, want)
+	}
+
+	// Both halves of the drop, and they are one rule: the accessor goes with
+	// the mount (a job whose account may not read a mounted secret is a job
+	// Cloud Run refuses to create, C2.3), and both are read off the class-gated
+	// names rather than off var.workflow.secret_env, which Go has already
+	// emptied of them.
+	mounts := func(name string) string {
+		t.Helper()
+		re := regexp.MustCompile(`(?s)\b` + name + `\s*=\s*(?:toset\(\[)?\{?\s*for env, logical in var\.workflow\.secret_env\s*:\s*(env => [^\n]+|logical if [^\n]+)`)
+		found := re.FindStringSubmatch(code)
+		if found == nil {
+			t.Fatalf("%s declares no %s of the per-mount shape", path, name)
+		}
+		return squash(found[1])
+	}
+	if got := mounts("job_secret_names"); !strings.Contains(got, "!contains(local.vault_secret_names, logical)") {
+		t.Errorf("%s: job_secret_names = %s: the job's accessor must drop the fetched class with its mount, or the job mounts a secret its account keeps no accessor on", path, got)
+	}
+	if got := mounts("job_mounts"); !strings.Contains(got, "!contains(local.vault_secret_names, logical)") {
+		t.Errorf("%s: job_mounts = %s: the mount must go with the accessor (C2.3), for the fetched class exactly as for the App key and a proxied repository's token", path, got)
+	}
+
+	// And the other direction, which is what makes the flip work at all: the
+	// service keeps its grant on those containers. The set is the mounts' own
+	// values plus the fetched names — the one flip that does NOT narrow it
+	// (D2074), because a workflow secret's value is read from this job's
+	// container when the run fetches it (B3.4) — and the grants test holds the
+	// set to this expression.
+	if !strings.Contains(code, "toset(concat(values(local.job_mounts), local.vault_secret_names))") {
+		t.Errorf("%s: service_secret_names does not add local.vault_secret_names to the mounts: the service has no accessor on a container the job no longer mounts, so every fetch of a workflow secret fails for the runs the flip exists to serve (D2074, B3.4):\n%s", path, code)
 	}
 }
 
