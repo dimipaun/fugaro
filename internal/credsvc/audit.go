@@ -546,6 +546,13 @@ func callerWithoutJobPurpose(purpose string) bool {
 // system — so there is no name for the line to carry, and a credential on one
 // would be an entry this service never read.
 //
+// The line is the narrowest in the file for the same reason: the act holds no
+// run identity and is not a job of this installation, so it names neither a run
+// nor the repository that run belongs to nor a job, and any of the three on one
+// is refused as unexpected — the shape a route that filled the event from the
+// wrong identity would write, and a phone's act recorded under a run and a job
+// that never carried it is a line an operator reads as a verified identity.
+//
 // It is NOT credentialWithoutTier, which is the opposite shape and is
 // deliberately kept apart from it: that one's purposes DO name a credential and
 // have no tier to pair with it, while a credentialless purpose names neither
@@ -635,13 +642,14 @@ func validErrorType(s string) bool {
 // credentiallessPurpose).
 type AuditEvent struct {
 	// Run is the run id the service verified (Identity.Run) and Repository is
-	// its repository's slug (Identity.Slug). They are empty only for a call
-	// refused before the run identity was verified, and they are set together
-	// or not at all: a run id without its repository is not a run this service
-	// can name. A read mint's line is the one line that carries a repository
-	// and no run (see repositoryOnlyPurpose), because the caller who minted —
-	// a person or the coordinator — is not a run of this installation and the
-	// repository is what the token was for.
+	// its repository's slug (Identity.Slug). They are empty for a call refused
+	// before the run identity was verified, and for a mobile act, which verifies
+	// no run identity at all (see credentiallessPurpose) — and they are set
+	// together or not at all: a run id without its repository is not a run this
+	// service can name. A read mint's line is the one line that carries a
+	// repository and no run (see repositoryOnlyPurpose), because the caller who
+	// minted — a person or the coordinator — is not a run of this installation
+	// and the repository is what the token was for.
 	Run        string
 	Repository string
 	// Job is the Cloud Run job the run reported (Identity.Job — the caller's
@@ -948,6 +956,20 @@ func (a *Auditor) checked(ev AuditEvent) (AuditEvent, auditRefusal) {
 	case repositoryOnlyPurpose(ev.Purpose) && ev.Job != "":
 		// For the same reason the line carries no run, it carries no job: the
 		// caller minting is not a job of this installation.
+		return AuditEvent{}, auditRefusal{"job", refusalUnexpected}
+	case credentiallessPurpose(ev.Purpose) && ev.Run != "":
+		// A mobile act is a person's and a phone holds no run identity: the
+		// service verified an assertion the identity project signed, not a run
+		// of this installation, so a run id here names a run it never verified —
+		// and the repository the run belongs to is not what the act was for
+		// either. The three are refused as unexpected rather than recorded, so a
+		// route that filled the event from the wrong identity fails loudly
+		// instead of writing a phone's act under a run and a job that never
+		// carried it.
+		return AuditEvent{}, auditRefusal{"run", refusalUnexpected}
+	case credentiallessPurpose(ev.Purpose) && ev.Repository != "":
+		return AuditEvent{}, auditRefusal{"repository", refusalUnexpected}
+	case credentiallessPurpose(ev.Purpose) && ev.Job != "":
 		return AuditEvent{}, auditRefusal{"job", refusalUnexpected}
 	case (ev.Run == "") != (ev.Repository == "") && !repositoryOnlyPurpose(ev.Purpose):
 		// The identity carries both: a run id without the repository it

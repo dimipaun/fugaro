@@ -164,26 +164,50 @@ func TestAuditMobilePurposesCarryTheCallerWithoutAJobOrACredential(t *testing.T)
 // the mobile purposes' and nothing else's, and the rules they do not relax are
 // untouched for them too.
 //
-// Two cases, one for each half. A run id with no repository is not a run this
-// service can name, and a phone reporting one is refused on it for the same
-// reason a model call is. And a purpose of the rest of the file still has to
-// name the credential its OK line says it used — the credentialless line is the
-// mobile act's because a mobile act touches nothing, not a shape the run's own
+// Three cases, one for each half. A mobile act verifies no run identity and a
+// phone is not a job of this installation, so its line names no run, no
+// repository and no job: each of the three is refused as unexpected when it
+// appears alone, and the run is the one named when a route fills the event from
+// the wrong identity and sets all three — the shape a probe of this file found
+// admitted, and one that would record a phone's act under a run and a job that
+// never carried it. And a purpose of the rest of the file still has to name the
+// credential its OK line says it used — the credentialless line is the mobile
+// act's because a mobile act touches nothing, not a shape the run's own
 // purposes may reach.
 func TestAuditMobilePurposesKeptTheRulesTheRestOfTheFileHolds(t *testing.T) {
-	t.Run("a run with no repository is refused for a mobile purpose", func(t *testing.T) {
-		a, buf := newAudit(t)
-		err := a.Write(context.Background(), AuditEvent{
-			Run:     "a-run",
-			Caller:  testPersonAccount,
-			Purpose: PurposeMobilePair,
-			Status:  StatusOK,
-		})
-		if err == nil {
-			t.Fatal("Write accepted a mobile line naming a run and no repository")
-		}
-		if lines := auditLines(t, buf); lines[0]["field"] != "run" {
-			t.Errorf("the refusal names field %v, want the run", lines[0]["field"])
+	t.Run("a mobile line naming a run, a repository or a job is refused", func(t *testing.T) {
+		for _, c := range []struct {
+			name string
+			ev   AuditEvent
+			want string
+		}{
+			{"a run alone", AuditEvent{Run: "a-run"}, "run"},
+			{"a repository alone", AuditEvent{Repository: "owner-repo"}, "repository"},
+			{"a job alone", AuditEvent{Job: "fugaro-owner-repo-a"}, "job"},
+			{"the run, repository and job of the identity that was not the caller's", AuditEvent{
+				Run: "a-run", Repository: "owner-repo", Job: "fugaro-owner-repo-a",
+			}, "run"},
+		} {
+			for _, purpose := range mobilePurposes() {
+				a, buf := newAudit(t)
+				ev := c.ev
+				ev.Caller = testPersonAccount
+				ev.Purpose = purpose
+				ev.Status = StatusOK
+				if err := a.Write(context.Background(), ev); err == nil {
+					t.Errorf("Write accepted a %s line carrying %s", purpose, c.name)
+					continue
+				}
+				lines := auditLines(t, buf)
+				if len(lines) != 1 {
+					t.Fatalf("the refused %s line carrying %s wrote %d audit lines, want exactly 1: %v", purpose, c.name, len(lines), lines)
+				}
+				for field, want := range map[string]any{"field": c.want, "reason": refusalUnexpected} {
+					if got := lines[0][field]; got != want {
+						t.Errorf("the refusal of a %s line carrying %s names %s = %v, want %q", purpose, c.name, field, got, want)
+					}
+				}
+			}
 		}
 	})
 
