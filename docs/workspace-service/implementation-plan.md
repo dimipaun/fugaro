@@ -9,7 +9,8 @@ workspace's service directly (D2981); the route is decided once at the run's sta
 with no fall-through on exhaustion (D2989); a bounded wait when a service is unreachable (D2983);
 every credential kind at once (D2984, not the recommendation), for a member's runs only (D2988);
 the run's beat with an off switch (D2985); a load check at 100 concurrent runs (D2986); one cap and
-no per-member share (D2990); the alarm deferred (D2987 as amended by D2991). From workspace
+no per-member share (D2990); the alarm deferred (D2987 as amended by D2991); shared project jobs
+served (D2992). From workspace
 credentials: the member's copy wins (D2973), `all_members` only after the meter (D2977), one cascade
 for every kind (D2978), the holder proxies (D2979).
 
@@ -24,8 +25,9 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
   `internal/projectpolicy/workspace_credentials.go` or `internal/localcfg/localcfg.go` also runs
   `go test ./internal/cli/ -run DocsWorkspaces -count=1` and moves the line citations in
   `docs/workspaces/*.md` in the same change (F19). A task that makes a pinned sentence of
-  `SECURITY.md` false changes the sentence, its test and `website/content/security.md` in the same
-  change. A new field in a published or `--json` shape is added, never retyped.
+  `SECURITY.md` false changes the sentence, the test that pins it (`docs_security_test.go` or
+  `docs_workspaces_security_test.go`) and `website/content/security.md` in the same change, and
+  runs `npm run check` in `website/`. A new field in a published or `--json` shape is added, never retyped.
 - **Ask first.** A new dependency; a change to a contract's files (raise a contract change, §7); a
   new command that waits for input (there is none in this plan).
 - **Never.** A secret-shaped literal; a live cloud call from a test or an agent; a confirmation
@@ -39,7 +41,7 @@ Point, don't restate: `CLAUDE.md`, `.claude/rules/credentials-service.md` (every
 | --- | --- |
 | An installation's service behaves exactly as today after the seam lands | WS1 `TestInstallationScopeIsTodaysBehaviour` and the existing `internal/credsvc` suites it must not edit |
 | A caller's member comes from the verified job account and nothing in the request | WS2 `TestWorkspaceScopeIgnoresADeclaredMember` |
-| The run's verified repository is held to the calling job account's (the workspaces design's O3) | WS2 `TestWorkspaceScopeHoldsTheSlugToTheCallingAccount` |
+| The run's verified repository is one of the calling job account's, a shared project job's list included (the workspaces design's O3, D2992) | WS2 `TestWorkspaceScopeHoldsTheSlugToTheCallingAccount` |
 | A call routed to the workspace still passes the allow-list, the member's policy and the repository's admission | WS2 `TestWorkspaceScopeOffersOnlyTheIntersection`; WS16, WS17 the same for forge entries |
 | A forge entry's coverage is the workspace owner's list, never the member's | WS16, WS17 `TestARepositoryNamedOnlyByTheMemberIsRefused` |
 | Workspace mode serves only the model routes and a run's forge routes | WS2 `TestWorkspaceModeRefusesEveryOtherRoute` |
@@ -66,7 +68,8 @@ of WS11 is asked the question of O4 by name.
 
 ### C1: the scope contract
 - Acceptance: `credsvc` declares the per-call scope a route needs (the verified caller; the
-  policy, kill, state, outcome, table, offering and meter readers for that caller; which routes
+  policy, kill, state, outcome, table, offering, forge-credential and meter readers for that
+  caller; which routes
   the scope serves, R14; and the keep-warm route's path), the resolver that returns one for a request, and the signature of
   the workspace resolver's constructor. A stub resolver returns a scope that refuses every call.
 - Files: `internal/credsvc/scope.go` (new), `internal/credsvc/scope_stub.go` (new, stub),
@@ -99,7 +102,7 @@ of WS11 is asked the question of O4 by name.
 
 ### C3: the node contract, version 2
 - Acceptance: version 2 of the `workspace_credentials` node is declared: a member row's job
-  accounts each carry their repository (R6); a shared entry carries its kind and, for a forge
+  accounts each carry their list of repositories (R6, D2992); a shared entry carries its kind and, for a forge
   entry, the repositories it covers, written by the workspace owner (U2); `all_members` is a key
   exclusive with `projects` (R7). Version 1 still decodes. The schema is published.
 - Files: `internal/projectpolicy/workspace_credentials_v2.go` (new),
@@ -127,9 +130,10 @@ its number is not reused).
 ### WS1: the front door and the model path on the scope
 - Acceptance: `Server.ServeHTTP` asks the resolver for a scope and refuses a route the scope does
   not serve; the model path (`candidates`, `forward`, `answer`) reads its caller, policy, kills,
-  state and offering from the scope; the installation's resolver is built from today's `Config`
-  and serves every route. Every other route keeps reading `Config` and is untouched (the forge
-  routes move in WS16 and WS17). No existing test in `internal/credsvc` changes.
+  state and offering from the scope; `ServeHTTP` hands the scope to each handler it dispatches;
+  the installation's resolver is built from today's `Config`, serves every route and implements
+  every reader C1 declares, the forge ones included. Every other handler keeps reading `Config`
+  and is untouched (the forge handlers switch to the scope in WS16 and WS17). No existing test in `internal/credsvc` changes.
 - Files: `internal/credsvc/server.go`, `internal/credsvc/cascade.go`,
   `internal/credsvc/scope_installation.go` (new), `internal/credsvc/scope_installation_test.go` (new).
 - Interfaces: builds C1's other side; produces the installation's `ScopeResolver`.
@@ -144,29 +148,31 @@ its number is not reused).
 ### WS2: the workspace's scope
 - Acceptance: a resolver built from `credsvc.Workspace` returns, for a member's job, a scope whose
   readers are that member's own database and whose offering is `Workspace.Shared` over
-  `WorkspaceShared` of the bundle and the published node; it holds the run's verified slug to the
-  repository of the calling job account (F28); it re-reads the node when older than 60 seconds
+  `WorkspaceShared` of the bundle and the published node; it implements the forge readers C1
+  declares from the same node; it holds the run's verified slug to the repositories of the
+  calling job account, one or several (F28, D2992); it re-reads the node when older than 60 seconds
   (R13) and refuses when that re-read fails (R17); it serves only the routes of R14, the
   keep-warm route among them; state is read and written in the workspace's database
   only (R8). The `SECURITY.md` sentence on the O3 gap says it is closed.
 - Files: `internal/credsvc/scope_workspace.go` (new), `internal/credsvc/scope_workspace_test.go`
   (new), `internal/credsvc/workspace.go`, `internal/credsvc/workspace_test.go`, `SECURITY.md` with
-  `website/content/security.md`.
+  `website/content/security.md`, `internal/cli/docs_workspaces_security_test.go`.
 - Interfaces: consumes C1, C3; produces the workspace's `ScopeResolver`.
 - Tests: `TestWorkspaceScopeIgnoresADeclaredMember`, `TestWorkspaceScopeOffersOnlyTheIntersection`,
-  `TestWorkspaceScopeHoldsTheSlugToTheCallingAccount`, `TestWorkspaceScopeRereadsItsNode`,
+  `TestWorkspaceScopeHoldsTheSlugToTheCallingAccount`,
+  `TestWorkspaceScopeServesASharedProjectJob`, `TestWorkspaceScopeRereadsItsNode`,
   `TestAFailedRereadRefuses`, `TestTheKeepWarmRouteCarriesNoSecret`,
   `TestWorkspaceModeRefusesEveryOtherRoute`, `TestWorkspaceScopeWritesNothingToAMember`.
 - Command: `go test ./internal/credsvc/ -run 'WorkspaceScope|WorkspaceMode|Workspace' -count=1 && go test ./internal/cli/ -run 'DocsWorkspaces|SecurityMd' -count=1`.
 - Red step: the intersection test fails while the offering is the whole bundle.
 - Depends on: C1 (the seam), C3 (the node it reads).
-- Commit: `credsvc: the workspace's scope (WS2, D2980, R5, R8, R13, R14, F28)`.
+- Commit: `credsvc: the workspace's scope (WS2, D2980, D2992, R5, R8, R13, R14, F28)`.
 - Reviewer tier: opus, mandatory independent review.
 
 ### WS3: the local config and the `fugaro workspace` writes
 - Acceptance: `workspace add` takes the service's address into the pin; a pin without one is
   valid, and an address must be `https` with no query or fragment (R3); `workspace member add`
-  takes `database_region` and a repository per job account (R6); `workspace share <credential>
+  takes `database_region` and the repositories of each job account (R6, D2992); `workspace share <credential>
   --projects a,b` (with `--covers owner/repo` for a forge entry) and `workspace unshare` edit a
   local shared list; every write is a local edit that ends by naming `fugaro update`, and none
   asks a question.
@@ -232,7 +238,7 @@ its number is not reused).
   `internal/cli/workspace_create.go` (the cover's caller only),
   `deploy/terraform/terraform_test.go`, `deploy/terraform/secret_readers_test.go` with
   `docs/secrets-brokering/secret-readers.md`, `internal/infra/managed/marker_test.go`,
-  `SECURITY.md` with `website/content/security.md`.
+  `SECURITY.md` with `website/content/security.md`, and the test that pins the sentence.
 - Interfaces: builds C2's Terraform side (the environment names).
 - Tests: `TestWorkspacePlanAdmitsTheService`, `TestWorkspacePlanRefusesAnythingElse`,
   `TestWorkspacePlanAdmitsRemovingAMembersInvokeGrant`,
@@ -288,16 +294,18 @@ its number is not reused).
 ### WS9: the member publishes the route
 - Acceptance: a member's `fugaro update` publishes one record: the address from its pin, and per
   repository and kind `project` when the project's own bundle holds a credential its policy admits
-  for that repository and `workspace` otherwise (R3, R4); it reports a project copy that shadows a
-  workspace one (D2973); a member in no workspace, or with no address in its pin, publishes
+  for that repository and `workspace` otherwise (R3, R4); for each repository and kind it serves
+  from the project's own copy it reports that a workspace credential of that kind is not used
+  (D2973, F38); a member in no workspace, or with no address in its pin, publishes
   nothing and removes a record it published before; `fugaro creds set` ends by naming
   `fugaro update`. The first step settles what is left of U1.
 - Files: `internal/cli/update_route.go` (new), `internal/cli/update_route_test.go` (new),
-  `internal/cli/update.go`, `internal/cli/creds.go`.
+  `internal/cli/init_stages.go` and `internal/initflow/stage.go` (the new stage's registration),
+  `internal/cli/creds.go`.
 - Interfaces: builds C2's publishing side; consumes WS3's pin field.
 - Tests: `TestUpdatePublishesTheRoute`, `TestTheRouteIsPerRepository`, `TestTheProjectsCopyWins`,
-  `TestUpdateReportsAShadowingCopy`, `TestNoWorkspaceNoRoute`, `TestLeavingRemovesTheRoute`.
-- Command: `go test ./internal/cli/ -run 'UpdatePublishesTheRoute|TheRouteIsPerRepository|TheProjectsCopyWins|UpdateReportsAShadowing|NoWorkspaceNoRoute|LeavingRemovesTheRoute' -count=1`.
+  `TestUpdateReportsWhereEachKindIsServed`, `TestNoWorkspaceNoRoute`, `TestLeavingRemovesTheRoute`.
+- Command: `go test ./internal/cli/ -run 'UpdatePublishesTheRoute|TheRouteIsPerRepository|TheProjectsCopyWins|UpdateReportsWhereEachKind|NoWorkspaceNoRoute|LeavingRemovesTheRoute' -count=1`.
 - Red step: no route is published for a member whose bundle is empty.
 - Depends on: C2 (it starts after C2 merges); WS3 (kept: it reads the pin field WS3 adds).
 - Commit: `update: a member publishes where each repository's credentials are served (WS9, D2973, D2982, R3, R4)`.
@@ -312,7 +320,8 @@ its number is not reused).
   `fugaro update` (R16); a run with no record behaves as today. The `SECURITY.md` sentence on what
   the workspace's service can write names the run's token (F30, O4).
 - Files: `internal/gateway/gateway.go`, `internal/gateway/service.go`, `internal/runner/gateway.go`,
-  `internal/gateway/workspace_route_test.go` (new), `SECURITY.md` with `website/content/security.md`.
+  `internal/gateway/workspace_route_test.go` (new), `SECURITY.md` with `website/content/security.md`,
+  `internal/cli/docs_workspaces_security_test.go`.
 - Interfaces: consumes C2.
 - Tests: `TestARunRoutedToTheWorkspaceNeverCallsTheProject`,
   `TestAnExhaustedProjectDoesNotFallThrough`, `TestTheWorkspaceUpstreamHasItsOwnAudience`,
@@ -363,14 +372,15 @@ its number is not reused).
 - Acceptance: `fugaro doctor` on the workspace owner's machine reports the service deployed, the
   node published and readable, and each shared entry present in the bundle; on a member's it
   reports the pin's address and the published route, and flags a route the bundle no longer
-  matches (R4). It reads and writes nothing else, and it reports no alarm (D2991).
+  matches, using WS9's own derivation (R4). It reads and writes nothing else, and it reports no alarm (D2991).
 - Files: `internal/cli/doctor_workspace.go`, `internal/cli/doctor_workspace_service_test.go` (new).
 - Interfaces: consumes C2, C3.
 - Tests: `TestDoctorReportsTheWorkspaceService`, `TestDoctorReportsAMembersRoute`,
   `TestDoctorFlagsAStaleRoute`, `TestDoctorWritesNothing`.
 - Command: `go test ./internal/cli/ -run 'DoctorReportsTheWorkspace|DoctorReportsAMembers|DoctorFlagsAStale|DoctorWritesNothing' -count=1`.
 - Red step: doctor passes a workspace with no service.
-- Depends on: C2, C3; WS3 (kept: it reads the pin field WS3 adds).
+- Depends on: C3; WS9 (kept: it calls WS9's derivation of the route, which is behaviour, and WS9
+  brings the pin field and C2 with it).
 - Commit: `doctor: the workspace's service, node and route (WS14, F20)`.
 - Reviewer tier: opus, mandatory independent review.
 
@@ -389,7 +399,8 @@ its number is not reused).
 - Reviewer tier: opus, mandatory independent review.
 
 ### WS16: the Bitbucket git proxy on the scope
-- Acceptance: the git proxy takes its token, coverage and repository table from the scope; under a
+- Acceptance: the git proxy handler takes its token, coverage and repository table from the
+  scope's forge readers, which WS1 and WS2 implement; under a
   workspace's scope a request is served only for a repository the workspace owner's coverage
   names, the member's policy admits and the allow-list names, and only for a run's job account;
   the read mint stays installation-only (D2988); an installation's behaviour is unchanged.
@@ -465,7 +476,7 @@ its number is not reused).
 - Tests: the four `_test.sh`.
 - Command: `for n in 770 771 772 773; do bash scripts/live-checks/check${n}_test.sh; done && go test ./internal/cli/ -run Docs -count=1`.
 - Red step: each self-test fails on a missing script.
-- Depends on: C2.
+- Depends on: C2; WS22 (kept: both edit `docs/gcp-live-checklist.md`).
 - Commit: `checks: 770 to 773 for the workspace's service (WS20, D2986)`.
 - Reviewer tier: standard.
 - Owner-run: `bash scripts/live-checks/check770.sh` and the three like it, after the release that
@@ -496,13 +507,15 @@ its number is not reused).
   device's or a launcher's; `RulesVersion` moves, with the documents test that pins its value; an
   installation at the previous rules version converges through `fugaro update` with a run in
   flight.
-- Files: `internal/budget/rules/rules.json.tmpl`, a rules emulator test beside it (new),
+- Files: `internal/budget/rules/rules.json.tmpl`, `rules_test.go` and
+  `testdata/rules.golden.json` beside it, a rules emulator test (new),
   `internal/projectpolicy/version.go`, `internal/cli/docs_mobile_auth_test.go`,
-  `internal/cli/update_converge_test.go`.
+  `docs/gcp-live-checklist.md` (Check 82's size and version), `internal/cli/update_converge_test.go`.
+  It is past five files because every pin of the rules' version and size moves with the rule (F39).
 - Interfaces: consumes C2 (the record's path).
 - Tests: `TestARunReadsTheRoute`, `TestNoRunWritesTheRoute`, `TestNoOtherTokenWritesTheRoute`,
   `TestRulesConvergeFromThePreviousVersion`.
-- Command: `go test -tags firebase ./internal/budget/rules/ -run 'ARunReadsTheRoute|NoRunWritesTheRoute|NoOtherTokenWritesTheRoute' -count=1 && go test ./internal/cli/ -run 'RulesConvergeFromThePrevious|Docs|RulesVersion' -count=1`.
+- Command: `go test ./internal/budget/rules/ -run 'RulesGolden|RulesVersion' -count=1 && go test -tags firebase ./internal/budget/rules/ -run 'ARunReadsTheRoute|NoRunWritesTheRoute|NoOtherTokenWritesTheRoute' -count=1 && go test ./internal/cli/ -run 'RulesConvergeFromThePrevious|Docs|RulesVersion' -count=1`.
 - Red step: a run's token is refused the read.
 - Depends on: C2.
 - Commit: `rules: a run reads its credential route and cannot write it (WS22, F23, R4)`.
@@ -536,13 +549,13 @@ repository's mode is `startup`, so the pass is applied aggressively.
 | Level | Tasks |
 | --- | --- |
 | 0 | C1, C2, C3 |
-| 1 | WS1, WS2, WS3, WS5, WS6, WS11, WS15, WS20, WS22 |
-| 2 | WS4, WS7, WS8, WS9, WS12, WS13, WS14, WS16, WS17 |
-| 3 | WS18, WS19 |
+| 1 | WS1, WS2, WS3, WS5, WS6, WS11, WS15, WS22 |
+| 2 | WS4, WS7, WS8, WS9, WS12, WS13, WS16, WS17, WS20 |
+| 3 | WS14, WS18, WS19 |
 | 4 | WS21, I1 |
 
 **Critical path.** By these levels the longest chain is C2, WS11, WS12, WS18, I1: five steps. The
-graph read reports `critical path (5 tasks): C2 -> WS11 -> WS12 -> WS18 -> I1`, with C2 the bottleneck, and `gain: 14 broken, 18 kept, 7 added; before 5 tasks, weight 11; after 5 tasks, weight 9.5;
+graph read reports `critical path (5 tasks): C2 -> WS11 -> WS12 -> WS18 -> I1`, with C2 the bottleneck, and `gain: 13 broken, 19 kept, 7 added; before 5 tasks, weight 11; after 5 tasks, weight 9.5;
 improves`.
 
 **Where the graph and this table differ (O5).** The graph format records a contract's consumers
@@ -554,15 +567,15 @@ merged, as its own Depends-on line and this table say.
 
 **Edges broken, each by a contract and rejoined in I1.**
 - WS2 after WS1, WS5 after WS1, WS5 after WS2: each needs the scope's shape, not the other's code (C1).
-- WS11 after WS9, WS14 after WS9, WS22 after WS9, WS5 after WS6, WS20 after WS6: each needs a name
-  or the route record, not who writes it (C2).
+- WS11 after WS9, WS22 after WS9, WS5 after WS6, WS20 after WS6: each needs a name or the route
+  record, not who writes it (C2).
 - WS2 after WS4, WS5 after WS4, WS14 after WS4, WS15 after WS4, WS16 after WS15, WS17 after WS15:
   each needs the node's shape, not its writer or the pool's code (C3).
 
 **Edges kept.** Each is stated in its task: a shared file (WS8, WS16 and WS17 after WS1; WS12 after
-WS11; WS7 after WS22; WS19 after WS4 and WS15), a field one task adds to a struct another reads
-(WS4, WS9 and WS14 after WS3), behaviour (WS7 after WS6, WS13 and WS18 after WS11, WS18 after WS12, I1
-after WS8 and WS18), the owner's ordering (WS19 after WS8) and the built CLI (WS21).
+WS11; WS7 and WS20 after WS22; WS19 after WS4 and WS15), a field one task adds to a struct another
+reads (WS4 and WS9 after WS3), behaviour (WS7 after WS6, WS13 and WS18 after WS11, WS14 after WS9,
+WS18 after WS12, I1 after WS8 and WS18), the owner's ordering (WS19 after WS8) and the built CLI (WS21).
 
 **Shared files.** No level holds two writers of one file, with the two exceptions named below the
 table.
@@ -583,14 +596,18 @@ table.
 | `internal/cli/workspace_create.go` | WS6 (1), WS7 (2) |
 | `internal/cli/update_workspace.go` | WS4 (2), WS19 (3) |
 | `internal/cli/update_converge_test.go` | WS22 (1), WS7 (2) |
-| `internal/cli/update.go`, `internal/cli/creds.go` | WS9 (2) |
+| `internal/cli/init_stages.go`, `internal/initflow/stage.go`, `internal/cli/creds.go` | WS9 (2) |
 | `internal/cli/credentials_serve.go` | WS5 (1) |
-| `internal/cli/doctor_workspace.go` | WS14 (2) |
+| `internal/cli/doctor_workspace.go` | WS14 (3) |
+| `internal/credsvc/scope_installation.go` | WS1 (1) |
+| `internal/credsvc/scope_workspace.go` | WS2 (1) |
+| `internal/budget/rules/*`, `internal/projectpolicy/version.go` | WS22 (1) |
 | `internal/config/*.go`, `internal/settings/registry.go`, the settings schemas | WS13 (2) |
-| `docs/gcp-live-checklist.md` | WS20 (1) |
+| `docs/gcp-live-checklist.md` | WS22 (1), WS20 (2) |
 
-**The two exceptions.** `SECURITY.md` (with `website/content/security.md`) is edited by WS2, WS6
-and WS11 at level 1 and by WS8 and WS12 at level 2, and the line citations in
+**The two exceptions.** `SECURITY.md` (with `website/content/security.md` and the two tests that
+pin its sentences, `docs_security_test.go` and `docs_workspaces_security_test.go`) is edited by
+WS2, WS6 and WS11 at level 1 and by WS8 and WS12 at level 2, and the line citations in
 `docs/workspaces/*.md` are moved by whichever task shifts the cited code. Each such edit is one
 sentence or one line number in its own paragraph. The coordinator merges those tasks back to back
 and resolves a conflict locally; none is a reason to order two tasks.

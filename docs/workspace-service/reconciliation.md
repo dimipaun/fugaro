@@ -2,8 +2,8 @@
 
 Checked against `origin/main` at `21b0a622b` on 2026-11-19. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D2980–D2991**, all answered by the owner on 2026-11-19 (D2988–D2991 were added by review round 1,
-and D2987 was amended by it); the settled decisions it builds on are
+**D2980–D2992**, all answered by the owner on 2026-11-19 (D2988–D2991 were added by review round 1,
+which also amended D2987; D2992 by round 3); the settled decisions it builds on are
 D1290–D1305 ([the workspaces design](../workspaces/reconciliation.md)) and D2960–D2979
 ([workspace credentials](../workspace-credentials/spec.md)).
 
@@ -100,7 +100,7 @@ for a service of today's code would make it refuse the whole node. Consequence: 
 version bump, a migrator and a guard in the writer; R7.
 
 **F13 — Gap.** `Projects` in a shared entry is not checked against the node's `Members`.
-Consequence: WS3's writer refuses a shared entry naming a project that is not a member.
+Consequence: WS4's writer refuses a shared entry naming a project that is not a member.
 
 **F14 — Rule.** The workspaces design left two answered items to "the task that gives the node a
 writer": O3, each job account carries the repository it is a job of, and O4, a member's
@@ -142,7 +142,7 @@ workspace check (`doctorWorkspaceSplitCheck`). Consequence: D2987 as amended by 
 **F21 — Gap.** Nothing a run can read says which credentials a project holds itself. A member's policy
 names the accounts it admits (`projectpolicy.MemberAdmitsShared` asks whether the name is a key of
 the member's `accounts`), which is true of a workspace's credential and of the project's own alike.
-Consequence: D2982 needs a published route per credential; R4.
+Consequence: D2982 needs a published route; R4.
 
 **F22 — Open, answered here.** V5 of the workspaces design: D2973 and D2978 answer it, and R4 and
 R5 say how.
@@ -218,6 +218,24 @@ amended.
 case) is answered by the platform with a bare 403, which is neither a typed refusal nor an
 unreachable service. Consequence: R16.
 
+**F37 — Gap (review round 3).** A job account is not always one repository's. A shared project job
+serves several: `credsvc.SharedJobAccount` carries an address, a profile and a list of
+repositories (`SharedJobAccountsFor`, `internal/credsvc/server.go`), deployed by
+`internal/infra/projectjobs.go`, and the shared-jobs-default work makes it the usual shape. A
+member row whose accounts each carry exactly one repository would refuse every such run.
+Consequence: D2992, R6 as amended.
+
+**F38 — Rule (review round 3).** A member reads nothing the workspace publishes: the workspace's
+database rules (`internal/budget/rules/workspace.json.tmpl`) deny every read, and the workspaces
+documents pin that a member holds no grant there. So a member's `fugaro update` cannot know what
+the workspace shares. Consequence: R4's report says only what the member can know.
+
+**F39 — Rule (review round 3).** A rules change moves more than the template: the untagged
+`TestRulesGolden` and `TestRulesVersionUnchanged` (`internal/budget/rules/rules_test.go`, with
+`testdata/rules.golden.json`), and Check 82's row in `docs/gcp-live-checklist.md`, which a
+documents test holds to the generated size and the version. Consequence: WS22's files, and WS20
+after it.
+
 ## 4. Decisions
 
 All answered by the owner on 2026-11-19.
@@ -236,6 +254,7 @@ All answered by the owner on 2026-11-19.
 | **D2989** | Does a run fall through to the workspace when the project's own model credential is exhausted mid-run? | No. The route is by kind and fixed at the run's start; a project that holds a usable model credential uses its own service for the whole run and waits when exhausted, as today | added by review round 1; as recommended |
 | **D2990** | Is there a per-member share of the workspace cap? | No: one cap for now. Each member's own caps still bound that member | added by review round 1; as recommended |
 | **D2991** | The alarm cannot be computed as D2987 placed it (F31). What now? | **Deferred.** The cap is enforced at the meter without it; the alarm stays unbuilt, `SECURITY.md` keeps saying so, and it gets its own spec | added by review round 1; as recommended |
+| **D2992** | Does the workspace's service serve a member's runs on shared project jobs (F37)? | **Yes.** A member job account carries a list of repositories, and the run's repository must be one of them | added by review round 3; as recommended |
 
 **What D2984 costs, stated because it is not the recommendation.** Git traffic depends on the
 workspace's service from the first release, so Check 770 measures git pushes and clones beside
@@ -265,16 +284,19 @@ Each has one defensible answer given the decisions and the owner's constraints.
   a credential the member's policy admits for that repository, and publishes `project` or
   `workspace`, with the address of R3, in one policy-side record that a run may read and no token
   but the member's admins' may write. The run reads it once at bootstrap and keeps it (D2982,
-  D2989). The project's copy wins when both exist (D2973), and `fugaro update` reports a project
-  copy that shadows a workspace one. A repository and kind with no route is served by the project,
+  D2989). The project's copy wins when both exist (D2973). `fugaro update` reports, for
+  each repository and kind it serves from the project's own copy, that a workspace credential of
+  that kind is not used; it cannot name the workspace's entries, which a member cannot read (F38). A repository and kind with no route is served by the project,
   as today. `fugaro creds set` ends by naming `fugaro update`, and `fugaro doctor` flags a route
   the bundle no longer matches.
 - **R5. The fallback is still fenced.** A call routed to the workspace passes the workspace
   entry's allow-list, the member's own policy and the repository's admission, exactly as
   `Workspace.Shared` intersects them today (D1298, D2978).
-- **R6. The table's two missing columns.** A member row carries `database_region`, and each job
-  account carries the repository it is a job of (the workspaces design's O4 and O3).
-  `fugaro workspace member add` takes both.
+- **R6. The table's two missing columns.** *(Amended after review round 3, D2992.)* A member row
+  carries `database_region`, and each job account carries the repositories it is a job of: one
+  for a repository's own job, several for a shared project job (the workspaces design's O4 and
+  O3). `fugaro workspace member add` takes both, and the scope holds the run's verified
+  repository to that list.
 - **R7. `all_members`.** A new key of a shared entry, exclusive with `projects`. The node's version
   becomes 2 with a migrator. The guard for an older service is an order, not a version probe: the
   workspace owner's `fugaro update` publishes the node only after its own deploy of the service
