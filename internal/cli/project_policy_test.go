@@ -4057,6 +4057,39 @@ func TestPublishKeepsTheTriageSwitchTheConfigIsSilentAbout(t *testing.T) {
 	}
 }
 
+// TestPublishKeepsTheReviewAgainstTaskNoConfigCanState is the triage switch's
+// case one key over, and it is sharper there: the published true is the one
+// value that turns the task check on for every run of the project and that no
+// repository can walk out of (D2935), so a publish from this release — which
+// reads the member, and so no longer refuses a node that carries it, but has no
+// key of its own that could state it — must not be the write that takes it off.
+// The width of the trap is the whole point: the drop is silent, the diff says
+// nothing, and the owner learns of it from a review that stopped checking the
+// task. The node stands where a hand-edited one or a newer release's write left
+// it, which is why the test seeds it rather than publishing it.
+func TestPublishKeepsTheReviewAgainstTaskNoConfigCanState(t *testing.T) {
+	f := newProjectFixture(t, "")
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatal(err)
+	}
+	var node map[string]any
+	if err := json.Unmarshal([]byte(nodeJSON(t, f, projectpolicy.PathShared())), &node); err != nil {
+		t.Fatal(err)
+	}
+	node["review_against_task"] = true
+	f.db.Set(projectpolicy.PathShared(), node)
+
+	if _, _, err := execute(t, "project", "policy", "publish"); err != nil {
+		t.Fatalf("a publish over a node carrying review_against_task was refused: %v", err)
+	}
+	if p := publishedPolicy(t, f); p.ReviewAgainstTask == nil || !*p.ReviewAgainstTask {
+		t.Errorf("the publish dropped the owner's forced check: ReviewAgainstTask = %v, want true", p.ReviewAgainstTask)
+	}
+	if raw := nodeJSON(t, f, projectpolicy.PathShared()); !strings.Contains(raw, `"review_against_task":true`) {
+		t.Errorf("the node does not carry the switch:\n%s", raw)
+	}
+}
+
 // TestPublishDropsReviewFloorOnPurpose: `review_floor: {}` is how the owner
 // takes a published floor away. Silence about the key keeps the node's floor
 // (the test above), so the written empty object is the spelling that has to

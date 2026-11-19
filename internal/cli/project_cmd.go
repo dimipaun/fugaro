@@ -1344,6 +1344,20 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		publishedTriage = old.Triage
 	}
 	triage := lc.TriageEffective(publishedTriage)
+	// The review-against-task switch is kept by the triage switch's rule, and
+	// it is the one member this release keeps from the node alone: it has no
+	// home in this machine's config yet (the repository's own key is S-KNOB's
+	// and the local key is RA8b's), so there is nothing here that could state
+	// it and the node's own value is carried over as it stands. Keeping it is
+	// not optional: reading this key is what stopped the publisher's and the
+	// launch gate's unknown-key refusal, so a publish that dropped it would
+	// quietly take the owner's forced check off a node whose whole protection
+	// was that refusal — the drop being silent is the failure, not the absence
+	// of a file that cannot write the key at all.
+	var publishedReviewAgainstTask *bool
+	if old != nil {
+		publishedReviewAgainstTask = old.ReviewAgainstTask
+	}
 	// The pools' subscription switch is kept by the triage switch's rule (F22,
 	// D1636), and the cost of the other reading is that switch's: the member is
 	// what makes a pool of two or more subscriptions serve anything at all
@@ -1437,6 +1451,7 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		ImageMap:             imageMap,
 		BakeRepos:            bakeRepos,
 		Triage:               triage,
+		ReviewAgainstTask:    publishedReviewAgainstTask,
 		Orchestrator:         orchestrator,
 		SubscriptionSpread:   spread,
 	}
