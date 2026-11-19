@@ -372,7 +372,10 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// against and the request mounts none of them, so the resolution — and the
 	// grant check it makes, which would refuse a build that is exactly the one
 	// the flip exists to serve — is the unserved builds' own.
-	serviceURL := buildServiceURL(lc, cfg, repo)
+	serviceURL, err := buildServiceURL(lc, repo, rs.BuildMountsServed())
+	if err != nil {
+		return err
+	}
 	gitID := ""
 	if serviceURL == "" {
 		// The provider credential's ID as live state resolves it, checked
@@ -526,21 +529,73 @@ func buildRecordNote(lc *localcfg.Config) string {
 // fetch its credentials from (B4.9, the S4 flip; D2076, D2077), and "" for a
 // build that holds them itself: an installation that deploys no service, and a
 // repository the switch holds off, whose build account keeps every accessor
-// and whose request keeps every mount (G9, D147).
+// and whose request keeps every mount (G9, D147). plan is whether the spec this
+// build is submitted against says the service serves it
+// (RepoSpec.BuildMountsServed), and err is the refusal for the one state a
+// build cannot be submitted in.
 //
-// It is the switch read the way the plan a re-apply writes reads it
-// (infra.CredentialsServiceServes, doctor_brokering's flipServes), with the
-// installation's block taken from the local config: the build paths here run
-// on a machine and not in a converge, and a machine whose config names no
-// service is one whose builds ask for none. The class list is the flip's own
-// half and is read where the drop happens (gcp.BuildRequest, and the module
-// for the account's accessors), so a build that is handed the address with the
-// list empty names it and mounts everything, exactly as B4.5 left it.
-func buildServiceURL(lc *localcfg.Config, cfg *config.Config, repo string) string {
-	if !infra.CredentialsServiceServes(lc.CredentialsService != nil, lc.Repos[repo].CredentialsServiceOn(), cfg.Agent.Auth, lc.BudgetMode()) {
-		return ""
+// Which repositories the switch serves is answered here, and never derived a
+// second time: a build that judged the switch for itself — on this machine's
+// budget.mode, or on an exact repos.<name> key — would submit a request naming
+// the secrets a root whose accessors are already gone cannot read, which Cloud
+// Build refuses, and the two ways it could be wrong are the two ways the
+// converge's own build would then fail.
+//
+// The two answers a build can be judged on are the plan this run is about to
+// apply (plan, the converge's own spec) and the root that is applied today, as
+// this machine records it — the installation's published block plus the record
+// of that root's last apply, which is the plan's own answer to the switch
+// written back by the apply that made it (localcfg.Repo.CredentialsServiceOn,
+// init_credentials' recordCredentialsServiceReady: "the one predicate, not a
+// second copy of its conjunction"). Either one being on is enough, and the
+// wider answer is the deliberate one: both are written by a state in which the
+// build account holds no accessor on the git credential or on the workflow's
+// own build secrets, so a request that named one of them is the request D2077
+// is about. The launch decides its job's address the same way and for the same
+// reason (credentialsServiceLaunchEnv, D143).
+//
+// The record is what answers for fugaro image build and the image refresh:
+// their spec is built from the checkout and carries no installation outputs
+// (buildSecrets' own note), so its own answer is off whatever the root was
+// applied with.
+//
+// The address is the installation's published one, and never a value of this
+// process's environment (configuredCredentialsServiceURL). A served repository
+// this config records no address for is a refusal and not a fallback: the
+// root it builds against holds no accessor on the git credential any more, so
+// a request submitted without the address would name no secret and no service
+// and fail at its credential step, long after it was billed.
+func buildServiceURL(lc *localcfg.Config, repo string, plan bool) (string, error) {
+	if !plan && !appliedBuildMountsServed(lc, repo) {
+		return "", nil
 	}
-	return configuredCredentialsServiceURL(lc)
+	if url := configuredCredentialsServiceURL(lc); url != "" {
+		return url, nil
+	}
+	return "", userErr("repository %s reads its builds' credentials at the installation's credentials service, and this config records no address for it (credentials_service.url): its build account holds no accessor on the git credential any more, so a build submitted without the address would hold no credential at all. Run %s at the installation's own checkout — that records the service's address — and then run this again", repo, selfCommand()+" update")
+}
+
+// appliedBuildMountsServed is whether the repository's root is applied with the
+// credentials service serving its BUILDS (B4.9): the installation's block this
+// config holds, and the record of that root's last apply.
+//
+// The record is the plan's own answer to the switch, written by the apply that
+// made it, and the four conditions of infra.CredentialsServiceServes are
+// inside it — the published node's mode included, which a build that read this
+// machine's own budget.mode would get wrong for an `api-key` or `oauth`
+// repository (D2071). A repository whose entry says off, and one this config
+// holds no entry for, are both repositories the service does not serve: an
+// unswitched repository keeps every accessor and every mount (G9, D147).
+//
+// The entry is read through localcfg.RepoFor's canonical match, the one the
+// plan reads it with: repos: is keyed by the name a person wrote, while a build
+// is submitted for the repository this checkout's own origin answers.
+func appliedBuildMountsServed(lc *localcfg.Config, repo string) bool {
+	if lc == nil || lc.CredentialsService == nil {
+		return false
+	}
+	entry, ok := lc.RepoFor(repo)
+	return ok && entry.CredentialsServiceOn()
 }
 
 // cloudBuildSpec is the Cloud Build build of workflow name of the
