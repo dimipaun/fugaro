@@ -192,7 +192,13 @@ func (r *run) readMessages(ctx context.Context) {
 			// asks from this number again. (A missing object is not an error
 			// here — GCS answers a job account's read of one with 403, which
 			// runmsg.Next reads as "nothing yet".)
-			r.d.Log.Warn("reading a run message failed", "seq", seq, "err", r.redact(err.Error()))
+			//
+			// A run whose context has gone says so once per number and not
+			// once per poll: a cancelled run's last read and its final read
+			// would otherwise each warn against a ticker that is still going.
+			if ctx.Err() == nil {
+				r.d.Log.Warn("reading a run message failed", "seq", seq, "err", r.redact(err.Error()))
+			}
 			r.commitMessages(seq, found, dels)
 			return
 		case m == nil:
@@ -222,7 +228,9 @@ func (r *run) messagePast(ctx context.Context, seq int) bool {
 		case errors.Is(err, runmsg.ErrRefused):
 			return true
 		case err != nil:
-			r.d.Log.Warn("reading a run message failed", "seq", n, "err", r.redact(err.Error()))
+			if ctx.Err() == nil {
+				r.d.Log.Warn("reading a run message failed", "seq", n, "err", r.redact(err.Error()))
+			}
 			return false
 		case m != nil:
 			return true
@@ -294,8 +302,9 @@ func (r *run) deliver(seq int, stage string, at time.Time) {
 
 // finalReadMessages is rule 5's last read (F18): at the run's end the runner
 // reads once more, so a message written after the last poll is recorded rather
-// than lost silently, and then records every message still pending as
-// undelivered (D2944).
+// than lost silently, and then lets go of the queue. What is still in it stays
+// recorded undelivered — that is what pendingDelivery wrote, and nothing since
+// has delivered it (D2944).
 func (r *run) finalReadMessages(ctx context.Context) {
 	if !r.msgs.on {
 		return
@@ -303,25 +312,21 @@ func (r *run) finalReadMessages(ctx context.Context) {
 	r.readMessages(ctx)
 	r.msgs.mu.Lock()
 	defer r.msgs.mu.Unlock()
-	pending := r.msgs.pending
 	r.msgs.pending = nil
-	for _, m := range pending {
-		for i := range r.msgs.dels {
-			if r.msgs.dels[i].Seq == m.Seq {
-				r.msgs.dels[i].State = runmsg.StateUndelivered
-				r.msgs.dels[i].Reason = messageUndelivered
-			}
-		}
-	}
 	r.publishMessages()
 }
 
 // pendingDelivery is a message the run has read and not yet handed to a stage:
-// the record calls it undelivered until one takes it, which is what it is if
-// the run ends first.
+// the record calls it undelivered, with the reason rule 5 gives, until a stage
+// takes it — which is what it is if the run ends first (D2944). The reason is
+// written here and not at the ending so that a message the poll reads after the
+// final read carries it too.
 func pendingDelivery(m runmsg.Message) runmsg.Delivery {
 	sent := m.SentAt
-	return runmsg.Delivery{Seq: m.Seq, SentAt: &sent, SentBy: m.SentBy, Flags: m.Flags, State: runmsg.StateUndelivered}
+	return runmsg.Delivery{
+		Seq: m.Seq, SentAt: &sent, SentBy: m.SentBy, Flags: m.Flags,
+		State: runmsg.StateUndelivered, Reason: messageUndelivered,
+	}
 }
 
 // messageBlock is the messages pending at a coder stage's boundary as the
