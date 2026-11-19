@@ -198,6 +198,76 @@ func EffectiveAtProject(in Input, caller string) Role {
 	return best
 }
 
+// Self returns the role caller holds and the scope that role is held at: the
+// caller's own read (D2907 of docs/console-improvements/reconciliation.md),
+// which is the one question a caller may ask about themselves and the document
+// `fugaro user ls --me --json` publishes.
+//
+// It resolves over the same Input the gates judge with — the stored grants and
+// the implicit project admins — so a console that reads it to decide which
+// controls to disable cannot disagree with the command that would refuse the
+// write. Where Effective answers "the role in ONE repository" and
+// EffectiveAtProject "the role at project scope", Self answers "the role, and
+// the scope it is held at", because a caller reading their own role needs to
+// know whether it reaches the project, every repository the policy admits, or
+// the patterns a grant names.
+//
+// The resolution is Effective's, without a repository to cover:
+//
+//   - an implicit project admin holds admin at project scope (F17.3);
+//   - otherwise the role is the highest of the grants that name the caller and
+//     whose scope this package parsed, and the scope is that grant's own — a
+//     tie between two grants of the same role goes to the wider scope, so a
+//     caller holding admin at all-repos and admin at one repository is told the
+//     wider one, which is the one that decides more of their commands;
+//   - a caller no valid grant names holds RoleNone, and the zero Scope with it.
+//     A grant whose role or scope this package did not parse is skipped rather
+//     than read as anything (the fail-closed rule).
+//
+// The published allow_repos is deliberately not read: it decides whether a
+// repository is admissible at the moment of a check (Effective), while a
+// caller's own role is a fact of the roster whatever the policy admits, and the
+// read that asks for it is not about a repository. A consumer that maps this
+// answer onto repository-level actions weighs the scope itself, as
+// Effective's own gate does.
+func Self(in Input, caller string) (Role, Scope) {
+	if caller == "" {
+		return RoleNone, Scope{}
+	}
+	if isImplicit(in, caller) {
+		return RoleAdmin, Scope{Kind: ScopeProject}
+	}
+	best, at := RoleNone, Scope{}
+	for _, grant := range in.Grants {
+		if grant.User != caller || !grant.Role.Valid() || !grant.Scope.Valid() {
+			continue
+		}
+		if grant.Role.Rank() > best.Rank() ||
+			(grant.Role == best && scopeWidth(grant.Scope.Kind) > scopeWidth(at.Kind)) {
+			best, at = grant.Role, grant.Scope
+		}
+	}
+	return best, at
+}
+
+// scopeWidth orders the scope kinds by how much of a project they cover, which
+// is the tie-break Self uses between two grants of one role: project covers the
+// project's own surfaces and every repository, all-repos every repository the
+// policy admits, and a repository list the repositories it names and no
+// project-level surface (F19). An unparsed kind covers nothing and sorts below
+// all three.
+func scopeWidth(kind ScopeKind) int {
+	switch kind {
+	case ScopeProject:
+		return 3
+	case ScopeAllRepos:
+		return 2
+	case ScopeRepos:
+		return 1
+	}
+	return 0
+}
+
 // isImplicit reports whether caller is one of the implicit project admins.
 func isImplicit(in Input, caller string) bool {
 	for _, member := range in.Implicit {

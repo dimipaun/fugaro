@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/whoami.schema.json",
+  "title": "fugaro user ls --me (the caller's own role)",
+  "description": "The document `fugaro user ls --me --json` prints: the caller's own role, the scope that role is held at, and the repository patterns that scope names (D2907 of docs/console-improvements/reconciliation.md; RS7 of docs/roles-scopes/implementation-plan.md records the amendment that a caller may read their own role). It is the CLI half of the console's `whoami` operation, and the console disables a write control the role cannot use from exactly this document — so the resolution behind it is the gates' own: `internal/access.Self` over the same input `internal/access.Allowed` judges with (the grants node's pairs and the installation's implicit project admins), and the caller is the credential `internal/access.Caller` names and never the local config's `user:` key (finding F21). The document names no member: it is about the caller and nobody else. `role` is one of the three the resolver ranks or `none`, and a reader that meets a word it does not know reads it as `none`; `scope` is the console's own word for the kind of scope the role is held at — `all` is what it calls `all-repos` — or `none` for a caller no grant names. `repos` carries the patterns the scope names and is an empty array for every kind that names none: it is never the repositories a machine knows, which would be a claim the grant does not make (finding F27). No object here is closed (additionalProperties is left true, as schemas/craft-ls.schema.json's description explains): members are added within a version, and a consumer that refused one this schema does not know would refuse a newer CLI's document under the same version. It is deliberately strict about the four enum words, which are the closed set each field's reader maps, and about `version`, which no reader may guess at.",
+  "type": "object",
+  "required": ["version", "role", "scope", "repos"],
+  "properties": {
+    "version": {
+      "const": 1,
+      "$comment": "whoamiDocVersion in internal/cli/user_ls.go. It is 1 from the document's first release: the shape is the console's contract, so it is published rather than grown from nothing."
+    },
+    "role": {
+      "type": "string",
+      "enum": ["viewer", "operator", "admin", "none"],
+      "description": "The caller's own role, as the resolver placed them: the highest role a stored grant names the caller with whose scope `internal/access` parsed, `admin` for an implicit project admin (finding F17.3), and `none` for a caller no valid grant names. A grant whose role or scope the resolver did not parse grants nothing, so a hand-written node cannot turn into a role here. A consumer that meets a word outside this set — a newer CLI's role, a value a future grammar adds — reads it as `none` rather than guessing at a rank."
+    },
+    "scope": {
+      "type": "string",
+      "enum": ["project", "all", "repos", "none"],
+      "description": "The kind of scope the role is held at: `project` is the whole project (`internal/access.ScopeProject`), `all` is every repository the published allow_repos admits (`ScopeAllRepos`, which the CLI spells `all-repos` wherever a person types a scope), and `repos` is the repository patterns in `repos` (`ScopeRepos`). `none` is the zero scope of a caller holding no role. The two vocabularies are deliberately apart: this document is the console's, and the sentence `fugaro user ls --me` prints without `--json` keeps the CLI's own spelling so a person can copy it into `fugaro user grant --scope`."
+    },
+    "repos": {
+      "type": "array",
+      "description": "The canonical repository patterns the scope names, in the resolver's own spelling (`internal/access.Scope.String`), and an empty array for `project`, `all` and `none`: a scope of either of those names no pattern, and an array is seeded empty rather than absent so a reader has no null case. These are patterns and not repositories: a pattern may admit repositories nothing on this machine can enumerate, so a list of known repositories here would be a claim the grant does not make (finding F27).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

@@ -10688,11 +10688,19 @@ member in this machine's own config keeps the IAM grant the installation
 derives, and the resolver ranks none of them, because the CLI cannot read a
 caller's groups.
 
+--me prints your own role and the scope it is held at, and nothing about anybody
+else. It reads the same grants node and the same resolver the commands gate on:
+the role is the highest one a stored grant names you with, an implicit project
+admin reads admin at project scope, and a caller no stored grant names reads
+none. It is a read of your own pair alone, so unlike the grant and revoke
+subcommands a coding agent's session may run it.
+
 The command reads the grants node and the published policy with your own
 credentials and writes nothing. An installation with no Firebase budget backend
 has no grants node at all: its roles are still this machine's own
 terraform.operators and terraform.admins, and this command prints those and
-says so.
+says so — but --me has no roster to read your own role from and refuses rather
+than guess at one.
 
 Usage: `fugaro user ls`
 
@@ -10704,6 +10712,7 @@ Flags:
 | `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
 | `-h`, `--help` | bool | `false` | no | help for ls |
 | `--json` | bool | `false` | no | print machine-readable output |
+| `--me` | bool | `false` | no | print the caller's own role and the scope it is held at |
 | `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--repo` | string | "" | no | the repository to print the effective role in (provider/owner/name, or owner/name for a repository this machine's config lists) |
