@@ -10,7 +10,7 @@ adds to [docs/status.md](../status.md) follows the rule that a spec's row moves 
 | File | Role |
 | --- | --- |
 | [spec.md](spec.md) | The spec **verbatim**. No typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1 to A5, findings F1 to F31, decisions D2900 to D2909 with the owner's dated answers, resolutions R1 to R10, open items O1 to O6, UNVERIFIED U1 to U9. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1 to A5, findings F1 to F31, decisions D2900 to D2909 with the owner's dated answers, resolutions R1 to R10, open items O1 to O7, UNVERIFIED U1 to U10. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Six slices and 46 tasks with levels, the critical path, the shared-files table, the dependencies broken and kept, the estimate line, the three owner-run checks and the after-deploy steps. **Nothing in it is approved** |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's tasks as the graph `fugaro plan graph` reads (schema 3) |
 
@@ -24,7 +24,7 @@ resolutions, open items and UNVERIFIED items are numbered from 1 inside this fol
 
 ## What waits on something external
 
-The owner's explicit go for every task, and a go of its own for `MW1`, `MW2` and `SW3a`; the owner-run Checks 710,
-711 and 712; and a CLI release that carries the new flags before the console floors are set. Open items O1 to O6
+The owner's explicit go for every task, and a go of its own for `MW1`, `MW2`, `MWR` and `SW3a`; the owner-run Checks 710,
+711 and 712; and a CLI release that carries the new flags before the console floors are set. Open items O1 to O7
 were all answered on 2026-11-18 (reconciliation section 6); O4, not the recommendation, added MD1 and MD2
-(`--dry-run` on `models add` and `image add`).
+(`--dry-run` on `models add` and `image add`); O7 makes "Add project" create a project with no repository.

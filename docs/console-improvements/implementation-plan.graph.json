@@ -752,7 +752,8 @@
           "console/src/preload/installations.ts",
           "console/src/renderer/installations.ts",
           "console/src/main/picker.ts",
-          "console/test/unit/installations-view.test.ts"
+          "console/test/unit/installations-view.test.ts",
+          "console/src/main/wizardrun.ts"
         ]
       }
     },
@@ -1261,6 +1262,11 @@
       "task": "SW3c",
       "needs": "SW3b",
       "reason": "opens the wizard SW3b builds"
+    },
+    {
+      "task": "SW3c",
+      "needs": "SW3a",
+      "reason": "passes the empty working directory to the setup run SW3a starts, in `wizardrun.ts`"
     },
     {
       "task": "MWR",

@@ -628,13 +628,13 @@ CLI first (answers file, events), then the wizard.
 
 #### SW3c: the Add project operation in the rail and the picker
 
-- Acceptance: FIRST the task writes in its pull-request body where the wizard opens when installations already exist, which working directory `setup` runs in and which repository it wires (U9 covers only the no-installation case); if that needs a choice this plan does not make, it stops and reports (O7). Then 'Add project' is one new `INSTALLATION_OPERATIONS` entry that only opens the wizard (it spawns nothing), exposed by the installations preload and drawn as a button in the rail and the picker; the picker's allow-list tests pin it, and a test proves it spawns no child.
-- Files: `console/src/main/installations.ts`; `console/src/preload/installations.ts`; `console/src/renderer/installations.ts`; `console/src/main/picker.ts`; `console/test/unit/installations-view.test.ts`
+- Acceptance: With installations present (O7, answered 2026-11-18): the wizard opens in the same view as first run, in place of the current installation, and Cancel returns to it; main runs `setup` in a fresh empty directory it creates (`mkdtemp`, mode 0700) and removes after the run, so `setup` wires no repository and is never passed `--onboard-repo`; repositories are added afterwards from Manage as a Copy-command; the new installation appears in the rail once `setup` ends. 'Add project' is one new `INSTALLATION_OPERATIONS` entry that only opens the wizard (it spawns nothing), exposed by the installations preload and drawn as a button in the rail and the picker; the picker's allow-list tests pin it, and a test proves it spawns no child.
+- Files: `console/src/main/installations.ts`; `console/src/preload/installations.ts`; `console/src/renderer/installations.ts`; `console/src/main/picker.ts`; `console/test/unit/installations-view.test.ts`; `console/src/main/wizardrun.ts`
 - Interfaces: Consumes SW3b's wizard entry point.
-- Tests: `installations-view.test.ts` (extended).
+- Tests: `installations-view.test.ts` (extended). Also: an Add project run's child cwd is a fresh empty directory, its argv carries no `--onboard-repo`, and Cancel restores the current installation.
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/installations-view.test.ts test/unit/installations-ipc.test.ts)`
 - Red step: The pin for the new operation fails while it is absent; a test that it spawns nothing fails if it does.
-- Depends on: **SW3b** (opens the wizard SW3b builds)
+- Depends on: **SW3b** (opens the wizard SW3b builds); **SW3a** (passes the empty working directory to the setup run SW3a starts, in `wizardrun.ts`)
 - Commit: `console(setup): Add project in the rail and the picker (D2904, R4)`
 - Reviewer tier: opus, independent review mandatory (a new IPC operation on the picker); tier `medium`, size 2
 
@@ -743,6 +743,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - RS5 needs RS4: decodes the budget stream's golden.
 - RS5 needs SU2b: both write `projects.ts`.
 - SW3c needs SW3b: opens the wizard SW3b builds.
+- SW3c needs SW3a: passes the empty working directory to the setup run SW3a starts, in `wizardrun.ts`.
 - MWR needs MW2: draws both writes' operations.
 - MWR needs SW3a: both write `renderer/confirm.ts`.
 - MWR needs RB4: enables the action by role.
@@ -761,6 +762,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 | `console/src/main/index.ts` | MW1 (3), MW2 (4), AL (2), I-OPS (5) |
 | `console/src/main/ipc.ts` | MW1 (3), MW2 (4), AL (2) |
 | `console/src/main/spawn.ts` | MW1 (3), MW2 (4), AL (2) |
+| `console/src/main/wizardrun.ts` | SW3a (3), SW3c (8) |
 | `console/src/preload/index.ts` | MW1 (3), MW2 (4), AL (2) |
 | `console/src/renderer/confirm.ts` | SU1 (2), SW3a (3), MWR (5) |
 | `console/src/renderer/entry.ts` | SU2b (4), RS2 (2), RB1 (0), RB4 (1), SW3b (7), PW1 (6), RS5 (5) |
@@ -786,7 +788,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 The contract-first pass is on (`fugaro settings planning.decoupling` reads `true`; rigor `startup`, which decouples aggressively). Two passes were measured with `fugaro plan graph`.
 
 - **Tried first and undone.** Four wire contracts (the settings metadata, the runs stream, the caller-role read, the setup answers and events) broke twelve edges between a console consumer and a CLI producer: `"12 broken, 36 kept, 10 added; before 6 tasks, weight 19; after 6 tasks, weight 19; no gain"`. The critical path was the allow-list to Manage to writes chain and no broken edge was on it, so all twelve were undone and each producing CLI task now owns its schema and its fixture, which the console task reads once it has merged.
-- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put six console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the nine operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `gain: 6 broken, 74 kept, 3 added; before 10 tasks, weight 30; after 9 tasks, weight 23; improves`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2, MWR (3 + 3 + 6 + 4 + 4 + 3 = 23); before it, the consumers of AL pushed it to 30. The read prints its critical path by task count (`critical path (9 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> RS5 -> PW1 -> SW3b -> SW3c`); the gain line is the weighted measure.
+- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put six console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the nine operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `gain: 6 broken, 75 kept, 3 added; before 10 tasks, weight 30; after 9 tasks, weight 23; improves`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2, MWR (3 + 3 + 6 + 4 + 4 + 3 = 23); before it, the consumers of AL pushed it to 30. The read prints its critical path by task count (`critical path (9 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> RS5 -> PW1 -> SW3b -> SW3c`); the gain line is the weighted measure.
 
 **Edges broken, one line each.** SU1, RB4, RS2, MO-C, SW3a and SRC each needed the operations' names and types, not the allow-list's rows (contract `C-OPS`, integration `I-OPS`).
 
