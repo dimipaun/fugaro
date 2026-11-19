@@ -554,27 +554,39 @@ func TestPaymentIsRecordedByOperationsOnly(t *testing.T) {
 	}
 
 	// Two lines and no more: the two payments, and nothing from the five
-	// requests that were refused.
+	// requests that were refused. Each line is found by the reference it carries
+	// rather than by the order it was written in, because the store answers a
+	// query in no order at all (docsSpy's own sentence): what the log's reader
+	// sorts by is the instant and the id, and both payments were recorded at the
+	// same one.
 	lines := f.auditedAction(actionStatementPayment)
 	if len(lines) != 2 {
 		t.Fatalf("the log holds %d statement.payment line(s), want the two recorded payments: %v", len(lines), lines)
 	}
-	for i, reference := range []string{"INV-2026-10", "INV-2026-10-REST"} {
-		line := lines[i]
+	byReference := map[string]WireAuditEntry{}
+	for _, line := range lines {
+		if line.Detail == nil {
+			t.Fatalf("a statement.payment line carries no detail, want the reference the payment was recorded with: %+v", line)
+		}
+		byReference[*line.Detail] = line
+	}
+	for _, reference := range []string{"INV-2026-10", "INV-2026-10-REST"} {
+		line, known := byReference[reference]
+		if !known {
+			t.Errorf("no statement.payment line carries the reference %q, want one line per recorded payment: %v", reference, byReference)
+			continue
+		}
 		if line.Action != actionStatementPayment || line.Read {
-			t.Errorf("the %d line is %q with read %v, want a write named %q", i, line.Action, line.Read, actionStatementPayment)
+			t.Errorf("the line for %q is %q with read %v, want a write named %q", reference, line.Action, line.Read, actionStatementPayment)
 		}
 		if line.ActorUID != opsUID {
-			t.Errorf("the %d line was written by %q, want the operations member %q", i, line.ActorUID, opsUID)
+			t.Errorf("the line for %q was written by %q, want the operations member %q", reference, line.ActorUID, opsUID)
 		}
 		if line.OrganisationID == nil || *line.OrganisationID != resellerID {
-			t.Errorf("the %d line names the organisation %v, want the reseller whose statement it is %q", i, line.OrganisationID, resellerID)
+			t.Errorf("the line for %q names the organisation %v, want the reseller whose statement it is %q", reference, line.OrganisationID, resellerID)
 		}
 		if line.TargetID == nil || *line.TargetID != statement.ID {
-			t.Errorf("the %d line names the target %v, want the statement %q", i, line.TargetID, statement.ID)
-		}
-		if line.Detail == nil || *line.Detail != reference {
-			t.Errorf("the %d line's detail is %v, want the reference operations was given %q", i, line.Detail, reference)
+			t.Errorf("the line for %q names the target %v, want the statement %q", reference, line.TargetID, statement.ID)
 		}
 	}
 }
