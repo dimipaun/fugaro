@@ -895,12 +895,17 @@ func residentTaskOf(spec orchestrator.Spec, requestedBy string) *task.Spec {
 	}
 	// Nothing for an item that named no recipe, which is one of the shapes a
 	// launch of the catalog default writes (taskRecipeEmbedding: no newer
-	// runner than a default run needs); an item that named one carries it as a
-	// REPOSITORY recipe, whose text is read at the run's own ref and so is not
-	// in the task — which is also the shape a launch of `.fugaro/recipes/
-	// default.yaml` writes, the item having named the default by name.
-	if spec.Recipe != "" && spec.Recipe != recipe.DefaultName {
-		ts.Recipe = &task.Recipe{Name: spec.Recipe, Source: string(recipe.SourceRepo)}
+	// runner than a default run needs); the other is the default by name, which
+	// the accept test pins. A name the catalog knows is EMBEDDED, text and sum,
+	// which is what a real launch of one writes; a name it does not is a
+	// repository recipe, carrying the name alone, and its text is read at the
+	// run's own ref rather than stored.
+	if name := spec.Recipe; name != "" && name != recipe.DefaultName {
+		if text, ok := recipe.CatalogText(name); ok {
+			ts.Recipe = &task.Recipe{Name: name, Source: string(recipe.SourceCatalog), SHA256: recipe.Sum(text), YAML: string(text)}
+		} else {
+			ts.Recipe = &task.Recipe{Name: name, Source: string(recipe.SourceRepo)}
+		}
 	}
 	return ts
 }
@@ -1136,6 +1141,37 @@ func TestResidentLauncherRefusesATaskTheItemDoesNotApprove(t *testing.T) {
 				t.Error("a launch was recorded for a task the item does not approve")
 			}
 		})
+	}
+}
+
+// TestResidentLauncherAcceptsATicketTheLaunchCouldNotRecord: the external id is
+// the one field of the declaration a launch may legitimately leave OUT.
+// externalSkew drops it rather than refusing the attempt when the job image
+// predates the release that reads it (a stored task an older runner cannot
+// decode is a paid-for attempt that never started, that gate's own reason), so
+// a stored task carrying no ticket where the item names one is a task a launch
+// really wrote, and the re-issue starts. A task naming a DIFFERENT ticket is a
+// disagreement like any other field, which the per-field test above covers.
+func TestResidentLauncherAcceptsATicketTheLaunchCouldNotRecord(t *testing.T) {
+	f := newLauncherFixture(t)
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	spec := orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app",
+		Recipe: "standard", External: "github:acme/app#7", Brief: "Start the run the node recorded."}
+	ts := residentTaskOf(spec, "dana@example.com")
+	ts.External = ""
+	seedTaskRun(t, f.cloudFixture, runID, ts)
+	l := f.resident(t)
+
+	got, err := l.Launch(ctx, spec, runID)
+	if err != nil {
+		t.Fatalf("the resident launcher refused a task whose ticket the launch could not record: %v", err)
+	}
+	if got != runID {
+		t.Errorf("the resident launcher started %q, want the run the node recorded (%q)", got, runID)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Errorf("the resident launch started %d executions, want one", n)
 	}
 }
 

@@ -236,6 +236,23 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 	if ts.Recipe != nil {
 		gotRecipe = ts.Recipe.Name
 	}
+	// The external ticket is the one pair with a THIRD state, and it is not a
+	// bug in the launch that writes it: externalSkew, the field's only writer,
+	// DROPS the item's id rather than refusing the attempt when the job image
+	// predates the release that reads the field (a task an older runner refuses
+	// is a paid-for attempt that never started, that gate's own reason). So a
+	// stored task carrying no ticket where the item names one is a task a launch
+	// really wrote, and refusing it would strand an approved attempt on every
+	// tick. An empty task field is read as the item's own; a task naming a
+	// DIFFERENT ticket is refused like any other field, and so is one naming a
+	// ticket the item does not. What that admits is an attacker clearing the
+	// ticket, which costs the run its `Fixes` line — where the fields around it
+	// are the attempt itself, and where the same attacker could always have
+	// replaced the whole task.
+	storedTicket := ts.External
+	if storedTicket == "" {
+		storedTicket = spec.External
+	}
 	// The rest of the declaration, field by field, over exactly the pairs
 	// buildAttemptSpec makes: the item's brief, title, plan task and rigor tier
 	// are written into the task straight through, the external ticket is set on
@@ -247,7 +264,7 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 		{spec.Title, ts.Title, "title"},
 		{spec.PlanTask, ts.PlanTask, "plan task"},
 		{spec.RigorTier, string(ts.Tier), "rigor tier"},
-		{spec.External, ts.External, "external ticket"},
+		{spec.External, storedTicket, "external ticket"},
 		{wantRecipe, gotRecipe, "recipe"},
 	} {
 		// Neither side is quoted: the task is the untrusted half, and a person
