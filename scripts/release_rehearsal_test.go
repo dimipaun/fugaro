@@ -366,13 +366,20 @@ func TestReleaseRefusesTheTagOnARedRehearsal(t *testing.T) {
 	requireNoTag(t, r, res)
 }
 
-// TestReleaseRefusesToCutTheTagInACodingAgentsSession: the whole point of the
-// guard is the tag. An agent's session that runs the release stops at the
-// rehearsal -- after the merge, before the tag -- with nothing built, no record
-// written and no tag pushed, and it is told what to hand over.
+// TestReleaseRefusesToCutTheTagInACodingAgentsSession: an agent's session cuts
+// no release, and release.sh refuses it in its PRECONDITIONS rather than only at
+// the rehearsal's own guard, which step 4 reaches after the release branch is
+// pushed, the pull request is opened and squash-merged and the gate has passed.
+// An agent that followed the new-release skill that far would by then have put
+// the version bump on main with no tag -- the half of the release nobody can
+// undo -- so the test pins that nothing outward-facing happened at all: no
+// branch on origin, no pull request, no merge, main where it was, and not even
+// the fake CLI called. The rehearsal's guard is covered on its own above, and
+// it stays, for a session that runs that script by hand.
 func TestReleaseRefusesToCutTheTagInACodingAgentsSession(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("CLAUDECODE=1")
+	main := testutil.Git(t, r.bare, "rev-parse", "main")
 
 	res := runRelease(t, r, g, "", "0.12.0")
 
@@ -381,6 +388,27 @@ func TestReleaseRefusesToCutTheTagInACodingAgentsSession(t *testing.T) {
 	requireNoRehearsalCalls(t, r)
 	if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
 		t.Error("an agent's session left a record behind: the tag gate would then read it as a build that happened")
+	}
+	if refExists(t, r.bare, "refs/heads/release/v0.12.0") {
+		t.Error("an agent's session pushed the release branch: the refusal is a precondition, ahead of the branch")
+	}
+	if n := countLog(t, g, "pr create"); n != 0 {
+		t.Errorf("an agent's session opened %d pull request(s): the refusal is ahead of the pull request", n)
+	}
+	if n := countLog(t, g, "pr merge"); n != 0 {
+		t.Errorf("an agent's session asked for %d merge(s): that is the version bump on main with no tag", n)
+	}
+	if now := testutil.Git(t, r.bare, "rev-parse", "main"); now != main {
+		t.Errorf("main moved from %s to %s in an agent's session:\n%s", main, now, res.out)
+	}
+
+	// --dry-run is the one thing an agent's session may run, and the refusal
+	// must not take it away: it creates nothing outside its own scratch
+	// worktree, which it removes however it ends.
+	dry := runRelease(t, r, g, "", "0.12.0", "--dry-run")
+	dry.requireSuccess(t)
+	if !strings.Contains(dry.out, "Dry run for v0.12.0") {
+		t.Errorf("--dry-run must still pass in a coding agent's session:\n%s", dry.out)
 	}
 }
 

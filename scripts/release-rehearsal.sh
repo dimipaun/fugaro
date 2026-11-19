@@ -77,6 +77,7 @@
 set -eu
 
 . "$(dirname "$0")/belong.sh"
+. "$(dirname "$0")/agent-session.sh"
 
 prog=${0##*/}
 # This repository's own entry, and the only one this rehearses: the point is that
@@ -136,27 +137,18 @@ guard_project() {
 
 # guard_agent refuses a coding agent's session before anything is built: the
 # build is billable and the tag that follows it is permanent, and both are the
-# person's to make. The shape is scripts/land-prs.sh's, and its list is
-# internal/agentenv's: the five markers an agent's own processes set, which its
-# tool calls inherit, whatever the terminal, plus the IDE extension's marker,
-# which a person's integrated terminal sets too, and so refuses only where no
-# real terminal is attached (an agent's tool call has none).
+# person's to make. The reading is scripts/agent-session.sh's (internal/agentenv
+# Session's markers, the shape scripts/land-prs.sh uses for a merge); this is
+# the late half of the fence, and scripts/release.sh refuses the same session in
+# its preconditions, before the branch, the pull request or the merge. Whoever
+# runs this script by hand rather than through the release gets it here.
 #
 # It is a courtesy against the accident, not a barrier (D1590, and agentenv's
 # own sentence): an agent that unsets its own markers gets past it, and the
 # guard is not why the record can be trusted — that is said where the record is
 # described, above.
 guard_agent() {
-  marker=""
-  for name in CLAUDECODE CLAUDE_CODE_ENTRYPOINT CLAUDE_CODE_REMOTE CURSOR_AGENT AI_AGENT; do
-    if [ -n "$(printenv "$name" 2>/dev/null || true)" ]; then
-      marker=$name
-      break
-    fi
-  done
-  if [ -z "$marker" ] && [ -n "$(printenv CLAUDE_CODE_SSE_PORT 2>/dev/null || true)" ] && [ ! -t 0 ]; then
-    marker=CLAUDE_CODE_SSE_PORT
-  fi
+  marker=$(agent_session_marker)
   if [ -n "$marker" ]; then
     die "$marker says this is a coding agent's session, and this rehearsal is yours to run: a catalog build is billable and the tag it gates is permanent, so an agent's session neither builds it nor cuts the tag. Run it at your own terminal — scripts/release-rehearsal.sh run $sha, or the whole release, scripts/release.sh <version> — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier.)"
   fi

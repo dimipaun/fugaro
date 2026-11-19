@@ -75,6 +75,9 @@ cd "$repo_root"
 # The names that are the owner's own installation, refused by the precondition
 # below and by scripts/release-rehearsal.sh's own guard.
 . scripts/belong.sh
+# The one reading of "this is a coding agent's session", refused by the
+# precondition below and, late, by scripts/release-rehearsal.sh's guard.
+. scripts/agent-session.sh
 # The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
 # run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
 . scripts/hotfix-commits.sh
@@ -668,6 +671,24 @@ current_branch=$(git rev-parse --abbrev-ref HEAD)
 if [ "$current_branch" != main ]; then
   echo "the current branch is '$current_branch', not main; switch to main first" >&2
   exit 1
+fi
+
+# A coding agent's session cuts no release, and it is checked here with the
+# other preconditions rather than left to the rehearsal's own guard at step 4:
+# by then the release branch is pushed, the pull request is opened and
+# squash-merged and the gate has passed, so an agent that followed the
+# new-release skill that far would have merged the version bump to main and
+# stopped with no tag -- the half of the release that cannot be undone. The
+# reading is that guard's own (scripts/agent-session.sh, internal/agentenv's
+# markers), so a session is refused the same way in both places. --dry-run is
+# not refused: it creates nothing outside its own scratch worktree and removes
+# that however it ends, which is exactly what the skill has an agent run.
+if [ "$dry_run" = 0 ]; then
+  agent_marker=$(agent_session_marker)
+  if [ -n "$agent_marker" ]; then
+    echo "$agent_marker says this is a coding agent's session, and a release is the person's to make: the pull request it opens merges the version bump to main and the tag it cuts is permanent, so an agent's session does neither. Nothing has been pushed, opened or merged. Run it at your own terminal — \"$rerun\" — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier — D1590.)" >&2
+    exit 1
+  fi
 fi
 
 # The pre-tag rehearsal needs the sandbox project named, and it is checked here
