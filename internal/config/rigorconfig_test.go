@@ -285,3 +285,66 @@ func TestRigorReadsTheOldModeKey(t *testing.T) {
 		t.Fatalf("the project layer read %+v, want one rule at pro", l.Defaults.Rigor.Areas)
 	}
 }
+
+// TestRigorSpellingsAreReadFromTheText: the two spellings this release adds to
+// the rigor configuration — an area rule's `level:` key and the scalar
+// `rigor: <level>` shorthand — are what the image-skew gate judges, and
+// neither the parsed block nor ProjectLayer.SetsRigor can answer it:
+// Area.UnmarshalYAML folds `level:` and the released `mode:` into the rule's
+// level, and Rigor.UnmarshalYAML reads the shorthand as the same block a
+// `default:` line writes. Both answers are taken from the document's own text,
+// so a file that writes neither spelling — including one that still writes
+// `mode:` — reports neither, and a file that writes one reports exactly that
+// one.
+//
+// Mutation (read the parsed rules instead of the tree, e.g. answer
+// setsRigorLevel with len(r.Areas) > 0): the `mode:` cases below report the
+// new key and the gate refuses a file every image reads.
+func TestRigorSpellingsAreReadFromTheText(t *testing.T) {
+	layer := mustLayer(t, testLayer)
+	for _, c := range []struct {
+		name             string
+		text             string
+		level, shorthand bool
+	}{
+		{"this release's area key", minimalRepo + "rigor:\n  areas:\n    - {name: docs, match: \"docs/**\", level: pro}\n", true, false},
+		{"the scalar shorthand", minimalRepo + "rigor: critical\n", false, true},
+		{"the released area key", minimalRepo + "rigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro}\n", false, false},
+		{"a block that names neither", minimalRepo + "rigor: { default: critical }\n", false, false},
+		{"no rigor key at all", minimalRepo + "agent: { auth: api-key }\n", false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			cfg, _, ps := Resolve([]byte(c.text), layer)
+			if len(ps) > 0 {
+				t.Fatalf("%s: %s", c.text, problemsText(ps))
+			}
+			if cfg.RepoRigorLevelSet != c.level || cfg.RepoRigorScalarSet != c.shorthand {
+				t.Errorf("RepoRigorLevelSet = %v, RepoRigorScalarSet = %v, want %v and %v for\n%s",
+					cfg.RepoRigorLevelSet, cfg.RepoRigorScalarSet, c.level, c.shorthand, c.text)
+			}
+		})
+	}
+
+	// The layer's half: the shorthand is not one it can carry (LayerRigor is a
+	// plain struct, so `defaults.rigor: critical` is a value no release reads),
+	// and the area key is the spelling a layer writes from this release on.
+	for _, c := range []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"this release's area key", rigorLayer, true},
+		{"the released area key", "version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  rigor:\n    areas:\n      - {name: docs, match: \"docs/**\", mode: pro}\n", false},
+		{"a default alone", "version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  rigor: { default: critical }\n", false},
+	} {
+		t.Run("layer: "+c.name, func(t *testing.T) {
+			l, ps := ParseProjectLayer([]byte(c.text), testAnchor)
+			if len(ps) > 0 {
+				t.Fatalf("%s: %s", c.text, problemsText(ps))
+			}
+			if got := l.SetsRigorLevel(); got != c.want {
+				t.Errorf("SetsRigorLevel = %v, want %v for\n%s", got, c.want, c.text)
+			}
+		})
+	}
+}

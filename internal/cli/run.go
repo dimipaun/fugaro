@@ -1975,6 +1975,13 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		if err := checkCloneRigorImage(ctx, env, spec, warn); err != nil {
 			return config.Inputs{}, err
 		}
+		// The spelling gate on that same file, judged the same way: the
+		// key above passes on any image newer than 0.11.0, and an area
+		// rule's `level:` or the scalar shorthand still dies at bootstrap
+		// on one older than this release: see checkRigorSpellingImage.
+		if err := checkCloneRigorSpellingImage(ctx, env, spec, warn); err != nil {
+			return config.Inputs{}, err
+		}
 		// The governance: gate, judged the same way and for the same
 		// reason: see checkGovernanceImage.
 		if err := checkCloneGovernanceImage(ctx, env, spec, warn); err != nil {
@@ -2203,6 +2210,10 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 		// than on a task field: see checkRigorImage. Unconditional, since
 		// the repository's file alone can carry the key.
 		if err := checkRigorImage(ctx, env, slug, spec, kind, warn); err != nil {
+			return config.Inputs{}, err
+		}
+		// The spelling gate on that same file: see checkRigorSpellingImage.
+		if err := checkRigorSpellingImage(ctx, env, slug, spec, kind, warn); err != nil {
 			return config.Inputs{}, err
 		}
 		// The governance: gate, the same shape as the clone branch's

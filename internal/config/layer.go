@@ -299,6 +299,27 @@ func (l *ProjectLayer) SetsRigor() bool {
 	return ok
 }
 
+// SetsRigorLevel reports whether the layer's text writes the `level:` key of
+// one of its defaults.rigor.areas rules, at any value. It is SetsRigor's
+// question one key deeper, read from the tree for that method's reason and one
+// of its own: rigor.Area.UnmarshalYAML folds `level:` and the `mode:` every
+// release reads into the rule's level, so the parsed rules cannot say which
+// spelling the layer wrote, while a runner older than rigorSpellingSince
+// refuses `level:` as a field it does not know in a layer it decodes with
+// KnownFields — and this key reaches every repository of the project at once,
+// because the layer is.
+//
+// The scalar shorthand has no half here: LayerRigor is a plain struct with no
+// unmarshaler, so `defaults.rigor: critical` is a value no release reads, and
+// the shorthand is the repository's own file's alone (config.Rigor).
+func (l *ProjectLayer) SetsRigorLevel() bool {
+	if l == nil {
+		return false
+	}
+	d, _ := l.tree["defaults"].(map[string]any)
+	return rigorAreaLevelWritten(d["rigor"])
+}
+
 // SetsLevelsNoneModel reports whether the layer's text names a review level's
 // model with the literal none (NoneModel), the level's own switch written the
 // other way. It reads the tree and not the parsed defaults.agent.levels, which

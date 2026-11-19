@@ -4630,6 +4630,13 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if err := r.gateRigor(o, repo, lc, cfg); err != nil {
 		return err
 	}
+	// The spellings this release adds to that key — an area rule's `level:`
+	// and the scalar `rigor:` shorthand — are the same kind of break on the
+	// newer rigorSpellingSince: the key above passes on any image newer than
+	// 0.11.0, and these still die at bootstrap on one.
+	if err := r.gateRigorSpelling(o, repo, lc, cfg); err != nil {
+		return err
+	}
 	// The governance: block, in either file, is the same kind of break, on
 	// governanceSince.
 	if err := r.gateGovernance(o, repo, lc, cfg); err != nil {
@@ -5216,6 +5223,26 @@ func (r *initRun) gateRigor(o *initOptions, repo string, lc *localcfg.Config, cf
 		w = r.cmd.ErrOrStderr()
 	}
 	return refuseRigorSkew(repo, cfg.RepoRigorSet, cfg.Layer.SetsRigor(), lc.BaseImage(config.BaseKind), w)
+}
+
+// gateRigorSpelling is fugaro update --repo's gate for rigorSpellingSince:
+// refuseRigorSpellingSkew, with gateRigor's escapes and for its reason. It is
+// its own gate rather than a wider condition in gateRigor because the two
+// answer different questions about one key: rigorSince is the key being written
+// at all, and this one is which spelling of it was written, which an
+// installation newer than rigorSince passes while an image older than this
+// release still dies on it at bootstrap. The three halves are read from the
+// text (RepoRigorLevelSet, RepoRigorScalarSet, SetsRigorLevel), since the
+// parsed block folds both spellings into its own fields.
+func (r *initRun) gateRigorSpelling(o *initOptions, repo string, lc *localcfg.Config, cfg *config.Config) error {
+	if o.forget || o.planOnly || cfg == nil {
+		return nil
+	}
+	w := r.w
+	if o.printVars {
+		w = r.cmd.ErrOrStderr()
+	}
+	return refuseRigorSpellingSkew(repo, cfg.RepoRigorLevelSet, cfg.RepoRigorScalarSet, cfg.Layer.SetsRigorLevel(), lc.BaseImage(config.BaseKind), w)
 }
 
 // gateGovernance is fugaro update --repo's gate for governanceSince:

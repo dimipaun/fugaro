@@ -118,6 +118,22 @@ type Config struct {
 	// the file with KnownFields and refuses it on the key alone). Like
 	// RepoRigor it is never part of the file or of SHA256.
 	RepoRigorSet bool `yaml:"-" json:"-"`
+	// RepoRigorLevelSet is whether the repository's own file writes the
+	// `level:` key of one of its rigor area rules: the spelling this release
+	// adds beside the `mode:` every release reads (rigor.Area's UnmarshalYAML
+	// folds the two into the rule's level, so the parsed rules cannot answer
+	// this). It is the question RepoRigorSet asks, one key deeper, because a
+	// runner older than rigorSpellingSince refuses `level:` as a field it does
+	// not know in a file it decodes with KnownFields. Like the fields above it
+	// is never part of the file or of SHA256.
+	RepoRigorLevelSet bool `yaml:"-" json:"-"`
+	// RepoRigorScalarSet is whether the repository's own file writes the rigor:
+	// key as a scalar — the shorthand `rigor: critical`, which says what a
+	// block carrying only default says. Rigor cannot answer it: the two forms
+	// decode to the same block, while a runner older than rigorSpellingSince
+	// refuses the scalar outright ("cannot unmarshal !!str into config.Rigor").
+	// Like the fields above it is never part of the file or of SHA256.
+	RepoRigorScalarSet bool `yaml:"-" json:"-"`
 	// RepoGovernanceSet is whether the repository's own file wrote the
 	// governance: key at all, at any value, the question RepoRigorSet answers
 	// for rigor: Governance cannot answer for an explicit null (`governance:`,

@@ -1029,6 +1029,38 @@ const baseBranchSince = "0.12.1"
 // checklist verify it equals the release that ships the key.
 const rigorSince = "0.11.0"
 
+// rigorSpellingSince is the first fugaro release whose config reader knows the
+// two spellings of the rigor configuration this release adds to the ones
+// rigorSince shipped: an area rule's `level:` key, and the scalar shorthand
+// `rigor: <level>`, which says what a block carrying only `default` says (D20).
+//
+// It is not rigorSince, which is older and answers a different question: that
+// one names the release whose reader knows the rigor: key at all, and its
+// judge booleans (RepoRigorSet, SetsRigor) are spelling-agnostic — a file
+// writing either new spelling passes them on every installation newer than
+// 0.11.0. What dies then is the run: a runner older than this constant meets
+// `level:` as "field level not found in type rigor.Area" and the shorthand as
+// "cannot unmarshal !!str into config.Rigor", both at bootstrap, in a file it
+// decodes with KnownFields, and the project layer's area key does it to every
+// repository of the project at once. Like rigorSince the judge is the
+// installation's base image and the gate is fugaro update --repo's
+// (refuseRigorSpellingSkew); fugaro run gates the launch too
+// (checkRigorSpellingImage, checkCloneRigorSpellingImage), but only from a
+// checkout of the repository, where it can read the file the run will, so
+// outside one only fugaro update --repo checks.
+//
+// Both spellings are read from the text and never from the parsed
+// configuration, which folds them into the block's own fields (the loader
+// drops the spelling once it has read it): Config.RepoRigorLevelSet,
+// Config.RepoRigorScalarSet and ProjectLayer.SetsRigorLevel.
+//
+// It names 0.27.0, the release this work is slotted for (docs/release.md's
+// Before-you-tag bullet verifies it against the tag actually cut), which is not
+// tagged yet: a wrong value refuses too late (a run on an image whose runner
+// cannot read the spelling dies at bootstrap) or too early (an image that knows
+// it stays blocked).
+const rigorSpellingSince = "0.27.0"
+
 // rigorRequestSince is the first fugaro release whose runner reads a task's
 // own rigor request (task.Spec.Rigor and task.Spec.Paths, fugaro run --mode
 // and --path): an older runner refuses both fields outright, since
@@ -3617,6 +3649,134 @@ func rigorImageWarnings(c *config.Config) []config.Problem {
 		subject = "the project layer's defaults.rigor"
 	}
 	return []config.Problem{{Path: "rigor", Message: subject + " needs fugaro " + rigorSince + " or later in the job image that runs it, and in the CLI of everyone who reads this file: an older runner decodes the file strictly and refuses the run at bootstrap. Run fugaro update --base base in your own terminal window to move the installation's base image, and fugaro image refresh for a workflow's own derived image"}}
+}
+
+// refuseRigorSpellingSkew refuses fugaro update --repo, before any cloud
+// effect, when the configuration the repository resolves over writes one of
+// the two rigor spellings this release adds — the `level:` key of a rigor area
+// rule (fromRepoLevel in the repository's own file, fromLayer in the project
+// layer it resolves over) or the scalar shorthand `rigor: <level>`
+// (fromRepoScalar) — and the installation's base image predates
+// rigorSpellingSince. The states of ref are read as refuseRigorSkew reads them:
+// no base image passes, one that is not a release only warns.
+func refuseRigorSpellingSkew(repo string, fromRepoLevel, fromRepoScalar, fromLayer bool, ref string, warn io.Writer) error {
+	if !fromRepoLevel && !fromRepoScalar && !fromLayer {
+		return nil
+	}
+	subject, alt := rigorSpellingSubject(repo, fromRepoLevel, fromRepoScalar, fromLayer)
+	switch rel, ok := releaseOf(ref); {
+	case ref == "":
+		return nil
+	case !ok:
+		fmt.Fprintf(warn, "warning: %s cannot be judged: the installation's base image is %s, which is not a release base image, so whether its runner reads the spelling is not checked\n",
+			subject, pluginwire.Printable(ref))
+	case imagePredates(rel, rigorSpellingSince):
+		return userErr("%s needs a job image whose runner reads it (fugaro %s or later), but the installation's base image is %s, release %s: an older runner decodes the file strictly and refuses the run at bootstrap on the spelling it does not know. Run fugaro update --base base in your own terminal window to move the installation's base image to a current release, or %s",
+			subject, rigorSpellingSince, pluginwire.Printable(ref), rel, alt)
+	}
+	return nil
+}
+
+// rigorSpellingSubject names, for refuseRigorSpellingSkew's messages, which
+// file wrote which of the two spellings — a file may write both — and the way
+// out that file's author has: the repository's own file is the repository's to
+// edit, while the layer's key is read by every repository of the project. The
+// cure is the spelling every release reads (`mode:`, and the block form of the
+// rigor: key) rather than the release, which the gate cannot move for the file
+// an older image reads.
+func rigorSpellingSubject(repo string, fromRepoLevel, fromRepoScalar, fromLayer bool) (subject, alt string) {
+	const (
+		levelWhat  = "rigor area rule `level:` key"
+		scalarWhat = "scalar `rigor:` shorthand"
+		layerWhat  = "the project layer's rigor area rule `level:` key"
+		levelCure  = "write the area rule's level under `mode:`, which every release reads"
+		scalarCure = "write the rigor: key as a block carrying `default:` rather than as a scalar"
+		layerAlt   = "write the area rule's level under `mode:` in the project layer and publish it again: until then every repository of the project whose job image predates it fails the same way"
+	)
+	var what, cure []string
+	if fromRepoLevel {
+		what = append(what, levelWhat)
+		cure = append(cure, levelCure)
+	}
+	if fromRepoScalar {
+		what = append(what, scalarWhat)
+		cure = append(cure, scalarCure)
+	}
+	switch {
+	case fromLayer && len(what) > 0:
+		return "fugaro.yaml's " + strings.Join(what, " and ") + ", and " + layerWhat + " of " + repo,
+			strings.Join(cure, ", and ") + "; and " + layerAlt
+	case fromLayer:
+		return layerWhat + " (read for " + repo + ")", layerAlt
+	}
+	return "fugaro.yaml's " + strings.Join(what, " and ") + " of " + repo,
+		strings.Join(cure, ", and ") + " in fugaro.yaml"
+}
+
+// rigorSpellingKnows names, for the image gate's messages, the spelling the job
+// image's runner has to know: the message reads "needs a job image whose runner
+// knows <this>", so it has to name whichever of the two the configuration
+// wrote, from whichever file.
+func rigorSpellingKnows(fromRepoLevel, fromRepoScalar, fromLayer bool) string {
+	var what []string
+	if fromRepoLevel || fromLayer {
+		what = append(what, "a rigor area rule's `level:` key")
+	}
+	if fromRepoScalar {
+		what = append(what, "the scalar `rigor:` shorthand")
+	}
+	return strings.Join(what, " and ")
+}
+
+// checkRigorSpellingImage and checkCloneRigorSpellingImage are the launch's own
+// rigorSpellingSince gate, for a workflow whose job image is a derived one and
+// for a checkout: clone workflow respectively: the pair every other
+// per-workflow image gate has (checkImageSince and checkCloneImageSince),
+// judged on the spelling the configuration the run will read writes
+// (rigorSpellingLaunchSources). The refusal names the fix that kind of image
+// has — fugaro image refresh for a built image, fugaro update --base base for
+// the installation's own — and the way out the file's author has, from
+// rigorSpellingSubject.
+//
+// The image is the judge because that is where the reader is: a runner older
+// than rigorSpellingSince decodes fugaro.yaml and the project layer with
+// KnownFields, so either spelling alone kills the run at bootstrap, before the
+// agent starts and after the launch was paid for.
+func checkRigorSpellingImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	fromRepoLevel, fromRepoScalar, fromLayer := rigorSpellingLaunchSources(ctx, env, spec)
+	if !fromRepoLevel && !fromRepoScalar && !fromLayer {
+		return nil
+	}
+	subject, alt := rigorSpellingSubject(spec.Repo, fromRepoLevel, fromRepoScalar, fromLayer)
+	return checkImageSince(ctx, env, slug, spec, kind, rigorSpellingSince, subject, rigorSpellingKnows(fromRepoLevel, fromRepoScalar, fromLayer), "; or "+alt, warn)
+}
+
+// checkCloneRigorSpellingImage is checkRigorSpellingImage for a checkout:
+// clone workflow: see checkCloneImageSince.
+func checkCloneRigorSpellingImage(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+	fromRepoLevel, fromRepoScalar, fromLayer := rigorSpellingLaunchSources(ctx, env, spec)
+	if !fromRepoLevel && !fromRepoScalar && !fromLayer {
+		return nil
+	}
+	subject, alt := rigorSpellingSubject(spec.Repo, fromRepoLevel, fromRepoScalar, fromLayer)
+	return checkCloneImageSince(env.lc, spec, rigorSpellingSince, subject, rigorSpellingKnows(fromRepoLevel, fromRepoScalar, fromLayer), "; or "+alt, warn)
+}
+
+// rigorSpellingLaunchSources reports, for the launch's rigorSpellingSince gate,
+// whether the configuration the run will read writes either spelling: the
+// repository's own file (fromRepoLevel, fromRepoScalar) or the project layer it
+// resolves over (fromLayer). The file is read as rigorLaunchSources reads it —
+// at the ref, out of this checkout's object database, with the checkout's own
+// document standing in when the ref cannot be read — and the layer is the one
+// that file resolves over, so a file that cannot be read here is a launch whose
+// bootstrap, which reads the file this launcher could not, refuses the spelling
+// then.
+func rigorSpellingLaunchSources(ctx context.Context, env *cloudEnv, spec *task.Spec) (fromRepoLevel, fromRepoScalar, fromLayer bool) {
+	cfg := launchFileConfig(ctx, env, spec)
+	if cfg == nil {
+		return false, false, false
+	}
+	return cfg.RepoRigorLevelSet, cfg.RepoRigorScalarSet, cfg.Layer.SetsRigorLevel()
 }
 
 // refuseGovernanceSkew refuses fugaro update --repo, before any cloud effect,
