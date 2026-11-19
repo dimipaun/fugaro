@@ -1,0 +1,500 @@
+{
+  "schema_version": 3,
+  "plan": "docs/keys-through-service/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "C1",
+      "title": "the provider wire",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/provider_wire.go",
+          "internal/credsvc/provider_wire_stub.go",
+          "schemas/creds-bundle.schema.json",
+          "docs/keys-through-service/contract-provider.md"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/credsvc/provider_wire_stub.go"
+      ]
+    },
+    {
+      "id": "KS1",
+      "title": "named provider entries in the bundle",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/bundle.go",
+          "internal/credsvc/bundle_provider_test.go"
+        ]
+      }
+    },
+    {
+      "id": "KS2",
+      "title": "creds set and accounts add write the bundle",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/creds.go",
+          "internal/cli/accounts_add.go",
+          "internal/cli/accounts_add_key_test.go",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "KS3",
+      "title": "the gate, narrowed",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/creds/select.go",
+          "internal/creds/select_provider_test.go",
+          "internal/credsvc/cascade.go"
+        ]
+      }
+    },
+    {
+      "id": "KS4",
+      "title": "the service's provider route takes a name",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/forward.go",
+          "internal/credsvc/forward_provider_test.go"
+        ]
+      }
+    },
+    {
+      "id": "KS5",
+      "title": "a provider route goes through the service",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/gateway/route.go",
+          "internal/gateway/service.go",
+          "internal/runner/providers.go",
+          "internal/runner/providerkey.go",
+          "internal/config/providers.go",
+          "internal/gateway/route_service_test.go",
+          "docs/multi-model.md",
+          "SECURITY.md",
+          "website/content/security.md"
+        ]
+      }
+    },
+    {
+      "id": "KS6",
+      "title": "the gateway always runs",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/gateway.go",
+          "internal/runner/routing.go",
+          "internal/agent/env.go",
+          "internal/runner/gateway_off_test.go"
+        ]
+      }
+    },
+    {
+      "id": "KS7",
+      "title": "the stage account goes through the service",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/run.go",
+          "internal/runner/gateway.go",
+          "internal/config/providers.go",
+          "internal/runner/stage_account_test.go",
+          "SECURITY.md",
+          "website/content/security.md"
+        ]
+      }
+    },
+    {
+      "id": "KS8",
+      "title": "fugaro update copies the keys into the bundle",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/update_keys.go",
+          "internal/cli/update_keys_test.go",
+          "internal/cli/init_stages.go",
+          "internal/initflow/stage.go",
+          "internal/cli/setup_refusals_test.go",
+          "internal/apply/steps.go"
+        ]
+      }
+    },
+    {
+      "id": "KS9",
+      "title": "no model mount for a repository that can do without",
+      "run": null,
+      "version": null,
+      "tier": "large",
+      "size": 3,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/infra/spec.go",
+          "internal/infra/readiness.go",
+          "internal/infra/tfvars.go",
+          "internal/cli/recipes_skew.go",
+          "internal/infra/spec_nomount_test.go",
+          "internal/cli/update_converge_test.go"
+        ]
+      }
+    },
+    {
+      "id": "KS10",
+      "title": "the workflow module loses its model mounts",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/workflow/**",
+          "internal/infra/tfvars.go",
+          "deploy/terraform/terraform_test.go",
+          "deploy/terraform/secret_readers_test.go",
+          "docs/secrets-brokering/secret-readers.md"
+        ]
+      }
+    },
+    {
+      "id": "KS11",
+      "title": "the per-repository model containers are retired",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/repo/secrets.tf",
+          "internal/infra/tf/**",
+          "internal/cli/update_retire_keys_test.go",
+          "internal/cli/update_converge_test.go",
+          "deploy/terraform/terraform_test.go"
+        ]
+      }
+    },
+    {
+      "id": "KS12",
+      "title": "shared project jobs",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/project/**",
+          "deploy/terraform/gcp/modules/installation/secrets.tf",
+          "internal/infra/projectjobs.go",
+          "deploy/terraform/terraform_test.go"
+        ]
+      }
+    },
+    {
+      "id": "KS13",
+      "title": "the live checks, as scripts",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check50*.sh",
+          "scripts/live-checks/check78*.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    },
+    {
+      "id": "KS14",
+      "title": "the documents and the operator note",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/model-crafts/reconciliation.md",
+          "docs/workspace-credentials/spec.md",
+          ".claude/rules/credentials-service.md",
+          "docs/credentials-service/**",
+          "docs/release.md",
+          "docs/releases/*.md"
+        ]
+      }
+    },
+    {
+      "id": "I1",
+      "title": "integration",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/provider_wire_stub.go",
+          "internal/cli/keys_end_to_end_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-entry-name",
+      "title": "amend the provider wire: the entry's name",
+      "run": null,
+      "version": null,
+      "tier": "trivial",
+      "size": 0.5,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/credsvc/provider_wire.go",
+          "schemas/creds-bundle.schema.json",
+          "docs/keys-through-service/contract-provider.md"
+        ]
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "KS2",
+      "needs": "C1",
+      "reason": "the entry's name"
+    },
+    {
+      "task": "KS3",
+      "needs": "C1",
+      "reason": "the accessor and the refusal type"
+    },
+    {
+      "task": "KS4",
+      "needs": "C1",
+      "reason": "the wire and the accessor"
+    },
+    {
+      "task": "KS5",
+      "needs": "C1",
+      "reason": "the wire"
+    },
+    {
+      "task": "KS8",
+      "needs": "C1",
+      "reason": "the entry's name"
+    },
+    {
+      "task": "KS4",
+      "needs": "KS3",
+      "reason": "both edit the candidate path, and KS4 calls the selection KS3 changes"
+    },
+    {
+      "task": "KS7",
+      "needs": "KS6",
+      "reason": "both edit runner/gateway.go"
+    },
+    {
+      "task": "KS7",
+      "needs": "KS5",
+      "reason": "both edit internal/config/providers.go"
+    },
+    {
+      "task": "KS9",
+      "needs": "KS5",
+      "reason": "a mount may go only once the gateway serves the provider key through the service"
+    },
+    {
+      "task": "KS9",
+      "needs": "KS6",
+      "reason": "a mount may go only once a budget-off run has the gateway"
+    },
+    {
+      "task": "KS9",
+      "needs": "KS7",
+      "reason": "a mount may go only once the stage account is served"
+    },
+    {
+      "task": "KS9",
+      "needs": "KS8",
+      "reason": "a mount may go only once its value is in the bundle"
+    },
+    {
+      "task": "KS9",
+      "needs": "KS2",
+      "reason": "the write path must not create a container this task stops mounting"
+    },
+    {
+      "task": "KS10",
+      "needs": "KS9",
+      "reason": "the variable goes only after nothing sets it, and both edit tfvars.go"
+    },
+    {
+      "task": "KS11",
+      "needs": "KS10",
+      "reason": "a container goes only after its accessors, and both edit terraform_test.go"
+    },
+    {
+      "task": "KS11",
+      "needs": "KS8",
+      "reason": "the copy must exist first"
+    },
+    {
+      "task": "KS12",
+      "needs": "KS11",
+      "reason": "the same retirement, and both edit terraform_test.go; it also waits on secrets-brokering B5.7"
+    },
+    {
+      "task": "KS14",
+      "needs": "KS9",
+      "reason": "the statements become true only then"
+    },
+    {
+      "task": "I1",
+      "needs": "C1",
+      "reason": "the contract it rejoins"
+    },
+    {
+      "task": "I1",
+      "needs": "KS1",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "KS2",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "KS3",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "KS4",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "KS5",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "KS8",
+      "reason": "it is a side of an edge the contract broke, re-joined here"
+    },
+    {
+      "task": "R-entry-name",
+      "needs": "C1",
+      "reason": "amends a file C1 creates"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C1",
+      "was": {
+        "task": "KS2",
+        "needs": "KS1"
+      },
+      "integration": "I1",
+      "reason": "the commands need the entry's name, not the bundle's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "KS3",
+        "needs": "KS1"
+      },
+      "integration": "I1",
+      "reason": "selection needs the accessor's signature, not the bundle's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "KS4",
+        "needs": "KS1"
+      },
+      "integration": "I1",
+      "reason": "the route needs the accessor's signature, not the bundle's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "KS8",
+        "needs": "KS1"
+      },
+      "integration": "I1",
+      "reason": "the copy needs the entry's name, not the bundle's code"
+    },
+    {
+      "contract": "C1",
+      "was": {
+        "task": "KS5",
+        "needs": "KS4"
+      },
+      "integration": "I1",
+      "reason": "the gateway needs the wire, not the route's code"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-entry-name",
+      "contract": "C1",
+      "raised_by": "KS8",
+      "reason": "if a repository's own provider secret cannot be named as C1 wrote it",
+      "affects": [
+        "KS1",
+        "KS2",
+        "KS4"
+      ]
+    }
+  ]
+}
