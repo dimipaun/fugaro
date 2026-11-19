@@ -431,7 +431,7 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_invoker" {
   role     = "roles/run.invoker"
   member   = google_service_account.scheduler.member
 
-  depends_on = [google_service_account.orchestrator]
+  depends_on = [google_cloud_run_v2_service.orchestrator, google_service_account.orchestrator]
 }
 
 # The account's way INTO the credentials service (F19, O2 of
@@ -467,7 +467,7 @@ resource "google_cloud_run_v2_service_iam_member" "orchestrator_credentials_invo
   role     = "roles/run.invoker"
   member   = "serviceAccount:${var.orchestrator.account_id}@${var.project}.iam.gserviceaccount.com"
 
-  depends_on = [google_service_account.orchestrator]
+  depends_on = [google_cloud_run_v2_service.credentials, google_service_account.orchestrator]
 }
 
 # The tick that wakes it (section 4.1; Q4's answer of 2026-10-19: the tick is

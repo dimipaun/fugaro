@@ -163,6 +163,39 @@ const proxySince = "0.22.0"
 // names the wrong release.
 const serviceAuthSince = "0.25.0"
 
+// vaultSince is the first fugaro release whose runner fetches a workflow's own
+// secrets from the installation's credentials service when its job does not
+// mount them (B3.4, S3; D491, D1267, D2073-D2075): B3.8's flip
+// (config.VaultFetchedSecretClasses) takes the mount of every workflow secret
+// a switched repository's job held away, and from that fetch on the value
+// arrives at bootstrap, in the runner's own environment, before the agent
+// starts. A runner older than this release reads the mounted value it has
+// always read, and on a job that no longer mounts one it would have nothing at
+// all: agent.BuildEnv would refuse the run over a declared secret that is not
+// set, which is a run that stops before any model call.
+//
+// The launch gate (vaultGate, launch_budget.go) refuses such a launch, judged
+// the way every other *Since gate is (checkImageSince, or checkCloneImageSince
+// for a checkout: clone workflow). It carries no shipped flag, on
+// serviceAuthSince's reasoning: refusing every image that predates it is
+// exactly the direction the gate wants, since a run whose mounts are gone on
+// an older runner cannot work at all.
+//
+// It names 0.26.0, the release that carries the RUNNER half (B3.4's
+// fetchWorkflowSecrets and the workflow-secrets route B3.2 answers it on), and
+// NOT the release the flip itself ships in — the two are one release apart
+// here, as they are for serviceAuthSince: the job reaches the service through
+// the address and the grant the release BEFORE the flip already put in place
+// (B2.3's URL, B3.3's per-container grant), so an image of that release is the
+// oldest one that carries both halves of the pair, and the flip takes a mount
+// away only where the serving is already there (G17). A number naming the
+// flip's own release would refuse a 0.26.0 image that works; a number below
+// 0.26.0 would admit one whose runner knows nothing of the fetch and dies at
+// bootstrap over a secret it no longer mounts. docs/release.md's Before-you-tag
+// list verifies it against the release actually cut, as it does for the other
+// *Since constants.
+const vaultSince = "0.26.0"
+
 // policySince is the first fugaro release whose launcher and runner read the
 // project's policy (the release phase 1 of the project-centric model ships
 // in, R4). Like cloneSince and unlike the policy's own integer `version` or

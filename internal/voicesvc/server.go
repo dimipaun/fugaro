@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,17 @@ type Config struct {
 	Devices DeviceReader
 	// Enforcer answers whether one project admits one call (policy.go).
 	Enforcer *Enforcer
+	// Keys is where a provider's credential comes from, for the engines that
+	// present one (provider.go).
+	Keys ProviderKeys
+	// Tokens mints this service's own access token, for the engine that is
+	// called as the installation's identity rather than with a key.
+	Tokens TokenSource
+	// Client makes the provider calls. It is required and not defaulted: the
+	// TLS configuration, the timeouts and the transport of a call that carries
+	// the installation's provider key are decisions the process that starts
+	// this server has to make in the open (internal/cli/voice_serve.go).
+	Client *http.Client
 	// Log is where the one line per call goes. A nil logger discards.
 	Log *slog.Logger
 	// Now is the clock for the log's elapsed figure, replaced only by tests.
@@ -32,6 +44,13 @@ type Server struct {
 	auth     *Authenticator
 	devices  DeviceReader
 	enforcer *Enforcer
+	// register is the engines this hop holds, parsed from the document in this
+	// binary at start-up (register.go): a hop that started with an unreadable
+	// register would refuse every call for a reason it could not name.
+	register *Register
+	keys     ProviderKeys
+	tokens   TokenSource
+	client   *http.Client
 	log      *slog.Logger
 	now      func() time.Time
 }
@@ -45,6 +64,16 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, errors.New("voicesvc: the server needs the device reader")
 	case cfg.Enforcer == nil:
 		return nil, errors.New("voicesvc: the server needs the policy enforcer")
+	case cfg.Keys == nil:
+		return nil, errors.New("voicesvc: the server needs a provider key source: without one, no call could be made to an engine that presents a key")
+	case cfg.Tokens == nil:
+		return nil, errors.New("voicesvc: the server needs its own token source: without one, no call could be made to an engine reached as the installation's identity")
+	case cfg.Client == nil:
+		return nil, errors.New("voicesvc: the server needs the HTTP client its provider calls are made with")
+	}
+	register, err := LoadRegister()
+	if err != nil {
+		return nil, err
 	}
 	log := cfg.Log
 	if log == nil {
@@ -54,29 +83,49 @@ func NewServer(cfg Config) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Server{auth: cfg.Auth, devices: cfg.Devices, enforcer: cfg.Enforcer, log: log, now: now}, nil
+	return &Server{
+		auth: cfg.Auth, devices: cfg.Devices, enforcer: cfg.Enforcer,
+		register: register, keys: cfg.Keys, tokens: cfg.Tokens, client: cfg.Client,
+		log: log, now: now,
+	}, nil
 }
 
-// ServeHTTP routes. This service has one route and answers everything else with
-// not_found — including the paths a provider API spells, because nothing here
-// forwards anything (P5.3.5 owns the forwarding half and its own paths).
+// ServeHTTP routes. This service has three routes — the project-status query
+// and the two forwarding ones — and answers everything else with not_found,
+// including the paths a provider API spells: what this service reaches is a
+// constant endpoint of its own (provider.go, §8) and never a path a caller
+// names.
 //
-// The route is matched on the exact path and not on a prefix: a service whose
-// surface is one path should not have a second one appear because a caller
-// appended a slash.
+// The status route is matched on the exact path and not on a prefix: a service
+// whose surface is one path should not have a second one appear because a
+// caller appended a slash. The two forwarding routes ARE matched by prefix,
+// because the engine's name is the rest of the path and the name's own pattern
+// (registerNameRE) is what bounds it.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := s.now()
-	if r.URL.Path != StatusPath {
-		s.refuseWith(w, r, start, "", "", http.StatusNotFound, ReasonNotFound,
-			"this service answers one path: the project-status query at "+StatusPath)
-		return
+	switch {
+	case r.URL.Path == StatusPath:
+		if r.Method != http.MethodPost {
+			s.refuseWith(w, start, callLog{act: "voice status"}, http.StatusMethodNotAllowed, ReasonBadRequest,
+				"the project-status query is a POST carrying the project in its body")
+			return
+		}
+		s.status(w, r, start)
+	case strings.HasPrefix(r.URL.Path, STTPathPrefix), strings.HasPrefix(r.URL.Path, TTSPathPrefix):
+		dir := STT
+		if strings.HasPrefix(r.URL.Path, TTSPathPrefix) {
+			dir = TTS
+		}
+		if r.Method != http.MethodPost {
+			s.refuseWith(w, start, callLog{act: "voice forward", direction: dir.String()}, http.StatusMethodNotAllowed, ReasonBadRequest,
+				"a forwarding call is a POST: the body is the audio, or the text to speak, and the project travels in "+HeaderProject)
+			return
+		}
+		s.forward(w, r, start, dir)
+	default:
+		s.refuseWith(w, start, callLog{act: "voice status"}, http.StatusNotFound, ReasonNotFound,
+			"this service answers three paths: the project-status query at "+StatusPath+", and the forwarding calls at "+STTPathPrefix+"<engine> and "+TTSPathPrefix+"<engine>")
 	}
-	if r.Method != http.MethodPost {
-		s.refuseWith(w, r, start, "", "", http.StatusMethodNotAllowed, ReasonBadRequest,
-			"the project-status query is a POST carrying the project in its body")
-		return
-	}
-	s.status(w, r, start)
 }
 
 // status is the whole of the project-status query: who is calling, whether that
@@ -88,41 +137,37 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // because a caller that will be refused for its identity should not have this
 // service read its payload at all.
 func (s *Server) status(w http.ResponseWriter, r *http.Request, start time.Time) {
+	cl := callLog{act: "voice status"}
 	tok, ok := BearerToken(r.Header.Get(HeaderAuth))
 	if !ok {
-		s.refuseWith(w, r, start, "", "", http.StatusUnauthorized, ReasonTokenUnverified,
+		s.refuseWith(w, start, cl, http.StatusUnauthorized, ReasonTokenUnverified,
 			"present the device's Firebase ID token as "+HeaderAuth+": "+authScheme+"<token>")
 		return
 	}
 	id, err := s.auth.VerifyDevice(r.Context(), tok)
 	if err != nil {
-		s.refuseErr(w, r, start, "", "", err)
+		s.refuseErr(w, start, cl, err)
 		return
 	}
+	cl.device = id.UID
 	if _, err := s.devices.DeviceExists(r.Context(), id.UID); err != nil {
-		s.refuseErr(w, r, start, id.UID, "", err)
+		s.refuseErr(w, start, cl, err)
 		return
 	}
 	req, err := ReadStatusRequest(r)
 	if err != nil {
-		s.refuseErr(w, r, start, id.UID, "", refuse(ReasonBadRequest, err))
+		s.refuseErr(w, start, cl, refuse(ReasonBadRequest, err))
 		return
 	}
+	cl.project = req.Project
 	ans, err := s.enforcer.Answer(r.Context(), req.Project)
 	if err != nil {
-		s.refuseErr(w, r, start, id.UID, req.Project, err)
+		s.refuseErr(w, start, cl, err)
 		return
 	}
 	WriteAnswer(w, ans)
-	s.logCall(callLog{
-		act:     "voice status",
-		device:  id.UID,
-		project: req.Project,
-		status:  http.StatusOK,
-		remote:  ans.Remote,
-		reason:  ans.Reason,
-		elapsed: s.now().Sub(start),
-	})
+	cl.status, cl.remote, cl.reason, cl.elapsed = http.StatusOK, ans.Remote, ans.Reason, s.now().Sub(start)
+	s.logCall(cl)
 }
 
 // refuseWith answers a refusal this file built, with the status this file
@@ -134,23 +179,17 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request, start time.Time)
 //
 // The status is an argument and not a lookup for that reason, and it is passed
 // at the call rather than defaulted, so a reader sees which the answer is.
-func (s *Server) refuseWith(w http.ResponseWriter, r *http.Request, start time.Time, device, project string, status int, reason, message string) {
+func (s *Server) refuseWith(w http.ResponseWriter, start time.Time, cl callLog, status int, reason, message string) {
 	WriteWireError(w, status, WireError{Error: reason, Message: message})
-	s.logCall(callLog{
-		act:     "voice status",
-		device:  device,
-		project: project,
-		status:  status,
-		reason:  reason,
-		elapsed: s.now().Sub(start),
-	})
+	cl.status, cl.reason, cl.elapsed = status, reason, s.now().Sub(start)
+	s.logCall(cl)
 }
 
 // refuseErr answers an error carrying a wire reason. The status is derived from
 // the reason and not from the message: a handler that read a sentence to decide
 // an HTTP status would change its behaviour when a sentence is edited, and half
 // these sentences are another writer's text (internal/projectpolicy's refusal).
-func (s *Server) refuseErr(w http.ResponseWriter, r *http.Request, start time.Time, device, project string, err error) {
+func (s *Server) refuseErr(w http.ResponseWriter, start time.Time, cl callLog, err error) {
 	reason := ReasonOf(err)
 	status := statusFor(reason)
 	// The message is the error's own, bounded and made one line on the way out
@@ -158,15 +197,8 @@ func (s *Server) refuseErr(w http.ResponseWriter, r *http.Request, start time.Ti
 	// and the error's type, so a sentence that quotes a hand-edited policy node
 	// never reaches a log file (callLog).
 	WriteWireError(w, status, WireError{Error: reason, Message: err.Error()})
-	s.logCall(callLog{
-		act:       "voice status",
-		device:    device,
-		project:   project,
-		status:    status,
-		reason:    reason,
-		errorType: errorType(err),
-		elapsed:   s.now().Sub(start),
-	})
+	cl.status, cl.reason, cl.errorType, cl.elapsed = status, reason, errorType(err), s.now().Sub(start)
+	s.logCall(cl)
 }
 
 // statusFor maps a reason to the HTTP status the app sees.
@@ -182,10 +214,12 @@ func statusFor(reason string) int {
 		return http.StatusUnauthorized
 	case ReasonNotADevice, ReasonDeviceUnknown:
 		return http.StatusForbidden
-	case ReasonBadRequest:
+	case ReasonBadRequest, ReasonUnknownEngine:
 		return http.StatusBadRequest
 	case ReasonNotFound:
 		return http.StatusNotFound
+	case ReasonProviderFailed:
+		return http.StatusBadGateway
 	default:
 		// state_unavailable, policy_unreadable and anything a later release
 		// adds without a status: the service could not answer, and the app
@@ -219,6 +253,28 @@ type callLog struct {
 	// project is the slug the request named, and "" when the request was
 	// refused before its body was read.
 	project string
+	// provider is the engine a forwarding call named, and "" for the status
+	// query. It is the register's own name and is shape-checked to that
+	// pattern before it gets here, so it is a name of this tree's and never a
+	// caller's text.
+	provider string
+	// direction is "stt" or "tts" for a forwarding call, and "" for the status
+	// query, which names no direction.
+	direction string
+	// providerStatus is what the PROVIDER answered with, on a forwarding call
+	// that reached one. It is an integer, and it is the one figure an operator
+	// reads a failed provider call from (a 401 is the installation's key, a 429
+	// is its quota).
+	providerStatus int
+	// bytes is how many bytes of the answer the caller was sent, and it is a
+	// COUNT and never content: no payload of this service is logged, and a
+	// figure that says how long the answer was is not a byte of it.
+	bytes int64
+	// cut says the copy of the answer did not reach the provider's own end of
+	// the body, and which end stopped it (the closed set below). It is a fact
+	// about the call and not a refusal: a 200 and some of the answer were
+	// already written when it happened.
+	cut string
 	// status is what the caller was answered with.
 	status int
 	// remote is the project-status answer's own field, logged only when there
@@ -244,6 +300,15 @@ func (s *Server) logCall(c callLog) {
 		"remote", c.remote,
 		"elapsed_ms", c.elapsed.Milliseconds(),
 	}
+	if c.provider != "" {
+		attrs = append(attrs, "provider", c.provider, "direction", c.direction)
+	}
+	if c.providerStatus != 0 {
+		attrs = append(attrs, "provider_status", c.providerStatus, "bytes", c.bytes)
+	}
+	if c.cut != "" {
+		attrs = append(attrs, "cut", c.cut)
+	}
 	if c.reason != "" {
 		attrs = append(attrs, "reason", c.reason)
 	}
@@ -252,6 +317,16 @@ func (s *Server) logCall(c callLog) {
 	}
 	s.log.Info("voice call", attrs...)
 }
+
+// The two ends that can stop a copy of a provider's answer before the provider's
+// own end of the body, from a closed set: which end is a fact an operator reads
+// a truncated call from, and neither is a word any peer chose.
+const (
+	// cutProvider is the provider's body failing mid-answer.
+	cutProvider = "provider"
+	// cutClient is the write to the caller failing: the phone went away.
+	cutClient = "client"
+)
 
 // maxErrorType bounds the type name in a log line. A Go type name is this
 // tree's own text and is short; the bound is here so that nothing a wrapped

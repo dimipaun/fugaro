@@ -115,6 +115,91 @@ func projectJobsFor(t *testing.T, lc string) map[string]ProjectJob {
 	return jobs
 }
 
+// prebuiltDefaultImage is the reference catalogDefaultLCBlock's entry carries:
+// a prebuilt image, the shape D2305's entry has.
+const prebuiltDefaultImage = "ghcr.io/dimipaun/aurora-base:1.0"
+
+// catalogDefaultLCBlock is a catalog whose default entry is a prebuilt image:
+// D2305's shape, an entry `fugaro update` writes for a project, which is a
+// reference this installation builds nothing from. The entry `update` writes
+// is the pinned base image itself, so this fixture's reference is deliberately
+// ANOTHER prebuilt image: a job that runs the entry and a job that runs the
+// base image have to be told apart by the reference the deployer wrote.
+const catalogDefaultLCBlock = `image_catalog:
+  entries:
+    - name: base
+      default: true
+      source: { kind: image, image: ` + prebuiltDefaultImage + ` }
+`
+
+// TestProjectJobsDeployTheCatalogDefaultImage: a shared job runs the project's
+// own image, which is the catalog's default entry (D2305, S10) — the entry the
+// project states, and the installation's base image only when it states none.
+//
+// A profile has no image field (R1), so the catalog's default is the one place
+// a project says which image its shared jobs run, and the deployer asks the
+// one resolver for it (catalog.JobImage, F21) rather than spelling the base
+// image: a shared job that kept the bare base image would run an image the
+// project's catalog does not name, and the baked image the spec describes as a
+// cache would be one no job of this project ever ran.
+func TestProjectJobsDeployTheCatalogDefaultImage(t *testing.T) {
+	// m5Additions' two image facts, spelled once here: the base image every
+	// repository builds from and the registry host the installation's images
+	// live under.
+	const baseImage = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-base:dev-0123abc"
+	const registryHost = "us-east5-docker.pkg.dev/proj-1234"
+	const built = `image_catalog:
+  entries:
+    - name: team
+      default: true
+      source: { kind: dockerfile, repo: acme/webapp, path: .fugaro/team.Dockerfile }
+`
+	for _, tt := range []struct{ name, block, want string }{
+		// A prebuilt entry's image is its own reference, exactly as the
+		// per-repository path runs it (repoCtx.catalogImage).
+		{"a prebuilt default", catalogDefaultLCBlock, prebuiltDefaultImage},
+		// An entry this installation builds is the image the catalog build
+		// pushes it to: the one shared registry, named catalog-<entry> with the
+		// moving :latest tag the job spec names (D1152).
+		{"a default this installation builds", built,
+			registryHost + "/" + gcp.SharedRegistryRepoID() + "/catalog-team:latest"},
+		// A project that marks no default runs the installation's base image,
+		// which is what every shared job ran before the catalog decided
+		// anything (O4 b).
+		{"no default at all", "", baseImage},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			jobs := projectJobsFor(t, m4LocalConfig+projectJobRepoLC+m5Additions+projectProfilesLCBlock+tt.block)
+			if len(jobs) != 2 {
+				t.Fatalf("%d jobs, want the two the fixture's profiles deploy: %v", len(jobs), slices.Sorted(maps.Keys(jobs)))
+			}
+			for name, j := range jobs {
+				if got := j.Image; got != tt.want {
+					t.Errorf("the shared job %s runs %s, want %s: a shared job runs the project's own image, which the catalog's default entry is (D2305)", name, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestImplicitReviewJobRunsTheCatalogDefault: the implicit review-only job is
+// a shared job of the project like any other, and a project that declares no
+// profile has no coding job for it to inherit an image from (S10, D2305). Such
+// a project's implicit jobs are the only jobs it has, so the deployer asks the
+// resolver for the image itself.
+func TestImplicitReviewJobRunsTheCatalogDefault(t *testing.T) {
+	jobs := projectReviewJobsFor(t, implicitReviewLC()+catalogDefaultLCBlock)
+	if len(jobs) != len(ImplicitReviewProviders) {
+		t.Fatalf("review jobs = %v, want one implicit default job per provider %v", sortedJobNames(jobs), ImplicitReviewProviders)
+	}
+	for name, j := range jobs {
+		want := prebuiltDefaultImage
+		if j.Image != want {
+			t.Errorf("the implicit review job %s runs %s, want the project's default entry %s: it is a shared job of this project, and a project with no profile has no coding job to inherit an image from", name, j.Image, want)
+		}
+	}
+}
+
 // One job and one job service account per (profile, provider, account) — the
 // resource set the whole phase rests on (plan task 3.2 step 1).
 func TestProjectJobsAreOnePerProfileProviderAccount(t *testing.T) {
@@ -1905,6 +1990,22 @@ profiles:
 // SECURITY.md, D111 and Global Constraint 4 carry the note that records the
 // widening in the same change.
 //
+// The fifth is a provider's key rather than a credential of this tree's own
+// (mobile plan tasks P5.3.3/P5.3.5, the voice design's section 4.4 point 4):
+// `internal/voicesvc/provider.go` reads the installation's provider-key
+// container, because the voice hop is what presents the key at a third party
+// when it forwards a phone's utterance — that is the whole point of the hop
+// (the device holds no provider credential, the owner's ruling of 2026-10-19).
+// The document is one JSON object of register names to keys, cached for five
+// minutes (providerKeyTTL), and the container is the hop's own: not the
+// credentials bundle, not a repository's or a job's secret. It is read by the
+// ONE Fugaro process behind an endpoint anyone on the internet may call, so
+// the file's own rule is stricter than the list's: no value of it reaches a
+// log line, an error, a refusal or a response, and what a call is logged as is
+// internal/voicesvc's callLog shape — no byte of any header but the two Claude
+// Code IDs, and no byte of any body. SECURITY.md's voice section states the
+// container, the grant and the blast radius this read creates.
+//
 // Mutation (run, restore): read the account's token in the deployer or the
 // launcher (any `sm.Access(...)` outside the files below) — the scan fails
 // with the file that did it. The other spellings a read can take are held by
@@ -1929,6 +2030,7 @@ var secretValueReadAllowed = map[string]string{
 	"credsvc/bundle.go":         "the credentials service's ONE bundle container (Q6): the service attaches the credential upstream, and it is the only Fugaro process that ever holds a model credential's value",
 	"credsvc/dynamicsecrets.go": "the per-secret containers of the dynamic-delivery grammar (D1931): a credential a person rotated is read ahead of the bundle's entry for it (R6), by exact name and never by listing, and a read that fails refuses the call rather than serving the bundle's older value (D143)",
 	"mailbox/keychain/cloud.go": "the installation's own pairing-key container (mobile plan task P5.1e, the mobile orchestrator design's section 4.2): a paired phone's tag is a symmetric HMAC, so the consumer that verifies one holds the key the phone signs with, and the version's own payload carries which device it is for (P5.1e's third copy, revoked by `fugaro pair revoke` destroying the version)",
+	"voicesvc/provider.go":      "the installation's provider-key container (mobile plan tasks P5.3.3/P5.3.5, the voice design's section 4.4 point 4): the hop presents a provider's key at the provider when it forwards a phone's utterance, one JSON object of register names to keys cached for five minutes (providerKeyTTL). That container is the hop's own and never the credentials bundle's, a job's or a repository's, and the process behind it is the one endpoint anyone on the internet may call, so no value of it reaches a log, an error, a refusal or a response, and a read that fails refuses the call rather than presenting an empty key (ErrKeyUnavailable)",
 }
 
 // secretValueReadNames are the reads, by the API each one is spelled with: the

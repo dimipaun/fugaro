@@ -30,11 +30,21 @@
 //     and no audio, no transcript and no text of any kind (§4.4 point 6).
 //     Nothing this package answers, refuses or records is a payload.
 //
-// This is the shell: it verifies, it checks and it answers the app's
-// project-status query. The forwarding half — the provider call, the key and
-// the register — is P5.3.5 and is a later level of the same directory, so
-// nothing here streams, buffers or forwards anything, and the account it runs
-// as holds no secret (voice.tf).
+//   - **A call that passes every gate reaches exactly one provider, once.**
+//     The engines are this hop's own register (§7), with each one's terms and
+//     the directions it is served in (register.go); the policy node names
+//     engines and never an address; and every endpoint is a constant of this
+//     tree's own text (provider.go). Nothing is retried and nothing falls over to a
+//     second provider, and nothing is buffered, spooled or written to disk:
+//     the audio is forwarded as it arrives and the answer streams back as it
+//     is generated (forward.go, stream.go; §4.5, §8).
+//
+// The shell (auth.go, status.go, policy.go, server.go) is mobile P5.3.3 and
+// the forwarding half (register.go, provider.go, forward.go, stream.go) is
+// P5.3.5. What the whole of it holds is one provider key, in the
+// installation's Secret Manager: it is read per call, it travels in one header
+// of one request, and no answer, log line or test fixture carries it (§4.4
+// point 4, voice.tf, secrets.tf).
 //
 // Two limits are the design's and are stated rather than hidden (§4.4, "two
 // honest limits"). **The project is a claim, not an authenticated fact**: the
@@ -114,6 +124,18 @@ const (
 	// is not an admission and not a refusal of the caller (§4.5: the app
 	// falls back to local either way).
 	ReasonStateUnavailable = "state_unavailable"
+	// ReasonUnknownEngine: a forwarding call named an engine this hop does not
+	// hold — no register row, or a row that does not serve the direction asked
+	// for. The two are one reason on purpose (register.go): which engines and
+	// which directions this service holds is not something a caller enumerates
+	// by asking one direction at a time, and the answer to either is the local
+	// engine.
+	ReasonUnknownEngine = "unknown_engine"
+	// ReasonProviderFailed: the call reached no provider, or the provider
+	// answered with a failure. Its answer is never relayed and never read — it
+	// may echo the key this service presented (§4.4 point 4) — and the app's
+	// answer to it is the local engine, exactly as for a refusal (§4.5).
+	ReasonProviderFailed = "provider_failed"
 	// ReasonBadRequest: a request this contract cannot read.
 	ReasonBadRequest = "bad_request"
 	// ReasonNotFound: a path this service does not serve.

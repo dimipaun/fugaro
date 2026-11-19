@@ -532,6 +532,12 @@ func TestRetryRefusesFreshClaim(t *testing.T) {
 	}
 }
 
+// A retry of a stored task that never started still launches: the check above
+// the launch answers "already-launched" only for a run that started, and this
+// is the case that must keep going through.
+//
+// Mutation (make the already-started check unconditional, or refuse every
+// --retry): the launch below never happens and this test fails.
 func TestRunRetryUnlaunched(t *testing.T) {
 	f := newCloudFixture(t)
 	t.Chdir(t.TempDir())
@@ -550,6 +556,90 @@ func TestRunRetryUnlaunched(t *testing.T) {
 	_ = runstore.Open(b, appSlug, "20260927-100000-ffff").RequestCancel(ctx)
 	if _, _, err := execute(t, "run", "--retry", "20260927-100000-ffff"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cancelled") {
 		t.Fatalf("retry of a cancelled run: %v", err)
+	}
+}
+
+// A --retry that finds its run already started starts nothing and says so: the
+// command exits non-zero with "nothing launched" and the way on its own record
+// supports named, where it used to print "launched already", cut the branch
+// line and exit 0 — which a caller read as a launch that went, and lost an
+// overnight session to a run that never started.
+//
+// Mutation (drop the o.retry != "" && res.Status == "already-launched" check
+// from runRun): all three retries below exit 0 and this test fails.
+func TestRunRetryRefusesAStartedRun(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	// Minted from the wall clock the retry's own window is measured back from
+	// (runid_test.go's guard): a --retry of a stored task reads its window
+	// through recheckFollowUp, which reads time.Now() itself.
+	id := wallRunIDAt(1, "100000", "abcd")
+	exec := seedSpec(t, f, firstRunSpec(id), true)
+	writeRecord(t, f, id, prRecord(id, exec, 7, 1))
+
+	_, errOut, err := execute(t, "run", "--retry", id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing launched") {
+		t.Fatalf("run --retry = %q, %v; want a non-zero refusal that says nothing launched", errOut, err)
+	}
+	// The pull request the run left is the way its chain is continued, so the
+	// refusal names it and its number rather than a --retry of a spent run ID.
+	if !strings.Contains(err.Error(), "fugaro run --pr 7") {
+		t.Fatalf("the refusal does not name the pull request the run left: %v", err)
+	}
+
+	// The document carries the same refusal as an error object under its stable
+	// code, and every field the reply always had keeps its name and meaning.
+	var doc struct {
+		Status string `json:"status"`
+		RunID  string `json:"run_id"`
+		Error  struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	jsOut, _, err := execute(t, "run", "--retry", id, "--json")
+	if ExitCode(err) != ExitUserError || json.Unmarshal([]byte(jsOut), &doc) != nil {
+		t.Fatalf("run --retry --json = %q, %v", jsOut, err)
+	}
+	if doc.Status != "already-launched" || doc.RunID != id {
+		t.Fatalf("the document's launch fields changed: %+v", doc)
+	}
+	if doc.Error.Code != retryAlreadyStarted || !strings.HasPrefix(doc.Error.Message, "nothing launched") {
+		t.Fatalf("error object = %+v, want the refusal under the %s code", doc.Error, retryAlreadyStarted)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want only the one the fixture seeded: a refused retry starts nothing", n)
+	}
+
+	// A run that left no pull request says so, and names a new run as the only
+	// way on: nothing the CLI takes continues a run that opened nothing.
+	plain := wallRunIDAt(1, "110000", "ffff")
+	seedRun(t, f, plain, "", "someone@example.com", false)
+	writeRecord(t, f, plain, &runstore.Record{Version: 1, RunID: plain, Status: runstore.StatusSucceeded, Stage: "writeback"})
+	_, _, err = execute(t, "run", "--retry", plain)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing launched") || !strings.Contains(err.Error(), "left no pull request") {
+		t.Fatalf("retry of a run with no pull request: %v", err)
+	}
+
+	// A run whose record says it has not ended is still going, and the retry
+	// says so instead of past-tensing what the run has not done yet: the
+	// ambiguous-launch message is what sends callers here, and "a new run"
+	// would be a second container for the task the first one is working on.
+	// Mutation (drop the !rec.Status.Terminal() case from retryStartedRefusal):
+	// this retry advises a new run and the two assertions below fail.
+	live := wallRunIDAt(1, "120000", "eeee")
+	liveExec := seedSpec(t, f, firstRunSpec(live), true)
+	writeRecord(t, f, live, &runstore.Record{Version: 1, RunID: live, Repo: "acme/app", Workflow: "web",
+		Execution: liveExec, Status: runstore.StatusRunning, Stage: "implement"})
+	_, _, err = execute(t, "run", "--retry", live)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "still going") {
+		t.Fatalf("retry of a run still going: %v", err)
+	}
+	if !strings.Contains(err.Error(), "fugaro diagnose "+task.ShortRun(live)) {
+		t.Fatalf("the refusal does not point at the run's own state: %v", err)
+	}
+	if strings.Contains(err.Error(), "a new run") {
+		t.Fatalf("the refusal sends the caller to a new run while the run it names is still going: %v", err)
 	}
 }
 
@@ -763,16 +853,26 @@ func TestLaunchStaleTakeoverOnGCSMatchesGeneration(t *testing.T) {
 	})
 }
 
-// --retry of a run that did launch reports it, and says where to go next.
+// --retry of a run that did launch refuses with nothing launched and the read
+// that says where it stands, and starts nothing: the exit is non-zero, so a
+// caller cannot read it as a launch that went. This run's record cannot be read
+// at all (nothing wrote one), which is the one answer this refusal withholds a
+// way on from: it points at the run's own state instead of guessing whether it
+// is still going.
 func TestRunRetryOfALaunchedRunHints(t *testing.T) {
-	newCloudFixture(t)
+	f := newCloudFixture(t)
 	t.Chdir(t.TempDir())
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature"); err != nil {
+	const id = "20260927-100000-abcd"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "Add a feature"); err != nil {
 		t.Fatal(err)
 	}
-	out, errOut, err := execute(t, "run", "--retry", "20260927-100000-abcd")
-	if err != nil || !strings.Contains(out, markSkipped+" launch "+task.ShortRun("20260927-100000-abcd")+" already launched") || !strings.Contains(errOut, "fugaro diagnose "+task.ShortRun("20260927-100000-abcd")) {
+	out, errOut, err := execute(t, "run", "--retry", id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out+errOut, "nothing launched") ||
+		!strings.Contains(out+errOut, "fugaro diagnose "+task.ShortRun(id)) {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
+	}
+	if n := len(f.run.Executions()); n != 1 {
+		t.Fatalf("%d executions, want the 1 the first launch started", n)
 	}
 }
 
@@ -2438,11 +2538,11 @@ func TestLaunchOutputShortID(t *testing.T) {
 		t.Errorf("--json's run = %q, %q, want the full IDs", res.Run, res.RunID)
 	}
 
-	// The hint beside a --retry names the run the short way too, because the
-	// command it names accepts it (SR14).
-	_, errOut, err := execute(t, "run", "--retry", id)
-	if err != nil || !strings.Contains(errOut, "fugaro diagnose "+task.ShortRun(id)) {
-		t.Fatalf("the --retry hint = %q, %v", errOut, err)
+	// The refusal a --retry of an already-started run is answered with names
+	// the run the short way too (D1706), the way every surface does.
+	_, _, err = execute(t, "run", "--retry", id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "run "+task.ShortRun(id)+" has already started") {
+		t.Fatalf("the --retry refusal = %v, want the run named short", err)
 	}
 }
 

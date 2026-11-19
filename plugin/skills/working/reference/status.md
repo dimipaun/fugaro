@@ -89,7 +89,7 @@ A finished run leaves the list three minutes after it finishes, on its own — s
 | `halted` | A budget cap, a kill switch or a review waiting on the owner stopped it. It exits cleanly and pushed a draft pull request, unless it halted at the start. The reason is shown as `halted (run_cap)`. |
 | `cancelled` | Someone cancelled it. |
 | `error` | Its records can't be read or trusted; the reason says which. |
-| `unlaunched` | A task was stored but never launched. `fugaro run --retry <run>` launches it, with the user's go-ahead. |
+| `unlaunched` | A task was stored but never launched. `fugaro run --retry <run>` launches it, with the user's go-ahead — it only starts a stored task that never started, and a run that already started is refused with `nothing launched`. |
 
 Next steps to offer: a failed or halted run with a draft pull request can be continued with `reference/followup.md`, once the cause is dealt with; `fugaro logs <run>` has its output.
 

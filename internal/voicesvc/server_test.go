@@ -22,11 +22,17 @@ import (
 
 // testHop is the whole service over the fakes: the real verifier, the real
 // device reader and the real enforcer, and a log buffer to read what it wrote.
+//
+// It carries the forwarding half's parts too, because NewServer requires them
+// (P5.3.5): the provider transport is the forwarding tests' own hook and a
+// status query must never reach it, which is a property these tests assert
+// rather than assume.
 type testHop struct {
-	server *Server
-	key    *testKey
-	db     *testDB
-	log    *bytes.Buffer
+	server   *Server
+	key      *testKey
+	db       *testDB
+	log      *bytes.Buffer
+	provider *fakeProvider
 }
 
 func newTestHop(t *testing.T) *testHop {
@@ -38,17 +44,21 @@ func newTestHop(t *testing.T) *testHop {
 		t.Fatalf("NewEnforcer: %v", err)
 	}
 	buf := &bytes.Buffer{}
+	provider := newFakeProvider()
 	srv, err := NewServer(Config{
 		Auth:     testAuthenticator(t, key),
 		Devices:  RTDBDevices{DB: db.Client},
 		Enforcer: enforcer,
+		Keys:     &fakeKeys{keys: map[string]string{"deepgram": testKeyValue, "elevenlabs": testKeyValue}},
+		Tokens:   &fakeTokens{token: "the-installations-own-access-token"},
+		Client:   &http.Client{Transport: provider},
 		Log:      slog.New(slog.NewTextHandler(buf, nil)),
 		Now:      func() time.Time { return testNow },
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	return &testHop{server: srv, key: key, db: db, log: buf}
+	return &testHop{server: srv, key: key, db: db, log: buf, provider: provider}
 }
 
 // pair writes the device node, which is what `fugaro pair` does (D165/D166).
@@ -88,32 +98,51 @@ func (h *testHop) status(t *testing.T, token, body string) *httptest.ResponseRec
 	return h.call(t, http.MethodPost, StatusPath, hdr, body)
 }
 
-// TestNewServerNeedsItsParts: a server missing one of the three would answer
-// every call wrongly, and the wrong answer here is an admission.
+// TestNewServerNeedsItsParts: a server missing any one of its parts would answer
+// every call wrongly, and the wrong answer here is an admission. Each member is
+// left out on its own, so a member that stopped being required is one subtest
+// failing rather than a claim in a comment.
 func TestNewServerNeedsItsParts(t *testing.T) {
 	k := newTestKey(t)
 	auth := testAuthenticator(t, k)
 	e := testEnforcer(t, []byte(`{"providers":["deepgram"],"direction":{"stt":true}}`))
 	d := fakeDevices{live: map[string]bool{testUID: true}}
+	keys := &fakeKeys{keys: map[string]string{"deepgram": testKeyValue}}
+	tokens := &fakeTokens{token: "the-installations-own-access-token"}
+	client := &http.Client{Transport: newFakeProvider()}
 
-	if _, err := NewServer(Config{Devices: d, Enforcer: e}); err == nil {
-		t.Error("a server with no verifier was built")
+	for _, tc := range []struct {
+		name string
+		cfg  Config
+	}{
+		{"with no verifier", Config{Devices: d, Enforcer: e, Keys: keys, Tokens: tokens, Client: client}},
+		{"with no device reader", Config{Auth: auth, Enforcer: e, Keys: keys, Tokens: tokens, Client: client}},
+		{"with no enforcer", Config{Auth: auth, Devices: d, Keys: keys, Tokens: tokens, Client: client}},
+		{"with no provider key source", Config{Auth: auth, Devices: d, Enforcer: e, Tokens: tokens, Client: client}},
+		{"with no token source", Config{Auth: auth, Devices: d, Enforcer: e, Keys: keys, Client: client}},
+		{"with no HTTP client", Config{Auth: auth, Devices: d, Enforcer: e, Keys: keys, Tokens: tokens}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := NewServer(tc.cfg); err == nil {
+				t.Errorf("a server %s was built: it would answer calls it cannot serve, and the wrong answer on this service is an admission", tc.name)
+			}
+		})
 	}
-	if _, err := NewServer(Config{Auth: auth, Enforcer: e}); err == nil {
-		t.Error("a server with no device reader was built")
-	}
-	if _, err := NewServer(Config{Auth: auth, Devices: d}); err == nil {
-		t.Error("a server with no enforcer was built")
-	}
-	if _, err := NewServer(Config{Auth: auth, Devices: d, Enforcer: e}); err != nil {
+	if _, err := NewServer(Config{
+		Auth: auth, Devices: d, Enforcer: e, Keys: keys, Tokens: tokens, Client: client,
+	}); err != nil {
 		t.Errorf("a complete server was refused: %v", err)
 	}
 }
 
-// TestServerHasOneRoute: this service answers the project-status query and
-// nothing else. A provider path is not one it serves — nothing here forwards
-// anything — and the refusal says so rather than reading the request as
-// something it understands.
+// TestServerHasOneRoute: the status route is matched on the exact path, and a
+// provider's own path is not one this service serves at all — §8's rule is that
+// the hop resolves a NAME and never an address a caller named, so a caller
+// cannot make it call one. The refusal says so rather than reading the request
+// as something it understands.
+//
+// The two forwarding routes are P5.3.5's and are tested in forward_test.go; what
+// is pinned here is that they are not reachable by accident from this one.
 func TestServerHasOneRoute(t *testing.T) {
 	h := newTestHop(t)
 	h.pair(t)
@@ -215,6 +244,11 @@ func TestServerAnswersTheProjectStatusQuery(t *testing.T) {
 	}
 	if ans.Project != testSlug {
 		t.Fatalf("Project = %q, want %q", ans.Project, testSlug)
+	}
+	// The query carries no audio and no text, so it reaches no provider: it is
+	// the only route of this service that never may.
+	if n := h.provider.calls(); n != 0 {
+		t.Fatalf("the project-status query reached a provider %d times", n)
 	}
 }
 

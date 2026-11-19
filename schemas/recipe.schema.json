@@ -32,11 +32,13 @@
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewNoBounce" }, { "$ref": "#/$defs/adversarialNoBounce" }], "items": false, "minItems": 3 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }, { "$ref": "#/$defs/adversarialBounce" }], "items": false, "minItems": 4 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/digest" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/commitReports" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 1 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 3 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/digest" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/commitReports" }, { "$ref": "#/$defs/reviewHandOver" }], "items": false, "minItems": 2 },
         { "type": "array", "prefixItems": [{ "$ref": "#/$defs/rebase" }], "items": false, "minItems": 1 },
         { "$ref": "#/$defs/artifactSteps" },
         { "$ref": "#/$defs/evaluateSteps" }
@@ -131,6 +133,11 @@
       "type": "object", "additionalProperties": false, "required": ["digest"],
       "properties": { "digest": { "type": ["object", "null"], "additionalProperties": false } },
       "description": "The report run's deterministic first step (recipe.StepDigest): it takes no options, and recipe.Parse refuses it anywhere but first in a mode: implement recipe, at most once, and followed by exactly one review step."
+    },
+    "commitReports": {
+      "type": "object", "additionalProperties": false, "required": ["commit_reports"],
+      "properties": { "commit_reports": { "type": ["object", "null"], "additionalProperties": false } },
+      "description": "The commit run's deterministic first step (recipe.StepCommitReports, docs/periodic-reviews E5): the runner writes the run reports the launcher handed in into the repository and folder the project's published policy designates and commits them, naming no model. It takes no options, like digest, and recipe.Parse refuses it anywhere but first in a mode: implement recipe, at most once, and followed by exactly one review step."
     },
     "firstLine": {
       "type": "object", "additionalProperties": false, "required": ["first_line"],

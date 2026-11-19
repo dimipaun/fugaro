@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
@@ -358,6 +359,31 @@ func catalogCheckFor(lc *localcfg.Config, containers map[string]string) (*config
 func CatalogBuilds(lc *localcfg.Config) bool {
 	_, repos, err := catalogCheckFor(lc, nil)
 	return err == nil && len(repos) > 0
+}
+
+// CatalogHasBuildEntries reports whether the effective image catalog has an
+// entry a build is submitted for (catalog.BuildsImage): a Dockerfile-sourced or
+// an inline definition. It is the condition a caller maintaining the base image
+// a build is built FROM is after, and CatalogBuilds is not it: a catalog of
+// prebuilt images is one the check job is deployed for — it names those entries
+// and passes them over — so CatalogBuilds is true for a catalog this
+// installation builds nothing from.
+//
+// The project whose only entry is the default one `fugaro update` writes
+// (D2305, S10) is that catalog, and the distinction is what keeps that write
+// from moving base_images.base: the entry's image IS the recorded base pin, so
+// a run that took it for a reason to pin would read its own record back as one.
+func CatalogHasBuildEntries(lc *localcfg.Config) bool {
+	cat := lc.ImageCatalogEffective(nil)
+	if cat == nil {
+		return false
+	}
+	for _, e := range cat.Entries {
+		if catalog.BuildsImage(e) {
+			return true
+		}
+	}
+	return false
 }
 
 // CatalogRepos is CatalogBuilds' read as a value: the repositories the

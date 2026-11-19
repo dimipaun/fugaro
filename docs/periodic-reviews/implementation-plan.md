@@ -728,7 +728,7 @@ R14 and R15 are the designation it reads and R16 is the half that hands the byte
   where the file lands.
 - **The designation it reads, and the refusal when there is none.** `reports_commit.repo` must match
   the repository the run is running in (`task.Slug`, so the two cannot disagree about what a
-  repository is) and `reports_commit.dir` is the folder (`digest.Dir`, `docs/fugaro-reviews`, unless
+  repository is) and `reports_commit.dir` is the folder (`projectpolicy.DefaultReportsCommitDir`, `docs/fugaro-reviews-mirror`, unless
   the project names another). **A run refuses before its first stage when the project designates
   nothing, names another repository, or carries a `dir` the path check refuses** — the refusal names
   the key, the file it is written in and the command that publishes it (R14), which is the

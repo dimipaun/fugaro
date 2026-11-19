@@ -241,10 +241,17 @@ func (s *imagesStage) allow() []string {
 // checkout init runs in (best effort: no checkout, or no valid fugaro.yaml,
 // adds none), and base when the project's own image catalog has an entry this
 // installation builds. That last one is what makes `fugaro image add <entry>`
-// a state the next `fugaro update` converges on its own (#1843): the catalog
-// check job runs FROM base_images.base and every catalog build is built FROM
-// it, nothing else names that kind, and the catalog lives in the project
-// config rather than in any checkout.
+// a state the next `fugaro update` converges on its own (#1843): every catalog
+// build is built FROM base_images.base, nothing else names that kind, and the
+// catalog lives in the project config rather than in any checkout.
+//
+// An entry this installation builds is CatalogHasBuildEntries' question and
+// not CatalogBuilds': the check job is deployed for a catalog of prebuilt
+// images too, and it names those entries and passes them over without a build.
+// The project whose only entry is the default one `fugaro update` writes
+// (D2305, S10) is that catalog, and it must not be what pins a base image in a
+// run outside a checkout: the entry's image is the recorded base pin, so such
+// a run would re-pin the image it just read the entry out of.
 func (s *imagesStage) kinds(ctx context.Context) []string {
 	if s.only != nil {
 		only := slices.DeleteFunc(slices.Clone(s.only), func(k string) bool { return !slices.Contains(config.Bases, k) })
@@ -262,7 +269,7 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 			set[w.BaseKind()] = true
 		}
 	}
-	if s.e.lc != nil && infra.CatalogBuilds(s.e.lc) {
+	if s.e.lc != nil && infra.CatalogHasBuildEntries(s.e.lc) {
 		set[config.BaseKind] = true
 	}
 	return slices.Sorted(maps.Keys(set))
@@ -993,6 +1000,13 @@ func (s *imagesStage) record(ctx context.Context, pl []planned) error {
 	// later reader takes it from here rather than from the flag, which an
 	// update --repo run does not even accept.
 	next.ImageSource = s.allow()[0]
+	// The project's default catalog entry is the base image this run just
+	// pinned, so it moves with it: an entry left on the release behind is the
+	// runner image every shared job of the project runs, and this stage is the
+	// only one that knows the pin the base moved to.
+	for _, k := range slices.Sorted(maps.Keys(want)) {
+		s.e.repinDefaultCatalogEntry(&next, host, owner, k, want[k].pin, want[k].item.version)
+	}
 	// The stage's own confirmation covered the copy; the config line it
 	// records is shown as a diff like every config write.
 	if err := r.writeLocalConfig(&next, s.e.path, old, true); err != nil {

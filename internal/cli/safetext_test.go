@@ -129,9 +129,16 @@ func TestRunOutputStripsTerminalControls(t *testing.T) {
 	_ = runstore.Open(b, appSlug, id).WriteLaunch(context.Background(), &runstore.Launch{Version: 1, RunID: id,
 		Execution: appExecution("x1"), LogURL: "https://console.example/" + hostileAll(), LaunchedAt: time.Now()})
 	b.Close()
-	out, errOut, err := execute(t, "run", "--retry", id)
+	// A repeated --run-id is what prints the launch detail of a run that
+	// already launched, the stored log URL included; a --retry of one is
+	// refused and prints no detail at all (a refusal reads the run's record
+	// and no string out of it).
+	out, errOut, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "x")
 	if err != nil {
-		t.Fatalf("run --retry: %v (%s)", err, errOut)
+		t.Fatalf("run --run-id: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "console.example") {
+		t.Fatalf("the launch detail printed no stored log URL, so this test proves nothing:\n%s", out)
 	}
 	noControls(t, "run", out)
 }
