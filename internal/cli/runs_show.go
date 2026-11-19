@@ -11,6 +11,11 @@ package cli
 // (D1056), so ChainLimits and ChainLimit are the two commands' one definition of
 // it: a consumer that reads the document a launch answered and the document
 // `runs show --json` prints is reading the same members.
+//
+// The file holds the message block both commands print as well
+// (docs/run-messages, RM10): the run's own account of every message it saw,
+// which `runs show` reads off the record alone and a diagnosis cross-checks
+// against the message objects under tokens/.
 
 import (
 	"context"
@@ -18,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -27,7 +33,9 @@ import (
 	accesslib "github.com/dimipaun/fugaro/internal/access"
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -108,6 +116,240 @@ type ChainLimit struct {
 	// flags write it, so the layer is the chain's wherever the record was
 	// written and whatever else the record's merge named.
 	Source string `json:"source"`
+}
+
+// MessagesDoc is the run's message channel as both commands print it
+// (docs/run-messages F13, F24, F25): whether the run reads messages at all, the
+// format and flags its runner knows, and one entry per message in number order.
+//
+// The entries are what the run's record states, and the record is written by
+// the run: the agent the run ran can rewrite it, so a fate here is the run's
+// account of itself and not proof (F20, F13). A diagnosis reads the message
+// objects beside the record and shows a message the record never mentions as
+// one the run never read (F18); `runs show` reads the record alone and never
+// looks under tokens/.
+type MessagesDoc struct {
+	// Accepting is whether the run reads messages. False is the run whose
+	// recipe has no coder stage — nothing would carry a message (F24) — and
+	// the run whose record carries no block at all, which is a runner that
+	// predates the channel and which `fugaro tell` refuses (F9).
+	Accepting bool `json:"accepting"`
+	// Format is the highest message format the run's runner reads, which a
+	// sender writes into the message it sends (F25). Zero is the record that
+	// carries no block: no runner wrote a format, and a sender has none to
+	// agree with.
+	Format int `json:"format"`
+	// Flags are the flags the run's runner honours, absent when it honours
+	// none. A sender refuses a flag the run does not list rather than sending
+	// one the runner would read as ordinary text (F25).
+	Flags []string `json:"flags,omitempty"`
+	// Messages is one entry per message, in number order. Empty is a run that
+	// reads messages and received none, which is not the same run as one whose
+	// record carries no block: Accepting tells those apart.
+	Messages []MessageFate `json:"messages"`
+}
+
+// MessageFate is one message as both commands print it: the number, the fate
+// the run's record gives it, who that record says sent it and what became of
+// it — and, in a diagnosis, what the message object and the code host still say
+// about it.
+//
+// Every member but Seq, Recorded and the record's own is absent when nothing
+// answered it: a message the record never mentions has no fate to show (F18),
+// and a message whose object the bucket has reaped has no text (F11).
+type MessageFate struct {
+	// Seq is the number the message object's own name carries and the record's
+	// entry names. It is the identity a later stage, the record and the
+	// copy-paste line all use.
+	Seq int `json:"seq"`
+	// State is the fate the record states — delivered, undelivered, refused or
+	// missing (runmsg.State), as the run recorded it. Empty for a message the
+	// record does not mention, which a diagnosis shows as never read (F18);
+	// Recorded is the member that tells the two apart without reading the
+	// words.
+	State runmsg.State `json:"state,omitempty"`
+	// Recorded is whether the run's record mentions this number at all. False
+	// is a message object the run never wrote down: it reached no stage, and
+	// the run may not have read it either (F18).
+	Recorded bool `json:"recorded"`
+	// SentAt, SentBy, Flags, Stage, DeliveredAt and Reason are the record's own
+	// fields, redacted like every other string a command reads off the record:
+	// the agent the run ran can rewrite them (F20, F13).
+	SentAt      *time.Time `json:"sent_at,omitempty"`
+	SentBy      string     `json:"sent_by,omitempty"`
+	Flags       []string   `json:"flags,omitempty"`
+	Stage       string     `json:"stage,omitempty"`
+	DeliveredAt *time.Time `json:"delivered_at,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
+	// Object is whether the message object is still under
+	// tokens/<slug>/<run>/messages/, read by a diagnosis and never by
+	// `runs show` — nil is "this document did not look", never "there is
+	// none". The object is the one part of a message a run cannot have written
+	// (D2941), so it is what a fate is cross-checked against (F18, F20).
+	Object *bool `json:"object,omitempty"`
+	// Expired is a message the record names as undelivered whose object the
+	// bucket has reaped after its seven days (F11): the fate survives in the
+	// record, the text does not, and there is nothing left to send again.
+	Expired bool `json:"text_expired,omitempty"`
+	// OverCap is a number past the ones a run reads (F12): a 21st object,
+	// which a launcher can write by hand and no runner ever reads.
+	OverCap bool `json:"over_cap,omitempty"`
+	// Text is the object's own words, redacted, for a message that never
+	// reached the agent: an undelivered one, a number the record does not
+	// mention, and a hole the run walked past that an object has since filled.
+	// Empty for one that did reach a stage, for one whose object is gone, and
+	// for a number no run reads.
+	Text string `json:"text,omitempty"`
+	// Line is the command that sends this message again, built by a diagnosis
+	// from the object's own text and the open pull request of the run's branch
+	// (F19) — never from anything under runs/, which the run's agent can write.
+	Line string `json:"line,omitempty"`
+	// LineNote is why Line carries no pull-request number: the code host could
+	// not be asked, or has no open pull request on the run's branch, and a
+	// number taken from anywhere else would aim the pasted command at whatever
+	// it found (F19).
+	LineNote string `json:"line_note,omitempty"`
+}
+
+// ptrBool is a bool's address, for the member whose absence and whose false
+// mean different things: MessageFate.Object is nil for a document that did not
+// look under tokens/ and false for one that looked and found nothing.
+func ptrBool(v bool) *bool { return &v }
+
+// messagesOf is rec's messages block for the two commands' documents: the
+// record's own order, bounded at runmsg.MaxMessages — the channel's own cap,
+// above which no runner writes an entry and a hand-edited record may — and with
+// every string redacted, since the record is an object a hand and the run's own
+// agent can both edit. nil for a record that carries no block, so the member is
+// absent rather than an empty one and a run whose runner predates the channel
+// prints exactly as it did.
+func messagesOf(rec *runstore.Record, red func(string) string) *MessagesDoc {
+	if rec == nil || rec.Messages == nil {
+		return nil
+	}
+	src := rec.Messages
+	doc := &MessagesDoc{Accepting: src.Accepting, Format: src.Format, Flags: redactAll(src.Flags, red), Messages: []MessageFate{}}
+	for i, d := range src.Messages {
+		if i == runmsg.MaxMessages {
+			break
+		}
+		doc.Messages = append(doc.Messages, MessageFate{
+			Seq: d.Seq, State: runmsg.State(red(string(d.State))), Recorded: true,
+			SentAt: d.SentAt, SentBy: red(d.SentBy), Flags: redactAll(d.Flags, red),
+			Stage: red(d.Stage), DeliveredAt: d.DeliveredAt, Reason: red(d.Reason),
+		})
+	}
+	return doc
+}
+
+// messageLine is one message's fate as both commands print it: the number, the
+// fate the record gives it, the stage it reached and the flags it carried, who
+// the record says sent it, and the record's own reason where it carries one.
+// Every part goes through oneLine: it is the record's bytes, which the run's
+// own agent and a hand can both write.
+func messageLine(f MessageFate) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "#%d %s", f.Seq, messageFate(f))
+	if f.Stage != "" {
+		fmt.Fprintf(&b, " in %s", oneLine(f.Stage))
+	}
+	if f.SentBy != "" {
+		fmt.Fprintf(&b, " by %s", oneLine(f.SentBy))
+	}
+	if len(f.Flags) > 0 {
+		fmt.Fprintf(&b, " (%s)", oneLine(strings.Join(f.Flags, ", ")))
+	}
+	if f.Reason != "" {
+		fmt.Fprintf(&b, ": %s", oneLine(f.Reason))
+	}
+	return b.String()
+}
+
+// messageFate words one message's fate. A number the record does not mention is
+// the one a diagnosis read off a message object the run never wrote down
+// (F18), and a number past the cap is one no run reads however it was written
+// (F12); both are "never read" and the rest of the line says which.
+func messageFate(f MessageFate) string {
+	switch {
+	case f.OverCap:
+		return "never read: over the cap"
+	case !f.Recorded:
+		return "never read: the run's record does not mention it"
+	case f.State == "":
+		// A record a hand edited may carry an entry with no fate at all; it is
+		// printed rather than dropped, and it is not read as a fate the
+		// vocabulary has.
+		return "no fate recorded"
+	}
+	return string(f.State)
+}
+
+// writeMessages prints the message block, the way both commands print it:
+// whether the run reads messages at all, then one line per message in number
+// order, and under it whatever a diagnosis read back from the object — the
+// text, and the command that sends the message again.
+func writeMessages(w io.Writer, m *MessagesDoc) error {
+	if m == nil {
+		return nil
+	}
+	fmt.Fprintf(w, "\nMessages (as the run recorded them)\n")
+	if !m.Accepting {
+		if m.Format == 0 {
+			fmt.Fprintf(w, "  this run reads no messages: its record carries none of the block a run that reads them writes\n")
+		} else {
+			fmt.Fprintf(w, "  this run reads no messages: accepting false in the run's record\n")
+		}
+	}
+	for _, f := range m.Messages {
+		fmt.Fprintf(w, "  %s\n", messageLine(f))
+		if f.Text != "" {
+			// The text is the person's own words, so it goes through multiLine
+			// and every line of it sits under the word: a message of several
+			// lines must read as one message.
+			fmt.Fprintf(w, "    text:\n")
+			for line := range strings.SplitSeq(strings.TrimRight(multiLine(f.Text), "\n"), "\n") {
+				fmt.Fprintf(w, "      %s\n", line)
+			}
+		}
+		if f.Line != "" {
+			// Not oneLine: a text of several lines stays one shell word across
+			// them, and a line whose newlines were escaped is a command that
+			// sends different words than the message held.
+			fmt.Fprintf(w, "    %s\n", multiLine(f.Line))
+		}
+		if f.LineNote != "" {
+			fmt.Fprintf(w, "    no --pr: %s\n", multiLine(f.LineNote))
+		}
+		if f.Expired {
+			fmt.Fprintf(w, "    text expired: the message object is gone after the bucket's seven days, so there is nothing left to send again\n")
+		}
+	}
+	if m.Accepting && len(m.Messages) == 0 {
+		fmt.Fprintf(w, "  no message reached this run\n")
+	}
+	// The list is bounded at the channel's own cap, which sits above what a
+	// runner writes: a list that reaches it is a record a hand edited, and
+	// saying so is the difference between a short list and a complete one.
+	if len(m.Messages) == runmsg.MaxMessages {
+		fmt.Fprintf(w, "  … at most %d messages are printed\n", runmsg.MaxMessages)
+	}
+	return nil
+}
+
+// messageResendLine is the command that sends a message again (F19): `fugaro
+// run --repo <owner/name> -- '<text>'`, with `--pr N` when the run's branch has
+// an open pull request, so the text steers that pull request and not whatever
+// checkout the line is pasted in. The text is the message object's own and
+// stands after `--`, quoted, so a text that begins with `-` is never read as a
+// flag; the repository is this machine's own name for the run's slug, and the
+// number comes from the code host — neither from the run's record, which the
+// run's own agent can rewrite (F19, F20).
+func messageResendLine(repo string, pr int, text string) string {
+	line := "fugaro run"
+	if pr > 0 {
+		line += " --pr " + strconv.Itoa(pr)
+	}
+	return line + " --repo " + shellword.Quote(repo) + " -- " + shellword.Quote(text)
 }
 
 type runsShowOptions struct {
@@ -198,12 +440,14 @@ func runRunsShow(cmd *cobra.Command, o *runsShowOptions, ref string) error {
 	if err != nil {
 		return err
 	}
-	doc := runsShowDoc{Version: runsShowDocVersion, Repo: repo, Run: s.Slug() + "/" + s.RunID(), ChainLimits: *lim}
+	red := agent.RedactFunc(cliSecrets(os.Getenv))
+	doc := runsShowDoc{Version: runsShowDocVersion, Repo: repo, Run: s.Slug() + "/" + s.RunID(), ChainLimits: *lim,
+		Messages: messagesOf(rec, red)}
 	if rec != nil && rec.Halt != nil {
 		// The halt's own sentence is the run's text, redacted the way diagnose
 		// redacts every string it prints.
 		h := *rec.Halt
-		h.Detail = agent.RedactFunc(cliSecrets(os.Getenv))(h.Detail)
+		h.Detail = red(h.Detail)
 		doc.Halt = &h
 	}
 	if o.asJSON {
@@ -227,6 +471,14 @@ type runsShowDoc struct {
 	ChainLimits
 	// Halt is the halt of a halted run, absent for a run that was not halted.
 	Halt *runstore.Halt `json:"halt,omitempty"`
+	// Messages is the run's message channel as its own record states it
+	// (F13): whether the run reads messages, the format and flags its runner
+	// knows, and one entry per message. Absent for a record that carries no
+	// block, which is a run whose runner predates the channel. What the
+	// message objects under tokens/ still hold is not here: this command reads
+	// the record, and `fugaro diagnose` is the one that cross-checks the two
+	// (F18, F20).
+	Messages *MessagesDoc `json:"messages,omitempty"`
 }
 
 // showRunRepo is the repository the run being shown belongs to, as a person
@@ -346,7 +598,7 @@ func printRunsShow(w io.Writer, doc *runsShowDoc) error {
 		}
 		fmt.Fprintf(w, "%s\n", oneLine(line))
 	}
-	return nil
+	return writeMessages(w, doc.Messages)
 }
 
 // chainBlock is the chain and its limits as diagnose prints them: the blocks of

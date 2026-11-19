@@ -56,6 +56,10 @@
     },
     "halt": {
       "$ref": "#/$defs/halt"
+    },
+    "messages": {
+      "$ref": "#/$defs/messages",
+      "$comment": "Absent, never null, for a run whose record carries no messages block: a run that reads no messages has the block with accepting false, and a run from before the channel existed has none at all (internal/cli.messagesOf)."
     }
   },
   "$defs": {
@@ -146,6 +150,122 @@
         }
       },
       "description": "The halt of a halted run, absent for a run that was not halted. A halted run's first question is how much is left, which is what this document's own figures answer (D1055)."
+    },
+    "messages": {
+      "type": "object",
+      "required": [
+        "accepting",
+        "format",
+        "messages"
+      ],
+      "properties": {
+        "accepting": {
+          "type": "boolean",
+          "description": "Whether the run was taking messages at all (runmsg.Record.Accepting). False is a run launched with the channel off — and a diagnosis reports it as a run that reads no messages rather than as one that was merely sent none, the two being different readings of an empty list (F9). Not a licence to send one: whether a message is still taken is the launcher's own decision, and this member is what the run recorded about itself."
+        },
+        "format": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The format version the run's message block was written in (runmsg.Format; 0 in the block a diagnosis synthesizes for a run whose record carries none). A consumer reads the version before the members below, so a newer format's block is not read under this one's rules."
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The flags the launch wrote for the run's channel, each a name of runmsg's closed vocabulary (`now`, `wrap_up`) — the directives that hold for every message of the run, such as a run told to wrap up after the message it reads. Absent when the record names none. Not an enum, for the reason `source` is not one: a consumer that refused a name this schema has never heard of would refuse a newer CLI's document."
+        },
+        "messages": {
+          "type": "array",
+          "description": "One row per message, in number order: what the run recorded about it. The list is the record's own, so a run whose record carries no block has an empty list under accepting false, and a number the record does not mention is absent here — a diagnosis is the reader that adds those rows, from the objects under the bucket's prefix (F18). Bounded by the channel's own cap (runmsg.MaxMessages), which a diagnosis reads a few rows past so that the 21st message is visible as one no run reads (F12).",
+          "items": {
+            "$ref": "#/$defs/fate"
+          }
+        }
+      },
+      "description": "The run's own account of its message channel (docs/run-messages, D2940, F13): whether it was reading messages and what it recorded about each one it saw. The record is written by the run, whose own agent can rewrite it, so every fate here is what the run recorded and not what happened — `fugaro diagnose` is the reader that cross-checks these rows against the message objects under the bucket's `tokens/<slug>/<run>/messages/` and prints a number the record never mentions as one the run never read (F18, F20). The members that say so — `object`, `text_expired`, `text`, `line`, `line_note` — are a diagnosis's: this document is read off the record alone, and never opens the bucket."
+    },
+    "fate": {
+      "type": "object",
+      "required": [
+        "seq",
+        "recorded"
+      ],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "The message's number, and the name it is stored under: the object is `<seq, four digits>.msg.json` under the run's own messages prefix."
+        },
+        "state": {
+          "enum": [
+            "delivered",
+            "undelivered",
+            "refused",
+            "missing"
+          ],
+          "description": "The fate the run recorded for this number (runmsg.State): `delivered`, read by the coder stage in `stage`; `undelivered`, still unread when the run ended; `refused`, an object the run would not read; and `missing`, a number between two it delivered whose object was not there when it polled — which a later write can fill, so a diagnosis reads it as one the agent never saw. Absent when the record states no fate for the number, and on a row the record does not mention. Not an enum that closes the vocabulary of a newer format: a consumer reads `format` first.",
+          "$comment": "Absent, never empty-string, so that a consumer branches on the member rather than on a value that could also be a name it does not know."
+        },
+        "recorded": {
+          "type": "boolean",
+          "description": "Whether the run's record mentions this number at all. True for every row of the record's own list, and false for a row a diagnosis added from the bucket's prefix: a message object written after the run's last poll — the runner's last is at finalize (F18) — is one the run never read, and this member is what tells that row from a run that read the message and recorded it."
+        },
+        "sent_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the message was written, RFC 3339 in UTC, as the run recorded it. The object carries its own time, which a diagnosis does not print: the record is what this document is."
+        },
+        "sent_by": {
+          "type": "string",
+          "description": "The address of whoever sent it, as the run recorded it. Redacted the way every string a command prints is."
+        },
+        "flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The flags this one message carried, one of the names of the block's own `flags`. Absent when it carried none."
+        },
+        "stage": {
+          "type": "string",
+          "description": "The stage that read a delivered message (`implement`, `review`, `fix`), as the run recorded it. Absent for a message no stage read, and for one a record states no stage for."
+        },
+        "delivered_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When a stage read it, RFC 3339 in UTC, as the run recorded it. Absent for a message no stage read."
+        },
+        "reason": {
+          "type": "string",
+          "description": "The run's own sentence for the fate — why a message was refused, or why it was never carried — redacted the way every string a command prints is. Absent when the record carries none."
+        },
+        "object": {
+          "type": "boolean",
+          "description": "Whether the message object is under the run's own prefix in the bucket, which is the question a diagnosis asks and a `runs show` does not. True is an object a diagnosis could read the text out of; false is one the bucket never had or has aged out after its seven days (F11). Absent in this document: `runs show` reads the record alone and has no answer about the bucket, which is a different member from a false that was read."
+        },
+        "text_expired": {
+          "type": "boolean",
+          "description": "A diagnosis's own reading: the record says the run never carried this message and the object is no longer there, so the text is gone and there is nothing left to send again (F11). Absent, never false, elsewhere: only a diagnosis looked."
+        },
+        "over_cap": {
+          "type": "boolean",
+          "description": "A diagnosis's own reading of a number past the channel's cap (runmsg.MaxMessages): no run reads it, however it was written, so the row says so rather than quoting a text the run never saw (F12). Absent, never false, elsewhere."
+        },
+        "text": {
+          "type": "string",
+          "description": "The message's own text, read out of the object by a diagnosis and printed under the fate. Absent when nothing was read: no object, a row over the cap, or a fate that needs no text. This member is the reason a diagnosis reads the object — the record holds no text at all, so a text that came from under `runs/` is not this one (F19)."
+        },
+        "line": {
+          "type": "string",
+          "description": "The command that sends the message again, built by a diagnosis out of the object's text, this machine's own name for the repository and the number of the open pull request the code host reports for the run's branch — `fugaro run [--pr N] --repo <owner/name> -- '<text>'`. Never built from anything under `runs/`: the run's own record names a pull request the run's agent could have written, which is what F19 exists to keep out of a line a person pastes. Absent when there is no text to send, and its number is absent when the host cannot be asked or reports no open pull request for the branch."
+        },
+        "line_note": {
+          "type": "string",
+          "description": "Why the `line` above carries no `--pr`, when it does not: the code host could not be asked, or it reports no open pull request on the run's branch (it answers with closed and merged ones too, and a message sent under one of those follows up a pull request that is over), or this machine's config names no repository for the run. Printed beside the line rather than left for the reader to wonder about (F19)."
+        }
+      },
+      "description": "One message as the run recorded it, plus whatever a diagnosis read back about it. The run's own members come from the record and are forgeable by the run's agent, which is why every one of them is labelled as the run's own account (F20); the diagnosis's members come from the bucket and the code host, which the run cannot write (F19)."
     }
   }
 }
