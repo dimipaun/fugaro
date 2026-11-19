@@ -303,12 +303,14 @@
     "rigorArea": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "match", "level"],
-      "description": "One rigor.areas rule: a name to print, a doublestar path glob relative to the repository root, and the level it sets. The same shape as fugaro.schema.json's; the key was `mode:` until LD2 renamed the axis.",
+      "required": ["name", "match"],
+      "anyOf": [{ "required": ["level"] }, { "required": ["mode"] }],
+      "description": "One rigor.areas rule: a name to print, a doublestar path glob relative to the repository root, and the level it sets. The same shape as fugaro.schema.json's. The level's key was `mode:` until LD2 renamed the axis, and that spelling is still read: v0.11.0 shipped rigor.areas with it, and the `fugaro rigor set --area` of that release wrote it into this file, so a layer nobody has rewritten loads, with the decoder preferring `level:` where a rule carries both. Write `level:`.",
       "properties": {
         "name": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._-]*$", "description": "The rule's name, which the run record, the pull request body and fugaro watch print when they say which rule decided. 1 to 40 characters of letters, digits, space, dash, underscore and dot, starting with a letter or a digit." },
         "match": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^/\\s]", "not": { "pattern": "(^|/)\\.\\.(/|$)" }, "description": "A doublestar path glob relative to the repository root. Not empty, not absolute, no \"..\" component, and a pattern doublestar validates." },
-        "level": { "$ref": "#/$defs/rigorLevel", "description": "The level this rule sets for the paths it matches." }
+        "level": { "$ref": "#/$defs/rigorLevel", "description": "The level this rule sets for the paths it matches. A rule that writes it and the old `mode:` is read as this one says." },
+        "mode": { "$ref": "#/$defs/rigorLevel", "description": "The key the level was written under before LD2 renamed the axis, read as the rule's level when the rule writes no `level:`. Write `level:`." }
       }
     },
     "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },

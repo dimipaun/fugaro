@@ -38,9 +38,11 @@ var areaType = reflect.TypeOf(Area{})
 
 // areaKeys are the yaml keys one rule accepts, read from the struct's own tags
 // so a new field is picked up without a second list (the same thing
-// internal/config's jobProfileKeys does for a profiles entry).
+// internal/config's jobProfileKeys does for a profiles entry). `mode` is the
+// one key added by hand, and it is not a field of Area: it is the spelling the
+// level was written under before LD2 (see UnmarshalYAML).
 var areaKeys = func() map[string]bool {
-	out := map[string]bool{}
+	out := map[string]bool{"mode": true}
 	t := reflect.TypeOf(Area{})
 	for i := range t.NumField() {
 		if tag, _, _ := strings.Cut(t.Field(i).Tag.Get("yaml"), ","); tag != "" && tag != "-" {
@@ -50,37 +52,47 @@ var areaKeys = func() map[string]bool {
 	return out
 }()
 
-// UnmarshalYAML decodes one rule, refuses a key it does not know, and refuses
-// `mode:` by name.
+// UnmarshalYAML decodes one rule, refuses a key it does not know, and reads the
+// old spelling of the rule's level.
 //
-// The second job is normally the decoder's own (Decoder.KnownFields), but known
-// fields are a property of a Decoder while decoding through a Node is always
-// lenient, so the check is repeated here, with the same message.
+// The unknown-field check is normally the decoder's own (Decoder.KnownFields),
+// but known fields are a property of a Decoder while decoding through a Node is
+// always lenient, so the check is repeated here, with the same message.
 //
-// The third is the migration: the key this rule's level is written under was
-// `mode:` before LD2 renamed the axis, so a document a person upgrades carries
-// that key and a bare "field mode not found" would leave them to guess the new
-// one. The refusal says both spellings, which is the whole of what a reader
-// needs to fix the file.
+// The old spelling is `mode:`, and it is read rather than refused because it is
+// released: v0.11.0 shipped rigor.areas with that key, and a released
+// `fugaro rigor set --area` wrote it into the project layer this file loads. A
+// repository's own fugaro.yaml is never rewritten by `fugaro update`, so a
+// refusal here would be a manual repair on two version-1 formats — the thing
+// CLAUDE.md's rule about update forbids. It follows RigorRecord.LevelOf's rule
+// for the same value: `level:` decides whenever it is written, `mode:` is the
+// fallback, and a file carrying both is read as the new key says.
+//
+// `level:` being written but unknown is still a refusal — the rule's own level
+// is what Validate checks — so a typo in the new spelling is a message naming
+// the vocabulary, not a silent fall back to the old one.
 func (a *Area) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
 		return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: an area rule must be a mapping of field to value", node.Line)}}
 	}
 	for i := 0; i+1 < len(node.Content); i += 2 {
-		k := node.Content[i]
-		if k.Value == "mode" {
-			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: an area rule's level is written `level:`, not `mode:` (the mode key was renamed)", k.Line)}}
-		}
-		if !areaKeys[k.Value] {
+		if k := node.Content[i]; !areaKeys[k.Value] {
 			return &yaml.TypeError{Errors: []string{fmt.Sprintf("line %d: field %s not found in type %s", k.Line, k.Value, areaType)}}
 		}
 	}
 	type plain Area // no methods: decodes the fields without recursing into this one
-	var v plain
+	var v struct {
+		plain `yaml:",inline"`
+		Mode  Rigor `yaml:"mode"` // the pre-LD2 spelling of Level, read and never written
+	}
 	if err := node.Decode(&v); err != nil {
 		return err
 	}
-	*a = Area(v)
+	rule := Area(v.plain)
+	if rule.Level == "" {
+		rule.Level = v.Mode
+	}
+	*a = rule
 	return nil
 }
 

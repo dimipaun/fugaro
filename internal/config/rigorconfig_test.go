@@ -239,18 +239,49 @@ func TestRigorScalarShorthand(t *testing.T) {
 	}
 }
 
-// TestRigorRefusesTheRenamedModeKey: the key an area rule's level is written
-// under was `mode:` before the rename, so a document a person upgrades carries
-// it. It is refused — the key is gone, and a rule half-read would set no level
-// — and the refusal names the key that replaced it, so the fix is the message
-// itself.
-func TestRigorRefusesTheRenamedModeKey(t *testing.T) {
-	_, ps := Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
-	if got := problemsText(ps); !strings.Contains(got, "`level:`") || !strings.Contains(got, "`mode:`") {
-		t.Fatalf("the repository layer's renamed key: %q, want a refusal naming level and mode", got)
+// TestRigorReadsTheOldModeKey: the key an area rule's level is written under
+// was `mode:` before the rename, and that key is released — v0.11.0 shipped
+// rigor.areas with it, and a released `fugaro rigor set --area` wrote it into
+// the project layer `fugaro update` publishes — so both loaders read it as the
+// rule's level rather than refusing it. Neither format is versioned past 1 for
+// it, and a repository's own fugaro.yaml is never rewritten by `fugaro update`,
+// so a refusal would leave an installed project with a manual repair and no
+// command behind it.
+//
+// `level:` decides where a file carries both, RigorRecord.LevelOf's rule for
+// the same value, and a `level:` outside the vocabulary is still refused: the
+// old spelling is a fallback for a document nobody wrote the new key in, never
+// a way to spell a level the reader cannot use.
+//
+// Mutation (refuse `mode:` by name again): the two loads below report it, and
+// an installation whose file still writes the old key fails its next run.
+func TestRigorReadsTheOldModeKey(t *testing.T) {
+	cfg, ps := Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
+	if len(ps) > 0 {
+		t.Fatalf("the repository layer's old key: %s", problemsText(ps))
+	}
+	if cfg.Rigor == nil || len(cfg.Rigor.Areas) != 1 || cfg.Rigor.Areas[0].Level != rigor.Pro {
+		t.Fatalf("the repository layer read %+v, want one rule at pro", cfg.Rigor)
+	}
+	// The new key wins where a file still carries both, so a rule a person has
+	// already upgraded cannot be dragged back by the line beside it.
+	cfg, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: poc, level: pro}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
+	if len(ps) > 0 {
+		t.Fatalf("a rule carrying both keys: %s", problemsText(ps))
+	}
+	if len(cfg.Rigor.Areas) != 1 || cfg.Rigor.Areas[0].Level != rigor.Pro {
+		t.Fatalf("a rule carrying both keys read %+v, want level's value", cfg.Rigor.Areas)
+	}
+	_, ps = Parse([]byte(minimalRepo + "git: {provider: github}\nrigor:\n  areas:\n    - {name: docs, match: \"docs/**\", mode: pro, level: Paranoid}\nworkflows: {app: {commands: {build: sh b, test: sh t}}}\n"))
+	if got := problemsText(ps); !strings.Contains(got, "level must be one of "+rigor.RigorList()) {
+		t.Fatalf("an unknown level beside the old key: %q, want the vocabulary refusal", got)
 	}
 	const text = "version: 1\nproject: acme\ngcp_project: acme-fugaro\ndefaults:\n  rigor:\n    areas:\n      - {name: docs, match: \"docs/**\", mode: pro}\n"
-	if l, ps := ParseProjectLayer([]byte(text), testAnchor); l != nil || !strings.Contains(problemsText(ps), "`level:`") {
-		t.Fatalf("the project layer's renamed key: %v, %s", l, problemsText(ps))
+	l, ps := ParseProjectLayer([]byte(text), testAnchor)
+	if len(ps) > 0 {
+		t.Fatalf("the project layer's old key: %s", problemsText(ps))
+	}
+	if len(l.Defaults.Rigor.Areas) != 1 || l.Defaults.Rigor.Areas[0].Level != rigor.Pro {
+		t.Fatalf("the project layer read %+v, want one rule at pro", l.Defaults.Rigor.Areas)
 	}
 }
