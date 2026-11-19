@@ -1144,6 +1144,264 @@ func TestResidentLauncherRefusesATaskTheItemDoesNotApprove(t *testing.T) {
 	}
 }
 
+// residentFieldSpec is the item the field tests below move a task field off: a
+// fully populated declaration, so an honest task built from it is the honest
+// case for every rule the fence applies.
+func residentFieldSpec() orchestrator.Spec {
+	return orchestrator.Spec{ItemID: "p5-1d", Title: "the launcher half", Repo: "acme/app",
+		Recipe: "standard", RigorTier: "medium", PlanTask: "p5/P5.1d", External: "github:acme/app#7",
+		Brief: "Start the run the node recorded."}
+}
+
+// residentStoredTask is the task a launch stored for one item under one run id:
+// residentTaskOf plus the two fields the runstore keys a stored task by, which
+// the fence reads before it compares anything of the declaration. A test that
+// calls the fence directly needs them set, or every rule below would refuse for
+// the repository's reason instead of its own.
+func residentStoredTask(spec orchestrator.Spec, requestedBy, runID string) *task.Spec {
+	ts := residentTaskOf(spec, requestedBy)
+	ts.RunID = runID
+	ts.Repo = spec.Repo
+	return ts
+}
+
+// TestResidentRunIsTheItemsRefusesAFieldNoLaunchWrites: the half of the
+// fence the item cannot argue with. A field the item has no counterpart for is
+// not compared — there is nothing to compare it with — and an item-driven
+// launch, which is the launch whose attempt a resident pass re-issues, writes
+// none of them: every field below is one a launch writes only when the command
+// that made it was asked to. What each would buy a rewrite is why the rule is
+// there rather than reported: an owner's ruling is text the runner appends to
+// the brief and the review prompt, context repositories are cloned and read
+// beside the work tree, attached inputs and reports are files the run reads, and
+// the marks and the limits choose the job variant, the model and the clock.
+//
+// The fence is called directly rather than through the launcher, and that is
+// deliberate: some of these fields a reader before the fence refuses first for
+// its own reason (retrySpec refuses an A/B arm and a report run), and what this
+// test pins is THIS fence's answer, field by field, so that the mutation check
+// has one case per line of its table.
+func TestResidentRunIsTheItemsRefusesAFieldNoLaunchWrites(t *testing.T) {
+	const runID = "20261117-050000-abcd"
+	const slug = "acme-app"
+	spec := residentFieldSpec()
+	maxUSD := 5.0
+	cases := []struct {
+		name   string
+		field  string // the words the refusal has to carry
+		change func(*task.Spec)
+	}{
+		{"an owner ruling", "an owner ruling", func(ts *task.Spec) { ts.OwnerRuled = "ship it without the review" }},
+		{"context repositories", "context repositories", func(ts *task.Spec) { ts.ContextRepos = []string{"acme/lib"} }},
+		{"the branch of a follow-up", "the pull request of a follow-up", func(ts *task.Spec) { ts.Branch = "feature" }},
+		{"the pull request of a follow-up", "the pull request of a follow-up", func(ts *task.Spec) { ts.PR = 7 }},
+		{"the run a follow-up continues", "the pull request of a follow-up", func(ts *task.Spec) { ts.PreviousRun = runID }},
+		{"review pull requests", "review pull requests", func(ts *task.Spec) { ts.ReviewPRs = []int{7} }},
+		{"a change set", "a change set", func(ts *task.Spec) {
+			ts.ChangeSet = &task.ChangeSet{ID: runID, Members: []task.ChangeSetMember{{Repo: "acme/app", RunID: runID}}}
+		}},
+		{"attached inputs", "attached inputs", func(ts *task.Spec) {
+			ts.Inputs = []task.InputFile{{Name: "spec.md", Bytes: 12, SHA256: strings.Repeat("ab", 32)}}
+		}},
+		{"stored reports", "stored reports", func(ts *task.Spec) {
+			ts.Reports = []task.InputFile{{Name: "report.md", Bytes: 12, SHA256: strings.Repeat("ab", 32)}}
+		}},
+		{"an A/B arm", "an A/B arm", func(ts *task.Spec) { ts.AB = &task.AB{PairID: runID, Arm: task.ABArmChampion} }},
+		{"a mutation list", "a mutation list", func(ts *task.Spec) {
+			ts.Mutate = []task.Mutate{{File: "internal/cli/run.go", Test: "TestRun"}}
+		}},
+		{"declared paths", "declared paths", func(ts *task.Spec) { ts.Paths = []string{"internal/cli"} }},
+		{"a requested rigor mode", "a requested rigor mode", func(ts *task.Spec) { ts.Rigor = "thorough" }},
+		{"a batch label", "a batch label", func(ts *task.Spec) { ts.Batch = "batch-1" }},
+		{"review levels", "review levels", func(ts *task.Spec) { ts.ReviewLevels = &config.ReviewLevels{} }},
+		{"an expected scope", "an expected scope", func(ts *task.Spec) { ts.ExpectedScope = []string{"internal/cli"} }},
+		{"a follow-up link", "a follow-up link", func(ts *task.Spec) {
+			ts.FollowUpOf = &task.FollowUpOf{Run: runID, Keys: []string{"k1"}}
+		}},
+		{"a model grade", "a model grade", func(ts *task.Spec) { ts.ModelGrade = "high" }},
+		{"the review class", "the review class", func(ts *task.Spec) { ts.ReviewClass = true }},
+		{"a compression override", "a compression override", func(ts *task.Spec) { ts.CompressionOff = true }},
+		{"the debt mark", "the debt mark", func(ts *task.Spec) { ts.Debt = true }},
+		{"the security mark", "the security mark", func(ts *task.Spec) { ts.Security = true }},
+		{"a run's spend limit", "a run limit", func(ts *task.Spec) { ts.Overrides.MaxUSD = &maxUSD }},
+		{"a run's wall-clock limit", "a run limit", func(ts *task.Spec) { ts.Overrides.MaxTime = "45m" }},
+	}
+	// The item's own task first: the table below moves one field off a task the
+	// fence has to accept, or every case would pass for the wrong reason.
+	honest := residentStoredTask(spec, "dana@example.com", runID)
+	if err := residentRunIsTheItems(spec, slug, honest); err != nil {
+		t.Fatalf("the fence refused the task the item's own launch writes: %v", err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := residentStoredTask(spec, "dana@example.com", runID)
+			tc.change(ts)
+			err := residentRunIsTheItems(spec, slug, ts)
+			if err == nil {
+				t.Fatalf("the fence started a task carrying %s, which no launch of the item writes", tc.field)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error: this is a record a person has to look at, not a service failure", err)
+			}
+			// The wording of the presence refusal, field and all: a case that
+			// passed on some OTHER rule of the fence (the comparison half, the
+			// repository) would be a line of the table nothing tests.
+			for _, want := range []string{"holds a task carrying " + tc.field + ",", runID, "nothing was started"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q, so a person cannot tell which field of the record is the foreign one: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestResidentRunIsTheItemsAcceptsTheFieldsTheLaunchItselfResolves is the other
+// side of the table above, and the reason it is a refusal list and not a
+// whitelist of fields: these are fields an item cannot declare either, and the
+// launch RESOLVES them — the ref and the base branch the repository's
+// configuration names, the workflow that decides the job, the project layer it
+// embeds, the mode the resolved recipe carries, the account a named token
+// mounts, the author a commit is recorded under, and the wall clock the
+// workflow's timeouts name. An honest stored task carries them and no item does,
+// so refusing them would refuse every honest re-issue; what a rewritten one
+// could do with them is the pull request's open design question, not a rule
+// here.
+func TestResidentRunIsTheItemsAcceptsTheFieldsTheLaunchItselfResolves(t *testing.T) {
+	const runID = "20261117-050000-abcd"
+	spec := residentFieldSpec()
+	ts := residentStoredTask(spec, "dana@example.com", runID)
+	ts.Ref, ts.BaseBranch, ts.Workflow = "main", "main", "web"
+	ts.Mode = recipe.ModeArtifact
+	ts.OAuthToken = "acme-review"
+	ts.Author = &task.Person{Name: "Dana", Email: "dana@example.com"}
+	ts.ProjectLayer = &task.ProjectLayer{SHA256: strings.Repeat("ab", 32), YAML: "agent:\n  recipe: standard\n"}
+	ts.Overrides.TotalTimeout = "45m"
+	if err := residentRunIsTheItems(spec, "acme-app", ts); err != nil {
+		t.Fatalf("the fence refused a task carrying the fields the launch itself resolves, which is what every honest re-issue carries: %v", err)
+	}
+}
+
+// TestResidentTaskFieldsAreAllClassified keeps the fence's claim true as the
+// task format grows. Every field of task.Spec is one of three things to a
+// resident re-issue: COMPARED with the item's declaration (the six pairs above
+// plus the repository), resolved by the launch ITSELF (so the item cannot hold
+// the task to it and the fence leaves it alone), or a field no launch of an item
+// writes, which the fence refuses by its presence. A field added to the format
+// and classified as nothing would otherwise slip through the fence silently —
+// the failure mode the review of this change found — and this test makes that
+// impossible: it fails until the new field is named in one of the three lists,
+// which is where the fence, its comment and this test are kept in step.
+func TestResidentTaskFieldsAreAllClassified(t *testing.T) {
+	compared := []string{"repo", "task", "title", "plan_task", "tier", "external", "recipe"}
+	resolved := []string{"version", "run_id", "ref", "base_branch", "workflow", "requested_by",
+		"mode", "oauth_token", "overrides", "project_layer", "author", "digest_runs"}
+	refused := []string{"branch", "pr", "previous_run", "owner_ruled", "context_repos", "review_prs",
+		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "batch", "review_levels",
+		"expected_scope", "follow_up_of", "model_grade", "review_class", "compression_off", "debt", "security"}
+	// overrides is classified as the launch's own because the launch writes one
+	// of its fields (total_timeout, from the workflow's timeouts) and the fence
+	// refuses the rest by value rather than by presence; the case above pins the
+	// refusal of a limit and the accept test pins the total timeout. digest_runs
+	// is the launch's own for the same reason (buildAttemptSpec writes it from
+	// the plan), and a task that set it would be read as a report run and
+	// refused by retrySpec before the fence ever runs.
+	classified := map[string]string{}
+	for _, f := range compared {
+		classified[f] = "compared with the item"
+	}
+	for _, f := range resolved {
+		classified[f] = "resolved by the launch"
+	}
+	for _, f := range refused {
+		classified[f] = "refused by its presence"
+	}
+	typ := reflect.TypeOf(task.Spec{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		name := strings.Split(f.Tag.Get("json"), ",")[0]
+		if name == "" || name == "-" {
+			t.Errorf("task.Spec field %s has no json name, and the fence reads the format by its names", f.Name)
+			continue
+		}
+		if _, ok := classified[name]; !ok {
+			t.Errorf("task.Spec field %s (json %q) is not classified by the resident fence: name it in residentRunIsTheItems as compared, as the launch's own, or as a field no launch of an item writes — the fence's comment says which, and a field nobody classified is one a rewritten task could carry past it", f.Name, name)
+		}
+	}
+	for name, how := range classified {
+		found := false
+		for i := 0; i < typ.NumField(); i++ {
+			if strings.Split(typ.Field(i).Tag.Get("json"), ",")[0] == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the fence classifies %q as %s, and task.Spec has no such field", name, how)
+		}
+	}
+}
+
+// TestResidentLauncherStartsNothingForAFieldTheItemCannotDeclare is the same
+// rule end to end, through the launcher and the command's own retry reader,
+// which is where the review's probe stood: a stored task with an owner's ruling
+// or a context repository in it — text the runner appends to the brief and the
+// review prompt, repositories cloned beside the work tree, neither of which the
+// item's declaration can express — was started as-is under the approved run id,
+// without the gate block that admits an allow_repos entry. It is refused now,
+// and refusals leave nothing of a launch behind.
+func TestResidentLauncherStartsNothingForAFieldTheItemCannotDeclare(t *testing.T) {
+	ctx := context.Background()
+	const runID = "20261117-050000-abcd"
+	spec := residentFieldSpec()
+	cases := []struct {
+		name   string
+		field  string
+		change func(*task.Spec)
+	}{
+		{"an owner ruling", "an owner ruling", func(ts *task.Spec) {
+			// task.Validate — which the launcher's read of the stored task
+			// applies — holds a ruling to the follow-up shape, because a ruling
+			// answers findings a run on a pull request left. So the task a
+			// rewrite could store carries branch, pr and previous_run with it,
+			// and the fence refuses those under their own line of the table too.
+			ts.OwnerRuled = "skip the review this time"
+			ts.Branch, ts.PR, ts.PreviousRun = "fugaro/"+runID, 7, runID
+		}},
+		{"context repositories", "context repositories", func(ts *task.Spec) { ts.ContextRepos = []string{"acme/lib"} }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLauncherFixture(t)
+			ts := residentStoredTask(spec, "dana@example.com", runID)
+			tc.change(ts)
+			seedTaskRun(t, f.cloudFixture, runID, ts)
+			l := f.resident(t)
+
+			_, err := l.Launch(ctx, spec, runID)
+			if err == nil {
+				t.Fatalf("a resident launch started a task carrying %s, which no launch of the item writes", tc.field)
+			}
+			if ExitCode(err) != ExitUserError {
+				t.Fatalf("err = %v, want a user error: this is a record a person has to look at, not a service failure", err)
+			}
+			for _, want := range []string{"holds a task carrying " + tc.field + ",", runID, "nothing was started"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal does not say %q, so a person cannot tell which field of the record is the foreign one: %v", want, err)
+				}
+			}
+			if n := len(f.run.Executions()); n != 0 {
+				t.Errorf("the run was started %d time(s) for a task carrying %s", n, tc.field)
+			}
+			if raw := readToken(t, f.cloudFixture, runID); raw != "" {
+				t.Error("a budget token was minted for a task carrying a field the item cannot declare")
+			}
+			if _, err := f.runStore(t, runID).ReadLaunch(ctx); err == nil {
+				t.Error("a launch was recorded for a task carrying a field the item cannot declare")
+			}
+		})
+	}
+}
+
 // TestResidentLauncherAcceptsATicketTheLaunchCouldNotRecord: the external id is
 // the one field of the declaration a launch may legitimately leave OUT.
 // externalSkew drops it rather than refusing the attempt when the job image

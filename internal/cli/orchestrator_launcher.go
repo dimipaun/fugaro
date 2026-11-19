@@ -163,11 +163,23 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 	// config in a container that has neither a person nor a checkout, and a
 	// resident launch is not nobody's: the task says who asked for the run
 	// (requested_by, written by the launch that stored it), the launch record
-	// this launch writes carries that same name, and the token's RB claim —
-	// its own self-asserted attribution, which nothing in the rules reads —
-	// says it too rather than a service account's. So the config this launch's
-	// env carries is given that name here, on a config the opener made for this
+	// this launch writes carries that same name, and the token's RB claim says
+	// it too rather than a service account's. So the config this launch's env
+	// carries is given that name here, on a config the opener made for this
 	// launch alone.
+	//
+	// The claim is not decoration and not only attribution: every budget entry a
+	// run writes is tied to it by the database's own rules, whose RBOK requires
+	// the entry's requestedBy to equal the token's rb claim, so the name decides
+	// whose spend the registry records and what the cost views show. It grants
+	// nothing — the token's reach is its own grant, and the name is compared
+	// rather than consulted — and it is not a name this launcher can check: the
+	// task it reads is the bucket's, written by the run's own account as much as
+	// by the launch, so a rewritten task chooses the attribution. What the item
+	// could bind it to does not exist (a work item carries no requester, and the
+	// approver on the node is not handed to a launcher), which is why this is
+	// named in the pull request's open design question beside the evidence a
+	// re-issue would have to wait for, and not fixed with a gate here.
 	if ts.RequestedBy == "" {
 		return "", userErr("run %s/%s names nobody who asked for it, and a resident launch gives the run the budget identity of the person its own record carries: the task's requested_by is the name the run's own launch record is written with, and this service will not mint a run's identity under a name it invented. Launch it from a machine of your own (fugaro run --retry %s/%s), or patch the item's attempt so that it names a run whose task does", slug, runID, slug, runID)
 	}
@@ -200,7 +212,27 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 // stores is therefore compared, and a difference refuses the re-issue: what a
 // resident pass starts is the attempt the item was approved as, or nothing. A
 // field the item does not carry is compared all the same, "" against "", so a
-// task that added one is refused too.
+// task that added one of those is refused too.
+//
+// AND THE FIELDS NO LAUNCH OF THE ITEM CAN WRITE ARE REFUSED BY THEIR PRESENCE.
+// The comparison above covers what the two records both carry; the rest of a
+// stored task is the task's alone, and the launch this attempt comes from — the
+// daemon's, which builds it from the item's fields and the installation's
+// configuration and passes no flag at all (orchestratorLauncher, buildAttemptSpec)
+// — writes none of them. Every one of them is a field a launch writes only when
+// it was asked to with a flag or by the command that made it (--owner-ruled,
+// --context, --pr, --change-set, --attach, --review-levels, --security, --path,
+// --mode, --max-*, and the follow-up and review marks beside them), so a stored
+// task carrying one is a task that launch did not write whatever the compared
+// fields say, and the fence refuses it rather than start it unexamined. What such
+// a field would buy is what makes the rule worth having: an owner's ruling is
+// text the runner appends to the brief and to the review prompt, context
+// repositories are cloned and read beside the work tree (the allow_repos read the
+// skipped gate block is where the repository's admission of them is asked),
+// attached inputs and reports are files the run reads, and the marks and the
+// limits decide the job variant, the model and the clock the launch had chosen.
+// It is a refusal and not a comparison because the item carries no counterpart to
+// compare with, and a field no item can express is a field no approval covers.
 //
 // WHAT THIS CANNOT SEE, AND WHY. The item's declaration carries the recipe by
 // NAME and no text: the body is resolved at the launch, so a task carrying a
@@ -210,6 +242,23 @@ func (l *residentLauncher) Launch(ctx context.Context, spec orchestrator.Spec, r
 // the run's own ref. The item's id is compared by nothing at all: task.json
 // carries no item id, and the join between the two records is the run id the
 // item itself holds.
+//
+// The other fields this fence cannot reach are the ones the launch itself
+// RESOLVES from the installation rather than reading off the item: the ref and
+// the base branch the repository's configuration names, the workflow that
+// decides the job, the project layer the launch embeds, the mode the resolved
+// recipe carries, the account a named token mounts, the author the launch
+// records, and an override of the run's wall clock. An honest task carries them
+// and no item does, so they are neither compared nor refused — refusing them
+// would refuse every honest re-issue — and what a rewritten one could do with
+// them (a run on another ref, on the job of another workflow, under a layer or a
+// mode of another's choosing) is named in the pull request's open design
+// question beside the evidence a re-issue would have to wait for. Identity is
+// the last of them and the sharpest: requested_by is the name the task names,
+// and this launcher mints the run's budget token under it and writes the launch
+// record with it, so a rewritten task chooses the attribution the rules then
+// tie every budget entry to (RBOK: an entry's requestedBy must equal the token's
+// rb claim) without gaining an access the token's grant does not already carry.
 func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) error {
 	want, err := task.CanonicalRepo(spec.Repo)
 	if err != nil {
@@ -272,6 +321,42 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 		// reading the line needs the FIELD that moved, not two long briefs.
 		if f.stored != f.item {
 			return userErr("the item of run %s/%s and the task the runs bucket holds for it disagree about the %s: a resident pass starts the attempt the item was approved as, and that task is the run's own to write, so a task that no longer says what the item says is one no launch gated — nothing was started", slug, ts.RunID, f.what)
+		}
+	}
+	// And the fields no launch of an item writes, refused by their presence
+	// (the paragraph above the function is why): the item cannot express one, so
+	// there is nothing to hold it to, and the only launch whose task this pass
+	// may start writes none of them.
+	for _, f := range []struct {
+		set  bool
+		what string
+	}{
+		{ts.OwnerRuled != "", "an owner ruling"},
+		{len(ts.ContextRepos) > 0, "context repositories"},
+		{ts.Branch != "" || ts.PR != 0 || ts.PreviousRun != "", "the pull request of a follow-up"},
+		{len(ts.ReviewPRs) > 0, "review pull requests"},
+		{ts.ChangeSet != nil, "a change set"},
+		{len(ts.Inputs) > 0, "attached inputs"},
+		{len(ts.Reports) > 0, "stored reports"},
+		{ts.AB != nil, "an A/B arm"},
+		{ts.Mutate != nil, "a mutation list"},
+		{ts.Paths != nil, "declared paths"},
+		{ts.Rigor != "", "a requested rigor mode"},
+		{ts.Batch != "", "a batch label"},
+		{ts.ReviewLevels != nil, "review levels"},
+		{ts.ExpectedScope != nil, "an expected scope"},
+		{ts.FollowUpOf != nil, "a follow-up link"},
+		{ts.ModelGrade != "", "a model grade"},
+		{ts.ReviewClass, "the review class"},
+		{ts.CompressionOff, "a compression override"},
+		{ts.Debt, "the debt mark"},
+		{ts.Security, "the security mark"},
+		{ts.Overrides.ReviewRounds != nil || ts.Overrides.MaxBudgetUSD != nil || ts.Overrides.Model != "" ||
+			ts.Overrides.MaxUSD != nil || ts.Overrides.MaxTokens != nil || ts.Overrides.MaxTime != "" ||
+			ts.Overrides.MaxReviewRounds != nil, "a run limit"},
+	} {
+		if f.set {
+			return userErr("run %s/%s holds a task carrying %s, and no launch of the item writes that: a resident pass starts the attempt the item was approved as, and the task the runs bucket holds for it is the run's own to write, so a task carrying a field the item cannot declare is one no launch of the item made — nothing was started", slug, ts.RunID, f.what)
 		}
 	}
 	return nil
