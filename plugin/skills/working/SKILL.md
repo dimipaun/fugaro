@@ -110,7 +110,7 @@ Do not wait for the daily look. Whoever launched a run watches the COST column o
 
 ## Review your runs
 
-`fugaro runs digest --period day, week, month or year` writes one closed period's report of this repository into the checkout's `docs/fugaro-reviews/`, to commit through an ordinary pull request: committing one is a separate opt-in step, never the command. It is in every build. The stored reports are committed by their own run, `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"`, from a checkout of the designated repository; the launcher reads the store with your own account and hands it every report your mirror folder lacks (`reference/periodic-reviews.md`, section 8).
+`fugaro runs digest --period day, week, month or year` writes one closed period's report of this repository into the checkout's `docs/fugaro-reviews/`, to commit through an ordinary pull request: committing one is a separate opt-in step, never the command. It is in every build. The stored reports are committed by their own run, `fugaro run --recipe commit-reports --commit-reports "commit the stored reports"`, from a checkout of the designated repository; the launcher reads the store with your own account and hands the run every report it holds, to commit into your mirror folder (`reference/periodic-reviews.md`, section 8).
 
 `fugaro runs digest --due` says whether the cadence has lapsed, offline: the closed periods with no report, and the age of the newest it found. Without `--date` it is the most recent closed period; one holding today is refused. Fugaro schedules nothing (section 2 of that file).
 

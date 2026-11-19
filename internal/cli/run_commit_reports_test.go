@@ -120,43 +120,45 @@ func TestRunCommitReportsUploadsTheStoreIntoTheRun(t *testing.T) {
 	}
 }
 
-// TestRunCommitReportsHandsInOnlyWhatTheFolderLacks: the comparison is a
-// transfer bound and never a decision. A report the checkout's folder already
-// holds byte for byte is not uploaded at all (the run needs no copy of what
-// is already committed), and one the folder does not hold — or holds with
-// different bytes — is.
+// TestRunCommitReportsHandsInEveryStoredReport: the launcher hands in every
+// report the store holds, and the checkout's folder withholds nothing.
 //
-// Mutation (hand in every listed object): the identical report is uploaded
-// and the second half of this test fails on the object. Mutation (compare the
-// name alone, without the bytes): a report the store has replaced is left out
-// and the first half fails.
-func TestRunCommitReportsHandsInOnlyWhatTheFolderLacks(t *testing.T) {
+// The folder this fixture writes is not committed anywhere — appRepoCheckout
+// writes it into a fresh repository with no commit at all — and the run
+// commits onto a fresh clone of the ref it was launched on, so the folder's
+// copy is exactly the copy the run will NOT see. A launcher that compared the
+// store against it would withhold the identical report, and nothing would
+// ever name it: the clone holds no row for it either, so no step downloads it
+// and no step logs it as left out. The comparison belongs to the commit step,
+// which makes it against the clone it really has
+// (internal/runner/reports_commit.go).
+//
+// Mutation (skip a report whose bytes match the checkout folder's, which is
+// the comparison the plan asked the launcher for): the identical report is
+// not uploaded and the task does not name it, and this test fails on both.
+func TestRunCommitReportsHandsInEveryStoredReport(t *testing.T) {
 	day, week := commitDayName(), commitWeekName()
-	month := appSlug + "/2026/2026-10.md"
-	f := commitReportsFixture(t, map[string]string{
-		day:   "the same bytes in both places",
-		month: "the checkout's stale month",
-	})
+	f := commitReportsFixture(t, map[string]string{day: "the same bytes in both places"})
 	writeBucketFile(t, f, digest.ReportsPrefix+"/"+day, "the same bytes in both places")
 	writeBucketFile(t, f, digest.ReportsPrefix+"/"+week, "the aggregate the folder does not hold")
-	writeBucketFile(t, f, digest.ReportsPrefix+"/"+month, "the store's newer month")
 
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "commit-reports",
-		"--run-id", commitRunID, "--commit-reports", "Commit the stored reports"); err != nil {
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--recipe", "commit-reports",
+		"--run-id", commitRunID, "--commit-reports", "Commit the stored reports")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if hasObject(t, f, commitReportKey(commitRunID, day)) {
-		t.Fatal("a report the folder already holds byte for byte was handed in")
+	if !strings.Contains(errOut, "handing 2 stored report(s)") {
+		t.Fatalf("the launch said %q, want both stored reports handed in", errOut)
 	}
-	for name, body := range map[string]string{week: "the aggregate the folder does not hold", month: "the store's newer month"} {
+	for name, body := range map[string]string{day: "the same bytes in both places", week: "the aggregate the folder does not hold"} {
 		if got := string(object(t, f, commitReportKey(commitRunID, name))); got != body {
 			t.Fatalf("%s = %q, want %q", name, got, body)
 		}
 	}
 	spec := readSpec(t, f, commitRunID)
-	want := inNameOrder(inputOf(month, "the store's newer month"), inputOf(week, "the aggregate the folder does not hold"))
+	want := inNameOrder(inputOf(day, "the same bytes in both places"), inputOf(week, "the aggregate the folder does not hold"))
 	if len(spec.Reports) != len(want) {
-		t.Fatalf("the task names %+v, want the two reports the folder lacks", spec.Reports)
+		t.Fatalf("the task names %+v, want every stored report", spec.Reports)
 	}
 	for i := range want {
 		if spec.Reports[i] != want[i] {

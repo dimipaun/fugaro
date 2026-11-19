@@ -12,13 +12,25 @@ package cli
 // prefix, which the run's account already reads, and the task names those
 // objects (task.Spec.Reports, R9's member and this flag's write side).
 //
-// Nothing here decides what a report is: every object under reports/ whose
-// name is a mirror name (digest.ParseMirrorPath) is handed in, and the
-// comparison against the checkout's own folder is a transfer bound — a report
-// the folder already holds byte for byte needs no copy — never a filter that
-// could withhold one. The commit step is the judge of what belongs on the
-// branch, and it refuses a name that is not a report of the mirror's shape
-// before writing a byte of it.
+// Nothing here decides what a report is, and nothing here decides which ones
+// go: every object under reports/ whose name is a mirror name
+// (digest.ParseMirrorPath) is handed in whole, and the commit step is the
+// judge of what belongs on the branch. The launcher keeps no comparison
+// against the checkout's own folder, deliberately. The run commits onto a
+// FRESH CLONE of the ref it was launched on
+// (internal/runner/reports_commit.go), so the clone is the only copy whose
+// bytes mean anything, and the commit step already compares against it —
+// downloads a report only where the clone's bytes differ, and names every
+// report of the folder the task did not hand in. A launcher reading the local
+// folder would withhold a report whose copy is in the working tree but not in
+// the ref the run clones (an uncommitted edit, a commit never pushed, the
+// previous commit run's branch checked out for review): the run would never
+// see it and never commit it, with nothing logged, because the clone holds no
+// row for it either. Reading a committed tree at the ref instead does not
+// close that gap — the tree a launcher can read locally is a remote-tracking
+// ref a later push has already dated, and fetching inside the person's
+// checkout is not this command's business — so the bound the plan asks for is
+// the commit step's, which is exact, and the launcher's read is the store.
 
 import (
 	"context"
@@ -27,8 +39,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -123,8 +133,10 @@ func commitReportsRefusesStoredRun(ctx context.Context, s *runstore.Store, runID
 // commitReportsUpload is the last thing a --commit-reports launch does before
 // createTask, and the only write it makes that the task then names: it lists
 // the project's stored reports with the launcher's own credential, reads
-// every one the checkout's mirror folder does not already hold byte for byte,
-// uploads it under the run's own prefix and fills in spec.Reports.
+// every one of them, uploads it under the run's own prefix and fills in
+// spec.Reports. No report the store holds is left out, whatever the
+// checkout's own folder says (see the file header): a report the run's clone
+// already holds is the commit step's to skip.
 //
 // It is called after every gate that can refuse the launch, so a refused
 // launch leaves no report object under a run id that never gets a task. The
@@ -133,19 +145,18 @@ func commitReportsRefusesStoredRun(ctx context.Context, s *runstore.Store, runID
 // lost (the freshness check above saw no task) and not a transfer to complete.
 //
 // The bytes that go up are the STORE's, read here, and never the checkout's
-// copy of the same report: the runner compares what it is handed against the
-// clone it makes, so the store is what reaches the branch, and a folder that
-// holds a stale copy of a report is a reason to hand the store's bytes in and
-// not a reason to commit the stale ones. What comes back from a read is what
-// this function names in the task, hashed in the same pass that holds the
-// bytes it wrote, so a task can never name a size or a hash that is not the
-// object's.
+// copy of the same report — the run compares what it is handed against the
+// clone it makes, so the store is what reaches the branch, and a folder
+// holding a stale copy of a report is a reason to hand the store's bytes in
+// and not a reason to commit the stale ones. What comes back from a read is
+// what this function names in the task, hashed in the same pass that holds
+// the bytes it wrote, so a task can never name a size or a hash that is not
+// the object's.
 func commitReportsUpload(ctx context.Context, env *cloudEnv, spec *task.Spec, prefix string, warn io.Writer) error {
 	names, err := storedReportNames(ctx, env)
 	if err != nil {
 		return err
 	}
-	have := mirrorFolderDigests(ctx, env, spec, warn)
 	url := "gs://fugaro-runs-" + env.lc.GCPProject
 	leaf := prefix + digest.ReportsPrefix + "/"
 	var reports []task.InputFile
@@ -162,9 +173,6 @@ func commitReportsUpload(ctx context.Context, env *cloudEnv, spec *task.Spec, pr
 		}
 		sum := sha256.Sum256(body)
 		hexsum := hex.EncodeToString(sum[:])
-		if have[name] == hexsum {
-			continue
-		}
 		if _, err := env.bucket.Create(ctx, leaf+name, body, "text/markdown"); err != nil {
 			if errors.Is(err, blobx.ErrExists) {
 				return userErr("report %s is already in run %s; --commit-reports uploads into a run's own reports/, so it only ever hands reports to a new run — use a new run ID", name, spec.RunID)
@@ -218,49 +226,6 @@ func storedReportNames(ctx context.Context, env *cloudEnv) ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
-}
-
-// mirrorFolderDigests is the checkout's own mirror of the project's reports,
-// keyed by the name each report carries under it, holding the sha256 of every
-// report the launcher could read there. It is the transfer bound — a report
-// whose bytes are already committed needs no copy in the run's prefix — and
-// never a decision: a folder the launcher cannot read here (no checkout of
-// the repository, a designation this launcher resolves to no folder, a
-// symbolic link under the folder, a file it cannot open) answers no digests
-// and hands every stored report in.
-//
-// That direction is the only safe one. A report withheld on the strength of a
-// comparison made against something the launcher could not read would be a
-// report the run never sees and never commits, and the folder is the
-// repository's to shape: the commit step reads it again, on the clone it
-// makes, and refuses a link rather than following it (digest.MirrorRows).
-func mirrorFolderDigests(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) map[string]string {
-	root := checkoutRoot(ctx, spec.Repo)
-	if root == "" {
-		return nil
-	}
-	dir := nodePolicy(ctx, &env.policy, env.lc).ReportsCommitDir()
-	if dir == "" {
-		return nil
-	}
-	rows, err := digest.MirrorRows(filepath.Join(root, filepath.FromSlash(dir)))
-	if err != nil {
-		fmt.Fprintf(warn, "warning: reading %s here (%s): every stored report is handed in, and the commit step judges the folder itself\n", dir, oneLine(err.Error()))
-		return nil
-	}
-	have := make(map[string]string, len(rows))
-	for _, row := range rows {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(dir), filepath.FromSlash(row.Rel)))
-		if err != nil {
-			// A report this launcher cannot read here is handed in: the
-			// comparison is a transfer bound, and a bound it cannot compute
-			// is the widest one.
-			continue
-		}
-		sum := sha256.Sum256(data)
-		have[row.Rel] = hex.EncodeToString(sum[:])
-	}
-	return have
 }
 
 // commitReportNames is the reports a launch handed in, for the one line the
