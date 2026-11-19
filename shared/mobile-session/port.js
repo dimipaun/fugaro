@@ -203,7 +203,12 @@ function checkRole(role) {
 
 function checkPolicy(policy) {
   if (!isPlainObject(policy)) refuse(PORT_CODES.BAD_TYPE, 'policy');
-  for (const field of Object.keys(policy)) {
+  // The same check the top level gets, for the same reason: a member the
+  // contract does not name is refused whether it is enumerable or not, and a
+  // symbol-keyed one -- which has no name to report -- is refused as the policy
+  // itself rather than waved through.
+  if (Object.getOwnPropertySymbols(policy).length > 0) refuse(PORT_CODES.UNKNOWN_POLICY_FIELD, 'policy');
+  for (const field of Object.getOwnPropertyNames(policy)) {
     if (!SESSION_POLICY_FIELDS.includes(field)) refuse(PORT_CODES.UNKNOWN_POLICY_FIELD, `policy.${field}`);
   }
   for (const field of SESSION_POLICY_FIELDS) {

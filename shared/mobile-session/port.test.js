@@ -169,6 +169,29 @@ test('a symbol-keyed member is refused too', () => {
   assert.deepEqual(refused, { code: PORT_CODES.UNKNOWN_MEMBER, member: '$' });
 });
 
+test('a member the port does not name is refused even when it is not enumerable', () => {
+  // `Object.keys` sees enumerable own string keys only, so a member hidden from
+  // it would pass a check built on it while still being a member the session
+  // carries and a surface can read. Both objects the port closes -- the session
+  // and the policy -- are checked on this.
+  const session = conforming();
+  Object.defineProperty(session, 'refresh_token', { value: 'a-device-bound-refresh-token' });
+  assert.deepEqual(refusalOf(() => session), { code: PORT_CODES.UNKNOWN_MEMBER, member: 'refresh_token' });
+
+  const policy = conforming();
+  Object.defineProperty(policy.policy, 'refresh_token', { value: 'a-device-bound-refresh-token' });
+  assert.deepEqual(refusalOf(() => policy), {
+    code: PORT_CODES.UNKNOWN_POLICY_FIELD,
+    member: 'policy.refresh_token',
+  });
+});
+
+test('a symbol-keyed policy member is refused too', () => {
+  const session = conforming();
+  session.policy[Symbol('refresh_token')] = 'a-device-bound-refresh-token';
+  assert.deepEqual(refusalOf(() => session), { code: PORT_CODES.UNKNOWN_POLICY_FIELD, member: 'policy' });
+});
+
 test('each member the port names is required', () => {
   for (const member of SESSION_MEMBERS) {
     const refused = refusalOf(() => {
