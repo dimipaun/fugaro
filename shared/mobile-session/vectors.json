@@ -1,0 +1,299 @@
+{
+  "format": "fugaro mobile session contract vectors",
+  "about": "The mobile session contract's data half (docs/mobile-identity-pairing implementation plan, task C1). internal/mobilesession/contract.go is the Go half and docs/mobile-identity-pairing/contract.md is the prose half; this file is what both languages read, so the claim names, the routes, the refusal codes, the secure-store item names, the audience derivation and the signed key set's exact bytes cannot drift apart between the Go service and the JavaScript app. The Go test (internal/mobilesession/contract_test.go, TestVectorsRoundTrip) holds the shapes to it and shared/mobile-session/vectors.test.js holds the file to itself. Every case is a fact the owner's answers fixed (D2783, D2785, D2791, D2792, O4, O6, O7, O16, O18) and none carries a credential: the values here are readable placeholders and public keys, and the one signature is a real Ed25519 signature by a throwaway root key whose private half was never written down.",
+  "claims": [
+    "iss",
+    "aud",
+    "sub",
+    "email",
+    "email_verified",
+    "provider",
+    "auth_time",
+    "jti",
+    "iat",
+    "exp",
+    "challenge"
+  ],
+  "codes": [
+    "provider_not_accepted",
+    "auth_too_old",
+    "not_a_member",
+    "nonce_expired",
+    "strict_new_device_needs_qr",
+    "device_revoked",
+    "mobile_disabled"
+  ],
+  "routes": [
+    "/mobile/v1/pair",
+    "/mobile/v1/refresh",
+    "/mobile/v1/restore/challenge",
+    "/mobile/v1/restore",
+    "/mobile/v1/revoke-self"
+  ],
+  "secure_store_items": [
+    "fugaro.identity-session/",
+    "fugaro.device-key/",
+    "fugaro.project-session/",
+    "fugaro.consumer-key/"
+  ],
+  "lifetimes_seconds": {
+    "assertion": 120,
+    "invite": 600,
+    "challenge": 600,
+    "custom_token": 3600,
+    "idle": 2592000
+  },
+  "signature": {
+    "label": "fugaro-mobile-",
+    "separator": ":",
+    "about": "What a device key signs for a refresh and for a sign-out everywhere: label + purpose + separator + value, ASCII. The label is not secrecy, it is separation: the same device key signs mailbox messages, so a signature over a refresh token must not be a signature over anything else that key signs.",
+    "messages": [
+      {
+        "purpose": "refresh",
+        "value": "not-a-credential-test-refresh-token",
+        "message": "fugaro-mobile-refresh:not-a-credential-test-refresh-token"
+      },
+      {
+        "purpose": "revoke-self",
+        "value": "not-a-credential-test-refresh-token",
+        "message": "fugaro-mobile-revoke-self:not-a-credential-test-refresh-token"
+      }
+    ]
+  },
+  "audience": {
+    "about": "The audience an assertion must carry, derived from the endpoint the QR (or the paired-list entry) holds - F39: the QR carries no project id, so the audience has to come from the endpoint, and the project requires the derived string to be its own and the assertion's aud. Scheme and host are lower-cased, the path is kept and a trailing slash is removed, and a userinfo, a query, a fragment, a non-URL and any scheme but http or https are refused.",
+    "cases": [
+      {
+        "endpoint": "https://mobile-example.a.run.app",
+        "audience": "https://mobile-example.a.run.app",
+        "why": "the ordinary endpoint: the audience is the endpoint itself"
+      },
+      {
+        "endpoint": "https://mobile-example.a.run.app/",
+        "audience": "https://mobile-example.a.run.app",
+        "why": "a trailing slash is a second spelling of one endpoint, so it is trimmed rather than carried into the signature"
+      },
+      {
+        "endpoint": "HTTPS://Mobile-Example.a.run.app",
+        "audience": "https://mobile-example.a.run.app",
+        "why": "the scheme and the host are folded: a signature covers bytes, and two spellings of one host would be two audiences"
+      },
+      {
+        "endpoint": "http://127.0.0.1:8080",
+        "audience": "http://127.0.0.1:8080",
+        "why": "http and a port are allowed, which is what a hermetic test runs a service on"
+      },
+      {
+        "endpoint": "https://example.com/mobile/",
+        "audience": "https://example.com/mobile",
+        "why": "a path is part of the endpoint (a service behind a route prefix) and only its trailing slash goes"
+      },
+      {
+        "endpoint": "https://example.com/mobile?next=https://elsewhere.example",
+        "audience": null,
+        "why": "a query is refused: it is a second string a reader would have to interpret, and an audience is compared byte for byte"
+      },
+      {
+        "endpoint": "https://user@example.com",
+        "audience": null,
+        "why": "a userinfo is refused: credentials in the endpoint would end up in an audience"
+      },
+      {
+        "endpoint": "https://example.com/#fragment",
+        "audience": null,
+        "why": "a fragment is refused, for the query's reason"
+      },
+      {
+        "endpoint": "ftp://example.com",
+        "audience": null,
+        "why": "only http and https: a scheme the contract does not name is refused rather than lower-cased into one"
+      },
+      {
+        "endpoint": "not-a-url",
+        "audience": null,
+        "why": "a string with no scheme is refused, so a QR field that is not an endpoint never becomes an audience"
+      },
+      {
+        "endpoint": "",
+        "audience": null,
+        "why": "an empty endpoint is refused rather than read as this project"
+      }
+    ]
+  },
+  "identity_id": {
+    "about": "The string that names one signed-in identity in a paired-list entry and in a secure-store item: the provider, a colon and the provider's stable id. A part that is empty or carries the separator is refused, because a collision here would show one person's session under another's name.",
+    "cases": [
+      {
+        "provider": "google",
+        "sub": "104729384756102938475",
+        "identity": "google:104729384756102938475",
+        "why": "the ordinary identity"
+      },
+      {
+        "provider": "password",
+        "sub": "not-a-credential-test-uid",
+        "identity": "password:not-a-credential-test-uid",
+        "why": "an email-and-password identity has a uid of its own and is named the same way"
+      },
+      {
+        "provider": "",
+        "sub": "104729384756102938475",
+        "identity": null,
+        "why": "no provider is not an identity"
+      },
+      {
+        "provider": "google",
+        "sub": "",
+        "identity": null,
+        "why": "no stable id is not an identity, and it is exactly what a provider that did not tell us looks like"
+      },
+      {
+        "provider": "go:ogle",
+        "sub": "104729384756102938475",
+        "identity": null,
+        "why": "a provider carrying the separator would join into a string another pair could also produce"
+      },
+      {
+        "provider": "google",
+        "sub": "1047:29384756102938475",
+        "identity": null,
+        "why": "the same, on the id's side"
+      }
+    ]
+  },
+  "wire": {
+    "claims": {
+      "iss": "https://identity.example.com",
+      "aud": "https://mobile-example.a.run.app",
+      "sub": "104729384756102938475",
+      "email": "dimi@example.com",
+      "email_verified": true,
+      "provider": "google",
+      "auth_time": 1794900000,
+      "jti": "not-a-credential-test-jti",
+      "iat": 1794960000,
+      "exp": 1794960120,
+      "challenge": "not-a-credential-test-nonce"
+    },
+    "assertion_request": {
+      "aud": "https://mobile-example.a.run.app",
+      "challenge": "not-a-credential-test-nonce"
+    },
+    "assertion_response": {
+      "assertion": "not-a-credential-test-assertion"
+    },
+    "pair_request": {
+      "assertion": "not-a-credential-test-assertion",
+      "endpoint": "https://mobile-example.a.run.app",
+      "nonce": "not-a-credential-test-nonce",
+      "device_public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "prior_device_id_token": "not-a-credential-test-id-token"
+    },
+    "session_response": {
+      "project_id": "fugaro-example",
+      "endpoint": "https://mobile-example.a.run.app",
+      "database_url": "https://example-project-default-rtdb.firebaseio.com",
+      "api_key": "not-a-credential-test-api-key",
+      "role": "operator",
+      "policy": {
+        "costly_modes": ["pro", "critical"],
+        "biometric_on_costly": false,
+        "compact_threshold_percent": 40
+      },
+      "consumer_public_key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+      "refresh_token": "not-a-credential-test-refresh-token",
+      "custom_token": "not-a-credential-test-custom-token",
+      "expires_in": 3600
+    },
+    "refresh_request": {
+      "refresh_token": "not-a-credential-test-refresh-token",
+      "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    "refresh_response": {
+      "refresh_token": "not-a-credential-test-next-refresh-token",
+      "custom_token": "not-a-credential-test-custom-token",
+      "expires_in": 3600,
+      "role": "operator",
+      "policy": {
+        "costly_modes": ["pro", "critical"],
+        "biometric_on_costly": false,
+        "compact_threshold_percent": 40
+      }
+    },
+    "restore_challenge_request": {},
+    "restore_challenge_response": {
+      "challenge": "not-a-credential-test-challenge",
+      "expires_in": 600
+    },
+    "restore_request": {
+      "assertion": "not-a-credential-test-assertion",
+      "challenge": "not-a-credential-test-challenge",
+      "device_public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    "revoke_self_request": {
+      "refresh_token": "not-a-credential-test-refresh-token",
+      "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    "revoke_self_response": {},
+    "invite": {
+      "nonce": "not-a-credential-test-nonce",
+      "email": "dimi@example.com",
+      "role": "operator",
+      "accepted_providers": ["google", "password"],
+      "expires_at": "2026-11-19T09:10:00Z"
+    },
+    "member": {
+      "email": "dimi@example.com",
+      "provider": "google",
+      "sub": "104729384756102938475"
+    },
+    "paired_entry": {
+      "project_id": "fugaro-example",
+      "endpoint": "https://mobile-example.a.run.app",
+      "identity": "google:104729384756102938475",
+      "consumer_key_fingerprint": "not-a-credential-test-fingerprint"
+    },
+    "error": {
+      "code": "provider_not_accepted",
+      "accepted_providers": ["google", "password"],
+      "message": "this project accepts google and password sign-ins"
+    }
+  },
+  "key_set": {
+    "header": {
+      "alg": "EdDSA",
+      "kid": "root-2026-11",
+      "typ": "fugaro-key-set+jws"
+    },
+    "payload": {
+      "format": "fugaro-identity-key-set",
+      "seq": 7,
+      "iat": 1794960000,
+      "exp": 1810512000,
+      "jwks": {
+        "keys": [
+          {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "j22h5_4vmc0wyywl-Y5eNzRPt6zWzShHzianUOOz-JE",
+            "kid": "signing-2026-11",
+            "alg": "EdDSA",
+            "use": "sig"
+          }
+        ]
+      }
+    },
+    "signing_input": "eyJhbGciOiJFZERTQSIsImtpZCI6InJvb3QtMjAyNi0xMSIsInR5cCI6ImZ1Z2Fyby1rZXktc2V0K2p3cyJ9.eyJmb3JtYXQiOiJmdWdhcm8taWRlbnRpdHkta2V5LXNldCIsInNlcSI6NywiaWF0IjoxNzk0OTYwMDAwLCJleHAiOjE4MTA1MTIwMDAsImp3a3MiOnsia2V5cyI6W3sia3R5IjoiT0tQIiwiY3J2IjoiRWQyNTUxOSIsIngiOiJqMjJoNV80dm1jMHd5eXdsLVk1ZU56UlB0NnpXelNoSHppYW5VT096LUpFIiwia2lkIjoic2lnbmluZy0yMDI2LTExIiwiYWxnIjoiRWREU0EiLCJ1c2UiOiJzaWcifV19fQ",
+    "signature": "6VUnbvxD3huKp2IY0j_620QSHwMFEpx1_i7_7MqLptxD8L0CclH8u68bPOlOpSsBDEWYPSpqJtWYeG7YokCuCw",
+    "compact": "eyJhbGciOiJFZERTQSIsImtpZCI6InJvb3QtMjAyNi0xMSIsInR5cCI6ImZ1Z2Fyby1rZXktc2V0K2p3cyJ9.eyJmb3JtYXQiOiJmdWdhcm8taWRlbnRpdHkta2V5LXNldCIsInNlcSI6NywiaWF0IjoxNzk0OTYwMDAwLCJleHAiOjE4MTA1MTIwMDAsImp3a3MiOnsia2V5cyI6W3sia3R5IjoiT0tQIiwiY3J2IjoiRWQyNTUxOSIsIngiOiJqMjJoNV80dm1jMHd5eXdsLVk1ZU56UlB0NnpXelNoSHppYW5VT096LUpFIiwia2lkIjoic2lnbmluZy0yMDI2LTExIiwiYWxnIjoiRWREU0EiLCJ1c2UiOiJzaWcifV19fQ.6VUnbvxD3huKp2IY0j_620QSHwMFEpx1_i7_7MqLptxD8L0CclH8u68bPOlOpSsBDEWYPSpqJtWYeG7YokCuCw",
+    "root_public_key": {
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "x": "fA8oJ7D5vlEaJAXaADnQrO7H_1xsv59Q7LQhOERFswA",
+      "kid": "root-2026-11",
+      "alg": "EdDSA",
+      "use": "sig"
+    },
+    "about": "One signed key set, as O7 fixes it: a JWS whose signing input is the base64url of the header and of the payload exactly as the Go structs serialise them (field order as declared, no whitespace), signed by the root key. A fetched set is accepted only inside one of these, so someone who can change what the keys URL serves cannot publish keys of their own. The signature here is real; the root private key was drawn for this vector alone and discarded."
+  }
+}
