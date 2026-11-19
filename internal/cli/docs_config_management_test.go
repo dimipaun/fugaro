@@ -284,8 +284,14 @@ const (
 // block's four own rows stay as rows of the read and the write refuses their own
 // spelling, so the named half does not move and the prefix-reached half carries
 // one more for every leaf.
+//
+// S-KNOB of docs/review-against-task/ moved it once more, by one row and by one:
+// the review-against-task switch `agent.review_against_task` is a repository-
+// scope key of `fugaro.yaml`, read from the base branch, and the `agent.` prefix
+// reaches it — the shape `agent.triage` beside it has — so the allowlist carries
+// one key more and the rows without a generic writer do not move.
 const (
-	cfmRegistryRows   = 505
+	cfmRegistryRows   = 506
 	cfmAllowlistNamed = 118
 )
 

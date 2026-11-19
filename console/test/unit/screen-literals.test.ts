@@ -626,8 +626,12 @@ const ATTRIBUTE_VOCABULARY: Readonly<Record<string, Readonly<Record<string, Entr
     'reading.state': 'a Reading\'s `state`, the closed `ReadingState` union',
     'String(line.segments)': 'a count the model computed',
     'none.state': 'a Reading\'s `state`, the closed `ReadingState` union',
+    'none.because':
+      'the reason of the empty sparkline\'s one bar, and this file\'s own sentence for the fact: `spark()` builds the reading a few lines above the write (`gap(\'no document has been seen for this repository yet\')`), and that branch runs when the history holds no sample at all, so no document is read for the value at all. The bar carries **no text** (D2901), which makes the `title` the only place the sentence can be, and design section 2.9 asks for exactly this shape on Live\'s empty state: a gap bar with the console\'s own sentence rather than an empty box',
     "formatReading(point.height, 'percent')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     'point.height.state': 'a Reading\'s `state`, the closed `ReadingState` union',
+    'point.height.because':
+      'the reason sentence of one bar\'s own height reading, which is a `Reading` this console built: `sparkline()` in this file makes every height `measured(share)` or `gap(...)`, and the `gap` carries either this file\'s own "no sample arrived here" or the sample reading\'s reason, which `burnReading` and `readNumber` (`availability.ts`) wrote as the console\'s sentence about a value the document did not carry -- never a string the document chose. The bar draws **no text at all** (D2901), so this sentence is the only place the fact reaches a person, and it is the same `title` `putReading` writes for a reading with no number to draw',
     "formatReading(point.rate, 'usd')": '`formatReading` of a Reading: the console\'s own number formatting or its unavailable mark',
     'row.tone': '`RunTone`, a closed union the model assigns',
     'flag.name': 'a RunFlag name from live.ts\'s own flag table (`runFlags`)',

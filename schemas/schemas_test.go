@@ -33,6 +33,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/settings"
@@ -897,6 +898,21 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 				{Dimension: runstore.Time, From: 2700, To: 5400},
 			},
 		}},
+		// And the message channel's block (docs/run-messages, F13, F24, F25):
+		// whether the run reads messages, the format and flags its runner
+		// knows, and one entry per message it saw — every state, so a record
+		// with any of them is one the schema accepts.
+		Messages: &runmsg.Record{
+			Accepting: true, Format: runmsg.Format, Flags: []string{runmsg.FlagNow, runmsg.FlagWrapUp},
+			Messages: []runmsg.Delivery{
+				{Seq: 1, SentAt: &at, SentBy: "someone@example.com", Flags: []string{runmsg.FlagNow},
+					State: runmsg.StateDelivered, Stage: "implement", DeliveredAt: &finished},
+				{Seq: 2, SentAt: &at, SentBy: "someone@example.com", State: runmsg.StateUndelivered,
+					Reason: "the run reached finalize before a coder stage"},
+				{Seq: 3, State: runmsg.StateMissing},
+				{Seq: 4, State: runmsg.StateRefused, Reason: "the text is 5000 bytes and the cap is 4096"},
+			},
+		},
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -1116,6 +1132,34 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 			t.Errorf("schema accepts %s: %s", tc.name, repl)
 		}
 	}
+	// The message channel's block (docs/run-messages, F13, F24, F25) is closed
+	// the same way: whether the run accepts messages and the format it reads
+	// are what a sender decides from, the flags and the stage are sets the
+	// runner writes and a reader may render, and the block's own keys are the
+	// ones a sender and `diagnose` read — so a value outside one of those
+	// vocabularies, a number past the cap or a key the block does not carry is
+	// a record no reader should have to render.
+	for _, tc := range []struct{ name, old, new string }{
+		{"a state outside the vocabulary", `"state":"missing"`, `"state":"lost"`},
+		{"a stage rule 1 does not allow", `"stage":"implement"`, `"stage":"review"`},
+		{"a number past the cap", `"seq":3,"state":"missing"`, `"seq":30,"state":"missing"`},
+		{"a flag outside the set", `"flags":["now","wrap_up"]`, `"flags":["now","someday"]`},
+		{"the block with no accepting", `"accepting":true,`, ``},
+		{"the block with no format", `"accepting":true,"format":1,`, `"accepting":true,`},
+		{"a key the entry does not carry", `"reason":"the text is 5000 bytes and the cap is 4096"`, `"urgency":"high"`},
+	} {
+		old, repl := []byte(tc.old), []byte(tc.new)
+		if !bytes.Contains(data, old) {
+			t.Fatalf("fixture lacks the literal this test replaces (%s): %s", tc.name, data)
+		}
+		bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, old, repl, 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(bad); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, repl)
+		}
+	}
 	without := rec
 	without.Backlog = nil
 	without.BacklogClosed = nil
@@ -1123,13 +1167,15 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	without.ReviewScope = nil
 	without.Triage = nil
 	without.Deferred = nil
+	without.Messages = nil
 	bare, err := json.Marshal(without)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(bare, []byte(`"backlog"`)) || bytes.Contains(bare, []byte(`"backlog_closed"`)) ||
 		bytes.Contains(bare, []byte(`"tolerated"`)) || bytes.Contains(bare, []byte(`"review_scope"`)) ||
-		bytes.Contains(bare, []byte(`"triage"`)) || bytes.Contains(bare, []byte(`"deferred"`)) {
+		bytes.Contains(bare, []byte(`"triage"`)) || bytes.Contains(bare, []byte(`"deferred"`)) ||
+		bytes.Contains(bare, []byte(`"messages"`)) {
 		t.Fatalf("a run that filed, closed and tolerated nothing still writes the fields: %s", bare)
 	}
 	inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bare))
@@ -7192,6 +7238,7 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		HeadSHA:       strings.Repeat("a", 40),
 		Base:          "main",
 		Reviewer:      runner.ReviewReviewer{Account: "person-1", Model: "claude-opus-5-5", Effort: "high"},
+		Against:       &runstore.Against{Source: runstore.AgainstSourceRun, Run: "20261102-093000-abcd", SHA256: strings.Repeat("b", 64)},
 		Verdict:       "fix first",
 		Overview:      "the change does what the task asked",
 		Strengths:     []string{"the new reader is strict"},
@@ -7235,11 +7282,13 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	}
 	want := slices.Sorted(maps.Keys(written))
 	// Every key the struct marshals is declared, and all of them are required
-	// but the one a run can honestly have nothing to say about: the reviewer's
+	// but the ones a run can honestly have nothing to write: the reviewer's
 	// effort is absent when the run's level named none (the model's own
 	// default), which is the meaning absence already has wherever a Fugaro
-	// setting spells one.
-	optional := []string{"effort"}
+	// setting spells one, and `against` is absent until a launcher fills it
+	// (R8) -- a review written before the shape had the field is a valid
+	// document and not a malformed one.
+	optional := []string{"effort", "against"}
 	props := nodeOf(t, doc, "properties")
 	if got := slices.Sorted(maps.Keys(props)); !slices.Equal(got, want) {
 		t.Errorf("review.schema.json declares %v, want %v (every key runner.ReviewArtifact marshals)", got, want)
@@ -7337,6 +7386,8 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		{"a head that is not hex", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("g", 40) + `"`},
 		{"a branch name where a commit belongs", `"head_sha":"` + head + `"`, `"head_sha":"refs/heads/main"`},
 		{"a hostile review_run", `"review_run":"20261102-093000-abcd"`, `"review_run":"../../etc/passwd"`},
+		{"an against source nobody defined", `"source":"run"`, `"source":"sideways"`},
+		{"an against digest that is not hex", `"sha256":"` + strings.Repeat("b", 64) + `"`, `"sha256":"` + strings.Repeat("x", 64) + `"`},
 	} {
 		if !bytes.Contains(data, []byte(tc.from)) {
 			t.Fatalf("%s: fixture lacks the literal this test replaces: %s", tc.name, data)

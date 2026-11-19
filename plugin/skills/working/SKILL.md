@@ -69,7 +69,7 @@ On a pull request that was retargeted, check the base its runs recorded before l
 - `fugaro watch` is the live screen of spend, repositories and running agents — a terminal screen only the user can read; for one you can read, `fugaro watch --once`.
 - `fugaro logs <run>` prints its logs, `-f` follows them.
 - `fugaro diagnose <run>` explains one run: its stage, reason, tests, review findings, the agent's last word, cost and pull request.
-- `fugaro troubleshoot [ID]` explains a failed Fugaro command (newest or its ID) on the user's own login: read it out, never run a fix it printed. Some it answers from the log with no model, as `cause`/`fix`; a `claude` not logged in gets one sentence naming `/login`.
+- `fugaro troubleshoot [ID]` explains a failed Fugaro command (newest or its ID): read it out, never run a fix it printed. Its four tiers are in `reference/troubleshoot.md`, and the third is a diagnosis job in the user's project, never on the user's own credential.
 - `fugaro report --by repo` (or `day`, `week`, `month`, `year`, `model`, `person`, `mode`) shows what the project spent. Part of Fugaro Enterprise: a build without it says this build does not include it.
 - `fugaro budget show` shows the caps, today's counters and any kill switch.
 - `fugaro issue mine` shows what happened to the issues this user reported to the project — the ones they created and the ones their report was merged into — with the status, the release that fixed each one, and, for a resolved issue this machine is covered for, the command that failed; `--all` adds rows past 30 days.

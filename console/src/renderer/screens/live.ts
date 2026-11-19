@@ -1635,6 +1635,14 @@ function killBanner(factory: ScreenFactory, kill: KillView): ScreenElement {
  * forbids (section 6.1 rule 3): `5 min` and `1 h` are what say which scale a
  * person is looking at, and they are the console's own words rather than a
  * window the document reported.
+ *
+ * **The line is one fixed-size box, and each bar is one shape inside it.** The
+ * box's height is the stylesheet's, its overflow is clipped, its ticks are
+ * capped, and **no reading is drawn as text in a bar**: a bar carries the share
+ * it is drawn at (`data-height`), the reading's state (`data-state`) and what it
+ * means (`title`), and nothing else. That is what makes a window of a thousand
+ * samples and a window of three the same element at the same size, with the
+ * newest samples the ones a clip keeps.
  */
 function spark(factory: ScreenFactory, line: Sparkline, window: 'burn' | 'hour'): ScreenElement {
   const element = make(factory, 'div', 'live-meter')
@@ -1649,27 +1657,42 @@ function spark(factory: ScreenFactory, line: Sparkline, window: 'burn' | 'hour')
   bars.setAttribute('data-segments', String(line.segments))
   if (line.bars.length === 0) {
     // No sample at all is not an empty chart: it is the console saying it has
-    // not seen a document for this repository yet.
-    // availability.ts maps that to a gap (an em dash), so the mark, the state
-    // and the title all come from one gap reading rather than from three
-    // separate choices.
-    const empty = cell(bars, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
+    // not seen a document for this repository yet, which design section 2.9
+    // asks for as a gap bar with the console's own sentence. The one bar
+    // carries that sentence as its `title` and **no `data-height`**: there is no
+    // share to draw, and a bar at zero would be the measurement
+    // `availability.ts` exists to refuse -- which is the one thing that tells
+    // this bar from a sample drawn at the em dash.
+    const empty = cell(bars, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar')
     const none = gap('no document has been seen for this repository yet')
-    putReading(empty, none, 'percent')
     empty.setAttribute('data-state', none.state)
+    empty.setAttribute('title', none.because)
     return element
   }
   for (const point of line.bars) {
-    const drawn = cell(bars, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar', 'live-num')
-    putReading(drawn, point.height, 'percent')
+    // **A bar is geometry, and no reading is drawn inside it.** The percent that
+    // used to be written here was the whole of the owner's report of 2026-11-18
+    // ("grey text on light blue, looks like a percentage", a row of blue squares
+    // that grew with the feed): an `li` carrying text -- or the `live-num` class
+    // beside it, whose `min-width` is six characters -- has a minimum width of
+    // its own, so a window of samples pushed the line wider than the panel it
+    // sits in, however the stylesheet was written. What a person needs from one
+    // bar is its share, which is `data-height` and is what a rule draws, and its
+    // rate, which is the `title` and costs no width.
+    const drawn = cell(bars, factory, 'li', window === 'burn' ? 'live-burn-bar' : 'live-hour-bar')
     drawn.setAttribute('data-height', formatReading(point.height, 'percent'))
     drawn.setAttribute('data-state', point.height.state)
-    // The rate is what the bar means, so it is the tooltip -- except on a bar
-    // that is a gap, where `putReading` has already written *why* the sample is
-    // missing into exactly this attribute. `n/a` over a reason is the wrong way
-    // round: the mark is drawn either way, and the sentence is the only thing
-    // that tells a person which of the two facts they are looking at.
-    if (point.height.value !== null) drawn.setAttribute('title', formatReading(point.rate, 'usd'))
+    // **`n/a` over a reason is the wrong way round**, so the two cases are one
+    // choice here: a bar whose height is a reading is tooltipped with the rate
+    // that produced it, and a bar that is a gap is tooltipped with *why* the
+    // sample is missing -- the sentence the height reading carries, which is the
+    // only thing that tells a person which of the two facts they are looking at
+    // (design section 6.1 rule 1).
+    if (point.height.value === null) {
+      drawn.setAttribute('title', point.height.because)
+    } else {
+      drawn.setAttribute('title', formatReading(point.rate, 'usd'))
+    }
   }
   return element
 }
