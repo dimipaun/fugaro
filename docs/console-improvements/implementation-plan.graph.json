@@ -976,6 +976,11 @@
       "reason": "the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD1's document"
     },
     {
+      "task": "MW1",
+      "needs": "RB4",
+      "reason": "enables the action only for a project admin"
+    },
+    {
       "task": "MW2",
       "needs": "MW1",
       "reason": "both write `spawn.ts`, `ipc.ts` and the \u00a75.1 table"
