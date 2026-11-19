@@ -655,6 +655,29 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# A coding agent's session cuts no release, on either path: it is checked here
+# with the other preconditions, ahead of the --hotfix branch below as well as of
+# the ordinary steps, rather than left to the rehearsal's own guard at step 4:
+# by then the release branch is pushed, the pull request is opened and
+# squash-merged and the gate has passed, so an agent that followed the
+# new-release skill that far would have merged the version bump to main and
+# stopped with no tag -- the half of the release that cannot be undone. --hotfix
+# is the same release by another door (release/X.Y, then a permanent tag), so a
+# refusal that only covered the ordinary path would leave the skill's own
+# "the same command with --hotfix" a way around it. The reading is the
+# rehearsal's guard's own (scripts/agent-session.sh, internal/agentenv's
+# markers), so a session is refused the same way in both places. --dry-run is
+# not refused: it creates nothing outside its own scratch worktree and removes
+# that however it ends, which is exactly what the skill has an agent run, and
+# --hotfix --dry-run is covered by the same exemption.
+if [ "$dry_run" = 0 ]; then
+  agent_marker=$(agent_session_marker)
+  if [ -n "$agent_marker" ]; then
+    echo "$agent_marker says this is a coding agent's session, and a release is the person's to make: the pull request it opens merges the version bump to main and the tag it cuts is permanent, so an agent's session does neither. Nothing has been pushed, opened or merged. Run it at your own terminal — \"$rerun\" — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier — D1590.)" >&2
+    exit 1
+  fi
+fi
+
 # --hotfix is the other path from here: it owns every step from the branch on,
 # and it never moves the user's checkout (restore_main is not installed for it:
 # the branch is built in a scratch worktree), so it ends on whatever branch it
@@ -671,24 +694,6 @@ current_branch=$(git rev-parse --abbrev-ref HEAD)
 if [ "$current_branch" != main ]; then
   echo "the current branch is '$current_branch', not main; switch to main first" >&2
   exit 1
-fi
-
-# A coding agent's session cuts no release, and it is checked here with the
-# other preconditions rather than left to the rehearsal's own guard at step 4:
-# by then the release branch is pushed, the pull request is opened and
-# squash-merged and the gate has passed, so an agent that followed the
-# new-release skill that far would have merged the version bump to main and
-# stopped with no tag -- the half of the release that cannot be undone. The
-# reading is that guard's own (scripts/agent-session.sh, internal/agentenv's
-# markers), so a session is refused the same way in both places. --dry-run is
-# not refused: it creates nothing outside its own scratch worktree and removes
-# that however it ends, which is exactly what the skill has an agent run.
-if [ "$dry_run" = 0 ]; then
-  agent_marker=$(agent_session_marker)
-  if [ -n "$agent_marker" ]; then
-    echo "$agent_marker says this is a coding agent's session, and a release is the person's to make: the pull request it opens merges the version bump to main and the tag it cuts is permanent, so an agent's session does neither. Nothing has been pushed, opened or merged. Run it at your own terminal — \"$rerun\" — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier — D1590.)" >&2
-    exit 1
-  fi
 fi
 
 # The pre-tag rehearsal needs the sandbox project named, and it is checked here
