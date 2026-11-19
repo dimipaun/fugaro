@@ -1782,6 +1782,177 @@ func TestCoverRefusesAVoiceServiceThatIsNotTheModules(t *testing.T) {
 	})
 }
 
+// TestCoverRefusesAMobileServiceThatIsNotTheModules is the public mobile
+// service's counterpart of the hop's test above (mobile plan task P5): the
+// second public Cloud Run service of the credentials service's own image,
+// served from the same module, and the fixture is the golden plan
+// scripts/gen-golden-plans.sh makes from
+// internal/infra/testdata/installation-credentials.tfvars.json — the ONE
+// installation golden whose credentials service is on, which is the local the
+// mobile service's own switch is — so the "as the module writes it" row is the
+// module's real service and every other row is one attribute of it moved.
+//
+// Every rule mobileServiceChange carries is a row below, and each is the
+// service's own rather than a general one: this address answers anyone on the
+// internet, so a plan that dropped `--mobile` would serve the credentials
+// service's routes there as the account that may mint a device identity (F31);
+// an environment the module did not write is a value an unauthenticated
+// caller's request would run with; a plan naming a sibling account, or this one
+// at a sibling's address, is a pairing of identity and address nothing priced;
+// and an instance kept warm is the installation paying for a public endpoint
+// nobody called.
+//
+// Mutation (run, restore): make mobileServiceChange return "" on entry — every
+// row below is covered and this fails. The module's own plan stays covered
+// either way, which is why TestGoldenPlansAreCovered cannot see it.
+func TestCoverRefusesAMobileServiceThatIsNotTheModules(t *testing.T) {
+	const svcAddr = "module.installation.google_cloud_run_v2_service.mobile[0]"
+	const acctAddr = "module.installation.google_service_account.mobile[0]"
+	// A fresh golden per row: a change's After is the plan's own map, so a
+	// mutation written into the plan one row loaded would carry into the next.
+	load := func() (ResourceChange, ResourceChange) {
+		p := goldenPlan(t, "installation-credentials")
+		return resource(t, p, svcAddr), resource(t, p, acctAddr)
+	}
+	_, first := load()
+	project := str(first.Change.After["project"])
+	credentialsEmail := CredentialsAccountID + "@" + project + ".iam.gserviceaccount.com"
+	container := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	}
+	template := func(r ResourceChange) map[string]any {
+		return r.Change.After["template"].([]any)[0].(map[string]any)
+	}
+	for name, tc := range map[string]struct {
+		change  func() ResourceChange
+		covered bool
+	}{
+		"as the module writes it": {func() ResourceChange { r, _ := load(); return r }, true},
+		// The account: this service runs as the account the module creates for
+		// it, and never as the credentials service's own — that account reads
+		// every model credential in the bundle, and this one may mint a device
+		// identity, so each sitting at the other's URL is a pairing no design
+		// priced.
+		"the credentials service's own account": {func() ResourceChange {
+			r, _ := load()
+			template(r)["service_account"] = credentialsEmail
+			return r
+		}, false},
+		// The args, which are what makes this service the mobile one: without the
+		// flag the container serves `credentials serve` — the credentials
+		// service's routes, from this public address, as the identity that signs
+		// device tokens (F31).
+		"no args at all, as the credentials service's container": {func() ResourceChange {
+			r, _ := load()
+			delete(container(r), "args")
+			return r
+		}, false},
+		"the credentials service's own args": {func() ResourceChange {
+			r, _ := load()
+			container(r)["args"] = []any{"credentials", "serve"}
+			return r
+		}, false},
+		"a command the module does not set": {func() ResourceChange {
+			r, _ := load()
+			container(r)["command"] = []any{"/bin/sh", "-c"}
+			return r
+		}, false},
+		// An environment is the one path a value could reach this process
+		// without a Secret Manager read, and this process answers anyone on the
+		// internet. The name below is one the mobile service reads nowhere:
+		// mobileServiceEnv is the whole of what its container may carry, and
+		// this is the name the credentials service's own job grant uses.
+		"an environment the module does not set": {func() ResourceChange {
+			r, _ := load()
+			c := container(r)
+			c["env"] = append(c["env"].([]any), map[string]any{"name": "FUGARO_SECRET_ID", "value": "fugaro-project-aurora-creds-bundle"})
+			return r
+		}, false},
+		"an environment whose value comes from a source": {func() ResourceChange {
+			r, _ := load()
+			container(r)["env"] = []any{map[string]any{"name": "FUGARO_FIREBASE_PROJECT",
+				"value_source": []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle"}}}}}}
+			return r
+		}, false},
+		// The row the allowlist alone would miss: a name the module sets, with a
+		// value_source under it, is a Secret Manager read where the module writes
+		// a literal — the credentials service's own test carries this row for the
+		// same reason (review finding), and here the value would reach a process
+		// anyone on the internet may call.
+		"an allow-listed name whose value comes from a source": {func() ResourceChange {
+			r, _ := load()
+			c := container(r)
+			env := c["env"].([]any)
+			env[0].(map[string]any)["value_source"] = []any{map[string]any{"secret_key_ref": []any{map[string]any{"secret": "creds-bundle"}}}}
+			c["env"] = env
+			return r
+		}, false},
+		// The image: the mobile service is the credentials service's own binary
+		// in another mode, so it runs that pin and never an image of its own —
+		// and never the operator-writable base repository, which is where a
+		// digest an operator pushed would run as the device token's minter.
+		"an image outside the pin": {func() ResourceChange {
+			r, _ := load()
+			container(r)["image"] = "us-east5-docker.pkg.dev/" + project + "/fugaro-base/fugaro-credentials:latest"
+			return r
+		}, false},
+		// The two scaling blocks, one row each: the mobile service is a public
+		// endpoint whose work arrives with a phone's call, and mobile_service.tf
+		// writes the count at both levels because the provider computes the
+		// service-level one otherwise.
+		"a warm instance at the service level": {func() ResourceChange {
+			r, _ := load()
+			r.Change.After["scaling"].([]any)[0].(map[string]any)["min_instance_count"] = 1
+			return r
+		}, false},
+		"a warm instance at the template level": {func() ResourceChange {
+			r, _ := load()
+			template(r)["scaling"].([]any)[0].(map[string]any)["min_instance_count"] = 1
+			return r
+		}, false},
+		// IAM, which is required and stated: with the check off the service is
+		// reachable through a flag no reviewer reads instead of through the
+		// binding mobile_service.tf writes.
+		"IAM turned off": {func() ResourceChange {
+			r, _ := load()
+			r.Change.After["invoker_iam_disabled"] = true
+			return r
+		}, false},
+		"IAM not stated": {func() ResourceChange {
+			r, _ := load()
+			delete(r.Change.After, "invoker_iam_disabled")
+			return r
+		}, false},
+		"no container": {func() ResourceChange {
+			r, _ := load()
+			r.Change.After["template"] = []any{map[string]any{}}
+			return r
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// The account the module creates for the mobile service is in the
+			// plan because the account check reads the plan's creation fact;
+			// the change under test is the row's own.
+			_, acct := load()
+			p := &Plan{ResourceChanges: []ResourceChange{tc.change(), acct}}
+			if got := goldenCover().NotCovered(p, nil); (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+	// The plan the module writes after the one that created the service: the
+	// account is a no-op and the service keeps naming it, which is every later
+	// plan and must stay covered.
+	t.Run("the account unchanged and the service still naming it", func(t *testing.T) {
+		svc, acct := load()
+		acct.Change.Actions = []string{"no-op"}
+		p := &Plan{ResourceChanges: []ResourceChange{svc, acct}}
+		if got := goldenCover().NotCovered(p, nil); len(got) != 0 {
+			t.Fatalf("NotCovered = %q, want covered: the account is the plan's own, unchanged", got)
+		}
+	})
+}
+
 // --- The resident orchestrator's service and its tick (P5.1c, design §4.1) -
 
 const orchestratorAccountEmail = OrchestratorAccountID + "@proj-1.iam.gserviceaccount.com"
