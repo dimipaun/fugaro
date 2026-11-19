@@ -1934,6 +1934,21 @@ func (d *lsWidthDriver) keysRead() []string {
 	return slices.Clone(d.readKeys)
 }
 
+// Attributes answers the existence probes a listing makes on an object it does
+// not open (runstore's cancel marker, asked for a run that never launched): the
+// driver holds bodies and no metadata, so an object it holds answers with its
+// size and one it does not answers as absent. It is not one of the reads
+// keysRead reports, which is every object a listing opened.
+func (d *lsWidthDriver) Attributes(_ context.Context, key string) (*driver.Attributes, error) {
+	d.mu.Lock()
+	body, ok := d.objects[key]
+	d.mu.Unlock()
+	if !ok {
+		return nil, errNoObject
+	}
+	return &driver.Attributes{ContentType: "application/json", Size: int64(len(body))}, nil
+}
+
 // ListPaged answers the listing a run listing walks: the directories under the
 // prefix, one per run, so ls sees the runs the test seeded.
 func (d *lsWidthDriver) ListPaged(_ context.Context, opts *driver.ListOptions) (*driver.ListPage, error) {

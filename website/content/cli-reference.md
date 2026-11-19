@@ -8498,7 +8498,15 @@ the one its task reviews, which its record names only when the review
 ends: while it is going, its row reads that pull request's state though
 its pr is still empty. A run's own state is in its result.json, so this
 filter reads every run it filters -- it narrows the listing, never the
-reads.
+reads. running and launching are the exception: a run that is going, and a
+run whose launch is in flight, are answered from the live set -- the
+executions the backend is still running, and the claims a launch in flight
+holds -- so those two read only the runs that set names, never every run of
+the window (D2960). One run launching can miss: a relaunch under an older
+run ID (run --retry, or a re-issue by the resident launcher) holds a fresh
+claim on a run older than the claim window, which is what bounds the
+listing those claims are found by, so a scan shows that run and this query
+does not.
 
 The fourth state of a pull request, orphan (no run ever produced or follows
 it), is one no listing of runs can name: such a pull request has no run and
