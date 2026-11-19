@@ -33,6 +33,7 @@
         "paths": [
           "internal/config/config.go",
           "internal/config/scope.go",
+          "internal/config/resolve.go",
           "internal/config/review_against_task_test.go",
           "internal/settings/registry.go",
           "schemas/settings.schema.json",
@@ -56,8 +57,9 @@
         "paths": [
           "internal/runner/reviewartifact.go",
           "internal/runner/verdict.go",
-          "internal/runner/reviewscope.go",
-          "internal/runner/reviewscope_test.go",
+          "internal/runner/issuescope.go",
+          "internal/runner/issuescope_test.go",
+          "internal/runstore/against.go",
           "schemas/review.schema.json"
         ]
       }
@@ -93,6 +95,8 @@
           "internal/runner/taskspec.go",
           "internal/runner/taskspec_test.go",
           "internal/runner/runner.go",
+          "internal/plan/section.go",
+          "internal/plan/section_test.go",
           "internal/orchestrator/planimport.go"
         ]
       }
@@ -231,6 +235,7 @@
           "internal/cli/sharedcfg.go",
           "internal/cli/project_cmd.go",
           "internal/cli/init_policy_publish.go",
+          "internal/cli/settings_set.go",
           "internal/settings/registry.go",
           "schemas/settings.schema.json",
           "internal/cli/docs_config_management_test.go",
@@ -253,6 +258,7 @@
           "internal/cli/recipes_skew_test.go",
           "internal/cli/init.go",
           "internal/cli/run.go",
+          "internal/cli/validate.go",
           "docs/release.md"
         ]
       }
@@ -302,22 +308,27 @@
     {
       "task": "RA5a",
       "needs": "S-TASK",
-      "reason": "it builds on it"
+      "reason": "compiles against its types"
     },
     {
       "task": "RA6a",
       "needs": "S-OUT",
-      "reason": "it builds on it"
+      "reason": "compiles against its types"
     },
     {
       "task": "RA6b",
       "needs": "S-OUT",
-      "reason": "it builds on it"
+      "reason": "compiles against its types"
     },
     {
       "task": "RA2",
       "needs": "RA1",
       "reason": "its tests assert the block RA1 really builds; a stub would test nothing"
+    },
+    {
+      "task": "RA2",
+      "needs": "S-OUT",
+      "reason": "`runstore.Against`"
     },
     {
       "task": "RA3",
@@ -327,7 +338,7 @@
     {
       "task": "RA3",
       "needs": "S-TASK",
-      "reason": "it builds on it"
+      "reason": "compiles against its types"
     },
     {
       "task": "RA3",
@@ -360,9 +371,14 @@
       "reason": "the published field"
     },
     {
+      "task": "RA8b",
+      "needs": "S-KNOB",
+      "reason": "both write the registry, the settings schema and the pinned count; S-KNOB lands first"
+    },
+    {
       "task": "RA9",
       "needs": "S-KNOB",
-      "reason": "it builds on it"
+      "reason": "compiles against its types"
     },
     {
       "task": "RA9",
@@ -385,29 +401,34 @@
       "reason": "the gate the notes describe"
     },
     {
+      "task": "RA7",
+      "needs": "RA8b",
+      "reason": "the publisher the notes describe"
+    },
+    {
       "task": "RA10",
       "needs": "RA2",
-      "reason": "it builds on it"
+      "reason": "it tests them together"
     },
     {
       "task": "RA10",
       "needs": "RA3",
-      "reason": "it builds on it"
+      "reason": "it tests them together"
     },
     {
       "task": "RA10",
       "needs": "RA5b",
-      "reason": "it builds on it"
+      "reason": "it tests them together"
     },
     {
       "task": "RA10",
       "needs": "RA6a",
-      "reason": "it builds on it"
+      "reason": "it tests them together"
     },
     {
       "task": "RA10",
       "needs": "RA6b",
-      "reason": "it builds on it"
+      "reason": "it tests them together"
     },
     {
       "task": "RA10",
