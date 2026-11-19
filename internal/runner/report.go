@@ -707,7 +707,18 @@ func followupsLine(runID string) string {
 // it goes through tableCode: the pipe that would slide the columns is escaped
 // and the fence is longer than any backtick run in it.
 func toleratedCell(title string) string {
-	return tableCode(strings.Join(strings.Fields(title), " "))
+	return cellText(title)
+}
+
+// cellText is a value a record states of its own, rendered into one cell of a
+// table: its whitespace is flattened, so a newline in it cannot end the row
+// and have the line after it read as Markdown of the report's, and it goes
+// through tableCode, so a pipe cannot slide the columns and the value cannot
+// close the code span it sits in. The record's values are the untrusted ones —
+// it is a file the run's own agent can rewrite (F20) — and a report is posted
+// as a comment on a pull request.
+func cellText(s string) string {
+	return tableCode(strings.Join(strings.Fields(s), " "))
 }
 
 // testsLine is the report's account of the suite on the final commit: the run
@@ -809,7 +820,7 @@ func messagesSection(rec *runstore.Record, mem *ReportMessages) string {
 	b.WriteString("| # | Sender | Flags | Fate | Stage |\n|---|---|---|---|---|\n")
 	for _, d := range rec.Messages.Messages {
 		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n",
-			d.Seq, senderCell(d.SentBy), flagsCell(d.Flags), tableText(string(d.State)), stageCell(d.Stage))
+			d.Seq, senderCell(d.SentBy), flagsCell(d.Flags), stateCell(string(d.State)), stageCell(d.Stage))
 	}
 	b.WriteString("\n")
 	for _, d := range rec.Messages.Messages {
@@ -849,14 +860,22 @@ func senderCell(sender string) string {
 	return tableCode(inlineText(sender))
 }
 
-// flagsCell is the flags a message asked for. They are a closed set of this
-// program's own, so they need no escaping; "—" for a message that asked for
-// none.
+// flagsCell is the flags a message asked for; "—" for a message that asked for
+// none. The set is closed at the message object (runmsg.check), and the record
+// beside it is not: the record is a file the run's own agent can rewrite
+// (F20), so what it states goes into the cell through cellText like the
+// reviewer text toleratedCell renders.
 func flagsCell(flags []string) string {
 	if len(flags) == 0 {
 		return "—"
 	}
-	return strings.Join(flags, ", ")
+	return cellText(strings.Join(flags, ", "))
+}
+
+// stateCell is what became of a message, for the reason flagsCell is: the
+// record states it, and the record is the run's own write (F20).
+func stateCell(state string) string {
+	return cellText(state)
 }
 
 // stageCell is the coder stage a message reached; "—" for one the run never

@@ -315,9 +315,9 @@ func TestReportMessagesSection(t *testing.T) {
 	for _, want := range []string{
 		"#### Messages",
 		"| # | Sender | Flags | Fate | Stage |",
-		"| 1 | `dimi` | now | delivered | `fix` |",
-		"| 2 | `alice` | — | undelivered | — |",
-		"| 3 | — | — | missing | — |",
+		"| 1 | `dimi` | `now` | `delivered` | `fix` |",
+		"| 2 | `alice` | — | `undelivered` | — |",
+		"| 3 | — | — | `missing` | — |",
 		"**Message 1**:",
 		"```\nuse the existing helper in internal/foo\n```",
 		"**Message 2**:",
@@ -339,11 +339,34 @@ func TestReportMessagesSection(t *testing.T) {
 	// message: the artifact path builds its report this way and carries no
 	// message at all (F24), so the record's own account must stand alone.
 	without := reportedWith(rec, nil)
-	if !strings.Contains(without, "| 1 | `dimi` | now | delivered | `fix` |") {
+	if !strings.Contains(without, "| 1 | `dimi` | `now` | `delivered` | `fix` |") {
 		t.Errorf("the fates alone are not enough to render the section:\n%s", without)
 	}
 	if strings.Contains(without, "**Message") {
 		t.Errorf("a report with no memory quotes a text:\n%s", without)
+	}
+}
+
+// TestReportMessagesStayInsideTheirCells: the record is a file the run's own
+// agent can rewrite (F20), so what it states about a message — its flags and
+// its fate, as much as its sender — flattens and escapes into one cell of the
+// section's table rather than ending the row and putting lines of its own into
+// the report posted on the pull request.
+func TestReportMessagesStayInsideTheirCells(t *testing.T) {
+	rec := messageRec(runmsg.Delivery{
+		Seq: 1, SentBy: "dimi | admin", Flags: []string{"now | wrap_up"},
+		State: runmsg.State("delivered\n\n# Heading"), Stage: "fix",
+	})
+	got := reportedWith(rec, nil)
+	// The pipe inside the code span is escaped (as toleratedCell renders a
+	// reviewer's title), and the fate's blank line is flattened to one space,
+	// so the heading it carried is no line's first character.
+	const row = "| 1 | `dimi admin` | `now \\| wrap_up` | `delivered # Heading` | `fix` |"
+	if !strings.Contains(got, row) {
+		t.Errorf("a record's own flags or fate broke the row:\n%s\nwant %q", got, row)
+	}
+	if strings.Contains(got, "\n# Heading") {
+		t.Errorf("a record's own fate forged a heading:\n%s", got)
 	}
 }
 
