@@ -304,7 +304,8 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 
 // TestRigorScalarShorthandIsBothASchemaAndALoaderForm: the repository's rigor
 // block may be written as the level alone beside the mapping (the owner's
-// ruling of 2026-11-18, item 8), so the two spellings have to agree in both
+// ruling of 2026-11-18 on item 8's shorthand half), so the two spellings have
+// to agree in both
 // places a document is judged: a schema that took only the mapping would fail a
 // `rigor: critical` a run accepted, and one that took any string would pass a
 // level the loader refuses. The project layer's own defaults.rigor is not here:

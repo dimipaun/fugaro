@@ -283,7 +283,8 @@ var rigorBlockKeys = map[string]bool{"default": true, "areas": true}
 
 // UnmarshalYAML reads the block form (default:, areas:) and the scalar
 // shorthand, `rigor: critical`, which says the same thing as a block carrying
-// only default (D20, the levels reconciliation's item 8 as the owner ruled it).
+// only default (D20; reconciliation item 8's shorthand half, the owner's
+// ruling of 2026-11-18).
 //
 // One way to write a thing is usually the better rule, and the shorthand is the
 // exception for the same reason the block has a default at all: the level a

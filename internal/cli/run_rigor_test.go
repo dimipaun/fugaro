@@ -183,7 +183,8 @@ func TestRunTakesHotfixInAnAgentSession(t *testing.T) {
 // claim it serves is "no opt-in key exists anywhere": a key added to the
 // document a repository's fugaro.yaml is validated against would be the gate
 // the 2026-11-13 ruling dropped. The block is an `anyOf` of the level alone
-// (`rigor: critical`, the owner's ruling of 2026-11-18) and its mapping, so the
+// (`rigor: critical`, the owner's ruling of 2026-11-18 on item 8's shorthand
+// half) and its mapping, so the
 // keys are the mapping branch's.
 func repoRigorKeys(t *testing.T) []string {
 	t.Helper()

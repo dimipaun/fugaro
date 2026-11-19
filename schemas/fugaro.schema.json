@@ -223,7 +223,7 @@
       }
     },
     "rigor": {
-      "description": "How much cost this repository's runs accept to reduce risk (docs/rigor-modes/spec.md). A default, not a floor: the project layer's defaults.rigor may set both keys too, and the narrowest layer that sets one wins. The block may be written as the level alone -- `rigor: critical`, which says exactly what `rigor: {default: critical}` says (the owner's ruling of 2026-11-18, item 8) -- or as a mapping of the keys below. Fugaro before 0.11.0 refuses the key; the project layer's own defaults.rigor takes the mapping alone, because every key of that layer names a fugaro.yaml key its own command writes.",
+      "description": "How much cost this repository's runs accept to reduce risk (docs/rigor-modes/spec.md). A default, not a floor: the project layer's defaults.rigor may set both keys too, and the narrowest layer that sets one wins. The block may be written as the level alone -- `rigor: critical`, which says exactly what `rigor: {default: critical}` says (the owner's ruling of 2026-11-18 on item 8's shorthand half) -- or as a mapping of the keys below. Fugaro before 0.11.0 refuses the key; the project layer's own defaults.rigor takes the mapping alone, because every key of that layer names a fugaro.yaml key its own command writes.",
       "anyOf": [
         { "$ref": "#/$defs/rigorLevel" },
         {
