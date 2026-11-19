@@ -7192,6 +7192,7 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		HeadSHA:       strings.Repeat("a", 40),
 		Base:          "main",
 		Reviewer:      runner.ReviewReviewer{Account: "person-1", Model: "claude-opus-5-5", Effort: "high"},
+		Against:       &runstore.Against{Source: runstore.AgainstSourceRun, Run: "20261102-093000-abcd", SHA256: strings.Repeat("b", 64)},
 		Verdict:       "fix first",
 		Overview:      "the change does what the task asked",
 		Strengths:     []string{"the new reader is strict"},
@@ -7235,11 +7236,13 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 	}
 	want := slices.Sorted(maps.Keys(written))
 	// Every key the struct marshals is declared, and all of them are required
-	// but the one a run can honestly have nothing to say about: the reviewer's
+	// but the ones a run can honestly have nothing to write: the reviewer's
 	// effort is absent when the run's level named none (the model's own
 	// default), which is the meaning absence already has wherever a Fugaro
-	// setting spells one.
-	optional := []string{"effort"}
+	// setting spells one, and `against` is absent until a launcher fills it
+	// (R8) -- a review written before the shape had the field is a valid
+	// document and not a malformed one.
+	optional := []string{"effort", "against"}
 	props := nodeOf(t, doc, "properties")
 	if got := slices.Sorted(maps.Keys(props)); !slices.Equal(got, want) {
 		t.Errorf("review.schema.json declares %v, want %v (every key runner.ReviewArtifact marshals)", got, want)
@@ -7337,6 +7340,8 @@ func TestReviewArtifactSchemaMatchesStruct(t *testing.T) {
 		{"a head that is not hex", `"head_sha":"` + head + `"`, `"head_sha":"` + strings.Repeat("g", 40) + `"`},
 		{"a branch name where a commit belongs", `"head_sha":"` + head + `"`, `"head_sha":"refs/heads/main"`},
 		{"a hostile review_run", `"review_run":"20261102-093000-abcd"`, `"review_run":"../../etc/passwd"`},
+		{"an against source nobody defined", `"source":"run"`, `"source":"sideways"`},
+		{"an against digest that is not hex", `"sha256":"` + strings.Repeat("b", 64) + `"`, `"sha256":"` + strings.Repeat("x", 64) + `"`},
 	} {
 		if !bytes.Contains(data, []byte(tc.from)) {
 			t.Fatalf("%s: fixture lacks the literal this test replaces: %s", tc.name, data)
