@@ -298,6 +298,28 @@ func TestFixPromptSaysTouchNothingElse(t *testing.T) {
 	}
 }
 
+// TestFixPromptWidensWithMessage: a fix that carries a run message ends with
+// rule 4's sentence instead of "Touch nothing else" (D2943). The two contradict
+// each other — the round below the message may ask for more than the findings
+// do — and a coder reading "touch nothing else" beside a message asking for
+// something else is told to refuse the message.
+func TestFixPromptWidensWithMessage(t *testing.T) {
+	const block = "<<<fugaro-messages-0123456789abcdef>>>\n    [1] dimi, 2026-11-19T05:30Z\n    rename the helper\n<<<end-fugaro-messages-0123456789abcdef>>>\n"
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, block)
+	if strings.Contains(got, "Touch nothing else") {
+		t.Errorf("the brief still says to touch nothing else beside a message:\n%s", got)
+	}
+	if !strings.Contains(got, "may ask for more than the findings do") {
+		t.Errorf("the brief does not widen the round for the message:\n%s", got)
+	}
+	if !strings.Contains(got, block) {
+		t.Errorf("the brief does not carry the message block it was handed:\n%s", got)
+	}
+	if !strings.Contains(got, "the retry loop never stops") {
+		t.Errorf("the brief lost the findings it still blocks on:\n%s", got)
+	}
+}
+
 // TestTheImplementPromptNamesTheAdmittedPaths: a run whose task needs an asset
 // is told where the project admits one before it writes anything (D992,
 // spec.md §5). The list is not a secret — the policy node is readable by the
