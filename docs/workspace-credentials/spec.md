@@ -92,9 +92,9 @@ except D2975.** Three of them withdraw part of an earlier answer: D2975 (D2964's
 credsrv, we want to move away completely from mounting them, too much terraform." It is a ruling
 about every project, not only a workspace's members: no model key is mounted in a job, and the
 credentials service serves all of them. It reverses D1634 and D1670. It is wider than this addendum
-and needs its own spec. **One thing it leaves open:** D150's gate, which refuses the provider tier
-until Check 50, was not mentioned, so whether the gate is lifted or Check 50 runs first is still the
-owner's to say.
+and needs its own spec. **D150's gate stays** (owner, 2026-11-19, as recommended): the service refuses a Claude model through
+a provider key until Check 50 has run and passed, so moving provider keys off job mounts is planned
+now and switches on only after that check.
 
 The first option of each is the recommendation.
 
