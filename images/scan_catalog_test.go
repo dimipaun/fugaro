@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,8 +362,8 @@ func gzipOf(t *testing.T, body []byte) []byte {
 // TestScanReadsTheCatalogFixture holds the fixture the docker-tagged test
 // loads, against the scan it is loaded for, with no daemon in the way: the
 // same tar read as the image's save is cleared, the layer its config lists
-// twice costs the scan nothing, and a worker with no program for the codec the
-// layers are in is refused rather than left clearing nothing.
+// twice costs the scan nothing, and a member named like a layer whose bytes no
+// tar can read refuses the image rather than leaving it cleared in part.
 //
 // It is here because a daemon is the one thing a test cannot bring with it:
 // without this, a fixture a load would shape differently -- a blob the fence
@@ -381,16 +382,77 @@ func TestScanReadsTheCatalogFixture(t *testing.T) {
 		t.Fatalf("the scan refused the fixture image it is loaded for: %v\n%s", err, out)
 	}
 
-	// The same image for a worker whose tar cannot decompress it: every tool
-	// the scan runs is there, gzip is not, and the layers really are gzip.
-	t.Setenv("PATH", pathWithoutProgram(t, "gzip"))
+	// The same save with one more member, named like a layer and holding bytes
+	// no tar can read: the fence refuses the image rather than clearing the
+	// layers it did read and counting this one as read with them.
+	fixture.saveTar = scanCatalogUndecodableSave(t, image.path)
+	fixture.diffIDs = append(append([]string{}, image.diffIDs...), scanCatalogUndecodableID)
 	out, _, err = runScan(t, fixture, "0", "--secrets", image.tag)
 	if err == nil {
-		t.Fatalf("the scan cleared an image whose layers it read none of:\n%s", out)
+		t.Fatalf("the scan cleared an image holding a layer it could not read:\n%s", out)
 	}
 	if !strings.Contains(out, "holds a layer this cannot decode") {
 		t.Fatalf("the scan refused the image over something other than a layer it could not read: %v\n%s", err, out)
 	}
+}
+
+// scanCatalogUndecodableID is the ID of the member the save below carries in
+// addition to the image's own layers: as a save names a layer's blob, and as
+// the daemon's list of the image's layers names it.
+var scanCatalogUndecodableID = "sha256:" + strings.Repeat("f", 64)
+
+// scanCatalogUndecodableSave writes the fixture's own save beside it with one
+// more member: undecodableLayer (scan_test.go) under the name a save gives a
+// layer, which is what the fence reads for a layer in a codec this worker has
+// no program for.
+//
+// The bytes are written here rather than reached by taking a decompressor off
+// PATH, because the scan reads a layer only through tar: a tar that inflates by
+// itself -- bsdtar, and so macOS's /usr/bin/tar -- reads a gzip layer with no
+// program on PATH at all, and the fence would then be asked to refuse an image
+// it read in full.
+func scanCatalogUndecodableSave(t *testing.T, save string) string {
+	t.Helper()
+	body, err := os.ReadFile(save)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	tw := tar.NewWriter(&out)
+	tr := tar.NewReader(bytes.NewReader(body))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.Copy(tw, tr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	header := &tar.Header{
+		Name:     "blobs/sha256/" + strings.TrimPrefix(scanCatalogUndecodableID, "sha256:"),
+		Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(undecodableLayer)), ModTime: scanCatalogEpoch,
+	}
+	if err := tw.WriteHeader(header); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(undecodableLayer); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "undecodable.tar")
+	if err := os.WriteFile(path, out.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // scanFixtureFiles are the files the fixture image carries: the two a catalog
