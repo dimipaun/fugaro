@@ -52,6 +52,21 @@ var areaKeys = func() map[string]bool {
 	return out
 }()
 
+// AreaKeys is the keys one area rule accepts, in sorted order: the three fields
+// above and `mode`, the spelling the level was written under before LD2 and read
+// beside `level` since. A surface that has to admit what this loader admits asks
+// here rather than keeping a list that could fall behind the decoder — the
+// settings registry is not that surface for this key, because its rows are the
+// keys `fugaro settings` writes and this one is read and never written.
+func AreaKeys() []string {
+	out := make([]string, 0, len(areaKeys))
+	for k := range areaKeys {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // UnmarshalYAML decodes one rule, refuses a key it does not know, and reads the
 // old spelling of the rule's level.
 //
