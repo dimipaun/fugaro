@@ -52,14 +52,13 @@ type lsOptions struct {
 	state                    string
 	groupBy                  string
 	all, mine, watch, asJSON bool
-	stream                   bool // with --json: one line per run, then the end line
-
-	debt     bool // only the runs filed from a triage deferral, when set
-	interval time.Duration
-	pr       int    // only the runs on this pull request, when set
-	limit    int    // print the newest N rows of the window, when > 0
-	after    string // start the listing after this run, when set
-	noCache  bool   // read every object from the bucket, as before the cache existed
+	stream                   bool // with --json: one line per run, then the line that ends the feed
+	debt                     bool // only the runs filed from a triage deferral, when set
+	interval                 time.Duration
+	pr                       int    // only the runs on this pull request, when set
+	limit                    int    // print the newest N rows of the window, when > 0
+	after                    string // start the listing after this run, when set
+	noCache                  bool   // read every object from the bucket, as before the cache existed
 }
 
 // lsStates are the run states --state accepts, sorted: runstore's own states
