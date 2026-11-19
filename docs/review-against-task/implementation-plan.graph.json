@@ -1,0 +1,341 @@
+{
+  "schema_version": 3,
+  "plan": "docs/review-against-task/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "S-TASK",
+      "title": "the review_spec task field",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/task/task.go",
+          "internal/task/reviewspec.go",
+          "internal/task/reviewspec_test.go",
+          "schemas/task.schema.json",
+          "internal/cli/reviewspec_since.go"
+        ]
+      }
+    },
+    {
+      "id": "S-KNOB",
+      "title": "the review_against_task setting's types",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/config/config.go",
+          "internal/config/scope.go",
+          "internal/policy/policy.go",
+          "schemas/fugaro.schema.json",
+          "internal/config/review_against_task_test.go"
+        ]
+      }
+    },
+    {
+      "id": "C-OUT",
+      "title": "the per-issue scope and the artifact's against",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/reviewartifact.go",
+          "internal/runner/verdict.go",
+          "internal/runner/reviewscope.go",
+          "internal/runner/against_stub.go",
+          "schemas/review.schema.json"
+        ]
+      },
+      "kind": "contract",
+      "stubs": [
+        "internal/runner/against_stub.go"
+      ]
+    },
+    {
+      "id": "RA1",
+      "title": "resolve the spec and build the reviewer's block",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/taskspec.go",
+          "internal/runner/planspec.go",
+          "internal/runner/taskspec_test.go",
+          "internal/runner/runner.go"
+        ]
+      }
+    },
+    {
+      "id": "RA4",
+      "title": "merge the setting tighter-only and gate it",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/policy/merge.go",
+          "internal/policy/merge_test.go",
+          "internal/cli/recipes_skew.go",
+          "internal/cli/recipes_skew_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RA5",
+      "title": "the launcher: default, --code-only, --spec FILE",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/review.go",
+          "internal/cli/run.go",
+          "internal/cli/reviewspec.go",
+          "internal/cli/reviewspec_test.go",
+          "internal/cli/review_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RA6",
+      "title": "the fix round and the rigor table read scope",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/prompts.go",
+          "internal/runner/outcome.go",
+          "internal/rigor/table.go",
+          "internal/rigor/table_test.go",
+          "CLAUDE.md"
+        ]
+      }
+    },
+    {
+      "id": "RA2",
+      "title": "in-run reviews read the task",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/runner.go",
+          "internal/runstore/runstore.go",
+          "schemas/result.schema.json",
+          "internal/runner/review_taskspec_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RA3",
+      "title": "the review job and pick runs read the task",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/reviewmode.go",
+          "internal/runner/reviewmode_taskspec_test.go"
+        ]
+      }
+    },
+    {
+      "id": "RA7",
+      "title": "documents, skills, website, release notes",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "docs/recipes.md",
+          "plugin/skills/working/SKILL.md",
+          "plugin/skills/routing/SKILL.md",
+          "website/content/cli-reference.md",
+          "docs/releases/*.md"
+        ]
+      }
+    },
+    {
+      "id": "I-RA",
+      "title": "wire against, retire the stub, prove it end to end",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/against_stub.go",
+          "internal/runner/against.go",
+          "internal/runner/review_against_e2e_test.go",
+          "internal/cli/review_against_e2e_test.go"
+        ]
+      },
+      "kind": "integration"
+    },
+    {
+      "id": "R-OUT",
+      "title": "amend C-OUT: an against reason or scope value a consumer needs",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": []
+      },
+      "kind": "contract_change"
+    }
+  ],
+  "edges": [
+    {
+      "task": "RA1",
+      "needs": "S-TASK",
+      "reason": "compiles against task.ReviewSpec"
+    },
+    {
+      "task": "RA1",
+      "needs": "S-KNOB",
+      "reason": "reads agent.review_against_task"
+    },
+    {
+      "task": "RA3",
+      "needs": "S-TASK",
+      "reason": "reads spec.ReviewSpec"
+    },
+    {
+      "task": "RA4",
+      "needs": "S-KNOB",
+      "reason": "merges the policy field S-KNOB declares"
+    },
+    {
+      "task": "RA4",
+      "needs": "S-TASK",
+      "reason": "gates on reviewSpecSince"
+    },
+    {
+      "task": "RA5",
+      "needs": "S-TASK",
+      "reason": "writes task.ReviewSpec and reads reviewSpecSince"
+    },
+    {
+      "task": "RA5",
+      "needs": "C-OUT",
+      "reason": "review show prints the artifact's against, built against the contract's type"
+    },
+    {
+      "task": "RA6",
+      "needs": "C-OUT",
+      "reason": "built against Finding.Scope"
+    },
+    {
+      "task": "RA2",
+      "needs": "RA1",
+      "reason": "its tests assert the block RA1 really builds; a stub would test nothing"
+    },
+    {
+      "task": "RA3",
+      "needs": "RA1",
+      "reason": "its tests assert the block RA1 really builds; a stub would test nothing"
+    },
+    {
+      "task": "RA7",
+      "needs": "RA5",
+      "reason": "the plugin and docs tests pin the flags against the CLI"
+    },
+    {
+      "task": "RA7",
+      "needs": "RA4",
+      "reason": "the docs name the key the CLI gates"
+    },
+    {
+      "task": "I-RA",
+      "needs": "C-OUT",
+      "reason": "integrates the contract and deletes its stub"
+    },
+    {
+      "task": "I-RA",
+      "needs": "RA1",
+      "reason": "wires reviewAgainst to the resolver"
+    },
+    {
+      "task": "I-RA",
+      "needs": "RA2",
+      "reason": "integration"
+    },
+    {
+      "task": "I-RA",
+      "needs": "RA3",
+      "reason": "integration"
+    },
+    {
+      "task": "I-RA",
+      "needs": "RA5",
+      "reason": "integration"
+    },
+    {
+      "task": "I-RA",
+      "needs": "RA6",
+      "reason": "integration"
+    }
+  ],
+  "decoupling": [
+    {
+      "contract": "C-OUT",
+      "was": {
+        "task": "RA6",
+        "needs": "RA3"
+      },
+      "integration": "I-RA",
+      "reason": "the fix round needs the scope field, not a reviewer that fills it"
+    },
+    {
+      "contract": "C-OUT",
+      "was": {
+        "task": "RA5",
+        "needs": "RA3"
+      },
+      "integration": "I-RA",
+      "reason": "review show needs the against field's shape, not the job that writes it"
+    }
+  ],
+  "contract_changes": [
+    {
+      "change": "R-OUT",
+      "contract": "C-OUT",
+      "raised_by": "RA6",
+      "reason": "an against reason or scope value a consumer needs",
+      "affects": [
+        "RA5",
+        "RA6",
+        "I-RA"
+      ]
+    }
+  ]
+}
