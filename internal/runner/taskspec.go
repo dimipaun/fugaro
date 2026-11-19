@@ -20,11 +20,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/plan"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -142,8 +144,13 @@ func (r *run) readReviewSpec(ctx context.Context) {
 	}
 	root, err := r.d.Store.Sibling(id).ReadTask(ctx)
 	if err != nil {
-		r.d.Log.Warn("reading the root run's task failed; this run's reviews judge the code alone",
-			"root_run", id, "err", r.redact(err.Error()))
+		// A root record that is gone is an ordinary pull request — the bucket's
+		// retention has been through it — and the answer is freshContext's: the
+		// review judges the code alone. Anything else is worth a line.
+		if !errors.Is(err, runstore.ErrNotFound) {
+			r.d.Log.Warn("reading the root run's task failed; this run's reviews judge the code alone",
+				"root_run", id, "err", r.redact(err.Error()))
+		}
 		r.reviewSpec = &task.ReviewSpec{Source: task.ReviewSpecNone, Reason: specReasonNothingFound}
 		return
 	}
