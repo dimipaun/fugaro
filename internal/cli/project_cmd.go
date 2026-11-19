@@ -663,6 +663,11 @@ const rulesVoiceGeneration = 5
 // push registration carries on a mailbox message (mobile plan task P5.2.2).
 const rulesRegistrationGeneration = 6
 
+// rulesSpendLeavesGeneration is the rules generation that added the four
+// day-counter leaves a run's stage report writes per model (spend-accuracy task
+// SA5.0, D2648 as amended by D2650).
+const rulesSpendLeavesGeneration = 7
+
 // rulesMarkerOlderText is the sentence for the state between the two
 // generations: at or above PolicyRulesVersion and below RulesVersion. Nothing
 // refuses here — Read reads the policy the marker's rules carry and
@@ -681,8 +686,15 @@ const rulesRegistrationGeneration = 6
 // registration kind's fields are new to it (mobile plan task P5.2.2), and one
 // at rulesRegistrationGeneration already has those fields and only the four
 // day-counter leaves a run's stage report writes per model are new to it
-// (spend-accuracy task SA5.0, D2648 as amended by D2650).
+// (spend-accuracy task SA5.0, D2648 as amended by D2650), and one at
+// rulesSpendLeavesGeneration already has those leaves and only the paired
+// device's read of a run's outcome is new to it (mobile identity-pairing task
+// J1, F30, D2797, O3).
 func rulesMarkerOlderText(gen int) string {
+	if gen >= rulesSpendLeavesGeneration {
+		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node, the registration kind's fields and the four day-counter leaves a run's stage report writes per model, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the paired device's read of a run's outcome (outcomes/$day/$slug/$run, one node granted to the app's user claim and to nothing else, so the phone can name a run that is still going): a phone under these rules sees a running run's spend and not the run, so the app's jobs list shows the spend alone until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
+			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, projectpolicy.RulesVersion)
+	}
 	if gen >= rulesRegistrationGeneration {
 		return fmt.Sprintf("the policy marker %s records generation %d, below the generation %d this Fugaro deploys: these rules carry the policy nodes, the mailbox, the device binding, the coordinator's read grant, the voice policy node and the registration kind's fields, so runs, a published policy, the mobile app and the coordinator are unaffected — what they predate is this release's own document, which adds the four leaves a run's stage report writes per model (%s/{notional,rep,tlo,thi}: the subscription part of the model's dollars, the cost the provider reported for the calls that carried one, and the table's charge over those same calls at the two ends of the tier that served them, spend-accuracy D2648 and D2650): a run under these rules that writes them is refused the whole stage report, because Realtime Database applies a multi-path update atomically, so it writes the leaves it knows and none of these until the deploy; re-run 'fugaro update' in your own terminal from a Fugaro that deploys generation %d or newer, which writes that document and records its generation in the marker",
 			projectpolicy.PathRulesMarker(), gen, projectpolicy.RulesVersion, rules.PathByModel, projectpolicy.RulesVersion)
