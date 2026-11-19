@@ -424,10 +424,18 @@ func (s *Service) paddleCustomer(ctx context.Context, organisationID string) (st
 // puts it here because this area is where a subscription is acted on, and
 // Paddle's `Cancel` is what ends one.
 //
-// The record is left alone and the merchant's own cancellation event is what
-// moves it, the way a seat purchase leaves the seats to the event that carries
-// them (P4.2): a store marked cancelled here would be a subscription this
-// service had ended without Paddle having said so.
+// **The record of a cancellation the merchant has taken is written here too**,
+// and not only by the merchant's own event: a deletion reaches the merchant
+// before it removes anything, so an attempt whose store failed afterwards is
+// retried, and a retry that asked the merchant again would be answered with a
+// refusal for a subscription it has ended already — the retry an organisation's
+// deletion promises (`refuseDeletion`'s 500 is the caller asking again) would
+// then be refused for as long as the cancellation event took to arrive, and the
+// organisation could not be deleted until it had. `At` is still the merchant's
+// alone: it is the instant of the last event the store applied and §5.2's
+// ordering compares an event's own instant with it (merchant.go's Renew), so a
+// clock of this service's in that field would drop the cancellation event that
+// follows it. The event still lands and still dates the record.
 //
 // Every subscription is attempted and the failures are joined. A deletion that
 // stopped at the first merchant failure would leave the rest of an
@@ -445,6 +453,11 @@ func (s *Service) cancelSubscriptionsOf(ctx context.Context, organisationID stri
 		}
 		if err := s.paddle.Cancel(ctx, sub.ID); err != nil {
 			failed = append(failed, fmt.Errorf("the merchant of record did not cancel the subscription %s: %w", sub.ID, err))
+			continue
+		}
+		sub.Cancelled = true
+		if err := s.store.SaveSubscription(ctx, sub); err != nil {
+			failed = append(failed, fmt.Errorf("the cancellation of the subscription %s could not be recorded: %w", sub.ID, err))
 		}
 	}
 	return errors.Join(failed...)

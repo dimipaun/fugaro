@@ -6021,13 +6021,16 @@ func TestSchemasDecodeTheModelGradesKey(t *testing.T) {
 // for, and the schema validated it anyway.
 //
 // Four more are the members a consumer draws the edit from (D1102), and they
-// are the CLI's answer rather than the fixture's: `target_layer` is the
-// narrowest of repo, project and local the key may be set in, which is what
-// settingsDefaultLayer answers for `settings set` and what the read prints, so
-// a row whose write lands in a different layer than the one it names is a row
-// the console would spawn `--layer` from wrongly; `sensitive` is the registry's
-// own flag and the member is written **only when it is true**; and writability
-// follows from the two refusals that come before the generic path's allowlist
+// are the CLI's answer rather than the fixture's: `target_layer` is the layer a
+// write with no --layer lands in -- a Tighten key is a ceiling and lands in the
+// project layer when it has one, else the local config, and every other key
+// lands in the narrowest of repo, project and local it may be set in (D2605) --
+// which is what settingsDefaultLayer answers for `settings set` and what the
+// read prints, so a row whose write lands in a different layer than the one it
+// names is a row the console would spawn `--layer` from wrongly; `sensitive` is
+// the registry's own flag and the member is written **only when it is true**; and
+// writability follows from the two refusals that come before the generic path's
+// allowlist
 // (settingsWriteRowHinted) -- a sensitive key is never written by it and neither
 // is a key a family owns -- so a row that says `writable` while the registry
 // marks it sensitive is a row no write produces. Every row also names an owner,
@@ -6118,22 +6121,34 @@ func TestSettingsConsoleFixture(t *testing.T) {
 		// sensitive. The registry answers the last three, and the layer rule is
 		// restated because settingsDefaultLayer is internal/cli's and this
 		// guard is the schema package's: the read prints its answer, so the
-		// fixture is held to the same rule -- the narrowest of the three the
-		// key may be set in.
+		// fixture is held to the same rule -- a Tighten key is a ceiling and
+		// lands in the project layer when it has one, else in the local config,
+		// and every other key lands in the narrowest of the three it may be set
+		// in (D2605).
 		reg, known := settings.Lookup(row.Key)
 		if !known {
 			t.Errorf("%s: the registry has no such key, and every row of the read is one of its rows", row.Key)
 			continue
 		}
 		wantLayer := ""
-		for _, l := range []string{settings.LayerRepo, settings.LayerProject, settings.LayerLocal} {
-			if slices.Contains(reg.Layers, l) {
-				wantLayer = l
-				break
+		if reg.Merge == settings.Tighten {
+			for _, l := range []string{settings.LayerProject, settings.LayerLocal} {
+				if slices.Contains(reg.Layers, l) {
+					wantLayer = l
+					break
+				}
+			}
+		}
+		if wantLayer == "" {
+			for _, l := range []string{settings.LayerRepo, settings.LayerProject, settings.LayerLocal} {
+				if slices.Contains(reg.Layers, l) {
+					wantLayer = l
+					break
+				}
 			}
 		}
 		if row.TargetLayer != wantLayer {
-			t.Errorf("%s: target_layer = %q, and the narrowest of repo, project and local the key may be set in is %q, which is what a write with no --layer lands in and what the read prints (settingsDefaultLayer)", row.Key, row.TargetLayer, wantLayer)
+			t.Errorf("%s: target_layer = %q, and the layer a write with no --layer lands in is %q, which is what the read prints (settingsDefaultLayer: a Tighten key lands in the project layer when it has one, else the local config, and every other key in the narrowest layer it may be set in, D2605)", row.Key, row.TargetLayer, wantLayer)
 		}
 		// `owner` is the word for the command that writes the row (D1178): the
 		// generic writer's name on a key the allowlist carries, a family's on a

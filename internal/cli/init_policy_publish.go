@@ -380,8 +380,22 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 	// operator's entry is named by the publish that does refuse it, which is where
 	// they meet it (S6's flip warns and holds itself back rather than publishing
 	// one; update_proxy_switch.go's bitbucketProxyBlock).
-	if token, err := bitbucketProxyBlock(lc); err == nil {
-		add(bitbucketTokenKey, token, p.BitbucketToken, false)
+	//
+	// The row is reported only where this machine's config STATES the entry, and
+	// that gate is load-bearing (S6's fix, 2026-11-18): an absent entry is no
+	// statement about the switch at all, while the derivation answers nil for it
+	// exactly as it does for an entry whose list is empty — so a machine that
+	// holds no entry (a second operator's config, a config whose secrets live
+	// elsewhere, one whose entry an operator removed) would publish the node
+	// WITHOUT bitbucket_token and turn the whole project's proxy off, stranding
+	// the proxied runs in flight over a file that never mentioned the switch.
+	// An entry that is there and whose list is empty is the takedown above and
+	// still reports: that is the operator's own act, and the node has to follow
+	// it.
+	if _, stated := lc.ProjectSecrets[config.BitbucketSecret]; stated {
+		if token, err := bitbucketProxyBlock(lc); err == nil {
+			add(bitbucketTokenKey, token, p.BitbucketToken, false)
+		}
 	}
 	// The typed Bitbucket tokens are DERIVED from the local config, like the
 	// accounts block and for a stronger reason: the node is the only place the

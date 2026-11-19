@@ -19,7 +19,9 @@ import "slices"
 //
 // A digest recipe counts no implement stage either: its first step is the
 // runner's own work, which writes the run reports with no model call
-// (run-digest), so the review loop after it is all a run of it can record.
+// (run-digest), and a commit-reports recipe's first step is the runner's own
+// the same way (commit-reports, E5) -- so the review loop after either is all
+// a run of it can record.
 // The loop's fix stays counted: whether the review of a report ever asks for
 // one is for that run to decide, and a bound errs high rather than low.
 //
@@ -84,7 +86,11 @@ func StageBound(r *Recipe, f, n, n3Default int) int {
 		return 1
 	}
 	implement := 1
-	if UsesDigest(r) {
+	if UsesDigest(r) || UsesCommitReports(r) {
+		// Neither of the two deterministic steps is a model's work (digest
+		// writes the reports from the records, commit_reports writes the
+		// bytes the launcher handed in), so a run of either starts no
+		// implement stage whatever the knobs say.
 		implement = 0
 	}
 	first, bounce, rounds, handOver := 0, false, n, false

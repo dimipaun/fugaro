@@ -1,0 +1,8 @@
+version: 1
+name: commit-reports
+description: Writes the run reports the store holds into the repository the project designates, commits them, and hands the pull request to one senior review.
+use_when: A commit run only, launched on the designated repository's checkout by the project's own routine (fugaro run --recipe commit-reports). Never the recipe for a task, since it commits the stored reports rather than code.
+steps:
+  - commit_reports: {}
+  - review:
+      max_rounds: 1

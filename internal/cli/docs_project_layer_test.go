@@ -804,7 +804,7 @@ func TestDocsProjectLayerPolicyTableNamesEveryKeyItDescribes(t *testing.T) {
 	for _, want := range []string{
 		"| `reports_commit` | decoded, validated and accepted, **not applied**",
 		"the one repository a report run may open its pull request in",
-		"the layout's own `docs/fugaro-reviews` unless the project says otherwise",
+		"`docs/fugaro-reviews-mirror`, a folder `run-digest` never writes, unless the project says otherwise",
 		"A block with no `repo` is refused where it is read",
 		"a folder that is absolute or walks out of the checkout is refused with it",
 		"the commit run that would is [periodic-reviews/](periodic-reviews/) R9",

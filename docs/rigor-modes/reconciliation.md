@@ -921,14 +921,25 @@ orchestrator's account and section 4.3's bindings ride that step, mobile plan
 task P5.1b — moved the table's row from 144 to 145.)
 
 (Amended 2026-11-17: `internal/cli/docs_repos_management_test.go`, the repos-management folder's
-pin, moved the table's row from 148 to 149.) They
+pin, moved the table's row from 148 to 149.) (Amended 2026-11-18:
+`internal/cli/docs_check640_test.go`, the forge-labels plan's pin over its
+owner-run Check 640 in the register — the status labels on a real pull request,
+with its row and its section, the sibling test `scripts/live_checks_test.go`
+drives, and the two questions the check settles, U1 and U3 — moved the table's
+row from 148 to 149.) They
 are named because the figure is a running total of other folders' guards: a folder
 that writes one moves this row in its own commit, and a reader who finds the row
 stale has found a merge that did not.
 
+(Amended 2026-11-18: the secrets-brokering plan's B2.7 — the flip that takes the two Claude mounts off a
+switched `api-key` or `oauth` repository's job — added `serviceAuthSince` to
+`internal/cli/recipes_skew.go`, which moved the *Image-skew `Since` constants* row from 54 to 55. That
+row is held to its own command rather than to another folder's guard, so it is named here only because a
+reader who finds the figure stale should find who moved it.)
+
 | Construct | Count | Command |
 | --- | --- | --- |
-| Catalog recipes | 13 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
+| Catalog recipes | 14 | `ls internal/recipe/catalog/*.yaml \| wc -l` |
 | Top-level `fugaro.yaml` keys | 15 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*": '` |
 | Top-level `fugaro.yaml` keys whose name contains `review` | 0 | `sed -n '/^  "properties": {/,/^  }/p' schemas/fugaro.schema.json \| grep -c '^    "[a-z_]*review[a-z_]*": '` |
 | Config scope rows | 116 | `sed -n '/Scopes = \[\]ScopeRow{/,/^}/p' internal/config/scope.go \| grep -c '{Key:'` |
@@ -938,9 +949,9 @@ stale has found a merge that did not.
 | Fields of `task.Spec` or `recipe.Step` whose name is a path | 0 | `{ sed -n '/^type Spec struct {/,/^}/p' internal/task/task.go; sed -n '/^type Step struct {/,/^}/p' internal/recipe/recipe.go; } \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Path\|Glob\|Dir)'` |
 | Sites that compare a finding's severity to a value | 0 | `git grep -n 'Severity ==' -- internal/runner ':!*_test.go' \| wc -l` |
 | Files in `internal/runner` that mention `Severity` at all | 4 | `git grep -l 'Severity' -- internal/runner ':!*_test.go' \| wc -l` |
-| Image-skew `Since` constants | 54 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
+| Image-skew `Since` constants | 55 | `git grep -hc 'Since = "' internal/cli/recipes_skew.go` |
 | Run outcomes | 4 | `git grep -ho 'Outcome[A-Za-z]* *= *"[a-z]*"' internal/runstore/runstore.go \| wc -l` |
-| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 149 | `ls internal/cli/docs_*_test.go \| wc -l` |
+| Docs folders that ship their own `internal/cli/docs_*_test.go` pin | 150 | `ls internal/cli/docs_*_test.go \| wc -l` |
 | Questions the in-job-review folder put to the owner, all answered | 17 | `git grep -hc '^\*\*Q[0-9]*\. ' docs/in-job-review/reconciliation.md` |
 | Published project-policy version | 10 | `sed -n 's/^const Version = //p' internal/projectpolicy/version.go` |
 | Blocks the project layer's `defaults:` may set whose value names a repository | 0 | `sed -n '/^type LayerDefaults struct {/,/^}/p' internal/config/layer.go \| grep -cE '^[[:space:]]+[A-Z][A-Za-z]*(Repo\|Repos\|Repository)'` |

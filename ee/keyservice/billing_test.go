@@ -595,9 +595,13 @@ func TestAnotherOrgsSubscriptionIsRefused(t *testing.T) {
 // which is what a deletion that left the others charging a customer who is gone
 // would be.
 //
-// The record is left where it stands: a store marked cancelled here would be a
-// subscription this service ended without Paddle having said so, and the
-// merchant's own cancellation event is what moves it (P4.2).
+// The record follows the merchant's answer and nothing else: a subscription the
+// merchant took reads cancelled here, because the deletion that asked is
+// retried and a retry must not ask the merchant to end what it has ended, and
+// one the merchant refused reads as it did, because a store marked cancelled on
+// a refusal would be a subscription this service ended without Paddle having
+// said so. The instant in either is the merchant's own (its event's), so it is
+// not this pass that writes it.
 func TestCancelSubscriptionsOfEndsTheOrgsRunningOnes(t *testing.T) {
 	f := newCheckoutFixture(t)
 	ctx := context.Background()
@@ -612,6 +616,16 @@ func TestCancelSubscriptionsOfEndsTheOrgsRunningOnes(t *testing.T) {
 	f.paidWorkspace(t, erin.ID, "ws-erin", "erin-portal-4821", "sub-erin", 1, f.now.Add(20*24*time.Hour), false)
 
 	running := []string{"sub-dana", "sub-dana-2"}
+	// The instant each record carries before the pass, which is the merchant's
+	// own event's and not this pass's to write.
+	instants := map[string]time.Time{}
+	for _, id := range running {
+		before, present, err := f.store.Subscription(ctx, id)
+		if err != nil || !present {
+			t.Fatalf("reading the subscription %s: %v (present %t)", id, err, present)
+		}
+		instants[id] = before.At
+	}
 	if err := f.svc.cancelSubscriptionsOf(ctx, org.ID); err != nil {
 		t.Fatalf("cancelling the subscriptions of %s answered %v, want nothing: the merchant took both", org.ID, err)
 	}
@@ -626,8 +640,25 @@ func TestCancelSubscriptionsOfEndsTheOrgsRunningOnes(t *testing.T) {
 		if err != nil || !present {
 			t.Fatalf("reading the subscription %s back: %v (present %t)", id, err, present)
 		}
-		if held.Cancelled {
-			t.Errorf("the record of %s reads cancelled, and this path writes no record: the merchant's own cancellation event is what moves it", id)
+		if !held.Cancelled {
+			t.Errorf("the record of %s does not read cancelled after the merchant took the cancellation, so a retried deletion asks the merchant to end a subscription it has ended already", id)
+		}
+		if !held.At.Equal(instants[id]) {
+			t.Errorf("the record of %s carries the instant %s and it carried %s, and the merchant's own event is what carries it: §5.2's ordering compares an event's instant with this field", id, held.At, instants[id])
+		}
+	}
+
+	// The refused pass below is over subscriptions that are running again: the
+	// record is moved only by what the merchant answered, and that pass is the
+	// merchant refusing (P4.2).
+	for _, id := range running {
+		held, present, err := f.store.Subscription(ctx, id)
+		if err != nil || !present {
+			t.Fatalf("reading the subscription %s back: %v (present %t)", id, err, present)
+		}
+		held.Cancelled = false
+		if err := f.store.SaveSubscription(ctx, held); err != nil {
+			t.Fatalf("re-arming the subscription %s: %v", id, err)
 		}
 	}
 
@@ -654,5 +685,14 @@ func TestCancelSubscriptionsOfEndsTheOrgsRunningOnes(t *testing.T) {
 	if len(f.paddle.cancelled) != 2*len(running) {
 		t.Errorf("the merchant was asked to cancel %v across the refused pass, want one attempt per subscription (%d): a failure on one must not stop the rest",
 			f.paddle.cancelled[len(running):], len(running))
+	}
+	for _, id := range running {
+		held, present, err := f.store.Subscription(ctx, id)
+		if err != nil || !present {
+			t.Fatalf("reading the subscription %s back: %v (present %t)", id, err, present)
+		}
+		if held.Cancelled {
+			t.Errorf("the record of %s reads cancelled after the merchant refused it, and only the merchant's own answer moves it", id)
+		}
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/creds"
 	"github.com/dimipaun/fugaro/internal/digest"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -883,6 +884,79 @@ func TestProjectPolicyPublishRefusesAnEmptyBudgetMode(t *testing.T) {
 	}
 	if f.db.Value(projectpolicy.PathShared()) != nil {
 		t.Error("a node was written anyway")
+	}
+}
+
+// TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched is D2071 (a) at the
+// publish door (B2.7): a node whose budget mode is `off` is the fourth
+// condition of the credentials-service switch, so publishing it withholds the
+// service's address from every run of a switched `api-key` or `oauth`
+// repository at its next launch — while the mounts those runs would fall back
+// on come back only when each repository's own root is applied again, which is
+// a different command and not this one. The refusal is what stops the operator
+// from leaving an installation in that state by a single command.
+//
+// Every row that is NOT refused is the reason this is one refusal and not a
+// blanket one, and each takes one half of the state away: a mode that is not
+// `off` (nothing is withheld), a repository whose own record does not say a
+// root of it was applied with the service on (its job mounts what it always
+// did), a record whose auth the flip list does not carry (the cascade, whose
+// jobs gave their mounts up long before the flip and whose launch the mode
+// already refuses), and an installation with no credentials service at all.
+func TestPolicyPublishRefusesModeOffWhileARepositoryIsSwitched(t *testing.T) {
+	const svc = "credentials_service: { url: https://fugaro-credentials-abc.a.run.app }"
+	// The switch's own two facts on the repository: the record `fugaro update`
+	// writes when it applies a root with the service on, and the repository's
+	// auth as the run will read it (the record the service narrows a call to).
+	const switched = "  acme/app: { provider: github, workflows: [web], credentials_service_ready: true }\n"
+	replaceRepo := func(s, entry string) string {
+		return strings.Replace(s, "  acme/app: { provider: github, workflows: [web] }\n", entry, 1)
+	}
+	for _, tc := range []struct {
+		name    string
+		auth    string
+		mode    string
+		svc     string
+		repo    string
+		refused bool
+	}{
+		{name: "a switched api-key repository and the mode goes off", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
+		{name: "a switched oauth repository and the mode goes off", auth: config.AuthOAuth, mode: config.BudgetOff, svc: svc, repo: switched, refused: true},
+		{name: "the mode is published as enforce", auth: config.AuthAPIKey, mode: config.BudgetEnforce, svc: svc, repo: switched},
+		{name: "the mode is published as observe", auth: config.AuthAPIKey, mode: config.BudgetObserve, svc: svc, repo: switched},
+		{name: "no root of the repository was applied with the service on", auth: config.AuthAPIKey, mode: config.BudgetOff, svc: svc},
+		{name: "the record says cascade", auth: config.AuthCascade, mode: config.BudgetOff, svc: svc, repo: switched},
+		{name: "the installation carries no credentials service", auth: config.AuthAPIKey, mode: config.BudgetOff, repo: switched},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newProjectFixture(t, tc.svc+"\n")
+			setConfig(t, f, func(s string) string {
+				s = replaceRepo(s, tc.repo)
+				return strings.Replace(s, "budget: { mode: enforce, per_run_usd: 5,", "budget: { mode: "+tc.mode+", per_run_usd: 5,", 1)
+			})
+			f.db.Set(creds.PathRepoAuth(mustSlug("github", "acme/app")), map[string]any{"version": creds.RepoAuthVersion, "auth": tc.auth})
+
+			_, _, err := execute(t, "project", "policy", "publish")
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("the mode was published as off while a switched repository holds no model mount of its own: its next launch is handed no service address and has no credential to read (D2071)")
+			case tc.refused:
+				for _, want := range []string{"acme/app", tc.auth, config.BudgetOff, config.BudgetObserve} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if f.db.Value(projectpolicy.PathShared()) != nil {
+					t.Error("a node was written anyway: the refusal is D2071 (a)'s, and it is before the first write of this publish")
+				}
+			case err != nil:
+				t.Fatalf("a publish D2071 (a) does not refuse was refused: %v", err)
+			default:
+				if got := publishedPolicy(t, f).Budget.Mode; got != tc.mode {
+					t.Errorf("the node's mode is %q, want %q", got, tc.mode)
+				}
+			}
+		})
 	}
 }
 
@@ -3917,18 +3991,23 @@ func TestPolicyShowPrintsTheDesignatedReportsRepository(t *testing.T) {
 	}
 }
 
-// TestTheReportsCommitFolderIsTheLayoutsFolder pins the one thing
-// projectpolicy cannot say about its own default: that it is the report
-// layout's folder. The constant is spelled there as a literal rather than read
-// from internal/digest, because that package's own test binary reaches
-// projectpolicy through internal/orchestrator and importing it there would be
-// an import cycle — so the two are held equal here, where both are readable,
-// and a layout that moved its folder fails this test instead of quietly
-// committing a project's reports beside the folder the layout writes.
-func TestTheReportsCommitFolderIsTheLayoutsFolder(t *testing.T) {
-	if projectpolicy.DefaultReportsCommitDir != digest.Dir {
-		t.Errorf("projectpolicy.DefaultReportsCommitDir = %q, and the report layout's folder (digest.Dir) is %q: a project that designates a repository and names no folder means the place its reports already live",
-			projectpolicy.DefaultReportsCommitDir, digest.Dir)
+// TestTheReportsCommitFolderIsNotTheLayoutsFolder pins that the default mirror
+// folder is not the one run-digest writes a repository's own reports into
+// (digest.Dir): a designated repository that is itself reviewed holds both, and
+// no mirror path may be a path run-digest writes. projectpolicy spells the
+// default as a literal (internal/digest's test binary reaches it through
+// internal/orchestrator, so importing it there is a cycle), so the two are held
+// apart here, where both are readable.
+func TestTheReportsCommitFolderIsNotTheLayoutsFolder(t *testing.T) {
+	def := projectpolicy.DefaultReportsCommitDir
+	if def == digest.Dir || strings.HasPrefix(def+"/", digest.Dir+"/") || strings.HasPrefix(digest.Dir+"/", def+"/") {
+		t.Fatalf("projectpolicy.DefaultReportsCommitDir = %q and digest.Dir = %q: the mirror's default folder must be neither the layout's folder nor inside it nor around it, or a designated repository's own reports and the mirror share paths", def, digest.Dir)
+	}
+	own := digest.Dir + "/" + digest.PeriodPath("2026-10-25")
+	for _, slug := range []string{"acme-app-dc4d4e59e884fc44", ""} {
+		if got := digest.MirrorPath(def, slug, "day", "2026-10-25"); got == "" || got == own || strings.HasPrefix(got, digest.Dir+"/") {
+			t.Errorf("MirrorPath(%q, %q) = %q: it must be a path of its own, never a path run-digest writes (%q)", def, slug, got, own)
+		}
 	}
 }
 

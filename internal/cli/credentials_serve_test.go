@@ -439,6 +439,70 @@ func TestCredentialsServiceSharedJobAccountsReachTheService(t *testing.T) {
 	}
 }
 
+// TestCredentialsServiceRepoBuildAccountsReachTheAuthenticator is the same
+// wiring test for the repository build class (B4.3, R5, D2076, G20): the rows
+// the build-credentials route admits are derived from FUGARO_JOB_ACCOUNTS —
+// the same document the job bindings come from, read a third way — and a class
+// quietly dropped on the way to AuthConfig would look exactly like an
+// installation that runs no repository's build. Only the route's answer would
+// differ, and reaching it takes a Google ID token.
+//
+// The class's own overlap rule is what makes the wiring reachable: one address
+// may not be both a repository's build service account and one of the
+// installation's verifiers, because one caller would then be two classes
+// (auth.go). The address below is DERIVED from the document this file's
+// environment holds, by the function the command derives it with, so the
+// refusal exists ONLY if the rows arrived at the authenticator — a service
+// built with RepoBuildAccounts dropped starts, and one built with the rows
+// refuses. The refusal names the variable and never an account, which is this
+// process's own no-echo rule.
+//
+// The second half is the empty half of the same wiring: an empty job document
+// is refused by name (a table that binds nothing admits nobody), and the
+// derivation is over the SAME per-provider list the job accounts come from, so
+// there is no state in which a repository has a build class and no jobs.
+//
+// Mutation (verified, run and restored): dropping RepoBuildAccounts from the
+// AuthConfig literal in credentialsServiceConfig — this test fails on the
+// first half, the configuration building with the verifier admitted and no
+// build class configured.
+func TestCredentialsServiceRepoBuildAccountsReachTheAuthenticator(t *testing.T) {
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	// The one repository this file's environment names, read the way the
+	// command reads it: the derived row is the deployment's own account and not
+	// a second spelling of it.
+	rows, err := credsvc.RepoBuildAccountsFor(credentialsServeEnv[envGCPProject], "github",
+		[]credsvc.RepoJob{{Repo: "acme/webapp", Workflow: "api"}})
+	if err != nil {
+		t.Fatalf("RepoBuildAccountsFor over the document this file's environment holds: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the derived rows = %+v, want one for the one repository the document names", rows)
+	}
+	buildAccount := rows[0].Email
+	t.Setenv(envVerifierAccounts, `["`+buildAccount+`"]`)
+	fakeCredentialsService(t)
+
+	_, err = credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: one address that is both a verifier and a repository's build service account must refuse the process rather than be dropped on the way to it", err)
+	}
+	if !strings.Contains(err.Error(), "cannot verify its callers") || !strings.Contains(err.Error(), "build service account") {
+		t.Fatalf("err = %v, want the refusal that says the service cannot verify its callers because the address is also a repository's build service account, which is reachable only if the build rows reached the authenticator", err)
+	}
+	if strings.Contains(err.Error(), buildAccount) {
+		t.Errorf("err = %v, which carries the derived build account itself: the refusal names the variable and never an account", err)
+	}
+
+	t.Setenv(envVerifierAccounts, "")
+	t.Setenv(envJobAccounts, "[]")
+	if _, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: a job document that names no job binds no run to a repository and is refused by name", err)
+	}
+}
+
 // TestCredentialsServiceReviewJobAccountsAreOneTableWhateverTheDocumentsOrder:
 // the document is a deployment's own text, so its order is not a fact about the
 // installation and the same rows written twice are one account -- the table
@@ -631,6 +695,108 @@ func TestBuildAccountsReadFromEnv(t *testing.T) {
 	}
 	if _, err := credsvc.NewServer(cfg); err != nil {
 		t.Fatalf("NewServer with the installation's build identity as its build class: %v", err)
+	}
+}
+
+// TestCredentialsServiceOrchestratorClassReachesTheAuthenticator is the
+// daemon's class at this end (F19, O2; E16, D2049): the value credentials.tf
+// renders for an installation that runs a resident orchestrator — a JSON array
+// holding the one address orchestrator.tf creates — is a value this process
+// STARTS on, and the class it builds is the daemon's alone.
+//
+// The three halves are the build list's, one class over. The module's own
+// value builds a configuration the server accepts, which is what makes the
+// service an update deploys a service that serves the label route and the
+// merge mint rather than a container that will not bind a port. An address the
+// class may not hold — one of the installation's own job accounts, and one of
+// its operators — is refused where the configuration is read, and those two
+// refusals exist ONLY if the value arrived at credsvc.NewAuthenticator: a
+// service built with OrchestratorAccounts dropped starts and admits nobody,
+// and a job admitted here is the credential C2.2 and F28 keep out of the
+// merge mint. And absent or empty is the empty class, which is the state every
+// service deployed by a release before this one is in: it starts, and both
+// routes answer every caller with the class's own refusal rather than refuse
+// to serve (credsvc/mergemint_test.go's TestPreviousInstallationConverges is
+// the route-level half of that).
+//
+// Mutation (verified, run and restored): drop OrchestratorAccounts from the
+// AuthConfig literal in credentialsServiceConfig, and both refusals below are
+// gone — the configuration builds, with the daemon class empty and a job's or
+// a person's address admitted to it.
+func TestCredentialsServiceOrchestratorClassReachesTheAuthenticator(t *testing.T) {
+	// The installation's own operator, and the job account its job table
+	// derives — the address TestCredentialsServiceConfigBuildsFromAFullEnvironment
+	// pins by value. Neither may be the daemon: the class is an automation of
+	// its own.
+	const (
+		daemonPerson   = "operator-1@example.com"
+		daemonJobEmail = "fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"
+	)
+	for _, n := range credentialsServiceEnvNames {
+		t.Setenv(n, credentialsServeEnv[n])
+	}
+	t.Setenv(envPersonAccounts, `["`+daemonPerson+`"]`)
+	fakeCredentialsService(t)
+
+	// The module's own value, read through the configuration the way the
+	// service reads it: an installation that opted in gets a service that
+	// serves both of the daemon's routes.
+	daemonEmail := infra.OrchestratorAccountID + "@" + credentialsServeEnv[envGCPProject] + ".iam.gserviceaccount.com"
+	t.Setenv(envOrchestratorAccounts, `["`+daemonEmail+`"]`)
+	cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err != nil {
+		t.Fatalf("credentialsServiceConfig with the installation's own daemon account: %v (credentials.tf renders this entry on every installation that runs a resident orchestrator, and a value this process cannot read is a daemon whose service never starts)", err)
+	}
+	if _, err := credsvc.NewServer(cfg); err != nil {
+		t.Fatalf("NewServer with the installation's own daemon account: %v", err)
+	}
+
+	// A run's own account, which is what a list dropped on the way to the
+	// authenticator would admit in the daemon's place ...
+	t.Setenv(envOrchestratorAccounts, `["`+daemonJobEmail+`"]`)
+	_, err = credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an installation's job account on the daemon class is what C2.2 and F28 keep out of the merge mint", err)
+	}
+	for _, want := range []string{"cannot verify its callers", "orchestrator", "job service accounts"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want the refusal that says a run's account may not be the daemon", err)
+			break
+		}
+	}
+	if strings.Contains(err.Error(), daemonJobEmail) {
+		t.Errorf("err = %v, which carries the account itself: the refusal names the classes and never an address", err)
+	}
+
+	// ... and one of the installation's operators, for the person list's own
+	// reason: the daemon is an automation and its class is not a person's, which
+	// is what keeps a person's ambient credentials out of both routes whatever
+	// the audience check does.
+	t.Setenv(envOrchestratorAccounts, `["`+daemonPerson+`"]`)
+	_, err = credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error: an operator on the daemon class is a person admitted to the merge mint", err)
+	}
+	for _, want := range []string{"cannot verify its callers", "orchestrator", "people"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want the refusal that says a person may not be the daemon", err)
+			break
+		}
+	}
+
+	// The optional half: absent and empty are the empty class, which is the
+	// state of every service deployed before this release and of every
+	// installation that runs no daemon. Both start, and both routes answer
+	// every caller with the class's refusal.
+	for _, raw := range []string{"", "[]"} {
+		t.Setenv(envOrchestratorAccounts, raw)
+		cfg, err := credentialsServiceConfig(context.Background(), os.Getenv, io.Discard)
+		if err != nil {
+			t.Fatalf("credentialsServiceConfig with %s = %q: %v (the entry arrives with the account the module creates, so a service deployed by a release that renders none must start the same service it always did)", envOrchestratorAccounts, raw, err)
+		}
+		if _, err := credsvc.NewServer(cfg); err != nil {
+			t.Fatalf("NewServer with %s = %q: %v", envOrchestratorAccounts, raw, err)
+		}
 	}
 }
 
@@ -966,6 +1132,19 @@ func TestCredentialsServiceConfigRefusesAMalformedVariable(t *testing.T) {
 			set:   map[string]string{envBuildAccounts: `[{"email":"fugaro-build-identity@proj-1234.iam.gserviceaccount.com"}]`},
 			names: []string{envBuildAccounts},
 		},
+		{
+			name:  "the orchestrator list is not JSON",
+			set:   map[string]string{envOrchestratorAccounts: "fugaro-orch@proj-1234.iam.gserviceaccount.com"},
+			names: []string{envOrchestratorAccounts},
+		},
+		{
+			// The daemon's address is what the module renders, so a list of
+			// rows here is a deployment that is wrong rather than a class
+			// admitting nobody — the build list's rule, one class over.
+			name:  "the orchestrator list carries a row rather than an address",
+			set:   map[string]string{envOrchestratorAccounts: `[{"email":"fugaro-orch@proj-1234.iam.gserviceaccount.com"}]`},
+			names: []string{envOrchestratorAccounts},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, n := range credentialsServiceEnvNames {
@@ -1062,14 +1241,14 @@ func TestCredentialsServiceRefusalsNeverCarryAValue(t *testing.T) {
 // The other direction is a name this command reads that nothing sets, which is
 // a fact the service silently does not have.
 //
-// The list is the seven REQUIRED names plus the seven optional ones, which is
+// The list is the seven REQUIRED names plus the eight optional ones, which is
 // the whole of what the module renders and what this command reads: the
 // optional ones belong here because a name the module sets and this command
 // does not read is the same mistake whether the command requires it or reads it
 // outside the loop. Which of the names is which is pinned by the tests around
 // this one, not by this comparison.
 //
-// All seven are rendered conditionally — the module sets each of them only on
+// All eight are rendered conditionally — the module sets each of them only on
 // an installation where it applies — and the reason they belong here rather than
 // in credentialsServiceEnvNames is pinned by the tests around this one. One of
 // them is rendered by no module yet and is read from
@@ -1088,7 +1267,7 @@ func TestCredentialsServiceEnvIsTheDeploymentsOwn(t *testing.T) {
 		inModule[m[1]] = true
 	}
 	pending := infraTF.CredentialsServiceEnvAwaitingTheModule()
-	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts)
+	read := append(slices.Clone(credentialsServiceEnvNames), envVerifierAccounts, envPersonAccounts, envLauncherAccounts, envCoordinatorAccount, envReviewJobAccounts, envSharedJobAccounts, envBuildAccounts, envOrchestratorAccounts)
 	for _, n := range read {
 		if slices.Contains(pending, n) {
 			if inModule[n] {

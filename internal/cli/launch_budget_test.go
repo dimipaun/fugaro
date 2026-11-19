@@ -20,6 +20,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -1555,6 +1556,92 @@ func TestLaunchRefusesProxiedRunOnBatch(t *testing.T) {
 	}
 }
 
+// TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage is B2.7's own gate (D2072,
+// G17): a repository the flip has taken the model mounts off is not launched
+// onto a job image whose runner predates the service half of the switch. The
+// job such a run starts carries neither ANTHROPIC_API_KEY nor
+// CLAUDE_CODE_OAUTH_TOKEN (B2.7's flip, internal/infra's dropModelMounts), so
+// a runner that cannot call the credentials service for them holds no
+// credential at all: it dies at its first model call with nothing to fall back
+// to (D143).
+//
+// The judge is the one every *Since gate uses, against the release whose
+// runner carries the service half (serviceAuthSince — B2.2's gatewayUpstream
+// and ServiceSwitchedAuth, which is the release BEFORE the flip's own), and
+// the rows are the switch's conditions taken one at a time: both auths the
+// list carries are refused on the image below it, and a repository whose
+// record says its root was never applied with the service on, an installation
+// that carries no service, and a published node whose budget mode is off are
+// admitted — a launch the service does not serve keeps every mount and is
+// judged by every gate it always was (G9, G17).
+//
+// The admitted rows end at policyImageGate rather than at the launch, the way
+// TestLaunchRefusesProxiedRunOnOldImage's do and for the same reason: every
+// node this reader reads is policy version 5 or later, whose release is newer
+// than the image those rows run on, so the launch is refused by that gate
+// afterwards. What they hold is that the refusal is not this gate's (this
+// gate's sentence is the only one that names serviceAuthSince) — and the row
+// on the current release, which reaches the backend, holds the other end: the
+// same repository, on an image this gate is old for, is launched.
+func TestLaunchRefusesASwitchedAPIKeyRunOnAnOldImage(t *testing.T) {
+	const old = "ghcr.io/dimipaun/fugaro-base:0.24.0"
+	const atFlip = "ghcr.io/dimipaun/fugaro-base:" + serviceAuthSince
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		auth    string
+		base    string
+		block   string
+		mode    string
+		ready   bool
+		refused bool
+	}{
+		{"a switched api-key repository on an image below the flip", apiKeyLaunchYAML, config.AuthAPIKey, old, proxiedBlock, "enforce", true, true},
+		{"a switched oauth repository on an image below the flip", oauthLaunchYAML, config.AuthOAuth, old, proxiedBlock, "enforce", true, true},
+		{"the repository's own switch is off", apiKeyLaunchYAML, "", old, proxiedBlock, "enforce", false, false},
+		{"the installation carries no credentials service", apiKeyLaunchYAML, "", old, "", "enforce", true, false},
+		{"the published node's budget mode is off", apiKeyLaunchYAML, "", old, proxiedBlock, "off", true, false},
+		{"the job image is at the flip's release", apiKeyLaunchYAML, "", atFlip, proxiedBlock, "enforce", true, false},
+		{"the job image is the current release", apiKeyLaunchYAML, "", releasePolicy, proxiedBlock, "enforce", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			if tc.block != "" {
+				f.appendConfig(t, tc.block)
+			}
+			publishPolicy(t, f, cascadePolicyWithMode(tc.mode))
+			projectJobCheckoutYAML(t, tc.yaml)
+			if tc.ready {
+				markRepoCredentialsServiceReady(t, f.cloudFixture)
+			}
+			writeBuildRecord(t, f.cloudFixture, appSlug, "web", tc.base)
+			_, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", budgetRun, "Add a feature")
+			switch {
+			case tc.refused && err == nil:
+				t.Fatal("a repository whose model mounts the flip has taken off was launched onto a job image whose runner cannot read them from the credentials service: it would halt at its first model call with no key and no account of its own (D2072, G17)")
+			case tc.refused:
+				for _, want := range []string{serviceAuthSince, "model credential is brokered", tc.auth, "job mounts neither the Anthropic key nor the Claude OAuth token", "fugaro update"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("the refusal does not name %q: %v", want, err)
+					}
+				}
+				if launchedAny(f) {
+					t.Error("the refused launch started an execution")
+				}
+				if storedTaskFor(t, f.cloudFixture, appSlug) {
+					t.Error("the refused launch stored a task")
+				}
+			case !tc.refused && err != nil && imageGateOnly(err, tc.base):
+				return
+			case !tc.refused && err != nil:
+				t.Fatalf("a launch this gate does not judge was refused: %v", err)
+			case !launchedAny(f):
+				t.Error("a launch this gate does not judge started no execution")
+			}
+		})
+	}
+}
+
 // TestProxySinceHasAReleaseBullet: proxySince names 0.22.0, the release that
 // carries the runner half, so docs/release.md's Before-you-tag list is what
 // holds the constant to the release actually cut — the job every other *Since
@@ -1585,6 +1672,41 @@ func TestProxySinceHasAReleaseBullet(t *testing.T) {
 	for _, want := range []string{"bitbucket_token", "proxy: true", "0.21.0 was tagged", "without the runner half"} {
 		if !strings.Contains(bullet, want) {
 			t.Errorf("docs/release.md's proxySince bullet does not say %q", want)
+		}
+	}
+}
+
+// TestServiceAuthSinceHasAReleaseBullet: serviceAuthSince names 0.25.0, the
+// release that carries the runner half — B2.2's gatewayUpstream and
+// ServiceSwitchedAuth — and NOT the release the flip itself ships in
+// (0.26.0, B2.7), which is the pair D2072 splits across two releases. The
+// number is one release off from the obvious answer, so docs/release.md's
+// Before-you-tag list is the only thing that holds it to the release actually
+// cut and stops it sliding onto the flip's own release, which would refuse a
+// 0.25.0 image whose runner serves such a run correctly. Nothing in the code
+// ties the number the gate refuses on to the release whose runner reads the
+// service.
+//
+// The pinned phrases are that account: the runner half by name, the release
+// the flip ships in, and the "refuses too late" failure a value below 0.25.0
+// buys.
+func TestServiceAuthSinceHasAReleaseBullet(t *testing.T) {
+	var bullet string
+	for _, line := range strings.Split(readDoc(t, "docs/release.md"), "\n") {
+		if strings.HasPrefix(line, "- **Verify `serviceAuthSince`") {
+			bullet = line
+			break
+		}
+	}
+	if bullet == "" {
+		t.Fatal("docs/release.md's Before-you-tag list has no serviceAuthSince bullet: the checklist is where a release verifies the constant, and this constant is one release off from the flip it is for")
+	}
+	if !strings.Contains(bullet, "currently `\""+serviceAuthSince+"\"`") {
+		t.Errorf("docs/release.md's serviceAuthSince bullet does not carry the constant's release (%q)", serviceAuthSince)
+	}
+	for _, want := range []string{"gatewayUpstream", "ServiceSwitchedAuth", "not the release the flip ships in", "0.25.0 image is the oldest one that can carry both halves", "refuses too late"} {
+		if !strings.Contains(bullet, want) {
+			t.Errorf("docs/release.md's serviceAuthSince bullet does not say %q", want)
 		}
 	}
 }

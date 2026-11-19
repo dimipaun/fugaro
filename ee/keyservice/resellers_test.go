@@ -23,6 +23,7 @@ package keyservice
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1010,5 +1011,79 @@ func TestConcurrentFirstOwnerInvitationsLeaveOnePending(t *testing.T) {
 	}
 	if len(f.mail.sent) != 1 {
 		t.Errorf("the burst mailed %d message(s), want one: the invitation nobody wrote is not a mail either", len(f.mail.sent))
+	}
+}
+
+// TestFirstOwnerInvitationGoesBackWhenTheMailFails: the reseller's remedy for an
+// invitation nobody received is to ask again, and it exists only if the failed
+// send leaves nothing behind. The reseller is not a member of the customer's
+// organisation and operations decides nothing for another organisation's people
+// (P2.2's inviteAccess), so nobody can withdraw a pending invitation left here,
+// and this act's own guard refuses on a member OR a live invitation: an
+// invitation kept on a failed send shuts the reseller out of its own customer for
+// the whole of the seven days it is live. SeedOperations puts its own invitation
+// back for this exact reason.
+func TestFirstOwnerInvitationGoesBackWhenTheMailFails(t *testing.T) {
+	f := newFixture(t)
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, sellerMail, roleOwner)
+	f.actsAs(sellerUID, sellerMail, signInGoogle)
+	bought := f.soldBy("Example Ltd")
+
+	f.mail.err = errors.New("the mail provider refused the message")
+	rec := f.firstOwnerInvite(bought.ID, buyerMail, roleOwner)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("an invitation whose mail the provider refused answered %d (%s), want the failure: a link nobody received must not read as one that was sent", rec.Code, rec.Body)
+	}
+	if held := f.invitationsOf(bought.ID); len(held) != 0 {
+		t.Errorf("the failed send left %+v, want nothing: nobody can withdraw an invitation here, so a pending one refuses the reseller's only remedy for the %s it is live", held, inviteTTL)
+	}
+	if len(f.mail.sent) != 0 {
+		t.Error("the failed send recorded a message anyway")
+	}
+
+	// The reseller asks again, and the customer's first owner is invited.
+	f.mail.err = nil
+	again := f.firstOwnerInvite(bought.ID, buyerMail, roleOwner)
+	if again.Code != http.StatusCreated {
+		t.Fatalf("inviting the customer's first owner again after a failed send answered %d: %s", again.Code, again.Body)
+	}
+	invitation := readAnswer[WireInvite](f, again)
+	if held := f.invitationsOf(bought.ID); len(held) != 1 || held[0].ID != invitation.ID {
+		t.Errorf("the store holds %+v, want the one invitation the retry wrote", held)
+	}
+	if len(f.mail.sent) != 1 || f.lastMail().To != buyerMail {
+		t.Errorf("the retry mailed %+v, want the one message for %s", f.mail.sent, buyerMail)
+	}
+}
+
+// TestResellerCannotInviteItsOwnAddressInAnyCase: F40's other side — a reseller's
+// own person is not the answer to "who owns the customer" — read through the
+// spellings one address has. A membership carries the address the sign-in folded
+// WHOLE (mcpauth's fold), while access.Member lower-cases the domain and keeps the
+// local part byte for byte, so a comparison that stopped at the member would admit
+// a reseller's own owner inviting their own address in the case their token
+// claimed it. The invitation would make them a member of the customer's
+// organisation, and the customer's reveals, binds and purchases would be the
+// reseller's.
+func TestResellerCannotInviteItsOwnAddressInAnyCase(t *testing.T) {
+	f := newFixture(t)
+	// The reseller's owner signed in claiming a capitalised local part: the
+	// membership carries the folded address the sign-in wrote, and the caller's
+	// own member keeps the claimed case — the two spellings this case is about.
+	f.resellerOrg(resellerID, "Partner Ltd", sellerUID, strings.ToLower(sellerMail), roleOwner)
+	f.signedInAsClaiming(sellerUID, "Seller@partner.example", signInGoogle)
+	bought := f.soldBy("Example Ltd")
+
+	for _, own := range []string{sellerMail, "Seller@partner.example", "SELLER@PARTNER.EXAMPLE"} {
+		readAPIRefusal(t, f.firstOwnerInvite(bought.ID, own, roleOwner),
+			http.StatusForbidden, "not_permitted")
+	}
+	if held := f.invitationsOf(bought.ID); len(held) != 0 {
+		t.Errorf("the store holds %+v, want nothing: a spelling of the reseller's own address is not an invitation", held)
+	}
+
+	// A buyer who is nobody at the reseller is invited as before.
+	if rec := f.firstOwnerInvite(bought.ID, buyerMail, roleOwner); rec.Code != http.StatusCreated {
+		t.Errorf("inviting a buyer who is not the reseller's own person answered %d: %s", rec.Code, rec.Body)
 	}
 }

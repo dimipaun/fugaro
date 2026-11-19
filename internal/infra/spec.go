@@ -352,9 +352,12 @@ type VoiceService struct {
 //     doctor, --print-vars), and "" is then the answer — held off, the
 //     fail-closed direction — while an empty Policy is the different answer
 //     "read, and the project has published no block". Neither is a repository
-//     left broken: nothing is dropped for an auth this release does not serve
-//     (config.ServiceServedAuths is empty until B2.7), so a held-off
-//     `api-key` repository keeps exactly the mounts it had.
+//     left broken: nothing is dropped for an auth the flip list does not carry
+//     (config.ServiceServedAuths), and an auth it does carry is held off here
+//     only where this answer is false — a mode off, a root applied with the
+//     switch off, no install — and then nothing is dropped either, so a
+//     held-off `api-key` repository keeps exactly the mounts it had and its
+//     run reads its own key, no service being reached (D2071).
 //
 //     The cascade is deliberately not held to this condition, and that is what
 //     keeps the mode's own rule whole: a `cascade` workflow is REFUSED outright
@@ -390,13 +393,18 @@ func CredentialsServiceServes(installed, ready bool, auth, mode string) bool {
 // accessor drop on (config.ModelSecretServedAll, ...Anthropic, ...None).
 //
 // It is a SECOND answer rather than a clause of the switch because the two
-// come apart on this branch, and that is D2072's first step: a switched
-// `api-key` or `oauth` repository's runs reach the service from the release
-// that hands out the address, while its job goes on MOUNTING the credential —
-// config.ServiceServedAuths is empty, the flip is B2.7 — so an older launcher
-// or an older job image, which reads the mount and knows nothing of the
-// service, still works (G17, D2072). Only the cascade, which has no in-job
-// credential to read at all, takes its mounts away with the URL.
+// come apart across releases, and that was D2072's first step: from the
+// release that hands out the address (B2.3) a switched `api-key` or `oauth`
+// repository's runs reached the service while its job went on MOUNTING the
+// credential — config.ServiceServedAuths was empty then — so an older
+// launcher or an older job image, which reads the mount and knows nothing of
+// the service, still worked (G17, D2072). The flip (B2.7) filled the list,
+// which is what makes this answer `anthropic` for those two: only the two
+// named model credentials go, and a provider's key stays with the job. The
+// two answers stay apart because they decide different things — the switch is
+// the address and the accessor, this is the mount — and because the cascade,
+// which has no in-job credential to read at all, takes every mount away with
+// the URL.
 //
 // `serves` is CredentialsServiceServes' answer for this repository, and the
 // three cases are:
@@ -491,6 +499,18 @@ type WorkflowSpec struct {
 	TokenCondition Condition `json:"token_condition"`
 	Vertex         bool      `json:"vertex"`
 	DeployJob      bool      `json:"deploy_job"`
+	// StageAccount is whether this is a mixed stage account's own variant job
+	// (mixedStageAccountJob): the job a run's `review`, `adversarial` and
+	// `triage` stages go out on when an api-key repository mixes a Claude
+	// account with the provider key its coder's stages keep (B0's one mix,
+	// docs/design/mixed-credentials.md §11). Those stages reach Anthropic on
+	// that account's token through the RUNNER and never through the run's
+	// gateway, so the credentials service has no call of theirs to serve and
+	// B2.7's flip leaves this job's Claude OAuth mount and its accessor alone
+	// where it takes the rest away (dropModelMounts, modules/workflow/sa.tf's
+	// anthropic arm). False for every other job of the repository, the base
+	// variant included.
+	StageAccount bool `json:"stage_account"`
 
 	Name                string            `json:"-"`
 	Slug                string            `json:"-"`
@@ -650,6 +670,42 @@ type RepoSpec struct {
 	// plan moves for a repository nobody proxied.
 	BitbucketProxied bool `json:"bitbucket_proxied,omitempty"`
 
+	// Shared is whether a deployed profile admits this repository (M6,
+	// docs/shared-jobs-default): the repository runs on a shared project job
+	// instead of the per-repository jobs its own root deploys, which is the
+	// structural precondition the owner's answer to D2303 puts in place of a
+	// retire gate, and the fact M7 reads to stop applying that root.
+	//
+	// A deployed profile is one the published node defines for a provider a
+	// shared job is deployed for (SharedJobProvider, the same predicate the
+	// deployer skips a profile by and the launcher refuses a shared job with),
+	// and it admits the repository when projectpolicy.Admits says so — the
+	// profile's own provider, the project's allow_repos and the profile's own
+	// list, all three. A repository no profile admits is unmarked, and so is
+	// one whose provider no profile of the node serves. The profiles are
+	// walked in name order and the first admission answers, so a node answers
+	// the same way on every read.
+	//
+	// The admission is the whole rule, deliberately: this is a record of what
+	// the project's policy says about the repository, not a second copy of the
+	// launcher's decision about a run. Which job a workflow lands on is
+	// launchProjectJobFor's (the workflow's own job_profile, its checkout mode
+	// while a shared job cannot hold it), and a mark computed from that would
+	// have to guess at a run that has not happened. What reads it asks the
+	// rest of its own question (M7: the repository's workflows, the images
+	// stage, the warning).
+	//
+	// It changes no Terraform input and no behaviour on its own: it is
+	// json:"-" the way the spec's other in-process facts are
+	// (ProjectSecretCandidates, AccountProfiles), so the repository root plans
+	// exactly what it planned before the field existed and M6 merges before M7
+	// and M2 without a root applying differently. nil Policy — a caller that
+	// read no node (fugaro image, fugaro doctor, --print-vars) — marks
+	// nothing, because a node it never read deploys no profile it could be
+	// admitted to; an empty Policy is the different answer "read, and the
+	// project published no profile", and it marks nothing either.
+	Shared bool `json:"-"`
+
 	// ModelSecretsServed is which model secrets the credentials service serves
 	// to this repository's jobs (config.ModelSecretServedAll, ...Anthropic,
 	// ...None), written into the tfvars' repo object as the workflow module's
@@ -663,11 +719,10 @@ type RepoSpec struct {
 	// It is the flip's value rather than the switch's (D2072): `none` for a
 	// repository the switch holds off, `all` for the cascade's job, and
 	// `anthropic` — the two named model credentials and no provider key — for
-	// an auth config.ServiceServedAuths holds, which is empty until B2.7. So a
-	// switched `api-key` or `oauth` repository plans every mount and every
-	// accessor exactly as it did before the service existed, while its runs
-	// reach the service: the URL first, the mounts dropped behind the flip
-	// (G17).
+	// an auth config.ServiceServedAuths holds. So a switched `api-key` or
+	// `oauth` repository plans the two Claude mounts and their accessors away
+	// while every provider key it mounts stays, and its runs reach the service
+	// for the credential the two mounts gave up (G17, R6, D1634).
 	//
 	// It is omitted when empty, and the module's default is then `all`: the
 	// value this branch shipped before the input existed, which is what a root
@@ -923,7 +978,7 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 	if !hasEntry {
 		return nil
 	}
-	localProxies := entry.Proxy && entry.AllowsData(c.in.Repo)
+	localProxies := entry.Proxying() && entry.AllowsData(c.in.Repo)
 	if localProxies == nodeProxies {
 		return nil
 	}
@@ -934,6 +989,45 @@ func (c *repoCtx) resolveBitbucketProxied() error {
 		return "does not admit it with proxy: true"
 	}
 	return userErr("the local config's project_secrets.%s entry and the project's published policy disagree about %s: the entry %s, and the published node %s. Whether a repository's git credential is brokered has one source, the published node, because that node is what the credentials service reads when the repository's job asks it for the token — so make the two agree: publish this config with 'fugaro project policy publish', which derives the node's bitbucket_token block from this entry, or correct the entry to say what the node says", config.BitbucketSecret, c.in.Repo, says(localProxies), says(nodeProxies))
+}
+
+// sharedRepo is RepoSpec.Shared's answer for this repository, which SharedRepo
+// computes: the node is read through the operator's credentials by the caller
+// and handed in as Inputs.Policy, exactly as the proxy's half is
+// (resolveBitbucketProxied, same reason: internal/infra holds no client that
+// could read one and Repo is a pure function of its Inputs).
+func (c *repoCtx) sharedRepo() bool { return SharedRepo(c.in.Policy, c.provider, c.in.Repo) }
+
+// SharedRepo is RepoSpec.Shared's answer for a repository whose spec a caller
+// does not build: whether a deployed profile of the published node admits it.
+// RepoSpec.Shared's own doc comment is the whole rule; this is that walk for
+// the callers that hold the node and the repository's name but no Inputs to
+// build a spec with — the images stage and the refresh behind it, which decide
+// by it whether a checkout still converges per-repository images (M7,
+// docs/shared-jobs-default).
+//
+// A nil policy marks nothing, exactly as it does there: a caller that read no
+// node has read no profile the repository could be admitted to. An error is
+// never a refusal either, and the two it can carry are both unreachable from
+// the callers here: a name no provider could address (which task.Slug refuses
+// long before) and Admits' own error, which is a name the node itself defines.
+func SharedRepo(p *projectpolicy.Policy, provider, repo string) bool {
+	if p == nil {
+		return false
+	}
+	canonical, err := projectpolicy.Canonical(provider, repo)
+	if err != nil {
+		return false
+	}
+	for _, name := range slices.Sorted(maps.Keys(p.Profiles)) {
+		if !SharedJobProvider(p.Profiles[name].Provider) {
+			continue
+		}
+		if ok, err := p.Admits(name, canonical); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // localRepo is the local config's entry for repo, matched as fugaro run
@@ -1076,10 +1170,7 @@ func (c *repoCtx) registryPath() string { return c.registryHost + "/" + gcp.Regi
 // (PIC4), which does not exist yet; when it lands, this is the reader the two
 // halves must agree through, so the name is written once.
 func (c *repoCtx) catalogImage(e config.Entry) string {
-	if e.Source.Kind == config.SourceImage {
-		return e.Source.Image
-	}
-	return c.registryHost + "/" + c.inst.SharedRegistry + "/" + catalogImagePrefix + e.Name + ":latest"
+	return catalogEntryImage(c.registryHost, c.inst.SharedRegistry, e)
 }
 
 // effectiveCatalog is the catalog the repository's specs are computed from:
@@ -1202,8 +1293,9 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 // instead stores that one for the project through the allow-list (D461/D464).
 // GitHub's App key is a project's, mounted by every repository the App serves,
 // and its logical name is config.GitHubAppKeySecret — the same constant
-// config.IsServiceHeldSecretEnv and the workflow module's
-// service_held_secret_names answer "is this the App key?" with. Review finding
+// config.IsServiceHeldSecretName and the workflow module's
+// service_held_secret_names answer "is this the App key?" with (the model
+// credentials' own half of that question is config.IsServiceHeldModelEnv). Review finding
 // F3: this function wrote both the App key's name and Bitbucket's out as
 // literals, so a rename in config would have left it returning a secret no job
 // mounts; the internal/cli code that spelled the App key out — doctor.go's
@@ -1285,8 +1377,11 @@ func SecretMounts(gitSecret string, cfg *config.Config, name, token string, w co
 			out = append(out, SecretMount{logical, p.SecretEnv()})
 		}
 		// The one mix the owner's B0 ruling admits: the stage account's own
-		// job mounts its token (mixedStageAccounts).
-		if slices.Contains(mixedStageAccounts(cfg, lc, repo), token) {
+		// job mounts its token (mixedStageAccounts). That mount is the
+		// exception B2.7's flip has to carry: it is the STAGE's credential and
+		// not the run's, so the service never serves it and the mount stays
+		// (mixedStageAccountJob, dropModelMounts).
+		if mixedStageAccountJob(cfg, lc, repo, token) {
 			out = append(out, SecretMount{config.ClaudeAccountSecret(token), config.ReservedSecrets["claude-oauth-token"]})
 		}
 	}
@@ -1593,21 +1688,31 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 		ws.SecretEnv[m.Env] = m.Logical
 		ws.SecretIDs[m.Logical] = gcp.SecretID(slug, m.Logical)
 	}
-	// A repository the credentials service serves holds its model
-	// credentials itself (D146, D147), so its jobs mount none of them:
-	// modules/workflow/sa.tf drops each job account's accessor, and a mount
-	// left behind would fail the job's own deploy. The containers stay
-	// declared — see dropModelMounts — so nothing here plans a secret's
-	// destruction.
+	// A repository the credentials service serves is handed its model
+	// credential by the service instead of by its own job (D146, D147), so the
+	// job mounts none of the mounts the service serves: modules/workflow/sa.tf
+	// drops each job account's accessor, and a mount left behind would fail the
+	// job's own deploy. The containers stay declared — see dropModelMounts —
+	// so nothing here plans a secret's destruction.
 	//
 	// Which model mounts go is ModelSecretsServed's answer and not the
 	// switch's alone (D2072): the cascade's job gives up every one of them,
 	// while an `api-key` or `oauth` repository whose runs reach the service
-	// gives up none of them until the flip — config.ServiceServedAuths is
-	// empty — because an older launcher or an older job image reads the mount
-	// and knows nothing of the service (G17). The value is the same one the
-	// tfvars carry (RepoSpec.ModelSecretsServed), so the mount this drops and
-	// the accessor the module takes away are one answer.
+	// gives up the two Claude mounts and keeps every provider key — the flip
+	// (B2.7) is what filled the list that makes that arm reachable, and the
+	// arm itself is why the two answers are apart: an `api-key` run still
+	// forwards a provider call on its own mounted key (R6, D1634). The value
+	// is the same one the tfvars carry (RepoSpec.ModelSecretsServed), so the
+	// mount this drops and the accessor the module takes away are one answer.
+	//
+	// And a mixed stage account's own job is the one job the `anthropic` arm
+	// does not reach whole (WorkflowSpec.StageAccount, set just below and read
+	// by the drop, the address mirror and the module alike): its Claude OAuth
+	// mount is the STAGE's credential, read by the runner for the three stages
+	// that go direct to Anthropic rather than through the run's gateway, so the
+	// service never serves it and the mount stays — with its accessor, which
+	// sa.tf exempts by the same field (B0's one mix,
+	// docs/design/mixed-credentials.md §11).
 	//
 	// c.credentialsServiceOn and not the block's presence: the installation
 	// having a service says nothing about THIS repository. A repository
@@ -1615,6 +1720,7 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	// cannot hand its credential back, would be left with no model
 	// credential at all — which is the whole of what this gate is for
 	// (CredentialsServiceServes).
+	ws.StageAccount = mixedStageAccountJob(c.in.Cfg, c.lc, c.in.Repo, token)
 	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
 	}
@@ -1756,6 +1862,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			CatalogCheckServiceAccount: c.inst.CatalogCheckServiceAccount,
 		},
 		BitbucketProxied: c.bitbucketProxied,
+		Shared:           c.sharedRepo(),
 		// The same answer workflow() dropped the mounts with, read from the
 		// same two facts, so the module's accessor drop and this spec's mount
 		// drop cannot disagree: a job whose account lost an accessor on a
@@ -2251,6 +2358,14 @@ func (rs RepoSpec) Addresses() []string {
 	add(root + `google_project_iam_member.build["log_writer"]`)
 	add(root + `google_project_iam_member.build["build_submitter"]`)
 	add(root + "google_service_account_iam_member.build_self")
+	// The build account's own roles/run.invoker on the installation's
+	// credentials service (B4.4, modules/repo/build.tf), on the same switch
+	// the workflow module's job invoker grants read (D135): an installation
+	// that has not opted in plans no resource, so its address is not one this
+	// spec has.
+	if rs.Installation.CredentialsService != nil {
+		add(root + "google_cloud_run_v2_service_iam_member.build_credentials[0]")
+	}
 	for _, member := range operators {
 		add(root + "google_service_account_iam_member.operator_build[" + q(member) + "]")
 	}
@@ -2295,7 +2410,7 @@ func (rs RepoSpec) Addresses() []string {
 			// that survives a retirement. The App key's half is inert until
 			// config.ServiceHeldSecretNames names it (C2.2's release, review
 			// finding F1).
-			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied) {
+			if rs.Installation.CredentialsService != nil && mountsServiceHeldSecret(ws, logical, rs.BitbucketProxied, rs.ModelSecretsServed) {
 				continue
 			}
 			add(p + "google_secret_manager_secret_iam_member.job[" + q(logical) + "]")
@@ -2331,12 +2446,21 @@ func (rs RepoSpec) Addresses() []string {
 // mountsServiceHeldSecret reports whether the logical secret name is one
 // whose credential the credentials service holds and the job's own account has
 // given up for ws: every secret_env entry naming it carries such a credential
-// (config.IsServiceHeldSecretEnv — a model credential by its variable, a name
-// config.ServiceHeldSecretNames lists by its name), so the service holds it
-// once an installation opts in (D145, D146) and the job's account keeps no
-// accessor on it (C1.18, C2.3). The App key's half of that list is empty until
-// C2.2's release (review finding F1), so this answers false for it today and
-// the job keeps the accessor it needs to read the key.
+// (config.IsServiceHeldModelEnv — the model variable, read for the arm this
+// root plans — or a name config.IsServiceHeldSecretName holds for every job),
+// so the service holds it once an installation opts in (D145, D146) and the
+// job's account keeps no accessor on it (C1.18, C2.3). The App key's name is
+// not in that list until C2.2's release (review finding F1), so this answers
+// false for it today and the job keeps the accessor it needs to read the key.
+//
+// served is RepoSpec.ModelSecretsServed, read for the same reason it is read
+// by the drop this mirrors (dropModelMounts): the arm decides which model
+// mounts the service serves this repository, and with it which accessors the
+// plan keeps. In the `anthropic` arm a mount that survives the drop — the
+// provider keys, and a mixed stage account's own Claude OAuth token — is a
+// mount the job's account keeps a grant on, so a mirror that answered "held"
+// for every model variable would report a live accessor as one the plan
+// retires (R6, D1634; B0's mix, docs/design/mixed-credentials.md §11).
 //
 // proxied is the repository's own fact (RepoSpec.BitbucketProxied), and it is
 // the second way a mount comes to be held: a name config.ProxiedGitSecretNames
@@ -2357,14 +2481,14 @@ func (rs RepoSpec) Addresses() []string {
 // way. The proxied clause is the module's is_proxied_git, folded in: it reads
 // the logical name and the repository's fact and never the variable, so it is
 // the same answer for every entry naming the name.
-func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool) bool {
+func mountsServiceHeldSecret(ws WorkflowSpec, name string, proxied bool, served string) bool {
 	proxiedGit := proxied && slices.Contains(config.ProxiedGitSecretNames, name)
 	held := false
 	for env, logical := range ws.SecretEnv {
 		if logical != name {
 			continue
 		}
-		if !config.IsServiceHeldSecretEnv(env, name) && !proxiedGit {
+		if !config.IsServiceHeldModelEnv(env, served, ws.StageAccount) && !config.IsServiceHeldSecretName(name) && !proxiedGit {
 			return false
 		}
 		held = true
@@ -2491,6 +2615,33 @@ func mixedStageAccounts(cfg *config.Config, lc *localcfg.Config, repo string) []
 		out = append(out, def)
 	}
 	return out
+}
+
+// mixedStageAccountJob is whether token is one of the repository's mixed stage
+// accounts: the job that account gets is its OWN variant (gcp.WorkflowVariant),
+// the one a run of this repository is launched on when the mix's stages go out
+// on it (mixedRunAccount, internal/cli), and the only job whose Claude OAuth
+// mount is a credential of the stage's rather than the run's.
+//
+// The mix is api-key's alone (resolveMixedStages, internal/runner; B0's ruling
+// of 2026-11-04, docs/design/mixed-credentials.md §11), which is why the auth
+// is read here: a name a stage key of an oauth repository names is not one of
+// these jobs — under oauth the key keeps the meaning the accounts design gives
+// it, and the account's token is the run's own, served by the service like
+// every other (B2.7).
+//
+// It is one function so that the mount and the drop reading it cannot
+// disagree: SecretMounts mounts the token on that job alone, and workflow
+// hands the same answer to dropModelMounts and to the tfvars the module reads
+// (WorkflowSpec.StageAccount), so the one mount the flip leaves and the
+// account's accessor on it go and stay together — Cloud Run refuses to create
+// a job whose account keeps an accessor a mount does not, or the reverse
+// (C1.20).
+func mixedStageAccountJob(cfg *config.Config, lc *localcfg.Config, repo, token string) bool {
+	if cfg.Agent.Auth != config.AuthAPIKey {
+		return false
+	}
+	return slices.Contains(mixedStageAccounts(cfg, lc, repo), token)
 }
 
 // mixedDefaultAccount is rung 4's account for an api-key repository: the

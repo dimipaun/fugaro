@@ -351,6 +351,41 @@ func (r *initRun) refreshCloneJobs(ctx context.Context, p *refreshPlan, t *refre
 // own "built so far" detail, takes precedence over it.
 func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
 	w := r.stageDetail()
+	// M7, D2312 as amended: a repository a deployed profile admits runs on the
+	// project's shared jobs, so the images its workflows need are the
+	// project's — the catalog entries, rebuilt per project — and not derived
+	// images of its own. Nothing of this step is this repository's to do:
+	// there is no per-repository derived image to rebuild, and no per-repository
+	// job for refreshCloneJobs to move. F5's first half, and spec decision 3:
+	// rebuilding images after a Fugaro update happens per project.
+	//
+	// The base step before this one is untouched: the base images are the
+	// installation's, and the project's catalog entries and its check job are
+	// built FROM them whatever a profile admits.
+	//
+	// The provider is the checkout's own rather than the spec's, and the two
+	// are one value in a run (infra.Repo builds the spec's from this one): the
+	// mark is a question about the repository this checkout is, and the config
+	// is where that is stated, whatever a caller assembled the spec out of.
+	//
+	// The node is read the way the repository stage of this same run reads it
+	// (repoPolicyRead, carried forward from projectpolicy.ShapeFreeFloor up)
+	// rather than the way the gates read it (nodePolicy, strict). This stage
+	// runs BEFORE the repository stage and before the policy stage that
+	// migrates the node, so the node here is the one a release behind wrote —
+	// and a strict read refuses one more than a shape-free step behind
+	// (ReadsVersion), which is the installation that skipped a release.
+	// nodePolicy turns that refusal into nil, SharedRepo(nil) answers "no
+	// profile admits this repository", and the step submits and bills the
+	// per-repository builds the repository stage of the same run has just
+	// stopped applying for. One decision read two ways inside one run cannot
+	// disagree: the mark is the repository stage's, so this is the repository
+	// stage's read of it (M7, D2312 as amended).
+	node, found, err := repoPolicyRead(ctx, t.lc)
+	if infra.SharedRepo(repoPolicyInput(t.lc, node, found, err), t.cfg.Git.Provider, t.spec.Name) {
+		fmt.Fprintf(w, "  %s runs on the project's shared jobs, so its workflows' images are the project's catalog entries: this run rebuilds none of them (M7, D2312)\n", oneLineCLI(t.spec.Name))
+		return nil
+	}
 	cloneErr := r.refreshCloneJobs(ctx, p, t)
 	host, err := infra.RegistryHost(t.lc)
 	if err != nil {

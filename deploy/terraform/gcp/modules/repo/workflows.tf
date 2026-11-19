@@ -38,10 +38,10 @@ module "workflow" {
   # Which model credentials each job of THIS repository gives its accessor up
   # for (D2072, G17), from the repository's own answer: the workflow module
   # reads it for the model half of the drop, and it is a separate value from
-  # the service above because the two come apart on an `api-key` or `oauth`
-  # repository whose credential the service does not hold yet — the switch is
-  # on, the mount and the accessor stay (`none`), and B2.7's flip fills
-  # config.ServiceServedAuths in for the `anthropic` arm.
+  # the service above because the two come apart — a root applied before
+  # B2.7's flip carries `none` for an `api-key` or `oauth` repository and keeps
+  # the mount and the accessor of a job the launcher already hands the service's
+  # address, and `all` is what a tfvars written before the input existed means.
   model_secrets_served = var.repo.model_secrets_served
 
   # The per-repository fact (D500, D502), passed to every workflow of this

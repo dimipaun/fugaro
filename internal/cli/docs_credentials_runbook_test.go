@@ -102,8 +102,8 @@ func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 // launch sets it on a switched-on repository's job and on no other, so a
 // `cascade` run there is served while one on a shared project job or on a
 // repository whose root has not been re-applied with the switch on fails at
-// bootstrap — and what the release
-// does not carry (the other `agent.auth` modes' half). Every step in the file
+// bootstrap — and what the other `agent.auth` modes are owed (they are served
+// too, and the flip took their two Claude mounts away). Every step in the file
 // is advice an operator acts on, so a reader who takes the wiring the wrong way
 // acts on it wrongly.
 //
@@ -120,7 +120,9 @@ func TestDocsCredentialsRunbookIsOwnerRunOnly(t *testing.T) {
 // on every pin; the retired "ships dormant" paragraph put back → FAIL, on the
 // ban; the wiring sentence's clause naming the shared project job the switch
 // also reaches deleted, leaving "a repository's own job and on no other" →
-// FAIL; the other-auth-modes clause deleted → FAIL.
+// FAIL; the other-auth-modes clause deleted → FAIL, and now the clause that
+// replaced it in B2.7's sweep — the paragraph saying those two auths are served
+// and that their job keeps every provider key — fails on its own four pins.
 func TestDocsCredentialsRunbookSaysWhatTheLaunchWires(t *testing.T) {
 	flat := flattenDoc(readDoc(t, credentialsRunbook))
 	for _, want := range []string{
@@ -135,8 +137,10 @@ func TestDocsCredentialsRunbookSaysWhatTheLaunchWires(t *testing.T) {
 		"fails",
 		"infra_error",
 		"opens no pull request",
-		"the **other `agent.auth` modes'**",
-		"agent.auth: cascade",
+		"no `agent.auth` mode is left out",
+		"every provider key it mounts stays its own",
+		"the service forwards a provider's key rather than attaching it",
+		"Only `vertex` is never admitted",
 	} {
 		if !strings.Contains(flat, want) {
 			t.Errorf("%s does not say %q: an operator would act on its steps without knowing which jobs the launch tells about the service", credentialsRunbook, want)

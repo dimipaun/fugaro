@@ -198,14 +198,16 @@ func TestLoadRowsOneRunFinishingMidRead(t *testing.T) {
 }
 
 // A run that already ran without a cloud execution (a local run against
-// the same bucket) is not launched again by --retry.
+// the same bucket) is not launched again by --retry, and the retry is refused
+// rather than reported as a launch: the exit is non-zero and the message says
+// nothing launched.
 func TestRetryDoesNotRelaunchARunWithARecord(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260927-100000-abcd"
 	seedRun(t, f, id, "", "someone@example.com", false)
 	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Status: runstore.StatusSucceeded, Stage: "writeback"})
 	out, errOut, err := execute(t, "run", "--retry", id)
-	if err != nil || len(f.run.Executions()) != 0 || !strings.Contains(out+errOut, "already") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "nothing launched") || len(f.run.Executions()) != 0 {
 		t.Fatalf("run --retry = %q %q, %v; executions %v", out, errOut, err, f.run.Executions())
 	}
 }

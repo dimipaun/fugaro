@@ -37,8 +37,7 @@ import (
 // comparison against the repository it is running in has one form to compare.
 //
 // `dir` is optional and is DefaultReportsCommitDir when it is absent: the
-// layout's own folder (D960), which is where a repository's reports live
-// unless the project says otherwise.
+// mirror folder no run-digest writer uses, unless the project says otherwise.
 //
 // Both members carry omitempty so a project with no designation writes no
 // member at all — the byte-for-byte promise every optional member of this node
@@ -50,19 +49,19 @@ type ReportsCommit struct {
 	Dir  string `json:"dir,omitempty" yaml:"dir,omitempty"`
 }
 
-// DefaultReportsCommitDir is the folder a designated repository's reports live
-// under when the block names none: the report layout's own folder (D960),
-// because a project that designates a repository and says nothing more means
-// the place its reports already live, not a second folder beside it.
+// DefaultReportsCommitDir is the folder a designated repository's mirror of
+// the project's reports lives under when the block names none. It is not the
+// report layout's own folder (digest.Dir): a designated repository that is
+// itself a reviewed repository already holds its own reports there, written by
+// run-digest, and a mirror in the same folder would put two writers' files
+// side by side. The owner may still name any folder.
 //
 // The folder is spelled here as a literal rather than read from the layout's
-// own constant (digest.Dir, internal/digest): this package is imported by that
-// one's test binary through internal/orchestrator, so naming it here would be
-// an import cycle. The two are held equal by
-// TestTheReportsCommitFolderIsTheLayoutsFolder (internal/cli), which imports
-// both, and a layout that moved would fail there rather than silently commit
-// a project's reports into a folder beside the one the layout writes.
-const DefaultReportsCommitDir = "docs/fugaro-reviews"
+// constant, because this package is imported by that package's test binary
+// through internal/orchestrator and naming it here would be an import cycle.
+// TestTheReportsCommitFolderIsNotTheLayoutsFolder (internal/cli) imports both
+// and holds them apart.
+const DefaultReportsCommitDir = "docs/fugaro-reviews-mirror"
 
 // reportsCommitMembers is the block's own member spelling, read from the
 // struct's json tags (carrierMembers) so a field added here is known without a
@@ -191,7 +190,7 @@ func reportsCommitNullRemedy(member string) string {
 	if member == "repo" {
 		return "repo is required, and a written null designates no repository while reading as a designation"
 	}
-	return "an absent dir is " + DefaultReportsCommitDir + ", the folder the reports live in"
+	return "an absent dir is " + DefaultReportsCommitDir + ", the folder the mirror lives in"
 }
 
 // ReportsCommitRepo is the repository a report run may commit into, in the

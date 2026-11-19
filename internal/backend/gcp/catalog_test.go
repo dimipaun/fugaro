@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -144,6 +145,47 @@ func TestCatalogBuildReadsTheCopiedDockerfile(t *testing.T) {
 	}
 	if b.ServiceAccount != "projects/proj-1234/serviceAccounts/"+s.ServiceAccount {
 		t.Fatalf("service account = %s", b.ServiceAccount)
+	}
+}
+
+// TestCatalogBuildRequestCarriesTheServiceURL: a catalog build's request is
+// built the way a repository's is, so the address the credential step fetches
+// at travels from the spec as it does there (B4.5) — and every caller of this
+// path leaves it empty, because the route's caller is a repository's build
+// account and a catalog build runs as the project's build identity, which the
+// route does not admit (D2076). What the test pins is the mechanism, so that a
+// later task that admits that identity does not have to build the request a
+// second way; the empty value is what a catalog build submits today and the
+// step reads it as "there is no service here" and holds the credential its
+// request mounts.
+//
+// Mutation (verified, run and restored): drop the `_CREDENTIALS_SERVICE_URL`
+// entry from this request's substitutions and the switched case fails with a
+// step that reads `${_CREDENTIALS_SERVICE_URL}` and a request that never
+// declared it — which Cloud Build refuses.
+func TestCatalogBuildRequestCarriesTheServiceURL(t *testing.T) {
+	s := catalogBuildSpec(t)
+	b, err := CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := b.Substitutions["_CREDENTIALS_SERVICE_URL"]; !ok || v != "" {
+		t.Fatalf("a catalog build sends _CREDENTIALS_SERVICE_URL %q (present %v): %v", v, ok, b.Substitutions)
+	}
+	s.CredentialsServiceURL = "https://credentials.example.com"
+	b, err = CatalogBuildRequest("proj-1234", s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := b.Substitutions["_CREDENTIALS_SERVICE_URL"]; got != s.CredentialsServiceURL {
+		t.Fatalf("_CREDENTIALS_SERVICE_URL = %q, want %q", got, s.CredentialsServiceURL)
+	}
+	cred := step(t, b, credentialStep)
+	if !slices.Contains(cred.Env, "FUGARO_CREDENTIALS_SERVICE_URL=${_CREDENTIALS_SERVICE_URL}") {
+		t.Fatalf("the credential step does not read the service's address from its env: %v", cred.Env)
+	}
+	if args := strings.Join(cred.Args, " "); strings.Contains(args, s.CredentialsServiceURL) {
+		t.Errorf("the credential step's argv carries the address: %q", args)
 	}
 }
 
@@ -674,8 +716,28 @@ func TestCatalogBuildSelftestIsTheSmokeSpec(t *testing.T) {
 	if !strings.Contains(pin, "/workspace/out/selftest.json") || !strings.Contains(pin, "base64 -d") {
 		t.Fatalf("the smoke's spec is not written where the smoke reads it: %q", pin)
 	}
-	if _, ok := b.Substitutions["_WORKFLOW"]; ok {
-		t.Fatalf("the catalog build sends a substitution no step of it references: %v", b.Substitutions)
+	// The credential step a catalog build reuses reads the three a repository's
+	// build fetches through (B4.5), so this request carries the workflow and the
+	// address too — empty, because a catalog build fetches nothing at the
+	// service: its identity is the project's build identity, which the service's
+	// build route does not admit (D2076).
+	for _, k := range []string{"_WORKFLOW", "_SECRET_ENVS", "_CREDENTIALS_SERVICE_URL"} {
+		if v, ok := b.Substitutions[k]; !ok || v != "" {
+			t.Fatalf("the catalog build's %s is %q, and the credential step reads it: %v", k, v, b.Substitutions)
+		}
+	}
+	// Every substitution it does send is one a step of the request references:
+	// Cloud Build refuses a request whose substitution no step uses.
+	subs := b.Substitutions
+	b.Substitutions = nil
+	body, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := range subs {
+		if !strings.Contains(string(body), "${"+k+"}") {
+			t.Errorf("substitution %s is sent but not referenced, which Cloud Build rejects", k)
+		}
 	}
 }
 

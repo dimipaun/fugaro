@@ -5,8 +5,9 @@
 # It settles S2's two halves (plan B2.5, its "What it measures"; the
 # reconciliation's **D2070**, **D2071**, **D2072**, **G16**, **G17**, **F29**
 # and **R6**; UNVERIFIED **U9**). Until B2.7's flip every repository of an
-# installation keeps its mounts and the credentials service serves the model
-# path of an `api-key` or `oauth` repository BESIDE them, so an offline reading
+# installation kept its mounts and the credentials service served the model
+# path of an `api-key` or `oauth` repository BESIDE them — the flip (B2.7, in
+# 0.26.0) is what took those two mounts away — so an offline reading
 # settles nothing: whether the service is handed to a job at all, whether it
 # serves that job the credential its own recorded auth names and no other,
 # whether a Bitbucket repository published with `proxy: true` pushes through it,
@@ -16,8 +17,9 @@
 # reads the service's OWN lines back: `credsvc: audit` for the acts, which
 # names the credential it served and the tier it is of, and `credsvc: refused`
 # for a refusal, which carries the sentence the boundary answers with. A FAIL
-# stops S2 and returns to the owner as a decision (B2.6 is the gate, B2.8 the
-# flip's).
+# returns to the owner as a decision: the two modes are B2.6 (the switch) and
+# B2.8 (`--after-flip`), and the owner's ruling of 2026-11-18 runs both on the
+# release that carries the flip rather than gating it on the first.
 #
 # Usage:      bash scripts/live-checks/check193.sh
 #             bash scripts/live-checks/check193.sh --dry-run      (prints the

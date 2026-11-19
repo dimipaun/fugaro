@@ -404,6 +404,12 @@ type paddleSpy struct {
 	checkouts   []Checkout
 	seats       []int
 	cancelled   []string
+	// cancelErrors is what the merchant answers each cancellation with, in
+	// order, and `err` stands for every attempt after the list is spent. A case
+	// uses it for an answer that only a later attempt meets: a merchant refuses
+	// to cancel a subscription it has ended already, so a case whose retry asked
+	// it again would be reading that refusal.
+	cancelErrors []error
 }
 
 func (p *paddleSpy) CreateTransaction(_ context.Context, checkout Checkout) (Transaction, error) {
@@ -429,6 +435,11 @@ func (p *paddleSpy) SetSeats(_ context.Context, _ string, seats int) error {
 
 func (p *paddleSpy) Cancel(_ context.Context, subscriptionID string) error {
 	p.cancelled = append(p.cancelled, subscriptionID)
+	if len(p.cancelErrors) > 0 {
+		err := p.cancelErrors[0]
+		p.cancelErrors = p.cancelErrors[1:]
+		return err
+	}
 	return p.err
 }
 

@@ -23,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 )
 
 // atTerminal points e's run at a fake terminal whose input is stdin, with
@@ -1410,4 +1411,136 @@ func TestRefreshBuildsWaitFailureSaysTheBuildKeepsRunning(t *testing.T) {
 	// watched (image.go and image_build_catalog.go make the same call for their
 	// own waits).
 	wholeReservationCounted(t, r.budget, tg.spec.Slug, "for a build whose watch was lost")
+}
+
+// TestImagesStageSkipsASharedRepo: the per-repository image convergence
+// `fugaro update` runs reaches refreshBuilds — the checkout stage's cloud step,
+// which is `fugaro image refresh` run in process — and for a repository a
+// deployed profile admits it converges nothing (M7, F5's first gap): no Cloud
+// Build is submitted for its derived images and no job's image is moved, which
+// is the half D1900 left standing when it disabled the commands.
+//
+// The target is TestRefreshCloneMoveDoesNotBlockBakedRebuilds' own, so the one
+// difference between the two tests is the published node: what that test sees
+// move and build is exactly what this one sees nothing of.
+//
+// The images stage's other halves are not this guard's and are not touched by
+// it: the installation's base pins and the project's catalog entries
+// (init_images_catalog.go) are converged per project whatever a repository's
+// mark says, which is U8's answer and spec decision 3's per-project rebuild.
+//
+// Mutation (run, restore): drop M7's guard from refreshBuilds and this test
+// fails on all three assertions — one Cloud Build for api, one job patch for
+// app, and no line saying why neither happened.
+func TestImagesStageSkipsASharedRepo(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, mixedCloneYAML, true)
+	db := buildBudgetForRig(t, r.initRig)
+	publishSharedNode(t, db, "github", "github/acme/app")
+	fb := useFakeBuilder(t)
+	e := rigEngine(t, r.initRig, &initOptions{})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{config.BaseKind: managedRef("base", "0.5.1")}
+	cfg, problems := config.Parse([]byte(mixedCloneYAML))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	slug := mustSlug("github", "acme/app")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobName := gcp.JobName(slug, "app")
+	r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, managedRef("base", "0.4.0"))
+	r.run.SetJobEnv(jobName, map[string]string{infra.CheckoutEnv: config.CheckoutClone})
+	tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label, RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+		Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}, "api": {}}}}
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
+	out := atTerminal(t, e, "")
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 0 {
+		t.Errorf("a Cloud Build was submitted for a shared repository's derived image: %+v", fb.specs)
+	}
+	if len(r.run.Patches()) != 0 {
+		t.Errorf("%d job patches, want none: a shared repository's workflows run the project's catalog entries, so no job image of it moves\n%s", len(r.run.Patches()), out.String())
+	}
+	if !strings.Contains(out.String(), "runs on the project's shared jobs, so its workflows' images are the project's catalog entries: this run rebuilds none of them (M7, D2312)") {
+		t.Errorf("the run does not say why it converged nothing:\n%s", out.String())
+	}
+}
+
+// TestImagesStageSkipsASharedRepoBehind is the same skip on the node the first
+// `fugaro update` after a version bump reads: the one a release behind wrote,
+// which the repository stage's own read carries forward in memory
+// (repoPolicyRead) and a strict read may refuse (projectPolicyRead).
+//
+// Which is the node every installation that skipped a release holds, and this
+// stage runs BEFORE the stage that migrates it — so a read that refuses answers
+// nil, SharedRepo(nil) answers "no profile admits this repository", and the
+// step submits and bills the per-repository builds the same run's repository
+// stage has stopped applying for: one decision read two ways inside one run.
+//
+// The two versions are both real states and only the second one is refused by
+// the strict read: ReadsVersion accepts a node one shape-free step behind (step
+// 9 is shape-free, projectpolicy's shapeFreeSteps), so a one-behind node is
+// read member for member by both reads and the subtest above it passes either
+// way; two versions back is the state the carry exists for (ShapeFreeFloor up)
+// and the one a strict read turns into a refusal. Mutation (run, restore): read
+// the node with nodePolicy here rather than repoPolicyRead and the two-versions
+// subtest fails on both counts — a Cloud Build for api and a job patch for app —
+// while the one-version subtest and TestImagesStageSkipsASharedRepo still pass.
+func TestImagesStageSkipsASharedRepoBehind(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		version int
+	}{
+		{"one version behind", projectpolicy.Version - 1},
+		{"two versions behind", projectpolicy.Version - 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useVersion(t, "0.5.1")
+			r := newAnchorModeRig(t, mixedCloneYAML, true)
+			db := buildBudgetForRig(t, r.initRig)
+			publishSharedNodeAt(t, db, tc.version, "github", "github/acme/app")
+			fb := useFakeBuilder(t)
+			e := rigEngine(t, r.initRig, &initOptions{})
+			lc, err := localcfg.Load(r.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lc.BaseImages = map[string]string{config.BaseKind: managedRef("base", "0.5.1")}
+			cfg, problems := config.Parse([]byte(mixedCloneYAML))
+			if cfg == nil {
+				t.Fatal(problems)
+			}
+			slug := mustSlug("github", "acme/app")
+			label, err := gcp.RepoLabel(slug)
+			if err != nil {
+				t.Fatal(err)
+			}
+			jobName := gcp.JobName(slug, "app")
+			r.run.SetJob(jobName, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: "app"}, managedRef("base", "0.4.0"))
+			r.run.SetJobEnv(jobName, map[string]string{infra.CheckoutEnv: config.CheckoutClone})
+			tg := &refreshTarget{lc: lc, cfg: cfg, spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label, RegistryPath: "r", BuildServiceAccountEmail: "b@x.iam",
+				Workflows: map[string]infra.WorkflowSpec{"app": {Job: jobName}, "api": {}}}}
+			p := &refreshPlan{workflows: []string{"api", "app"}}
+			putWorkflowRecordFrom("api", "0.4.0", managedRef("base", "0.4.0"))
+			out := atTerminal(t, e, "")
+			if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+				t.Fatalf("%v\n%s", err, out.String())
+			}
+			if len(fb.specs) != 0 {
+				t.Errorf("a Cloud Build was submitted for a shared repository's derived image, on a version-%d node: %+v", tc.version, fb.specs)
+			}
+			if len(r.run.Patches()) != 0 {
+				t.Errorf("%d job patches, want none: the node's version does not change the mark it carries\n%s", len(r.run.Patches()), out.String())
+			}
+		})
+	}
 }

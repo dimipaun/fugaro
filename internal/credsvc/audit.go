@@ -289,6 +289,39 @@ const (
 	// purpose is deliberately not one of repositoryOnlyPurpose's, and its line
 	// names neither a repository nor a run.
 	PurposeBuildToken = "build_token"
+	// PurposeBuild is the whole of what a REPOSITORY's build asks this service
+	// for (B4.3, R5, D2076, D2077): the git credential of the one repository the
+	// calling account is bound to — a read-only GitHub installation token, or
+	// the bundle's Bitbucket token — and the build secrets of the workflow the
+	// call names, out of the record `fugaro update` wrote for that same
+	// repository (B3.1's record through B3.2's reader).
+	//
+	// It is ONE purpose for one act and not one per credential served, because
+	// the call is one: a build asks once, for everything it needs to bake its
+	// repository, and a line per credential would be two lines for one act —
+	// which is exactly what this log's one-line rule refuses. The credential a
+	// line of this purpose names is therefore the GIT credential the provider's
+	// answer selected — the App key for a GitHub repository, the bundle's
+	// bitbucket-token for a Bitbucket one — which the route knows the moment the
+	// class's row is in hand and which is the same name the read mint, the merge
+	// mint, the label and issue routes and the build route each name for the one
+	// key they sign with. It is not a model credential of the cascade and has no
+	// tier (credentialWithoutTier).
+	//
+	// Its caller is a repository's build service account (gcp.
+	// BuildServiceAccountID), which holds no run identity and is not a job of
+	// this installation (callerWithoutJobPurpose). Its line names the calling
+	// repository's SLUG and no run, because that is the binding the whole route
+	// is (repositoryOnlyPurpose, G20): the repository is the row's and never a
+	// call's, and it is the one fact an operator reads to see which repository's
+	// build was served.
+	//
+	// It is NOT PurposeBuildToken and not PurposeBuildGrant: those are the
+	// installation's catalog build, which names no repository and is answered
+	// the repositories of a published image map. An operator grepping for a
+	// repository's own build greps this purpose, and one grepping the catalog
+	// build's greps those two.
+	PurposeBuild = "build"
 	// PurposeBuildGrant is the Bitbucket half of the same act (B1, R6, D2302):
 	// the service pairs a build's identity to the repositories of the entry its
 	// request names and answers a proxy grant, and the build holds no token at
@@ -383,7 +416,7 @@ func ValidPurpose(purpose string) bool {
 	case PurposeForward, PurposeProbe, PurposeMint, PurposeReviewSign, PurposeReviewVerify, PurposeBitbucketRead, PurposeGitHubRead,
 		PurposeGit, PurposeBitbucketAPI, PurposeSlipGrant, PurposeSlipClaim, PurposeMergeMint, PurposeWorkflowSecret, PurposeLabel, PurposeIssue,
 		PurposeBuildToken, PurposeBuildGrant, PurposeBuildGit,
-		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken:
+		PurposeBuildBitbucket, PurposeBuildProxy, PurposeContextToken, PurposeBuild:
 		return true
 	}
 	return false
@@ -420,7 +453,7 @@ func credentialWithoutTier(purpose string) bool {
 		purpose == PurposeIssue ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGit ||
 		purpose == PurposeBuildBitbucket || purpose == PurposeBuildProxy ||
-		purpose == PurposeContextToken
+		purpose == PurposeContextToken || purpose == PurposeBuild
 }
 
 // callerWithoutJobPurpose reports whether a line records a caller's act rather
@@ -437,6 +470,9 @@ func credentialWithoutTier(purpose string) bool {
 // them (B1): it is the account a catalog build runs as, and it holds no run
 // identity either, so every purpose of its own is here — the two the build
 // route answers under and the three a build's proxy calls are recorded under.
+// A REPOSITORY's build is the seventh (B4.3): its caller is the account one
+// repository's image build and daily check run as, which holds no run identity
+// either, so its one purpose is here too.
 func callerWithoutJobPurpose(purpose string) bool {
 	return purpose == PurposeReviewVerify || purpose == PurposeBitbucketRead ||
 		purpose == PurposeGitHubRead || purpose == PurposeSlipGrant ||
@@ -444,7 +480,7 @@ func callerWithoutJobPurpose(purpose string) bool {
 		purpose == PurposeIssue ||
 		purpose == PurposeBuildToken || purpose == PurposeBuildGrant ||
 		purpose == PurposeBuildGit || purpose == PurposeBuildBitbucket ||
-		purpose == PurposeBuildProxy
+		purpose == PurposeBuildProxy || purpose == PurposeBuild
 }
 
 // repositoryOnlyPurpose reports whether a line names a repository and no run:
@@ -461,12 +497,18 @@ func callerWithoutJobPurpose(purpose string) bool {
 // class, and why its two issuing purposes (PurposeBuildToken,
 // PurposeBuildGrant) are deliberately NOT here: their acts are one credential
 // over several repositories, or no credential at all.
+//
+// A repository's build is the opposite case and IS here (PurposeBuild, B4.3):
+// its line's repository is the calling account's own binding — the one
+// repository the class is — and it holds no run identity for a line to tie it
+// to. It is the only purpose of that route, and the repository on its line is
+// what an operator reads to see which repository's build was served (G20).
 func repositoryOnlyPurpose(purpose string) bool {
 	return purpose == PurposeBitbucketRead || purpose == PurposeGitHubRead ||
 		purpose == PurposeMergeMint || purpose == PurposeLabel ||
 		purpose == PurposeIssue ||
 		purpose == PurposeBuildGit || purpose == PurposeBuildBitbucket ||
-		purpose == PurposeBuildProxy
+		purpose == PurposeBuildProxy || purpose == PurposeBuild
 }
 
 // StatusOK is the one status that is not a refusal: a credential answered —

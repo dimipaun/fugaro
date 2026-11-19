@@ -405,6 +405,32 @@ type Spec struct {
 	// A runner before this field refuses the spec outright (Parse disallows
 	// unknown fields), which is the skew every new task field has.
 	DigestRuns []string `json:"digest_runs,omitempty"`
+	// Reports are the stored run reports a commit run carries (periodic-reviews
+	// R9, E5/D2754): what the launcher listed from the project's stored reports
+	// — reports/<slug>/<YYYY>/<key>.md for a repository's report and
+	// reports/<YYYY>/<key>.md for the project's aggregate — and uploaded under
+	// runs/<slug>/<run>/reports/<name>, each with the size and the hash it read
+	// on the way up, which the commit_reports step downloads by name, verifies
+	// and writes into the folder the project designates. Nil for every launch
+	// that commits no report, so a spec this release writes for one is
+	// byte-identical to what the previous release wrote.
+	//
+	// It is a member of its own rather than part of Inputs, and that is
+	// load-bearing: a report object is never a recipe input, so the --attach
+	// caps (DefaultInputFiles, DefaultInputBytes, DefaultInputTotalBytes) and
+	// their artifact-recipe gate stay exactly what they are, and a commit run
+	// refuses --attach while an --attach launch refuses this recipe (R16).
+	// Each name is a name of the mirror's own shape, which the step checks
+	// before it writes anything — task.InputNameProblem admits a dot-prefixed
+	// name on purpose (an input lands under the git-excluded inputs/) and this
+	// step commits the path it writes, so the two rules are not one.
+	//
+	// It is accepted only with a recipe whose first step is commit_reports
+	// (Validate, RecipeUsesCommitReports): that step is the only reader, so
+	// objects under any other recipe name reports a loop that never reads them.
+	// A runner before this field refuses the spec outright (Parse disallows
+	// unknown fields), which is the skew every new task field has.
+	Reports []InputFile `json:"reports,omitempty"`
 	// Tier is the expectation tier of this run (docs/task-governance spec.md §3,
 	// plan T8.1): what the run is expected to cost and take, which selects one
 	// tier of fugaro.yaml's governance.tiers. "" is untiered — every spec
@@ -804,6 +830,22 @@ func RecipeUsesDigest(yaml string) bool {
 	}
 	rcp, ps := recipe.Parse([]byte(yaml))
 	return len(ps) == 0 && recipe.UsesDigest(rcp)
+}
+
+// RecipeUsesCommitReports reports whether the recipe text yaml holds a recipe
+// whose first step is the commit_reports step (recipe.UsesCommitReports), which
+// is the only recipe a task carrying reports may name. It is
+// RecipeUsesDigest's twin, and the two cases it reads alike are the same two:
+// "" is not one (a task with no recipe at all), and a repository recipe
+// carries its name alone — the runner reads that file at the task's ref, so
+// the launcher, which resolves it from the checkout, is where its steps are
+// judged.
+func RecipeUsesCommitReports(yaml string) bool {
+	if yaml == "" {
+		return false
+	}
+	rcp, ps := recipe.Parse([]byte(yaml))
+	return len(ps) == 0 && recipe.UsesCommitReports(rcp)
 }
 
 // TitleProblem reports what is wrong with a run's own title t — "" when
@@ -1419,7 +1461,20 @@ const (
 var (
 	slugUnsafeRE = regexp.MustCompile(`[^a-z0-9]+`)
 	providerRE   = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	// slugShapeRE is the shape Slug derives: the readable part -- never empty,
+	// and never ending in the "-" that separates it -- then 16 lower-case hex
+	// digits. A value that is not one of these is not a slug this tree made.
+	slugShapeRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{16}$`)
 )
+
+// ValidSlug reports whether slug is a storage slug of the shape Slug derives,
+// the check a reader makes that a value it was handed may be addressed as one
+// (a path segment of a bucket key, a directory of the committed report
+// mirror). It is a shape check and not a proof of origin: only Slug builds one,
+// and what this answers is that a string could have come from it -- a
+// misspelling of the readable part is a slug of another repository and is
+// indistinguishable here, which is what the hash suffix is for.
+func ValidSlug(slug string) bool { return slugShapeRE.MatchString(slug) }
 
 // ValidProvider reports whether kind is a git provider kind ("github",
 // "bitbucket", or "fake" in tests). It is the check Slug applies, exported so
@@ -1973,6 +2028,39 @@ func (s *Spec) Validate() error {
 			bad("task spec: digest_runs needs a recipe whose first step is digest")
 		case s.Recipe.Source != string(recipe.SourceRepo) && !RecipeUsesDigest(s.Recipe.YAML):
 			bad("task spec: digest_runs needs a recipe whose first step is digest, and recipe %s is not one", s.Recipe.Name)
+		}
+	}
+	// The stored reports a commit run carries (periodic-reviews R9): each is an
+	// object the job will download by name and write into a committed path, so
+	// its own claims are shape-checked the way an input's are — and only here,
+	// because what a report NAME may be is the step's own check, applied where
+	// the name becomes a path in the repository
+	// (internal/runner/reports_commit.go): refusing the mirror's shape here
+	// would make that check unreachable, since this decoder runs first.
+	//
+	// The pairing is this decoder's, the way digest_runs' is: a launcher that
+	// handed report objects to a recipe with no commit_reports step has written
+	// a task nobody meant, and the objects would be read by nothing. A
+	// repository recipe carries only its name here (Recipe.YAML is empty by the
+	// rule the digest manifest's arm states), so the files to judge are not in
+	// this spec and the launcher is where they were judged.
+	if len(s.Reports) > 0 {
+		for i, rf := range s.Reports {
+			if InputNameBlank(rf.Name) {
+				bad("task spec: reports[%d].name is required", i)
+			}
+			if rf.Bytes < 0 {
+				bad("task spec: reports[%d].bytes must not be negative", i)
+			}
+			if !inputSHA256RE.MatchString(rf.SHA256) {
+				bad("task spec: reports[%d].sha256 %q must be 64 lower-case hex digits, the sha256 of the report", i, rf.SHA256)
+			}
+		}
+		switch {
+		case s.Recipe == nil:
+			bad("task spec: reports needs a recipe whose first step is commit_reports")
+		case s.Recipe.Source != string(recipe.SourceRepo) && !RecipeUsesCommitReports(s.Recipe.YAML):
+			bad("task spec: reports needs a recipe whose first step is commit_reports, and recipe %s is not one", s.Recipe.Name)
 		}
 	}
 	// The level block's own rules, through the ONE set of them
