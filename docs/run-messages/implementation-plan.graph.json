@@ -1,0 +1,214 @@
+{
+  "schema_version": 3,
+  "plan": "docs/run-messages/implementation-plan.md",
+  "stream": "cli",
+  "nodes": [
+    {
+      "id": "RM0",
+      "title": "the message format, its store under tokens/ and the record block",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runmsg/message.go",
+          "internal/runmsg/store.go",
+          "internal/runmsg/runmsg_test.go",
+          "schemas/run-message.schema.json",
+          "schemas/result.schema.json",
+          "internal/runstore/runstore.go"
+        ]
+      }
+    },
+    {
+      "id": "RM1",
+      "title": "fugaro tell",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/tell.go",
+          "internal/cli/tell_test.go",
+          "internal/cli/root.go",
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "RM2",
+      "title": "the runner reads messages and delivers them at stage boundaries",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/messages.go",
+          "internal/runner/messages_test.go",
+          "internal/runner/prompts.go",
+          "internal/runner/prompts_test.go",
+          "internal/runner/runner.go"
+        ]
+      }
+    },
+    {
+      "id": "RM3",
+      "title": "the agent's quiet point and an interrupt that is not a failure",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/agent/stream.go",
+          "internal/agent/agent.go",
+          "internal/agent/interrupt_test.go",
+          "internal/agent/fakeclaude/main.go"
+        ]
+      }
+    },
+    {
+      "id": "RM4",
+      "title": "--now and --wrap-up in the runner",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "large",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/interrupt.go",
+          "internal/runner/interrupt_test.go",
+          "internal/runner/runner.go",
+          "internal/runner/prompts.go"
+        ]
+      }
+    },
+    {
+      "id": "RM5",
+      "title": "the report, diagnose and runs show",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/runner/report.go",
+          "internal/runner/report_test.go",
+          "internal/cli/diagnose.go",
+          "internal/cli/runs_show.go",
+          "schemas/runs-show.schema.json"
+        ]
+      }
+    },
+    {
+      "id": "RM6",
+      "title": "the lifecycle rule for message objects",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/bucket.tf",
+          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl"
+        ]
+      }
+    },
+    {
+      "id": "RM7",
+      "title": "the documents",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "SECURITY.md",
+          "docs/design/v1.md",
+          "docs/design/bucket-iam.md"
+        ]
+      }
+    },
+    {
+      "id": "RM8",
+      "title": "Check 740, the owner's live check",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "scripts/live-checks/check-740-run-messages.sh",
+          "scripts/live-checks/check-740-run-messages_test.sh",
+          "docs/gcp-live-checklist.md"
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "task": "RM1",
+      "needs": "RM0",
+      "reason": "calls runmsg.Put; RM0 is so small a contract would be nearly all of it and adds weight"
+    },
+    {
+      "task": "RM2",
+      "needs": "RM0",
+      "reason": "calls runmsg.Next and writes the record block RM0 defines; a contract gains nothing"
+    },
+    {
+      "task": "RM5",
+      "needs": "RM0",
+      "reason": "reads the record type only; a contract gains nothing"
+    },
+    {
+      "task": "RM4",
+      "needs": "RM2",
+      "reason": "delivers through RM2's queue, and both write runner.go and prompts.go"
+    },
+    {
+      "task": "RM4",
+      "needs": "RM3",
+      "reason": "needs the interrupt's behaviour, the stop that keeps the session, not only its signature"
+    },
+    {
+      "task": "RM7",
+      "needs": "RM1",
+      "reason": "the documents name the command as built"
+    },
+    {
+      "task": "RM7",
+      "needs": "RM4",
+      "reason": "the documents describe --now and --wrap-up as built"
+    },
+    {
+      "task": "RM8",
+      "needs": "RM1",
+      "reason": "the live check drives the command"
+    },
+    {
+      "task": "RM8",
+      "needs": "RM4",
+      "reason": "the live check exercises --now"
+    },
+    {
+      "task": "RM8",
+      "needs": "RM6",
+      "reason": "the live check reads the applied lifecycle rule"
+    }
+  ],
+  "decoupling": [],
+  "contract_changes": []
+}
