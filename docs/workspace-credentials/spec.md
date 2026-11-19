@@ -132,6 +132,11 @@ Three constraints on the plan follow, the first two the owner's own concerns of 
   instance and concurrency limits explicitly; today they are the platform's defaults.
 - **One service down stops every member's shared calls.** The plan states what a member's run does
   then, and keeps the service warm as Check 511 does for a project's.
+- **Every project keeps its own service.** The owner considered, on 2026-11-19, not provisioning a
+  project's service when the project holds no credential of its own, and kept the ruling of
+  2026-11-05: `fugaro update` deploys it for every installation. It also serves review signing,
+  build credentials, workflow secrets and the Bitbucket proxy, and it costs nothing idle. The plan
+  ensures that a project with no credential of its own never wakes it.
 
 ## 6. What it costs
 
