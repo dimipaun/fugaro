@@ -31,8 +31,8 @@
 // argv (`types.ts`'s `CopyCommandAction`), and the text put on the clipboard is
 // that argv joined with single spaces -- which is unambiguous exactly because no
 // admitted word can hold a space, a tab or a newline. `buildCopyCommand` is the
-// only door to an action and this file is the only place the join is spelled, so
-// no caller has to decide how to quote; the shell copies `argv.join(' ')`.
+// only door to an action and `copyCommandText` the only place the join is
+// spelled, so no caller ever decides how to quote.
 
 import type { CopyCommandAction } from './types'
 
@@ -142,6 +142,18 @@ export function buildCopyCommand(parts: readonly CommandPart[]): CopyCommandAnsw
     argv.push(part.text)
   }
   return { ok: true, action: { kind: 'copy-command', argv } }
+}
+
+/**
+ * copyCommandText is what goes on the clipboard: the action's argv joined with a
+ * single space. It takes the **action** rather than an argv, so the text can only
+ * come from an admitted build, and the join is spelled here rather than at each
+ * caller: one word is one shell word, and a caller that joined or quoted some
+ * other way would be a second answer to the question this file exists to answer
+ * once.
+ */
+export function copyCommandText(action: CopyCommandAction): string {
+  return action.argv.join(' ')
 }
 
 /** valueRefusal is the sentence for a value that is not a plain word. It reads

@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { buildCopyCommand, commandValue, commandWord } from '../../src/renderer/manage/command'
+import { buildCopyCommand, commandValue, commandWord, copyCommandText } from '../../src/renderer/manage/command'
 import type { CommandPart, CopyCommandAnswer } from '../../src/renderer/manage/command'
 import { MANAGE_GROUPS, defineManageKind } from '../../src/renderer/manage/types'
 import type { CopyCommandAction, ManageGroup, ManageKind } from '../../src/renderer/manage/types'
@@ -103,6 +103,20 @@ describe('the Copy-command builder', () => {
       'ana@example.invalid',
       'roles/datastore.viewer',
     ])
+  })
+
+  it('writes the clipboard text as the argv joined with single spaces', () => {
+    const built = action([
+      commandWord('fugaro'),
+      commandWord('user'),
+      commandWord('grant'),
+      commandWord('--project=fugaro-dev'),
+      commandValue('ana@example.invalid'),
+      commandValue('roles/datastore.viewer'),
+    ])
+    expect(copyCommandText(built)).toBe(
+      'fugaro user grant --project=fugaro-dev ana@example.invalid roles/datastore.viewer',
+    )
   })
 
   it('refuses a value a shell would read as syntax, and never the words around it', () => {

@@ -80,8 +80,9 @@ export interface ManageRow {
  * the exact argv to put on the clipboard, which the operator runs in a terminal
  * themselves. The words are built by `command.ts` (`buildCopyCommand`), which
  * refuses any value that is not a plain word, so a row's text can never put a
- * second command on the clipboard -- and the shell copies `argv` as it stands
- * (one word is one shell word), never re-quoted.
+ * second command on the clipboard. The shell copies it with `copyCommandText`,
+ * which is the argv joined with single spaces (one word, one shell word), and
+ * never quotes it again.
  */
 export interface CopyCommandAction {
   readonly kind: 'copy-command'

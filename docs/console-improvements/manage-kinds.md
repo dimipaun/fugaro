@@ -88,7 +88,8 @@ repository, an account and a key's name, and a value that is not a plain word is
 The row is drawn without its Copy, and the refusal's sentence never quotes the value it refused -- a value the
 console will not put in a shell is one it will not put in a sentence either.
 
-The action carries the argv, and the text on the clipboard is that argv joined with single spaces. That is
+The action carries the argv, and the text on the clipboard is that argv joined with single spaces
+(`copyCommandText`, the one place the join is spelled). That is
 unambiguous exactly because no admitted word can hold a space, a tab or a newline, so no caller quotes anything.
 The refusal is an ordinary outcome and never a repair: `;`, `$(`, a backtick, a newline, a space, a leading `-`,
 `=` `@` or `~`, and a `..` segment are each a value the console will not copy.
