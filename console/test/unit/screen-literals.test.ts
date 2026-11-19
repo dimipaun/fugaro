@@ -1479,6 +1479,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
     expect([...SHARED_FILES]).toEqual([
       '../../shared/availability.ts',
       '../../shared/launcher.ts',
+      '../../shared/new-ops.ts',
       '../../shared/notice.ts',
       '../../shared/replay.ts',
       '../../shared/rigor.ts',
@@ -1810,6 +1811,7 @@ describe('no module under src/renderer writes an inline style', () => {
     // the walk has nothing to find there.
     expect([...RENDERER_FILES]).toEqual([
       'app.ts',
+      'cache-invalidate.ts',
       'checkout.ts',
       'confirm.ts',
       'entry.ts',
@@ -1820,6 +1822,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'installations.ts',
       'manage/command.ts',
       'manage/types.ts',
+      'new-bridge.ts',
       'screens/accountkeys.ts',
       'screens/coordinator.ts',
       'screens/credentialsservice.ts',
@@ -1840,6 +1843,7 @@ describe('no module under src/renderer writes an inline style', () => {
       'screens/spend.ts',
       'section.ts',
       'skeleton.ts',
+      'stubs/bridge-stub.ts',
       'writes.ts',
     ])
   })
