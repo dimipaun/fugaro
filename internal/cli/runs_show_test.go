@@ -27,6 +27,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -446,7 +447,13 @@ func TestRunsShowNamesTheHalt(t *testing.T) {
 // on. The shape is the one L7's launch reply carries for `chain` and `limits[]`,
 // so the two cannot drift.
 func TestRunsShowJSONMatchesTheSchema(t *testing.T) {
-	showRig(t)
+	f := showRig(t)
+	// The run's own message block is part of the document a consumer reads
+	// (F13), so it is written onto the record the schema is checked against:
+	// the validated document is the one a run that took messages produces.
+	rec := showRecord(t, f, showTip)
+	rec.Messages = showMessages()
+	writeRecord(t, f, showTip, rec)
 	out, errOut, err := execute(t, "runs", "show", "--json", showTip)
 	if err != nil {
 		t.Fatalf("runs show --json: %v (%s)", err, errOut)
@@ -494,7 +501,19 @@ func TestRunsShowJSONMatchesTheSchema(t *testing.T) {
 			Remaining *float64 `json:"remaining"`
 			Source    string   `json:"source"`
 		} `json:"limits"`
-		Halt *runstore.Halt `json:"halt"`
+		Halt     *runstore.Halt `json:"halt"`
+		Messages *struct {
+			Accepting bool     `json:"accepting"`
+			Format    int      `json:"format"`
+			Flags     []string `json:"flags"`
+			Messages  []struct {
+				Seq      int    `json:"seq"`
+				State    string `json:"state"`
+				Recorded bool   `json:"recorded"`
+				Stage    string `json:"stage"`
+				Object   *bool  `json:"object"`
+			} `json:"messages"`
+		} `json:"messages"`
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatal(err)
@@ -547,6 +566,23 @@ func TestRunsShowJSONMatchesTheSchema(t *testing.T) {
 	if got.Halt != nil {
 		t.Errorf("halt = %+v, want none for a run that did not halt", got.Halt)
 	}
+	// The message block is the run's own account of its channel (F13), read off
+	// the record and nothing else: runs show never opens the bucket's tokens/
+	// prefix, so the object member — the diagnosis's own answer about the
+	// bucket — is absent here rather than false (RM10, F18).
+	m := got.Messages
+	if m == nil || !m.Accepting || m.Format != runmsg.Format || strings.Join(m.Flags, ",") != runmsg.FlagNow {
+		t.Fatalf("messages = %+v, want the run's block, accepting and in format %d", m, runmsg.Format)
+	}
+	if len(m.Messages) != 2 || m.Messages[0].Seq != 1 || m.Messages[0].State != string(runmsg.StateDelivered) ||
+		m.Messages[0].Stage != "implement" || !m.Messages[0].Recorded {
+		t.Fatalf("messages = %+v, want the two messages the record holds", m.Messages)
+	}
+	for i, e := range m.Messages {
+		if e.Object != nil {
+			t.Errorf("messages[%d].object = %v, and runs show reads the record alone, so it has no answer about the bucket", i, *e.Object)
+		}
+	}
 }
 
 // TestRunsShowRefusesARunThatIsNotInThisRepository: --repo names the repository
@@ -567,4 +603,105 @@ func TestRunsShowRefusesARunThatIsNotInThisRepository(t *testing.T) {
 	if _, _, err := execute(t, "runs", "show", other+"/"+showRoot, "--repo", "acme/other"); err != nil {
 		t.Fatalf("runs show %s/%s --repo acme/other = %v", other, showRoot, err)
 	}
+}
+
+// showMessages is the block a run's record carries for its message channel: one
+// message a coder stage read and one the run never carried (F13).
+func showMessages() *runmsg.Record {
+	sent := time.Date(2026, 11, 1, 15, 1, 0, 0, time.UTC)
+	delivered := sent.Add(90 * time.Second)
+	return &runmsg.Record{Accepting: true, Format: runmsg.Format, Flags: []string{runmsg.FlagNow},
+		Messages: []runmsg.Delivery{
+			{Seq: 1, SentAt: &sent, SentBy: "dana@example.com", Flags: []string{runmsg.FlagNow},
+				State: runmsg.StateDelivered, Stage: "implement", DeliveredAt: &delivered},
+			{Seq: 2, SentAt: &sent, SentBy: "dana@example.com", State: runmsg.StateUndelivered,
+				Reason: "the run ended before a coder stage carried it"},
+		}}
+}
+
+// TestRunsShowMessages: the block a run keeps about the messages it was sent is
+// part of what runs show prints, in the text and in --json, under the line that
+// says whose account it is — the record is the run's own, which its agent can
+// rewrite, so what it holds is what the run recorded and not proof (F20). The
+// command reads the record alone: the message objects, the bucket's own copy
+// and the second opinion a diagnosis takes, are not what this document is about
+// (RM10, F18). A run whose record carries no block is unchanged.
+func TestRunsShowMessages(t *testing.T) {
+	f := showRig(t)
+	out, errOut, err := execute(t, "runs", "show", showTip)
+	if err != nil {
+		t.Fatalf("runs show %s: %v (%s)", showTip, err, errOut)
+	}
+	if strings.Contains(out, "Messages") {
+		t.Errorf("a run whose record carries no messages block prints one:\n%s", out)
+	}
+	js, _, err := execute(t, "runs", "show", "--json", showTip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(js, `"messages"`) {
+		t.Errorf("a run whose record carries no messages block carries one in its document:\n%s", js)
+	}
+
+	rec := showRecord(t, f, showTip)
+	rec.Messages = showMessages()
+	writeRecord(t, f, showTip, rec)
+
+	out, errOut, err = execute(t, "runs", "show", showTip)
+	if err != nil {
+		t.Fatalf("runs show %s: %v (%s)", showTip, err, errOut)
+	}
+	for _, want := range []string{
+		"Messages (as the run recorded them)",
+		"#1 delivered in implement by dana@example.com (now)",
+		"#2 undelivered by dana@example.com: the run ended before a coder stage carried it",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("runs show lacks %q:\n%s", want, out)
+		}
+	}
+	// The two things only a diagnosis can say are absent, not empty: runs show
+	// has no line to send a message again and no answer about the bucket.
+	if strings.Contains(out, "fugaro run") || strings.Contains(out, "text expired") {
+		t.Errorf("runs show prints what only a diagnosis of the bucket can:\n%s", out)
+	}
+
+	var doc struct {
+		Messages *MessagesDoc `json:"messages"`
+	}
+	js, _, err = execute(t, "runs", "show", "--json", showTip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatalf("%v\n%s", err, js)
+	}
+	if doc.Messages == nil {
+		t.Fatalf("runs show --json of a run with messages carries no block:\n%s", js)
+	}
+	if !doc.Messages.Accepting || doc.Messages.Format != runmsg.Format || strings.Join(doc.Messages.Flags, ",") != runmsg.FlagNow {
+		t.Errorf("block = %+v, want the run accepting format %d with the flag it honours", doc.Messages, runmsg.Format)
+	}
+	if len(doc.Messages.Messages) != 2 {
+		t.Fatalf("block holds %d messages, want the record's two: %+v", len(doc.Messages.Messages), doc.Messages.Messages)
+	}
+	if doc.Messages.Messages[0].DeliveredAt == nil {
+		t.Errorf("message 1 = %+v, want it delivered at a time", doc.Messages.Messages[0])
+	}
+	if doc.Messages.Messages[1].Reason == "" || doc.Messages.Messages[1].State != runmsg.StateUndelivered {
+		t.Errorf("message 2 = %+v, want the fate and the reason the record states", doc.Messages.Messages[1])
+	}
+
+	t.Run("a run that reads no messages says so", func(t *testing.T) {
+		rec := showRecord(t, f, showTip)
+		rec.Messages = &runmsg.Record{Accepting: false, Format: runmsg.Format}
+		writeRecord(t, f, showTip, rec)
+		out, _, err := execute(t, "runs", "show", showTip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "this run reads no messages: accepting false in the run's record") {
+			t.Errorf("a run that reads no messages does not say so:\n%s", out)
+		}
+	})
 }

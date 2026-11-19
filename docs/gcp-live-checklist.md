@@ -814,6 +814,30 @@ table below and the `## Check 127:` section is written below it, the check is ow
 runs any step of it** — it reads a sandbox repository's own project and nothing else, **never `belong`**,
 it launches nothing, and it is **NOT RUN**.
 
+**Checks 730 to 737 are the mobile-identity-pairing work's, and they are the first eight numbers free past
+every claim above them** ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md),
+whose "Checks the plan takes" table reserves **730-739** and uses **730-737**, one per thing the owner's own
+applies and spikes have to answer). The reading is taken the way the paragraphs above take theirs, **on
+2026-11-19 at `0db80aa4`**, the commit this change is based on: the highest **written** `## Check` section in
+this file is **663** (the always-on orchestrator's four), and above it **700 to 709** are
+`docs/orchestrator-graph-estimates`' (its README's *"checks **700–709** (700–703 used, 704–709 reserved)"*),
+**710 to 719** are `docs/console-improvements`' (*"checks **710 to 719** (710 to 712 used)"*) and **720 to 729**
+are `docs/workspace-projects-users`' (its reconciliation's *"checks take **Checks 720–729**"*). Nothing above
+**729** is claimed by any document on `main` or on any open pull request's head, so **730 is the first free
+number past every claim** and this work takes **730–737**, the first eight of its own reservation. Like every
+claim above the highest written section it is **claimed, not reserved**: a claim is settled at its merge, and
+whichever of two claims merges second renumbers itself. **Nothing above was renumbered**: 663 stays the
+always-on orchestrator's, 700–709, 710–719 and 720–729 stay the three works named above, and **738 and 739 stay
+unused and that plan's** — it reserved ten for the checks its later tasks may take and writes eight here. The
+eight are the work's owner-run half: the identity project and its key ceremony (**730**), the provider consoles
+and what one email under several providers does (**731**), the operator's Claude Code session read for its
+context, its compaction and its usage limits (**732**), two real phones and what they hold (**733**), the store
+builds and the share extension (**734**), the live sequence after `fugaro update` (**735**), the quotas at the
+stated scale (**736**), and the root key project with its first signed key set (**737**). Each is a **summary
+row** in the table below and a `## Check 73N:` section written below it, each is **one command** the owner runs
+at their own terminal, each is owner-run — **no agent runs any step of it** — each is on the owner's own
+project and **never `belong`**, and each is **NOT RUN**.
+
 **That is the end of the register.** The paragraph below is not another
 reservation: it introduces the check that owns 57, whose row is in the table
 below.
@@ -1128,6 +1152,14 @@ probe account carries predefined grants only).
 | 542 | The App's merge permission on one sandbox repository, that repository's bypass lists, and the **gated merge mint** the daemon asks the credentials service for ([`docs/outer-loop-escalation/`](outer-loop-escalation/implementation-plan.md), its task **E15** and its **E16**'s route — `POST /v1/github/merge-token` — with the plan's **D2048** (the App's merge permission is granted per repository, and by you) and **D2049** (the route's rate), and the design's **G14**, because an App that may merge past a protected branch is not one the gate can be trusted about): the App's **own installation on the sandbox repository** (`gh api /user/installations` and that installation's repository list) has to carry **contents write** and **pull requests write** — the set `mergeTokenPermissions()` hands out — and **administration read**, which is what the mint's gate reads the base's rulesets and its branch protection under, so an App without it fails the gate closed and mints nothing; the App has to be on **neither** bypass list — every ruleset covering the pull request's base read again **by id**, since the bypass list is only in the per-id answer, and the base's classic branch protection — where a page of rulesets that comes back full, or a list that could not be read, is a finding and never an absent list; the daemon's own half is read too (the service's `AuthConfig.OrchestratorAccounts` class, the variable that would carry it, the account's existence and its invoker grant), because on the tree this check was written against the route ships **inert** and the row says so by name rather than reporting a refusal as a mystery; then the mint itself, as the identity the daemon holds, and **three refusals** — a head the pull request is not at, a **run** identity, and the token your own credentials mint, which is refused before any account list is read and holds on every installation; and the service's **audit log**: one `credsvc: audit` line for each call an admitted caller answered, and **none** for a call refused before the caller was verified | See "Check 542" below; `bash scripts/live-checks/check542.sh --sandbox <checkout> --pr <number> [--app-id <the App's numeric id>]` is the whole of it (`--dry-run` prints the plan and touches nothing), its sibling test `scripts/live-checks/check542_test.sh` drives it against fake `gh`, `gcloud` and `curl` on PATH only, and **you** run it, at your own terminal, on the **sandbox project and repository** only — **never `belong`** — the account and the project are refused by name, and so is a checkout whose project names it, as are a coding agent's session and a traced shell, the session most of all because this check is the one that asks a service for a merge credential; **no agent runs any step of it**. **The owner grants the App's merge permission** on that repository: the check grants nothing and changes nothing — no permission, no ruleset, no branch protection, no merge, no run, no setting and no policy — and it never uses the token a successful mint answers with | Nothing but a handful of read-only GitHub and Cloud Run API calls: **no model call, no run and no build**. Up to **four** mint calls, and each one an admitted caller answers counts against the service's own per-repository rate (ten an hour, **D2049**) and writes one audit line. The installation token a successful mint answers with is written into the scratch directory, read field by field by the check's own reader, deleted **before** the scratch is kept or removed, and never printed and never used; the ID tokens `gcloud` mints go straight into mode-0600 curl config files, so they are never a shell variable and never an argument; and no App key is read at all. One scratch directory, removed from the exit trap. **OWNER-RUN, NOT RUN.** |
 | 610 | The review-only job end to end: `fugaro review --pr N` on a repository the project publishes **no profile** for and whose workflow is **baked** ([`docs/review-job/`](review-job/implementation-plan.md), its task **RJ9** and its "Check 610"; the plan's **U1**, **U2**, **U3** and **U4** are the four UNVERIFIED items it answers, and **D2383** to **D2388** with **F4** and **D2385** are the decisions it reads back): ONE throwaway pull request in the sandbox GitHub repository and ONE `fugaro review --pr N` on it, then the reads that say what happened — the checkout resolves **every** workflow to `checkout: baked` and carries no `profiles:` key of its own, the published policy carries **no profiles block** and admits the repository (its budget mode not `off`, and its `accounts` block read for whether the **default** account is admitted: **U2**), the installation deploys the implicit **review-only** job `fugaro-p-standard-github-default-rev-<hash>` (`infra.ImplicitReviewJobName`'s own derivation — gcp's `derive` cuts the readable part to thirty-six characters before the twelve hex of the hash, which is why the account segment reads `default-rev` and never `default-review`) — holding `FUGARO_CREDENTIALS_SERVICE_URL`, no `FUGARO_SECRET_ENVS` and no secret volume, on the installation's own base image (**U1**) — the launch lands on **that** job (never a coding one) as the **default** account (D2385), the run's own row ends **`succeeded`** with outcome **`reviewed`** on **this** pull request, `fugaro review show <run> --json` reads that run's signed artifact back with a head commit and a verdict, and the credentials service's **own** `credsvc: audit` lines for the run name the **default** account on the **earliest** served `forward` line, which is the review's first model call (**U3**); the installation's project jobs are counted for **U4** — a live `terraform apply` that deploys **no project job of a profile at all**: every `fugaro-p-…` job is either one of the two implicit **review-only** names `infra.ImplicitReviewJobName` derives (github and bitbucket, `infra.ImplicitReviewProviders`), read **by that derivation** rather than for a `-review` segment in the name, or it is a job of a profile — a coding job or the profile's own review variant, and U4 is about an apply with none | See "Check 610" below; `bash scripts/live-checks/check610.sh --sandbox <a sandbox GitHub repository checkout>` is the whole of it, its sibling test `scripts/live-checks/check610_test.sh` drives it against fake `fugaro`, `gh`, `gcloud` and `git` only, and **you** run it, at your own terminal, on an installation whose sandbox repository is a **GitHub** one with no `profiles:` block and a baked workflow, **never `belong`** (refused as the installation, the project, the region, the repository and the path, and so is a Bitbucket checkout — this is the GitHub half, the Bitbucket half is Check 611 — a dirty checkout, and a coding agent's session or a traced shell); **no agent runs any step of it**, and none has | **ONE billable review**: an ordinary review of the installation's agent, so its model calls are real, on the sandbox's own budget — about twenty-five minutes at the terminal while it is waited for (`CHECK610_RUN_SECONDS`, 2400) — plus the one throwaway pull request it opens. **The branch `chk610-<timestamp>` and its pull request stay on the sandbox repository**: this check holds no credential of its own and removes nothing, so their rows are yours to settle, and the block's `restore` row names both, with the review's run id. Everything else is a read — the checkout's own doctor document and resolved config, the published policy, the project's job list and the service's own lines, each read with **your** `gcloud` credential — and the check writes no cloud resource, no record, no object and no node. On disk it is one scratch directory, removed from its exit trap whatever happened. **OWNER-RUN, NOT RUN.** |
 | 611 | The implicit **Bitbucket** review-only job, end to end ([`docs/review-job/`](review-job/implementation-plan.md), its task **RJ10**, approved 2026-11-18, and its "Checks the plan takes"; **RJ8** read by its behaviour, and the reconciliation's UNVERIFIED items **U1**, **U2**, **U3** and **U4**): one `fugaro review --pr N` of a **sandbox Bitbucket** pull request resolves onto the installation's implicit review-only job for provider `bitbucket` — the name this release derives for (profile `standard`, provider `bitbucket`, account `default` + the review variant), and **not** a per-repository job and not a profile's variant — the run it starts ends `succeeded` with outcome `reviewed`, its verdict reads back naming the repository, the pull request and the head it read, and the job it ran on mounts **no credential of any kind** (no `FUGARO_BITBUCKET_TOKEN`, no `FUGARO_SECRET_ENVS`, no secret reference), so its clone of the head can only have been the credentials service's own **git route**: the check reads the service's **own audit lines** for that run and holds at least one of purpose `git` with status `ok`, naming a credential and **never a value**. What only a live installation answers is which job a launch resolves, whether the run it starts records a verdict, what the deployed job mounts and what the service served | See "Check 611" below; `bash scripts/live-checks/check611.sh --sandbox <a sandbox Bitbucket repository checkout> --pr <N>` is the whole of it, its sibling test `scripts/live-checks/check611_test.sh` drives it against fake `fugaro`, `gh`, `curl` and `gcloud` only (no network, no cloud), and **you** run it, at your own terminal, **after Check 191's open state is closed**, on the **sandbox** only, **never `belong`** (refused by name as a value this check was given or read — the installation, the repository, the project, the region, the account and the path — and a checkout whose origin is GitHub is refused too, this being the Bitbucket half), and so is a coding agent's session or a traced shell; **no agent runs any step of it**, and it asks you nothing | **ONE billable review run** of the sandbox repository — a review is shorter than a coding run but its model calls are real, on the sandbox's budget — plus the verdict objects it writes into that run's own record. It pushes nothing, opens no pull request and writes no comment (**spec §5**: a review never touches the repository), so there is **no branch and no pull request to decline**: what a coding check leaves behind, this one does not, and its `restore` row says so. Everything else the check does is a **read** — the checkout's own `origin`, `fugaro doctor --json`, `fugaro project policy show --json`, `gcloud run jobs list`, `fugaro runs ls`, `fugaro review show --json` and the service's own audit lines — and **no write is made to the installation**: no `creds set`, no policy publish and no `fugaro update`. On disk it is one scratch directory, removed from the exit trap whatever happened. **USER-RUN, NOT RUN.** |
+| 730 | **The identity project** and its key ceremony ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 730** and task **A3**; **A1** and **A2** are what it serves — the assertion signer, its JWKS and the rotation overlap): the project **A3**'s Terraform root creates exists with its KMS key ring and its `ASYMMETRIC_SIGN` **Ed25519** signing key, the key is non-exportable (an asymmetric signing key's private half never leaves KMS and there is no export state to read: what the check pins is the **purpose**, the **algorithm** and the **protection level**, as `ee/identitysvc/infra_test.go` pins them offline), the signer service answers and publishes its **JWKS** with a `kid` per published key and no private material, and the key ceremony is read and recorded — the KMS key version in use, the not-after date of the newest signed key set and the 30-day alert A3's root defines. What no `terraform plan`, `terraform validate` or `TestInfra` pin can hold: that the key GCP actually made is the one the tree asked for, that the service in front of it answers, and that the set it serves is the one the owner signed | See "Check 730" below; **one command**, run by **you**, on the **identity project** A3 creates, at your own terminal right after its apply (**never `belong`**); **no agent runs any step of it**, and **no agent applies it** | The key's `purpose` is `ASYMMETRIC_SIGN`, its `versionTemplate.algorithm` is `EC_SIGN_ED25519` and its protection level is the one A3's Terraform pins; a key with another purpose or algorithm **fails the check**, because a key that is not the pinned one signs nothing this work verifies. The JWKS answers with one `kid` per published key, `crv` `Ed25519` and no `d` (private) member anywhere: a document carrying one is a **STOP**, since it publishes the half that must never leave the KMS project. An unreachable signer or JWKS route is **not measured** rather than a FAIL, and the block says which read did not answer. **OWNER-RUN, NOT RUN.** |
+| 731 | The provider consoles, one email under several providers, and a Microsoft tenant-verified email flag ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 731** and task **A3**; the reconciliation's **U8** and **U9**, and **F28**): the **identity project**'s Identity Platform configuration carries the Google, Microsoft and Apple providers and email and password with verification, set up by hand in the consoles because the app's own OAuth clients are the owner's; one email signed in under several providers behaves the way the plan assumes it does (**U8**: whether the providers are linked onto one account or become two users, which is the setting the app's identity records are read under); and whether a **Microsoft** ID token carries a flag this tree can read as *the tenant verified this email* (**U9**), which no offline document can settle | See "Check 731" below; **one command**, run by **you**, with your own credentials on the **identity project** (**never `belong`**), after the consoles are set up; the console clicks themselves are yours and are written out in the section; **no agent runs any step of it** | Every enabled provider the plan names is enabled and no provider it does not name is; `signIn.email` is enabled with verification. The U8 half is recorded as a reading rather than a pass: the check writes which of one-account and two-users the project produced for one email under two providers, and the plan's identity records are read against it. The U9 half is recorded the same way: the Microsoft token's claims are written into the section — **claims only, never the token** — and the flag is either there or the plan's fallback applies. **OWNER-RUN, NOT RUN.** |
+| 732 | The operator's Claude Code session — its context fullness, injected `/compact`, the auto-compact threshold and the usage limits ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 732** and task **Z0**; the reconciliation's **U1**, **U2** and **U3**, and the spike's own result document `docs/mobile-identity-pairing/context-spike.md`): whether the session exposes how full its **context** is and honours a `/compact` injected while it is idle (**U1**), whether the built-in auto-compact threshold is configurable (**U2**), and whether the five-hour and weekly limits per OAuth token are readable by code at all, and within Anthropic's terms (**U3**) — the three questions the context module (tasks **Z1** to **Z3**) waits on, and the ones that decide whether the app can draw a gauge and a usage meter | See "Check 732" below; **one command** for the machine-read half (U3), run by **you**, at your own terminal on the machine whose Claude Code session the operator's own session is — an installation you own, **never `belong`**; the U1 and U2 halves are read in the session itself and the section writes out what to do; **no agent runs any step of it** | The usage read answers two windows (five-hour and weekly) for the session's own token, or it is refused: **a refusal is a result**, because per-token limits that a third party may not read are what U3 asks, and the spike's document records it rather than the check failing. The session half records, in the section: the command that shows context fullness or the fact that none does, whether an injected `/compact` was honoured while idle, and whether the auto-compact threshold moved. Anything the check cannot read is written as **UNVERIFIED** in Z0's result and never as a pass. **OWNER-RUN, NOT RUN.** |
+| 733 | Provider tokens, the device key, the share route and the synced keychain on **two real phones** ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 733** and task **M0**; the reconciliation's **U4**, **U5**, **U7** and **U10**): on a real **iPhone** and a real **Android** phone, whether the Google, Microsoft and Apple sign-ins yield provider tokens the REST `signInWithIdp` exchange accepts, and with two identities at once (**U4**); whether the app can hold a hardware-backed, non-exportable signing key, or the key is software and the plan says so (**U5**); the **share extension** and intent-filter route and the package it arrives under (**U7**); and whether the synced platform **keychain** works with the secure-store option the app uses (**U10**) | See "Check 733" below; **one command** for the half the CLI can read, run by **you**, on your own installation (**never `belong`**), with the two phones in your hands for the rest — the on-device steps are written out in the section, because nothing on a laptop can run them; **no agent runs any step of it** | The devices the check reads are the two you paired, and the reading names them by their own labels rather than by a count. Each of the four questions is written into `docs/mobile-identity-pairing/app-spike.md` in the task's own words — a spike's result is the document, so a check that answered three of the four has produced three answers — and a token the exchange refuses is recorded as the plan's fallback (the app keeps the OAuth route) rather than as a failure of the check. **OWNER-RUN, NOT RUN.** |
+| 734 | **The store builds**, the share extension in them and the store review declarations ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 734** and task **M0**; **F29**, and **U7**'s other half): a real **store build** of the app installs and launches on both phones, the **share extension** — the iOS extension and the Android intent filter — appears in the sharesheet and receives a text selection, and the store review **declarations** (the data-safety and privacy answers, the sign-in provider disclosures, the encryption and export answers) are the ones the app's behaviour and `SECURITY.md`'s paragraph justify: a declaration that says an identity is not collected while the app signs one in is the failure this check catches, and no test in this tree can read a store console | See "Check 734" below; **one command** for the build listing, run by **you**, at your own terminal with your own store accounts (**never `belong`**); the console forms and the two device installations are yours and are written out in the section; **no agent runs any step of it** | The build the listing names is the one under review or already in review, for both platforms, and it carries the share extension the section names. Each declaration is read back from the store's own console and compared with the app's behaviour and with `SECURITY.md`: a declaration that contradicts either is a **FAIL with the sentence to change named**, because a wrong declaration is what removes an app from a store rather than what a test catches. The device half passes only when the sharesheet entry is there on both phones. **OWNER-RUN, NOT RUN.** |
+| 735 | The live sequence after `fugaro update` ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 735** and task **UP1**; the reconciliation's **U11** and **U12**, and the consumer half of **J6**): after `fugaro update` converges an installation that was paired the old way, pair, **refresh** after an hour, revoke a device, revoke a person's roster grant, restore from the synced list, the strict mode that requires a QR for a new device, and an outage of the identity project — with two phones, an old-way-paired phone still working through its MAC and offered identity pairing; the consumer's replies verify with its own KMS consumer key; **U11**, that Firebase refuses a custom token signed by a service account outside the Firebase project (the reason the signer is created there), and **U12**, whether the project owner's own role can sign with the consumer KMS key or needs a grant of its own | See "Check 735" below; **one command** for the consumer-key half (U12), run by **you**, on a **sandbox installation** with your own credential (**never `belong`**), after `fugaro update`; the sequence itself is yours, phone by phone, and the section writes out each step and what it must read; **no agent runs any step of it** | Every step has a reading rather than a verdict: the pairing that ends paired, the refresh that answers with a new token after the hour, the revoke that ends the device's access on its next request, the roster revoke that ends the person's mobile access, the restore that brings the synced list back, the strict mode that refuses a device without a QR, and the outage that leaves the old-way phone working rather than locked out. The U12 read is the sign attempt: the owner's own login **cannot sign** with the consumer key, or the grant the plan asks for is the reading and is recorded as the step U12 says it is. **OWNER-RUN, NOT RUN.** |
+| 736 | The Firebase Auth, KMS and Cloud Run **quotas** at the stated scale ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 736**; the reconciliation's **U6**): the identity project's Identity Platform sign-in quota, the KMS signing operations per second it can want and the Cloud Run request and instance quotas beside them, read against the scale the plan states — every phone refreshing its token on the hour and pairing and revoking as the spec describes — so a limit that would stop pairing at the planned fleet size is found before the fleet is that size | See "Check 736" below; **one command**, run by **you**, on the **identity project** (**never `belong`**), with your own credentials; **no agent runs any step of it** | Each quota the command prints is compared with the plan's stated scale, and the reading names the ones with no headroom. A quota that answers with a limit below the stated scale is a **FAIL with the limit and the scale named**; a quota the read cannot reach is written as **not measured** rather than as headroom. The section records the figures it read, because a quota rises and the sentence here is only as good as its date. **OWNER-RUN, NOT RUN.** |
+| 737 | **The root key project** and the first signed key set ([`docs/mobile-identity-pairing/`](mobile-identity-pairing/implementation-plan.md), its **Check 737** and task **A4**; the owner's **O7** and **O15**, and **A2**'s and **P8**'s pinned half): the separate owner-only project exists with its root KMS key, the root key is non-exportable and **no service account can sign with it** — signing is granted to exactly one member, a separate owner identity given as a variable, and the laptop's default login **cannot sign** either; the **key-set** signing command has signed the first set and A2 serves it; and a rotation rehearsal has run, so the new KMS key version and the signing command are known before the first real rotation needs them | See "Check 737" below; **one command** for the refusal that matters (your own login against the root key), run by **you**, at your own terminal with your own credential on the **root key project** (**never `belong`**); the applies and the ceremony are yours, and **no agent applies, signs or holds the key**; **no agent runs any step of it** | The root key's purpose is `ASYMMETRIC_SIGN`, its algorithm is Ed25519, and the sign attempt with the owner's own login is **refused** — a sign that succeeds is the **worst finding this check can produce**, because a key anyone holding the default login can sign with is a key that signs key sets no client should trust (O7). The signed set A2 serves verifies against the root public key, its `seq` is above every set before it and its not-after date is the one the envelope carries; the rotation rehearsal's reading is the new key version's `kid` and the command that signed it, recorded in the section. **USER-RUN, NOT RUN.** |
 | 640 | The status labels on a real pull request ([`docs/forge-labels/`](forge-labels/implementation-plan.md), its task **CK** and the block it reserves — **640–649**, 640 used; **U1** and **U3** are the two questions nothing offline can answer, and **D2437**'s table with **D2439**'s token and **D2440**'s create-on-first-use are what the labels' colours and the route's behaviour rest on): with the installation's orchestrator daemon running and **one approved task** launched, the pull request the run opens carries **`fugaro:running`** while the run is in flight and, once it has ended, **no** status label (a run that ended `succeeded` or `cancelled`) or **`fugaro:failed`** — plus the **`spec:<name>`** label its item's own spec asks for, in D2437's grey. **U1** — whether the dogfood installation's GitHub App really holds `pull_requests: write` — is read from the **credentials service's own audit lines** (`gcloud logging read`, purpose `label`), which are the service's record of the act and never the run's word; **U3** — what GitHub does with a label name that carries a **colon** — is read from the repository's own label table (`gh label list`). Run by **you**, on the **dogfood installation `fugaro`** (GCP project `fugaro-dev`, region `us-east5`, never `belong`), at your own terminal, as **one command**: `bash scripts/live-checks/check640.sh --installation fugaro`, with the test that drives it against fakes, `scripts/live-checks/check640_test.sh` (run by `go test ./scripts`). **No agent runs any step of it.** It reads and writes nothing anywhere, launches no run and costs nothing billable; the one conditional owner step is the plan's: if the check shows the App lacks `pull_requests: write`, you raise it on the App's settings page, which an agent cannot. **OWNER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -21771,3 +21803,450 @@ is that reading, and a FAILed row names what to remove by hand. What is left is 
 and its verdict objects, which the block names and which stay as every run's do; **nothing is left on the
 repository**, because a review pushes nothing, opens nothing and comments on nothing. **USER-RUN, NOT RUN:
 no agent runs any step of it.**
+
+## Check 730: the identity project, its non-exportable key, the signer and the JWKS, and the key ceremony (the identity project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+"Checks the plan takes" row for **730**, "the identity project exists; the KMS key is non-exportable; the
+signer and JWKS answer; the key ceremony" — and owed to that plan's task **A3**, whose Terraform root defines
+the project, the key ring, the Ed25519 signing key, the signer service and the JWKS route. It is **run by
+you**, at your own terminal, straight after you apply A3's root: **no agent applies it**, and **no agent runs
+any step of it**. The offline half is already pinned — `ee/identitysvc/infra_test.go` holds the purpose, the
+algorithm and the protection level the way the key service's own `infra_test.go` holds its ring — and this is
+the half no plan can read: the key GCP really made, the service really answering, and the document the JWKS
+really serves.
+
+**What it settles.** Four things, in the order the check reads them:
+
+- **The key is the pinned one.** The signer key's `purpose` is `ASYMMETRIC_SIGN`, its algorithm is the
+  Ed25519 one the plan pins, and its protection level is the one A3's root asks for. An asymmetric signing
+  key in Cloud KMS is **non-exportable** by construction — the private half never leaves the service and the
+  API offers no export — so what a reading can hold is the purpose and the algorithm, and a key that is not
+  the pinned one is a key that signs nothing this work will verify.
+- **The signer answers.** The service A3 deploys is up, on its own narrow role, and its JWKS route returns a
+  document rather than an error. A deploy that has not propagated yet is a **reading of its own** (the route
+  is cold), not a failure of the key.
+- **The JWKS publishes keys, and nothing else.** One `kid` per published key, `crv` `Ed25519`, and **no
+  private member anywhere in the document**. A JWKS carrying a `d` member is a **STOP**: it is the half that
+  must never leave the KMS project, and nothing else this check reads matters beside it.
+- **The ceremony is recorded.** The KMS key version in use, the `kid` the set names, the not-after date of
+  the newest signed set and the alert A3's root defines 30 days before it. Task **P8** pins the first two
+  numbers into the build, so the reading is what a release is pinned from rather than a fact that lives here
+  alone.
+
+**What has to exist before it runs.** `ee/identitysvc/terraform/` merged and **applied by you** (Check 730 is
+named in the plan's after-deploy order ahead of everything else), the provider configuration the plan's A3
+task defines, an account that may read KMS metadata and the service in the project, and — for the ceremony's
+half — task **A4**'s root key project, whose first signed key set is Check 737's. Run it after the apply and
+again after 737's first set, because the second reading is the one P8 pins.
+
+**The command.** It is **one command**, and it only reads:
+
+```sh
+gcloud kms keys describe <the signer key> --keyring=<the identity key ring> --location=<the ring location> --project=<the identity project> --format='value(purpose,versionTemplate.algorithm,versionTemplate.protectionLevel)' && curl -fsS <the pinned JWKS URL> | jq -c '.keys[] | {kid, crv, private: has("d")}'
+```
+
+**What it reads, and what a run costs.** The first half prints three values — purpose, algorithm, protection
+level — and the second prints one object per published key with its `kid`, its curve and whether it carries a
+private member. `private: false` on every line is the pass; a `true` is the STOP above. Nothing is created,
+granted, written or deleted: two reads with your own credentials, **nothing billable and no model call**, so
+the check is safe to run again after any change. There is no script behind it and there is deliberately no
+scratch state: the command's output is what the section's own numbers are written from.
+
+**What waits on it.** **A3**'s apply is what the whole signer half of this work waits on, **P8** pins the
+issuer, the JWKS URL and the keys this reading produces, and **Check 735** — the live sequence after
+`fugaro update` — is run against the pair. The apply itself also carries the plan's release-actions entry
+(**F26**), which is where the number this reading produced is written down.
+
+**Restore.** Nothing to restore: the check reads two documents and writes none. It creates no resource, no
+object and no file, and a re-run after a rotation is expected — the ceremony moves and the reading is taken
+again.
+
+## Check 731: the provider consoles, one email under several providers, and a Microsoft tenant-verified email flag (the identity project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+row for **731** — and owed to task **A3** on the tree's side and to **you** on the consoles' side: the app's
+own OAuth clients live in Google Cloud, Microsoft Entra and Apple's developer portal, and no agent may create
+one. It settles the reconciliation's **U8** and **U9** and the finding **F28** that put them here. **No agent
+runs any step of it**, and it is **never `belong`**: the identity project is the owner-only one A3 creates,
+not the installation you work in.
+
+**What it settles.**
+
+- **The consoles are set up, and the project agrees.** Google, Microsoft and Apple are enabled in the
+  identity project's Identity Platform configuration, email and password sign-in is enabled with
+  verification, and no provider the plan does not name is on. The console half is yours — an OAuth client in
+  each provider's own portal, its redirect URI, its client id and secret into the project — and the read
+  below is the half that says the project agrees with what you did.
+- **U8: one email under several providers.** Sign one address in with two providers and read whether the
+  project links them onto one user or makes two. The plan's identity records are read under that answer —
+  the app's record is the provider's subject, not the address — so the reading is written into this section
+  and into the plan's own answer, and the tree is read against it rather than assumed.
+- **U9: whether a Microsoft ID token carries a tenant-verified email flag.** Read the claims of a token a
+  real Microsoft sign-in produced — **the claims, never the token** — and record whether the flag the plan's
+  fallback is about is there. If it is not, the plan's fallback (the app treats the address as unverified
+  unless the tenant claim says otherwise) is what the implementation is read against; the reading, not the
+  check, decides it.
+- **The exchange the app depends on.** The provider tokens these consoles yield are the ones the app hands
+  to Firebase's REST `signInWithIdp`; that the exchange accepts them is **Check 733**'s, on two real phones,
+  and this check stops at what the project carries.
+
+**What has to exist before it runs.** The identity project applied (Check 730), your accounts on the three
+providers, and two sign-in addresses you may use — one of them under two providers for U8, one of them a
+Microsoft work or school account for U9 if you want the tenant flag's positive reading (a personal account
+answers the other half and is worth recording as such).
+
+**The command.** It is **one command**, and it only reads:
+
+```sh
+curl -fsS -H "Authorization: Bearer $(gcloud auth print-access-token --quiet)" https://identitytoolkit.googleapis.com/admin/v2/projects/<the identity project>/config | jq -c '{password: (.signIn.email.enabled // false), idps: [.defaultSupportedIdpConfigs[]? | select(.enabled) | (.name | split("/") | last)], idpsFieldPresent: has("defaultSupportedIdpConfigs")}'
+```
+
+**What it reads.** The same document `infra.PublicSignUp` parses and Check 361 reads for a workspace's own
+project — one GET with your own credentials, nothing written, idempotent — and from it the enabled providers
+and whether password sign-in is on. The field is the **list** the tree reads it as: entries of `name` and
+`enabled`, where `name` is the full resource path and the provider id (`google.com`, `microsoft.com`,
+`apple.com`) is its last segment, which is what the `jq` above prints — never the list's indices, which is
+what reading it as an object's keys would print. **`idpsFieldPresent` is read with the list**: a `false`
+there means the project's answer carries no such field at all, which is a different finding from an empty
+`idps` with the field present, and the one reading this check must not lose — a field that is absent is not
+"no provider enabled", it is a configuration the console has not written. **No model call and nothing
+billable.** The U8 and U9 halves are not in this document: they are real sign-ins you make, and what they
+produce goes into this section as the claims and the account shape, never as a token.
+
+**What waits on it.** The app's sign-in path (**M1** to **M3**) and the plan's release: the provider set is
+what the app may offer, and U8's answer is what its identity records are keyed by. A provider enabled here
+that the app does not offer, or one the app offers that is not enabled, is the mismatch this check exists to
+find.
+
+**Restore.** Nothing to restore: one read with your credentials. The console work — clients, redirect URIs,
+secrets — is yours and stays; a client you created only to answer U9 is yours to delete in that console, and
+the check neither creates nor removes one.
+
+## Check 732: the operator's Claude Code session — context fullness, an injected `/compact` and the usage limits (the machine you operate from, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+row for **732** — and owed to task **Z0**, the context spike whose result document
+(`docs/mobile-identity-pairing/context-spike.md`) is what the context module (**Z1** to **Z3**) waits on. It
+settles the reconciliation's **U1**, **U2** and **U3**, and **no agent runs any step of it**: the session it
+reads is the operator's own, and half of what it settles is a question about Claude Code rather than about
+this tree.
+
+**What it settles.**
+
+- **U1: context fullness, and an injected `/compact`.** Whether the session exposes how full its context is
+  to a hook or a status line, and honours a `/compact` — or another slash command — while it is idle. Read in
+  the session itself: note what the screen shows, inject the command while nothing is running, and record
+  whether it was honoured. Z1's gauge and Z2's compaction are built on the answer, so a "no" here is what
+  makes them draw a message instead of a control.
+- **U2: the auto-compact threshold.** Whether the built-in threshold is configurable at all, and where that
+  setting lives. A threshold nobody can move is a fact Z2 has to design around.
+- **U3: the five-hour and weekly limits per token.** Whether the limits that the usage meter would draw are
+  readable by code for the session's own token, and whether reading them is within Anthropic's terms. The
+  command below is the machine half; a refusal or an undocumented answer is **the answer**, and it is written
+  into Z0's document as such — a meter drawn from a read the terms do not allow is the outcome this check
+  exists to prevent.
+
+**What has to exist before it runs.** Your own Claude Code session on the machine you operate from, an OAuth
+login whose token the read may use (a subscription login, as the plan assumes) with that token exported in
+the shell you run the command from as `CLAUDE_CODE_OAUTH_TOKEN` (the variable it reads, and the only place
+the value is), and — for U1's second half — a session idle enough that an injected command can be seen to be
+honoured rather than queued behind output.
+
+**The command.** It is **one command**, the machine-read half, and it only reads:
+
+```sh
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$CLAUDE_CODE_OAUTH_TOKEN") https://api.anthropic.com/api/oauth/usage | jq -c '{five_hour, seven_day}'
+```
+
+**What it reads.** Two windows for the token, if the answer carries them: the five-hour one and the weekly
+one. A `401`, a `403` or a document without them is recorded as **not readable by this route** — which is
+U3's finding rather than a failure of the check — and what the session itself shows is then the only reading
+the meter could use. **No model call and nothing billable.** Nothing is written; the token is read from your
+own session and is **never printed, logged, written to a file or put on a command line** — it is taken from
+`CLAUDE_CODE_OAUTH_TOKEN` in your own shell and handed to `curl` through a `--config` process substitution,
+the register's own rule for a credential at your terminal, so the value is never in `curl`'s argv where `ps`
+would show it to every user of the machine, and the block here carries the variable's name, never a value.
+
+**What waits on it.** Z0's result document, and through it **Z1 to Z3**: the gauge's source, the compaction's
+mechanism and the meter's route are each chosen from this reading, and the plan's U-items are answered by it
+and by nothing else.
+
+**Restore.** Nothing to restore: one read with your own session's credential.
+
+## Check 733: provider tokens, the device key, the share route and the synced keychain on two real phones (your own installation and your own phones, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+row for **733** — and owed to task **M0**, the app spike whose result document
+(`docs/mobile-identity-pairing/app-spike.md`) is what tasks **M1**, **M2** and **X3** wait on. It settles the
+reconciliation's **U4**, **U5**, **U7** and **U10**, and **no agent runs any step of it**: the readings are
+taken on **two real phones**, an **iPhone** and an **Android** one, and nothing on a laptop can stand in for
+them.
+
+**What it settles.**
+
+- **U4: provider tokens, and two identities at once.** Whether the Google, Microsoft and Apple sign-ins the
+  app offers yield tokens the REST `signInWithIdp` exchange accepts, and whether the app can hold two
+  identities at once. A provider whose token the exchange refuses is recorded with its refusal, because that
+  is what makes the plan's fallback (keep the OAuth route rather than the exchange) the chosen path rather
+  than an assumption.
+- **U5: the device key.** Whether the app can hold a hardware-backed, non-exportable signing key in this
+  stack, or the key is software and the plan says so. Either answer is a valid one — what is not valid is
+  the plan claiming a hardware key the platform does not offer.
+- **U7: the share route.** The iOS **share extension** and the Android intent filter, the package or bundle
+  they arrive under, and what a text selection carries into the app.
+- **U10: the synced keychain.** Whether the platform's synced **keychain** works with the secure-store
+  option the app uses — the property restore-from-the-synced-list rests on (**M3**, **K3**).
+
+**What has to exist before it runs.** The app built and installed on both phones (task **M0**'s spike build;
+Check 734 is the store build), a paired installation of your own, provider accounts to sign in with, and the
+phones' own settings pages for the keychain read.
+
+**The command.** It is **one command**, the half the CLI can read, and it only reads:
+
+```sh
+fugaro pair ls --json | jq -c '.[]'
+```
+
+**What it reads.** The device nodes the installation holds — the uid, the name, the administered email, the
+role and the pairing time — which is how the two phones are named in the block rather than by a count. It
+prints no token, no key and no keychain item's value, and **no model call and nothing billable** is made.
+Everything else is on the phones: what each sign-in yielded, whether the key is hardware-backed, what the
+sharesheet shows and what the synced keychain holds. Each answer is written into `app-spike.md` in the task's
+own words — a spike's result is the document — and a question the spike could not answer is written as
+**UNVERIFIED** there rather than as a pass here.
+
+**What waits on it.** **M1** to **M3** (the identity records, the storing and the refresh, and the restore),
+**X3** and the packages the owner approves: the spike's answers choose them, so this check is run before they
+are written rather than after.
+
+**Restore.** Nothing in the cloud: the one command reads the installation's own device nodes. On the phones,
+the spike build is yours to remove, and the pairing it made is yours to revoke (`fugaro pair revoke`), which
+is the restore the task's own document records.
+
+## Check 734: the store builds, the share extension in them, and the store review declarations (your own store accounts, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+row for **734** — and owed to task **M0** and to the mobile release that follows it. It settles **F29** and
+the store half of **U7**, and **no agent runs any step of it**: the console forms are yours, the builds
+install on your own devices, and a store's review answers no API.
+
+**What it settles.**
+
+- **The store build.** A real build of the app for each platform — the one under review or already in review
+  — rather than a local debug build: what ships is what this check reads, because a debug build proves
+  nothing about a bundle identifier, a signing identity or a provisioning profile.
+- **The share extension ships.** The iOS share extension and the Android intent filter are in the built app,
+  the **sharesheet** lists the app on both phones, and a text selection handed to it arrives in the app in
+  one piece. This is **U7**'s other half: Check 733 reads the route in the spike, this one reads it in the
+  artifact stores actually serve.
+- **The review declarations.** The store's own declarations — the data-safety answers, the privacy
+  disclosures, the sign-in provider list, the encryption and export answers — are read back from the console
+  and compared with what the app does and with `SECURITY.md`'s paragraph for this work (**D1**). A
+  **declaration** that says an identity is not collected while the app signs one in is the failure this
+  half exists for, and no test in this tree can read a store console to catch it.
+
+**What has to exist before it runs.** The store builds uploaded (the mobile release's own tag,
+`mobile-vX.Y.Z`), your developer accounts with their review consoles open, and the two phones with the store
+build installed beside the spike build.
+
+**The command.** It is **one command**, the build listing, and it only reads:
+
+```sh
+eas build:list --platform all --limit 5 --non-interactive --json | jq -r '.[] | "\(.platform) \(.status) \(.id)"'
+```
+
+**What it reads.** The last few builds, one row per platform with its status and its id: the row this check
+quotes is the build under review. **No model call, nothing billable and nothing created** — the listing is a
+read of the build service's own record. If the app is built by another route, the reading is that route's
+listing and the section says which one; what may not happen is a check that quotes a build nobody can point
+at.
+
+**What waits on it.** The mobile release and **M0**'s own result: the declarations are what a store accepts
+or refuses, so a declaration that contradicts the app is a release blocker rather than a follow-up. `U7`'s
+route is settled here for the shipped artifact, exactly as Check 733 settles it for the spike.
+
+**Restore.** Nothing to restore: the check reads a listing and two consoles. A build you uploaded for the
+check alone is yours to expire in that store, and the check neither uploads nor removes one.
+
+## Check 735: the live sequence after `fugaro update` (a sandbox installation with your own two phones, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+row for **735** — and owed to task **UP1**, the update that converges an installation paired the old way. It
+settles the reconciliation's **U11** and **U12** and the whole of the live behaviour the plan describes, and
+**no agent runs any step of it**: it is the owner's own phones, the owner's own installation, and a sequence
+that has to be watched rather than asserted.
+
+**What it settles.**
+
+- **`fugaro update` converges.** After `brew upgrade` and `fugaro update`, an installation paired the old way
+  still works: the phone keeps its D171 MAC, the consumer accepts it during the transition, and the app is
+  offered identity pairing. **Refresh** after an hour answers with a new token rather than a refusal.
+- **Revocation, both kinds.** Revoking a device ends its access on its next request; revoking a person's
+  roster grant ends that person's mobile access; and the phone's own state after each is recorded.
+- **Restore.** A restore from the synced list brings the pairing back on a phone that lost it, and the
+  keychain item it reads is the one Check 733 settled.
+- **The strict switch, and an outage.** With the project's strict mode on, a new device without a QR is
+  refused; with the identity project unreachable, the old-way phone keeps working through its MAC rather than
+  being locked out — the two states the plan's transition exists for.
+- **U11: a custom token from outside the project.** Firebase refuses a custom token signed by a service
+  account that is not in the Firebase project, which is why the signer is created there. Read it as the
+  refusal it is, with the error's own words in this section.
+- **U12: whether the owner's own role can sign with the consumer key.** The command below is that reading:
+  your own login against the consumer KMS key. If it **cannot sign**, the grant the plan asks for is the
+  finding and is recorded as the step U12 says it is; if it **can**, the plan's J6 grant is unnecessary and
+  that too is recorded, because a grant nobody needs is a grant to remove.
+- **The replies verify.** The consumer's replies verify with its own KMS consumer key (**J6**) — the
+  assertion path end to end rather than a unit test's fake signer.
+
+**What has to exist before it runs.** A **sandbox installation** (never `belong`, never your working one)
+brought to the previous version, upgraded with `fugaro update`, with the consumer key applied and its public
+half published; two phones, one of them paired the old way before the upgrade; the roster with a second
+person in it for the roster revoke; and one person's address you may revoke.
+
+**The command.** It is **one command**, the U12 half, and it only reads what KMS answers. Two things about
+the flags, because on either one `gcloud` would exit before it calls KMS and the branch below would print
+**refused** for every login — including the role that can sign, which is the whole reading: `--signature-file`
+is the flag `gcloud` writes the signature into and it is **required**, and there is **no
+`--digest-algorithm`**, because this key is **Ed25519** (O17: one Ed25519 key per project, in the
+installation project): gcloud passes the file's bytes to KMS as the message
+and KMS refuses a digest for an Ed25519 version, which is why the tree's own signer
+(`ee/licence/mint/kms.go`) runs `asymmetric-sign` with the flags below and its test refuses a
+`--digest-algorithm` in the argv — "a digest algorithm is not what a raw Ed25519 signature takes":
+
+```sh
+gcloud kms asymmetric-sign --project=<your installation project> --location=<the consumer key location> --keyring=<the consumer key ring> --key=<the consumer key> --version=1 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own role can sign, so J6 needs no grant' || echo 'refused, as U12 assumes'
+```
+
+**What it reads.** Whether your own login is refused by the consumer key — and it is KMS's own refusal, the
+`PERMISSION_DENIED` the role is read from, that answers: a `gcloud` or KMS error about the flags settles
+nothing and must not be read as either. **The sequence itself is yours**,
+step by step on the two phones, and each step's reading goes into this section: **pair** (the phone ends
+paired), **refresh** (a new token after the hour), **revoke** (access ends on the next request), the **roster
+revoke** (the person's mobile access ends), **restore** (the synced list brings the pairing back), **strict
+mode** (a device without a QR is refused), and the **outage** (the old-way phone keeps working). The
+simulated outage is the identity project's route made unreachable for the duration — on a sandbox project
+only, and restored in the step below.
+
+**What a run costs, and what waits on it.** Nothing billable and no model call: the phones talk to the
+project and the CLI reads, and no run is launched. What waits on it is the release itself: **UP1**'s
+`### For operators` entry sends every installation to this sequence, and the mobile release's own notes
+point here.
+
+**Restore.** The outage's change is undone — the route is reachable again and a pairing after it succeeds —
+the second phone is unpaired, and the roster grant you revoked is restored if the person needs it. On disk
+there is nothing to undo: the command writes only the signature file you named, and you delete it with the
+input file you made; the sandbox's own state is what the sequence changed, step by step.
+
+## Check 736: the Firebase Auth, KMS and Cloud Run quotas at the stated scale (the identity project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+row for **736** — and it settles the reconciliation's **U6**: the quotas that decide whether the planned
+fleet can pair, refresh and sign at all. It is **run by you**, on the identity project, with your own
+credentials, and **no agent runs any step of it**.
+
+**What it settles.** Three services' limits beside one another, read against the plan's own scale:
+
+- **Firebase Auth** — the Identity Platform sign-in operations per second and the daily limits, against the
+  refresh-on-the-hour the spec describes: every paired phone refreshing inside the same minute is the peak
+  this reading is about.
+- **Cloud KMS** — the asymmetric **sign** operations per second for the project, against every assertion and
+  every signed reply the fleet can want at once.
+- **Cloud Run** — the request and instance quotas of the signer service's region, against the same peak, and
+  the concurrency the service is deployed with.
+
+**What has to exist before it runs.** The identity project applied (Check 730) and **the plan's stated
+scale** to hand: the number of phones and the request rate per phone that the check is read against. Without
+that figure the reading has no denominator, and the check says so rather than passing.
+
+**The command.** It is **one command**, and it only reads:
+
+```sh
+gcloud alpha services quota list --service=cloudkms.googleapis.com --consumer=projects/<the identity project> --format='value(quotaId,limit)' && gcloud alpha services quota list --service=identitytoolkit.googleapis.com --consumer=projects/<the identity project> --format='value(quotaId,limit)' && gcloud alpha services quota list --service=run.googleapis.com --consumer=projects/<the identity project> --format='value(quotaId,limit)'
+```
+
+**What it reads.** The quota ids and their limits for the three services. **No model call, nothing billable,
+nothing written.** Where a limit is not in this listing — a console-only quota, or one the API answers in
+another shape — the reading is the console page instead, and the section names which of the two it used,
+because a quota that cannot be pointed at is a number nobody can re-check.
+
+**What waits on it.** The plan's capacity assumption and **A3**'s deployment shape: a quota below the stated
+scale is a project limit to raise (a console act, yours) before the fleet reaches it, and the reading is what
+makes that a planned step rather than an incident. It is also where **U6** is closed.
+
+**Restore.** Nothing to restore: three reads with your own credentials. A quota you raise in the console is
+yours and stays; the check raises none.
+
+## Check 737: the root key project, the first signed key set and a rotation rehearsal (the root key project only, never `belong`; run by you; NOT RUN)
+
+**NOT RUN.** Written by task **T0** of
+[docs/mobile-identity-pairing/implementation-plan.md](mobile-identity-pairing/implementation-plan.md) — its
+row for **737** — and owed to task **A4**, whose Terraform root defines the separate owner-only project, its
+Ed25519 **root key** and the key-set signing command. It settles the owner's **O7** and **O15** (a root key
+only the owner can use, and a separate owner identity as a variable), and the failure it is built around is
+the worst one this work can produce: a root key any default login can sign with. **No agent applies, signs or
+holds the key**, and **no agent runs any step of it**.
+
+**What it settles.**
+
+- **The root key project exists, and the key is the pinned one.** Its purpose is `ASYMMETRIC_SIGN`, its
+  algorithm is the Ed25519 one the plan pins, it is **non-exportable** as every asymmetric KMS key is, and
+  signing is granted to **exactly one member** — the separate owner identity given as a variable (O15) — and
+  to **no service account**.
+- **Your own login cannot sign.** The command below is the reading O7 is about: the laptop's default login
+  against the **root key**. A sign that succeeds is the **worst finding this check can produce**, because a
+  key the default login can use signs key sets no client should trust.
+- **The first key set is signed and served.** The signing command has wrapped the JWKS in the envelope (a JWS
+  over it with `seq`, `iat` and `exp` 180 days on, O18), the root key has signed it, and A2 serves it
+  unchanged at the pinned URL. The set verifies against the root public key, its `seq` is above every set
+  before it, and its not-after date is the one the envelope carries. **P8** pins the root public key and the
+  signing keys from this reading.
+- **A rotation rehearsal has run.** A new KMS key version, added and published in a rehearsal, is read back:
+  the new `kid`, the set that carries both keys during the overlap, and the command that signed it. A
+  rotation rehearsed once is a rotation someone can do under pressure — which is the point of doing it before
+  the 180-day expiry is real.
+
+**What has to exist before it runs.** `ee/identitysvc/rootkey/` merged and **applied by you**, the owner
+identity (O15) in place with its one signing grant, the signing command built, and the bucket A3's root
+defines for the signed document — which only the owner writes and the signer service reads.
+
+**The command.** It is **one command**, and it is the refusal that matters. Two things about the flags,
+because on either one `gcloud` would exit before it calls KMS and the branch below would print **refused** for
+every login — including the one that can sign, which is the whole finding this check exists to catch:
+`--signature-file` is the flag `gcloud` writes the signature into and it is **required**, and there is **no
+`--digest-algorithm`**, because the root key is the **Ed25519** one A4's root defines (D2792, O7): gcloud
+passes the file's bytes to KMS as the message and KMS refuses a digest for an Ed25519 version. The tree's own
+signer (`ee/licence/mint/kms.go`) runs `asymmetric-sign` the same way, and its test refuses a
+`--digest-algorithm` in the argv — "a digest algorithm is not what a raw Ed25519 signature takes":
+
+```sh
+gcloud kms asymmetric-sign --project=<the root key project> --location=<the root key location> --keyring=<the root key ring> --key=<the root key> --version=1 --input-file=<a small file of your own> --signature-file=<a scratch path of your own> && echo 'SIGNED: your own login signed with the root key, which O7 forbids' || echo 'refused, as O7 asks'
+```
+
+**What it reads.** Whether your own login can sign with the root key — and the reading is KMS's answer: a
+`PERMISSION_DENIED` is the refusal O7 asks for, while a signature written into the file you named is the
+finding. A `gcloud` or KMS error about the flags settles nothing and must not be read as either. The rest —
+the ceremony, the first signed **key set** and the rehearsal — is the signing command you run in your own
+terminal: the command prints the root public key and no private material, refuses a `seq` not above the last
+signed one, and refuses inside an agent session. The readings this section carries are the root public key,
+the `seq` and dates of the first set, and the rehearsal's new version's `kid` — **public values only, never a
+key**.
+
+**What waits on it.** **P8** (the production root key, the signing keys and the `seq` floor pinned into the
+build), and through it **P1** and the verifier every client trusts; the alert A3's root defines 30 days before
+the set expires is what makes the next ceremony a planned one. It is also the check the plan's after-deploy
+order puts beside Check 730, before the release and before every operator's `fugaro update`.
+
+**Restore.** The apply's resources stay — the project, the ring, the key and the bucket are the work's, not
+the check's — and the signature files the rehearsal wrote are yours to delete. What must not be left is a
+second signing grant: the reading's own criterion is that exactly one member can sign, so a rehearsal that
+granted anyone else must have that grant removed before the section is written.
+
+**USER-RUN, NOT RUN: no agent runs any step of it.**
