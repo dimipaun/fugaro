@@ -5858,6 +5858,13 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	if err != nil {
 		return "", false, err
 	}
+	// A repository the credentials service serves (B4.9, D2076): the build's
+	// credential step fetches the git credential and the workflow's own build
+	// secrets there instead of reading the mounts the apply took away, and the
+	// address is what tells it to. The ID above is the caller's, read back out
+	// of the apply's own spec or resolved live, and a served request names no
+	// secret at all — so it is carried and unused, never looked up here.
+	bs.CredentialsServiceURL = buildServiceURL(lc, cfg, spec.Name)
 	if cfg.Layer != nil {
 		rb, err := openRecordBucket(ctx, lc.RecordBucketURL())
 		if err != nil {

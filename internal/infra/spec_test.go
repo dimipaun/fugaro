@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/projectpolicy"
@@ -3924,6 +3925,133 @@ func TestFilledVaultListKeepsAnUnswitchedRepository(t *testing.T) {
 		if got := ws.Env[runner.SecretEnvsVar]; !strings.Contains(got, "NPM_TOKEN") {
 			t.Errorf("%s's %s = %q does not name NPM_TOKEN: the mount is there, and a mounted secret left off the redaction list is one the run would print", rs.Name, runner.SecretEnvsVar, got)
 		}
+	}
+}
+
+// repoRootServedLC is repoRootVaultLC with the installation's credentials
+// service address, which `fugaro update` writes into the local config from the
+// installation's own outputs: the state a switched repository's machine is in,
+// and the one a launch or a check job's environment is planned from (a job
+// learns the address there, providers.EnvCredentialsServiceURL).
+const repoRootServedLC = repoRootVaultLC + credentialsServiceLCBlock
+
+// buildAccessors are a spec's build-account secretAccessor addresses, sorted:
+// the module's google_secret_manager_secret_iam_member.build, one per logical
+// name the account may read, which is the list B4.9's flip empties for a
+// repository the credentials service serves.
+func buildAccessors(rs RepoSpec) []string {
+	var out []string
+	for _, a := range rs.Addresses() {
+		if strings.Contains(a, ".google_secret_manager_secret_iam_member.build[") {
+			out = append(out, a)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// TestEmptyBuildListChangesNothing is the build flip's inert state pinned
+// (B4.9, D2076, D2077): while config.BuildServedSecretClasses is empty no
+// build takes anything from the credentials service, so a switched repository
+// plans exactly what it planned before — the build account's accessor list
+// with the provider credential and the workflow's own build secret in it, and
+// the check job's own mount of the git credential, with the redaction list
+// that follows it.
+//
+// The list is cleared here and restored afterwards rather than assumed empty,
+// so this is the same test in the flip's first commit and its second: it is
+// the counterfactual the filled pair below is read against.
+func TestEmptyBuildListChangesNothing(t *testing.T) {
+	saved := config.BuildServedSecretClasses
+	config.BuildServedSecretClasses = nil
+	t.Cleanup(func() { config.BuildServedSecretClasses = saved })
+
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootServedLC, config.BudgetEnforce)
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
+	}
+	if off.Check == nil || on.Check == nil {
+		t.Fatal("the fixture plans no check job: the check's own mount is half of what this flip moves")
+	}
+	if got, want := on.BuildSecrets, off.BuildSecrets; !slices.Equal(got, want) {
+		t.Errorf("the switched repository's build secrets are %v, want the unswitched one's %v: with the class list empty no build is served, so the build account's accessor list does not move (D147's shape, D2076)", got, want)
+	}
+	if !slices.Contains(on.BuildSecrets, config.BitbucketSecret) && !slices.Contains(on.BuildSecrets, "github-app-key") {
+		t.Errorf("the fixture's build secrets are %v and name no provider credential: the test would be vacuous", on.BuildSecrets)
+	}
+	if !maps.Equal(on.Check.SecretEnv, off.Check.SecretEnv) {
+		t.Errorf("the switched repository's check job mounts %v, want the unswitched one's %v: the class list is empty, so the job keeps the credential it mounts and fetches nothing", on.Check.SecretEnv, off.Check.SecretEnv)
+	}
+	if got, want := on.Check.Env[runner.SecretEnvsVar], redactionEnvs(on.Check.SecretEnv); got != want {
+		t.Errorf("the switched check job's %s = %q, want %q: a mount that moved without its redaction entry is one the run would print", runner.SecretEnvsVar, got, want)
+	}
+	if _, named := on.Check.Env[providers.EnvCredentialsServiceURL]; named {
+		t.Errorf("the switched check job's environment names a credentials service (%v): with no class served the job mounts its credential and asks nobody for it", on.Check.Env)
+	}
+	if got, want := buildAccessors(on), buildAccessors(off); !slices.Equal(got, want) {
+		t.Errorf("the switched repository's build account holds the accessors %v, want %v: no build named a service, so no accessor moves", got, want)
+	}
+}
+
+// TestFilledBuildListDropsTheBuildAccessor is B4.9's flip pinned where it
+// holds: the class list is filled, so a repository the credentials service
+// serves plans its build account without a single secretAccessor — the
+// request names no secret for it to read (gcp.BuildRequest, whose own test
+// holds the request half) and the check job's mount goes with it (check.tf) —
+// while a repository the switch holds off keeps every one of them.
+func TestFilledBuildListDropsTheBuildAccessor(t *testing.T) {
+	if !config.BuildServesClass(config.BuildSecretClassBuild) {
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q: B4.9's flip is what empties a switched repository's build account accessor list and makes its build fetch the credential from the service instead (D2076, D2077)", config.BuildServedSecretClasses, config.BuildSecretClassBuild)
+	}
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootVaultLC, config.BudgetEnforce)
+	if on.Installation.CredentialsService == nil {
+		t.Fatal("the fixture is not on the switch: nothing below would be about a switched repository")
+	}
+	if len(buildAccessors(off)) == 0 {
+		t.Fatalf("the unswitched fixture's build account holds no accessor at all: the test would be vacuous")
+	}
+	if got := buildAccessors(on); len(got) != 0 {
+		t.Errorf("the switched repository's build account holds the accessors %v, want none: the request names no secret, so an accessor kept here is one nothing reads (D2076)", got)
+	}
+	if got := on.BuildSecrets; len(got) != 0 {
+		t.Errorf("the switched repository's build secrets are %v, want none: the tfvars answer is the module's for_each, and the two are one list", got)
+	}
+	if got, want := buildAccessors(off), buildAccessors(vaultSpecUnswitched(t)); !slices.Equal(got, want) {
+		t.Errorf("an unswitched repository's build accessors are %v and then %v: the flip moves a served repository's list alone (G9, D147)", got, want)
+	}
+}
+
+// TestFilledBuildListDropsTheCheckMounts is the check job's half of the same
+// flip: the daily check runs as the build account, so the accessor its mount
+// of the repository's git credential is read under is the one the class
+// "build" takes away — the mount goes with either class (C2.3) and the job
+// fetches the credential from the service instead, which is what the address
+// its environment now carries is for (B4.5's checkGitCredential).
+func TestFilledBuildListDropsTheCheckMounts(t *testing.T) {
+	if !config.BuildServesClass(config.BuildSecretClassGit) || !config.BuildServesClass(config.BuildSecretClassBuild) {
+		t.Fatalf("config.BuildServedSecretClasses = %v and does not carry %q and %q: the check job's mount goes with the git credential's own class, and its accessor is the build account's, which the build's class takes away (C2.3)", config.BuildServedSecretClasses, config.BuildSecretClassGit, config.BuildSecretClassBuild)
+	}
+	off := vaultSpecUnswitched(t)
+	on := repoRootServed(t, repoRootCascadeAgent, repoRootServedLC, config.BudgetEnforce)
+	if off.Check == nil || on.Check == nil {
+		t.Fatal("the fixture plans no check job: nothing below would be about its mounts")
+	}
+	if len(off.Check.SecretEnv) == 0 {
+		t.Fatalf("the unswitched fixture's check job mounts nothing: the test would be vacuous")
+	}
+	if len(on.Check.SecretEnv) != 0 {
+		t.Errorf("the switched repository's check job mounts %v, want none: the job runs as the build account, whose accessor on the credential the same flip takes away, and Cloud Run refuses a job that mounts a secret its account may not read (C2.3)", on.Check.SecretEnv)
+	}
+	if got := on.Check.Env[runner.SecretEnvsVar]; got != redactionEnvs(on.Check.SecretEnv) {
+		t.Errorf("the switched check job's %s = %q, want %q: the list follows the mounts", runner.SecretEnvsVar, got, redactionEnvs(on.Check.SecretEnv))
+	}
+	if got := on.Check.Env[providers.EnvCredentialsServiceURL]; got != "https://fugaro-credentials-123456789012.us-east5.run.app" {
+		t.Errorf("the switched check job's %s = %q, want the installation's service: the job mounts no credential, so the address is the only way it can fetch one (B4.5, D2076)", providers.EnvCredentialsServiceURL, got)
+	}
+	if !maps.Equal(off.Check.SecretEnv, map[string]string{"FUGARO_GITHUB_APP_PRIVATE_KEY": "github-app-key"}) {
+		t.Errorf("the unswitched repository's check job mounts %v: a repository the switch holds off keeps the mount and reads it itself (G9, D147)", off.Check.SecretEnv)
 	}
 }
 
