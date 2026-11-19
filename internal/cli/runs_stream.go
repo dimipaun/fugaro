@@ -77,11 +77,11 @@ type streamErrorLine struct {
 }
 
 // streamWriter writes a --stream feed, one compact JSON object per line, the
-// shape every line-delimited document in the CLI is written in
-// (console/docs/json-contract.md §6.2). It is the one writer of that shape:
-// the report and budget feeds write through it rather than each keeping its own
-// copy of the encoder's rules -- compact, one object per line, and the count of
-// the rows that went out.
+// shape every line-delimited document in the CLI is written in (the JSON
+// contract's section on the line-delimited documents). It is the one writer of
+// that shape: the report and budget feeds write through it rather than each
+// keeping its own copy of the encoder's rules -- compact, one object per line,
+// and the count of the rows that went out.
 //
 // Nothing is buffered: each line is one write of the encoder to the stream a
 // consumer reads, which is what makes the feed arrive line by line rather than
