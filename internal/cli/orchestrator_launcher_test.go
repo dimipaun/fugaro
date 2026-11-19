@@ -1223,6 +1223,8 @@ func TestResidentRunIsTheItemsRefusesAFieldNoLaunchWrites(t *testing.T) {
 		{"a compression override", "a compression override", func(ts *task.Spec) { ts.CompressionOff = true }},
 		{"the debt mark", "the debt mark", func(ts *task.Spec) { ts.Debt = true }},
 		{"the security mark", "the security mark", func(ts *task.Spec) { ts.Security = true }},
+		{"a review spec", "a review spec", func(ts *task.Spec) { ts.ReviewSpec = &task.ReviewSpec{} }},
+		{"a findings follow-up", "a findings follow-up", func(ts *task.Spec) { ts.FromFindings = true }},
 		{"a run's spend limit", "a run limit", func(ts *task.Spec) { ts.Overrides.MaxUSD = &maxUSD }},
 		{"a run's wall-clock limit", "a run limit", func(ts *task.Spec) { ts.Overrides.MaxTime = "45m" }},
 	}
@@ -1297,7 +1299,8 @@ func TestResidentTaskFieldsAreAllClassified(t *testing.T) {
 		"mode", "oauth_token", "overrides", "project_layer", "author", "digest_runs"}
 	refused := []string{"branch", "pr", "previous_run", "owner_ruled", "context_repos", "review_prs",
 		"change_set", "inputs", "reports", "ab", "mutate", "paths", "rigor", "batch", "review_levels",
-		"expected_scope", "follow_up_of", "model_grade", "review_class", "compression_off", "debt", "security"}
+		"expected_scope", "follow_up_of", "model_grade", "review_class", "compression_off", "debt", "security",
+		"review_spec", "from_findings", "own_text"}
 	// overrides is classified as the launch's own because the launch writes one
 	// of its fields (total_timeout, from the workflow's timeouts) and the fence
 	// refuses the rest by value rather than by presence; the case above pins the
