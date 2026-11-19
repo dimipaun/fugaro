@@ -390,6 +390,10 @@ const rigorNoEffect = "it has no effect"
 //
 // Mutation (drop the note): the first two cases see nothing on stderr.
 func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
+	// The area rule writes the released `mode:` spelling: this fixture's job
+	// image is one the two spellings this release adds ship behind, and the
+	// gate for them refuses a `level:`-writing file on it before the note is
+	// ever reached (TestRunRefusesTheNewRigorSpellingsOnAnOlderBaseImage).
 	cases := []struct {
 		name, rigorYAML, mode string
 		paths                 []string
@@ -397,7 +401,7 @@ func TestRunNotesAModeThatRaisesNothing(t *testing.T) {
 	}{
 		{"equal to the repository's", "rigor:\n  default: critical\n", "critical", nil,
 			"--mode critical is not higher than the repository's resolved mode critical: it has no effect"},
-		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", level: critical }\n", "pro", []string{"payments/x.go"},
+		{"below an area the paths match", "rigor:\n  default: poc\n  areas:\n    - { name: payments, match: \"payments/**\", mode: critical }\n", "pro", []string{"payments/x.go"},
 			"--mode pro is not higher than the repository's resolved mode critical: it has no effect"},
 		{"above the repository's", "rigor:\n  default: startup\n", "critical", nil, ""},
 	}
