@@ -428,6 +428,17 @@ func buildRows() []Row {
 		if strings.HasPrefix(out[i].Key, "governance.") {
 			out[i].Doc = docGovernance
 		}
+		// A block of settings is not the generic writer's row. The write refuses
+		// the block's own spelling — a block is a shape, so a scalar written at
+		// it has no value to land on (IsBlock, settingsRefuseRow) — and a row
+		// naming `settings set` while the write refuses it is the pair D1178 and
+		// F13 forbid: the read prints `writable: false` beside the command it
+		// says writes the key. The truth about a block is the other way round —
+		// `settings set` writes the settings the block holds, one at a time — so
+		// the row names that instead (ownerBlockToken).
+		if out[i].Owner == "settings set" && blockAmong(out, out[i].Key) {
+			out[i].Owner = ownerBlockToken
+		}
 	}
 	// Each document's rows are written in its own order, so the three groups
 	// are sorted here rather than in a reader: the table, `--changed` and the
@@ -1687,6 +1698,31 @@ func governanceLeafRows() []Row {
 		}
 	}
 	return out
+}
+
+// ownerBlockToken is the owner column's entry for a block of settings: the key
+// whose own spelling holds other rows below it and no value of its own
+// (IsBlock). No command writes such a key, and the command that writes the
+// settings under it is `settings set` — which is what the token's sentence in
+// the read says (settingsOwnerCommands). It is a token of its own rather than
+// the default one because the write refuses the block's spelling
+// (settingsRefuseRow): a row naming the generic writer while the write refuses
+// it is the pair D1178 and F13 forbid, and the read's own blanking rule is only
+// the display half of it.
+const ownerBlockToken = "settings block"
+
+// blockAmong reports whether any row of the table sits below key. It is the
+// question IsBlock asks of the assembled table, and buildRows cannot ask it
+// there: the table is what it is building, so the rows it holds are not yet the
+// package's (rows).
+func blockAmong(out []Row, key string) bool {
+	prefix := key + "."
+	for _, r := range out {
+		if strings.HasPrefix(r.Key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsBlock reports whether key is a block of the registry: a key whose own

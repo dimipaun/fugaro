@@ -246,6 +246,13 @@ func TestRegistryOwnerNamesACommand(t *testing.T) {
 		// that command rather than `fugaro project`, whose other keys this
 		// block is not.
 		"project binaries",
+		// A block of settings (W2 of docs/config-ownership, D2604): the key
+		// whose own spelling holds other rows and no value of its own, so the
+		// generic path refuses it (settingsRefuseRow) and its row names the
+		// command that writes the settings under it rather than the command
+		// itself — the default token would say `settings set` writes a key it
+		// will not write (D1178, F13).
+		"settings block",
 	}
 	for _, r := range Rows() {
 		ok := false

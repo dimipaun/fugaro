@@ -652,7 +652,15 @@ func settingsRefuseRow(key, registry string, row settings.Row) (settings.Row, er
 	// key. It is refused here, beside the map-entry case and for the same
 	// reason, and the row stays in the read: a person reading `fugaro settings`
 	// sees the block and the settings it holds (D2604).
-	if settings.IsBlock(row.Key) {
+	//
+	// The question is asked of the registry's own table and not of the key:
+	// the entry pair (--add-entry, --remove-entry) names a block deliberately,
+	// and the row such a write is about is built from the block's leaves rather
+	// than held by the registry (settingsEntryRow, D1175 — `layer.ab
+	// --add-entry rate=0.05`). A key the registry holds no row for is no block
+	// of this path's, and one whose row the registry holds is refused here
+	// whatever was asked of it.
+	if reg, ok := settings.Lookup(key); ok && settings.IsBlock(reg.Key) {
 		return settings.Row{}, userErr("%s is a block of settings rather than a setting: it holds %s; write one of them", key, strings.Join(settings.BlockChildren(row.Key), ", "))
 	}
 	if !settingsGenericKey(registry) {
