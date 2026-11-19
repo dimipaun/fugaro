@@ -54,7 +54,7 @@ As of 2026-11-19 02:00 UTC (night), read from `main` at `0db80aa40` (#3198), the
 | review-against-task | plan only: 0/16 tasks merged, none approved (docs/review-against-task); owner-run Check 750 after the release |
 | run-messages | plan only: 0/11 tasks merged, none approved (docs/run-messages); D2940–D2947 answered 2026-11-18 as recommended; O1 and O2 answered; owner-run Check 740 after the release |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
-| workspace-credentials | an addendum with no plan yet (docs/workspace-credentials): D2930–D2937 answered 2026-11-19 as recommended; the reconciliation and the plan are not written; it becomes a slice of workspace-projects-users after WU0 (D2937) |
+| workspace-credentials | an addendum with no plan (docs/workspace-credentials): D2960–D2967 answered 2026-11-19 (asked as D2930–D2937), four of them found unbuildable as written by the review of the same day; D2968–D2977 unanswered; it waits on the workspace service being deployed (D2968) |
 
 ## Done
 
