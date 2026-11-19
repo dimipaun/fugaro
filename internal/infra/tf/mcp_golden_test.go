@@ -46,7 +46,17 @@ func TestNoGoldenPlanCreatesTheFrontDoor(t *testing.T) {
 				sawCoordinator = true
 			}
 			if rc.Type == "google_cloud_run_v2_service_iam_member" {
-				if got := str(rc.Change.After["member"]); got == "allUsers" {
+				// The mobile service's binding (mobile plan task P5) is the one
+				// `allUsers` member these goldens legitimately carry: the
+				// credentials service's own switch creates that service and its
+				// public binding, and installation-credentials and
+				// installation-review pass that switch, so the member is named
+				// here rather than those plans dropped from the list. The hop's
+				// binding — the tree's other designed public endpoint — is why
+				// installation-voice is not in this list at all, and the front
+				// door's is what this test is about: it is refused above by
+				// address, so neither can hide behind this exception.
+				if got := str(rc.Change.After["member"]); got == "allUsers" && !strings.Contains(rc.Address, "mobile_public") {
 					t.Errorf("%s admits everyone to %s: the front door's public binding is D920's and only an installation that opted in gets it", name, rc.Address)
 				}
 			}

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // The public mobile service beside the credentials service (mobile plan task
@@ -164,9 +166,6 @@ func TestCredentialsMobileIsASecondPublicService(t *testing.T) {
 	}
 	if got := afterStr(acct, "email"); got != mobileAccountID+"@"+p.project+".iam.gserviceaccount.com" {
 		t.Errorf("%s is %q, want the account of the installation's own project: it holds a project-level database role and signJwt on a signer of the Firebase project, and both bindings name the address this value carries", acctAddr, got)
-	}
-	if got := afterStr(svc, "template"); got == "" {
-		t.Fatalf("%s plans no template", svcAddr)
 	}
 	if got := mobileServiceAccount(t, svc); got != mobileAccountID+"@"+p.project+".iam.gserviceaccount.com" {
 		t.Errorf("%s runs as %q, want the account this module creates for it (%s)", svcAddr, got, acctAddr)
@@ -376,15 +375,21 @@ func firebaseGoldenRows(t *testing.T) map[string]plannedResource {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc struct {
-		ResourceChanges []plannedResource `json:"resource_changes"`
-	}
-	if err := json.Unmarshal(b, &doc); err != nil {
+	// The document is decoded the way every other plan read in this package is
+	// (tf.Plan, whose UnmarshalJSON keeps the top-level keys beside the fields):
+	// the attributes live under change.after, so a struct with an `after` tag of
+	// its own would read every row as empty and every assertion below as a pass
+	// on nothing.
+	var plan tf.Plan
+	if err := json.Unmarshal(b, &plan); err != nil {
 		t.Fatal(err)
 	}
-	out := map[string]plannedResource{}
-	for _, rc := range doc.ResourceChanges {
-		out[rc.Address] = rc
+	out := make(map[string]plannedResource, len(plan.ResourceChanges))
+	for _, rc := range plan.ResourceChanges {
+		out[rc.Address] = plannedResource{
+			Address: rc.Address, Type: rc.Type, Actions: rc.Change.Actions,
+			After: rc.Change.After, Importing: rc.Change.Importing,
+		}
 	}
 	return out
 }

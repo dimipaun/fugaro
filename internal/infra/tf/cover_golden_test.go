@@ -149,7 +149,21 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 			// and one more: a row here would be the cover quietly carrying a
 			// public endpoint, and the plan order below is what the golden
 			// really emits.
+			// The public mobile service's own invoker binding (mobile plan task
+			// P5; D2782 as amended by F31, O8) is the same state one service
+			// over, and it is in every plan of this root whose fixture turns the
+			// credentials service on — that one switch creates the mobile
+			// service, its account and this binding beside the private service
+			// (mobile_service.tf). The three plans below are exactly the
+			// fixtures that carry it. The member is on purpose, the cover names
+			// no kind for `allUsers` (the front door's and the hop's state), and
+			// what refuses the member everywhere else is deploy/terraform's
+			// TestAllUsersIsRefusedOnEveryOtherResource. The two appends are in
+			// the order the plans emit their changes, sorted by address.
 			want := []string{}
+			if name == "installation-credentials" || name == "installation-review" || name == "installation-voice" {
+				want = append(want, `module.installation.google_cloud_run_v2_service_iam_member.mobile_public[0] (grants to allUsers, who is not on the review screen)`)
+			}
 			if name == "installation-voice" {
 				want = append(want, `module.installation.google_cloud_run_v2_service_iam_member.voice_public[0] (grants to allUsers, who is not on the review screen)`)
 			}
