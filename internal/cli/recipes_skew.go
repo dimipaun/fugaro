@@ -417,6 +417,56 @@ const digestSince = "0.13.0"
 // release that ships the command.
 const reportsSince = "0.26.0"
 
+// commitReportsSince is the first fugaro release whose runner reads the
+// reports a task hands in (R9): the commit_reports step downloads every object
+// task.Spec.Reports names — runs/<slug>/<run>/reports/<name>, uploaded by the
+// launcher that handed them in — checks each one against the size and the
+// sha256 the task carries, and commits it into the mirror folder.
+//
+// The member is what makes this gate necessary rather than a warning: a runner
+// before it has no such field, and task.Parse decodes with
+// DisallowUnknownFields, so the WHOLE task is refused at bootstrap — after the
+// launcher read the project's stored reports, uploaded them and started a job
+// — with nothing the run can do about it. So a --commit-reports launch against
+// an older job image is refused at the person's terminal, by this gate, before
+// the first byte leaves the machine.
+//
+// Like artifactsSince and digestSince it carries no shipped flag: refusing
+// every image that predates the member is exactly the direction this gate
+// wants, and an image with no release tag (a dev build, a hand-pushed one)
+// only warns, the same as for every other *Since constant here — the runner
+// fails closed on the unknown field anyway, so a warning cannot let a commit
+// run through as an ordinary one.
+//
+// docs/release.md's ("Before you tag") checklist verifies it equals the
+// release that ships the member.
+const commitReportsSince = "0.27.0"
+
+// commitReportsSubject and commitReportsKnows are this gate's two names in the
+// family's sentence (checkImageSince): what is refused (the launch carrying
+// --commit-reports) and what its job image's runner has to know (the stored
+// reports a task hands in, which is R9's step reading the member). The refusal
+// carries no alt: the member is the whole of what the flag does, so there is
+// no other way to hand reports in that an older image could take.
+const (
+	commitReportsSubject = "--commit-reports"
+	commitReportsKnows   = "the stored reports a task hands in"
+)
+
+// checkCommitReportsImage is checkImageSince's arm for a --commit-reports
+// launch: a launch whose job image's runner cannot read the reports member is
+// refused here, at the person's terminal, rather than starting a job that
+// refuses the whole task at bootstrap.
+func checkCommitReportsImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
+	return checkImageSince(ctx, env, slug, spec, kind, commitReportsSince, commitReportsSubject, commitReportsKnows, "", warn)
+}
+
+// checkCloneCommitReportsImage is checkCommitReportsImage for a checkout:
+// clone workflow: see checkCloneImageSince.
+func checkCloneCommitReportsImage(lc *localcfg.Config, spec *task.Spec, warn io.Writer) error {
+	return checkCloneImageSince(lc, spec, commitReportsSince, commitReportsSubject, commitReportsKnows, "", warn)
+}
+
 // adversarialSince is the first fugaro release whose runner acts on the
 // adversarial step, review level 3 (D720): it runs the step after the senior
 // review, a rejection bounces back to the first-line loop, and the level

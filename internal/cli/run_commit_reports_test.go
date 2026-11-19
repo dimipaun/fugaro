@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/digest"
@@ -13,11 +17,11 @@ import (
 // commitRunID is the run every test here launches into, and the two mirror
 // names they hand in: a repository's own report and the project's aggregate
 // (digest's mirror shape, <slug>/<YYYY>/<key>.md and <YYYY>/<key>.md).
-const commitRunID = "20261119-100000-cr01"
+const commitRunID = "20261119-100000-c4a1"
 
 // releaseCommitReports is a job image whose runner reads the reports a task
 // hands in: the first release that does (commitReportsSince).
-const releaseCommitReports = "ghcr.io/dimipaun/fugaro-base:0.27.0"
+const releaseCommitReports = "ghcr.io/dimipaun/fugaro-base:" + commitReportsSince
 
 func commitDayName() string  { return appSlug + "/2026/2026-10-20.md" }
 func commitWeekName() string { return "2026/2026-W43.md" }
@@ -52,6 +56,16 @@ func commitReportsFixture(t *testing.T, folder map[string]string) *cloudFixture 
 func inputOf(name, body string) task.InputFile {
 	sum := sha256.Sum256([]byte(body))
 	return task.InputFile{Name: name, Bytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}
+}
+
+// inNameOrder is the reports a launch should hand in, in the order the task
+// carries them: by name, so two launches of one store write one task. The
+// order is the names' own and not the order the test listed them in — the
+// project's aggregate (`<YYYY>/<key>.md`) sorts before a repository's own
+// report (`<slug>/<YYYY>/<key>.md`) because a digit sorts before a letter.
+func inNameOrder(files ...task.InputFile) []task.InputFile {
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	return files
 }
 
 // TestRunCommitReportsUploadsTheStoreIntoTheRun is R16's own point (D2754):
@@ -133,7 +147,7 @@ func TestRunCommitReportsHandsInOnlyWhatTheFolderLacks(t *testing.T) {
 		}
 	}
 	spec := readSpec(t, f, commitRunID)
-	want := []task.InputFile{inputOf(month, "the store's newer month"), inputOf(week, "the aggregate the folder does not hold")}
+	want := inNameOrder(inputOf(month, "the store's newer month"), inputOf(week, "the aggregate the folder does not hold"))
 	if len(spec.Reports) != len(want) {
 		t.Fatalf("the task names %+v, want the two reports the folder lacks", spec.Reports)
 	}
@@ -165,7 +179,7 @@ func TestRunCommitReportsNamesEveryObjectInTheTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := readSpec(t, f, commitRunID)
-	want := []task.InputFile{inputOf(day, "the day's report"), inputOf(week, "the week's aggregate")}
+	want := inNameOrder(inputOf(day, "the day's report"), inputOf(week, "the week's aggregate"))
 	if len(spec.Reports) != len(want) {
 		t.Fatalf("task reports = %+v, want %+v", spec.Reports, want)
 	}
@@ -204,6 +218,38 @@ func TestRunCommitReportsRefusesTheFlagOnAnotherRecipe(t *testing.T) {
 	}
 }
 
+// TestRunCommitReportsGatesOnTheImagesRelease: a task carrying the reports
+// member is refused outright by a runner older than commitReportsSince
+// (task.Parse decodes with DisallowUnknownFields, so every unknown field is
+// fatal), so a --commit-reports launch must not reach such a job at all — and
+// the refusal is made before the first byte, so the run id it never started
+// holds no object either.
+//
+// Mutation (drop the gate from commitReportsLaunch): the launch starts a job
+// whose runner refuses the whole task at bootstrap and this test fails on the
+// missing refusal.
+func TestRunCommitReportsGatesOnTheImagesRelease(t *testing.T) {
+	f := commitReportsFixture(t, nil)
+	below := shiftRelease(t, commitReportsSince, -1)
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-base:"+below)
+	day := commitDayName()
+	writeBucketFile(t, f, digest.ReportsPrefix+"/"+day, "a stored report")
+	wantRefused(t, f, "--commit-reports needs a job image whose runner knows the stored reports a task hands in (fugaro "+commitReportsSince+" or later)",
+		"run", "--repo", "acme/app", "--recipe", "commit-reports", "--run-id", commitRunID, "--commit-reports", "Commit the stored reports")
+	if hasObject(t, f, commitReportKey(commitRunID, day)) {
+		t.Fatal("the gate is before the upload, and a refused launch left a report under a run id that never got a task")
+	}
+	if hasObject(t, f, taskKey(commitRunID)) {
+		t.Fatal("the refused launch wrote a task")
+	}
+	// The constant is a release a build record's base_ref can carry, which is
+	// what the gate reads: a value that is not one is a constant no image can
+	// ever satisfy.
+	if rel, ok := releaseOf("ghcr.io/dimipaun/fugaro-base:" + commitReportsSince); !ok || rel != commitReportsSince {
+		t.Fatalf("commitReportsSince = %q is not the X.Y.Z release a build record's base_ref carries", commitReportsSince)
+	}
+}
+
 // TestRunCommitReportsRefusesAnExistingRunIdBeforeUploading is --attach's own
 // freshness rule, read for the reports: a run id whose task.json is already
 // there is refused BEFORE the first byte, whether the stored task differs
@@ -227,5 +273,34 @@ func TestRunCommitReportsRefusesAnExistingRunIdBeforeUploading(t *testing.T) {
 		"--run-id", commitRunID, "--commit-reports", "Commit the stored reports")
 	if got := string(object(t, f, commitReportKey(commitRunID, day))); got != "the report a finished run already holds" {
 		t.Fatalf("the finished run's report was overwritten: %q", got)
+	}
+}
+
+// TestRunCommitReportsUploadsCreateOnly: every object the launcher hands in is
+// a create-only write, so a second launcher that won the run id in the
+// meantime cannot overwrite the reports of a run whose task is already there.
+// The deterministic refusal is the freshness check above; this is the arm that
+// classifies the race the other one cannot see, and the message names the
+// report and the run, because the launcher lost a race it cannot observe.
+//
+// Mutation (pass a replacing write, or drop the blobx.ErrExists arm): the
+// second launcher's object replaces the first and this test fails on the
+// object's bytes.
+func TestRunCommitReportsUploadsCreateOnly(t *testing.T) {
+	day := commitDayName()
+	f := commitReportsFixture(t, nil)
+	writeBucketFile(t, f, digest.ReportsPrefix+"/"+day, "the store's bytes")
+	writeBucketFile(t, f, commitReportKey(commitRunID, day), "a second launcher's bytes")
+	spec := &task.Spec{Version: 1, RunID: commitRunID, Repo: "acme/app", Ref: "main", Task: "Commit the stored reports",
+		Recipe: &task.Recipe{Name: "commit-reports"}}
+	err := commitReportsUpload(context.Background(), fileEnv(t, f), spec, "runs/"+appSlug+"/"+commitRunID+"/", io.Discard)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is already in run") {
+		t.Fatalf("commitReportsUpload = %v, want a refusal naming the report and the run", err)
+	}
+	if got := string(object(t, f, commitReportKey(commitRunID, day))); got != "a second launcher's bytes" {
+		t.Fatalf("the existing object was overwritten: %q", got)
+	}
+	if len(spec.Reports) != 0 {
+		t.Fatalf("a failed upload filled in %+v", spec.Reports)
 	}
 }

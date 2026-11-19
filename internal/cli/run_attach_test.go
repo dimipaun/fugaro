@@ -919,11 +919,11 @@ func TestRunCommitReportsRefusesAttachAndTheRecipeRefusesItToo(t *testing.T) {
 	n := guardAttach(t)
 	shot := attachShot(t, "shot.png", "png")
 	wantRefused(t, f, "--commit-reports hands the project's stored reports to the run and --attach adds files to a recipe's inputs",
-		"run", "--repo", "acme/app", "--recipe", "commit-reports", "--run-id", "20261119-100000-cr01",
+		"run", "--repo", "acme/app", "--recipe", "commit-reports", "--run-id", "20261119-100000-c4a1",
 		"--attach", shot, "--commit-reports", "Commit the stored reports")
 	wantNoUpload(t, f, n)
 	wantRefused(t, f, "--attach needs an artifact recipe; commit-reports is mode: "+recipe.ModeImplement,
-		"run", "--repo", "acme/app", "--recipe", "commit-reports", "--run-id", "20261119-100000-cr01",
+		"run", "--repo", "acme/app", "--recipe", "commit-reports", "--run-id", "20261119-100000-c4a1",
 		"--attach", shot, "Commit the stored reports")
 	wantNoUpload(t, f, n)
 }
