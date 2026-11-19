@@ -93,12 +93,19 @@ func TestRunCommitReportsUploadsTheStoreIntoTheRun(t *testing.T) {
 	writeBucketFile(t, f, digest.ReportsPrefix+"/notes.md", "a file a person put in the store")
 	writeBucketFile(t, f, digest.ReportsPrefix+"/"+appSlug+"/2026/README.md", "an index is not a report")
 
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--recipe", "commit-reports",
-		"--run-id", commitRunID, "--commit-reports", "Commit the stored reports"); err != nil {
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--recipe", "commit-reports",
+		"--run-id", commitRunID, "--commit-reports", "Commit the stored reports")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if n := len(f.run.Executions()); n != 1 {
 		t.Fatalf("%d executions, want the commit run to have started", n)
+	}
+	// The person is told what left the machine and whose account read it: the
+	// reports are the project's, the read is theirs, and a launch that says
+	// nothing hands them over silently.
+	if !strings.Contains(errOut, "handing 2 stored report(s)") || !strings.Contains(errOut, "read with your own account") {
+		t.Fatalf("the launch said %q, want the count and whose account read the store", errOut)
 	}
 	if got := string(object(t, f, commitReportKey(commitRunID, day))); got != "the store's own day report" {
 		t.Fatalf("the day report the run was handed = %q, want the store's bytes rather than the checkout's", got)

@@ -595,6 +595,79 @@ func TestTaskSchemaInputs(t *testing.T) {
 	}
 }
 
+// TestTaskSchemaReports pins the task schema's `reports` property (plan task
+// R16, D2754): the project's stored reports a `fugaro run --commit-reports`
+// launch hands its run, as the commit_reports step reads them. The schema is
+// additionalProperties: false, so without this property every commit run
+// writes a task.json the published schema rejects — and the schema is what
+// every other reader of a task (the console, the history, anything that never
+// links this binary) checks that task against.
+//
+// The shape is `inputs`'s, one member per report, and the two are deliberately
+// not one property: an input is a file the launcher attached for a mode:
+// artifact run to download into inputs/, and a report is an object the launcher
+// read from the project's store for the commit step to commit. What the members
+// carry is the same rule each, and Spec.Validate states it for both.
+//
+// The ONE rule this test does not ask the schema for is the name's shape: what
+// a report name may be is the mirror's (digest.ParseMirrorPath), applied where
+// the name becomes a path in the repository, and refusing the mirror's shape
+// here would make that check unreachable, since the decoder runs first
+// (Spec.Validate's own note).
+//
+// Mutation (drop the reports property from schemas/task.schema.json, or rename
+// the Go field's json tag): the marshalled task below is rejected as an unknown
+// key.
+func TestTaskSchemaReports(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	validate := func(lit string) error {
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(lit))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	head := `{"version":1,"run_id":"20261119-100000-c4a1","repo":"acme/app","ref":"main","task":"commit the stored reports"`
+	sha := strings.Repeat("a", 64)
+	// The name below is a real mirror name, the repository's day report, and
+	// the aggregate's shape is accepted beside it: neither level of the mirror
+	// is a schema rule, so both must pass here.
+	ok := head + `,"reports":[{"name":"acme-app-dc4d4e59e884fc44/2026/2026-10-20.md","bytes":1024,"sha256":"` + sha + `"},{"name":"2026/2026-W43.md","bytes":2048,"sha256":"` + sha + `"}]` + `}`
+	if err := validate(ok); err != nil {
+		t.Fatalf("schema rejects a task carrying reports: %v", err)
+	}
+	if err := validate(head + `}`); err != nil {
+		t.Fatalf("schema rejects a task carrying none: %v", err)
+	}
+	for _, tc := range []struct{ name, lit string }{
+		{"not an array", `,"reports":{}`},
+		{"empty name", `,"reports":[{"name":"","bytes":1,"sha256":"` + sha + `"}]`},
+		{"whitespace-only name", `,"reports":[{"name":"   ","bytes":1,"sha256":"` + sha + `"}]`},
+		{"negative bytes", `,"reports":[{"name":"2026/2026-10-20.md","bytes":-1,"sha256":"` + sha + `"}]`},
+		{"short sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"abc"}]`},
+		{"upper-case sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"` + strings.Repeat("A", 64) + `"}]`},
+		{"unknown key", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1,"sha256":"` + sha + `","content_type":"text/markdown"}]`},
+		{"missing sha256", `,"reports":[{"name":"2026/2026-10-20.md","bytes":1}]`},
+	} {
+		if err := validate(head + tc.lit + `}`); err == nil {
+			t.Errorf("schema accepts %s: %s", tc.name, tc.lit)
+		}
+	}
+	// The property's name is the Go field's own json tag, so the two cannot
+	// drift silently: the launcher writes this member and nothing else reads
+	// this document.
+	data, err := json.Marshal(task.Spec{
+		Version: 1, RunID: "20261119-100000-c4a1", Repo: "acme/app", Ref: "main", Task: "commit the stored reports",
+		Reports: []task.InputFile{{Name: "2026/2026-10-20.md", Bytes: 1, SHA256: sha}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"reports":`) {
+		t.Fatalf("task.Spec marshals its reports as %s, and schemas/task.schema.json calls the member \"reports\"", data)
+	}
+}
+
 // TestTaskSchemaDigestRuns pins the task schema's `digest_runs` property
 // (task-governance plan T3.6): the report run's manifest, the run IDs the
 // launching CLI listed for the digest step to read. task.schema.json is
