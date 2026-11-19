@@ -20,11 +20,13 @@ It answers in one of four tiers, and it tries them in this order: the first tier
 
 It never runs on the user's own credential. The job is the review-only variant `fugaro review --pr N` uses, which mounts no credential of its own: the model call is signed for the project by its credentials service, the user's login never enters the container, and the CLI reads no secret of the installation's into itself. What leaves the machine is what the local tier would have sent, and the one line printed before anything is uploaded names both places the evidence goes, the user's own project first.
 
-It is the only tier the project's own state can refuse, and every one of these is asked before anything is uploaded, so the person gets the reason and the command that fixes it rather than a second failure: a job image older than the release that carries this tier; a credentials service that is not deployed; a budget that is spent; and a repository the launch's roles gate does not admit, refused before a task, a token or an execution exists. The first three name the same fix, and it is the user's to run in their own terminal, not through the agent:
+It is the only tier the project's own state can refuse, and every one of these is asked before anything is uploaded, so the person gets the reason rather than a second failure: a job image older than the release that carries this tier; a credentials service that is not deployed; a budget that is spent; and a repository the launch's roles gate does not admit, refused before a task, a token or an execution exists. The image and the credentials service name the fix, and it is the user's to run in their own terminal, not through the agent:
 
 ```bash user-runs
 fugaro update
 ```
+
+The budget's refusal is the launch path's own sentence, read out as it stands: it names the launch flag that skips the check, and this tier takes no such flag — a pre-flight that skipped the budget would vouch for a launch the backend refuses when it starts. Say the budget is what refuses, quote the sentence, and do not tell the user the flag is theirs to run.
 
 Two limits are the tier's own, and neither is a fault to report: it needs a repository checkout, because a run is scoped to a repository and a failure that happened outside one has none, and it declines there with that reason; and its run is bounded far below a task run's — a per-run cap of $0.25 and a fifteen-minute timeout, spent on the project's credential rather than the user's, launched once with no retry.
 

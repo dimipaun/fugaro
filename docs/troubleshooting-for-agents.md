@@ -46,8 +46,10 @@ first one that can answer does, and the ones after it are never reached:
    tier that can be refused by the project's own state — a job image older than
    the release that carries this tier, a credentials service that is off, a
    budget that is spent — and a pre-flight asks all of that before anything is
-   uploaded, so the reason and the command that fixes it are printed instead of
-   a second failure.
+   uploaded, so what a person reads is the gate's own reason instead of a
+   second failure. The image and the credentials service name `fugaro update`
+   as the fix; a spent budget is refused in the launch path's own words, which
+   name the launch flag that skips the check — a flag this tier does not take.
    Outside a repository checkout there is no repository to scope a run to, and
    the tier declines for that reason too.
 4. **Evidence only.** The evidence is printed where it is, with the reason
