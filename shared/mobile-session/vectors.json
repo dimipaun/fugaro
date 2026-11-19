@@ -31,10 +31,10 @@
     "/mobile/v1/revoke-self"
   ],
   "secure_store_items": [
-    "fugaro.identity-session/",
-    "fugaro.device-key/",
-    "fugaro.project-session/",
-    "fugaro.consumer-key/"
+    "fugaro.identity-session.",
+    "fugaro.device-key.",
+    "fugaro.project-session.",
+    "fugaro.consumer-key."
   ],
   "lifetimes_seconds": {
     "assertion": 120,
@@ -121,19 +121,25 @@
     ]
   },
   "identity_id": {
-    "about": "The string that names one signed-in identity in a paired-list entry and in a secure-store item: the provider, a colon and the provider's stable id. A part that is empty or carries the separator is refused, because a collision here would show one person's session under another's name.",
+    "about": "The string that names one signed-in identity in a paired-list entry and in a secure-store item: the provider, a dot and the provider's stable id. The dot is not decoration: this string is the second half of a keychain key, and expo-secure-store accepts only letters, digits, '.' and '-' and '_' in a key and throws on any other byte (mobile/src/accounts/account.js encodes the same rule for the app's account tuple), so a part that is empty or carries a byte outside that set is refused rather than composed into a name the phone cannot write at all.",
     "cases": [
       {
         "provider": "google",
         "sub": "104729384756102938475",
-        "identity": "google:104729384756102938475",
+        "identity": "google.104729384756102938475",
         "why": "the ordinary identity"
       },
       {
         "provider": "password",
         "sub": "not-a-credential-test-uid",
-        "identity": "password:not-a-credential-test-uid",
+        "identity": "password.not-a-credential-test-uid",
         "why": "an email-and-password identity has a uid of its own and is named the same way"
+      },
+      {
+        "provider": "apple",
+        "sub": "001234.abcdef0123456789",
+        "identity": "apple.001234.abcdef0123456789",
+        "why": "a provider's own id may carry a dot: only the alphabet is restricted, so an Apple subject keeps its own spelling inside the name"
       },
       {
         "provider": "",
@@ -151,13 +157,19 @@
         "provider": "go:ogle",
         "sub": "104729384756102938475",
         "identity": null,
-        "why": "a provider carrying the separator would join into a string another pair could also produce"
+        "why": "a colon is a byte the keychain refuses, so an item named for this identity could never be written on the phone; it is refused here rather than composed into a name that throws"
       },
       {
         "provider": "google",
         "sub": "1047:29384756102938475",
         "identity": null,
         "why": "the same, on the id's side"
+      },
+      {
+        "provider": "password",
+        "sub": "not+a/credential=",
+        "identity": null,
+        "why": "a base64 alphabet is not the keychain's: the bytes a provider might choose there are refused for the colon's reason"
       }
     ]
   },
@@ -250,7 +262,7 @@
     "paired_entry": {
       "project_id": "fugaro-example",
       "endpoint": "https://mobile-example.a.run.app",
-      "identity": "google:104729384756102938475",
+      "identity": "google.104729384756102938475",
       "consumer_key_fingerprint": "not-a-credential-test-fingerprint"
     },
     "error": {

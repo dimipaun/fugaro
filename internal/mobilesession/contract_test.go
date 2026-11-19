@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -219,6 +220,50 @@ func TestVectorsRoundTrip(t *testing.T) {
 
 	roundTripWire(t, v)
 	roundTripKeySet(t, v)
+}
+
+// keychainName is the alphabet expo-secure-store accepts in a key: letters,
+// digits, "." and "-" and "_". A key outside it makes the platform throw rather
+// than report a miss, so a name composed outside it is a session the phone
+// cannot write at all — and not one it can report as missing either.
+var keychainName = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// TestComposedStoreItemNames holds every name this contract tells the app to
+// compose to that alphabet. The parts are the vectors' own: the identity ids the
+// join produces, and the project id a session response and a paired-list entry
+// carry.
+func TestComposedStoreItemNames(t *testing.T) {
+	v := loadVectors(t)
+
+	var parts []string
+	for _, c := range v.IdentityID.Cases {
+		if c.Identity != nil {
+			parts = append(parts, *c.Identity)
+		}
+	}
+	for _, name := range []string{"session_response", "paired_entry"} {
+		var doc struct {
+			ProjectID string `json:"project_id"`
+		}
+		if err := json.Unmarshal(v.Wire[name], &doc); err != nil {
+			t.Fatalf("decoding the %s vector: %v", name, err)
+		}
+		if doc.ProjectID == "" {
+			t.Fatalf("the %s vector carries no project_id, so a project session's name has no part to be composed from", name)
+		}
+		parts = append(parts, doc.ProjectID)
+	}
+
+	for _, prefix := range []string{SecureStoreIdentitySession, SecureStoreDeviceKey, SecureStoreProjectSession, SecureStoreConsumerKey} {
+		if !keychainName.MatchString(prefix) {
+			t.Errorf("the item prefix %q is outside the keychain's alphabet: every name composed from it is a key the phone throws on", prefix)
+		}
+		for _, part := range parts {
+			if !keychainName.MatchString(prefix + part) {
+				t.Errorf("the composed item name %q is outside the keychain's alphabet", prefix+part)
+			}
+		}
+	}
 }
 
 // roundTripWire holds every wire document in the file to the shape that reads

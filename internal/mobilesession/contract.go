@@ -491,23 +491,50 @@ type PairedEntry struct {
 }
 
 // IdentityID returns the string that names one signed-in identity in a
-// PairedEntry and in a secure-store item: the provider, a colon and the
+// PairedEntry and in a secure-store item: the provider, a dot and the
 // provider's stable id, both as the assertion carries them.
 //
 // It is a join and not a name invented from the email, because an address can
 // be reassigned (F9) and an identity may have no usable address at all (an
-// Apple private-relay sign-in, D2785). A part that is empty or carries the
-// separator is refused ("") rather than joined into a string two different
-// identities could share: the identity list is keyed by this string, and one
-// collision would show one person's session under another's account.
+// Apple private-relay sign-in, D2785).
+//
+// The dot is the separator and not a colon or a slash because this string ends
+// up as the second half of a keychain key, where expo-secure-store accepts only
+// the bytes keychainSafe reports and *throws* on any other: an item named for
+// an identity whose id carried a colon could not be written on the phone at
+// all, and the failure would look like a broken keychain rather than a bad
+// name. A part that is empty, or that carries a byte outside that alphabet, is
+// therefore refused ("") rather than joined into a name no device can hold. The
+// string is compared and never taken apart, so a part may keep dots of its own
+// (an Apple subject id has them). The identity list is keyed by this string,
+// and one collision would show one person's session under another's account.
 func IdentityID(provider, sub string) string {
 	if provider == "" || sub == "" {
 		return ""
 	}
-	if strings.Contains(provider, ":") || strings.Contains(sub, ":") {
+	if !keychainSafe(provider) || !keychainSafe(sub) {
 		return ""
 	}
-	return provider + ":" + sub
+	return provider + "." + sub
+}
+
+// keychainSafe reports whether s may be one part of a secure-store item name:
+// every byte a letter, a digit, "." or "-" or "_". It is expo-secure-store's
+// rule, and mobile/src/accounts/account.js's ACCOUNT_ID_RE is the app's copy of
+// it: a key outside this set makes the platform throw rather than return a
+// miss, so a name composed from unsafe parts is a session the phone cannot
+// write and cannot report.
+func keychainSafe(s string) bool {
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		switch {
+		case 'a' <= b && b <= 'z', 'A' <= b && b <= 'Z', '0' <= b && b <= '9':
+		case b == '.', b == '-', b == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // The mobile routes (P5's public service, I1's fail-closed allowlist). They are
@@ -618,8 +645,17 @@ func (e Error) Error() string {
 }
 
 // The secure-store item names (D2790, D2793): the phone's own store, one item
-// per identity and per paired project. The names are prefixes, and the id
-// follows: an identity's IdentityID, or a project's opaque id.
+// per identity and per paired project. The names are prefixes ending in a dot,
+// and the id follows: an identity's IdentityID, or a project's opaque id.
+//
+// The separator is a dot and not a slash or a colon because the alphabet is the
+// platform's, not this contract's: expo-secure-store accepts only letters,
+// digits, "." and "-" and "_" in a key, and throws on anything else
+// (mobile/src/accounts/account.js's ACCOUNT_ID_RE is the app's own copy of that
+// rule, over one part rather than a composed name). A composed name is
+// therefore only a name the keychain takes while both halves stay inside that
+// alphabet, which is what keychainSafe reports and why IdentityID refuses a
+// part that is not.
 //
 // They are fixed here because two sides write them: M1 and M3 store under them
 // and M2, K3 and I2 read them, and an item written under one spelling and read
@@ -628,19 +664,19 @@ const (
 	// SecureStoreIdentitySession holds one signed-in identity's provider
 	// session. It is the only place a provider session is kept, and there is
 	// never a project credential in it (D2790 amends D232).
-	SecureStoreIdentitySession = "fugaro.identity-session/"
+	SecureStoreIdentitySession = "fugaro.identity-session."
 	// SecureStoreDeviceKey holds the device's own private key for one paired
 	// project: hardware-backed where M0 found one, software otherwise, as the
 	// plan's docs say (U5).
-	SecureStoreDeviceKey = "fugaro.device-key/"
+	SecureStoreDeviceKey = "fugaro.device-key."
 	// SecureStoreProjectSession holds one paired project's session: the
 	// refresh token, the project id, the endpoint and the role. The Firebase
 	// refresh token the app derives from a custom token is never stored here
 	// (D2783).
-	SecureStoreProjectSession = "fugaro.project-session/"
+	SecureStoreProjectSession = "fugaro.project-session."
 	// SecureStoreConsumerKey holds one paired project's pinned consumer public
 	// key (O12), which is what the phone verifies mailbox replies with.
-	SecureStoreConsumerKey = "fugaro.consumer-key/"
+	SecureStoreConsumerKey = "fugaro.consumer-key."
 )
 
 // Binding is what a call expects an assertion to be bound to: the audience it

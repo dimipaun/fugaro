@@ -55,10 +55,16 @@ and it is why `aud` is a field of the pair request.
 whether it wants a biometric there, and where it compacts. It is carried on a session response and again on every
 refresh response, because a project that turns a costly mode on must not need every phone to pair again (P6, Z2).
 
-The secure-store item names are prefixes — `fugaro.identity-session/`, `fugaro.device-key/`,
-`fugaro.project-session/` and `fugaro.consumer-key/` — one item per signed-in identity and per paired project, and the
+The secure-store item names are prefixes — `fugaro.identity-session.`, `fugaro.device-key.`,
+`fugaro.project-session.` and `fugaro.consumer-key.` — one item per signed-in identity and per paired project, and the
 identity's id follows the prefix (D2790). They are in the contract because two sides write them: an item written under
 one spelling and read under another is a session that disappears at the next launch.
+
+The prefix ends in a dot, and `IdentityID` joins with one, because these names are keychain keys: `expo-secure-store`
+accepts only letters, digits, `.`, `-` and `_` and **throws** on any other byte rather than reporting a miss, so a name
+outside that alphabet is a session the phone cannot write at all. `IdentityID` therefore refuses a `provider` or a `sub`
+carrying a byte outside it instead of composing one, and only the alphabet is restricted: a dot inside a part is fine,
+which is what an Apple subject id needs.
 
 ## The refusals
 

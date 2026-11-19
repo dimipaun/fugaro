@@ -99,13 +99,19 @@ const ROUTES = [
 // One item per thing the phone keeps in the keychain (D2790): a signed-in
 // identity's session, that device key, one project session and the consumer key
 // it pinned. The names are a contract because a name spelled differently at
-// sign-out leaves the session on the device.
+// sign-out leaves the session on the device, and because `expo-secure-store`
+// refuses a key outside its alphabet: every byte here is one it accepts, and the
+// separator is a dot so the part that follows may be too.
 const SECURE_STORE_ITEMS = [
-  'fugaro.identity-session/',
-  'fugaro.device-key/',
-  'fugaro.project-session/',
-  'fugaro.consumer-key/',
+  'fugaro.identity-session.',
+  'fugaro.device-key.',
+  'fugaro.project-session.',
+  'fugaro.consumer-key.',
 ];
+
+// The bytes a keychain key may carry: what `expo-secure-store` accepts, which is
+// also what `mobile/src/accounts/account.js` requires of one account id.
+const KEYCHAIN_SAFE = /^[A-Za-z0-9_.-]+$/;
 
 const LIFETIMES_SECONDS = {
   assertion: 120,
@@ -183,7 +189,26 @@ test('the routes the app calls are the ones the service serves', () => {
 test('the secure-store items are the ones sign-out deletes', () => {
   assert.deepEqual(vectors.secure_store_items, SECURE_STORE_ITEMS);
   for (const item of SECURE_STORE_ITEMS) {
-    assert.ok(item.endsWith('/'), `${item} is a prefix: one item per signed-in identity and per project`);
+    assert.ok(item.endsWith('.'), `${item} is a prefix: one item per signed-in identity and per project`);
+    assert.ok(KEYCHAIN_SAFE.test(item), `${item} is inside the alphabet expo-secure-store accepts`);
+  }
+});
+
+// A key `expo-secure-store` refuses throws on the phone instead of returning a
+// miss, so a name composed out of a prefix and a part is a session the app can
+// write or a crash, and nothing in between. Every composed name here is checked
+// against the alphabet, with the parts the vectors themselves carry.
+test('every item name the app composes is one the keychain takes', () => {
+  const parts = [
+    ...vectors.identity_id.cases.map((c) => c.identity).filter((identity) => identity !== null),
+    ...new Set(Object.values(vectors.wire).map((doc) => doc.project_id).filter((id) => id !== undefined)),
+  ];
+  assert.ok(parts.length >= 3, 'the vectors name parts to compose with');
+  for (const prefix of SECURE_STORE_ITEMS) {
+    assert.ok(prefix.endsWith('.'), `${prefix} takes a part after it`);
+    for (const part of parts) {
+      assert.ok(KEYCHAIN_SAFE.test(prefix + part), `${prefix}${part} is a key expo-secure-store accepts`);
+    }
   }
 });
 
@@ -245,11 +270,13 @@ test('the audience comes from the endpoint, and only from an endpoint', () => {
 });
 
 // The app's own join for one signed-in identity (D2790), the key of a
-// paired-list entry and of a secure-store item.
+// paired-list entry and of a secure-store item. A part outside the keychain's
+// alphabet is refused rather than joined: the name it would make is one
+// `expo-secure-store` throws on, so the session could never be written at all.
 function identityId(provider, sub) {
   if (provider === '' || sub === '') return null;
-  if (provider.includes(':') || sub.includes(':')) return null;
-  return `${provider}:${sub}`;
+  if (!KEYCHAIN_SAFE.test(provider) || !KEYCHAIN_SAFE.test(sub)) return null;
+  return `${provider}.${sub}`;
 }
 
 test('an identity is named by its provider and its stable id, or not at all', () => {

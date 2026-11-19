@@ -65,15 +65,23 @@ export const ROUTES = Object.freeze({
 
 // One keychain item per thing the phone keeps (D2790): one signed-in identity's
 // session, one device key and one project session per paired project, and the
-// consumer key it pinned (O12). They are prefixes, and the identity id or the
-// project's opaque id follows: an item written under one spelling and read under
-// another is a session that disappears at the next launch.
+// consumer key it pinned (O12). They are prefixes ending in a dot, and the
+// identity id or the project's opaque id follows: an item written under one
+// spelling and read under another is a session that disappears at the next
+// launch, and an item whose key leaves KEYCHAIN_SAFE is one `expo-secure-store`
+// throws on rather than stores.
 export const SECURE_STORE_ITEMS = Object.freeze({
-  IDENTITY_SESSION: 'fugaro.identity-session/',
-  DEVICE_KEY: 'fugaro.device-key/',
-  PROJECT_SESSION: 'fugaro.project-session/',
-  CONSUMER_KEY: 'fugaro.consumer-key/',
+  IDENTITY_SESSION: 'fugaro.identity-session.',
+  DEVICE_KEY: 'fugaro.device-key.',
+  PROJECT_SESSION: 'fugaro.project-session.',
+  CONSUMER_KEY: 'fugaro.consumer-key.',
 });
+
+// The bytes `expo-secure-store` accepts in a key: letters, digits, '.', '-' and
+// '_'. Anything else makes the platform throw — not return a miss — and
+// `mobile/src/accounts/account.js`'s ACCOUNT_ID_RE is the app's own copy of the
+// rule for one part. Every name this module composes is checked against it.
+const KEYCHAIN_SAFE = /^[A-Za-z0-9_.-]+$/;
 
 // The lives from O4, in seconds, read rather than kept as a second copy: a
 // device that outlived one of these would present something the service refuses.
@@ -85,8 +93,12 @@ export const LIFETIMES_SECONDS = Object.freeze({
   IDLE: 2592000,
 });
 
-/** The separator an identity id joins on: `provider:sub` (D2790). */
-export const IDENTITY_SEPARATOR = ':';
+/**
+ * The separator an identity id joins on: `provider.sub` (D2790). A dot and not
+ * a colon or a slash, because the id becomes the second half of a keychain key
+ * and those bytes are refused by the platform (see `identityId`).
+ */
+export const IDENTITY_SEPARATOR = '.';
 
 // What a device key signs. The label separates this contract's messages from the
 // mailbox's, which the same key signs (O6): a signature over a refresh token
@@ -143,13 +155,14 @@ export function audienceOf(endpoint) {
 
 /**
  * The string that names one signed-in identity, or null when the pair cannot
- * name one: a part that is empty or carries the separator would join into a
- * string another pair could also produce, and a collision here shows one
- * person's session under another's name.
+ * name one: a part that is empty or carries a byte the keychain refuses would
+ * name an item `expo-secure-store` throws on, and a collision here shows one
+ * person's session under another's name. Only the *alphabet* is restricted, so
+ * a part may keep dots of its own (an Apple subject id has them).
  */
 export function identityId(provider, sub) {
   if (typeof provider !== 'string' || typeof sub !== 'string') return null;
   if (provider === '' || sub === '') return null;
-  if (provider.includes(IDENTITY_SEPARATOR) || sub.includes(IDENTITY_SEPARATOR)) return null;
+  if (!KEYCHAIN_SAFE.test(provider) || !KEYCHAIN_SAFE.test(sub)) return null;
   return `${provider}${IDENTITY_SEPARATOR}${sub}`;
 }
