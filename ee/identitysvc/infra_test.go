@@ -609,6 +609,37 @@ func tfEnv(t *testing.T, container string) map[string]string {
 	return out
 }
 
+// tfGrants reports whether a block hands an identity a role, whatever the block
+// is called. It is deliberately loose — an IAM resource type, or an attribute a
+// grant is written with — and it is loose in the safe direction: the sweep's
+// other half is a list of the grants this root is allowed to hold, so a block
+// the sweep thinks grants something and finds unlisted fails, while being wrong
+// about a block that grants nothing costs only a message. The attribute test is
+// on the compacted body, because `role="x"` and `role = "x"` are one grant.
+func tfGrants(header, compact string) bool {
+	if strings.Contains(header, "_iam_") {
+		return true
+	}
+	for _, attr := range []string{"member=", "members=", "role=", "role_id=", "permissions=", "policy_data="} {
+		if strings.Contains(compact, attr) {
+			return true
+		}
+	}
+	return false
+}
+
+// tfList renders the grants this root is allowed to hold, one per line and
+// sorted, so that a failure names the whole list rather than only the block it
+// refused: the point of the list is that a person reads it.
+func tfList(grants map[string]string) string {
+	lines := make([]string, 0, len(grants))
+	for header, why := range grants {
+		lines = append(lines, "  "+header+" — "+why)
+	}
+	slices.Sort(lines)
+	return strings.Join(lines, "\n")
+}
+
 // tfIdentStart reports whether c can begin an HCL attribute name.
 func tfIdentStart(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_'
@@ -700,7 +731,10 @@ func TestInfraTheSigningKeyIsNonExportable(t *testing.T) {
 //
 // The mutations this fails on: a permission besides the two, a predefined role
 // (cloudkms.signerVerifier also verifies; owner and editor reach the ring), a
-// second member on the grant, and the service's template naming another account.
+// second member on the grant, a second grant anywhere in the root — under
+// another header, another IAM resource type, a `user:` member, or a role named
+// by a variable whose default is a predefined one — and the service's template
+// naming another account.
 func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 	role := tfBlock(t, `resource "google_project_iam_custom_role" "signer"`)
 	tfAttrsAre(t, role, "the signer role", []tfWant{
@@ -721,19 +755,31 @@ func TestInfraTheSignerRoleIsTheNarrowestThatSigns(t *testing.T) {
 		{"service_account", "google_service_account.signer.email"},
 	}, "the identity a Cloud Run service runs as is the identity it IS, so a template naming another account holds the signer role from wherever that account's code runs (A3)")
 
+	// Every block in this root that grants anything at all is one of the four
+	// grants the assertion signer needs, and the list is the whole of it. A
+	// count of one resource type would miss a second holder written another way
+	// — the signer role granted with google_kms_key_ring_iam_binding or an
+	// `_iam_policy` instead of `_iam_member`, a second custom role, a plain
+	// `user:` added beside the signer's account, a grant whose role is a
+	// variable defaulting to a predefined role — so the discriminator is "this
+	// block grants a role", whatever it is called, and the answer for a grant
+	// nobody has reviewed is this list's absence. Each of the four is read as
+	// the attributes it writes above, because a header is not a role.
+	sanctioned := map[string]string{
+		`resource "google_project_iam_custom_role" "signer"`:                "the signer role itself, and the whole of what signing takes",
+		`resource "google_kms_key_ring_iam_member" "signer_signs"`:          "its one grant, to the signer's own account",
+		`resource "google_storage_bucket_iam_member" "signer_reads"`:        "the service's read of the signed key set, which holds no key",
+		`resource "google_cloud_run_v2_service_iam_member" "signer_public"`: "the signer's public invoker, which reaches no key at all",
+	}
+
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
-			compact := tfCompact(block)
-			for _, role := range []string{
-				`"roles/owner"`,
-				`"roles/editor"`,
-				`"roles/cloudkms.admin"`,
-				`"roles/cloudkms.signer"`,
-				`"roles/cloudkms.signerVerifier"`,
-			} {
-				if strings.Contains(compact, role) {
-					t.Errorf("%s hands out %s:\n%s\nthe signer role is the ONLY route to useToSign, it carries two permissions, and a predefined role here is a wider reach of the key ring than the plan asked for (A3, .claude/rules/terraform.md)", rel, role, strings.TrimSpace(block))
-				}
+			header := tfHeader(block)
+			if !tfGrants(header, tfCompact(block)) {
+				continue
+			}
+			if _, ok := sanctioned[header]; !ok {
+				t.Errorf("%s holds a grant this root is not allowed:\n%s\nthe signer role is the only route to useToSign and it reaches one account, the service's own, so that a reader of the plan sees every identity that can mint an assertion (A3, D2792, O7). The whole list of grants this root may hold is:\n%s", rel, strings.TrimSpace(block), tfList(sanctioned))
 			}
 		}
 	}
@@ -857,7 +903,8 @@ func TestInfraTheKeysetExpiryIsAlerted(t *testing.T) {
 	channel := tfBlock(t, `resource "google_monitoring_notification_channel" "email"`)
 	tfAttrsAre(t, channel, "the alert channel", []tfWant{
 		{"type", `"email"`},
-	}, "an alert policy with no channel notifies nobody, and the project's own alert address is the one the installation already uses")
+		{"labels", "{email_address=var.alert_email}"},
+	}, "an alert policy with no channel notifies nobody, and the project's own alert address is the one the installation already uses: the address of an `email` channel is its `email_address` label, so a label spelled any other way is a channel created with no address — and a policy that fires into one reaches nobody, which is the whole of what the 30-day warning is for (O7, O18)")
 
 	policy := tfBlock(t, `resource "google_monitoring_alert_policy" "keyset_expiry"`)
 	condition := tfNested(t, policy, "conditions")

@@ -211,7 +211,7 @@ resource "google_monitoring_notification_channel" "email" {
   type         = "email"
 
   labels = {
-    email = var.alert_email
+    email_address = var.alert_email
   }
 }
 
