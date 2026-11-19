@@ -185,6 +185,13 @@ variable "repo" {
       # mounts away. Optional and false, so a tfvars written before the fact
       # existed plans exactly what it planned.
       stage_account = optional(bool, false)
+      # The workflow's OWN secrets whose values the credentials service fetches
+      # for this job (B3.8, S3): Go's WorkflowSpec.VaultSecretNames. The
+      # workflow module drops each of them from the job's accessors and mounts
+      # and keeps the credentials service's own grant on their containers.
+      # Optional and empty, so a tfvars written before the flip existed plans
+      # exactly what it planned.
+      vault_secret_names = optional(list(string), [])
     }))
   })
 

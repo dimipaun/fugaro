@@ -14,42 +14,55 @@
 // environment, signals, port and log (intake_serve.go's own reason).
 //
 // WHAT THIS PROCESS IS. It verifies the phone's Firebase ID token, checks that
-// the device node is still there, enforces the project's voice policy and
-// answers the project-status query. It forwards nothing: the provider call,
-// the key and the register are P5.3.5's half, in the same directory at a later
-// level. internal/voicesvc is the whole of the service, and this file is only
-// the two things a process needs and a package cannot have: the deployment's
-// environment, and a listener.
+// the device node is still there, enforces the project's voice policy, answers
+// the project-status query and — since P5.3.5, the forwarding half — makes the
+// call to the provider the register admits, with the key it reads out of the
+// installation's provider-key container. internal/voicesvc is the whole of the
+// service, and this file is only the things a process needs and a package
+// cannot have: the deployment's environment, the clients, and a listener.
 //
-// THE ENVIRONMENT IS TWO NAMES, and voiceServiceConfig below is the one place
+// THE ENVIRONMENT IS THREE NAMES, and voiceServiceConfig below is the one place
 // they are read: FUGARO_FIREBASE_PROJECT (the audience and the issuer a
 // device's ID token must carry, which is also the project whose database the
-// two reads are) and FUGARO_RTDB_URL (that database, refused unless it is the
-// Firebase project's own <project>-default-rtdb). Neither is a credential.
+// two reads are), FUGARO_RTDB_URL (that database, refused unless it is the
+// Firebase project's own <project>-default-rtdb) and FUGARO_GCP_PROJECT (the
+// installation's GCP project, which is where the provider-key container
+// lives). None is a credential, and the third names a PROJECT rather than a
+// container: the container's ID is a constant of this binary
+// (internal/backend/gcp's VoiceProviderKeysSecret, the same literal
+// modules/installation/secrets.tf writes), so no secret ID is an environment
+// value anywhere in this tree.
 //
 // WHAT IT DOES NOT READ is as much of the design as what it does. There is no
-// job roster, no verifier or launcher list, no Firebase key file and no
-// provider key: the hop serves no run and no person, it verifies a device
-// against Google's published certificates, and it holds no provider credential
-// until P5.3.5's forwarding half -- so the whole of what a compromised
-// revision of this process brings with it is the database read below and
-// nothing else. A missing name is a refusal by name and never a default: a
+// job roster, no verifier or launcher list and no Firebase key file: the hop
+// serves no run and no person, and it verifies a device against Google's
+// published certificates. The ONE credential it holds is the provider keys
+// (P5.3.5): a provider key reaches this process out of Secret Manager as this
+// service's own account and is presented to the provider and to nobody else —
+// never a log line, never a response, never a caller. So the whole of what a
+// compromised revision of this process brings with it is the database read
+// below and the ability to spend at the providers the register admits, which
+// is the spend SECURITY.md discloses as outside every cap. A missing name is a
+// refusal by name and never a default: a
 // process that does not know which Firebase project mints the identities it
 // admits, or which database the device nodes live in, must not serve at all
 // (D143's fail-closed half, credentialsServiceConfig's own rule). No refusal
 // below names a value: this process's log is Cloud Logging and the
 // environment is the deployment's.
 //
-// THE ONE GRANT, STATED AS THE GRANT IT IS. The revision runs as the service
-// account voice.tf creates, and the whole of that account's ability is the
+// THE TWO GRANTS, STATED AS THE GRANTS THEY ARE. The revision runs as the
+// service account voice.tf creates, and it holds two. The first is the
 // one-permission reader fugaroStateRead -- firebasedatabase.instances.get,
 // held in internal/infra/tf's RolePermissions pin -- which is a read of ANY
 // node of the Realtime Database instance, because Realtime Database IAM has no
-// path-level scope. So the account reaches every device node, every policy
-// node, creds/ and the mailbox, and what keeps this process to the three nodes
-// it uses is internal/voicesvc's own code and not the grant
-// (internal/voicesvc/status.go, policy.go). SECURITY.md states it; the
-// reviewer tier of P5.3.3 exists to weigh it.
+// path-level scope: the account reaches every device node, every policy node,
+// creds/ and the mailbox, and what keeps this process to the three nodes it
+// uses is internal/voicesvc's own code and not the grant
+// (internal/voicesvc/status.go, policy.go). The second is
+// roles/secretmanager.secretAccessor on the ONE provider-key container
+// (P5.3.5, secrets.tf) and on nothing else of the project, which is the key
+// every forwarded call presents. SECURITY.md states both; the reviewer tier of
+// P5.3.3 exists to weigh the read, and P5.3.5's carries the key.
 //
 // AND THE FENCE IS THIS PROCESS. Cloud Run's own invoker check cannot admit a
 // phone: a device presents a *Firebase ID token*, which is not a Google IAM
@@ -71,10 +84,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -83,6 +99,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	secretmanager "google.golang.org/api/secretmanager/v1"
 )
 
 // newVoiceCmd is the hidden `voice` group: the process, and nothing an
@@ -142,46 +159,111 @@ func serveVoice(ctx context.Context, cmd *cobra.Command, getenv func(string) str
 	return hostVoiceService(ctx, cfg, getenv, cmd.ErrOrStderr())
 }
 
-// voiceWiring points the configuration builder at a stand-in for the one
-// thing it reaches Google for as the process's own identity: the OAuth2 token
-// source the database is read with. It is a test seam for credentialsWiring's
-// reason exactly: without one, building the configuration would need
-// Application Default Credentials and a live metadata server, and the test
-// that matters most -- that a full environment builds a configuration
-// voicesvc.NewServer accepts -- could not be written. It is never set outside
-// a test, and it carries no value: it is one constructor.
+// voiceWiring points the configuration builder at stand-ins for the three
+// things it reaches Google for as the process's own identity: the OAuth2 token
+// source the database is read with, the Secret Manager client the provider
+// keys are read through, and this service's own access-token source for the
+// engine called as the installation rather than with a key. It is a test seam
+// for credentialsWiring's reason exactly: without one, building the
+// configuration would need Application Default Credentials and a live metadata
+// server, and the test that matters most -- that a full environment builds a
+// configuration voicesvc.NewServer accepts -- could not be written. It is
+// never set outside a test, and it carries no value: three constructors.
 //
-// The key source needs no seam: credsvc.NewGoogleKeys fetches nothing until a
-// token is verified, and what it fetches then is Google's published
-// certificates, which is a fact of the internet and not of this installation.
+// The device verifier's key source needs no seam: credsvc.NewGoogleKeys
+// fetches nothing until a token is verified, and what it fetches then is
+// Google's published certificates, which is a fact of the internet and not of
+// this installation.
 type voiceWiring struct {
-	tokens func(ctx context.Context) (oauth2.TokenSource, error)
+	tokens  func(ctx context.Context) (oauth2.TokenSource, error)
+	secrets func(ctx context.Context) (*secretmanager.Service, error)
+	mint    func(ctx context.Context) (voicesvc.TokenSource, error)
 }
 
-// voiceTest is nil in production: the function above is then
-// google.DefaultTokenSource over the database scopes, over the service account
-// voice.tf grants the instance read to.
+// voiceTest is nil in production: the three functions above are then
+// google.DefaultTokenSource over the database scopes, secretmanager.NewService,
+// and voicesvc.GoogleTokenSource -- all three over the service account voice.tf
+// grants the instance read and the one provider-key container to.
 var voiceTest *voiceWiring
+
+// voiceProviderClient is the client every provider call is made with, and it
+// is built in the open here because voicesvc.Config refuses a server without
+// one (its own comment says why: the TLS configuration and the timeouts of a
+// call that carries the installation's provider key are decisions this process
+// has to make rather than inherit).
+//
+// Three decisions, each of them about a credential or about a stream:
+//
+//   - NO REDIRECT IS FOLLOWED, buildTokenHTTPClient's rule for the same
+//     reason one credential over: the request carries the provider's key in an
+//     Authorization header, and a followed 307 or 308 would carry that key to
+//     whatever host the Location named.
+//   - NO WHOLE-CALL TIMEOUT. The answer is a stream that ends when the caller
+//     stops speaking (provider.go's engine contract), so a client-level Timeout
+//     would cut a long utterance at a fixed second with no way for the phone to
+//     tell that from a provider's failure. What bounds the call is the caller's
+//     own context -- cancelled the moment the phone hangs up -- and Cloud Run's
+//     300s request timeout on the revision.
+//   - BOUNDED HANDSHAKES. A provider that accepts the TCP connection and then
+//     says nothing would otherwise hold a request open until that 300s. The
+//     dial, the TLS handshake and the response header are each given a
+//     deadline, and nothing after the header is: the body is the stream above.
+//     Compression is off because the body is forwarded as it arrives and this
+//     process has no business decompressing a provider's answer.
+func voiceProviderClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	t.DialContext = (&net.Dialer{Timeout: voiceProviderDialTimeout, KeepAlive: voiceProviderKeepAlive}).DialContext
+	t.TLSHandshakeTimeout = voiceProviderDialTimeout
+	t.ResponseHeaderTimeout = voiceProviderHeaderTimeout
+	return &http.Client{
+		Transport:     t,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+const (
+	// voiceProviderDialTimeout bounds reaching a provider and the TLS
+	// handshake with it. Fifteen seconds is an order of magnitude over the
+	// worst handshake a phone's turn can wait for, and the point is that a
+	// black hole is a failure rather than a request held open.
+	voiceProviderDialTimeout = 15 * time.Second
+	// voiceProviderKeepAlive is the TCP keepalive on a pooled connection: a
+	// provider that goes away between turns must not leave a socket this
+	// process believes in.
+	voiceProviderKeepAlive = 30 * time.Second
+	// voiceProviderHeaderTimeout bounds the wait for the provider's response
+	// header. Past it the body is streamed and nothing here bounds it (above).
+	voiceProviderHeaderTimeout = 30 * time.Second
+)
 
 // voiceServiceConfig builds the hop's configuration out of the deployment's
 // environment, and it is the whole of this process's wiring.
 //
-// The two names are read in the order of what an operator has to be told, and
-// each is refused by name before anything is built. The database URL is held
-// to two things: that it is a Realtime Database URL at all (rtdb.ValidateURL,
-// the history job's own check), and that it is THIS Firebase project's
-// database (credentialsServiceDatabase, which is checkDatabaseHost's rule --
-// the database is named after the project it belongs to). A pair that
+// The three names are read in the order of what an operator has to be told,
+// and each is refused by name before anything is built. The database URL is
+// held to two things: that it is a Realtime Database URL at all
+// (rtdb.ValidateURL, the history job's own check), and that it is THIS Firebase
+// project's database (credentialsServiceDatabase, which is checkDatabaseHost's
+// rule -- the database is named after the project it belongs to). A pair that
 // disagrees is a hop reading one installation's device nodes while verifying
 // another's identities, which is what a copied deployment's environment looks
-// like.
+// like. The third name is a GCP project ID and nothing else is checked about
+// it: the container inside it is this binary's own constant, so a value naming
+// the wrong project is a Secret Manager refusal on the first forwarded call
+// rather than a process that would not start. It is refused here when it is
+// MISSING, because a hop with no project to read its provider keys from would
+// answer every forwarding call with ErrKeyUnavailable and read as a broken
+// register.
 //
-// What is built here is the three parts internal/voicesvc refuses to serve
-// without: the verifier, the device reader and the enforcer. The verifier's
-// key source is credsvc.NewGoogleKeys -- the credentials service's own cache
-// of Google's published certificates for Firebase ID tokens -- through
-// voiceKeySource below, and the reader and the enforcer share ONE rtdb.Client,
-// because they are one database read as this process's one identity.
+// What is built here is everything internal/voicesvc refuses to serve without:
+// the verifier, the device reader, the enforcer, the provider-key source, the
+// service's own token source and the HTTP client its provider calls are made
+// with. The verifier's key source is credsvc.NewGoogleKeys -- the credentials
+// service's own cache of Google's published certificates for Firebase ID
+// tokens -- through voiceKeySource below, and the reader and the enforcer share
+// ONE rtdb.Client, because they are one database read as this process's one
+// identity.
 func voiceServiceConfig(ctx context.Context, getenv func(string) string, errw io.Writer) (voicesvc.Config, error) {
 	firebaseProject := getenv(envFirebaseFP)
 	if firebaseProject == "" {
@@ -197,6 +279,15 @@ func voiceServiceConfig(ctx context.Context, getenv func(string) string, errw io
 	if err := credentialsServiceDatabase(rawURL, firebaseProject); err != nil {
 		return voicesvc.Config{}, userErr("%v", err)
 	}
+	// The project the provider-key container lives in, and never the
+	// container: its ID is this binary's constant (gcp.VoiceProviderKeysSecret,
+	// the literal modules/installation/secrets.tf writes), which is what keeps
+	// a secret ID out of a container's environment (voice.tf's env block, and
+	// internal/infra/tf's voiceServiceEnv, which admits exactly this name).
+	gcpProject := getenv(envGCPProject)
+	if gcpProject == "" {
+		return voicesvc.Config{}, userErr("the voice hop needs %s in its environment: it is the installation's GCP project, where the provider-key container every forwarded call is credentialed by lives (%s). Without it no call can be credentialed, so nothing was started and no credential was issued", envGCPProject, gcp.VoiceProviderKeysSecret)
+	}
 
 	tokens := func(ctx context.Context) (oauth2.TokenSource, error) {
 		// The same two scopes the credentials service and the history job read
@@ -204,12 +295,40 @@ func voiceServiceConfig(ctx context.Context, getenv func(string) string, errw io
 		// service account rather than as a run.
 		return google.DefaultTokenSource(ctx, budgetScopes...)
 	}
-	if voiceTest != nil && voiceTest.tokens != nil {
-		tokens = voiceTest.tokens
+	// The provider keys and this service's own access tokens. Both are built
+	// for the forwarding half (P5.3.5): the first is where a provider's key
+	// comes from, and the second is what an engine called as the installation's
+	// identity is reached with instead of a key — provider.go's register says
+	// which engine is which, and a call to an engine with no key of either kind
+	// is refused rather than made half-credentialed.
+	secrets := func(ctx context.Context) (*secretmanager.Service, error) {
+		return secretmanager.NewService(ctx)
+	}
+	mint := func(ctx context.Context) (voicesvc.TokenSource, error) {
+		return voicesvc.GoogleTokenSource(ctx)
+	}
+	if voiceTest != nil {
+		if voiceTest.tokens != nil {
+			tokens = voiceTest.tokens
+		}
+		if voiceTest.secrets != nil {
+			secrets = voiceTest.secrets
+		}
+		if voiceTest.mint != nil {
+			mint = voiceTest.mint
+		}
 	}
 	ts, err := tokens(ctx)
 	if err != nil {
 		return voicesvc.Config{}, remote(fmt.Errorf("no credential for the installation's database, so the voice hop cannot read the device nodes or the policy: %w", err))
+	}
+	sm, err := secrets(ctx)
+	if err != nil {
+		return voicesvc.Config{}, remote(fmt.Errorf("no Secret Manager client, so the voice hop cannot read the provider keys every forwarded call is credentialed by: %w", err))
+	}
+	minted, err := mint(ctx)
+	if err != nil {
+		return voicesvc.Config{}, remote(fmt.Errorf("no token source for this service's own identity, so the voice hop cannot reach the engine that is called as the installation rather than with a key: %w", err))
 	}
 	// The client's own refusal names the URL it was handed, which is what
 	// FUGARO_RTDB_URL held -- credentialsServiceConfig's rule for the same
@@ -237,7 +356,23 @@ func voiceServiceConfig(ctx context.Context, getenv func(string) string, errw io
 		Auth:     auth,
 		Devices:  voicesvc.RTDBDevices{DB: db},
 		Enforcer: enforcer,
-		Log:      runner.NewLogger(errw),
+		// The provider-key source, and it holds the container's ID from this
+		// binary rather than from the environment: Secret is a constant, so a
+		// deployment cannot point this process at another container of the
+		// project even if it wrote a different FUGARO_GCP_PROJECT -- what it
+		// could do is name another project, in which case the read is refused
+		// by IAM (the account holds its accessor on one container of one
+		// project, secrets.tf).
+		Keys: &voicesvc.SecretManagerKeys{
+			Project: gcpProject,
+			Secret:  gcp.VoiceProviderKeysSecret,
+			Service: sm,
+		},
+		Tokens: minted,
+		// What the provider calls are made with, built here rather than
+		// defaulted: voiceProviderClient's comment is the three decisions.
+		Client: voiceProviderClient(),
+		Log:    runner.NewLogger(errw),
 	}, nil
 }
 

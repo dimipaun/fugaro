@@ -83,6 +83,13 @@ variable "workflow" {
     # Optional and false, so a tfvars written before the fact existed plans
     # exactly what it planned.
     stage_account = optional(bool, false)
+    # The workflow's OWN secrets whose values the credentials service fetches
+    # for this job (B3.8, S3): Go's WorkflowSpec.VaultSecretNames. Each is
+    # dropped from this job's accessors and mounts and added to the service's
+    # own set, which is what makes the run's fetch possible. Optional and
+    # empty, so a tfvars written before the flip existed plans exactly what it
+    # planned.
+    vault_secret_names = optional(list(string), [])
   })
 
   validation {
