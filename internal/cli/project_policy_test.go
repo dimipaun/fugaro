@@ -4599,7 +4599,7 @@ func TestProjectPolicyPublishKeepsTheOrchestratorSwitchAndIssueSync(t *testing.T
 }
 
 // TestProjectPolicyPublishKeepsTheMobileBlock: the mobile block is the node's
-// own too (P6 of docs/mobile-identity-pairing, D2796) — no key of this
+// own too (P6 of the mobile-identity-pairing plan, D2796) — no key of this
 // machine's config states it, the update's policy stage is what writes it, and
 // the node is the only place it exists. A publish that built a node without it
 // would turn mobile pairing off for a project whose owner turned it on and take
