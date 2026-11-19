@@ -36,6 +36,36 @@ type call struct {
 	// API are model calls made after the shell, through the gateway the
 	// environment points at.
 	API []apiCall `json:"api"`
+	// Tools are the stream-json tool events the call emits after the shell
+	// and its API calls: each is an assistant tool_use event, then its
+	// tool_result after the tool's own sleep_s, so a long tool is a long
+	// sleep a test can hold the stream in.
+	Tools []toolEvent `json:"tools"`
+}
+
+// toolEvent is one tool call the fake emits on the stream. Two of them are
+// two parallel tool_use events, emitted before either result; Parent names
+// the tool_use id of the Task call a sub-agent's events belong to, which is
+// the parent_tool_use_id the stream marks them with; Usage is the assistant
+// event's message.usage, which is where a stage that never reaches its
+// result event (a yielded one) reports its tokens from.
+type toolEvent struct {
+	Name    string          `json:"name"`
+	ID      string          `json:"id"`
+	Parent  string          `json:"parent"`
+	SleepS  float64         `json:"sleep_s"`
+	IsError bool            `json:"is_error"`
+	Input   json.RawMessage `json:"input"`
+	Usage   *streamUsage    `json:"usage"`
+}
+
+// streamUsage is an assistant event's message.usage, in the stream's own
+// spelling (the result event's modelUsage is camelCase; this is not).
+type streamUsage struct {
+	Input         int64 `json:"input_tokens"`
+	CacheCreation int64 `json:"cache_creation_input_tokens"`
+	CacheRead     int64 `json:"cache_read_input_tokens"`
+	Output        int64 `json:"output_tokens"`
 }
 
 type modelUsage struct {
@@ -114,6 +144,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	emitTools(sid, c.Tools)
 	if c.SleepS > 0 {
 		time.Sleep(time.Duration(c.SleepS * float64(time.Second)))
 	}
@@ -136,6 +167,59 @@ func main() {
 		emit(ev)
 	}
 	os.Exit(c.Exit)
+}
+
+// emitTools writes a call's tool events: every tool_use first, so two tools
+// are two parallel calls whose results both come later, then every
+// tool_result after that tool's own sleep. A tool whose parent names another
+// carries it as parent_tool_use_id, the mark of a sub-agent's events.
+func emitTools(sid string, tools []toolEvent) {
+	for _, t := range tools {
+		emit(toolStreamEvent(sid, t, true))
+	}
+	for _, t := range tools {
+		if t.SleepS > 0 {
+			time.Sleep(time.Duration(t.SleepS * float64(time.Second)))
+		}
+		emit(toolStreamEvent(sid, t, false))
+	}
+}
+
+// toolStreamEvent is one tool_use assistant event (use true) or one
+// tool_result user event.
+func toolStreamEvent(sid string, t toolEvent, use bool) map[string]any {
+	name := t.Name
+	if name == "" {
+		name = "Bash"
+	}
+	id := t.ID
+	if id == "" {
+		id = "toolu_" + name
+	}
+	var parent any
+	if t.Parent != "" {
+		parent = t.Parent
+	}
+	if use {
+		input := t.Input
+		if len(input) == 0 {
+			input = json.RawMessage(`{}`)
+		}
+		msg := map[string]any{
+			"role":    "assistant",
+			"content": []any{map[string]any{"type": "tool_use", "id": id, "name": name, "input": input}},
+		}
+		if t.Usage != nil {
+			msg["usage"] = t.Usage
+		}
+		return map[string]any{"type": "assistant", "session_id": sid, "message": msg, "parent_tool_use_id": parent}
+	}
+	return map[string]any{
+		"type": "user", "session_id": sid, "parent_tool_use_id": parent,
+		"message": map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": id, "is_error": t.IsError, "content": "ok"},
+		}},
+	}
 }
 
 // sessionID returns the session the call names, and whether it resumes it.

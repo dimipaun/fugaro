@@ -55,6 +55,24 @@ type Request struct {
 	Env             []string
 	Transcript      io.Writer // receives the raw stream-json lines
 	Stderr          io.Writer
+	// Yield, when non-nil, asks Run to stop this stage at its next quiet
+	// point and return a yielded result rather than an error: the session
+	// is intact and the caller resumes it with the message that asked for
+	// the stop (run-messages rule 2, D2945). nil is today's run, unchanged.
+	Yield *YieldRequest
+}
+
+// YieldRequest asks a running stage to stop at its next quiet point.
+type YieldRequest struct {
+	// Ask, when non-nil, is closed by the caller to ask for the yield: a
+	// `now` or `wrap-up` message has arrived during this coder stage. Run
+	// waits for it before it starts looking for a quiet point, so a nil Ask
+	// asks from the first event.
+	Ask <-chan struct{}
+	// Bound is how long Run waits for a quiet point once the request is
+	// in, before it stops the agent at once anyway. Zero waits however
+	// long it takes.
+	Bound time.Duration
 }
 
 // Result is what the agent's final result event reported.
@@ -82,7 +100,24 @@ type Result struct {
 	// by model, which also covers subagent and background models.
 	Usage      Usage
 	ModelUsage map[string]Usage
+	// Yielded reports that the stage was stopped by its yield request and
+	// not by a failure: the session is intact and the caller resumes it.
+	// It is never set on an error return, and a stage that reached its own
+	// result event is never yielded even if the stop raced it.
+	Yielded bool
+	// YieldReason is what stopped a yielded stage: YieldAtQuietPoint or
+	// YieldAtBound. Empty unless Yielded. It is the fact and not the
+	// record's wording, which the caller owns.
+	YieldReason string
 }
+
+// YieldAtQuietPoint and YieldAtBound are Result.YieldReason's two values:
+// the stage stopped between tool calls, or the request's bound passed with
+// no quiet point and it was stopped at once.
+const (
+	YieldAtQuietPoint = "quiet point"
+	YieldAtBound      = "bound"
+)
 
 // Usage counts tokens by kind.
 type Usage struct{ Input, CacheCreation, CacheRead, Output int64 }
@@ -151,6 +186,11 @@ func Args(req Request) []string {
 // runner environment", which would hand the permission-bypassed agent every
 // credential the runner holds. Callers build a scrubbed environment with
 // BuildEnv (even an empty one is a non-nil, zero-length slice).
+//
+// A non-nil req.Yield stops the stage at its next quiet point and returns a
+// yielded result, which is not an error (D2945). The stop is the same
+// process-group stop a cancel uses, so it reaches everything the stage
+// started; only the reading of it differs.
 func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
 	if req.Env == nil {
 		return Result{}, fmt.Errorf("agent: refusing to run claude with a nil Env, which would inherit the runner's full environment")
@@ -194,9 +234,24 @@ func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
 		_, _ = io.Copy(w, errR)
 	}()
 
-	code, runErr := procgroup.Run(ctx, procgroup.Cmd{
+	// A yield request watches the stage's own stream for a quiet point. A
+	// stage that asked for none keeps pw as its writer and is untouched.
+	runCtx := ctx
+	stdout := io.Writer(pw)
+	quiet := &QuietPoint{}
+	var outcome yieldOutcome
+	if req.Yield != nil {
+		var stop context.CancelFunc
+		runCtx, stop = context.WithCancel(ctx)
+		defer stop()
+		quietCh := make(chan struct{}, 1)
+		stdout = &quietWriter{w: pw, q: quiet, ch: quietCh}
+		go watchYield(runCtx, req.Yield, quiet, quietCh, &outcome, stop)
+	}
+
+	code, runErr := procgroup.Run(runCtx, procgroup.Cmd{
 		Name: bin, Args: Args(req), Dir: req.Dir, Env: req.Env,
-		Stdin: strings.NewReader(req.Prompt), Stdout: pw, Stderr: errW, Grace: c.Grace,
+		Stdin: strings.NewReader(req.Prompt), Stdout: stdout, Stderr: errW, Grace: c.Grace,
 	})
 	pw.Close()
 	errW.Close()
@@ -205,6 +260,17 @@ func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
 	p.res.ExitCode = code
 	switch {
 	case runErr != nil:
+		// The yield stopped the stage itself, and the caller did not end
+		// the run under it: that is not a failure. A stage that reached its
+		// own result event was finished whatever the stop raced, so it is
+		// reported as the run it was.
+		if stopped, reason := outcome.get(); stopped && ctx.Err() == nil && !p.found {
+			if u, ok := quiet.LastUsage(); ok {
+				p.res.Usage = u
+			}
+			p.res.Yielded, p.res.YieldReason = true, reason
+			return p.res, nil
+		}
 		return p.res, runErr
 	case p.err != nil:
 		// ParseStream already wraps this with context.
