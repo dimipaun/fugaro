@@ -222,12 +222,12 @@ func residentRunIsTheItems(spec orchestrator.Spec, slug string, ts *task.Spec) e
 	if got != want {
 		return userErr("the item of run %s/%s is %s's, and the run's stored task is %s's: a resident launch starts the attempt the node recorded, and the record it acts on is the item and the run id together — nothing was started", slug, ts.RunID, oneLine(spec.Repo), oneLine(ts.Repo))
 	}
-	// The recipe is the one field whose two sides are not the same shape: an
-	// item NAMES a recipe, and a task carries what the launch resolved it to —
-	// nil for the catalog default, which taskRecipeEmbedding stores as no
-	// recipe at all so that a default run needs no newer runner
-	// (recipes_resolve.go) — so the default is the name both sides stand for
-	// when neither says one.
+	// The recipe is one of the two fields whose sides are not the same shape (the
+	// ticket below is the other): an item NAMES a recipe, and a task carries what
+	// the launch resolved it to — nil for the catalog default, which
+	// taskRecipeEmbedding stores as no recipe at all so that a default run needs
+	// no newer runner (recipes_resolve.go) — so the default is the name both
+	// sides stand for when neither says one.
 	wantRecipe := recipe.DefaultName
 	if spec.Recipe != "" {
 		wantRecipe = spec.Recipe
