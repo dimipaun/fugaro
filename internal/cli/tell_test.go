@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"gocloud.dev/blob"
 
@@ -446,6 +447,49 @@ func tellStorageRig(t *testing.T, policy ...gcpfake.Binding) *cloudFixture {
 	return f
 }
 
+// tellProjectJobRig is tellStorageRig for a run that is on a shared project job:
+// the same bucket and storage endpoint with the policy a case gives it, plus the
+// published policy that places the job's name (projectJobOfRecord) and the
+// launch that records it. Which read the run's account makes with is the whole
+// of what the check judges, so a case about a shared job is only a case if the
+// run is really on one.
+func tellProjectJobRig(t *testing.T, policy ...gcpfake.Binding) *cloudFixture {
+	t.Helper()
+	g := gcpfake.NewGCS(t)
+	g.AddBucket(tellRunsBucket, 123456789012, map[string]string{"fugaro": "managed"})
+	g.SetBucketPolicy(tellRunsBucket, policy)
+	f := newLaunchBudget(t, "off")
+	rewriteConfig(t, "endpoints: { ", "endpoints: { storage: "+g.URL+"/storage/v1/, ")
+	publishPolicy(t, f, projectJobPolicy)
+	// The profile's no-account job: the name the published policy computes for
+	// standard/github, which is the one projectJobOfRecord places.
+	job := gcp.ProjectJobName("standard", "github", "")
+	f.run.AddProjectJob(job, "standard", "github", "", "2", "4Gi")
+	id := tellRunID
+	seedRun(t, f.cloudFixture, id, "", "someone@example.com", false)
+	writeRecord(t, f.cloudFixture, id, tellRecord(id, tellAccepting()))
+	tellLaunchedOn(t, f.cloudFixture, id, job)
+	return f.cloudFixture
+}
+
+// tellLaunchedOn records the job a run launched on, with the execution the
+// fixture starts for it: the platform's own job name is what a real launch
+// writes down, and the run's recorded job is what the F21 check reads the
+// account to pair with out of.
+func tellLaunchedOn(t *testing.T, f *cloudFixture, id, job string) {
+	t.Helper()
+	b, err := blob.OpenBucket(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	exec := startRunExecution(f, job, appSlug, id)
+	if err := runstore.Open(b, appSlug, id).WriteLaunch(context.Background(), &runstore.Launch{
+		Version: 1, RunID: id, Backend: "cloud-run", Execution: exec, Job: job, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 const tellRunsBucket = "unused-bucket"
 
 // tellJobSA is the account a run of the fixture's workflow runs as
@@ -465,22 +509,28 @@ func tellJobGrant() gcpfake.Binding {
 		Condition: &gcpfake.IAMCondition{Title: gcp.BucketConditionTitle(tellJobSA()), Expression: gcp.BucketCondition(tellRunsBucket, gcp.JobBucketPrefixes, appSlug)}}
 }
 
-// tellTokenRead is the read the same job account holds once its repository's
+// tellRepoTokenRead is the read the same job account holds once its repository's
 // root has been re-applied (modules/workflow/sa.tf's job_tokens).
-func tellTokenRead() gcpfake.Binding {
+func tellRepoTokenRead() gcpfake.Binding {
 	return gcpfake.Binding{Role: "roles/storage.objectViewer", Members: []string{tellJobMember()},
 		Condition: &gcpfake.IAMCondition{Title: gcp.TokenBucketConditionTitle(tellJobSA()), Expression: gcp.TokenBucketCondition(tellRunsBucket, appSlug)}}
 }
 
-// tellProjectJobGrants are a shared project job account's two grants (plan task
-// 3.2): the widened runs/, cache/ and locks/ write, and the whole-tokens/ read
-// that covers every repository its profile serves. A run launched on that job
-// reads its messages through the second, whatever its own repository's root
-// says — which is why the check accepts either.
-func tellProjectJobGrants(saID string) gcpfake.Binding {
+// tellProjectJobRead is the whole-tokens/ read one shared project job account
+// holds (plan task 3.2): the widening that lets the job serve every repository
+// its profile admits. It is one account's read and not the profile's, so a case
+// that gives it to a job the run is not on is a case about a read of somebody
+// else's run.
+func tellProjectJobRead(saID string) gcpfake.Binding {
 	return gcpfake.Binding{Role: "roles/storage.objectViewer",
-		Members:   []string{"serviceAccount:" + saID + "@proj-1234.iam.gserviceaccount.com"},
+		Members:   []string{tellProjectJobMember(saID)},
 		Condition: &gcpfake.IAMCondition{Title: gcp.ProjectTokenBucketConditionTitle(saID), Expression: gcp.ProjectTokenBucketCondition(tellRunsBucket)}}
+}
+
+// tellProjectJobMember is the IAM member of the shared project job account
+// saID, spelled as the deployment writes it.
+func tellProjectJobMember(saID string) string {
+	return "serviceAccount:" + saID + "@proj-1234.iam.gserviceaccount.com"
 }
 
 // tellInstallationPolicy is a bucket policy shaped like the installation
@@ -522,27 +572,79 @@ func TestTellRefusesNoTokenGrant(t *testing.T) {
 }
 
 // The same repository once its root has been re-applied: the read is there and
-// the message is sent. And a shared project job's whole-tokens/ read is a read
-// of this run's messages for the same reason, since a run launched on that job
-// reads through it.
+// the message is sent. The other half of the pairing — a run that is on a shared
+// project job and reads through that job's account — is
+// TestTellSendsForASharedProjectJob.
 func TestTellSendsWithTheTokenGrant(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		extra []gcpfake.Binding
-	}{
-		{"the repository's own read", []gcpfake.Binding{tellTokenRead()}},
-		{"a shared project job's read", []gcpfake.Binding{tellProjectJobGrants(gcp.ProjectServiceAccountID("standard", "github", "team-a"))}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			tellStorageRig(t, tellInstallationPolicy(tc.extra...)...)
-			out, errOut, err := execute(t, "tell", tellRef(tellRunID), "carry on")
-			if err != nil {
-				t.Fatalf("tell with the grant in place: %v (%s)", err, errOut)
-			}
-			if !strings.Contains(out, "sent message 1") {
-				t.Errorf("tell printed %q, want the message's number", out)
-			}
-		})
+	tellStorageRig(t, tellInstallationPolicy(tellRepoTokenRead())...)
+	out, errOut, err := execute(t, "tell", tellRef(tellRunID), "carry on")
+	if err != nil {
+		t.Fatalf("tell with the grant in place: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "sent message 1") {
+		t.Errorf("tell printed %q, want the message's number", out)
+	}
+}
+
+// The pairing is with the account, not with the prefix: the policy carries a
+// shared project job's whole-tokens/ read and this run is not on that job, so
+// the read another account holds is not this run's read. A check that took any
+// whole-tokens/ binding would send here, and the run's own job account, which
+// reads nothing, would find the message missing.
+func TestTellRefusesAnotherJobsTokenRead(t *testing.T) {
+	f := tellStorageRig(t, tellInstallationPolicy(
+		tellProjectJobRead(gcp.ProjectServiceAccountID("standard", "github", "team-a")))...)
+	_, _, err := execute(t, "tell", tellRef(tellRunID), "carry on")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	for _, want := range []string{"no read of tokens/" + appSlug + "/", "F21", "fugaro update --repo"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if keys := tellPrefixKeys(t, f, tellRunID); len(keys) != 0 {
+		t.Errorf("a message nobody could read was written: %v", keys)
+	}
+}
+
+// A run that recorded a shared project job reads its messages through that job
+// account's whole-tokens/ read, and the message is sent even though its
+// repository's own job account holds no tokens/ read at all.
+func TestTellSendsForASharedProjectJob(t *testing.T) {
+	saID := gcp.ProjectServiceAccountID("standard", "github", "")
+	f := tellProjectJobRig(t, tellInstallationPolicy(tellProjectJobRead(saID))...)
+	out, errOut, err := execute(t, "tell", tellRef(tellRunID), "carry on")
+	if err != nil {
+		t.Fatalf("tell for a run on the shared project job: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(out, "sent message 1") {
+		t.Errorf("tell printed %q, want the message's number", out)
+	}
+	if m := tellSent(t, f, tellRunID, 1); m.Text != "carry on" {
+		t.Errorf("message = %+v, want the text", m)
+	}
+}
+
+// The sharing is per job account and not per profile or per prefix: another
+// account's job of the same profile holds the read this run's own job does not,
+// so nothing is sent. The refusal names the account and the fix that writes its
+// grant, which is the installation's own update rather than a repository's.
+func TestTellRefusesAnotherAccountsProjectRead(t *testing.T) {
+	f := tellProjectJobRig(t, tellInstallationPolicy(
+		tellProjectJobRead(gcp.ProjectServiceAccountID("standard", "github", "team-a")))...)
+	_, _, err := execute(t, "tell", tellRef(tellRunID), "carry on")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v (exit %d), want a refusal", err, ExitCode(err))
+	}
+	want := []string{"no read of tokens/ for " + tellProjectJobMember(gcp.ProjectServiceAccountID("standard", "github", "")), "F21", "project jobs", "fugaro update"}
+	for _, w := range want {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("the refusal does not say %q: %v", w, err)
+		}
+	}
+	if keys := tellPrefixKeys(t, f, tellRunID); len(keys) != 0 {
+		t.Errorf("a message nobody could read was written: %v", keys)
 	}
 }
 
