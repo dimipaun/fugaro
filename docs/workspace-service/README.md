@@ -13,7 +13,7 @@ the workspace when the project holds none of its own. It is the prerequisite
 | File | What it is |
 | --- | --- |
 | [spec.md](spec.md) | The brief, as received. The coordinator wrote it from the owner's rulings of 2026-11-19; no typo was fixed |
-| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A6, findings F1–F39, decisions D2980–D2992 with the owner's answers, resolutions R1–R17 (R13–R15 came with review round 1, R16 and R17 with round 2), open items O1–O7, UNVERIFIED U1–U6. **Where it disagrees with the spec, it wins** |
+| [reconciliation.md](reconciliation.md) | The amended spec: assumptions A1–A6, findings F1–F42, decisions D2980–D2992 with the owner's answers, resolutions R1–R19 (R13–R15 came with review round 1, R16 and R17 with round 2, R18 and R19 with round 4), open items O1–O7, UNVERIFIED U1–U6. **Where it disagrees with the spec, it wins** |
 | [implementation-plan.md](implementation-plan.md) | Contracts C1–C3, tasks WS1–WS22 (WS10 dropped, its number not reused), integration I1 (25 runs, and three contract changes that run only if raised); levels, critical path, shared files, the edges broken and kept; Checks 770–773 |
 | [implementation-plan.graph.json](implementation-plan.graph.json) | The plan's graph as `fugaro plan graph` reads it |
 
@@ -28,7 +28,9 @@ recommendation** (every credential kind at once, where model credentials first w
 D2987**: the reconciliation alarm is deferred (D2991), because it cannot be computed where D2987
 placed it. **Review round 2** changed no answer; it amended resolutions R3, R4 and R14 and added
 R16 and R17. **Review round 3** added D2992 (shared project jobs are served), answered the same
-day as recommended, and amended R4 and R6.
+day as recommended, and amended R4 and R6. **Review round 4**, which the owner asked for before
+merging, changed no answer: it added R18 (no member secret reaches the workspace's service) and
+R19, and corrected F37 through F42. Its fixes are the last commit and were not reviewed again.
 
 **What a reader should not take from here:** no task is approved; each needs the owner's go by name.
 Checks 770–773 are owner-run after the release that carries the service. Per-person tokens at the

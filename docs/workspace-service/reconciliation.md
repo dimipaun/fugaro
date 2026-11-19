@@ -27,8 +27,8 @@ D1290–D1305 ([the workspaces design](../workspaces/reconciliation.md)) and D29
   calls. Review signing, slips, workflow secrets and build credentials stay on the project's service
   and may wake it.
 - **A3.** "Every credential kind" means the kinds the service serves today: Claude OAuth tokens, the
-  Anthropic key, declared `anthropic` credentials, the Bitbucket tokens and read consumer, and the
-  GitHub App key. Provider keys stay behind Check 50 (D150), and job-mounted keys are D2975's own
+  Anthropic key, declared `anthropic` credentials, the Bitbucket tokens and the GitHub App key, for
+  the routes a run calls (R14). The Bitbucket read consumer is not one of them (D2988). Provider keys stay behind Check 50 (D150), and job-mounted keys are D2975's own
   spec.
 - **A4.** A workspace whose Firebase is another project's (`workspaceSplitFirebase`) is out of
   scope: `fugaro update` skips the workspace root for it today and keeps doing so, with a refusal
@@ -236,6 +236,26 @@ the workspace shares. Consequence: R4's report says only what the member can kno
 documents test holds to the generated size and the version. Consequence: WS22's files, and WS20
 after it.
 
+**F40 — Rule (review round 4).** The run's gateway sends the slip's id and its claim secret on
+every service call once a slip is set (`Server.serviceUpstream` and `Service.Post`,
+`internal/gateway/service.go`; `HeaderSlip`, `HeaderSlipClaim` in `internal/credsvc/wire.go`), and
+the server checks them on its common path (`verifyCallSlip`). A second upstream built the same way
+would hand a member's slip secret to the workspace's service on every call. Consequence: R18.
+
+**F41 — Rule (review round 4).** A new command, flag or update stage is counted in more places than
+its own file: the CLI reference (`TestCliReferenceNamesEveryCommandAndFlag`,
+`website/content/cli-reference.md`), the closed-stdin harness
+(`internal/cli/noprompt_harness_test.go`), the list of writing commands
+(`internal/cli/report_exempt.go`), the stage refusal table (`internal/cli/setup_refusals_test.go`)
+and the settings-to-stage map (`internal/apply/steps.go`). Consequence: WS3, WS9 and WS19 name them.
+
+**F42 — Wrong (review round 4), corrects F37.** `SharedJobAccount.Repos` is the profile's
+`allow_repos` patterns, checked by `projectpolicy.AdmitRepo` and then by the member's live profile
+gate (`pairShared`, `internal/credsvc/review.go`). The workspace's check compares concrete slugs
+(`canonicalOfSlug`). Consequence: R6 says concrete repositories and refuses a pattern. The residual
+is stated: the workspace owner's list for a shared job can be wider than the member's profile at
+that moment; the member's own policy is still asked through R5's intersection.
+
 ## 4. Decisions
 
 All answered by the owner on 2026-11-19.
@@ -293,8 +313,8 @@ Each has one defensible answer given the decisions and the owner's constraints.
   entry's allow-list, the member's own policy and the repository's admission, exactly as
   `Workspace.Shared` intersects them today (D1298, D2978).
 - **R6. The table's two missing columns.** *(Amended after review round 3, D2992.)* A member row
-  carries `database_region`, and each job account carries the repositories it is a job of: one
-  for a repository's own job, several for a shared project job (the workspaces design's O4 and
+  carries `database_region`, and each job account carries the concrete repositories it is a job
+  of, never a pattern (F42): one for a repository's own job, several for a shared project job (the workspaces design's O4 and
   O3). `fugaro workspace member add` takes both, and the scope holds the run's verified
   repository to that list.
 - **R7. `all_members`.** A new key of a shared entry, exclusive with `projects`. The node's version
@@ -320,7 +340,8 @@ Each has one defensible answer given the decisions and the owner's constraints.
 - **R13. The service re-reads its node.** The workspace's scope re-reads the published node when
   it is older than 60 seconds, conditionally, so a member added or an entry shared or unshared
   takes effect within a minute with no new revision (F26). A member's new repository still needs
-  the workspace owner's `fugaro update`, for the invoke grant (F17).
+  the workspace owner to declare it and run `fugaro update`: for the invoke grant when it has a
+  job of its own (F17), and for the account's list when it runs on a shared project job.
 - **R14. What workspace mode serves.** *(Amended after review round 2, F33, F35.)* The model
   routes; the forge routes a run calls (the git proxy, a run's own token mint and its context
   tokens); and a keep-warm route that takes the job's identity and carries no secret. Every other
@@ -337,6 +358,14 @@ Each has one defensible answer given the decisions and the owner's constraints.
   gateway reads a platform 403 from the workspace's service as "this repository's job is not yet
   granted": the run halts at once with a reason that names the workspace owner's `fugaro update`.
   It is not waited for.
+- **R18. The workspace's upstream carries no member secret.** *(Review round 4, F40.)* A call to
+  the workspace's service carries the job's identity and the run's token and nothing else of the
+  member's: no slip id, no claim secret, no auth-mode or account header. The workspace's scope
+  refuses a call that presents a slip.
+- **R19. A repository the workspace does not list is a refusal that names the fix.** *(Review round
+  4.)* A run whose repository is not in its job account's list is refused by the scope with a typed
+  reason, and the run halts naming the workspace owner's `fugaro update`, as R16 does for a missing
+  grant.
 - **R17. A node that cannot be re-read refuses.** When R13's re-read fails and the copy held is
   older than 60 seconds, the scope refuses the call; it never serves from a stale table.
 

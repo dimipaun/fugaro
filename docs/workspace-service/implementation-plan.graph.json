@@ -56,7 +56,8 @@
         "paths": [
           "internal/projectpolicy/workspace_credentials_v2.go",
           "schemas/workspace-credentials.schema.json",
-          "docs/workspace-service/contract-node.md"
+          "docs/workspace-service/contract-node.md",
+          "internal/projectpolicy/workspace_credentials.go"
         ]
       },
       "kind": "contract",
@@ -115,7 +116,11 @@
           "internal/cli/workspace.go",
           "internal/cli/workspace_share.go",
           "internal/cli/workspace_share_test.go",
-          "docs/workspaces/*.md"
+          "docs/workspaces/*.md",
+          "website/content/cli-reference.md",
+          "internal/cli/noprompt_harness_test.go",
+          "internal/cli/report_exempt.go",
+          "internal/apply/steps.go"
         ]
       }
     },
@@ -223,7 +228,9 @@
           "internal/cli/update_route_test.go",
           "internal/cli/init_stages.go",
           "internal/initflow/stage.go",
-          "internal/cli/creds.go"
+          "internal/cli/creds.go",
+          "internal/cli/setup_refusals_test.go",
+          "internal/apply/steps.go"
         ]
       }
     },
@@ -283,8 +290,7 @@
           "internal/config/defaults.go",
           "schemas/fugaro.schema.json",
           "schemas/settings.schema.json",
-          "docs/config-management/**",
-          "website/content/**"
+          "docs/config-management/**"
         ]
       }
     },
@@ -380,7 +386,8 @@
           "internal/cli/workspace_share.go",
           "internal/cli/update_workspace.go",
           "internal/credsvc/bundle_workspace.go",
-          "internal/cli/workspace_all_members_test.go"
+          "internal/cli/workspace_all_members_test.go",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -761,6 +768,11 @@
       "task": "WS20",
       "needs": "WS22",
       "reason": "both edit docs/gcp-live-checklist.md"
+    },
+    {
+      "task": "WS2",
+      "needs": "WS15",
+      "reason": "it feeds the version 2 node through WorkspaceShared, whose signature WS15 changes"
     }
   ],
   "decoupling": [
