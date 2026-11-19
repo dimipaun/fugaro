@@ -122,9 +122,11 @@ export const STUB_FIXTURES: Readonly<Record<NewOperationName, unknown>> = Object
     },
   },
 
-  // The caps, repository by repository. This end line carries no `version`,
-  // because the `budget show --json` document carries none either: a console
-  // that read a missing version as a broken stream would call this finished read
+  // The caps, repository by repository and then the kill switch, which is a row
+  // of its own (RS4: "`row` lines per repository and per kill switch as their
+  // reads complete"). This end line carries no `version`, because the
+  // `budget show --json` document carries none either: a console that read a
+  // missing version as a broken stream would call this finished read
   // interrupted.
   'budget.stream': {
     document: {
@@ -161,7 +163,16 @@ export const STUB_FIXTURES: Readonly<Record<NewOperationName, unknown>> = Object
           runs: 0,
           kill: null,
         },
-        { type: 'end', count: 2 },
+        {
+          type: 'row',
+          slug: 'kill',
+          kill: {
+            by: 'dana@example.com',
+            at: '2026-11-18T09:00:00Z',
+            reason: 'the day’s spend reached the cap while a run was looping',
+          },
+        },
+        { type: 'end', count: 3 },
       ],
     },
   },
