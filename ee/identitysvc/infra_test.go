@@ -650,6 +650,60 @@ func tfNested(t *testing.T, block, name string) string {
 	return got[0]
 }
 
+// tfNestedNames answers the name of every block written one level inside a block
+// body — `env`, `volume_mounts`, `startup_probe` — as the words they are rather
+// than by asking for the names this suite expects: a block nobody here has named
+// is still a block, and a check that read only the names it knew would pass on a
+// body holding one it did not. A word followed by `{` is a block; a word
+// followed by `=` is an attribute, and its value is left to the reader that
+// wants it.
+func tfNestedNames(block string) []string {
+	body, ok := tfBlockBody(block)
+	if !ok {
+		return nil
+	}
+	var names []string
+	depth := 0
+	for i := 0; i < len(body); {
+		switch c := body[i]; {
+		case c == '"':
+			j, ok := tfSkipString(body, i)
+			if !ok {
+				return names
+			}
+			i = j
+		case c == '<' && strings.HasPrefix(body[i:], "<<"):
+			j, ok := tfSkipHeredoc(body, i)
+			if !ok {
+				return names
+			}
+			i = j
+		case c == '{' || c == '[' || c == '(':
+			depth++
+			i++
+		case c == '}' || c == ']' || c == ')':
+			depth--
+			i++
+		case depth == 0 && tfIdentStart(c):
+			j := i
+			for j < len(body) && tfIdentChar(body[j]) {
+				j++
+			}
+			k := j
+			for k < len(body) && tfSpace(body[k]) {
+				k++
+			}
+			if k < len(body) && body[k] == '{' {
+				names = append(names, body[i:j])
+			}
+			i = j
+		default:
+			i++
+		}
+	}
+	return names
+}
+
 // tfCompact removes every space, tab and newline: `member = "allUsers"` and
 // `member="allUsers"` are one grant written twice, and a check that read the
 // first spelling only would let the second through.
@@ -1022,6 +1076,11 @@ func TestInfraTheKeysetBucketIsOwnerWrittenAndServiceRead(t *testing.T) {
 		{"enabled", "true"},
 	}, "the document a release pins its `seq` floor against is one object, and a versioned bucket is what lets a bad write be seen and put back")
 
+	lifecycle := tfNested(t, bucket, "lifecycle")
+	tfAttrsAre(t, lifecycle, "the key-set bucket's lifecycle", []tfWant{
+		{"prevent_destroy", "true"},
+	}, "every install fetches the pinning keys out of this bucket, so losing it is losing the key set at the URL they hold: a destroy is a step a person takes on purpose — after the new set is published somewhere else — and never an apply's side effect (O7, A3)")
+
 	reads := 0
 	for _, rel := range tfFiles(t) {
 		for _, block := range tfBlocks(tfSource(t, rel), `resource "`) {
@@ -1160,6 +1219,30 @@ func TestInfraTheServiceSignsWithThisKeyAndServesTheJWKS(t *testing.T) {
 	tfAttrsAre(t, container, "the signer's container", []tfWant{
 		{"image", "var.image"},
 	}, "the image is the one the release builds and the owner deploys, so it is an input rather than a value written here")
+
+	// The program the signer runs is the image's own entrypoint and the five
+	// values below, and the container is the whole of it. A second container, an
+	// init container, a command or an argument beside the image, another working
+	// directory, a mounted volume or a probe is each another program, or another
+	// file, running as the signer's account — whose one permission is useToSign on
+	// the assertion key, so what runs there signs with the project's identity
+	// however little the root says about it (A1, A3, D2792).
+	if got := len(tfNestedBlocks(template, "containers")); got != 1 {
+		t.Errorf("the signer's template declares %d containers blocks, want exactly 1: a second container runs an image of its own beside the signer's, under the same account and with the signer role (A1, A3)", got)
+	}
+	for _, name := range tfNestedNames(container) {
+		if name != "env" {
+			t.Errorf("the signer's container writes a %s block: the signer's program is the image's entrypoint, and a %s block is a second one — a probe or a mount — running, or handed a file, as the account that holds useToSign on the assertion key (A1, A3)", name, name)
+		}
+	}
+	for _, override := range []string{"command", "args", "working_dir", "volume_mounts"} {
+		if got, ok := tfAttr(container, override); ok {
+			t.Errorf("the signer's container writes %s = %s, want nothing: the image's entrypoint is the program this root means to run, and a command, an argument, a working directory or a mounted volume here is another program — or another file it reads — running as the account that holds useToSign on the assertion key (A1, A3, D2792)", override, got)
+		}
+	}
+	if blocks := tfNestedBlocks(template, "init_containers"); len(blocks) > 0 {
+		t.Errorf("the signer's template declares %d init_containers blocks, want none:\n%s\nan init container runs an image of its own, under the service's account, before the signer's container starts — so it mints with the signer role while no check here reads the program it runs (A1, A3)", len(blocks), strings.TrimSpace(blocks[0]))
+	}
 
 	want := map[string]string{
 		"FUGARO_SIGNING_KEY":       `"${google_kms_crypto_key.signing.id}/cryptoKeyVersions/1"`,
