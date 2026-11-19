@@ -174,7 +174,7 @@ export const GRAPH_ROW_CARDS = 4
  * level back up into one line and undoes them. `SIMPLE` is the placement that
  * lays a row out as one compact line -- the default spreads a layer's cards
  * apart along the row to straighten its edges, and drew a level of seven cards
- * 5393 units wide where the bound below is 1304. And
+ * 5393 units wide where a full row of four is 1304. And
  * `elk.separateConnectedComponents: 'false'` keeps the engine from packing the
  * **components** of one stream two-dimensionally: a plan whose tasks need
  * nothing, or a task nothing needs, is a component of its own, and packed that
@@ -393,8 +393,8 @@ const ROW_CHAIN_PREFIX = 'row:'
  * r - 1, by the same induction) and plan edges only from shallower levels, whose
  * rows are earlier and whose levels are therefore at most r - 1. One edge per
  * card is what makes it exact, and it is also the cheapest: an edge from every
- * card of a row to every card of the next (measured at the same exactness, in
- * the experiments this shape comes from) costs a route per pair for nothing.
+ * card of a row to every card of the next is exact at the same bound and costs
+ * the engine a route per pair for nothing.
  *
  * **The chain is scaffolding and never a line.** It is in the graph the worker
  * is asked about -- the engine has to be told -- and in no picture:
