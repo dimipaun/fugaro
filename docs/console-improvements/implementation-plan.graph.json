@@ -184,7 +184,8 @@
           "internal/cli/runs_stream.go",
           "internal/cli/runs_stream_test.go",
           "schemas/runs-stream.schema.json",
-          "internal/cli/testdata/runs_stream.golden.ndjson"
+          "internal/cli/testdata/runs_stream.golden.ndjson",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -238,7 +239,9 @@
           "internal/cli/user_ls_me_test.go",
           "internal/access/resolve.go",
           "schemas/whoami.schema.json",
-          "internal/cli/testdata/whoami.golden.json"
+          "internal/cli/testdata/whoami.golden.json",
+          "website/content/cli-reference.md",
+          "docs/roles-scopes/implementation-plan.md"
         ]
       }
     },
@@ -273,7 +276,8 @@
           "internal/cli/init.go",
           "internal/cli/setup_answers.go",
           "internal/cli/setup_answers_test.go",
-          "schemas/setup-answers.schema.json"
+          "schemas/setup-answers.schema.json",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -292,7 +296,8 @@
           "internal/cli/report_step.go",
           "internal/cli/setup_events_test.go",
           "schemas/setup-events.schema.json",
-          "internal/cli/testdata/setup_events.golden.ndjson"
+          "internal/cli/testdata/setup_events.golden.ndjson",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -411,7 +416,7 @@
     },
     {
       "id": "MW1",
-      "title": "models add from the Manage list",
+      "title": "models add: the main-process rows, handlers and binding",
       "run": null,
       "version": null,
       "size": 4,
@@ -421,16 +426,19 @@
         "paths": [
           "console/src/main/spawn.ts",
           "console/src/main/ipc.ts",
-          "console/src/renderer/manage/kinds/models.ts",
-          "docs/design/desktop-console.md",
+          "console/src/main/index.ts",
+          "console/src/source/source.ts",
+          "console/src/preload/index.ts",
+          "console/src/shared/version.ts",
+          "console/src/main/confirm.ts",
           "console/test/unit/spawn.test.ts",
-          "console/src/shared/version.ts"
+          "console/test/unit/models-writes.test.ts"
         ]
       }
     },
     {
       "id": "MW2",
-      "title": "image add from the Manage list",
+      "title": "image add: the main-process rows, handlers and binding",
       "run": null,
       "version": null,
       "size": 4,
@@ -440,10 +448,13 @@
         "paths": [
           "console/src/main/spawn.ts",
           "console/src/main/ipc.ts",
-          "console/src/renderer/manage/kinds/images.ts",
-          "docs/design/desktop-console.md",
+          "console/src/main/index.ts",
+          "console/src/source/source.ts",
+          "console/src/preload/index.ts",
+          "console/src/shared/version.ts",
+          "console/src/main/confirm.ts",
           "console/test/unit/spawn.test.ts",
-          "console/src/shared/version.ts"
+          "console/test/unit/image-writes.test.ts"
         ]
       }
     },
@@ -625,7 +636,8 @@
           "console/src/shared/new-ops.ts",
           "console/src/renderer/stubs/bridge-stub.ts",
           "console/test/unit/new-ops.test.ts",
-          "docs/console-improvements/contract-ops.md"
+          "docs/console-improvements/contract-ops.md",
+          "console/src/renderer/new-bridge.ts"
         ]
       },
       "kind": "contract",
@@ -683,7 +695,8 @@
           "ee/report/cli/report_stream_test.go",
           "schemas/report-stream.schema.json",
           "ee/report/cli/testdata/report_stream.golden.ndjson",
-          "ee/report/cli/testdata/report_stream.golden.ndjson.license"
+          "ee/report/cli/testdata/report_stream.golden.ndjson.license",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -701,7 +714,8 @@
           "internal/cli/budget_stream.go",
           "internal/cli/budget_stream_test.go",
           "schemas/budget-stream.schema.json",
-          "internal/cli/testdata/budget_stream.golden.ndjson"
+          "internal/cli/testdata/budget_stream.golden.ndjson",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -719,7 +733,8 @@
           "console/src/renderer/screens/projects.ts",
           "console/src/renderer/stream.ts",
           "console/test/unit/spend-stream.test.ts",
-          "console/test/unit/projects-stream.test.ts"
+          "console/test/unit/projects-stream.test.ts",
+          "console/src/renderer/entry.ts"
         ]
       }
     },
@@ -754,7 +769,8 @@
           "internal/cli/models_add.go",
           "internal/cli/models_add_dryrun_test.go",
           "schemas/models-add-plan.schema.json",
-          "internal/cli/testdata/models_add_plan.golden.json"
+          "internal/cli/testdata/models_add_plan.golden.json",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -771,7 +787,28 @@
           "internal/cli/image_catalog.go",
           "internal/cli/image_add_dryrun_test.go",
           "schemas/image-add-plan.schema.json",
-          "internal/cli/testdata/image_add_plan.golden.json"
+          "internal/cli/testdata/image_add_plan.golden.json",
+          "website/content/cli-reference.md"
+        ]
+      }
+    },
+    {
+      "id": "MWR",
+      "title": "the Manage write actions: the window views, the kinds and the contract text",
+      "run": null,
+      "version": null,
+      "size": 3,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "console/src/renderer/confirm.ts",
+          "console/src/renderer/manage/kinds/models.ts",
+          "console/src/renderer/manage/kinds/images.ts",
+          "docs/design/desktop-console.md",
+          "console/docs/json-contract.md",
+          "internal/cli/docs_desktop_console_test.go",
+          "console/test/unit/manage-writes.test.ts"
         ]
       }
     },
@@ -952,11 +989,6 @@
     },
     {
       "task": "MW1",
-      "needs": "I-MG",
-      "reason": "adds an action to the list kind the integration wired"
-    },
-    {
-      "task": "MW1",
       "needs": "SU1",
       "reason": "confirms through the same window"
     },
@@ -972,13 +1004,13 @@
     },
     {
       "task": "MW1",
-      "needs": "MD1",
-      "reason": "the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD1's document"
+      "needs": "RB4",
+      "reason": "enables the action only for a project admin"
     },
     {
       "task": "MW1",
-      "needs": "RB4",
-      "reason": "enables the action only for a project admin"
+      "needs": "MD1",
+      "reason": "the window shows MD1's document, the floor follows MD1's release, and the aiming flags must exist"
     },
     {
       "task": "MW2",
@@ -988,7 +1020,7 @@
     {
       "task": "MW2",
       "needs": "MD2",
-      "reason": "the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD2's document"
+      "reason": "the window shows MD2's document and the floor follows MD2's release"
     },
     {
       "task": "PL1",
@@ -1034,6 +1066,11 @@
       "task": "AL",
       "needs": "SM-E",
       "reason": "both write `console/docs/json-contract.md`"
+    },
+    {
+      "task": "AL",
+      "needs": "RS3",
+      "reason": "`ee/report/cli`'s `TestConsoleContractNamesOnlyRealReportFlags` checks every `--flag` the contract and design docs give `report` against report's own command, so `--stream` must be registered there first"
     },
     {
       "task": "SM1",
@@ -1126,6 +1163,11 @@
       "reason": "both write `entry.ts`"
     },
     {
+      "task": "PW1",
+      "needs": "RS5",
+      "reason": "both write `entry.ts`; prewarm warms the stream paths RS5 adds"
+    },
+    {
       "task": "I-OPS",
       "needs": "C-OPS",
       "reason": "integrates the contract"
@@ -1176,9 +1218,19 @@
       "reason": "compares the console's copy with the budget golden"
     },
     {
+      "task": "I-OPS",
+      "needs": "MW2",
+      "reason": "both write `index.ts`; I-OPS swaps AL's stubs after MW1 and MW2 have added their handlers, and its contract test checks only the contract's own names"
+    },
+    {
       "task": "SRC",
       "needs": "C-OPS",
       "reason": "built against the payloads and handler signatures"
+    },
+    {
+      "task": "RS3",
+      "needs": "RS1",
+      "reason": "writes the `row`/`end`/`error` line shape RS1's schema states"
     },
     {
       "task": "RS4",
@@ -1209,6 +1261,26 @@
       "task": "SW3c",
       "needs": "SW3b",
       "reason": "opens the wizard SW3b builds"
+    },
+    {
+      "task": "MWR",
+      "needs": "MW2",
+      "reason": "draws both writes' operations"
+    },
+    {
+      "task": "MWR",
+      "needs": "SW3a",
+      "reason": "both write `renderer/confirm.ts`"
+    },
+    {
+      "task": "MWR",
+      "needs": "RB4",
+      "reason": "enables the action by role"
+    },
+    {
+      "task": "MWR",
+      "needs": "I-MG",
+      "reason": "adds an action to the kinds the integration mounted"
     }
   ],
   "decoupling": [

@@ -2,7 +2,7 @@
 
 **Status: plan only; nothing is implemented; no task approved.** It builds [spec.md](spec.md) as amended by
 [reconciliation.md](reconciliation.md) (checked against `origin/main` at `01fe41f30`, 2026-11-18). **No task in it
-is approved: each needs the owner's explicit go by name**, and `MW1` and `MW2` (console writes) and `SW3a` (a console
+is approved: each needs the owner's explicit go by name**, and `MW1`, `MW2` and `MWR` (console writes) and `SW3a` (a console
 write that provisions cloud resources) each need a go of their own. The answers that shaped it, all given on
 2026-11-18: **D2900** graph top to bottom; **D2901** fix the sparklines and keep Watch parity; **D2902** one
 main-process modal for entry and confirmation; **D2903** lists for every object, writes only where fenced-safe;
@@ -14,6 +14,7 @@ and project deletion declined.
 
 - Rules files: `.claude/rules/console.md` for every `console/**` task (Node 22, exact-pinned dependencies, the allow-list tests, `TEXT_CLASSES`, the parallel-sections rule, goldens skipped in CI); `CLAUDE.md` for the CLI tasks. Run targeted tests, never a whole package (`internal/cli` takes about 25 minutes).
 - **Always:** write the failing test first; run the task's command before the commit; `git status --short` and `git diff --stat` before every commit and `git add <paths>`; cite a `T#` and `D#` in the pull-request body.
+- **Generated files:** `website/content/cli-reference.md` is never hand-edited; each task that adds a CLI flag regenerates it with `go run ./ee/clidoc` and runs `TestCliReferenceNamesEveryCommandAndFlag` and `go test ./ee/clidoc/`. It is the plan's one file several tasks may write at once (the owner's choice, 2026-11-18): a conflict in it is resolved by regenerating.
 - **Ask first:** a new console argv or IPC operation (only AL, SU1, SW3c, MW1 and MW2 may add one or change an IPC shape); a CLI flag that is not named in this plan; a new dependency; a change to a wire document other than an added member.
 - **Never:** edit `.github/workflows/`; re-record a screenshot golden; add a confirmation, a prompt or a `--yes` to the CLI (the no-prompt policy); let the console read, hold or pass a secret value (design rule 2); bump elkjs; change an existing `--json` document's meaning or shape; delete or skip a failing test.
 - **Safety rules:** no secret-shaped literal in a test, fixture or doc; no live cloud action by an agent (the three Checks are the owner's); `fugaro update` is unaffected (no installed state changes: every CLI change is an added flag or member, so the release's `### For operators` is "run `fugaro update`", which asks nothing new).
@@ -29,13 +30,15 @@ Inputs and failure modes the spec implies and no single task owns, each with the
 | An older CLI lacks the new members or flags | SU2a (no metadata: raw key and text control), RS2 (falls back to `runs.list`), RB4 (no answer: controls stay enabled), SW3a (the floor is unset: the wizard shows the command) |
 | Reduced mode (a CLI the console does not know) misreads a figure | MO-B (`hidesView`), LP2 (the existing reduced-mode tests stay green) |
 | A renderer frame tries to answer a write window or start setup | SU1, SW3a, MW1, MW2 (each has a mutation test) |
+| A hostile process of the same user swaps the setup answers between the check and the CLI's read | ST1, SW3a (the answers go on stdin from bytes main holds; no file exists) |
+| A Manage value parses as a flag, or a write lands on another installation | MW1, MW2 (a grammar per value, `--flag=value` words, the positional after `--`, `--project` set by main) |
 | The answers file leaks or lingers | ST1 (contents never logged), SW3a (mode 0600, removed after the run) |
 | A section's slow read blocks another | MO-SH (one read, busy mark and refusal per kind), RS2 |
 | `runs ls` without `--stream` or any existing `--json` changes | RS1 (`TestRunsLsJSONUnchanged` written first), SM-E and WH1 (only added members) |
 | A reset leaves a lower layer's value that the dialog calls "the default" | SU1 (R6: the built-in default is named as such, and the lower-layer caveat is shown) |
 | Keys that take `--add`, `--remove` or `--add-entry` | SU1 (read-only with the command to copy) |
 | Contrast below 4.5:1 anywhere in Live | LP2 (a test computes it from the CSS tokens) |
-| A hostile renderer names the answers file, or a cloud project the owner did not see | AL (a renderer-supplied path is refused; the payload schema is closed), SW3a (main validates the answers, writes the 0600 file in a 0700 directory, shows main's own parsed copy in the window and binds apply to the same bytes by SHA-256; a changed byte is refused; the Terraform plan is recomputed at apply and the window says so) |
+| A hostile renderer names the answers file, or a cloud project the owner did not see | AL (a renderer-supplied path is refused; the payload schema is closed), SW3a (main validates the answers, holds them as bytes in memory and hands them to the CLI on stdin, shows its own parsed copy in the window and applies with exactly the bytes it showed; the Terraform plan is recomputed at apply and the window says so) |
 | A console yes is taken for a consent the CLI accepts | SW3a (`--json` confirms no step, so every step needing one arrives as `left_for_you`; a test asserts apply never passes a confirming word), ST1 (`TestSetupAnswersFileGrantsNoConsent`) |
 | A hostile CLI floods a stream or a setup is killed half-way | AL (per-line, row and byte caps; a deadline of its own for `setup.*`, never the 90 s read timeout) |
 | The answers file is read as consent | ST1 (`TestSetupAnswersFileGrantsNoConsent`) |
@@ -109,8 +112,8 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 
 #### C-OPS: the new operations' names and payload types (contract)
 
-- Acceptance: `new-ops.ts` exports the names and the request and response types of `runs.stream`, `spend.stream`, `budget.stream`, `whoami`, `image.catalog.ls`, `recipes.ls`, `setup.plan`, `setup.apply` and `settings.editor.open` (the last with payload `{key}` only; `setup.plan` carries an answers object and never a path, `setup.apply` carries `{}`); `bridge-stub.ts` is a bridge that answers each operation from the console fixtures; the document says what each side may rely on (an unknown role reads as `none`, a stream without an `end` is interrupted, an answers object never names a file). Fixtures are inline in the stub; I-OPS holds them to the CLI goldens.
-- Files: `console/src/shared/new-ops.ts` (new); `console/src/renderer/stubs/bridge-stub.ts` (new); `console/test/unit/new-ops.test.ts` (new); `docs/console-improvements/contract-ops.md` (new)
+- Acceptance: `new-ops.ts` exports the names and the request and response types of `runs.stream`, `spend.stream`, `budget.stream`, `whoami`, `image.catalog.ls`, `recipes.ls`, `setup.plan`, `setup.apply` and `settings.editor.open` (the last with payload `{key}` only; `setup.plan` carries an answers object and never a path, `setup.apply` carries `{}`); `bridge-stub.ts` is a bridge that answers each operation from the console fixtures; the document says what each side may rely on (an unknown role reads as `none`, a stream without an `end` is interrupted, an answers object never names a file). Fixtures are inline in the stub; I-OPS holds them to the CLI goldens. `new-bridge.ts` exports `newOpsFrom(fugaro)`, the renderer's typed read of the nine methods over the structural bridge (as `readBridgeFrom` in `entry.ts` does for the old reads), so no consumer edits `entry.ts` to reach them; a missing method reads as 'not available'.
+- Files: `console/src/shared/new-ops.ts` (new); `console/src/renderer/stubs/bridge-stub.ts` (new); `console/test/unit/new-ops.test.ts` (new); `docs/console-improvements/contract-ops.md` (new); `console/src/renderer/new-bridge.ts` (new)
 - Interfaces: Produces the types, the stub bridge and the document; consumers import the types and the stub, the allow-list task (AL) implements the operations beside it and does not import them.
 - Tests: `new-ops.test.ts` (new): the stub answers every operation with a fixture that decodes against its type.
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/new-ops.test.ts)`
@@ -121,25 +124,25 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 
 #### AL: the argv rows, IPC operations, bridge, floors, the narrowed never-table and the section 5.1 and contract text
 
-- Acceptance: `SPAWN_COMMANDS` and `CONSOLE_OPERATIONS` gain, as one change, `runs.stream` (`runs ls --stream --json --since <w>`), `whoami` (`user ls --me --json`), `spend.stream` (the `spend.report` argv plus `--stream`), `budget.stream` (the `budget.show` argv plus `--stream`), `image.catalog.ls` (`image ls --json`), `recipes.ls` (`recipes ls --json`), `setup.plan` (`setup --plan-only --answers-file <path> --events --json`), `setup.apply` (`setup --answers-file <path> --events --json`, payload `{}`: apply carries nothing and reuses the file and digest main stored at plan time, so a renderer cannot slip in new answers at apply) and `settings.editor.open` (payload `{key}` only, validated with `SETTINGS_KEY_RE` and the closed payload schema; the layer and phase stay main-process decided), each with its sanitiser class and no flag the renderer can choose; each new operation is added to the closed `ConsoleHandlers` type in `ipc.ts`, to the `Omit` of `CliBackedHandlers` in `console/src/source/source.ts`, and to the `gated` table in `console/src/main/index.ts` with an explicit handler that answers 'not available in this build', so the existing startup check (`refuses to build a surface with a handler missing`) still holds and still stops the console when a handler is truly missing; the handlers sit behind the same wrappers as every other (`lapseHandlers`, `reducedModeHandlers`, and the refused-console rule that a refused console registers nothing), so a lapsed console refuses `setup.apply` and a refused console has no channel, and duplicate or unknown registrations are refused; I-OPS replaces the explicit stubs through the `gated` table in `console/src/main/index.ts`; main chooses `<path>` (a fresh `mkdtemp` directory, mode 0700, the file 0600) and the renderer sends only an answers object, which a payload schema refuses if it carries a path; `setup.apply` carries `refusedAfterLapse` as `settings.edit` does (the licence-lapse read-only gate, nothing more); **bounds:** `runs.stream`, `spend.stream`, `budget.stream` and the setup event feed are read under `MAX_FEED_LINE_LENGTH` per line, a row cap and a total byte cap, and `setup.*` have a deadline of their own (never the 90 s `READ_TIMEOUT_MS`, which would kill an apply part-way; the run ends on the CLI's exit or the user's cancel); the `setup` command row of `NEVER_REACHABLE` **stays**, and `except` (today a flag-row field, `ipc.ts`) is extended to command rows so that row grants exactly the operations `setup.plan` and `setup.apply` by name, with `assertSpawnSurface` and the `ipc.test.ts` pin of the `setup` never-row following (a total ban with two named exceptions, never a denylist); the `models` never-rows are left for MW1; design §3.4 rule 3 (the renderer never names a cloud project; the existing `--gcp-project` and `--region` rows guard `run`) is amended to say that the wizard's answers, validated in main and shown in the confirmation window, are the one way a project name reaches the CLI from the console; `version.ts` gains one plain floor constant per new row, each `string | null = null` until the CLI release that carries it and each pinned by `version.test.ts`; §5.1 of `desktop-console.md` gains a row each, rule 12 describes the single modal (D2902) and the 2026-10-20 ruling is amended (D2904); `console/docs/json-contract.md` says four documents are line-delimited and states the new read documents and the two write operations, with its pinned sentences in `docs_desktop_console_test.go` updated; the old `settings.edit` operation is unchanged and stays main-confirmed. `REDUCED_VIEW_OPERATIONS` gains `spend.stream` under `spend` and `budget.stream` under `caps`, so reduced mode withholds them in main as well as in the renderer.
+- Acceptance: `SPAWN_COMMANDS` and `CONSOLE_OPERATIONS` gain, as one change, `runs.stream` (`runs ls --stream --json --since <w>`), `whoami` (`user ls --me --json`), `spend.stream` (the `spend.report` argv plus `--stream`), `budget.stream` (the `budget.show` argv plus `--stream`), `image.catalog.ls` (`image ls --json`), `recipes.ls` (`recipes ls --json`), `setup.plan` (`setup --plan-only --answers-file - --events --json`), `setup.apply` (`setup --answers-file - --events --json`, payload `{}`: apply carries nothing and reuses the file and digest main stored at plan time, so a renderer cannot slip in new answers at apply) and `settings.editor.open` (payload `{key}` only, validated with `SETTINGS_KEY_RE` and the closed payload schema; the layer and phase stay main-process decided), each with its sanitiser class and no flag the renderer can choose; each new operation is added to the closed `ConsoleHandlers` type in `ipc.ts`, to the `Omit` of `CliBackedHandlers` in `console/src/source/source.ts`, and to the `gated` table in `console/src/main/index.ts` with an explicit handler that answers 'not available in this build', so the existing startup check (`refuses to build a surface with a handler missing`) still holds and still stops the console when a handler is truly missing; the handlers sit behind the same wrappers as every other (`lapseHandlers`, `reducedModeHandlers`, and the refused-console rule that a refused console registers nothing), so a lapsed console refuses `setup.apply` and a refused console has no channel, and duplicate or unknown registrations are refused; I-OPS replaces the explicit stubs through the `gated` table in `console/src/main/index.ts`; the answers reach the child on its stdin as the existing `stdin` argument kind (`spawn.ts`, the kind `run --task-file -` uses), from bytes main holds in memory, so no file exists for another process to change between the check and the CLI's read; the renderer sends only an answers object, which a payload schema refuses if it carries a path; `setup.apply` carries `refusedAfterLapse` as `settings.edit` does (the licence-lapse read-only gate, nothing more); **bounds:** `runs.stream`, `spend.stream`, `budget.stream` and the setup event feed are read under `MAX_FEED_LINE_LENGTH` per line, at most 10,000 rows and at most 16 MiB in all (constants in `ipc.ts`, each pinned by a test); a feed that reaches a cap is ended, the child killed, and the section shows it as an interrupted read with Retry (R1), never a partial list as complete; `setup.*` have a deadline of their own, 60 minutes (never the 90 s `READ_TIMEOUT_MS`, which would kill an apply part-way; the run ends on the CLI's exit or the user's cancel); the `setup` command row of `NEVER_REACHABLE` **stays**, and `except` (today a flag-row field, `ipc.ts`) is extended to command rows so that row grants exactly the operations `setup.plan` and `setup.apply` by name, with `assertSpawnSurface` and the `ipc.test.ts` pin of the `setup` never-row following (a total ban with two named exceptions, never a denylist); the `models` never-rows are left for MW1; design §3.4 rule 3 (the renderer never names a cloud project; the existing `--gcp-project` and `--region` rows guard `run`) is amended to say that the wizard's answers, validated in main and shown in the confirmation window, are the one way a project name reaches the CLI from the console; `version.ts` gains one plain floor constant per new row, each `string | null = null` until the CLI release that carries it and each pinned by `version.test.ts`; §5.1 of `desktop-console.md` gains a row each, rule 12 describes the single modal (D2902) and the 2026-10-20 ruling is amended (D2904); `console/docs/json-contract.md` says seven documents are line-delimited (today's three, `watch`, `logs` and `graph --watch`, plus `runs ls --stream`, `report --stream`, `budget show --stream` and `setup --events`) and states the new read documents and the two write operations, with its pinned sentences in `docs_desktop_console_test.go` updated; the old `settings.edit` operation is unchanged and stays main-confirmed. `REDUCED_VIEW_OPERATIONS` gains `spend.stream` under `spend` and `budget.stream` under `caps`, so reduced mode withholds them in main as well as in the renderer.
 - Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/main/index.ts`; `console/src/source/source.ts`; `console/src/preload/index.ts`; `console/src/shared/version.ts`; `console/test/unit/spawn.test.ts`; `console/test/unit/ipc.test.ts`; `console/test/unit/version.test.ts`; `docs/design/desktop-console.md`; `console/docs/json-contract.md`; `internal/cli/docs_desktop_console_test.go`
-- Interfaces: Consumes RS1, WH1 and ST2 (the CLI in the tree registers every flag word the allow-list names, which `TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands: `--stream` arrives with RS1, so RS3 and RS4 need not precede it; their rows stay behind floors that are `null` until the release); produces the argv table, the operations, the bridge methods, the stub handlers and the floors every console task spawns through.
-- Tests: `spawn.test.ts` (an exact-argv pin per row and a mutation per row that a widened argv is refused), `ipc.test.ts` (each operation pinned, a renderer-supplied path refused, a frame of another origin refused, the `setup` never-rows), `pinning.test.ts`, `version.test.ts`, `TestDocsDesktopConsole*` in `internal/cli/docs_desktop_console_test.go`. The `refuses to build a surface with a handler missing` test in `ipc.test.ts` stays green; new tests: a lapsed console refuses `setup.apply`, a refused console has no channel for the new operations. Also: `spend.stream` and `budget.stream` are unreachable in reduced mode; `except` on a command row grants only the operations it names.
-- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/ipc.test.ts test/unit/pinning.test.ts test/unit/version.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
-- Red step: Each row's pin fails while the row is absent; adding `--yes` or a renderer-chosen `--answers-file` path to `setup.apply` must fail a test; a lapsed console must refuse `setup.apply`, a refused console must register no new channel, and a missing handler must still stop the console at startup; the docs pin fails until the contract sentences say four.
-- Depends on: **RS1** (the docs pin holds the allow-list's flags to flags the CLI registers); **WH1** (same); **ST2** (same); **SM-E** (both write `console/docs/json-contract.md`)
+- Interfaces: Consumes RS1, WH1 and ST2 (the CLI in the tree registers every flag word the allow-list names, which `TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands: `--stream` arrives with RS1, so RS4 need not precede it; RS3 must, because report's own ee contract test reads the docs AL writes; their rows stay behind floors that are `null` until the release); produces the argv table, the operations, the bridge methods, the stub handlers and the floors every console task spawns through.
+- Tests: `spawn.test.ts` (an exact-argv pin per row and a mutation per row that a widened argv is refused), `ipc.test.ts` (each operation pinned, a renderer-supplied path refused, a frame of another origin refused, the `setup` never-rows), `pinning.test.ts`, `version.test.ts`, `TestDocsDesktopConsole*` in `internal/cli/docs_desktop_console_test.go`. The `refuses to build a surface with a handler missing` test in `ipc.test.ts` stays green; new tests: a lapsed console refuses `setup.apply`, a refused console has no channel for the new operations. Also: `spend.stream` and `budget.stream` are unreachable in reduced mode; `except` on a command row grants only the operations it names. Also: a feed at the row or byte cap ends as an interrupted read; `TestConsoleContract*` in `ee/report/cli`.
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/ipc.test.ts test/unit/pinning.test.ts test/unit/version.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs' && go test ./ee/report/cli/ -count=1 -run TestConsoleContract`
+- Red step: Each row's pin fails while the row is absent; adding `--yes` or a renderer-chosen `--answers-file` path to `setup.apply` must fail a test; a lapsed console must refuse `setup.apply`, a refused console must register no new channel, and a missing handler must still stop the console at startup; the docs pin fails until the contract sentences say seven.
+- Depends on: **RS1** (the docs pin holds the allow-list's flags to flags the CLI registers); **WH1** (same); **ST2** (same); **SM-E** (both write `console/docs/json-contract.md`); **RS3** (`ee/report/cli`'s `TestConsoleContractNamesOnlyRealReportFlags` checks every `--flag` the contract and design docs give `report` against report's own command, so `--stream` must be registered there first)
 - Commit: `console(spawn): the rows, operations and floors the improvements need (F24, F25, F26)`
 - Reviewer tier: opus, independent review mandatory (the spawn and IPC allow-lists and a write operation); tier `large`, size 6
 
 #### I-OPS: retire the stub bridge and hold the allow-list to the contract (integration)
 
-- Acceptance: The stub bridge is deleted and every consumer runs on the real bridge; `handlers.ts` supplies SU1's `settings.editor.open` handler, SW3a's `setup.plan` and `setup.apply` handlers and the read handlers SRC adds, and replaces AL's stub handlers in the `gated` table in `index.ts` with them before `registerHandlers` runs, so every handler still passes the lapse and reduced-mode wrappers (a refused console still registers nothing); `ops-contract.test.ts` fails if `CONSOLE_OPERATIONS` and `new-ops.ts` disagree on a name or a payload field, if a handler's signature differs from the contract's, or if a stub answer differs from the CLI golden it stands for (`internal/cli/testdata/runs_stream.golden.ndjson`, `whoami.golden.json`, `setup_events.golden.ndjson`, `budget_stream.golden.ndjson` and `ee/report/cli/testdata/report_stream.golden.ndjson`; the console reads them as bytes); `ops.spec.ts` drives one operation of each consumer against the stub CLI.
+- Acceptance: The stub bridge is deleted and every consumer runs on the real bridge; `handlers.ts` supplies SU1's `settings.editor.open` handler, SW3a's `setup.plan` and `setup.apply` handlers and the read handlers SRC adds, and replaces AL's stub handlers in the `gated` table in `index.ts` with them before `registerHandlers` runs, so every handler still passes the lapse and reduced-mode wrappers (a refused console still registers nothing); `ops-contract.test.ts` fails if a name in `new-ops.ts` is missing from `CONSOLE_OPERATIONS` or its payload fields differ (operations added later by MW1 and MW2 are outside the contract and not refused), if a handler's signature differs from the contract's, or if a stub answer differs from the CLI golden it stands for (`internal/cli/testdata/runs_stream.golden.ndjson`, `whoami.golden.json`, `setup_events.golden.ndjson`, `budget_stream.golden.ndjson` and `ee/report/cli/testdata/report_stream.golden.ndjson`; the console reads them as bytes); `ops.spec.ts` drives one operation of each consumer against the stub CLI.
 - Files: `console/src/renderer/stubs/bridge-stub.ts`; `console/src/main/handlers.ts` (new); `console/src/main/index.ts`; `console/test/unit/ops-contract.test.ts` (new); `console/test/e2e/ops.spec.ts` (new)
-- Interfaces: Joins C-OPS, AL, SRC, SU1, RB4, RS2, MO-C and SW3a.
+- Interfaces: Joins C-OPS, AL, SRC, SU1, RB4, RS2, MO-C and SW3a, after MW1 and MW2 have written `index.ts`; RS5 reads through `newOpsFrom`, so the real handlers reach it once I-OPS lands.
 - Tests: `ops-contract.test.ts` (new), `ops.spec.ts` (new).
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/ops-contract.test.ts) && test -f console/test/e2e/ops.spec.ts && (cd console && npm run test:e2e -- ops.spec.ts)`
 - Red step: Rename one operation in `ipc.ts` in a copy: the contract test fails; take a handler out of the `gated` table: the surface check stops the console at startup and the e2e spec fails.
-- Depends on: **C-OPS** (integrates the contract); **AL** (needs the real operations); **SU1** (needs the real consumer); **RB4** (needs the real consumer); **RS2** (needs the real consumer); **MO-C** (needs the real consumer); **SW3a** (needs the real consumer); **SRC** (needs the real consumer); **RS3** (compares the console's copy with the report golden); **RS4** (compares the console's copy with the budget golden)
+- Depends on: **C-OPS** (integrates the contract); **AL** (needs the real operations); **SU1** (needs the real consumer); **RB4** (needs the real consumer); **RS2** (needs the real consumer); **MO-C** (needs the real consumer); **SW3a** (needs the real consumer); **SRC** (needs the real consumer); **RS3** (compares the console's copy with the report golden); **RS4** (compares the console's copy with the budget golden); **MW2** (both write `index.ts`; I-OPS swaps AL's stubs after MW1 and MW2 have added their handlers, and its contract test checks only the contract's own names)
 - Commit: `console: the stub bridge is gone and the operations match the contract (F24)`
 - Reviewer tier: standard; tier `medium`, size 2
 
@@ -157,11 +160,11 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 
 #### WH1: user ls --me --json
 
-- Acceptance: `user ls --me --json` prints `{version, role (viewer|operator|admin|none), scope (project|all|repos), repos[]}` for the caller only, resolved through `internal/access` (the same resolution the gates use), never another member's; a role the console does not know is read as `none`; without `--json` it prints one sentence; the roster output is unchanged; it is not refused in an agent session because it reads only the caller's own role; the schema and a golden recorded from the CLI's own output hold the shape (the console's copy is compared with the golden by I-OPS).
-- Files: `internal/cli/user_ls.go`; `internal/cli/user_ls_me_test.go` (new); `internal/access/resolve.go`; `schemas/whoami.schema.json` (new); `internal/cli/testdata/whoami.golden.json` (new)
+- Acceptance: `user ls --me --json` prints `{version, role (viewer|operator|admin|none), scope (project|all|repos), repos[]}` for the caller only, resolved through `internal/access` (the same resolution the gates use), never another member's; a role the console does not know is read as `none`; without `--json` it prints one sentence; the roster output is unchanged; it is not refused in an agent session because it reads only the caller's own role; the schema and a golden recorded from the CLI's own output hold the shape (the console's copy is compared with the golden by I-OPS). `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag. RS7 in `docs/roles-scopes/implementation-plan.md` records its amendment (D2907, confirmed by O2): a caller may read their own role.
+- Files: `internal/cli/user_ls.go`; `internal/cli/user_ls_me_test.go` (new); `internal/access/resolve.go`; `schemas/whoami.schema.json` (new); `internal/cli/testdata/whoami.golden.json` (new); `website/content/cli-reference.md` (generated); `docs/roles-scopes/implementation-plan.md`
 - Interfaces: Produces the read, the schema and the fixture.
 - Tests: `TestUserLsMeShowsOnlyTheCaller`, `TestUserLsMeMatchesTheGate`, `TestUserLsRosterUnchanged`, `TestWhoamiSchema`, `TestWhoamiGolden` (new).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestUserLsMe|TestUserLsRosterUnchanged|TestWhoami'`
+- Command: `go test ./internal/cli/ -count=1 -run 'TestUserLsMe|TestUserLsRosterUnchanged|TestWhoami' && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestUserLsMeMatchesTheGate` fails if `--me` resolves differently from `accessGateProject`.
 - Depends on: none
 - Commit: `user: ls --me, the caller's own role (D2907)`
@@ -185,7 +188,7 @@ Inert until used: argv rows behind unset CLI floors, plus the section Retry and 
 - Files: `plugin/skills/working/SKILL.md`; `plugin/skills/setup/SKILL.md`
 - Interfaces: Consumes RS1, WH1, ST2.
 - Tests: The plugin tests that check every command and flag a skill names.
-- Command: `go test ./plugin/ -count=1`
+- Command: `go test ./plugin/ -count=1 && go test ./ee/plugincheck/ -count=1`
 - Red step: Name a flag the CLI lacks in a copy: the plugin test fails.
 - Depends on: **RS1** (names a flag that must exist); **WH1** (names a flag that must exist); **ST2** (names a flag that must exist); **RS3** (names a flag that must exist); **RS4** (names a flag that must exist)
 - Commit: `plugin: the skills name the new flags (F24)`
@@ -336,11 +339,11 @@ A measurement, then an opt-in stream and its decoder.
 
 #### RS1: runs ls --stream emits one line per run
 
-- Acceptance: `runs ls --stream` writes one NDJSON line per run as the per-run reads behind `runcache.List` complete, in the order the whole-document `runs` array has (`type: row`, exactly one element of today's array, unchanged), then one `end` line carrying `count` and the existing document's `version`; a failure after the first row writes an `error` line with the CLI's sentence and exits non-zero; a missing `end` means an interrupted read; without `--stream` the output is byte for byte what it was; `--stream` is accepted only with `--json`; the schema and a golden recorded from the CLI's own output hold the line shape (the console's copy is compared with the golden by I-OPS).
-- Files: `internal/cli/runs.go`; `internal/cli/runs_stream.go` (new); `internal/cli/runs_stream_test.go` (new); `schemas/runs-stream.schema.json` (new); `internal/cli/testdata/runs_stream.golden.ndjson` (new)
+- Acceptance: `runs ls --stream` writes one NDJSON line per run as the per-run reads behind `runcache.List` complete, in the order the whole-document `runs` array has (`type: row`, exactly one element of today's array, unchanged), then one `end` line carrying `count` and the existing document's `version`; a failure after the first row writes an `error` line with the CLI's sentence and exits non-zero; a missing `end` means an interrupted read; without `--stream` the output is byte for byte what it was; `--stream` is accepted only with `--json`; the schema and a golden recorded from the CLI's own output hold the line shape (the console's copy is compared with the golden by I-OPS). `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag.
+- Files: `internal/cli/runs.go`; `internal/cli/runs_stream.go` (new); `internal/cli/runs_stream_test.go` (new); `schemas/runs-stream.schema.json` (new); `internal/cli/testdata/runs_stream.golden.ndjson` (new); `website/content/cli-reference.md` (generated)
 - Interfaces: Produces the stream, the schema and the fixture the console decodes.
 - Tests: `TestRunsLsStreamRows`, `TestRunsLsStreamEndsWithCount`, `TestRunsLsJSONUnchanged`, `TestRunsStreamSchema`, `TestRunsStreamGolden` (new).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestRunsLsStream|TestRunsLsJSONUnchanged|TestRunsStreamSchema|TestRunsStreamGolden'`
+- Command: `go test ./internal/cli/ -count=1 -run 'TestRunsLsStream|TestRunsLsJSONUnchanged|TestRunsStreamSchema|TestRunsStreamGolden' && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestRunsLsStreamEndsWithCount` fails while the stream has no `end` line; `TestRunsLsJSONUnchanged` is written first against today's output and stays green.
 - Depends on: none
 - Commit: `runs: ls --stream, one record per line (D2906)`
@@ -348,23 +351,23 @@ A measurement, then an opt-in stream and its decoder.
 
 #### RS3: report --stream
 
-- Acceptance: `report` is a paid command under `ee/` (`ee/report/cli/report.go`; `paidCommands` in `internal/cli/extend.go`), so `.claude/rules/ee.md` applies: every new file carries the two-line SPDX notice (the golden, which has no comment syntax, gets a sibling `.license` file) and nothing outside `ee/` imports it. FIRST the task writes in its pull-request body how `report --json` is assembled and which part of it can be emitted before the whole is known (a row per group, a total last); if nothing can, it stops and reports. Then `report --stream` (with `--json`, accepted with the flags `report` takes today: `--by`, `--since`, `--until`, `--repo`) writes one NDJSON line per record in the `row`/`end`/`error` shape RS1's schema states (its own writer: `ee/` may not be imported from the core and RS1's writer is in package `cli`) (a `row` is one element of today's document, unchanged; the `end` carries the totals and the document `version`); without `--stream` the output is byte for byte what it was; the schema and a golden recorded from the CLI's own output hold the shape.
-- Files: `ee/report/cli/report.go`; `ee/report/cli/report_stream.go` (new); `ee/report/cli/report_stream_test.go` (new); `schemas/report-stream.schema.json` (new); `ee/report/cli/testdata/report_stream.golden.ndjson` (new); `ee/report/cli/testdata/report_stream.golden.ndjson.license` (new)
+- Acceptance: `report` is a paid command under `ee/` (`ee/report/cli/report.go`; `paidCommands` in `internal/cli/extend.go`), so `.claude/rules/ee.md` applies: every new file carries the two-line SPDX notice (the golden, which has no comment syntax, gets a sibling `.license` file) and nothing outside `ee/` imports it. FIRST the task writes in its pull-request body how `report --json` is assembled and which part of it can be emitted before the whole is known (a row per group, a total last); if nothing can, it stops and reports. Then `report --stream` (with `--json`, accepted with the flags `report` takes today: `--by`, `--since`, `--until`, `--repo`) writes one NDJSON line per record in the `row`/`end`/`error` shape RS1's schema states (its own writer: RS1's writer is unexported in package `cli`, which `ee/report/cli` imports only through exported names) (a `row` is one element of today's document, unchanged; the `end` carries the totals and the document `version`); without `--stream` the output is byte for byte what it was; the schema and a golden recorded from the CLI's own output hold the shape. `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag.
+- Files: `ee/report/cli/report.go`; `ee/report/cli/report_stream.go` (new); `ee/report/cli/report_stream_test.go` (new); `schemas/report-stream.schema.json` (new); `ee/report/cli/testdata/report_stream.golden.ndjson` (new); `ee/report/cli/testdata/report_stream.golden.ndjson.license` (new); `website/content/cli-reference.md` (generated)
 - Interfaces: Produces the stream, the schema and the golden.
 - Tests: `TestReportStreamRows`, `TestReportStreamEndCarriesTotals`, `TestReportJSONUnchanged`, `TestReportStreamSchema`, `TestReportStreamGolden` (new).
-- Command: `go test ./ee/report/cli/ -count=1 -run 'TestReportStream|TestReportJSONUnchanged' && go test ./internal/eeboundary/ -count=1`
+- Command: `go test ./ee/report/cli/ -count=1 -run 'TestReportStream|TestReportJSONUnchanged' && go test ./internal/eeboundary/ -count=1 && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestReportStreamEndCarriesTotals` fails while the stream has no `end` line; `TestReportJSONUnchanged` is written first and stays green.
-- Depends on: none
+- Depends on: **RS1** (writes the `row`/`end`/`error` line shape RS1's schema states)
 - Commit: `report: --stream, one record per line (O3, D2906)`
 - Reviewer tier: standard; tier `medium`, size 3
 
 #### RS4: budget show --stream
 
-- Acceptance: FIRST the task writes in its pull-request body how `budget show --json` reads its sources (config, spend, repos, agents, kill state) and which can be emitted as they arrive; if its shape is one indivisible document, it stops and reports. Then `budget show --stream` (with `--json`, and with every flag `budget show` takes today: `--repo`, `--all`, `--compute`, each meaning what it means without `--stream`) writes `row` lines per repository and per kill switch as their reads complete, then an `end` line; without `--stream` the output is byte for byte what it was; the schema and a golden hold the shape.
-- Files: `internal/cli/budget.go`; `internal/cli/budget_stream.go` (new); `internal/cli/budget_stream_test.go` (new); `schemas/budget-stream.schema.json` (new); `internal/cli/testdata/budget_stream.golden.ndjson` (new)
+- Acceptance: FIRST the task writes in its pull-request body how `budget show --json` reads its sources (config, spend, repos, agents, kill state) and which can be emitted as they arrive; if its shape is one indivisible document, it stops and reports. Then `budget show --stream` (with `--json`, and with every flag `budget show` takes today: `--repo`, `--all`, `--compute`, each meaning what it means without `--stream`) writes `row` lines per repository and per kill switch as their reads complete, then an `end` line; without `--stream` the output is byte for byte what it was; the schema and a golden hold the shape. `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag.
+- Files: `internal/cli/budget.go`; `internal/cli/budget_stream.go` (new); `internal/cli/budget_stream_test.go` (new); `schemas/budget-stream.schema.json` (new); `internal/cli/testdata/budget_stream.golden.ndjson` (new); `website/content/cli-reference.md` (generated)
 - Interfaces: Produces the stream, the schema and the golden.
 - Tests: `TestBudgetShowStreamRows`, `TestBudgetShowStreamEnd`, `TestBudgetShowJSONUnchanged`, `TestBudgetStreamSchema`, `TestBudgetStreamGolden` (new).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestBudgetShowStream|TestBudgetShowJSONUnchanged'`
+- Command: `go test ./internal/cli/ -count=1 -run 'TestBudgetShowStream|TestBudgetShowJSONUnchanged' && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestBudgetShowStreamEnd` fails while the stream has no `end` line; `TestBudgetShowJSONUnchanged` is written first and stays green.
 - Depends on: **RS1** (both reuse RS1's stream writer and line shape (`runs_stream.go`))
 - Commit: `budget: show --stream, one record per line (O3, D2906)`
@@ -384,7 +387,7 @@ A measurement, then an opt-in stream and its decoder.
 
 #### SRC: the main-side handlers and fixtures for the six new reads
 
-- Acceptance: `new-reads.ts`, typed from `new-ops.ts` (C-OPS), answers `runs.stream`, `spend.stream` and `budget.stream` (a line-by-line feed under the per-line, row and byte caps), `whoami`, `image.catalog.ls` and `recipes.ls` from the CLI source, and from the fixture source for the e2e specs; every answer passes `TEXT_CLASSES`; a CLI below the floor, or a floor still `null`, answers the section's refusal and Retry rather than spawning. The handlers are not added to `handlersFor` here (the names do not exist in its type until AL lands); I-OPS swaps AL's stubs in the `gated` table for them.
+- Acceptance: `new-reads.ts`, typed from `new-ops.ts` (C-OPS), answers `runs.stream`, `spend.stream` and `budget.stream` (a line-by-line feed under the per-line, 10,000-row and 16 MiB caps AL sets; at a cap the feed ends as an interrupted read), `whoami`, `image.catalog.ls` and `recipes.ls` from the CLI source, and from the fixture source for the e2e specs; every answer passes `TEXT_CLASSES`; a CLI below the floor, or a floor still `null`, answers the section's refusal and Retry rather than spawning. The handlers are not added to `handlersFor` here (the names do not exist in its type until AL lands); I-OPS swaps AL's stubs in the `gated` table for them.
 - Files: `console/src/source/new-reads.ts` (new); `console/src/source/fixture.ts`; `console/test/unit/source-new-reads.test.ts` (new)
 - Interfaces: Consumes the operations' payloads and handler signatures (C-OPS); produces the read handlers I-OPS registers.
 - Tests: `source-new-reads.test.ts` (new): each read from a stub child, the caps, the floor refusal.
@@ -402,14 +405,14 @@ A measurement, then an opt-in stream and its decoder.
 - Tests: `prewarm.test.ts` (new): order, one at a time, cancelled on switch, nothing in reduced mode.
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/prewarm.test.ts test/unit/section.test.ts)`
 - Red step: The cancel test fails while the queue keeps reading after a tab switch.
-- Depends on: **RB1** (uses the cache API it adds); **RS2** (both write `entry.ts`); **SU2b** (both write `entry.ts`)
+- Depends on: **RB1** (uses the cache API it adds); **RS2** (both write `entry.ts`); **SU2b** (both write `entry.ts`); **RS5** (both write `entry.ts`; prewarm warms the stream paths RS5 adds)
 - Commit: `console: prewarm the other tabs after the first paint (D2906)`
 - Reviewer tier: standard; tier `medium`, size 2
 
 #### RS5: the Spend and Project tabs draw their rows as they arrive
 
-- Acceptance: The Spend report and the Project tab's caps read through `readStream` (RS2) when the floor allows and fall back to the whole documents otherwise; rows and totals appear as lines arrive, the `end` line completes the section, a missing `end` is an interrupted read with Retry (R1), and reduced mode still withholds spend, caps and kill figures (`hidesView`).
-- Files: `console/src/renderer/screens/spend.ts`; `console/src/renderer/screens/projects.ts`; `console/src/renderer/stream.ts`; `console/test/unit/spend-stream.test.ts` (new); `console/test/unit/projects-stream.test.ts` (new)
+- Acceptance: The Spend report and the Project tab's caps read through `readStream` (RS2) when the floor allows and fall back to the whole documents otherwise; rows and totals appear as lines arrive, the `end` line completes the section, a missing `end` is an interrupted read with Retry (R1), and reduced mode still withholds spend, caps and kill figures (`hidesView`). The caps and report reads are called from `entry.ts` (`bridge.showBudget`, `bridge.runReport`), so RS5 changes those call sites. It reaches the streams through C-OPS's `newOpsFrom` and its tests use a fake bridge typed from `new-ops.ts`; I-OPS wires the real one.
+- Files: `console/src/renderer/screens/spend.ts`; `console/src/renderer/screens/projects.ts`; `console/src/renderer/stream.ts`; `console/test/unit/spend-stream.test.ts` (new); `console/test/unit/projects-stream.test.ts` (new); `console/src/renderer/entry.ts`
 - Interfaces: Consumes `spend.stream` and `budget.stream` (C-OPS types, I-OPS wiring) and RS2's `readStream`.
 - Tests: `spend-stream.test.ts` and `projects-stream.test.ts` (new): in-order rows, interrupted read, old-CLI fallback, reduced mode.
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spend-stream.test.ts test/unit/projects-stream.test.ts test/unit/spend.test.ts)`
@@ -509,11 +512,11 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 
 #### MD1: models add --dry-run
 
-- Acceptance: `models add <id> --dry-run --json` (with every flag `models add` takes today, each meaning what it means without `--dry-run`) computes the change and writes nothing: no config file, no policy node, no saved apply step; it prints one document (`version: 1`) naming the layer it would write, the `budget.allowed_models` entry it would append, the `model_prices` entry with both rates, and the follow-up step it would run or save; a refusal the real command would print (an unknown id, a half-given price) is the same refusal under `--dry-run`. Without `--dry-run` the behaviour and output are byte for byte what they were. The schema and a golden recorded from the CLI's own output hold the shape. It asks nothing (`--dry-run` is a read).
-- Files: `internal/cli/models_add.go`; `internal/cli/models_add_dryrun_test.go` (new); `schemas/models-add-plan.schema.json` (new); `internal/cli/testdata/models_add_plan.golden.json` (new)
+- Acceptance: `models add` gains the aiming pair `--project` and `--config` (`settingsAimFlags`, as the settings writers take it), so a caller names the installation it writes instead of whichever the CLI selects, and `--dry-run` and `--json`. `models add <id> --dry-run --json` (with every flag `models add` takes, each meaning what it means without `--dry-run`) computes the change and writes nothing: no config file, no policy node, no saved apply step; it prints one document (`version: 1`) naming the layer it would write, the `budget.allowed_models` entry it would append, the `model_prices` entry with both rates, and the follow-up step it would run or save; a refusal the real command would print (an unknown id, a half-given price) is the same refusal under `--dry-run`. `--json` is accepted only with `--dry-run` (alone it is refused with the fix), and with `--no-apply` the document lists the follow-up as saved, not run. Without the new flags the behaviour and output are byte for byte what they were. The schema and a golden recorded from the CLI's own output hold the shape. It asks nothing (`--dry-run` is a read). `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag.
+- Files: `internal/cli/models_add.go`; `internal/cli/models_add_dryrun_test.go` (new); `schemas/models-add-plan.schema.json` (new); `internal/cli/testdata/models_add_plan.golden.json` (new); `website/content/cli-reference.md` (generated)
 - Interfaces: Produces the plan document the MW1 window shows.
-- Tests: `TestModelsAddDryRunWritesNothing`, `TestModelsAddDryRunDocument`, `TestModelsAddDryRunRefusesAsTheCommandDoes`, `TestModelsAddUnchanged`, `TestModelsAddPlanSchema` (new).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestModelsAddDryRun|TestModelsAddUnchanged|TestModelsAddPlanSchema'`
+- Tests: `TestModelsAddDryRunWritesNothing`, `TestModelsAddDryRunDocument`, `TestModelsAddDryRunRefusesAsTheCommandDoes`, `TestModelsAddUnchanged`, `TestModelsAddPlanSchema` (new); `TestModelsAddAimsTheNamedProject`, `TestModelsAddJSONNeedsDryRun` (new).
+- Command: `go test ./internal/cli/ -count=1 -run 'TestModelsAddDryRun|TestModelsAddUnchanged|TestModelsAddPlanSchema' && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestModelsAddDryRunWritesNothing` fails while `--dry-run` is not a registered flag; `TestModelsAddUnchanged` is written first and stays green.
 - Depends on: none
 - Commit: `models: add --dry-run, the change as a document and nothing written (O4)`
@@ -521,41 +524,53 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 
 #### MD2: image add --dry-run
 
-- Acceptance: `image add <name> --dry-run --json` (with every flag `image add` takes today) validates the definition as the real command does and writes nothing: no catalog entry, no build, no saved apply step; it prints one document (`version: 1`) naming the catalog entry it would add (name, tags, description, the definition's source) and the steps it would run or save. A refusal the real command would print is the same refusal under `--dry-run`. Without `--dry-run` the behaviour and output are byte for byte what they were. The schema and a golden hold the shape.
-- Files: `internal/cli/image_catalog.go`; `internal/cli/image_add_dryrun_test.go` (new); `schemas/image-add-plan.schema.json` (new); `internal/cli/testdata/image_add_plan.golden.json` (new)
+- Acceptance: `image add` gains `--dry-run` and `--json`. `image add <name> --dry-run --json` (with every flag `image add` takes today, including its existing `--project` and `--config`) validates the definition as the real command does and writes nothing: no catalog entry, no build, no saved apply step; it prints one document (`version: 1`) naming the catalog entry it would add (name, tags, description, the definition's source) and the steps it would run or save. A refusal the real command would print is the same refusal under `--dry-run`. `--json` is accepted only with `--dry-run`, and with `--no-apply` the document lists the build, the redeploy and the publish as saved, not run. Without the new flags the behaviour and output are byte for byte what they were. The schema and a golden hold the shape. `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag.
+- Files: `internal/cli/image_catalog.go`; `internal/cli/image_add_dryrun_test.go` (new); `schemas/image-add-plan.schema.json` (new); `internal/cli/testdata/image_add_plan.golden.json` (new); `website/content/cli-reference.md` (generated)
 - Interfaces: Produces the plan document the MW2 window shows.
-- Tests: `TestImageAddDryRunWritesNothing`, `TestImageAddDryRunDocument`, `TestImageAddDryRunRefusesAsTheCommandDoes`, `TestImageAddUnchanged`, `TestImageAddPlanSchema` (new).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestImageAddDryRun|TestImageAddUnchanged|TestImageAddPlanSchema'`
+- Tests: `TestImageAddDryRunWritesNothing`, `TestImageAddDryRunDocument`, `TestImageAddDryRunRefusesAsTheCommandDoes`, `TestImageAddUnchanged`, `TestImageAddPlanSchema` (new); `TestImageAddJSONNeedsDryRun` (new).
+- Command: `go test ./internal/cli/ -count=1 -run 'TestImageAddDryRun|TestImageAddUnchanged|TestImageAddPlanSchema' && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestImageAddDryRunWritesNothing` fails while `--dry-run` is not a registered flag on `image add`; `TestImageAddUnchanged` is written first and stays green.
 - Depends on: none
 - Commit: `image: add --dry-run, the entry as a document and nothing written (O4)`
 - Reviewer tier: standard; tier `medium`, size 2
 
-#### MW1: models add from the Manage list
+#### MW1: models add: the main-process rows, handlers and binding
 
-- Acceptance: U5 is settled (reconciliation): `models add <id>` takes `--route`, `--price-in`, `--price-out` and `--no-apply` as flags, reads no terminal and has no role check of its own (it writes this machine's project config); the console enables it only for a caller whose role is project admin (RB4's gating) and a test pins that the argv carries no flag outside that set. `models add` goes through the SU1 modal as a **widening** (the tick: it appends to `budget.allowed_models` and writes a `model_prices` entry, `internal/cli/models_add.go`, so it changes what every run may name and spend on), the window showing the model, the typed price and the exact argv, main setting `--no-apply`, one exact-argv row carrying `refusedAfterLapse`, the `models add` row of `NEVER_REACHABLE` kept and granting only the two operations (the dry run and the apply) by name through `except`, with its pin, the cache scopes invalidated (R2), a §5.1 row. `models use` (it rewrites a repository's reviewed `agent.models.<role>` in its working tree: the owner's word, O5) and `models rm` stay Copy-commands. The window shows the CLI's own `--dry-run --json` document (MD1): main runs the dry run with the validated arguments, holds the document's digest and the argv in the window instance that showed them, refuses a second plan while one is pending, and on that window's own top-frame yes runs the same argv without `--dry-run` (plus `--no-apply`), never one the renderer re-sends; an IPC apply with no yes spawns nothing. Its rows carry a floor constant in `console/src/shared/version.ts` (`null` until the CLI release that carries MD1), so an older CLI shows the Copy-command instead.
-- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/models.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`; `console/src/shared/version.ts`
+- Acceptance: U5 is settled (reconciliation): `models add <id>` takes `--route`, `--price-in`, `--price-out` and `--no-apply` as flags, reads no terminal and has no role check of its own (it writes this machine's project config); the console enables it only for a caller whose role is project admin (RB4's gating), which is advisory: the CLI has no role check for this local write, and authority is checked where the change is published (`fugaro apply`) and a test pins that the argv carries no flag outside that set. `models add` goes through the SU1 modal as a **widening** (the tick: it appends to `budget.allowed_models` and writes a `model_prices` entry, `internal/cli/models_add.go`, so it changes what every run may name and spend on), the window showing the model, the typed price and the exact argv, main setting `--no-apply`, one exact-argv row carrying `refusedAfterLapse`, the `models add` command row and the `models`/`add` argv row of `NEVER_REACHABLE` kept, each granting only the two operations by name through `except` (AL extends `except` to command rows; MW1 extends it to argv rows the same way, a change to the never-table mechanism with its own pin), the cache scopes invalidated (R2), the §5.1 row written by MWR. `models use` (it rewrites a repository's reviewed `agent.models.<role>` in its working tree: the owner's word, O5) and `models rm` stay Copy-commands. The window shows the CLI's own `--dry-run --json` document (MD1): main runs the dry run with the validated arguments, holds the document's digest and the argv in the window instance that showed them, refuses a second plan while one is pending, and on that window's own top-frame yes runs the same argv without `--dry-run` (plus `--no-apply`), never one the renderer re-sends; an IPC apply with no yes spawns nothing. Its rows carry a floor constant in `console/src/shared/version.ts` (`null` until the CLI release that carries MD1), so an older CLI shows the Copy-command instead. The two operations are `models.add.plan` and `models.add`: each is added to `CONSOLE_OPERATIONS`, the closed `ConsoleHandlers` type, the `Omit` of `CliBackedHandlers` in `source.ts`, the `gated` table in `index.ts` and the preload bridge, as AL does for its own (F30). The planned argv is `<command> <validated values> --project <the active installation> --no-apply --dry-run --json` and the applied argv is exactly that argv without `--dry-run --json`; the window therefore shows the follow-up as saved, which is what apply does. Every value is checked in main against a stated grammar before any spawn (a model id or an image name `^[a-z0-9][a-z0-9._/-]{0,127}$`; `--dockerfile` `owner/name:path` with no `..` segment; tags from the CLI's closed list; a description of printable characters, no newline, at most 200), every flag is passed as one `--flag=value` word and the positional after `--`, so no value can parse as a flag.
+- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/main/index.ts`; `console/src/source/source.ts`; `console/src/preload/index.ts`; `console/src/shared/version.ts`; `console/src/main/confirm.ts`; `console/test/unit/spawn.test.ts`; `console/test/unit/models-writes.test.ts` (new)
 - Interfaces: Consumes the Manage list (I-MG), the modal (SU1), `invalidate` (RB1) and the ops table (AL).
-- Tests: `spawn.test.ts` (exact argv per write and a widened-argv mutation), `models-writes.test.ts` (new). Also: plan, plan, yes applies nothing; the applied argv equals the planned argv minus `--dry-run`; the row is unreachable below its floor. Also: the action is disabled for a non-admin caller.
-- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/models-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
+- Tests: `spawn.test.ts` (exact argv per write and a widened-argv mutation), `models-writes.test.ts` (new). Also: plan, plan, yes applies nothing; the applied argv equals the planned argv minus `--dry-run`; the row is unreachable below its floor. Also: the action is disabled for a non-admin caller. Also: a value that fails its grammar spawns nothing; a value beginning with `-` stays a value; the applied argv names the active installation.
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/models-writes.test.ts test/unit/ipc.test.ts test/unit/ops-contract.test.ts)`
 - Red step: The exact-argv pin for `models add` fails while the row is absent; a test that `models use` and `models rm` are refused fails if either is allowed. A test that an apply with no planned document spawns nothing fails while apply is reachable directly.
-- Depends on: **I-MG** (adds an action to the list kind the integration wired); **SU1** (confirms through the same window); **RB1** (calls `invalidate`); **AL** (writes the same allow-list, after it); **MD1** (the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD1's document); **RB4** (enables the action only for a project admin)
+- Depends on: **SU1** (confirms through the same window); **RB1** (calls `invalidate`); **AL** (writes the same allow-list, after it); **RB4** (enables the action only for a project admin); **MD1** (the window shows MD1's document, the floor follows MD1's release, and the aiming flags must exist)
 - Commit: `console(manage): models add behind the modal as a widening (D2903)`
 - Reviewer tier: opus, independent review mandatory (a console write); tier `large`, size 4
 - Owner-run: the owner's own go for this task by name.
 
-#### MW2: image add from the Manage list
+#### MW2: image add: the main-process rows, handlers and binding
 
-- Acceptance: As MW1 for `image add`, admitting only `--dockerfile owner/name:path`, `--tags` and `--description`, with `--no-apply` set by main so nothing is built (the console's child environment has no agent-session marker, so the CLI's own refusal of `--inline`, `--image`, `--default` and `--branch` would not apply; those flags define executable content and a test pins that each is refused); U5 is settled (reconciliation): `image add` reads no terminal (it checks for one only to detect an agent session) and refuses anyone but a project admin (`accessGateProject`), so the console enables it only for a project admin (RB4's gating) and still shows the CLI's refusal if the role changed; `image rm` stays a Copy-command (O5); `image build` and `image refresh` stay on `NEVER_REACHABLE` and `image promote` has no row and none is added. The window shows the CLI's own `--dry-run --json` document (MD2): main runs the dry run with the validated arguments, holds the document's digest and the argv in the window instance that showed them, refuses a second plan while one is pending, and on that window's own top-frame yes runs the same argv without `--dry-run` (plus `--no-apply`), never one the renderer re-sends; an IPC apply with no yes spawns nothing. Its rows carry a floor constant in `console/src/shared/version.ts` (`null` until the CLI release that carries MD2), so an older CLI shows the Copy-command instead.
-- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/images.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`; `console/src/shared/version.ts`
+- Acceptance: As MW1 for `image add`, admitting only `--dockerfile owner/name:path`, `--tags`, `--description` and main's own `--project`, with `--no-apply` set by main so nothing is built (the console's child environment has no agent-session marker, so the CLI's own refusal of `--inline`, `--image`, `--default` and `--branch` would not apply; those flags define executable content and a test pins that each is refused); U5 is settled (reconciliation): `image add` reads no terminal (it checks for one only to detect an agent session) and refuses anyone but a project admin (`accessGateProject`), so the console enables it only for a project admin (RB4's gating) and still shows the CLI's refusal if the role changed; `image rm` stays a Copy-command (O5); `image build` and `image refresh` stay on `NEVER_REACHABLE` and `image promote` has no row and none is added. The window shows the CLI's own `--dry-run --json` document (MD2): main runs the dry run with the validated arguments, holds the document's digest and the argv in the window instance that showed them, refuses a second plan while one is pending, and on that window's own top-frame yes runs the same argv without `--dry-run` (plus `--no-apply`), never one the renderer re-sends; an IPC apply with no yes spawns nothing. Its rows carry a floor constant in `console/src/shared/version.ts` (`null` until the CLI release that carries MD2), so an older CLI shows the Copy-command instead. The two operations are `image.add.plan` and `image.add`: each is added to `CONSOLE_OPERATIONS`, the closed `ConsoleHandlers` type, the `Omit` of `CliBackedHandlers` in `source.ts`, the `gated` table in `index.ts` and the preload bridge, as AL does for its own (F30). The planned argv is `<command> <validated values> --project <the active installation> --no-apply --dry-run --json` and the applied argv is exactly that argv without `--dry-run --json`; the window therefore shows the follow-up as saved, which is what apply does. Every value is checked in main against a stated grammar before any spawn (a model id or an image name `^[a-z0-9][a-z0-9._/-]{0,127}$`; `--dockerfile` `owner/name:path` with no `..` segment; tags from the CLI's closed list; a description of printable characters, no newline, at most 200), every flag is passed as one `--flag=value` word and the positional after `--`, so no value can parse as a flag.
+- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/main/index.ts`; `console/src/source/source.ts`; `console/src/preload/index.ts`; `console/src/shared/version.ts`; `console/src/main/confirm.ts`; `console/test/unit/spawn.test.ts`; `console/test/unit/image-writes.test.ts` (new)
 - Interfaces: Consumes MW1's pattern and the same files after it.
-- Tests: `spawn.test.ts`, `image-catalog-writes.test.ts` (new). Also: plan, plan, yes applies nothing; the applied argv equals the planned argv minus `--dry-run`. Also: the action is disabled for a non-admin caller.
-- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/image-catalog-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
+- Tests: `spawn.test.ts`, `image-catalog-writes.test.ts` (new). Also: plan, plan, yes applies nothing; the applied argv equals the planned argv minus `--dry-run`. Also: the action is disabled for a non-admin caller. Also: a value that fails its grammar spawns nothing; a value beginning with `-` stays a value; the applied argv names the active installation.
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/image-writes.test.ts test/unit/ipc.test.ts test/unit/ops-contract.test.ts)`
 - Red step: The exact-argv pin for `image add` fails while the row is absent.
-- Depends on: **MW1** (both write `spawn.ts`, `ipc.ts` and the §5.1 table); **MD2** (the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD2's document)
+- Depends on: **MW1** (both write `spawn.ts`, `ipc.ts` and the §5.1 table); **MD2** (the window shows MD2's document and the floor follows MD2's release)
 - Commit: `console(manage): image add behind the modal (D2903)`
 - Reviewer tier: opus, independent review mandatory (a console write); tier `large`, size 4
 - Owner-run: the owner's own go for this task by name.
+
+#### MWR: the Manage write actions: the window views, the kinds and the contract text
+
+- Acceptance: The Models and Images kinds gain an Add action, enabled only for a project admin (RB4) and only above the floor, that opens SU1's window with a view of its own showing the dry-run document as main parsed it (every string through `TEXT_CLASSES`); below the floor the action shows the Copy-command. §5.1 of `desktop-console.md` gains the four rows; `json-contract.md` gains a §6 section for each dry-run document and its pinned §9 sentence ('read-only — with three exceptions') becomes five exceptions, updated with its pin in `docs_desktop_console_test.go`.
+- Files: `console/src/renderer/confirm.ts`; `console/src/renderer/manage/kinds/models.ts`; `console/src/renderer/manage/kinds/images.ts`; `docs/design/desktop-console.md`; `console/docs/json-contract.md`; `internal/cli/docs_desktop_console_test.go`; `console/test/unit/manage-writes.test.ts` (new)
+- Interfaces: Consumes MW1 and MW2's operations, SU1's window, RB4's gating and the kinds MO-K and MO-C drew.
+- Tests: `manage-writes.test.ts` (new): a non-admin sees the action disabled with the reason; below the floor the Copy-command; the view draws only what main sent. `TestDocsDesktopConsole*`.
+- Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/manage-writes.test.ts test/unit/confirm.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
+- Red step: The non-admin test fails while the action is enabled for every role.
+- Depends on: **MW2** (draws both writes' operations); **SW3a** (both write `renderer/confirm.ts`); **RB4** (enables the action by role); **I-MG** (adds an action to the kinds the integration mounted)
+- Commit: `console(manage): Add for models and images behind the modal (D2903, O4)`
+- Reviewer tier: opus, independent review mandatory (a console write); tier `medium`, size 3
 
 
 ### Slice 6: the setup wizard (`setup-wizard`)
@@ -564,11 +579,11 @@ CLI first (answers file, events), then the wizard.
 
 #### ST1: fugaro setup --answers-file
 
-- Acceptance: `--answers-file PATH` decodes the strict schema `{version, gcp_project, region, name, rigor, bake_repos}` (exactly the five questions of `setupQuestions`; `rigor` is required, it has no default) and fills the five questions' flags; a flag given with a file wins and is named in the plan output; an unknown key or a missing `rigor` is refused with the fix; no question is asked when the file answers it; project creation, the billing link and the Firestore location stay terminal-only and are never read from the file; the file's contents never appear in a log or the plan.
-- Files: `internal/cli/init.go`; `internal/cli/setup_answers.go` (new); `internal/cli/setup_answers_test.go` (new); `schemas/setup-answers.schema.json` (new)
+- Acceptance: `--answers-file PATH` (or `-`, read from stdin, as `run --task-file -` does; the console uses only `-`) decodes the strict schema `{version, gcp_project, region, name, rigor, bake_repos}` (exactly the five questions of `setupQuestions`; `rigor` is required, it has no default) and fills the five questions' flags; a flag given with a file wins and is named in the plan output; an unknown key or a missing `rigor` is refused with the fix; no question is asked when the file answers it; project creation, the billing link and the Firestore location stay terminal-only and are never read from the file; the file's contents never appear in a log or the plan. `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag.
+- Files: `internal/cli/init.go`; `internal/cli/setup_answers.go` (new); `internal/cli/setup_answers_test.go` (new); `schemas/setup-answers.schema.json` (new); `website/content/cli-reference.md` (generated)
 - Interfaces: Consumes the contract's answers schema; produces the flag.
-- Tests: `TestSetupAnswersFile`, `TestSetupAnswersFileRefusesUnknownKey`, `TestSetupAnswersSchema`, `TestSetupAnswersFileGrantsNoConsent` (new: with an answers file an agent session still applies nothing, and a managed project's review and confirmation are still required), `TestEveryWizardQuestionHasAFlag` (existing).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestSetupAnswers|TestEveryWizardQuestionHasAFlag'`
+- Tests: `TestSetupAnswersFile`, `TestSetupAnswersFileRefusesUnknownKey`, `TestSetupAnswersSchema`, `TestSetupAnswersFileGrantsNoConsent` (new: with an answers file an agent session still applies nothing, and a managed project's review and confirmation are still required), `TestEveryWizardQuestionHasAFlag` (existing). Also `TestSetupAnswersFromStdin`.
+- Command: `go test ./internal/cli/ -count=1 -run 'TestSetupAnswers|TestEveryWizardQuestionHasAFlag' && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestSetupAnswersFileRefusesUnknownKey` fails until strict decoding is in.
 - Depends on: none
 - Commit: `setup: --answers-file (D2904)`
@@ -576,11 +591,11 @@ CLI first (answers file, events), then the wizard.
 
 #### ST2: fugaro setup --events
 
-- Acceptance: `--events` (with `--json`) writes NDJSON lines `{type: stage|step|left_for_you|done|error, ...}` as the stages run (the stages, `left_for_you`, the failed stage and the exit code that `--json` prints today, as separate lines), ending with `done` or `error`; the final exit code is unchanged; progress text still goes to stderr; without `--events` the output is byte for byte what it was; a terminal-only step emits `left_for_you` with its one line to run and never waits; the schema and a golden (a hermetic `setup --plan-only --events` against `internal/gcpfake`) hold the shape, and the console's copy is compared with the golden by I-OPS. Because `--json` confirms no step (`unconfirmedWhy` in `internal/cli/init.go`), every step that needs a confirmation is emitted as `left_for_you`; nothing here adds a way to confirm one.
-- Files: `internal/cli/init.go`; `internal/cli/setup_events.go` (new); `internal/cli/report_step.go`; `internal/cli/setup_events_test.go` (new); `schemas/setup-events.schema.json` (new); `internal/cli/testdata/setup_events.golden.ndjson` (new)
+- Acceptance: `--events` (with `--json`) writes NDJSON lines `{type: stage|step|left_for_you|done|error, ...}` as the stages run (the stages, `left_for_you`, the failed stage and the exit code that `--json` prints today, as separate lines), ending with `done` or `error`; the final exit code is unchanged; progress text still goes to stderr; without `--events` the output is byte for byte what it was; a terminal-only step emits `left_for_you` with its one line to run and never waits; the schema and a golden (a hermetic `setup --plan-only --events` against `internal/gcpfake`) hold the shape, and the console's copy is compared with the golden by I-OPS. Because `--json` confirms no step (`unconfirmedWhy` in `internal/cli/init.go`), every step that needs a confirmation is emitted as `left_for_you`; nothing here adds a way to confirm one. `website/content/cli-reference.md` is regenerated with `go run ./ee/clidoc` and names the new flag.
+- Files: `internal/cli/init.go`; `internal/cli/setup_events.go` (new); `internal/cli/report_step.go`; `internal/cli/setup_events_test.go` (new); `schemas/setup-events.schema.json` (new); `internal/cli/testdata/setup_events.golden.ndjson` (new); `website/content/cli-reference.md` (generated)
 - Interfaces: Consumes the events schema; produces the stream.
 - Tests: `TestSetupEventsStages`, `TestSetupEventsLeftForYou`, `TestSetupEventsSchema`, `TestSetupEventsGolden` (new), `TestInitJSONOnARefusalBeforeAnyStage` (existing).
-- Command: `go test ./internal/cli/ -count=1 -run 'TestSetupEvents|TestInitJSONOnARefusalBeforeAnyStage'`
+- Command: `go test ./internal/cli/ -count=1 -run 'TestSetupEvents|TestInitJSONOnARefusalBeforeAnyStage' && go test ./internal/cli/ -count=1 -run TestCliReferenceNamesEveryCommandAndFlag && go test ./ee/clidoc/ -count=1`
 - Red step: `TestSetupEventsLeftForYou` fails while the terminal-only step prints only to stderr.
 - Depends on: **ST1** (both register flags in `init.go`)
 - Commit: `setup: --events, one line per stage (D2904)`
@@ -588,12 +603,12 @@ CLI first (answers file, events), then the wizard.
 
 #### SW3a: the wizard's main process half: validation, the answers file, plan then apply
 
-- Acceptance: Main validates the answers from the renderer against the schema (`gcp_project` and `region` against the grammars the CLI enforces, `rigor` present, no sixth key), writes them to a 0600 file in a fresh 0700 `mkdtemp` directory it removes after the run, runs `setup.plan`, and shows in the shared confirmation window the answers **as main parsed them** (project, region, name, rigor, bake) beside their SHA-256; on a yes it runs `setup.apply` on the same file and refuses if the bytes changed. **What apply does is stated honestly:** `--json` confirms no step (`unconfirmedWhy`), so `setup.apply` applies only what the CLI applies without a confirmation, and every step that needs one (project creation, the billing link, the Firestore location, a Terraform review in a managed project, secrets) arrives as `left_for_you` with its one line to run in the owner's terminal; the window's yes is the owner's go to run the CLI, never a consent the CLI accepts, and the Terraform plan is recomputed at apply, which the window says. A path or flag from the renderer is refused; every event and sentence passes `TEXT_CLASSES`; the window is SU1's single window with a view of its own (rule 11/12 properties); a CLI older than the floor, or a floor still unset, shows the command to run instead. The task opens by writing in its pull-request body what working directory and repository `setup` takes with no installation (U9); if it needs a repository question, the task stops and reports. The file and its digest are held by the window instance that showed them, a `setup.plan` while one is pending is refused, and the `setup.apply` handler spawns only on that window's own top-frame yes.
+- Acceptance: Main validates the answers from the renderer against the schema (`gcp_project` and `region` against the grammars the CLI enforces, `rigor` present, no sixth key), serialises them once into bytes it holds in memory (no file), runs `setup.plan` with those bytes on the child's stdin, and shows in the shared confirmation window the answers **as main parsed them** (project, region, name, rigor, bake) beside their SHA-256; on a yes it runs `setup.apply` with the same held bytes on stdin (a hostile process of the same user has no file to swap between the check and the read). **What apply does is stated honestly:** `--json` confirms no step (`unconfirmedWhy`), so `setup.apply` applies only what the CLI applies without a confirmation, and every step that needs one (project creation, the billing link, the Firestore location, a Terraform review in a managed project, secrets) arrives as `left_for_you` with its one line to run in the owner's terminal; the window's yes is the owner's go to run the CLI, never a consent the CLI accepts, and the Terraform plan is recomputed at apply, which the window says. A path or flag from the renderer is refused; every event and sentence passes `TEXT_CLASSES`; the window is SU1's single window with a view of its own (rule 11/12 properties); a CLI older than the floor, or a floor still unset, shows the command to run instead. The task opens by writing in its pull-request body what working directory and repository `setup` takes with no installation (U9); if it needs a repository question, the task stops and reports. The bytes and their digest are held by the window instance that showed them, a `setup.plan` while one is pending is refused, and the `setup.apply` handler spawns only on that window's own top-frame yes. The header of `onboarding.ts`, which records the 2026-10-20 ruling that onboarding 'asks the operator for nothing', is amended to the ruling as D2904 amended it.
 - Files: `console/src/main/wizardrun.ts` (new); `console/src/main/setupview.ts` (new); `console/src/main/onboarding.ts`; `console/src/renderer/confirm.ts`; `console/test/unit/wizard-main.test.ts` (new)
 - Interfaces: Consumes the `setup.plan` and `setup.apply` payloads and handler signatures (C-OPS), ST2's events and SU1's window; produces handler functions the integration task registers.
 - Tests: `wizard-main.test.ts` (new): validation, mode 0700/0600 and removal, the digest (a changed byte between plan and apply is refused), the window shows main's parsed answers, a renderer-supplied path refused, an event sentence sanitised, a renderer frame cannot start apply, an unregistered or old CLI shows the command; apply never passes a confirming word (`--yes`, `--ask`, `--non-interactive`) and its argv equals the allow-list row. Also: an IPC `setup.apply` with no yes spawns nothing; plan, plan, yes applies nothing.
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/wizard-main.test.ts test/unit/onboarding.test.ts test/unit/ipc.test.ts)`
-- Red step: The digest test fails while apply re-reads a file that plan did not show.
+- Red step: A test that apply's stdin bytes equal the bytes plan showed fails while apply re-serialises the answers.
 - Depends on: **ST2** (decodes the events and fixture the CLI task produces (ST1's answers file arrives through it)); **SU1** (the confirmation window is SU1's single window); **C-OPS** (built against the operations' payloads and the handler signatures)
 - Commit: `console(setup): the wizard's main half, answers validated and bound to the plan (D2904)`
 - Reviewer tier: opus, independent review mandatory (a console write that provisions cloud resources); tier `large`, size 5
@@ -613,7 +628,7 @@ CLI first (answers file, events), then the wizard.
 
 #### SW3c: the Add project operation in the rail and the picker
 
-- Acceptance: 'Add project' is one new `INSTALLATION_OPERATIONS` entry that only opens the wizard (it spawns nothing), exposed by the installations preload and drawn as a button in the rail and the picker; the picker's allow-list tests pin it, and a test proves it spawns no child.
+- Acceptance: FIRST the task writes in its pull-request body where the wizard opens when installations already exist, which working directory `setup` runs in and which repository it wires (U9 covers only the no-installation case); if that needs a choice this plan does not make, it stops and reports (O7). Then 'Add project' is one new `INSTALLATION_OPERATIONS` entry that only opens the wizard (it spawns nothing), exposed by the installations preload and drawn as a button in the rail and the picker; the picker's allow-list tests pin it, and a test proves it spawns no child.
 - Files: `console/src/main/installations.ts`; `console/src/preload/installations.ts`; `console/src/renderer/installations.ts`; `console/src/main/picker.ts`; `console/test/unit/installations-view.test.ts`
 - Interfaces: Consumes SW3b's wizard entry point.
 - Tests: `installations-view.test.ts` (extended).
@@ -625,18 +640,19 @@ CLI first (answers file, events), then the wizard.
 
 ## Parallel execution
 
-Tasks in one level run at once; a level starts when every task its tasks need is done. The CLI computed the levels from the edges (seven or fewer: the table below).
+Tasks in one level run at once; a level starts when every task its tasks need is done. The CLI computed the levels from the edges (9 levels: the table below).
 
 | Level | Tasks |
 | --- | --- |
-| 0 | LP1, LP2, GF1, SM0, P1, RS1, RB1, WH1, ST1, MG0, C-OPS, RS3, MD1, MD2 |
-| 1 | GF2, SM-E, RB4, ST2, MO-SH, MO-P, MO-K, MO-B, MO-C, SM1, SM2, SM3, SM4, SRC, RS4 |
+| 0 | LP1, LP2, GF1, SM0, P1, RS1, RB1, WH1, ST1, MG0, C-OPS, MD1, MD2 |
+| 1 | GF2, SM-E, RB4, ST2, MO-SH, MO-P, MO-K, MO-B, MO-C, SM1, SM2, SM3, SM4, SRC, RS3, RS4 |
 | 2 | SU1, SU2a, RS2, PL1, AL, SMC |
-| 3 | I-MG, SW3a |
-| 4 | SU2b, MW1, I-OPS |
-| 5 | MW2, PW1, RS5 |
-| 6 | SW3b |
-| 7 | SW3c |
+| 3 | I-MG, MW1, SW3a |
+| 4 | SU2b, MW2 |
+| 5 | I-OPS, RS5, MWR |
+| 6 | PW1 |
+| 7 | SW3b |
+| 8 | SW3c |
 
 **Edges kept, one line each, with the reason that decided it.** Every edge is a real dependency: either the dependent needs the other task's behaviour or data at the moment it runs, or both write one file.
 
@@ -672,14 +688,13 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - I-MG needs MO-B: lists the kind.
 - I-MG needs MO-C: lists the kinds.
 - I-MG needs SU2a: both write `projects.ts`.
-- MW1 needs I-MG: adds an action to the list kind the integration wired.
 - MW1 needs SU1: confirms through the same window.
 - MW1 needs RB1: calls `invalidate`.
 - MW1 needs AL: writes the same allow-list, after it.
-- MW1 needs MD1: the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD1's document.
 - MW1 needs RB4: enables the action only for a project admin.
+- MW1 needs MD1: the window shows MD1's document, the floor follows MD1's release, and the aiming flags must exist.
 - MW2 needs MW1: both write `spawn.ts`, `ipc.ts` and the §5.1 table.
-- MW2 needs MD2: the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD2's document.
+- MW2 needs MD2: the window shows MD2's document and the floor follows MD2's release.
 - PL1 needs RS1: names a flag that must exist.
 - PL1 needs WH1: names a flag that must exist.
 - PL1 needs ST2: names a flag that must exist.
@@ -689,6 +704,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - AL needs WH1: same.
 - AL needs ST2: same.
 - AL needs SM-E: both write `console/docs/json-contract.md`.
+- AL needs RS3: `ee/report/cli`'s `TestConsoleContractNamesOnlyRealReportFlags` checks every `--flag` the contract and design docs give `report` against report's own command, so `--stream` must be registered there first.
 - SM1 needs SM0: the entries are built against `Meta` and `Register`.
 - SM2 needs SM0: the entries are built against `Meta` and `Register`.
 - SM3 needs SM0: the entries are built against `Meta` and `Register`.
@@ -707,6 +723,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - PW1 needs RB1: uses the cache API it adds.
 - PW1 needs RS2: both write `entry.ts`.
 - PW1 needs SU2b: both write `entry.ts`.
+- PW1 needs RS5: both write `entry.ts`; prewarm warms the stream paths RS5 adds.
 - I-OPS needs C-OPS: integrates the contract.
 - I-OPS needs AL: needs the real operations.
 - I-OPS needs SU1: needs the real consumer.
@@ -717,48 +734,59 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - I-OPS needs SRC: needs the real consumer.
 - I-OPS needs RS3: compares the console's copy with the report golden.
 - I-OPS needs RS4: compares the console's copy with the budget golden.
+- I-OPS needs MW2: both write `index.ts`; I-OPS swaps AL's stubs after MW1 and MW2 have added their handlers, and its contract test checks only the contract's own names.
 - SRC needs C-OPS: built against the payloads and handler signatures.
+- RS3 needs RS1: writes the `row`/`end`/`error` line shape RS1's schema states.
 - RS4 needs RS1: both reuse RS1's stream writer and line shape (`runs_stream.go`).
 - RS5 needs RS2: uses `readStream`.
 - RS5 needs RS3: decodes the report stream's golden.
 - RS5 needs RS4: decodes the budget stream's golden.
 - RS5 needs SU2b: both write `projects.ts`.
 - SW3c needs SW3b: opens the wizard SW3b builds.
+- MWR needs MW2: draws both writes' operations.
+- MWR needs SW3a: both write `renderer/confirm.ts`.
+- MWR needs RB4: enables the action by role.
+- MWR needs I-MG: adds an action to the kinds the integration mounted.
 
 **Sequential by necessity:** the allow-list task `AL` waits for the three CLI tasks that register the flags it names (`RS1`, `WH1`, `ST2`) and cannot be split, because `assertSpawnSurface`, the IPC set and the docs pins each refuse a half-change (twelve files, which is why it is tier large: the spawn rows, the operations, the handler type and its stubs, the floors and the docs pins each refuse a half-change); `MW1` then `MW2` write the same allow-list and §5.1 table, so they are one after the other; `ST1` then `ST2` register flags in `init.go`; `SU2b` deletes the inline editor only after the modal and the Manage mount that share `projects.ts`.
 
-**Critical path (the graph read):** `critical path (8 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> SW3b -> SW3c`.
+**Critical path (the graph read):** `critical path (9 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> RS5 -> PW1 -> SW3b -> SW3c`.
 
-**Shared-files table.** A file appears here only when more than one task names it; no level holds two writers of any of them (a change to any task's Files re-checks this).
+**Shared-files table.** A file appears here only when more than one task names it; no level holds two writers of any of them (a change to any task's Files re-checks this), with one exemption the owner chose on 2026-11-18: `website/content/cli-reference.md` is generated by `go run ./ee/clidoc`, every task that adds a flag regenerates it, and a run that meets a conflict in it reruns the generator rather than merging by hand.
 
 | File | Tasks (level) |
 | --- | --- |
-| `console/docs/json-contract.md` | SM-E (1), AL (2) |
-| `console/src/main/index.ts` | AL (2), I-OPS (4) |
-| `console/src/main/ipc.ts` | MW1 (4), MW2 (5), AL (2) |
-| `console/src/main/spawn.ts` | MW1 (4), MW2 (5), AL (2) |
-| `console/src/renderer/confirm.ts` | SU1 (2), SW3a (3) |
-| `console/src/renderer/entry.ts` | SU2b (4), RS2 (2), RB1 (0), RB4 (1), SW3b (6), PW1 (5) |
-| `console/src/renderer/manage/kinds/images.ts` | MO-C (1), MW2 (5) |
-| `console/src/renderer/manage/kinds/models.ts` | MO-K (1), MW1 (4) |
+| `console/docs/json-contract.md` | SM-E (1), AL (2), MWR (5) |
+| `console/src/main/confirm.ts` | SU1 (2), MW1 (3), MW2 (4) |
+| `console/src/main/index.ts` | MW1 (3), MW2 (4), AL (2), I-OPS (5) |
+| `console/src/main/ipc.ts` | MW1 (3), MW2 (4), AL (2) |
+| `console/src/main/spawn.ts` | MW1 (3), MW2 (4), AL (2) |
+| `console/src/preload/index.ts` | MW1 (3), MW2 (4), AL (2) |
+| `console/src/renderer/confirm.ts` | SU1 (2), SW3a (3), MWR (5) |
+| `console/src/renderer/entry.ts` | SU2b (4), RS2 (2), RB1 (0), RB4 (1), SW3b (7), PW1 (6), RS5 (5) |
+| `console/src/renderer/manage/kinds/images.ts` | MO-C (1), MWR (5) |
+| `console/src/renderer/manage/kinds/models.ts` | MO-K (1), MWR (5) |
 | `console/src/renderer/screens/projects.ts` | SU2a (2), SU2b (4), I-MG (3), RS5 (5) |
 | `console/src/renderer/section.ts` | RS2 (2), RB1 (0) |
 | `console/src/renderer/stream.ts` | RS2 (2), RS5 (5) |
-| `console/src/renderer/stubs/bridge-stub.ts` | C-OPS (0), I-OPS (4) |
+| `console/src/renderer/stubs/bridge-stub.ts` | C-OPS (0), I-OPS (5) |
 | `console/src/renderer/theme/flight-deck.css` | LP2 (0), GF2 (1) |
 | `console/src/renderer/theme/screens.css` | LP2 (0), SU2a (2) |
-| `console/src/shared/version.ts` | MW1 (4), MW2 (5), AL (2) |
+| `console/src/shared/version.ts` | MW1 (3), MW2 (4), AL (2) |
+| `console/src/source/source.ts` | MW1 (3), MW2 (4), AL (2) |
 | `console/test/unit/projects.test.ts` | SU2a (2), SU2b (4) |
-| `console/test/unit/spawn.test.ts` | MW1 (4), MW2 (5), AL (2) |
-| `docs/design/desktop-console.md` | MW1 (4), MW2 (5), AL (2) |
+| `console/test/unit/spawn.test.ts` | MW1 (3), MW2 (4), AL (2) |
+| `docs/design/desktop-console.md` | AL (2), MWR (5) |
+| `internal/cli/docs_desktop_console_test.go` | AL (2), MWR (5) |
 | `internal/cli/init.go` | ST1 (0), ST2 (1) |
+| `website/content/cli-reference.md` | RS1 (0), WH1 (0), ST1 (0), ST2 (1), RS3 (1), RS4 (1), MD1 (0), MD2 (0) |
 
 ## The dependencies the plan broke and kept
 
 The contract-first pass is on (`fugaro settings planning.decoupling` reads `true`; rigor `startup`, which decouples aggressively). Two passes were measured with `fugaro plan graph`.
 
 - **Tried first and undone.** Four wire contracts (the settings metadata, the runs stream, the caller-role read, the setup answers and events) broke twelve edges between a console consumer and a CLI producer: `"12 broken, 36 kept, 10 added; before 6 tasks, weight 19; after 6 tasks, weight 19; no gain"`. The critical path was the allow-list to Manage to writes chain and no broken edge was on it, so all twelve were undone and each producing CLI task now owns its schema and its fixture, which the console task reads once it has merged.
-- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put six console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the nine operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `gain: 6 broken, 68 kept, 3 added; before 9 tasks, weight 27; after 8 tasks, weight 20; improves`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2 (3 + 3 + 6 + 4 + 4 = 20); before it, the consumers of AL pushed it to 27. The read prints its critical path by task count (`critical path (8 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> SW3b -> SW3c`); the gain line is the weighted measure.
+- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put six console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the nine operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `gain: 6 broken, 74 kept, 3 added; before 10 tasks, weight 30; after 9 tasks, weight 23; improves`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2, MWR (3 + 3 + 6 + 4 + 4 + 3 = 23); before it, the consumers of AL pushed it to 30. The read prints its critical path by task count (`critical path (9 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> RS5 -> PW1 -> SW3b -> SW3c`); the gain line is the weighted measure.
 
 **Edges broken, one line each.** SU1, RB4, RS2, MO-C, SW3a and SRC each needed the operations' names and types, not the allow-list's rows (contract `C-OPS`, integration `I-OPS`).
 
@@ -768,7 +796,7 @@ The contract-first pass is on (`fugaro settings planning.decoupling` reads `true
 
 ## The estimate the graph read printed
 
-`ready in 450–1800 min, no history yet for 46 tasks (46 tasks; seeds for 46; from the seeds: no history is cached on this machine yet)`
+`ready in 495–1980 min, no history yet for 47 tasks (47 tasks; seeds for 47; from the seeds: no history is cached on this machine yet)`
 
 This is informational and reserves no budget: it is what the tasks' tiers and this machine's history predict, not a figure the plan holds to. It moves as runs finish and as the graph changes. Proposed runs, when the owner gives a go: one run per approved task; the worst case is every task at its tier's ceiling, and no figure here is a reservation.
 
