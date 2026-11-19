@@ -302,7 +302,12 @@ func TestImagesSkillEntryBuildAsksForNoSecret(t *testing.T) {
 	// definition's own text for a secret of its own, and answers by name and
 	// line, which is the sentence an agent can rely on.
 	fetch := readRepoFile(t, "internal/catalog/fetch.go")
-	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "return SecretRefusal(e.Name, line.line)") {
+	// The call is pinned without the statement it is written as, because what
+	// this case is about is the refusal and not the shape of the branch around
+	// it: an entry whose file is read at its own branch names that ref beside
+	// the name and the line (#3196), and the sentence an agent relies on is the
+	// same one.
+	if !strings.Contains(fetch, "if asksForASecret(line.text) {") || !strings.Contains(fetch, "SecretRefusal(e.Name, line.line)") {
 		t.Error("refuseCredentialIn no longer refuses a definition that asks for a secret of its own by name and line, which is the refusal the skill states")
 	}
 	// And the refusal is not a text guard standing in front of a build that
