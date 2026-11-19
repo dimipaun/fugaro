@@ -1568,17 +1568,26 @@ func buildProjectPolicy(lc *localcfg.Config, allow []string, old *projectpolicy.
 		// and what the node is built from.
 		pol.OrchestratorEnabled = old.OrchestratorEnabled
 		pol.IssueSync = old.IssueSync
-		// The mobile block is kept for the same reason (P6 of
-		// docs/mobile-identity-pairing, D2796): no key of this machine's config
-		// states it — the switches are the project's own answers, and the
-		// update's policy stage is what writes the block — and the node is the
-		// only place it exists. A publish that built a node without it would
-		// turn mobile pairing off for a project whose owner turned it on, and
-		// take a written `sync: false` away from a project that chose to store
-		// nothing, silently, from a machine whose config merely predates the
-		// key.
-		pol.Mobile = old.Mobile
 	}
+	// The mobile block is the project's own answers to the pairing surface (P6
+	// of docs/mobile-identity-pairing, D2796, O9), and no key of this machine's
+	// config states them: the node is the only place they live, so a publish
+	// keeps the block it finds — a project whose owner turned pairing off, or
+	// chose to store nothing in the identity project, keeps that decision
+	// through a publish from any machine. A node that carries no block is one
+	// published before the key existed, and O9's answer is that the update
+	// writes the default on when it publishes: MobileForPublish is that rule,
+	// and it is the whole of what makes the pairing route answer after `fugaro
+	// update` and answer `mobile_disabled` before it (F40). It is written
+	// outside the `old != nil` guard above for the craft members' reason: the
+	// node's own block is one of its two sources, and the other is the default
+	// a node that carries none is written with, so a first publish and an
+	// installation that has not published since the key existed both get it.
+	var publishedMobile *projectpolicy.Mobile
+	if old != nil {
+		publishedMobile = old.Mobile
+	}
+	pol.Mobile = projectpolicy.MobileForPublish(publishedMobile)
 	// The crafts' credentials, their pools and the crafts that choose among
 	// them are the operator's own blocks from this release on (docs/model-crafts
 	// §1–3, MC18, D1667): the local config is their carrier, and this publish
@@ -2964,10 +2973,13 @@ func printPolicyDiff(out io.Writer, old, new *projectpolicy.Policy, sources map[
 	}
 	// The mobile block is kept too (P6 of docs/mobile-identity-pairing,
 	// D2796), and the line is the two above it: no key of this machine's config
-	// states it, so the member is unchanged and no +/- line above mentions it —
-	// and a person who turned pairing on, or off, or chose to store nothing in
-	// the identity project, would read that silence as "it is gone".
-	if new.Mobile != nil {
+	// states it, so a block the node carries is unchanged and no +/- line above
+	// mentions it — and a person who turned pairing on, or off, or chose to
+	// store nothing in the identity project, would read that silence as "it is
+	// gone". A node that carries none is written the default block (O9), and
+	// that is the diff's own `mobile` row above: `kept` would be false of a
+	// block this publish has just written.
+	if old != nil && old.Mobile != nil {
 		fmt.Fprintf(out, "  mobile kept: %s\n", mobileText(new.Mobile))
 	}
 	// The crafts, their credentials and their pools are the operator's own
@@ -3606,7 +3618,7 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 	if len(p.Budget.AllowedModels) > 0 {
 		models = strings.Join(p.Budget.AllowedModels, ", ")
 	}
-	return map[string]string{
+	out := map[string]string{
 		"version":               fmt.Sprintf("%d", p.Version),
 		"budget.mode":           p.Budget.Mode,
 		"budget.per_run_usd":    usdVal(p.Budget.PerRunUSD),
@@ -3619,6 +3631,18 @@ func policyLines(p *projectpolicy.Policy) map[string]string {
 		"review_floor":          reviewFloorText(p),
 		"reports_commit":        reportsCommitText(p),
 	}
+	// The mobile block is the one member whose source is neither this machine's
+	// config nor the node it replaces: a publish writes the node's own block
+	// when there is one and O9's defaults when there is not (MobileForPublish),
+	// so the row is the block as written and the diff prints it as the line a
+	// publish adds to a node published before the key existed. A row is left
+	// out where there is no block at all — a node read before the publish and
+	// nothing else — because a line of "none" would read as a block this
+	// publish had taken away, which no publish does.
+	if p.Mobile != nil {
+		out["mobile"] = mobileText(p.Mobile)
+	}
+	return out
 }
 
 // reportsCommitText is the designated repository as one line — the repository

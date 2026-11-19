@@ -56,6 +56,13 @@ type policyDrift struct {
 // policyConfigDrift is the members of the published node the local config is
 // the source of and that the node does not carry, in the order a diff reads.
 //
+// One member is not the config's: the mobile block's source is the publisher's
+// own default for a node that carries none (projectpolicy.MobileForPublish,
+// O9), and the row is there for the same reason the config's own are — a
+// publish would write a member the node does not carry, and a stage that could
+// not see it would leave the node at the release behind for ever. It is the
+// only member of the list a config cannot state.
+//
 // The comparison is the JSON both sides spell, so a member the node omits and a
 // config that states nothing for it are one value (the carrier's omitempty is
 // what drops an empty list on the way in). Only the members a config edit has to
@@ -423,6 +430,27 @@ func policyConfigDrift(lc *localcfg.Config, p *projectpolicy.Policy, identities 
 		return out
 	}
 	add(projectpolicy.BitbucketTokensKey, tokens, p.BitbucketTokens, false)
+	// The mobile block is the one member of this comparison whose source is
+	// neither this machine's config nor the node: a publish writes the node's
+	// own block when it carries one and O9's defaults when it does not
+	// (projectpolicy.MobileForPublish), so the row is silent for a node that
+	// carries a block — the switches are the project's own answers and this
+	// machine has no opinion about them — and fires for a node published before
+	// the key existed, which is the node an installation at the release behind
+	// holds.
+	//
+	// It is the typed Bitbucket tokens' argument and the whole of what makes
+	// O9's "on in policy, answering only after `update` publishes it" true: the
+	// key is new with a release that does not move the node's version, so an
+	// installation whose node is already at this version has NO migration step
+	// that would carry it, and without this row the stage would find nothing to
+	// do about a node that is current in every other member — the pairing route
+	// would answer `mobile_disabled` for every installation that ran the update,
+	// and the block would reach a node only where an operator had written one by
+	// hand. It is compared through the publisher's own function rather than by a
+	// rule of its own here, so the node this stage decides on and the node the
+	// publish writes cannot disagree (F40, the plan's global constraint).
+	add("mobile", projectpolicy.MobileForPublish(p.Mobile), p.Mobile, false)
 	return out
 }
 

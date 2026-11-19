@@ -81,15 +81,16 @@ func DefaultMobileCostlyModes() []rigor.Mode { return []rigor.Mode{rigor.Pro, ri
 // **The block's presence is the surface's switch, and its absence is off.**
 // A policy published before this key existed carries no block, and reads as
 // `mobile.enabled: false` — never as the default on. That is the owner's answer
-// to F40 (D2796, O9): `mobile.enabled` is on in the block `fugaro update`
-// publishes, so pairing answers as soon as the update has run, and an
-// installation that has not updated answers `mobile_disabled` — deployment
-// alone switches nothing on, which is the credentials service's own rule.
+// to F40 (D2796, O9): `mobile.enabled` is on in the block a publish writes for a
+// node that carries none (MobileForPublish, what `fugaro update` publishes), so
+// pairing answers as soon as the update has run, and an installation that has
+// not updated answers `mobile_disabled` — deployment alone switches nothing on,
+// which is the credentials service's own rule.
 //
 // The members' defaults inside a written block are the product's (D2784,
 // D2785, D2786, O4) and every one of them is a member DefaultMobile writes
-// explicitly: the node `update` publishes says what it does rather than leaving
-// a reader to know a default, which is what D2796 asks for when it says admins
+// explicitly: the node a publish writes says what it does rather than leaving a
+// reader to know a default, which is what D2796 asks for when it says admins
 // are shown what is stored.
 type Mobile struct {
 	// Enabled is whether this project's phones may pair at all. It is a pointer
@@ -149,16 +150,15 @@ type Mobile struct {
 // keep in step.
 var mobileMembers = carrierMembers(reflect.TypeOf(Mobile{}))
 
-// DefaultMobile is the block `fugaro update` publishes (O9): every member
-// written, each at the default the plan's P6 states. It is the one place the
-// product's defaults are spelled as a node, so the value an operator reads in
-// the published policy and the value a reader falls back to for a member a
-// hand-edited node leaves out are the same numbers.
+// DefaultMobile is the block a publish writes for a node that carries none
+// (O9): every member written, each at the default the plan's P6 states. It is
+// the one place the product's defaults are spelled as a node, so the value an
+// operator reads in the published policy and the value a reader falls back to
+// for a member a hand-edited node leaves out are the same numbers.
 //
-// Writing it is the update's policy stage and not this package's: a policy
-// published before this key existed is migrated in place by the stage that
-// already rewrites the node (UP1), and `fugaro project policy publish` writes
-// the node from the local config, which carries no mobile block.
+// It is the answer of a project that has never answered and not one it gave:
+// MobileForPublish is what a publish writes, and a node that carries a block
+// keeps its own through every publish.
 func DefaultMobile() *Mobile {
 	return &Mobile{
 		Enabled:           boolPtr(true),
@@ -175,6 +175,32 @@ func DefaultMobile() *Mobile {
 // above: the zero value of the member is "not written", so a default cannot be
 // stated without taking its address.
 func boolPtr(v bool) *bool { return &v }
+
+// MobileForPublish is the block a publish writes: the node's own when it
+// carries one, and DefaultMobile() when it does not.
+//
+// The node is the only place these switches live — no key of any machine's
+// local config states them, and they are the project's own answers — so a
+// publish keeps the block it finds: a project whose owner turned pairing off,
+// or chose to store nothing in the identity project, keeps that decision
+// through a publish from any machine. A node that carries no block is one
+// published before this key existed, and O9's answer is that the update writes
+// the default on when it publishes — which is what makes the pairing route
+// answer after `fugaro update` and answer `mobile_disabled` before it (F40, the
+// global constraint the plan states for P3, K2 and P6).
+//
+// It is one function because two callers have to agree about it: the publisher
+// writes the node with it (internal/cli's buildProjectPolicy), and the drift
+// `fugaro update`'s policy stage decides to publish on compares the node with
+// it (policyConfigDrift) — a stage that compared the node with nil would find
+// nothing to do about a node that carries no block, and the default would never
+// reach an installation that has not published since the key existed.
+func MobileForPublish(node *Mobile) *Mobile {
+	if node != nil {
+		return node
+	}
+	return DefaultMobile()
+}
 
 // MobileEnabled reports whether this project's phones may pair at all.
 //
