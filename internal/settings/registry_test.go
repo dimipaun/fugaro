@@ -156,10 +156,6 @@ func TestRegistryCoversEveryConfigField(t *testing.T) {
 }
 
 func TestRegistryFugaroYAMLKeysMatchConfigScopes(t *testing.T) {
-	scopes := map[string]bool{}
-	for _, s := range config.Scopes {
-		scopes[s.Key] = true
-	}
 	rows := map[string]Row{}
 	for _, r := range Rows() {
 		rows[r.Key] = r
@@ -182,16 +178,28 @@ func TestRegistryFugaroYAMLKeysMatchConfigScopes(t *testing.T) {
 	}
 	// The reverse direction: only a fugaro.yaml key may be set in the layers
 	// config.Scopes owns, so a row claiming one of them is a row whose key
-	// belongs in that table.
+	// belongs in that table. The table's own answer for a path inside a listed
+	// key is the listed key (config.ScopeOf): `governance.stage_timeout.
+	// implement` is a key of the block `governance.stage_timeout` is, which the
+	// table lists InProject|InRepo, and that is what makes W2's concrete rows
+	// members of the table rather than rows beside it. A key the table answers
+	// nothing for is the failure here, and so is a row claiming a layer the key
+	// it is inside is not set in — the block a repository may set is the whole
+	// of what its leaves may claim.
 	for _, r := range Rows() {
+		if strings.HasPrefix(r.Key, "layer.") {
+			continue
+		}
+		scope, listed := config.ScopeOf(r.Key)
 		for _, l := range r.Layers {
 			if l != LayerProject && l != LayerProfile && l != LayerRepo && l != LayerFlag {
 				continue
 			}
-			if !scopes[r.Key] && !strings.HasPrefix(r.Key, "layer.") {
-				t.Errorf("%s: claims the %s layer and is not a config.Scopes key", r.Key, l)
-				break
+			if listed && slices.Contains(scopeLayers(scope.In), l) {
+				continue
 			}
+			t.Errorf("%s: claims the %s layer, and config.Scopes lists neither the key nor a block it is a key of (layer %v)", r.Key, l, scopeLayers(scope.In))
+			break
 		}
 	}
 }

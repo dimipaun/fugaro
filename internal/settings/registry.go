@@ -22,7 +22,9 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/tier"
 )
 
 // Merge is how a key's layers combine into the effective value a run gets.
@@ -408,7 +410,7 @@ var yamlMeta = map[string]Row{
 // `fugaro.yaml` rows from config.Scopes (so the two cannot drift), the project
 // layer's from config.ProjectLayer, the local config's from localcfg.Config.
 func buildRows() []Row {
-	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(cloudRows)+len(config.RunStages))
+	out := make([]Row, 0, len(config.Scopes)+len(layerRows)+len(localRows)+len(cloudRows)+len(config.RunStages)+len(governanceStages)*3)
 	for _, s := range config.Scopes {
 		out = append(out, yamlRow(s))
 	}
@@ -417,10 +419,14 @@ func buildRows() []Row {
 	out = append(out, cloudRows...)
 	out = append(out, policyRows...)
 	out = append(out, stageAccountRows()...)
+	out = append(out, governanceLeafRows()...)
 	for i := range out {
 		out[i].Sensitive = sensitiveKeys[out[i].Key]
 		if v, ok := defaultValues[out[i].Key]; ok {
 			out[i].Default = v
+		}
+		if strings.HasPrefix(out[i].Key, "governance.") {
+			out[i].Doc = docGovernance
 		}
 	}
 	// Each document's rows are written in its own order, so the three groups
@@ -486,11 +492,18 @@ func scopeLayers(in config.Scope) []string {
 // The documents a row's Doc names. A key whose document is not one of these
 // names it in full.
 const (
-	docSetup  = "docs/gcp-setup.md"
-	docLayer  = "docs/project-layer.md"
-	docModels = "docs/multi-model.md"
-	docRigor  = "docs/rigor-modes/spec.md"
-	docCrafts = "docs/model-crafts/spec.md"
+	docSetup = "docs/gcp-setup.md"
+	docLayer = "docs/project-layer.md"
+	// docGovernance is docLayer plus the one fact about a governance key the
+	// table has no column for (F12): the guardrails are enforced by a build with
+	// the `ee` tag, so an untagged build reads the block and holds no run to it
+	// (internal/policy/hook.go, D522). The released runner image is built with
+	// the tag, which is why the row says so rather than that the keys do
+	// nothing.
+	docGovernance = docLayer + " (enforced by the ee build)"
+	docModels     = "docs/multi-model.md"
+	docRigor      = "docs/rigor-modes/spec.md"
+	docCrafts     = "docs/model-crafts/spec.md"
 	// docEscalation is the escalation ladder's own document. The two model
 	// grades are stated in the plan rather than in the spec — the spec is the
 	// ladder's design and the plan is where each key it adds is defined (E2,
@@ -1614,6 +1627,102 @@ func stageAccountRows() []Row {
 	out := make([]Row, 0, len(config.RunStages))
 	for _, stage := range config.RunStages {
 		out = append(out, locLocal("stages."+stage+".claude_account", "the project's default account", "settings set", docModels))
+	}
+	return out
+}
+
+// governanceStages are the stages the governance block bounds, in the block's
+// own order: the ones a run's stages carry (config.StageTimeout's fields, the
+// three names config's validator lists). An artifact run's plan and render
+// steps have no governance — no budget share, no token ceiling and no timeout
+// of their own — so the vocabulary is these three and not config.RunStages.
+var governanceStages = []string{"implement", "review", "fix"}
+
+// governanceTierKeys are the keys every tier of governance.tiers carries
+// (policy's own three, T8.1). A tier's own key is one of them, so the twelve
+// names below are built from the tier's name rather than declared.
+var governanceTierKeys = []string{policy.KeyExpectedUSD, policy.KeyExpectedMinutes, policy.KeyMaxSubagents}
+
+// governanceLeafRows are the concrete rows of the governance block at the two
+// layers a project and a repository set it in (composite D2604, W2).
+//
+// The block's own rows (yamlMeta) are the read's: `governance.stage_timeout` is
+// a mapping of keys, so its own spelling is no setting and the write refuses it
+// (IsBlock, settingsRefuseRow). What a person writes is a stage's own bound,
+// and before this the only spelling of it was the project layer's
+// `layer.governance.stage_timeout.implement` — a concrete unprefixed
+// `governance.stage_timeout.implement` found no row at all and `settings set`
+// answered "no setting has that name" for the owner's 99% case (F1).
+//
+// The rows are a literal table rather than a walk of the config structs,
+// because a row's fields are decisions and not the struct's: the layers are
+// project and repo (D2604 — the project layer is the one layer that may
+// loosen the guardrail, and a repository may only tighten it), the merge is
+// Tighten, and the DEFAULT column repeats the block's own sentence so that the
+// long and the short spelling of one stage's bound read alike. The ratchet that
+// keeps the table complete is TestRegistryCarriesEveryGovernanceLeaf
+// (registry_stage_test.go), which walks config.Governance by reflection: a
+// stage, a tier or a key added to the block and left out here is that test's
+// failure.
+func governanceLeafRows() []Row {
+	out := make([]Row, 0, len(governanceStages)*3+len(tier.Tiers)*len(governanceTierKeys))
+	add := func(key, def string) {
+		out = append(out, Row{
+			Key:     key,
+			Layers:  []string{LayerProject, LayerRepo},
+			Merge:   Tighten,
+			Default: unset(def),
+			Owner:   "settings set",
+			Doc:     docLayer,
+		})
+	}
+	for _, stage := range governanceStages {
+		add("governance.stage_budget."+stage, "Fugaro's own stage budgets")
+		add("governance.stage_tokens."+stage, "Fugaro's own stage token caps")
+		add("governance.stage_timeout."+stage, "Fugaro's own stage timeouts")
+	}
+	for _, t := range tier.Tiers {
+		for _, key := range governanceTierKeys {
+			add("governance.tiers."+string(t)+"."+key, "Fugaro's own tiers")
+		}
+	}
+	return out
+}
+
+// IsBlock reports whether key is a block of the registry: a key whose own
+// spelling holds other rows below it, so a write of it as one value is a write
+// of a shape and not of a setting. `governance.stage_timeout` is one against
+// its three stages, `governance.tiers` against its four, and the layer file's
+// own `layer.profiles.*` against the profile the pattern covers.
+//
+// The read keeps the row — a person reading `fugaro settings` wants to see the
+// block and what it holds — and the write refuses it rather than failing at the
+// file's own re-read ("cannot unmarshal !!str into config.StageTimeout"), which
+// is what the four governance block rows did while they listed themselves
+// writable (D2604).
+func IsBlock(key string) bool {
+	return len(BlockChildren(key)) > 0
+}
+
+// BlockChildren are the keys key holds, by the segment that follows it in
+// registry order: `governance.tiers` holds `governance.tiers.large`,
+// `governance.tiers.medium`, `governance.tiers.small` and
+// `governance.tiers.trivial`. A key no row sits under answers nothing, which is
+// what makes it a setting rather than a block (IsBlock).
+func BlockChildren(key string) []string {
+	prefix := key + "."
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		if !strings.HasPrefix(r.Key, prefix) {
+			continue
+		}
+		child := prefix + strings.SplitN(strings.TrimPrefix(r.Key, prefix), ".", 2)[0]
+		if seen[child] {
+			continue
+		}
+		seen[child] = true
+		out = append(out, child)
 	}
 	return out
 }
