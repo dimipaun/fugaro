@@ -26,6 +26,22 @@
 // neighbour's row -- which the band drawn around them, the union of that
 // stream's cards, shows as a rectangle laid over another stream's cards.
 //
+// **Why the rows are cut here and not asked of the engine** (D2900, the owner,
+// 2026-11-18). The picture runs top to bottom, so a level of a stream is a row of
+// it -- and a level can be wider than the pane the console draws in (a plan of
+// twelve tasks that need one task is one level of twelve cards). The engine's
+// own width controls do not bound a level in this direction: `elk.layered.
+// wrapping` is ignored for it, and the bounds the layerer offers
+// (`elk.layered.layering.minWidth.upperBoundOnWidth`,
+// `elk.layered.layering.coffmanGraham.layerBound`) are loose -- a bound of four
+// came back as rows of five and six. What the engine does honour exactly is its
+// layering, so the levels are worked out here, cut into rows of
+// `GRAPH_ROW_CARDS`, and each row is **chained** to the one above it with
+// phantom edges (`rowGraph`); the engine's layers are then those rows and
+// nothing in the picture shows the chain. It is a pure function of the stream's
+// nodes and edges, which are exactly what the key below is a serialization of,
+// so a cached run's rows are the rows of the structure that was cached.
+//
 // **What the hash is, and what it is not.** It is a canonical string, not a
 // digest: a collision would draw one stream's coordinates over another's, which
 // is a wrong picture rather than a slow one, and the string is small enough
@@ -116,19 +132,61 @@ const GRAPH_ID = 'graph'
  */
 export const GRAPH_ROW_GAP = 124
 
-/** LAYOUT_OPTIONS is what the engine is asked for: a layered graph whose depth
- * runs **left to right**, with its edges routed orthogonally.
+/**
+ * GRAPH_ROW_CARDS is how many cards one row of a stream carries: as many as the
+ * pane the console opens with holds at the card's floor, and one fewer than the
+ * number that would not fit it.
  *
- * The direction is the redesign's canvas (console redesign, step 6a): a task
- * sits to the left of the tasks that need it, so the picture is read the way a
- * sentence is, and the layers the engine computes are the columns a person reads
- * across. `elk.edgeRouting` is set explicitly rather than left to the engine's
- * default: the default is a spline per edge, and a dependency's arrow is read as
- * a line that leaves one card's side and arrives at another's. */
+ * The pane is the console's own window less the page's own padding -- 1180 px
+ * minus 32 px at each side, 1116 px -- and a card drawn at `GRAPH_MIN_SCALE` is
+ * 195 px of it. Four cards and the three gaps between them are 978 px of that
+ * pane and five are 1239 px, which is 123 px past its edge, so four is the
+ * widest row that reads as one row. The arithmetic is written here as the
+ * ruling and pinned in `graph.test.ts`, which measures the constants and the
+ * drawn picture against that same pane: the window is the main process's
+ * (`CONSOLE_WINDOW_SIZE`) and the padding the theme's, and neither can be
+ * imported into this module without a dependency pointing the wrong way.
+ */
+export const GRAPH_ROW_CARDS = 4
+
+/**
+ * LAYOUT_OPTIONS is what the engine is asked for: a layered graph whose depth
+ * runs **top to bottom**, with its edges routed orthogonally, and the three
+ * strategies the row bound is built on.
+ *
+ * **The direction is D2900's** (the owner, 2026-11-18), which reversed console
+ * redesign step 6a's left-to-right canvas: a task sits **above** the tasks that
+ * need it, so the layers the engine computes are the rows a person reads down,
+ * and the picture is read the way a page is. What step 6a wanted is kept -- a
+ * dependency is a run of the picture a reader follows -- and what changed is the
+ * axis, because the graph is the one screen whose width grows with its data and
+ * a picture read sideways is one the console's window has to be wide for.
+ *
+ * `elk.edgeRouting` is set explicitly rather than left to the engine's default:
+ * the default is a spline per edge, and a dependency's arrow is read as a line
+ * that leaves one card's edge and arrives at another's.
+ *
+ * **The three strategy names are load-bearing, and measured rather than
+ * assumed** (the picture's width is a function of them). `LONGEST_PATH_SOURCE`
+ * is the layering whose layers are the rows below: it gives every card the
+ * longest path of needs that ends at it, which is what the row chain's edges
+ * then pin exactly, and the default layerer (`NETWORK_SIMPLEX`) balances a wide
+ * level back up into one line and undoes them. `SIMPLE` is the placement that
+ * lays a row out as one compact line -- the default spreads a layer's cards
+ * apart along the row to straighten its edges, and drew a level of seven cards
+ * 5393 units wide where the bound below is 1304. And
+ * `elk.separateConnectedComponents: 'false'` keeps the engine from packing the
+ * **components** of one stream two-dimensionally: a plan whose tasks need
+ * nothing, or a task nothing needs, is a component of its own, and packed that
+ * way one row of four such cards came back 2000 units wide.
+ */
 const LAYOUT_OPTIONS: Readonly<Record<string, string>> = Object.freeze({
   'elk.algorithm': 'layered',
-  'elk.direction': 'RIGHT',
+  'elk.direction': 'DOWN',
   'elk.edgeRouting': 'ORTHOGONAL',
+  'elk.layered.layering.strategy': 'LONGEST_PATH_SOURCE',
+  'elk.layered.nodePlacement.strategy': 'SIMPLE',
+  'elk.separateConnectedComponents': 'false',
 })
 
 const REQUEST: LayoutRequest = Object.freeze({ layoutOptions: LAYOUT_OPTIONS })
@@ -243,7 +301,7 @@ export class GraphLayout {
       this.cache.set(hash, cached)
       return cached
     }
-    const pending = this.client.layout(graphOf(column), REQUEST)
+    const pending = this.client.layout(rowGraph(column), REQUEST)
     this.cache.set(hash, pending)
     // The rejection is handled here as well as by the caller: this `catch` is
     // what removes the entry, and a promise nobody awaits must still not report
@@ -276,6 +334,9 @@ export class GraphLayout {
  * placed in its row -- so the band drawn around that stream, which is the union
  * of its cards, covers another stream's cards. One graph per stream is what
  * makes a band a row.
+ *
+ * It is the stream's **own** graph and nothing more; what the engine is actually
+ * handed is `rowGraph`, which is this plus the row chain.
  */
 export function graphOf(column: GraphColumn): LayoutGraph {
   const children: LayoutNode[] = []
@@ -309,6 +370,144 @@ export function nodeKey(plan: string, node: string): string {
  * engine's ids must be unique across the graph it is given. */
 export function edgeKey(plan: string, from: string, to: string): string {
   return `${String(plan.length)}:${plan}:${String(from.length)}:${from}:${to}`
+}
+
+/** ROW_CHAIN_PREFIX is what a row chain's edge ids begin with. An edge key
+ * always begins with the plan's own length -- a digit -- so no edge a plan can
+ * mint is ever mistaken for one of the chain's, whatever a plan or a task is
+ * called. */
+const ROW_CHAIN_PREFIX = 'row:'
+
+/**
+ * rowGraph is **the graph one stream is laid out from**: `graphOf`'s cards and
+ * edges, plus the row chain -- the phantom edges that make the engine's layers
+ * the rows the picture is drawn in.
+ *
+ * The chain's shape is the whole of the mechanism, and it is **exact** rather
+ * than approximate: every card of a row is given **one** edge from a card of the
+ * row above it (its own index, wrapped round the row above's own count). With
+ * `LONGEST_PATH_SOURCE` the engine then gives every card the longest path of
+ * needs ending at it, and by induction along the chain that is exactly its row:
+ * a card of row 0 has no chain edge into it and no plan edge from a shallower
+ * level, and a card of row r has its chain edge from a card of row r - 1 (level
+ * r - 1, by the same induction) and plan edges only from shallower levels, whose
+ * rows are earlier and whose levels are therefore at most r - 1. One edge per
+ * card is what makes it exact, and it is also the cheapest: an edge from every
+ * card of a row to every card of the next (measured at the same exactness, in
+ * the experiments this shape comes from) costs a route per pair for nothing.
+ *
+ * **The chain is scaffolding and never a line.** It is in the graph the worker
+ * is asked about -- the engine has to be told -- and in no picture:
+ * `stackStreams` drops the route the engine answers with, because a card of one
+ * row is not a dependency of a card in the next, and a line drawn between the
+ * two would read as one.
+ */
+function rowGraph(column: GraphColumn): LayoutGraph {
+  const graph = graphOf(column)
+  const rows = rowsOf(column)
+  const chain: LayoutEdge[] = []
+  rows.forEach((row, at) => {
+    const above = rows[at - 1]
+    if (above === undefined || above.length === 0) return
+    row.forEach((id, index) => {
+      const from = above[index % above.length]
+      if (from === undefined) return
+      chain.push({ id: `${ROW_CHAIN_PREFIX}${String(at)}:${id}`, sources: [from], targets: [id] })
+    })
+  })
+  return { id: graph.id, children: graph.children, edges: [...graph.edges, ...chain] }
+}
+
+/**
+ * rowsOf is **one stream's cards as the rows they are drawn in**: the stream's
+ * own levels, each cut into runs of at most `GRAPH_ROW_CARDS` cards, in the
+ * model's own order -- the order the plans and their tasks are read in, so a row
+ * is a run of the list a person was already reading rather than a set the engine
+ * chose.
+ *
+ * A row holds cards of **one level and no other**, which is what keeps the
+ * picture a reader can follow: level 0 under nothing, level 1 under it, and a
+ * second row of a level below the first. The alternative -- cutting the whole
+ * run of cards into fours and letting a row hold the tail of one level and the
+ * head of the next -- is one row of cards that do not belong together, and a
+ * dependency whose two ends are in it is then drawn as a line between two cards
+ * of the same row.
+ */
+function rowsOf(column: GraphColumn): readonly (readonly string[])[] {
+  const order: string[] = []
+  const needs = new Map<string, string[]>()
+  for (const plan of column.plans) {
+    for (const node of plan.nodes) {
+      const key = nodeKey(plan.id, node.id)
+      order.push(key)
+      needs.set(key, [])
+    }
+  }
+  // A plan's `needs` name tasks of that plan, and the model drops a need that
+  // names none of them, so both ends of every edge are cards of this stream --
+  // the two guards below are what keeps that a guarantee of this walk rather
+  // than an assumption about the document.
+  const laid = new Set(order)
+  for (const plan of column.plans) {
+    for (const edge of plan.edges) {
+      const to = needs.get(nodeKey(plan.id, edge.to))
+      const from = nodeKey(plan.id, edge.from)
+      if (to === undefined || !laid.has(from)) continue
+      to.push(from)
+    }
+  }
+
+  const levels = levelsIn(order, needs)
+  const sorted = order
+    .map((key, at) => ({ key, at, level: levels.get(key) ?? 0 }))
+    .sort((one, two) => one.level - two.level || one.at - two.at)
+  const rows: string[][] = []
+  let row: string[] = []
+  let level = Number.NaN
+  for (const card of sorted) {
+    if (card.level !== level || row.length === GRAPH_ROW_CARDS) {
+      row = []
+      rows.push(row)
+      level = card.level
+    }
+    row.push(card.key)
+  }
+  return rows
+}
+
+/** levelsIn is each card's **level**: the longest run of needs that ends at it,
+ * counted in cards. A card nothing leads to is level 0, and a card every task of
+ * a plan waits on is level 0 too, which is what makes a level the rows a reader
+ * reads down.
+ *
+ * It is the walk the engine's `LONGEST_PATH_SOURCE` layerer makes, done here
+ * because the rows are cut before the engine is asked anything -- and because
+ * the engine's answer is then the rows this call decided, the two have to agree
+ * on what a level is (the options above name that layerer for exactly this).
+ *
+ * **A cycle is broken rather than followed**: a document with one is refused
+ * where it is read, and this walk has to answer whatever it is handed, so the
+ * edge that would close a cycle in progress is read as no edge at all.
+ */
+function levelsIn(
+  order: readonly string[],
+  needs: ReadonlyMap<string, readonly string[]>,
+): ReadonlyMap<string, number> {
+  const level = new Map<string, number>()
+  const walking = new Set<string>()
+  const walk = (key: string): number => {
+    const found = level.get(key)
+    if (found !== undefined) return found
+    if (walking.has(key)) return 0
+    walking.add(key)
+    let deepest = 0
+    for (const from of needs.get(key) ?? []) deepest = Math.max(deepest, walk(from) + 1)
+    walking.delete(key)
+    level.set(key, deepest)
+    return deepest
+  }
+  for (const key of order) walk(key)
+  return level
 }
 
 /**
@@ -346,6 +545,9 @@ function stackStreams(columns: readonly GraphColumn[], laid: readonly Positions[
       placed.set(node.id, there)
     }
     for (const edge of row.edges) {
+      // The row chain is scaffolding (`rowGraph`): it made the rows and is not a
+      // dependency of the model, so its route is dropped rather than drawn.
+      if (edge.id.startsWith(ROW_CHAIN_PREFIX)) continue
       routed.add(edge.id)
       edges.push({ id: edge.id, sections: edge.sections.map((section) => moved(section, left, above - top)) })
     }

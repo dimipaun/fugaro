@@ -272,6 +272,60 @@ function manyStreams(
   })
 }
 
+/**
+ * wideStream is a document of **one stream whose middle level is wider than a
+ * row**: one task, `count` tasks that wait on it, and one task that waits on the
+ * first of those. Level 1 therefore holds `count` cards, which is a level the
+ * engine must be made to stack rather than to draw in one line.
+ */
+function wideStream(count: number): GraphModel {
+  const nodes: unknown[] = [
+    { id: 'root', title: 'The task the rest wait on', state: 'ready', closed: false, level: 0, critical: false, needs: [] },
+  ]
+  for (let at = 0; at < count; at += 1) {
+    nodes.push({
+      id: `wide-${String(at)}`,
+      title: 'A task that waits on the root',
+      state: 'ready',
+      closed: false,
+      level: 1,
+      critical: false,
+      needs: ['root'],
+    })
+  }
+  nodes.push({
+    id: 'tail',
+    title: 'The task that waits on the first of them',
+    state: 'ready',
+    closed: false,
+    level: 2,
+    critical: false,
+    needs: ['wide-0'],
+  })
+  return buildGraphModel({
+    document: decoded({
+      repo: 'example-owner/example-repo',
+      plans: [
+        {
+          id: 'plans/2026-11-19-wide',
+          artifact: 'docs/plans/2026-11-19-wide.graph.json',
+          plan: 'The wide plan',
+          stream: 'wide',
+          nodes,
+          releases: [],
+          tasks: nodes.length,
+          closed: 0,
+          open: nodes.length,
+        },
+      ],
+      totals: { plans: 1, tasks: nodes.length, closed: 0, open: nodes.length },
+      streams: [],
+      warnings: [],
+    }),
+    tab: null,
+  })
+}
+
 /** lastAsk is the graph of the layout this worker was asked for last, and so
  * what a reply to that ask has to cover. */
 function lastAsk(worker: FakeWorker): LayoutGraph {
@@ -1141,13 +1195,18 @@ describe('the graph layout cache', () => {
     expect(worker.placements, 'the entry just past the bound was not the one evicted').toBe(held + 1)
   })
 
-  it('lays the graph out left to right, orthogonally, over the cards’ own box', async () => {
-    // **The geometry the redesign's Graph canvas is drawn with.** The picture is
-    // read left to right -- a task to the left of the tasks that need it -- and
-    // its edges are routed orthogonally rather than as the engine's default
-    // splines, because a dependency's arrow is read as a line that leaves one
-    // card's side and arrives at another's, and a spline between two boxes is a
-    // curve a reader has to follow rather than a run they can see.
+  it('lays the graph out top to bottom, orthogonally, over the cards’ own box', async () => {
+    // **The geometry the redesign's Graph canvas is drawn with, turned on its
+    // side** (D2900, 2026-11-18, which reversed step 6a's left-to-right ruling).
+    // The picture is read top to bottom -- a task above the tasks that need it --
+    // so the layers the engine computes are the rows a reader reads **down**, and
+    // it is read the way a page is: the console's own window is wide enough for a
+    // row of cards, and the graph is the one screen whose width grows with its
+    // data, so the axis it may grow along is the one that scrolls. Its edges are
+    // still routed orthogonally rather than as the engine's default splines:
+    // a dependency's arrow is read as a line that leaves one card's edge and
+    // arrives at another's, and a spline between two boxes is a curve a reader
+    // has to follow rather than a run they can see.
     const { worker, layout } = layoutWith()
     await settle(worker, layout, model(null))
     const asks = worker.sent.filter((message) => message['cmd'] === 'layout')
@@ -1158,7 +1217,7 @@ describe('the graph layout cache', () => {
     for (const ask of asks) {
       const options = (ask['layoutOptions'] ?? {}) as Readonly<Record<string, string>>
       expect(options['elk.algorithm']).toBe('layered')
-      expect(options['elk.direction']).toBe('RIGHT')
+      expect(options['elk.direction']).toBe('DOWN')
       expect(options['elk.edgeRouting']).toBe('ORTHOGONAL')
     }
 
@@ -1183,6 +1242,53 @@ describe('the graph layout cache', () => {
       expect(structureHash(streamOf(model(null), index))).toContain(`${String(width.length)}:${width}`)
       expect(structureHash(streamOf(model(null), index))).toContain(`${String(height.length)}:${height}`)
     }
+  })
+
+  it('asks for a wide level stacked as rows, and draws none of the scaffolding', async () => {
+    // **A level wider than a row is stacked, and the engine has to be told.**
+    // The engine's own width controls do not do this for a top-to-bottom
+    // picture: `elk.layered.wrapping` is ignored in that direction, and the
+    // bounds the layerer offers (`minWidth`, `coffmanGraham.layerBound`) are
+    // loose, so a level of seven cards came back as one row of seven. What the
+    // engine does honour is its layering: so this module works out the levels
+    // itself, cuts each into rows of `GRAPH_ROW_CARDS`, and chains each row to
+    // the one above it, which is what makes the engine's layers those rows. The
+    // chain is **scaffolding**: it is in the graph the worker is asked about and
+    // in no picture (the assertions below, and `graph.test.ts` over the real
+    // engine, are the two halves of that).
+    const count = 7
+    const value = wideStream(count)
+    const stream = streamOf(value, 0)
+    const { worker, layout } = layoutWith()
+    const positions = await settle(worker, layout, value)
+    const ask = worker.asked[0]
+    if (ask === undefined) throw new Error('the worker was asked for no layout')
+
+    // The cards are the model's own cards, in the model's own order, and every
+    // edge of the stream is still there: the fold adds to the graph and takes
+    // nothing out of it.
+    const asked = ask.graph
+    const plain = graphOf(stream)
+    expect(asked.children).toEqual(plain.children)
+    for (const edge of plain.edges) expect(asked.edges).toContainEqual(edge)
+
+    // What it adds is the chain: one edge into each card of a row from a card of
+    // the row above, and none of them is an edge of any plan -- an edge key
+    // begins with the plan's own length, so no plan can mint an id this shape.
+    const chain = asked.edges.filter((edge) => !plain.edges.some((plainEdge) => plainEdge.id === edge.id))
+    expect(chain.length).toBeGreaterThan(0)
+    for (const edge of chain) expect(edge.id.startsWith('row:')).toBe(true)
+    // Seven cards of level 1 are two rows (four and three) under a row holding
+    // the root, so the level's cards reach the engine across two layers: the
+    // card that starts the second row is chained from the row above it.
+    const rowed = chain.filter((edge) => edge.targets[0]?.endsWith('wide-4'))
+    expect(rowed.length, 'the fifth card of the level was left in the first row').toBe(1)
+
+    // **And none of it is drawn**: the picture's edges are the model's own, the
+    // chain dropped rather than routed -- a line between two cards that no plan
+    // depends on would be an arrow a reader would read as a dependency.
+    const drawn = new Set(positions.edges.map((edge) => edge.id))
+    expect([...drawn].sort()).toEqual(plain.edges.map((edge) => edge.id).sort())
   })
 
   it('sends the worker ids and sizes and nothing a person wrote', () => {

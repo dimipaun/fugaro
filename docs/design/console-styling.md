@@ -1270,14 +1270,38 @@ never blanked — and says it is still reading after a quarter of a minute. The 
 drawn from the plan status alone and the run overlay decorates it when the run list lands,
 so a screen that waited for both reads would be the all-or-nothing wait this rule forbids.
 
-**The picture is read left to right** (console redesign, step 6a). The layout engine is
-asked for `elk.direction: 'RIGHT'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits to
-the **left** of the tasks that need it, the layers it computes are the columns a reader
-reads across, and a dependency is a line that leaves one card's side and arrives at
-another's. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), which is the
+**The picture is read top to bottom** (**D2900**, the owner, 2026-11-18, which **reversed**
+console redesign step 6a's left-to-right canvas). The layout engine is asked for
+`elk.direction: 'DOWN'` and `elk.edgeRouting: 'ORTHOGONAL'`, so a task sits **above** the
+tasks that need it, the layers it computes are the **rows** a reader reads down, and a
+dependency is a line that leaves one card's edge and arrives at another's. What step 6a
+wanted survives the reversal — a dependency is a run of the picture a reader follows — and
+what the ruling changed is the axis: the graph is the one screen whose width grows with its
+data, and the console's window *is* a width, so the axis a picture may grow along is the one
+that scrolls. A card is **260 × 88** (`GRAPH_NODE_WIDTH`, `GRAPH_NODE_HEIGHT`), which is the
 two constants the engine is told and the two **one stream's** layout cache is keyed by: the
 key is a serialization of that stream's **structure**, so the box sizes are in it and a
 card that changes size changes the key with it.
+
+**A level wider than a row is stacked into rows of four** (`GRAPH_ROW_CARDS`, D2900's second
+half). A level is a row of a top-to-bottom picture and a level can be wider than the pane —
+a plan of twelve tasks that need one task is one level of twelve cards — so the levels are
+worked out in `layout.ts` (the longest run of needs that ends at a card, which is the
+layering the option `elk.layered.layering.strategy: 'LONGEST_PATH_SOURCE'` names), each is
+cut into rows of at most `GRAPH_ROW_CARDS` **in the model's own order**, and each row is
+**chained** to the row above it by phantom edges the engine is handed and no picture draws.
+The engine's layers are then exactly those rows, and the chain is **exact** rather than
+approximate: every card of a row gets one edge from a card of the row above, so by induction
+the longest path of needs ending at a card is its own row. **The engine's own width controls
+do not do this for a vertical picture**: `elk.layered.wrapping` is ignored in that direction,
+and the bounds the layerer offers are loose — a bound of four came back as rows of five and
+six. `GRAPH_ROW_CARDS` is **4** because that is what the pane holds at the card's floor: the
+console's own window less the page's own padding is 1116 px, four cards and the three gaps
+between them drawn at `GRAPH_MIN_SCALE` are 978 px of it, and five are 1239 px. The two
+strategies named beside the layerer are part of the same bound and are measured rather than
+assumed: the default node placement spread a row of seven cards 5393 units wide, and
+`elk.separateConnectedComponents: 'false'` keeps the engine from packing the separate
+components of one row two-dimensionally, which drew a row of four 2000 units wide.
 
 **The picture has a scale floor, and below it the pane scrolls** (the graph-fits-the-width
 slice's G1.1; D735). Fitting the panel's width alone had one way to draw a
@@ -1298,8 +1322,9 @@ would leave the columns that made the picture wide drawn under it. **The pane wr
 canvas and nothing else** — the list has no width of its own to keep, and the coordinator
 scope draws no picture at all — and the zoom is untouched by it: the frame is the picture
 scaled by the zoom, which stays the operator's own control and the way to go below the
-floor. **No ELK wrapping** (`elk.layered.wrapping`): the layers run left to right, and
-folding them toward a wide shape widens the picture across the axis a reader moves along,
+floor. **No ELK wrapping** (`elk.layered.wrapping`): the engine ignores it in a
+top-to-bottom picture, so the row bound above is built on the layering instead, and folding
+the layers toward a wide shape would widen the picture across the axis a reader moves along,
 for a new set of positions and a new cache key.
 
 **One engine run per stream, and the runs are stacked as rows** (the owner's ruling of
