@@ -18,6 +18,7 @@
           "internal/runmsg/runmsg_test.go",
           "schemas/run-message.schema.json",
           "schemas/result.schema.json",
+          "schemas/schemas_test.go",
           "internal/runstore/runstore.go"
         ]
       }
@@ -36,6 +37,8 @@
           "internal/cli/tell_test.go",
           "internal/cli/root.go",
           "internal/cli/report_json_fixtures_test.go",
+          "internal/cli/report_exempt.go",
+          "internal/cli/noprompt_harness_test.go",
           "website/content/cli-reference.md"
         ]
       }
@@ -120,6 +123,7 @@
           "deploy/terraform/gcp/modules/installation/bucket.tf",
           "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
           "deploy/terraform/gcp/modules/project/sa.tf",
+          "internal/budget/token/object.go",
           "internal/infra/msglifecycle_test.go",
           "internal/infra/tf/testdata/golden/installation*.plan.json"
         ]
@@ -232,6 +236,11 @@
       "task": "RM4",
       "needs": "RM3",
       "reason": "needs the yield's behaviour, the stop that keeps the session, not only its signature"
+    },
+    {
+      "task": "RM4",
+      "needs": "RM5",
+      "reason": "it wires RM5's section into finalize, in runner.go, which RM5 leaves alone"
     },
     {
       "task": "RM7",
