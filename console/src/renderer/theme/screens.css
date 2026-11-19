@@ -387,12 +387,27 @@ p.live-note {
 }
 
 /* The burn window: one tick per sample, the tone saying whether the sample is
- * plottable, and the rate in each bar's `title`. */
+ * plottable, and the rate in each bar's `title`.
+ *
+ * **The line is one fixed-size box** (D2901, the owner's report of 2026-11-18):
+ * its height is the row's, it clips what it cannot hold, and its ticks are capped
+ * -- so a window of a thousand samples is the same box as a window of three. It
+ * packs to its **end** because the axis is time: the newest sample is the right
+ * edge, which is what a clip must therefore keep, and the older ticks it drops
+ * are the ones nobody is looking at.
+ *
+ * **No text and no `live-num` on a tick.** Both would give every bar a minimum
+ * width of its own -- the six-character floor of the number hook most of all --
+ * and a line whose width follows its sample count is the row of blue squares the
+ * report was about (`putBar`, `live.ts`). The bar is geometry: the share in
+ * `data-height`, the state in `data-state`, the rate in `title`. */
 ol.live-burn {
   display: flex;
   align-items: flex-end;
+  justify-content: flex-end;
   gap: 1px;
   height: var(--row-height);
+  overflow: hidden;
 }
 
 li.live-burn-bar {
@@ -400,8 +415,6 @@ li.live-burn-bar {
   max-width: 12px;
   height: 100%;
   overflow: hidden;
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
   background: var(--accent);
 }
 

@@ -716,14 +716,20 @@ span.live-meter-word {
 }
 
 /* The hour line is drawn where `screens.css` draws the burn line's own `ol`,
- * because the redesign's tokens are this file's: the height, the tick width and
- * the gap's mark are the same three facts, in the palette the rest of the panel
- * is painted on. */
+ * because the redesign's tokens are this file's: the height, the tick width, the
+ * gap's mark **and the box** are the same facts, in the palette the rest of the
+ * panel is painted on. The hour line's window is the wider of the two and so the
+ * one that reaches a cap first (`LIVE_HOUR_MAX_SAMPLES`), which is why the fixed
+ * box and the clip are stated here rather than left to the burn line's own rule:
+ * a tick a person cannot see costs nothing, and a tick that widens the panel
+ * costs a figure (D2901). */
 ol.live-hour {
   display: flex;
   align-items: flex-end;
+  justify-content: flex-end;
   gap: 1px;
   height: var(--row-height);
+  overflow: hidden;
 }
 
 li.live-hour-bar {
@@ -904,8 +910,16 @@ button.live-reap {
 
 /* ---- The runs table ------------------------------------------------------ */
 
+/* The rows are bounded and scroll (F3, D2901): a repository with a busy day has
+ * more runs than the panel can show, and before this box the list ran down the
+ * page and pushed the repositories under it away. The bound is the box's rather
+ * than a limit on the rows drawn, so a taller window shows more of them instead
+ * of the console deciding which runs a person may see -- and it is the same
+ * `max-height` the logs windows already use (the two `ol.run-log-*` rules). */
 div.live-runs {
+  max-height: 320px;
   overflow-x: auto;
+  overflow-y: auto;
   border: var(--rule-width) solid var(--line-subtle);
   border-radius: var(--radius-lg);
 }
