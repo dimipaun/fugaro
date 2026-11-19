@@ -225,6 +225,57 @@
       }
     },
     {
+      "id": "J5r",
+      "title": "the database rules accept the launch action and signatures",
+      "run": null,
+      "version": null,
+      "size": 1.5,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/rules/rules.json.tmpl",
+          "internal/budget/rules/rules.go",
+          "internal/budget/rules/rules_test.go",
+          "internal/budget/rules/emulator_mailbox_test.go",
+          "internal/projectpolicy/version.go"
+        ]
+      }
+    },
+    {
+      "id": "J6",
+      "title": "the consumer signing key in Cloud KMS",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "deploy/terraform/gcp/modules/installation/mailbox_key.tf",
+          "internal/infra/tf/cover.go",
+          "internal/infra/mailbox_key_test.go",
+          "internal/mailbox/kmssigner.go",
+          "internal/mailbox/kmssigner_test.go"
+        ]
+      }
+    },
+    {
+      "id": "P9",
+      "title": "fugaro user revoke ends mobile access",
+      "run": null,
+      "version": null,
+      "size": 1,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/user_grant.go",
+          "internal/cli/user_grant_mobile_test.go"
+        ]
+      }
+    },
+    {
       "id": "P8",
       "title": "pin the production root and signing public keys (after Checks 730 and 737)",
       "run": null,
@@ -525,7 +576,8 @@
           "internal/mailbox/verify.go",
           "shared/mailbox-schema/index.js",
           "mobile/src/mailbox/mac.js",
-          "mobile/src/mailbox/client.js"
+          "mobile/src/mailbox/client.js",
+          "internal/cli/mailbox.go"
         ]
       }
     },
@@ -783,6 +835,51 @@
       "task": "P8",
       "needs": "P1",
       "reason": "the same file, internal/assertion/pinned.go"
+    },
+    {
+      "task": "K1",
+      "needs": "A3",
+      "reason": "the same Terraform root, ee/identitysvc/terraform"
+    },
+    {
+      "task": "J5r",
+      "needs": "J1",
+      "reason": "the same files, rules.json.tmpl and internal/projectpolicy/version.go"
+    },
+    {
+      "task": "I2",
+      "needs": "J5r",
+      "reason": "the surfaces send what only the new rules accept"
+    },
+    {
+      "task": "UP1",
+      "needs": "J5r",
+      "reason": "update migrates the rules generation"
+    },
+    {
+      "task": "J6",
+      "needs": "P5",
+      "reason": "the same file, internal/infra/tf/cover.go"
+    },
+    {
+      "task": "J5c",
+      "needs": "J6",
+      "reason": "the consumer signs through J6 KMS signer: its real signing behaviour"
+    },
+    {
+      "task": "UP1",
+      "needs": "J6",
+      "reason": "update applies the key and publishes its public half"
+    },
+    {
+      "task": "P9",
+      "needs": "P7",
+      "reason": "calls the member removal P7 writes in pair_revoke.go"
+    },
+    {
+      "task": "D1",
+      "needs": "P9",
+      "reason": "it describes what revoking a roster grant ends"
     },
     {
       "task": "P8",
