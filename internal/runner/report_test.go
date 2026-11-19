@@ -7,6 +7,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/rigor"
+	"github.com/dimipaun/fugaro/internal/runmsg"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -270,5 +271,173 @@ func TestMarkerKeepsFullID(t *testing.T) {
 	}
 	if strings.Contains(got, "### Fugaro run `"+rec.RunID+"`") {
 		t.Errorf("the heading prints the full run ID:\n%s", got)
+	}
+}
+
+// messageRec is a record carrying the messages block the report's Messages
+// section reads: the shape the runner writes at bootstrap and fills in as
+// messages arrive (F13).
+func messageRec(ds ...runmsg.Delivery) *runstore.Record {
+	return &runstore.Record{
+		RunID:   "20261119-120000-77aa",
+		Outcome: runstore.OutcomeReady,
+		Messages: &runmsg.Record{
+			Accepting: true, Format: runmsg.Format, Flags: []string{runmsg.FlagNow},
+			Messages: ds,
+		},
+	}
+}
+
+// reportedWith renders rec's report as a run that still holds mem in memory:
+// the three report sites that can carry messages call reportWithMessages this
+// way (F15).
+func reportedWith(rec *runstore.Record, mem *ReportMessages) string {
+	return reportWithMessages(rec, "runs/acme-app/"+rec.RunID+"/", nil, nil, nil, mem)
+}
+
+// TestReportMessagesSection: the report has a Messages section listing what
+// became of every message the run read — its number, its sender, the flags it
+// asked for, its fate and the stage it reached (F13, rule 5) — and the text of
+// each, cleaned like every other text a run shows a person.
+func TestReportMessagesSection(t *testing.T) {
+	rec := messageRec(
+		runmsg.Delivery{Seq: 1, SentBy: "dimi", Flags: []string{runmsg.FlagNow}, State: runmsg.StateDelivered, Stage: "fix"},
+		runmsg.Delivery{Seq: 2, SentBy: "alice", State: runmsg.StateUndelivered, Reason: "the run ended before a coder stage"},
+		runmsg.Delivery{Seq: 3, State: runmsg.StateMissing, Reason: "the number was never written"},
+	)
+	got := reportedWith(rec, &ReportMessages{
+		Texts: map[int]string{
+			1: "use the existing helper in internal/foo",
+			2: "\x1b[31mskip the console part\x1b[0m",
+		},
+		Repo: "acme/app", PR: 42,
+	})
+	for _, want := range []string{
+		"#### Messages",
+		"| # | Sender | Flags | Fate | Stage |",
+		"| 1 | `dimi` | now | delivered | `fix` |",
+		"| 2 | `alice` | — | undelivered | — |",
+		"| 3 | — | — | missing | — |",
+		"**Message 1**:",
+		"```\nuse the existing helper in internal/foo\n```",
+		"**Message 2**:",
+		"```\nskip the console part\n```",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the Messages section lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b[31m") {
+		t.Errorf("the section carries an escape sequence the text was cleaned of:\n%s", got)
+	}
+	if strings.Contains(got, "**Message 3**") {
+		// The message is a number nobody wrote: there is no text to quote, and
+		// an empty block under it would read as one that said nothing.
+		t.Errorf("a message with no text got a block of its own:\n%s", got)
+	}
+	// A report rendered with no memory still lists what became of each
+	// message: the artifact path builds its report this way and carries no
+	// message at all (F24), so the record's own account must stand alone.
+	without := reportedWith(rec, nil)
+	if !strings.Contains(without, "| 1 | `dimi` | now | delivered | `fix` |") {
+		t.Errorf("the fates alone are not enough to render the section:\n%s", without)
+	}
+	if strings.Contains(without, "**Message") {
+		t.Errorf("a report with no memory quotes a text:\n%s", without)
+	}
+}
+
+// TestReportUndeliveredLine: an undelivered message carries the command that
+// sends it in a new run, built from the runner's memory — the text and the
+// pull request's number (F19, rule 5) — and a delivered one carries none.
+func TestReportUndeliveredLine(t *testing.T) {
+	rec := messageRec(
+		runmsg.Delivery{Seq: 1, State: runmsg.StateDelivered, Stage: "implement"},
+		runmsg.Delivery{Seq: 2, State: runmsg.StateUndelivered},
+	)
+	got := reportedWith(rec, &ReportMessages{
+		Texts: map[int]string{1: "delivered text", 2: "skip the console part"},
+		Repo:  "acme/app", PR: 42,
+	})
+	const line = "fugaro run --pr 42 --repo acme/app -- 'skip the console part'"
+	if !strings.Contains(got, line) {
+		t.Errorf("the undelivered message has no line to send it:\n%s\nwant %q", got, line)
+	}
+	if n := strings.Count(got, "fugaro run"); n != 1 {
+		t.Errorf("the section prints %d commands, want the one for the undelivered message:\n%s", n, got)
+	}
+	if !strings.Contains(got, "delivered text") {
+		t.Errorf("the delivered message's text is missing:\n%s", got)
+	}
+}
+
+// TestReportNoPRNoLine: a run that opened no pull request gets no --pr line —
+// there is nothing to continue — and its undelivered text is shown on its own,
+// which is the whole answer to send in a new run (F19).
+func TestReportNoPRNoLine(t *testing.T) {
+	rec := messageRec(runmsg.Delivery{Seq: 1, State: runmsg.StateUndelivered})
+	got := reportedWith(rec, &ReportMessages{Texts: map[int]string{1: "skip the console part"}, Repo: "acme/app"})
+	if strings.Contains(got, "fugaro run") {
+		t.Errorf("a run with no pull request prints a follow-up command:\n%s", got)
+	}
+	if !strings.Contains(got, "```\nskip the console part\n```") {
+		t.Errorf("the undelivered text is not shown on its own:\n%s", got)
+	}
+}
+
+// TestReportFenceLongerThanText: a text carrying a run of backticks cannot
+// close the block it sits in and have the lines after it read as the report's
+// own markdown (F19).
+func TestReportFenceLongerThanText(t *testing.T) {
+	text := "before\n```\nrm -rf /\n```\nafter"
+	rec := messageRec(runmsg.Delivery{Seq: 1, State: runmsg.StateDelivered, Stage: "fix"})
+	got := reportedWith(rec, &ReportMessages{Texts: map[int]string{1: text}})
+	if want := "````\n" + text + "\n````\n"; !strings.Contains(got, want) {
+		t.Errorf("the fence is not longer than the run in the text:\n%s\nwant %q", got, want)
+	}
+	if n := strings.Count(got, "````"); n != 2 {
+		t.Errorf("the block has %d four-backtick fences, want the opening and closing pair:\n%s", n, got)
+	}
+	if !strings.Contains(got, gitprov.ReportMarker(rec.RunID)) {
+		t.Errorf("the report's own markdown after the block is gone:\n%s", got)
+	}
+}
+
+// TestReportTextStartingWithDash: a pasted command never reads the text as a
+// flag, and never runs anything of its own: the text comes after "--" and is
+// quoted as one shell word (F19).
+func TestReportTextStartingWithDash(t *testing.T) {
+	rec := messageRec(runmsg.Delivery{Seq: 1, State: runmsg.StateUndelivered})
+	got := reportedWith(rec, &ReportMessages{
+		Texts: map[int]string{1: `--force it's --console`},
+		Repo:  "acme/app", PR: 7,
+	})
+	const line = `fugaro run --pr 7 --repo acme/app -- '--force it'\''s --console'`
+	if !strings.Contains(got, line) {
+		t.Errorf("the line for a text starting with a dash is not the one to paste:\n%s\nwant %q", got, line)
+	}
+}
+
+// TestReportUnchangedWithoutMessages: a run that received no message has no
+// section, and its report is byte for byte the report it always was (spec
+// "Done means", bullet 5; F13).
+func TestReportUnchangedWithoutMessages(t *testing.T) {
+	rec := messageRec()
+	loc := "runs/acme-app/" + rec.RunID + "/"
+	today := Report(rec, loc, nil)
+	with := reportWithMessages(rec, loc, nil, nil, nil, &ReportMessages{
+		Texts: map[int]string{}, Repo: "acme/app", PR: 42,
+	})
+	if strings.Contains(with, "#### Messages") {
+		t.Errorf("a run with no message has a Messages section:\n%s", with)
+	}
+	if with != today {
+		t.Errorf("a run with no message changed:\n--- got ---\n%s\n--- want ---\n%s", with, today)
+	}
+	// A record written before the block existed carries none, and reads the
+	// same: the field is additive and nothing else mentions it.
+	rec.Messages = nil
+	if got := Report(rec, loc, nil); got != today {
+		t.Errorf("a record without the block renders differently:\n--- got ---\n%s\n--- want ---\n%s", got, today)
 	}
 }
