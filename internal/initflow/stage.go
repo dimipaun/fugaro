@@ -439,8 +439,14 @@ type Left struct {
 	// who was not at the terminal has no other way to get. The loop fills it
 	// from the stage's own result when the stage set none — a stage that only
 	// said "run this in your own terminal" has said what it owes and not why —
-	// so a step left for a person always prints one, for every stage and not
-	// only the ones whose own text happens to argue the case.
+	// so a stage that knows why it stopped says so once, for the log and for
+	// --json, and not only in the line it printed in flight.
+	//
+	// It is empty when there is no reason beside the step's own Text: a stage
+	// that leaves a step by returning NeedsYouError carries that sentence and
+	// nothing else — the error type has no detail of its own, where
+	// BillingPausedError does — and a reason equal to Text is dropped by one
+	// rather than printed twice.
 	Why string `json:"why,omitempty"`
 	// Brief is a refusal's account as the terminal prints it, one part per
 	// line: what was refused, why in a clause, what to do (the owner's
@@ -456,9 +462,16 @@ type Left struct {
 // takes the run's redactions over them: a value the process holds must not
 // reach the screen through a stage's own sentence or through the reason it
 // gives for the step, and the two are normalised the same way for that reason.
+// A reason that turns out to be the step's own sentence is dropped here and
+// not printed twice: the input phase's wizard is the stage that answers a stop
+// with its own question as both the line and the reason (wizardStage.Check),
+// and one line is all the step owes.
 func (lf *Left) one(redact func(string) string, redactAll func([]string) []string) {
 	lf.Text = redact(oneLine(lf.Text))
 	lf.Why = redact(oneLine(lf.Why))
+	if lf.Why == lf.Text {
+		lf.Why = ""
+	}
 	if len(lf.Commands) > 0 {
 		lf.Commands = redactAll(lf.Commands)
 		for i, c := range lf.Commands {

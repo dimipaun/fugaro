@@ -697,6 +697,10 @@ func TestLeftTextIsOneLine(t *testing.T) {
 // The stage's detail is what the reader acts on, and the line the stage printed
 // in flight is gone from the log and from --json — the two views a reader who
 // was not at the terminal has.
+//
+// The reason is not printed twice: a stage whose detail IS the step's own line
+// — the input phase's wizard answers a stop with its question as both
+// (wizardStage.Check) — leaves a step that carries none.
 func TestALeftForYouStepAlwaysSaysWhy(t *testing.T) {
 	const reason = "server: NOT rebuilt: the catalog entry server: line 31 of its Dockerfile asks for a secret; remove it"
 	for _, tc := range []struct {
@@ -704,15 +708,20 @@ func TestALeftForYouStepAlwaysSaysWhy(t *testing.T) {
 		// left is the step the stage hands back, without a reason of its own in
 		// the first case and with one in the second.
 		left Left
+		// detail is the stage's own line: the reason in the first two cases, and
+		// the step's own sentence in the third.
+		detail string
+		// want is the reason the step carries, "" for the step that has none.
 		want string
 	}{
-		{"the stage's own detail", Left{Kind: LeftCommand, Text: "fugaro image build server"}, reason},
-		{"the step's own reason", Left{Kind: LeftCommand, Text: "fugaro image build server", Why: "the lease had no room"}, "the lease had no room"},
+		{"the stage's own detail", Left{Kind: LeftCommand, Text: "fugaro image build server"}, reason, reason},
+		{"the step's own reason", Left{Kind: LeftCommand, Text: "fugaro image build server", Why: "the lease had no room"}, reason, "the lease had no room"},
+		{"a detail that is the step's own line", Left{Kind: LeftCommand, Text: "pass --gcp-project"}, "pass --gcp-project", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var log []string
 			var out bytes.Buffer
-			f := &fake{name: Images, log: &log, outDetail: reason, outLeft: &tc.left}
+			f := &fake{name: Images, log: &log, outDetail: tc.detail, outLeft: &tc.left}
 			res, err := Run(context.Background(), []Stage{f}, Options{Out: &out, Yes: true})
 			if err != nil || res.ExitCode() != 1 || len(res.Left) != 1 {
 				t.Fatalf("err %v exit %d res %+v", err, res.ExitCode(), res)
@@ -726,6 +735,14 @@ func TestALeftForYouStepAlwaysSaysWhy(t *testing.T) {
 			})
 			if i < 0 {
 				t.Fatalf("the run printed no step for the person:\n%s", out.String())
+			}
+			if tc.want == "" {
+				// Nothing to print under it, and above all not the step's own
+				// line a second time.
+				if dup := lines[i] + "\n    " + tc.left.Text; strings.Contains(out.String(), dup) {
+					t.Errorf("the step's own line is printed twice:\n%s", out.String())
+				}
+				return
 			}
 			if i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) != tc.want {
 				t.Errorf("the reason is not the line under the step, want %q:\n%s", tc.want, out.String())
