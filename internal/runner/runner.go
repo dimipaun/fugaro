@@ -530,6 +530,11 @@ type run struct {
 	// this level with the challenger model and publishes nothing (B1.2). It is
 	// set at bootstrap, before anything reads a model, and never cleared.
 	replay policy.Level
+	// msgs is the message channel (messages.go): what this run has read out
+	// of its message prefix, what a coder stage has been given, and what the
+	// record says about each message. It is opened once at bootstrap, and it
+	// is the only authority for what has been delivered (F13).
+	msgs messageState
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
 	// baseSHA is the base branch's commit as bootstrap fetched it (the
@@ -874,6 +879,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
+	stopMessages := r.watchMessages(runCtx)
 	switch {
 	case r.artifact:
 		r.runArtifactMode(runCtx)
@@ -890,6 +896,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	default:
 		r.runAgentLoop(runCtx)
 	}
+	// Stopped here rather than deferred: the stop waits for the poll, and
+	// everything below it — the stopping agent's checkpoint report and the
+	// final writes — must not have another goroutine publishing the record
+	// beside it.
+	stopMessages()
 	// The stop's own last call, before anything that cannot make one: a
 	// governance halt asks the stopping agent for the three fields of its
 	// checkpoint report, from a fresh session, and the answers go into the
@@ -3262,6 +3273,12 @@ func (r *run) bootstrap(ctx context.Context) error {
 	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
 	r.rcp, r.derived = rcp, derived
 	r.gateSteps = checkGateSteps(rcp)
+	// The message channel opens here and not earlier: every flag coderStages
+	// reads is set by now, and a block written before the recipe is resolved
+	// could promise a coder stage a review-only run has not got. It is before
+	// any stage, which is what a sender reads to tell this runner from one
+	// that predates the feature (F9).
+	r.openMessages()
 	if err := checkGateCommands(rcp, wf, spec.Ref); err != nil {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
@@ -4111,6 +4128,14 @@ func (r *run) agentLoop(ctx context.Context) {
 	// implement, so there is no session yet for fix (below) to resume.
 	var sessionID string
 	if !skipImplement {
+		// Rule 1's first call site. The block is taken once and rides in both
+		// this request and the fresh one a recovered stage is retried with:
+		// the retry is the same stage, and a second take would find the queue
+		// already drained.
+		mb := r.messageBlock(ctx, "implement")
+		if mb != "" {
+			req.Prompt += "\n\n" + mb
+		}
 		res, ok, err := r.stage(ctx, "implement", req, opts)
 		r.noteSession(req, res)
 		r.countTokens(res)
@@ -4119,6 +4144,9 @@ func (r *run) agentLoop(ctx context.Context) {
 		if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
 			r.fellBackFresh(ctx)
 			req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
+			if mb != "" {
+				req.Prompt += "\n\n" + mb
+			}
 			res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
 			r.noteSession(req, res)
 			r.countTokens(res)
@@ -4729,7 +4757,7 @@ func (r *run) fix(ctx context.Context, findings []Finding, sys, sessionID string
 	if r.sessionID != "" {
 		sessionID = r.sessionID
 	}
-	req := agent.Request{Prompt: FixPrompt(findings), AppendSystemPrompt: sys}
+	req := agent.Request{Prompt: FixPrompt(findings, r.messageBlock(ctx, "fix")), AppendSystemPrompt: sys}
 	if sessionID == "" {
 		// No session exists to resume: a Fixed check gate (gate.go) skipped
 		// implement entirely, so this fix is the run's first real agent
@@ -6121,6 +6149,11 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 
 func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
+	// Rule 5's last read, before anything else saves the record: a message
+	// written after the final poll is recorded rather than lost, and every
+	// message still pending becomes undelivered here, which is the only place
+	// a run that ends without another coder stage can say so (D2944, F18).
+	r.finalReadMessages(ctx)
 	// The paths this run changed, recorded before anything else saves the
 	// record, so every run that reaches finalize carries them — the ones
 	// that end without a pull request included (design D27, V2.1.2).

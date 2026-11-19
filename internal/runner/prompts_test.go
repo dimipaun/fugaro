@@ -268,7 +268,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 		{Severity: "blocker", File: "internal/api/handler.go", Summary: "the handler ignores the decode error"},
 		{Summary: "the retry loop never stops"},
 		{Summary: "the licence text needs counsel's clearance", NeedsOwner: true},
-	})
+	}, "")
 	if !strings.Contains(got, "- [blocker] internal/api/handler.go: the handler ignores the decode error\n") {
 		t.Errorf("the brief does not list the first finding with its severity and file:\n%s", got)
 	}
@@ -289,7 +289,7 @@ func TestFixPromptListsOnlyBlockingFindings(t *testing.T) {
 // keep working, and every finding the round left open is either listed or a
 // follow-up no change here may pre-empt.
 func TestFixPromptSaysTouchNothingElse(t *testing.T) {
-	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}})
+	got := runner.FixPrompt([]runner.Finding{{Summary: "the retry loop never stops"}}, "")
 	if !strings.Contains(got, "Touch nothing else") {
 		t.Errorf("the brief does not say to touch nothing else:\n%s", got)
 	}
