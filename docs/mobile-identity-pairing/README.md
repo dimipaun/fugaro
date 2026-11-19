@@ -2,7 +2,7 @@
 
 **Status: plan only; nothing is implemented; no task approved.** The four documents below are the owner's spec as received, what the repository actually holds and the owner's answers, and the plan that follows. **Owner: Dimi Paun. Date: 2026-11-18.** Read against `main` at `01fe41f30`; every citation is by path and symbol, never by line number.
 
-The spec amends [../mobile-auth/spec.md](../mobile-auth/spec.md) and the mobile app spec in [../mobile/](../mobile/): a person-centric app with its own identity layer, workspace-bound assertions instead of a bearer QR, multi-device continuity, job controls, a text interface, a context gauge and a usage meter. [reconciliation.md](reconciliation.md) works through what the repository holds against it (no identity project exists, the "security service" does not exist, workspaces here have no users, Firebase refresh tokens are not what the spec describes) and records the owner's ten answers (D2782, credsvc, was **amended after review**: its endpoints are served by a second public Cloud Run service, which the owner confirmed and reconfirmed, O8); [implementation-plan.md](implementation-plan.md) turns them into 40 tasks and two anticipated contract changes in seven modules.
+The spec amends [../mobile-auth/spec.md](../mobile-auth/spec.md) and the mobile app spec in [../mobile/](../mobile/): a person-centric app with its own identity layer, workspace-bound assertions instead of a bearer QR, multi-device continuity, job controls, a text interface, a context gauge and a usage meter. [reconciliation.md](reconciliation.md) works through what the repository holds against it (no identity project exists, the "security service" does not exist, workspaces here have no users, Firebase refresh tokens are not what the spec describes) and records the owner's ten answers (D2782, credsvc, was **amended after review**: its endpoints are served by a second public Cloud Run service, which the owner confirmed and reconfirmed, O8); [implementation-plan.md](implementation-plan.md) turns them into 42 tasks and two anticipated contract changes in seven modules.
 
 ## The documents
 
@@ -15,8 +15,8 @@ The spec amends [../mobile-auth/spec.md](../mobile-auth/spec.md) and the mobile 
 
 ## Numbers taken
 
-Decisions **D2780-D2799** (D2780-D2789 asked, D2790-D2799 resolved); D2800-D2829 are not taken, because open pull request #3195 uses D2800-D2826; checks **730-739** (730-736 used). Findings are numbered `F1`.. per folder, as in the neighbouring folders.
+Decisions **D2780-D2799** (D2780-D2789 asked, D2790-D2799 resolved); D2800-D2829 are not taken, because open pull request #3195 uses D2800-D2826; checks **730-739** (730-737 used). Findings are numbered `F1`.. per folder, as in the neighbouring folders.
 
 ## What waits on something outside this folder
 
-The owner's own go on each task; **O2, O4, O5 and O7** are still open (see [reconciliation.md](reconciliation.md)); O1, O3, O6, O8, O9, O10, O11, O12 and O13 were answered 2026-11-18 (O6, a per-message device signature, tasks J5b and J5c, against the recommendation); Checks 730-736, all owner-run; the P5.1 consumer for start and cancel to work end to end.
+The owner's own go on each task; every open item O1-O13 was answered 2026-11-18 (see [reconciliation.md](reconciliation.md)), two against the recommendation: O6, a per-message device signature (tasks J5b and J5c), and O7, pinned keys plus a root-signed key set (tasks A4 and P8); if #3195 merges first, P2 and P3 are re-checked before they launch (O5); Checks 730-737, all owner-run; the P5.1 consumer for start and cancel to work end to end.

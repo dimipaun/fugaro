@@ -5,7 +5,7 @@
   "nodes": [
     {
       "id": "T0",
-      "title": "pin test and the live checks 730-736",
+      "title": "pin test and the live checks 730-737",
       "run": null,
       "version": null,
       "size": 1,
@@ -201,7 +201,41 @@
           "internal/assertion/verify.go",
           "internal/assertion/jwks_cache.go",
           "internal/assertion/jti.go",
+          "internal/assertion/pinned.go",
           "internal/assertion/verify_test.go"
+        ]
+      }
+    },
+    {
+      "id": "A4",
+      "title": "root key project and the key-set signing command (owner-run, Check 737)",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "ee/identitysvc/rootkey/terraform/main.tf",
+          "ee/identitysvc/keyset.go",
+          "ee/identitysvc/keyset_test.go",
+          "ee/identitysvc/cmd/keyset-sign/main.go",
+          "ee/identitysvc/rootkey_infra_test.go"
+        ]
+      }
+    },
+    {
+      "id": "P8",
+      "title": "pin the production root and signing public keys (after Checks 730 and 737)",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/assertion/pinned.go",
+          "internal/assertion/pinned_test.go"
         ]
       }
     },
@@ -744,6 +778,21 @@
       "task": "P7",
       "needs": "P2",
       "reason": "same file, internal/cli/pair.go"
+    },
+    {
+      "task": "P8",
+      "needs": "P1",
+      "reason": "the same file, internal/assertion/pinned.go"
+    },
+    {
+      "task": "P8",
+      "needs": "A4",
+      "reason": "the production root public key exists only after the ceremony A4 prepares"
+    },
+    {
+      "task": "UP1",
+      "needs": "P8",
+      "reason": "the release update converges to must carry the production pins"
     },
     {
       "task": "J5a",

@@ -18,7 +18,7 @@ Rules files and `CLAUDE.md` are pointed at, not restated: `.claude/rules/credent
 
 **Provider-side order.** `fugaro plan graph` records contract edges only from consumers, so the provider-side tasks that write to C1's shapes (A1, A2, K1, P2) carry no edge to C1 in the graph; launch them after C1 merges.
 
-**Defaults the plan uses for the spec's vague figures (O4 asks the owner to confirm):** QR nonce 10 minutes; "recent enough" authentication 24 hours, per project; assertion lifetime 2 minutes; signing key rotation 90 days with 30 days of overlap; access token about one hour; refresh token about 30 days idle; long paste 100000 characters without loss.
+**Defaults the plan uses for the spec's vague figures (accepted by the owner, O4):** QR nonce 10 minutes; "recent enough" authentication 24 hours, per project; assertion lifetime 2 minutes; signing key rotation 90 days with 30 days of overlap; access token about one hour; refresh token about 30 days idle; long paste 100000 characters without loss.
 
 ## Global constraints and review focus
 
@@ -28,6 +28,7 @@ Inputs and failure modes the spec implies; each is pinned by a named task.
 | --- | --- |
 | Assertion replayed (same `jti`), wrong `aud`, expired, bad signature, unknown `kid`, `alg` swapped to `none` or HMAC | P1 |
 | JWKS fetch fails: the cache serves until its bound; rotation overlap accepts the previous key; a key past overlap is refused | P1, A2 |
+| A fetched key set with a missing or bad root signature, past its `exp`, or with a lower `seq` than the cached one is refused; a key pinned in the build verifies with no fetch | P1, A4 |
 | QR nonce expired, reused, or presented by an identity whose email does not match the invite | P2, P3 |
 | Email reassigned: same email, different provider `sub` | P3 |
 | Unverified email, Apple private-relay address, provider not accepted (error lists the accepted ones), authentication too old | P3, M1 |
@@ -60,8 +61,8 @@ Inputs and failure modes the spec implies; each is pinned by a named task.
 ## Slices and tasks
 
 **Slice 1, ground and contracts.** DA, T0, C1, C2, owner-run M0 and Z0. Inert: documents, a pin test, two contracts with stubs.
-**Slice 2, the signer.** A1-A3, K1. Agent-written code and Terraform in `ee/`; the owner deploys (Check 730).
-**Slice 3, the project side.** P0-P7, K2, UP1.
+**Slice 2, the signer.** A1-A4, K1. Agent-written code and Terraform in `ee/`; the owner deploys (Checks 730 and 737).
+**Slice 3, the project side.** P0-P8, K2, UP1.
 **Slice 4, the app and the mailbox.** M1-M3, K3, J1-J4, J5a-J5c, X1-X3, Z1-Z3.
 **Slice 5, joins.** I1, I2, D1.
 
@@ -86,11 +87,11 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Command: `go test ./internal/cli/ -run 'DocsMobileIdentityPairing' -count=1`
 - Red step: the pin fails before the checklist lines exist.
 - Depends on: none.
-- Commit: `docs(mobile-identity-pairing): pin the folder and add Checks 730-736`
+- Commit: `docs(mobile-identity-pairing): pin the folder and add Checks 730-737`
 - Reviewer tier: standard.
 
 ### C1: the assertion and pairing wire contract
-- Acceptance: a Go package states the assertion claims (`iss`, `aud`, `sub`, `email`, `email_verified`, `provider`, `auth_time`, `jti`, `exp`, challenge), the request and response of pair, refresh, restore challenge, restore and revoke-self, the error codes (`provider_not_accepted` with the list, `auth_too_old`, `not_a_member`, `nonce_expired`, `strict_new_device_needs_qr`, `device_revoked`, `mobile_disabled`), the secure-store item names, the invite and member-record shapes and a `MemberStore` interface, the paired-list entry shape (opaque project id, endpoint, identity used), the interfaces `Verifier`, `Policy` (membership, accepted provider, authentication age, `mobile.enabled`, recorded `sub`), `InviteStore`, `RefreshStore`, `Minter`; a device public key in the pair request for proof of possession and message signatures; the consumer's public key in the pair response (O12); the policy values a session response carries to the phone (costly modes, biometric switch, compaction threshold); a challenge-and-`jti` compare-and-set store interface; a stub that returns fixed shapes and does nothing else; one `vectors.json` both Go and JS read; `contract.md` says what each side may rely on.
+- Acceptance: a Go package states the assertion claims (`iss`, `aud`, `sub`, `email`, `email_verified`, `provider`, `auth_time`, `jti`, `exp`, challenge), the request and response of pair, refresh, restore challenge, restore and revoke-self, the error codes (`provider_not_accepted` with the list, `auth_too_old`, `not_a_member`, `nonce_expired`, `strict_new_device_needs_qr`, `device_revoked`, `mobile_disabled`), the secure-store item names, the invite and member-record shapes and a `MemberStore` interface, the paired-list entry shape (opaque project id, endpoint, identity used), the interfaces `Verifier`, `Policy` (membership, accepted provider, authentication age, `mobile.enabled`, recorded `sub`), `InviteStore`, `RefreshStore`, `Minter`; the signed key-set envelope (a JWS by the root key over the JWKS with `seq`, `iat`, `exp`) with one vector (O7); a device public key in the pair request for proof of possession and message signatures; the consumer's public key in the pair response (O12); the policy values a session response carries to the phone (costly modes, biometric switch, compaction threshold); a challenge-and-`jti` compare-and-set store interface; a stub that returns fixed shapes and does nothing else; one `vectors.json` both Go and JS read; `contract.md` says what each side may rely on.
 - Files: `internal/mobilesession/contract.go` (new), `internal/mobilesession/stub.go` (new), `shared/mobile-session/vectors.json` (new), `docs/mobile-identity-pairing/contract.md` (new).
 - Interfaces: produces everything the consumers P1, P3, P4, P7, K2, M1, M2, M3, K3 build against; the provider-side tasks A1, A2, K1 and P2 write to the shapes it fixes. Consumes D2783, D2785, D2791, D2792. These files belong to the contract and its changes alone.
 - Tests: a vector round-trip test in Go and a loader test in JS.
@@ -158,9 +159,9 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus**, independent review.
 
 ### A2: JWKS publication and key rotation
-- Acceptance: a handler publishes the public keys as a JWKS (OKP Ed25519) with `kid`, the current key and the previous key during the overlap; rotation logic computes which keys are published at a time; the published set never contains private material.
+- Acceptance: a handler publishes the public keys as a JWKS (OKP Ed25519) with `kid`, the current key and the previous key during the overlap; rotation logic computes which keys are published at a time; the published set never contains private material; beside the plain JWKS it serves the root-signed key-set document the owner's signing command wrote (A4), unchanged, and it holds no root key and cannot sign one (O7).
 - Files: `ee/identitysvc/jwks.go`, `ee/identitysvc/rotation.go`, `ee/identitysvc/jwks_test.go` (all new).
-- Interfaces: produces the JWKS URL P1 caches.
+- Interfaces: produces the JWKS URL P1 caches; serves A4's signed document.
 - Tests: `TestJWKS*`, `TestRotation*` (90-day period, 30-day overlap).
 - Command: `go test ./ee/identitysvc/ -run 'TestJWKS|TestRotation' -count=1`
 - Red step: the overlap test fails with only the current key published.
@@ -169,7 +170,7 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus**.
 
 ### A3: the identity project Terraform
-- Acceptance: a Terraform root defines the project's KMS key ring and Ed25519 signing key (`ASYMMETRIC_SIGN`, non-exportable), the signer service on Cloud Run with the narrowest custom role, the Firebase Auth provider configuration (Google, Microsoft, Apple, email and password with verification), and the JWKS route; `infra_test.go` pins purpose, algorithm and protection level, as the key service's does.
+- Acceptance: a Terraform root defines the project's KMS key ring and Ed25519 signing key (`ASYMMETRIC_SIGN`, non-exportable), the signer service on Cloud Run with the narrowest custom role, the Firebase Auth provider configuration (Google, Microsoft, Apple, email and password with verification), the JWKS route and a bucket for the signed key set that only the owner writes and the service reads (O7); `infra_test.go` pins purpose, algorithm and protection level, as the key service's does.
 - Files: `ee/identitysvc/terraform/main.tf`, `ee/identitysvc/terraform/keyring.tf`, `ee/identitysvc/terraform/auth.tf` (new), `ee/identitysvc/infra_test.go` (new).
 - Interfaces: consumes the key ring pattern in `ee/keyservice/terraform/keyring/main.tf`.
 - Tests: `terraform fmt -check`, `init`, `validate`, `terraform test`; the pin test.
@@ -180,9 +181,21 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Reviewer tier: **opus**, independent review before apply; Trivy stays clean.
 - Owner-run: Check 730, the apply and the key ceremony, with a release-actions entry; no agent applies.
 
+### A4: the root key project and the key-set signing command (O7)
+- Acceptance: a Terraform root defines a separate, owner-only project's KMS key ring and one Ed25519 root key (`ASYMMETRIC_SIGN`, non-exportable), with signing granted to no service account; a command takes a JWKS, wraps it in the envelope (a JWS over the JWKS with `seq`, `iat`, `exp`), has the root key sign it through KMS and writes the signed document where A2 serves it from; it asks for nothing, refuses a `seq` not above the last signed one, and prints the root public key but no private material.
+- Files: `ee/identitysvc/rootkey/terraform/main.tf`, `ee/identitysvc/keyset.go`, `ee/identitysvc/keyset_test.go`, `ee/identitysvc/cmd/keyset-sign/main.go`, `ee/identitysvc/rootkey_infra_test.go` (all new; SPDX notice per `ee.md`).
+- Interfaces: produces the signed key-set document A2 serves and P1 verifies; the envelope is the one C1's vectors fix; reuses `ee/keyservice/kmssigner.go`'s pattern.
+- Tests: `TestKeyset*` with a fake KMS signer and a generated test key; `TestRootKeyInfra` pins purpose, algorithm, protection level and the absence of a service-account signer.
+- Command: `terraform fmt -check -recursive ee/identitysvc/rootkey && go test ./ee/identitysvc/ -run 'TestKeyset|TestRootKeyInfra' -count=1`
+- Red step: signing a set whose `seq` equals the last one must fail first.
+- Depends on: none (the envelope is fixed by O7's answer).
+- Commit: `ee/identitysvc: the root key project and the key-set signing command (O7)`
+- Reviewer tier: **opus**, independent review before apply.
+- Owner-run: Check 737, the apply, the root key ceremony and the first signed set, and the signing command at every rotation; no agent applies, signs or holds the key.
+
 ### P1: the assertion verifier
-- Acceptance: `internal/assertion` verifies an assertion: EdDSA only, `iss` equal to the pinned issuer, the JWKS fetched only from the pinned URL (F38, O7), `kid` from a cached JWKS (with the overlap rule and a bounded stale-serving cache), `aud` equal to this project, challenge equal to the expected one, `jti` unused (single use through C1's compare-and-set store, not process memory, remembered for the assertion's lifetime plus skew), `exp`/`iat` with bounded skew; every refusal is a typed error naming the field.
-- Files: `internal/assertion/verify.go`, `internal/assertion/jwks_cache.go`, `internal/assertion/jti.go`, `internal/assertion/verify_test.go` (all new).
+- Acceptance: `internal/assertion` verifies an assertion: EdDSA only, `iss` equal to the pinned issuer, a signing key pinned in the build accepted with no fetch, any other `kid` taken only from a key set fetched from the pinned URL whose envelope the pinned root key signed, unexpired and with a `seq` no lower than the cached one (F38, O7; with the overlap rule and a bounded stale-serving cache); the pins are placeholders from a generated test key until P8, `aud` equal to this project, challenge equal to the expected one, `jti` unused (single use through C1's compare-and-set store, not process memory, remembered for the assertion's lifetime plus skew), `exp`/`iat` with bounded skew; every refusal is a typed error naming the field.
+- Files: `internal/assertion/verify.go`, `internal/assertion/jwks_cache.go`, `internal/assertion/jti.go`, `internal/assertion/pinned.go`, `internal/assertion/verify_test.go` (all new).
 - Interfaces: implements C1's `Verifier`; no `ee/` import.
 - Tests: `TestVerify*` for every row of the global table that names P1.
 - Command: `go test ./internal/assertion/ -count=1`
@@ -190,6 +203,17 @@ Every task touches about five files or fewer. The Reviewer tier is the mode the 
 - Depends on: C1 (the contract replaces the edge to A1).
 - Commit: `assertion: verify identity-project assertions (D2792)`
 - Reviewer tier: **opus**.
+
+### P8: pin the production keys (after Checks 730 and 737)
+- Acceptance: `internal/assertion/pinned.go` holds the production issuer, JWKS URL, root public key and the signing public keys current at the release, taken from the owner's Check 730 and Check 737 output; a test verifies the owner's first signed key set against the pinned root and that each pinned signing key appears in it.
+- Files: `internal/assertion/pinned.go`, `internal/assertion/pinned_test.go` (new).
+- Interfaces: fills the values P1 reads; public keys only.
+- Tests: `TestPinned*`.
+- Command: `go test ./internal/assertion/ -run 'TestPinned' -count=1`
+- Red step: the signed-set test fails with P1's placeholder root.
+- Depends on: P1 (the same file), A4 (the root key exists only after its ceremony).
+- Commit: `assertion: pin the production root and signing keys (O7)`
+- Reviewer tier: **opus**; the reviewer compares each key with the owner's check output.
 
 ### P2: invites through the existing `fugaro pair --email --role`
 - Acceptance: `fugaro pair` keeps its flags and gains the invitation: an admin may name another member's email (amending D226, D2799), D224's role resolution and both its refusals (`errPairResolvedAbove`, `errPairRoleDisagrees`) stay, and the role is refused rather than defaulted for another person, an invite (nonce, 10-minute expiry, email, role, accepted providers) is written to a node only IAM can write and creates the member record (email, the resolved role, no `sub` yet), and the QR carries the endpoint, email and nonce and no credential, with `aud` derived from the endpoint; `pairQRVersion` is bumped and `schemas/pair-event.schema.json` carries the new fields; the command waits for nothing and asks nothing.
@@ -491,22 +515,22 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 
 | Level | Tasks |
 | --- | --- |
-| 0 | DA, T0, P0, C1, C2, M0*, Z0*, P5†, A1, A2, A3, P2, P6, K1, J1 |
+| 0 | DA, T0, P0, C1, C2, M0*, Z0*, P5†, A1, A2, A3, A4, P2, P6, K1, J1 |
 | 1 | P1, P3, P4, K2, P7, M1, M2, J2, J3, J4, X1, Z1 |
-| 2 | M3, X2, Z2, J5a |
+| 2 | M3, X2, Z2, J5a, P8‡ |
 | 3 | K3, X3, Z3, J5b |
 | 4 | I1, J5c |
 | 5 | D1, UP1, I2 |
 
-\* owner-run, on devices. † grants given in the plan (O1, O8); the task still needs its own go. The graph also lists the anticipated contract changes CR1 and CR2 (level 2 after C1 and P3; level 3 after C2, J3 and Z2); they run only if a consumer finds its contract wrong, and only after it.
+\* owner-run, on devices. ‡ waits on the owner's Checks 730 and 737. † grants given in the plan (O1, O8); the task still needs its own go. The graph also lists the anticipated contract changes CR1 and CR2 (level 2 after C1 and P3; level 3 after C2, J3 and Z2); they run only if a consumer finds its contract wrong, and only after it.
 
 **Critical path (as the read prints it):** `C1 -> M1 -> M3 -> K3 -> I1 -> D1`, bottleneck C1. It is sequential because M3 builds on M1's identity records, K3 needs M3's real storing and refresh behaviour, and I1 joins everything.
 
-**Estimate, as the read printed it:** `ready in 540–2160 min, no history yet for 42 tasks (42 tasks; seeds for 42; from the seeds: no history is cached on this machine yet)`. This is informational and reserves no budget: it is what the tiers and this machine's history predict, and it moves as runs finish.
+**Estimate, as the read printed it:** `ready in 540–2160 min, no history yet for 44 tasks (44 tasks; seeds for 44; from the seeds: no history is cached on this machine yet)`. This is informational and reserves no budget: it is what the tiers and this machine's history predict, and it moves as runs finish.
 
 ### The dependencies the plan broke (14) and what they were
 
-`fugaro plan graph` reports **14 broken, 31 kept, 6 added; before 10 tasks, weight 20; after 6 tasks, weight 14; improves.** Each is an edge where the dependent needed an interface only:
+`fugaro plan graph` reports **14 broken, 34 kept, 6 added; before 10 tasks, weight 20; after 6 tasks, weight 14; improves.** Each is an edge where the dependent needed an interface only:
 
 | Dependent | Was waiting on | Contract | Integration | Why an interface is enough |
 | --- | --- | --- | --- | --- |
@@ -530,6 +554,8 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 | Edge | Reason |
 | --- | --- |
 | P7 after P2 | the same file, `internal/cli/pair.go` |
+| P8 after P1 and A4 | the same file, `internal/assertion/pinned.go`; the production root key exists only after A4's ceremony |
+| UP1 after P8 | the release `update` converges to must carry the production pins |
 | P3, K2 after P6 | `Policy` reads P6's `mobile.*` fields |
 | X3 after M1 | the same file, `mobile/package.json` |
 | I2 after X2 | the same file, `mobile/src/text/index.js` |
@@ -569,6 +595,8 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 | `mobile/src/accounts/expo-secure-store.js` | K3 (3) |
 | `mobile/package.json` | M1 (1), X3 (3) |
 | `internal/cli/pair_events.go` | P2 (0) |
+| `internal/assertion/pinned.go` | P1 (1), P8 (2) |
+| `ee/identitysvc/*.go` | A1, A2 and A4 write different files |
 | `mobile/src/text/index.js` | X1 (1), X2 (2), I2 (5) |
 | `mobile/src/jobs/index.js` | J2 (1), I2 (5) |
 | `mobile/src/context/index.js` | Z1 (1), Z2 (2), Z3 (3) |
@@ -589,10 +617,11 @@ The graph is [implementation-plan.graph.json](implementation-plan.graph.json), r
 | 734 | store builds, the share extension, store review declarations | owner |
 | 735 | live, after `fugaro update`: pair, refresh after an hour, revoke, restore, strict mode, outage, with two phones | owner |
 | 736 | the Firebase Auth, KMS and Cloud Run quotas at the stated scale (U6) | owner |
+| 737 | the root key project exists; the root key is non-exportable and no service account can sign with it; the first key set is signed and served; a rotation rehearsal (O7) | owner |
 
 ## After-deploy steps
 
-Order: Check 730 (apply the identity project), Check 731 (provider consoles), release, then `fugaro update` on each installation (UP1's `### For operators` entry: run `fugaro update` and what it asks), then Check 735. Mobile ships under its own `mobile-vX.Y.Z` tag with notes in `docs/releases/mobile/`.
+Order: Check 730 (apply the identity project), Check 737 (the root key project and the first signed key set), P8 (pin the production keys), Check 731 (provider consoles), release, then `fugaro update` on each installation (UP1's `### For operators` entry: run `fugaro update` and what it asks), then Check 735. Mobile ships under its own `mobile-vX.Y.Z` tag with notes in `docs/releases/mobile/`.
 
 ## Considered and declined
 
@@ -611,8 +640,8 @@ The P5.1 always-on orchestrator that consumes the mailbox, and P5.1g's biometric
 
 ## Coverage
 
-Every decision and finding lands in a task or in a declined note: D2780 (P3, P6), D2781 (A3), D2782 (P0, P3-P5), D2783 (P4, M3), D2784 (K2, P6, D1), D2785 (P3, P6, M1), D2786 (J3, J5a, P6, DA), D2787 (J4), D2788 (X1, X3), D2789 (Z0-Z3), D2790 (M1, DA), D2791 (P2, P3), D2792 (C1, A1, A2, P1), D2793 (M1), D2794 (P4, P7, M3), D2795 (UP1), D2796 (P6), D2797 (J1, J2), D2798 (D1), D2799 (P2). F1-F41 land in the same tasks (F31 in P5, F32 in P4, P7, K2, F33 in O6, O12, J5b and J5c, F34 in P3, F35 in C1 and K2, F36 in J3, F37 in U9, F38 in P1 and O7, F39 across A1, K1, P1, P3, P4, C1 and M0, F40 in O9, F41 in O5); F24 in the conventions; F26 in T0, DA and the task commits; F28, F29 in Checks 731, 734, 736.
+Every decision and finding lands in a task or in a declined note: D2780 (P3, P6), D2781 (A3), D2782 (P0, P3-P5), D2783 (P4, M3), D2784 (K2, P6, D1), D2785 (P3, P6, M1), D2786 (J3, J5a, P6, DA), D2787 (J4), D2788 (X1, X3), D2789 (Z0-Z3), D2790 (M1, DA), D2791 (P2, P3), D2792 (C1, A1, A2, A4, P1, P8), D2793 (M1), D2794 (P4, P7, M3), D2795 (UP1), D2796 (P6), D2797 (J1, J2), D2798 (D1), D2799 (P2). F1-F41 land in the same tasks (F31 in P5, F32 in P4, P7, K2, F33 in O6, O12, J5b and J5c, F34 in P3, F35 in C1 and K2, F36 in J3, F37 in U9, F38 in P1, A4, P8 and O7, F39 across A1, K1, P1, P3, P4, C1 and M0, F40 in O9, F41 in O5); F24 in the conventions; F26 in T0, DA and the task commits; F28, F29 in Checks 731, 734, 736.
 
 ## Open items the plan carries
 
-**Answered 2026-11-18:** O6 (a per-message session signature in place of the MAC: J5b and J5c, not the recommendation), O8 (a public second service with a separate signer account; the owner reconfirmed the corrected consequence, that IAM cannot limit its claims and the route allowlist, tests and review are the control), O10 (a typed launch action: J5a), O11 (D2799 confirmed), O12 (a consumer signing key the phone pins: J5c), O13 (the public service's mailbox reach accepted and stated in `SECURITY.md`: D1), O1 (the signer account's grants, the database role and the cover row: the owner's go in the plan), O3 (the `outcomes` read for all roles) and O9 (`mobile.enabled` on in policy, the routes answering only after `update` publishes it). **Still open:** O2 (the amended D162 and D232 wording), O4 (the defaults), O5 (#3195), O7 (key pinning). Each is in [reconciliation.md](reconciliation.md).
+**Answered 2026-11-18:** O6 (a per-message session signature in place of the MAC: J5b and J5c, not the recommendation), O8 (a public second service with a separate signer account; the owner reconfirmed the corrected consequence, that IAM cannot limit its claims and the route allowlist, tests and review are the control), O10 (a typed launch action: J5a), O11 (D2799 confirmed), O12 (a consumer signing key the phone pins: J5c), O13 (the public service's mailbox reach accepted and stated in `SECURITY.md`: D1), O1 (the signer account's grants, the database role and the cover row: the owner's go in the plan), O3 (the `outcomes` read for all roles) and O9 (`mobile.enabled` on in policy, the routes answering only after `update` publishes it), O2 (the amended D162 and D232 wording confirmed), O4 (the defaults accepted), O5 (D2780 kept; P2 and P3 are re-checked if #3195 merges first) and O7 (pinned keys plus a root-signed key set, the root key in KMS in a separate owner-only project: A2, A3, A4, P1, P8 and Check 737, not the recommendation). **Nothing is still open.** Each is in [reconciliation.md](reconciliation.md).
