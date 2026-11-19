@@ -149,7 +149,6 @@ TOP=${CHECK711_TOP:-3}
 ONLY=${CHECK711_ONLY:-}
 SET_WORDS=${CHECK711_SET:-}
 VERSION_LINE=""
-INSTALL_DISPLAY=""
 
 T_SECONDS=""
 T_BYTES=""
@@ -592,6 +591,7 @@ set -u
 sleep_seconds="${CHECK711_STUB_SLEEP_REST:-0.02}"
 payload_bytes="${CHECK711_STUB_BYTES_REST:-200}"
 case "${1:-} ${2:-}" in
+'version ') printf 'stub\n'; exit 0 ;;
 'runs ls')
   sleep_seconds="${CHECK711_STUB_SLEEP_SLOWEST:-0.30}"
   payload_bytes="${CHECK711_STUB_BYTES_SLOWEST:-3000}"
