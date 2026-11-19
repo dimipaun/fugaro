@@ -45,12 +45,16 @@
 #
 # Where, and why it is the sandbox: FUGARO_LIVE_GCP_PROJECT names the live-test
 # project the register's owner-run checks use (docs/gcp-live-checklist.md, and
-# scripts/live-checks/*.sh the same way): a name that carries `belong` is refused
-# before anything is run, and it is passed on as the CLI's own --gcp-project, so
-# a config in force that names another project is refused by the CLI as well and
-# no project but that one can be built in. The checkout must be THIS repository,
-# at the commit being rehearsed: the entry's Dockerfile and the CLI are both read
-# off the tree.
+# scripts/live-checks/*.sh the same way), and a name that names the owner's own
+# installation is refused before anything is run, the rule scripts/belong.sh
+# holds (`belong`, `edge-devel-dimi` or `edgeappinc`).
+# That refusal is this script's and scripts/release.sh's -- the CLI's own
+# NeverBelong is `fugaro orchestrator serve`'s and no catalog build's. The name
+# is then handed on as the build's own --gcp-project, which the CLI holds to the
+# selected config's gcp_project, so a config in force that names another project
+# is refused there too and the build lands in the project this script was told.
+# The checkout must be THIS repository, at the commit being rehearsed: the
+# entry's Dockerfile and the CLI are both read off the tree.
 #
 # Costs: one billable Cloud Build (the catalog build of one entry: the clone, the
 # build, the smoke, the scan and the promotion), and the CLI's own budget lease
@@ -71,6 +75,8 @@
 # to run instead of building one (the tests, whose fixture checkout holds no go
 # module — the same seam RELEASE_SH_STREAMS_CMD is).
 set -eu
+
+. "$(dirname "$0")/belong.sh"
 
 prog=${0##*/}
 # This repository's own entry, and the only one this rehearses: the point is that
@@ -115,17 +121,17 @@ write_record() {
 # sets $project to it. The rule is the register's own (docs/gcp-live-checklist.md,
 # "Guardrails the tests enforce"): the checks name the live-test project and
 # never decide for themselves which project is one, and the owner's own project
-# is never it.
+# is never it. The names that are the owner's own -- `belong`, `edge-devel-dimi`
+# and `edgeappinc`, in the ids the installation answers to -- are
+# scripts/belong.sh's, shared with scripts/release.sh's own precondition.
 guard_project() {
   project=${FUGARO_LIVE_GCP_PROJECT:-}
   if [ -z "$project" ]; then
     die "FUGARO_LIVE_GCP_PROJECT is not set, and this rehearses in the sandbox project only: it names the live-test project the owner-run checks build in (docs/gcp-live-checklist.md, Preconditions). Export it (export FUGARO_LIVE_GCP_PROJECT=<the sandbox GCP project>) and run again"
   fi
-  case "$(printf '%s' "$project" | tr '[:upper:]' '[:lower:]')" in
-  *belong*)
-    die "FUGARO_LIVE_GCP_PROJECT names '$project', which carries 'belong': the owner's own installation is never the sandbox a rehearsal runs in"
-    ;;
-  esac
+  if names_the_owners_installation "$project"; then
+    die "FUGARO_LIVE_GCP_PROJECT names '$project', the owner's own installation or a name built around one (never belong, edge-devel-dimi or edgeappinc): a rehearsal builds in the sandbox, and the CLI does not refuse that name for it -- its own NeverBelong is fugaro orchestrator serve's -- so the refusal is here"
+  fi
 }
 
 # guard_agent refuses a coding agent's session before anything is built: the

@@ -219,14 +219,21 @@ func TestReleaseRehearsalRefusesARecordForAnotherCommit(t *testing.T) {
 }
 
 // TestReleaseRehearsalRefusesTheOwnersProject: the sandbox is the only project
-// it builds in. A name carrying `belong` -- the owner's own -- and an unset name
-// both refuse before the CLI is called at all, so nothing is built and no record
-// is written.
+// it builds in, and the owner's own is not it under any of the names it answers
+// to (scripts/belong.sh: `belong` anywhere, and `edge-devel-dimi` and
+// `edgeappinc`, the ids `internal/orchestrator.NeverBelong` and the register's
+// own checks refuse). Each refuses before the CLI is called at all, so nothing
+// is built and no record is written -- the CLI does not refuse these names for
+// it (NeverBelong is `fugaro orchestrator serve`'s), which is why the case is
+// pinned here rather than left to the build.
 func TestReleaseRehearsalRefusesTheOwnersProject(t *testing.T) {
 	for _, tc := range []struct {
 		name, project, want string
 	}{
-		{"belong", "belong-prod", "carries 'belong'"},
+		{"the word", "belong-prod", "names 'belong-prod', the owner's own installation"},
+		{"the GCP project the owner's resources run in", "edge-devel-dimi", "names 'edge-devel-dimi', the owner's own installation"},
+		{"the Firebase project the owner's database is", "fugaro-belong", "names 'fugaro-belong', the owner's own installation"},
+		{"the workspace the sandbox repository lives in", "edgeappinc-sandbox", "names 'edgeappinc-sandbox', the owner's own installation"},
 		{"unset", "", "FUGARO_LIVE_GCP_PROJECT is not set"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -380,12 +387,18 @@ func TestReleaseRefusesToCutTheTagInACodingAgentsSession(t *testing.T) {
 // TestReleaseRefusesWithoutASandboxProject: the rehearsal is the release's own
 // step, so a run that cannot say which sandbox to build in refuses in the
 // preconditions -- before the branch, the pull request or the merge, not after
-// them at the point the step would run.
+// them at the point the step would run. The names it refuses are the owner's
+// own, all of them, the same list scripts/release-rehearsal.sh holds: a release
+// pointed at `edge-devel-dimi` would otherwise build in the owner's project for
+// real, the CLI admitting that name.
 func TestReleaseRefusesWithoutASandboxProject(t *testing.T) {
 	for _, tc := range []struct {
 		name, project, want string
 	}{
-		{"belong", "belong-prod", "carries 'belong'"},
+		{"the word", "belong-prod", "names 'belong-prod', the owner's own installation"},
+		{"the GCP project the owner's resources run in", "edge-devel-dimi", "names 'edge-devel-dimi', the owner's own installation"},
+		{"the Firebase project the owner's database is", "fugaro-belong", "names 'fugaro-belong', the owner's own installation"},
+		{"the workspace the sandbox repository lives in", "edgeappinc-sandbox", "names 'edgeappinc-sandbox', the owner's own installation"},
 		{"unset", "", "FUGARO_LIVE_GCP_PROJECT is not set"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

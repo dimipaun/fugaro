@@ -72,6 +72,9 @@ repo_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo_root"
 . scripts/retry.sh
 . scripts/versions.sh
+# The names that are the owner's own installation, refused by the precondition
+# below and by scripts/release-rehearsal.sh's own guard.
+. scripts/belong.sh
 # The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
 # run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
 . scripts/hotfix-commits.sh
@@ -671,20 +674,22 @@ fi
 # with the other preconditions rather than at step 4, where the release PR has
 # already merged: a run that gets that far and only then has nothing to
 # rehearse in has spent the whole merge on a release it cannot cut. The name is
-# the one the owner-run checks use (docs/gcp-live-checklist.md), and a project
-# carrying `belong` is the owner's own, which a rehearsal never builds in
-# (scripts/release-rehearsal.sh refuses it too: this line is early, that one is
-# the guard).
+# the one the owner-run checks use (docs/gcp-live-checklist.md), and the names
+# that are the owner's own -- `belong`, `edge-devel-dimi` and `edgeappinc` --
+# are scripts/belong.sh's rule, which a rehearsal never builds in
+# (scripts/release-rehearsal.sh refuses them too: this line is early, that one
+# is the guard). The CLI is not that guard: its own NeverBelong is `fugaro
+# orchestrator serve`'s, so `fugaro image build --gcp-project edge-devel-dimi`
+# is admitted and really builds in the owner's project, which is exactly what
+# this refusal is here to prevent.
 if [ -z "${FUGARO_LIVE_GCP_PROJECT:-}" ]; then
   echo "FUGARO_LIVE_GCP_PROJECT is not set, and the release's pre-tag rehearsal builds this repository's own go catalog entry in the sandbox project only (step 4, scripts/release-rehearsal.sh): export FUGARO_LIVE_GCP_PROJECT=<the sandbox GCP project>, the one docs/gcp-live-checklist.md's Preconditions set for the owner-run checks, then re-run \"$rerun\"" >&2
   exit 1
 fi
-case "$(printf '%s' "$FUGARO_LIVE_GCP_PROJECT" | tr '[:upper:]' '[:lower:]')" in
-*belong*)
-  echo "FUGARO_LIVE_GCP_PROJECT names '$FUGARO_LIVE_GCP_PROJECT', which carries 'belong': the owner's own installation is never the sandbox the release's rehearsal builds in. Point it at the sandbox's GCP project and re-run \"$rerun\"" >&2
+if names_the_owners_installation "$FUGARO_LIVE_GCP_PROJECT"; then
+  echo "FUGARO_LIVE_GCP_PROJECT names '$FUGARO_LIVE_GCP_PROJECT', the owner's own installation or a name built around one (never belong, edge-devel-dimi or edgeappinc): the release's rehearsal builds in the sandbox, never in the owner's project. Point it at the sandbox's GCP project and re-run \"$rerun\"" >&2
   exit 1
-  ;;
-esac
+fi
 
 trap 'cleanup_plugin_scratch; restore_main' EXIT
 trap on_signal INT TERM HUP
