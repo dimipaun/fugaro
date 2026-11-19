@@ -782,6 +782,7 @@ func TestPreconditionFailures(t *testing.T) {
 func TestGHNotInstalled(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
+	bin := fakeBinDir(t)
 	cmd := exec.Command("bash", filepath.Join(r.local, "scripts", "release.sh"), "0.12.0")
 	cmd.Dir = r.local
 	// A PATH with no gh at all (just enough for git, bash's builtins, etc).
@@ -789,6 +790,12 @@ func TestGHNotInstalled(t *testing.T) {
 	cmd.Env = append(os.Environ(), "PATH="+realPath)
 	cmd.Env = append(cmd.Env, g.env...)
 	cmd.Env = append(cmd.Env, releaseEnv(t)...)
+	// The pre-tag rehearsal's environment too, although this run can never
+	// reach it: the refusal this test is about is 'gh is not installed', and a
+	// precondition ahead of it (the sandbox project the release refuses
+	// without) would otherwise be the sentence it fails on -- on exactly the
+	// machines this test runs on, since it skips wherever gh is installed.
+	cmd.Env = append(cmd.Env, rehearsalEnv(r, bin)...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	// Only meaningful if gh truly isn't already on PATH; skip otherwise.
