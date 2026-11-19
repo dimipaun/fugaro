@@ -62,7 +62,7 @@ Merged since the last read (27 commits): portal P6.3, mobile P5.1d, periodic-rev
 | --- | --- |
 | repo-image-removal | parked by the owner: 2/11 merged, R2 to R10 deferred by the image setup skill (D1900), not scheduled in any release and not cancelled; no run or pull request open |
 | voice-module, collateral, backlog, plans | no plan or not a spec |
-| workspace-credentials | draft addendum only (pull request #3250, ready, not on main): decisions D2930–D2937 unanswered in the pull request; no reconciliation or plan yet |
+| workspace-credentials | an addendum with no plan (docs/workspace-credentials): D2960–D2979 all answered 2026-11-19 (D2978: one project-then-workspace cascade for every credential kind; D2975 the owner's own answer: every model key through the credentials service, none mounted, which needs its own spec; D150's gate stays until Check 50 passes); it waits on the workspace service being deployed under its own plan (D2968) |
 
 ## Done
 
