@@ -1,8 +1,10 @@
 # Workspace credentials: a person's tokens and the shared keys, held once
 
-**Status: not ready for a plan. An independent review of 2026-11-19 found that four of the eight
-answers cannot be built as written, and that the work needs ten more decisions (§5), none answered.
-No task exists and none is approved.** Written on 2026-11-18 at the owner's request; revised on
+**Status: every decision is answered (D2960–D2977, owner, 2026-11-19); no plan is written, no task
+exists and none is approved.** An independent review of 2026-11-19 found that four of the first
+eight answers could not be built as written; §5's ten decisions replace or complete them, and the
+owner answered those the same day. **This work waits on the workspace's service being deployed
+under its own plan (D2968), and D2975 is wider than this addendum (§5).** Written on 2026-11-18 at the owner's request; revised on
 2026-11-19 against `origin/main` at `e2ec97c1a` and the review. It is an addendum to
 [the workspaces design](../workspaces/README.md) and to
 [workspace projects and users](../workspace-projects-users/README.md).
@@ -80,7 +82,19 @@ The owner answered each on 2026-11-19, option (a) of every one, which was the re
 | **D2966** | D2936 | A project in no workspace is out of scope | **Stands** |
 | **D2967** | D2937 | The work is a slice of workspace-projects-users, after WU0 | **Under-scoped.** The service this depends on is not deployed: see D2968 |
 
-## 5. Decisions still to answer
+## 5. The ten decisions the review added
+
+**Answered by the owner on 2026-11-19: option (a) of every one, which was the recommendation,
+except D2975.** Three of them withdraw part of an earlier answer: D2975 (D2964's route), D2976
+(D2962's opt-in) and D2977 (D2963's `*`).
+
+**D2975 is the owner's own answer and not either option:** "All keys should be served through the
+credsrv, we want to move away completely from mounting them, too much terraform." It is a ruling
+about every project, not only a workspace's members: no model key is mounted in a job, and the
+credentials service serves all of them. It reverses D1634 and D1670. It is wider than this addendum
+and needs its own spec. **One thing it leaves open:** D150's gate, which refuses the provider tier
+until Check 50, was not mentioned, so whether the gate is lifted or Check 50 runs first is still the
+owner's to say.
 
 The first option of each is the recommendation.
 
