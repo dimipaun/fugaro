@@ -507,28 +507,52 @@ Reads and Copy-commands for every object, then the two approved-by-name writes.
 - Commit: `console(manage): mount the Manage section on the real kinds (D2903)`
 - Reviewer tier: standard; tier `medium`, size 2
 
+#### MD1: models add --dry-run
+
+- Acceptance: `models add <id> --dry-run --json` (with every flag `models add` takes today, each meaning what it means without `--dry-run`) computes the change and writes nothing: no config file, no policy node, no saved apply step; it prints one document (`version: 1`) naming the layer it would write, the `budget.allowed_models` entry it would append, the `model_prices` entry with both rates, and the follow-up step it would run or save; a refusal the real command would print (an unknown id, a half-given price) is the same refusal under `--dry-run`. Without `--dry-run` the behaviour and output are byte for byte what they were. The schema and a golden recorded from the CLI's own output hold the shape. It asks nothing (`--dry-run` is a read).
+- Files: `internal/cli/models_add.go`; `internal/cli/models_add_dryrun_test.go` (new); `schemas/models-add-plan.schema.json` (new); `internal/cli/testdata/models_add_plan.golden.json` (new)
+- Interfaces: Produces the plan document the MW1 window shows.
+- Tests: `TestModelsAddDryRunWritesNothing`, `TestModelsAddDryRunDocument`, `TestModelsAddDryRunRefusesAsTheCommandDoes`, `TestModelsAddUnchanged`, `TestModelsAddPlanSchema` (new).
+- Command: `go test ./internal/cli/ -count=1 -run 'TestModelsAddDryRun|TestModelsAddUnchanged|TestModelsAddPlanSchema'`
+- Red step: `TestModelsAddDryRunWritesNothing` fails while `--dry-run` is not a registered flag; `TestModelsAddUnchanged` is written first and stays green.
+- Depends on: none
+- Commit: `models: add --dry-run, the change as a document and nothing written (O4)`
+- Reviewer tier: standard; tier `medium`, size 2
+
+#### MD2: image add --dry-run
+
+- Acceptance: `image add <name> --dry-run --json` (with every flag `image add` takes today) validates the definition as the real command does and writes nothing: no catalog entry, no build, no saved apply step; it prints one document (`version: 1`) naming the catalog entry it would add (name, tags, description, the definition's source) and the steps it would run or save. A refusal the real command would print is the same refusal under `--dry-run`. Without `--dry-run` the behaviour and output are byte for byte what they were. The schema and a golden hold the shape.
+- Files: `internal/cli/image_catalog.go`; `internal/cli/image_add_dryrun_test.go` (new); `schemas/image-add-plan.schema.json` (new); `internal/cli/testdata/image_add_plan.golden.json` (new)
+- Interfaces: Produces the plan document the MW2 window shows.
+- Tests: `TestImageAddDryRunWritesNothing`, `TestImageAddDryRunDocument`, `TestImageAddDryRunRefusesAsTheCommandDoes`, `TestImageAddUnchanged`, `TestImageAddPlanSchema` (new).
+- Command: `go test ./internal/cli/ -count=1 -run 'TestImageAddDryRun|TestImageAddUnchanged|TestImageAddPlanSchema'`
+- Red step: `TestImageAddDryRunWritesNothing` fails while `--dry-run` is not a registered flag on `image add`; `TestImageAddUnchanged` is written first and stays green.
+- Depends on: none
+- Commit: `image: add --dry-run, the entry as a document and nothing written (O4)`
+- Reviewer tier: standard; tier `medium`, size 2
+
 #### MW1: models add from the Manage list
 
-- Acceptance: FIRST U5 is settled in `docs/console-improvements/models-writes.md`: the exact terminal-free argv of `models add`, the layer it writes and the role it needs, and whether the CLI has a dry run (`models add` has no `--dry-run` or `--json` today; adding one is a separate CLI task proposed by amendment, never done here); if it needs a terminal or a secret the task stops and reports. Then `models add` goes through the SU1 modal as a **widening** (the tick: it appends to `budget.allowed_models` and writes a `model_prices` entry, `internal/cli/models_add.go`, so it changes what every run may name and spend on), the window showing the model and the typed price and the exact argv, main setting `--no-apply`, one exact-argv row carrying `refusedAfterLapse`, the `models add` never-row narrowed in `ipc.ts` with its pin, the cache scopes invalidated (R2), a §5.1 row. `models use` (it rewrites a repository's reviewed `agent.models.<role>` in its working tree: the owner's word, O5) and `models rm` stay Copy-commands.
-- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/models.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`
+- Acceptance: FIRST U5 is settled in `docs/console-improvements/models-writes.md`: the exact terminal-free argv of `models add`, the layer it writes and the role it needs, and that MD1's `--dry-run --json` takes the same arguments; if it needs a terminal or a secret the task stops and reports. Then `models add` goes through the SU1 modal as a **widening** (the tick: it appends to `budget.allowed_models` and writes a `model_prices` entry, `internal/cli/models_add.go`, so it changes what every run may name and spend on), the window showing the model, the typed price and the exact argv, main setting `--no-apply`, one exact-argv row carrying `refusedAfterLapse`, the `models add` row of `NEVER_REACHABLE` kept and granting only the two operations (the dry run and the apply) by name through `except`, with its pin, the cache scopes invalidated (R2), a §5.1 row. `models use` (it rewrites a repository's reviewed `agent.models.<role>` in its working tree: the owner's word, O5) and `models rm` stay Copy-commands. The window shows the CLI's own `--dry-run --json` document (MD1): main runs the dry run with the validated arguments, holds the document's digest and the argv in the window instance that showed them, refuses a second plan while one is pending, and on that window's own top-frame yes runs the same argv without `--dry-run` (plus `--no-apply`), never one the renderer re-sends; an IPC apply with no yes spawns nothing. Its rows carry a floor constant in `console/src/shared/version.ts` (`null` until the CLI release that carries MD1), so an older CLI shows the Copy-command instead.
+- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/models.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`; `console/src/shared/version.ts`
 - Interfaces: Consumes the Manage list (I-MG), the modal (SU1), `invalidate` (RB1) and the ops table (AL).
-- Tests: `spawn.test.ts` (exact argv per write and a widened-argv mutation), `models-writes.test.ts` (new).
+- Tests: `spawn.test.ts` (exact argv per write and a widened-argv mutation), `models-writes.test.ts` (new). Also: plan, plan, yes applies nothing; the applied argv equals the planned argv minus `--dry-run`; the row is unreachable below its floor.
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/models-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
-- Red step: The exact-argv pin for `models add` fails while the row is absent; a test that `models use` and `models rm` are refused fails if either is allowed.
-- Depends on: **I-MG** (adds an action to the list kind the integration wired); **SU1** (confirms through the same window); **RB1** (calls `invalidate`); **AL** (writes the same allow-list, after it)
+- Red step: The exact-argv pin for `models add` fails while the row is absent; a test that `models use` and `models rm` are refused fails if either is allowed. A test that an apply with no planned document spawns nothing fails while apply is reachable directly.
+- Depends on: **I-MG** (adds an action to the list kind the integration wired); **SU1** (confirms through the same window); **RB1** (calls `invalidate`); **AL** (writes the same allow-list, after it); **MD1** (the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD1's document)
 - Commit: `console(manage): models add behind the modal as a widening (D2903)`
 - Reviewer tier: opus, independent review mandatory (a console write); tier `large`, size 4
 - Owner-run: the owner's own go for this task by name.
 
 #### MW2: image add from the Manage list
 
-- Acceptance: As MW1 for `image add`, admitting only `--dockerfile owner/name:path`, `--tags` and `--description`, with `--no-apply` set by main so nothing is built (the console's child environment has no agent-session marker, so the CLI's own refusal of `--inline`, `--image`, `--default` and `--branch` would not apply; those flags define executable content and a test pins that each is refused); U5 settled first in `docs/console-improvements/image-catalog-writes.md` (the CLI has no dry run for it either); `image rm` stays a Copy-command (O5); `image build` and `image refresh` stay on `NEVER_REACHABLE` and `image promote` has no row and none is added.
-- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/images.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`
+- Acceptance: As MW1 for `image add`, admitting only `--dockerfile owner/name:path`, `--tags` and `--description`, with `--no-apply` set by main so nothing is built (the console's child environment has no agent-session marker, so the CLI's own refusal of `--inline`, `--image`, `--default` and `--branch` would not apply; those flags define executable content and a test pins that each is refused); U5 settled first in `docs/console-improvements/image-catalog-writes.md`; `image rm` stays a Copy-command (O5); `image build` and `image refresh` stay on `NEVER_REACHABLE` and `image promote` has no row and none is added. The window shows the CLI's own `--dry-run --json` document (MD2): main runs the dry run with the validated arguments, holds the document's digest and the argv in the window instance that showed them, refuses a second plan while one is pending, and on that window's own top-frame yes runs the same argv without `--dry-run` (plus `--no-apply`), never one the renderer re-sends; an IPC apply with no yes spawns nothing. Its rows carry a floor constant in `console/src/shared/version.ts` (`null` until the CLI release that carries MD2), so an older CLI shows the Copy-command instead.
+- Files: `console/src/main/spawn.ts`; `console/src/main/ipc.ts`; `console/src/renderer/manage/kinds/images.ts`; `docs/design/desktop-console.md`; `console/test/unit/spawn.test.ts`; `console/src/shared/version.ts`
 - Interfaces: Consumes MW1's pattern and the same files after it.
-- Tests: `spawn.test.ts`, `image-catalog-writes.test.ts` (new).
+- Tests: `spawn.test.ts`, `image-catalog-writes.test.ts` (new). Also: plan, plan, yes applies nothing; the applied argv equals the planned argv minus `--dry-run`.
 - Command: `(cd console && npm run typecheck) && (cd console && npm run test:unit -- --maxWorkers=2 --testTimeout=60000 test/unit/spawn.test.ts test/unit/image-catalog-writes.test.ts) && go test ./internal/cli/ -count=1 -run 'Docs'`
 - Red step: The exact-argv pin for `image add` fails while the row is absent.
-- Depends on: **MW1** (both write `spawn.ts`, `ipc.ts` and the §5.1 table)
+- Depends on: **MW1** (both write `spawn.ts`, `ipc.ts` and the §5.1 table); **MD2** (the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD2's document)
 - Commit: `console(manage): image add behind the modal (D2903)`
 - Reviewer tier: opus, independent review mandatory (a console write); tier `large`, size 4
 - Owner-run: the owner's own go for this task by name.
@@ -605,7 +629,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 
 | Level | Tasks |
 | --- | --- |
-| 0 | LP1, LP2, GF1, SM0, P1, RS1, RB1, WH1, ST1, MG0, C-OPS, RS3 |
+| 0 | LP1, LP2, GF1, SM0, P1, RS1, RB1, WH1, ST1, MG0, C-OPS, RS3, MD1, MD2 |
 | 1 | GF2, SM-E, RB4, ST2, MO-SH, MO-P, MO-K, MO-B, MO-C, SM1, SM2, SM3, SM4, SRC, RS4 |
 | 2 | SU1, SU2a, RS2, PL1, AL, SMC |
 | 3 | I-MG, SW3a |
@@ -652,7 +676,9 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 - MW1 needs SU1: confirms through the same window.
 - MW1 needs RB1: calls `invalidate`.
 - MW1 needs AL: writes the same allow-list, after it.
+- MW1 needs MD1: the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD1's document.
 - MW2 needs MW1: both write `spawn.ts`, `ipc.ts` and the §5.1 table.
+- MW2 needs MD2: the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD2's document.
 - PL1 needs RS1: names a flag that must exist.
 - PL1 needs WH1: names a flag that must exist.
 - PL1 needs ST2: names a flag that must exist.
@@ -720,6 +746,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 | `console/src/renderer/stubs/bridge-stub.ts` | C-OPS (0), I-OPS (4) |
 | `console/src/renderer/theme/flight-deck.css` | LP2 (0), GF2 (1) |
 | `console/src/renderer/theme/screens.css` | LP2 (0), SU2a (2) |
+| `console/src/shared/version.ts` | MW1 (4), MW2 (5), AL (2) |
 | `console/test/unit/projects.test.ts` | SU2a (2), SU2b (4) |
 | `console/test/unit/spawn.test.ts` | MW1 (4), MW2 (5), AL (2) |
 | `docs/design/desktop-console.md` | MW1 (4), MW2 (5), AL (2) |
@@ -730,7 +757,7 @@ Tasks in one level run at once; a level starts when every task its tasks need is
 The contract-first pass is on (`fugaro settings planning.decoupling` reads `true`; rigor `startup`, which decouples aggressively). Two passes were measured with `fugaro plan graph`.
 
 - **Tried first and undone.** Four wire contracts (the settings metadata, the runs stream, the caller-role read, the setup answers and events) broke twelve edges between a console consumer and a CLI producer: `"12 broken, 36 kept, 10 added; before 6 tasks, weight 19; after 6 tasks, weight 19; no gain"`. The critical path was the allow-list to Manage to writes chain and no broken edge was on it, so all twelve were undone and each producing CLI task now owns its schema and its fixture, which the console task reads once it has merged.
-- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put six console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the nine operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `"5 broken, 52 kept, 3 added; before 7 tasks, weight 25; after 6 tasks, weight 20; improves"`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2 (3 + 3 + 6 + 4 + 4 = 20); before it, the consumers of AL pushed it to 27. The read prints its critical path by task count (`critical path (8 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> SW3b -> SW3c`); the gain line is the weighted measure.
+- **Kept, because the review found it.** The first review round showed the allow-list task must wait for the three CLI tasks that register the flags it names (`TestDocsDesktopConsoleSpawnWordsAreFlagsTheCLIRegisters` demands it), which put six console tasks behind a longer chain for nothing but operation names. **Six edges were then broken through one contract, `C-OPS`** (the nine operations' names and payload types and a stub bridge), with `I-OPS` re-joining them: SU1, RB4, RS2, MO-C, SW3a and SRC no longer wait for `AL`. The read: `gain: 6 broken, 67 kept, 3 added; before 9 tasks, weight 27; after 8 tasks, weight 20; improves`. Weighted, the longest chain after the break is ST1, ST2, AL, MW1, MW2 (3 + 3 + 6 + 4 + 4 = 20); before it, the consumers of AL pushed it to 27. The read prints its critical path by task count (`critical path (8 tasks): SM0 -> SM-E -> SU2a -> I-MG -> SU2b -> PW1 -> SW3b -> SW3c`); the gain line is the weighted measure.
 
 **Edges broken, one line each.** SU1, RB4, RS2, MO-C, SW3a and SRC each needed the operations' names and types, not the allow-list's rows (contract `C-OPS`, integration `I-OPS`).
 
@@ -740,7 +767,7 @@ The contract-first pass is on (`fugaro settings planning.decoupling` reads `true
 
 ## The estimate the graph read printed
 
-`ready in 450–1800 min, no history yet for 44 tasks (44 tasks; seeds for 44; from the seeds: no history is cached on this machine yet)`
+`ready in 450–1800 min, no history yet for 46 tasks (46 tasks; seeds for 46; from the seeds: no history is cached on this machine yet)`
 
 This is informational and reserves no budget: it is what the tasks' tiers and this machine's history predict, not a figure the plan holds to. It moves as runs finish and as the graph changes. Proposed runs, when the owner gives a go: one run per approved task; the worst case is every task at its tier's ceiling, and no figure here is a reservation.
 

@@ -423,7 +423,8 @@
           "console/src/main/ipc.ts",
           "console/src/renderer/manage/kinds/models.ts",
           "docs/design/desktop-console.md",
-          "console/test/unit/spawn.test.ts"
+          "console/test/unit/spawn.test.ts",
+          "console/src/shared/version.ts"
         ]
       }
     },
@@ -441,7 +442,8 @@
           "console/src/main/ipc.ts",
           "console/src/renderer/manage/kinds/images.ts",
           "docs/design/desktop-console.md",
-          "console/test/unit/spawn.test.ts"
+          "console/test/unit/spawn.test.ts",
+          "console/src/shared/version.ts"
         ]
       }
     },
@@ -740,6 +742,40 @@
       }
     },
     {
+      "id": "MD1",
+      "title": "models add --dry-run",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/models_add.go",
+          "internal/cli/models_add_dryrun_test.go",
+          "schemas/models-add-plan.schema.json",
+          "internal/cli/testdata/models_add_plan.golden.json"
+        ]
+      }
+    },
+    {
+      "id": "MD2",
+      "title": "image add --dry-run",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/image_catalog.go",
+          "internal/cli/image_add_dryrun_test.go",
+          "schemas/image-add-plan.schema.json",
+          "internal/cli/testdata/image_add_plan.golden.json"
+        ]
+      }
+    },
+    {
       "id": "R-OPS",
       "title": "amend C-OPS: an operation or payload field a consumer needs",
       "run": null,
@@ -935,9 +971,19 @@
       "reason": "writes the same allow-list, after it"
     },
     {
+      "task": "MW1",
+      "needs": "MD1",
+      "reason": "the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD1's document"
+    },
+    {
       "task": "MW2",
       "needs": "MW1",
       "reason": "both write `spawn.ts`, `ipc.ts` and the \u00a75.1 table"
+    },
+    {
+      "task": "MW2",
+      "needs": "MD2",
+      "reason": "the docs pin holds the allow-list's flags to flags the CLI registers, and the window draws MD2's document"
     },
     {
       "task": "PL1",
