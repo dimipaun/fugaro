@@ -72,6 +72,7 @@ Subcommands:
 - `fugaro settings` -- Show every setting, what decides it, and its default
 - `fugaro setup` -- Create a fresh GCP project and stand up its installation, or a repository's cloud resources, through Terraform
 - `fugaro stats` -- Aggregate one installation's run records into figures a page can publish
+- `fugaro tell` -- Send a message to a run that is already going
 - `fugaro troubleshoot` -- Explain a Fugaro command that failed on this machine, locally
 - `fugaro update` -- Re-converge the installation, or a checkout's repository, after a CLI upgrade
 - `fugaro update-skills` -- Install or update the Fugaro plugin in your own Claude Code
@@ -10290,6 +10291,50 @@ Flags:
 | `--project` | string | "" | yes | the installation whose run records are read (required: this command never guesses one, and the sandbox is named like any other) |
 | `--region` | string | "" | no | GCP region (overrides the project config's) |
 | `--since` | string | `90d` | no | the window: Nd days back from today, or a Go duration (90d) |
+
+Subcommands:
+
+This command has no subcommands.
+
+## `fugaro tell`
+
+Send a message to a run that is already going
+
+Tell RUN (a full run ID, or <repo-slug>/<run-id>) something.
+
+The message is written into the run's own prefix of the runs bucket
+(tokens/<repo-slug>/<run-id>/messages/NNNN.msg.json, where no job account
+may write) and read by its runner at the next coder stage: a first run's
+implement, a follow-up's implement, or a fix. A review round never sees one.
+tell prints the number the message took and returns at once; it never waits
+for delivery, and what became of the message is in the run's record.
+
+Given an ending (the last four or more characters of a run ID), tell sends
+nothing: as cancel does, it looks the ending up among the active runs and
+refuses with the full run IDs it names, so an ending never steers a run
+nobody named in full.
+
+A run that is past finalize, whose runner does not read messages, or whose
+recipe has no coder stage is refused, with the reason; so is a text over
+4 KiB and a 21st message. --now asks for the message at the agent's next
+quiet point, inside the coder stage that is running; --wrap-up asks the run
+to finish: commit what it has and stop. Either flag is refused for a run
+whose runner does not honour it.
+
+Usage: `fugaro tell RUN "text"`
+
+Flags:
+
+| Flag | Type | Default | Required | Description |
+| --- | --- | --- | --- | --- |
+| `--config` | string | "" | no | the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml) |
+| `--gcp-project` | string | "" | no | the GCP project ID; it must be the selected project config's gcp_project |
+| `-h`, `--help` | bool | `false` | no | help for tell |
+| `--json` | bool | `false` | no | print the result as JSON |
+| `--now` | bool | `false` | no | ask for the message at the agent's next quiet point, inside the coder stage that is running |
+| `--project` | string | "" | no | the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config) |
+| `--region` | string | "" | no | GCP region (overrides the project config's) |
+| `--wrap-up` | bool | `false` | no | ask the run to commit what it has and stop |
 
 Subcommands:
 
