@@ -38,16 +38,86 @@ resource "google_service_account" "signer" {
 # It is granted NO roles, in the FP or anywhere, like the signer above: signing
 # goes through IAM signJwt AS this account, and nothing on this account's own
 # identity is ever used. Its one grant is the public mobile service's, written
-# in the INSTALLATION root (modules/installation/mobile_service.tf) because that
-# is where the service is created; the ID is a literal on both sides, and
-# deploy/terraform/terraform_test.go holds the two spellings together.
+# in this file with it (mobile_token_minter below) rather than in the
+# installation root that creates the service: the account is created HERE, and a
+# grant in a root applied before this one would name an account that does not
+# exist yet (the ordering mobile_token_minter states).
+#
+# It is created exactly when the installation hands over an account to sign FOR
+# (var.mobile_account, empty until the credentials image runs the mode the mobile
+# service is started in): a signer no service holds signJwt on is a key nothing
+# uses, and an installation whose mobile service is off plans neither it nor the
+# grant — which is what makes the first update carrying this change a plan with
+# nothing new in it (D2782, F31).
 resource "google_service_account" "device_signer" {
+  count = var.mobile_account == "" ? 0 : 1
+
   project      = var.project
   account_id   = "fugaro-device-signer"
   display_name = "Fugaro device token signer"
   description  = "Signs the custom tokens of the Fugaro project ${var.fugaro_project}'s paired devices. Holds no roles; the installation's public mobile service holds signJwt on it."
 
   depends_on = [google_project_service.this]
+}
+
+# The public mobile service's runtime account, on the device-only signer and on
+# nothing else (mobile plan task P5; O1, O8). It is orchestrator.tf's cross-root
+# row one account over — the row is bound on the signer ACCOUNT rather than on a
+# project, which is what keeps it signJwt and not
+# roles/iam.serviceAccountTokenCreator, whose holder could also mint access
+# tokens as the signer — and it is HERE, beside the account it signs as, because
+# of the order `fugaro update` applies the two roots in
+# (internal/cli/init_stages.go: preflight, installation, Firebase, images, ...):
+# the installation root creates the mobile service and its account, the Firebase
+# stage creates this signer, and a grant written in the installation root would
+# name an account this one had not created yet on the first update that carried
+# it — a 404 in the middle of an apply, on an installation whose runs are doing
+# nothing wrong. Written here, the plan that first carries it is also the plan
+# that creates what it is on.
+#
+# THE SENTENCE THIS ROW MUST CARRY (the task's acceptance). iam.serviceAccounts.
+# signJwt cannot be limited to a claim set: whoever holds it on an account can
+# sign ANY claims for ANY uid as that account, which is why orchestrator.tf
+# calls it the widest grant in the design's table. What holds this account to
+# device tokens is therefore NOT this grant: it is the route allowlist the
+# process mounts in its mobile mode — no route takes a caller-chosen uid or
+# claim — and the tests over it (I1's cross-class test among them). The
+# separation this account buys is a key that can be disabled alone and an audit
+# trail of its own. SECURITY.md states the residual risk (O8, D1).
+#
+# It is granted on the DEVICE signer and not the runs' own: signJwt on
+# google_service_account.signer would make the public service the identity that
+# mints every run's and every launcher's token, which is a reach O1 did not
+# announce and no reviewer priced.
+resource "google_service_account_iam_member" "mobile_token_minter" {
+  count = var.mobile_account == "" ? 0 : 1
+
+  # The account and the role are written out as literals of THIS file rather
+  # than as references to the two resources above, and that is the one thing
+  # about this row a reader has to know: `google_service_account.device_signer[0]
+  # .name` and `google_project_iam_custom_role.token_minter.name` are COMPUTED,
+  # so the plan would carry an unknown string — a principal and a role nobody
+  # can read off the review screen, which is what internal/infra/tf's cover
+  # refuses a grant for (mobileMinterGrant: the account has to be nameable).
+  # The three strings are the two resources' own facts, held together by
+  # deploy/terraform/terraform_test.go (TestDeviceSignerIsOneSpelling), which is
+  # what a literal costs and what keeps the plan readable.
+  #
+  # The role's ID is a literal for a second reason, which is this tree's rule
+  # for every role that is not `roles/...` (TestIAMResourcesUseKnownExpressions):
+  # an interpolated one is a role no review screen can read, so the ONE
+  # cross-root row of the same kind — the installation root's signJwt row on the
+  # runs' signer (orchestrator.tf, section 4.3) — spells the same ID the same
+  # way, and the test above holds this literal to the constant internal/infra
+  # writes into the root's tfvars (MinterRoleID, the module's own
+  # names.minter_role_id). What declares the role is role_id below, from that
+  # variable: one role, one literal that names it, and the two are pinned
+  # together rather than derived from one another.
+  service_account_id = "projects/${var.project}/serviceAccounts/fugaro-device-signer@${var.project}.iam.gserviceaccount.com"
+  role               = "projects/${var.project}/roles/fugaroTokenMinter"
+  member             = "serviceAccount:${var.mobile_account}"
+
+  depends_on = [google_service_account.device_signer, google_project_iam_custom_role.token_minter]
 }
 
 # signJwt and nothing else: narrower than serviceAccountTokenCreator, which

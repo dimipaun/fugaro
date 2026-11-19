@@ -41,7 +41,10 @@ locals {
   # the service — TestCredentialsServiceResourcesAreCounted is what holds this
   # number and the file's own resources together, in both directions). The
   # mobile service's account and the mobile service itself are NOT among them:
-  # they are the file beside this one, gated on the same boolean.
+  # they are the file beside this one, gated on local.mobile_service_on — which
+  # this boolean is the first half of (mobile_service.tf), so a null
+  # var.credentials_service leaves the mobile service's row below uncreated
+  # too, and its own switch narrows it further.
   credentials_service_on = var.credentials_service != null
 
   # The release the image pin names, or "" when the reference carries no
@@ -307,6 +310,11 @@ resource "google_project_iam_member" "credentials_database" {
 # permissions above and nothing more, and this account is the second and last
 # member the role is bound to.
 #
+# It is created exactly when the service is and not merely when the private one
+# is (local.mobile_service_on, mobile_service.tf's local): a binding to an
+# account that no switch created would be a plan bound on a member nothing
+# makes, which IAM accepts and the apply fails on.
+#
 # It is a row of ITS OWN rather than a second member in the binding above: one
 # binding carrying two members is the same reachability, but a plan cannot say
 # which of them a widening was for, and internal/infra/tf's grant dispatch reads
@@ -320,7 +328,7 @@ resource "google_project_iam_member" "credentials_database" {
 # whose body names either account, which is what keeps a third one from being
 # written somewhere else.
 resource "google_project_iam_member" "mobile_database" {
-  count = local.credentials_service_on ? 1 : 0
+  count = local.mobile_service_on ? 1 : 0
 
   project = var.credentials_service.firebase_project
   role    = "projects/${var.credentials_service.firebase_project}/roles/fugaroCredentialsDatabase"

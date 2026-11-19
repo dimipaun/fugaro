@@ -40,35 +40,60 @@
 # owner weighed and confirmed (O8), and the reviewer tier of this task exists to
 # re-weigh it.
 #
-# OFF BY DEFAULT, with the credentials service it belongs to: with
-# var.credentials_service null nothing here is created, and this task adds NO
-# variable of its own — an installation that runs the credentials service gets
-# the mobile endpoints, which is what the pairing tasks (P2, P3, P4) are for,
-# and one that runs none gets neither service. Turning it off removes a service,
-# an account and two grants; nothing in this file holds data, so no removal here
-# meets prevent_destroy.
+# OFF BY DEFAULT, TWICE OVER, and the second switch is why this file has a
+# variable of its own (var.enable_mobile_service, the module's; D2782 as amended
+# by F31, O8). var.credentials_service null means there is no service to run and
+# nothing here is created, exactly as before. But a released credentials image
+# today runs no `mobile` mode: the argv below is a flag
+# internal/cli/credentials_serve.go does not define until the mobile routes
+# themselves land (I1), and cobra answers one it does not know with `unknown
+# flag: --mobile` — so a container started with it never becomes ready and the
+# apply that created it FAILS, on an installation whose runs are doing nothing
+# wrong. The switch is off, so this task's own release starts nothing; the
+# release that lands the mode turns it on, and internal/cli's test over the
+# module's argv and this switch is what tells that release when the two
+# disagree (TestMobileServiceIsOffUntilThisBinaryRunsIt). Turning it off removes
+# a service, an account and two grants; nothing in this file holds data, so no
+# removal here meets prevent_destroy.
 #
-# ITS GRANTS, and the whole of them. The runtime account (below) holds
-# iam.serviceAccounts.signJwt on the DEVICE-ONLY signer account of the Firebase
-# project — a second signer created beside the runs' own
-# (modules/firebase/iam.tf), because Firebase accepts a custom token only from
-# an account of the Firebase project and an installation can span two — and the
+# ITS GRANTS, and the whole of them. The runtime account (below) holds the
 # unchanged database role fugaroCredentialsDatabase, bound in credentials.tf
-# beside the private service's own binding. O8's correction is what a reader of
-# this file has to take away: signJwt is the widest grant in this tree, it signs
-# ANY claim set for ANY uid, and IAM cannot limit which claims a signer signs.
-# What makes this account's reach the devices' is the process's route allowlist
-# (no route takes a caller-chosen uid or claim) and the tests over it; the
-# account's own separation buys a key that can be disabled alone and an audit
-# trail of its own, and nothing more. SECURITY.md states the residual risk (D1).
+# beside the private service's own binding, and iam.serviceAccounts.signJwt on
+# the DEVICE-ONLY signer account of the Firebase project — a second signer
+# created beside the runs' own (modules/firebase/iam.tf), because Firebase
+# accepts a custom token only from an account of the Firebase project and an
+# installation can span two. That signJwt is NOT written here: it is written in
+# the file that creates the signer and the account it signs as, handed over as
+# var.mobile_account, because `fugaro update` applies this root BEFORE the
+# Firebase stage (internal/cli/init_stages.go) and a plan that bound a role on
+# an account of another root would fail the update that first carried it
+# (mobile_token_minter's comment in iam.tf states the ordering and what closing
+# it cost). O8's correction is what a reader of this file has to take away:
+# signJwt is the widest grant in this tree, it signs ANY claim set for ANY uid,
+# and IAM cannot limit which claims a signer signs. What makes this account's
+# reach the devices' is the process's route allowlist (no route takes a
+# caller-chosen uid or claim) and the tests over it; the account's own
+# separation buys a key that can be disabled alone and an audit trail of its
+# own, and nothing more. SECURITY.md states the residual risk (D1).
+
+locals {
+  # Both switches, and the reason it is a local rather than a repeat of the
+  # condition: this service IS the credentials service's image, its sibling and
+  # its second face, so an installation that turns the credentials service off
+  # turns this off with it, whatever its own switch says. One spelling, four
+  # resources (the account, the service, the public binding here and
+  # credentials.tf's database binding).
+  mobile_service_on = local.credentials_service_on && var.enable_mobile_service
+}
 
 # The runtime account. It holds no bundle read and no project role of its own:
-# the two grants are the signJwt below and credentials.tf's database binding,
-# and that is the whole of its reach. Nobody is granted actAs on it
+# the two grants are credentials.tf's database binding and the signJwt of the
+# Firebase root's own file (above), and that is the whole of its reach. Nobody
+# is granted actAs on it
 # (history.tf's rule, and credentials.tf's for the same reason): whoever could
 # deploy a revision as this account could mint a device token for any uid.
 resource "google_service_account" "mobile" {
-  count = local.credentials_service_on ? 1 : 0
+  count = local.mobile_service_on ? 1 : 0
 
   project      = var.project
   account_id   = "fugaro-mobile"
@@ -93,7 +118,7 @@ resource "google_service_account" "mobile" {
 # a review screen cannot read; the service follows the same rule so that a
 # reader of a plan knows which public endpoint they are looking at.
 resource "google_cloud_run_v2_service" "mobile" {
-  count = local.credentials_service_on ? 1 : 0
+  count = local.mobile_service_on ? 1 : 0
 
   project  = var.project
   location = var.region
@@ -246,7 +271,7 @@ resource "google_cloud_run_v2_service" "mobile" {
 # the finding and is applied (D1545's content class), rather than passing as a
 # plan somebody had already classified.
 resource "google_cloud_run_v2_service_iam_member" "mobile_public" {
-  count = local.credentials_service_on ? 1 : 0
+  count = local.mobile_service_on ? 1 : 0
 
   project  = var.project
   location = google_cloud_run_v2_service.mobile[0].location
@@ -255,36 +280,17 @@ resource "google_cloud_run_v2_service_iam_member" "mobile_public" {
   member   = "allUsers"
 }
 
-# The runtime account's signJwt, on the device-only signer of the FIREBASE
-# project (O1, O8). It is orchestrator.tf's cross-root row one account over: the
-# account and the role belong to the Firebase root (modules/firebase/iam.tf,
-# whose plan creates them), the row is bound on the signer ACCOUNT rather than
-# on a project — which is what keeps it signJwt and not
-# roles/iam.serviceAccountTokenCreator, whose holder could also mint access
-# tokens as the signer — and the path is a literal of this file, because the
-# credentials block carries no signer field and a name this module invented from
-# a variable would be a second spelling of one the Firebase root already writes.
-#
-# THE SENTENCE THIS ROW MUST CARRY (the task's acceptance). iam.serviceAccounts.
-# signJwt cannot be limited to a claim set: whoever holds it on an account can
-# sign ANY claims for ANY uid as that account, which is why orchestrator.tf
-# calls it the widest grant in the design's table. What holds this account to
-# device tokens is therefore NOT this grant: it is the route allowlist the
-# process mounts in its mobile mode — no route takes a caller-chosen uid or
-# claim — and the tests over it (I1's cross-class test among them). The
-# separation this account buys is a key that can be disabled alone and an audit
-# trail of its own. SECURITY.md states the residual risk (O8, D1).
-#
-# It is granted on the DEVICE signer and not the runs' own: signJwt on
-# fugaro-token-signer would make this public service the identity that mints
-# every run's and every launcher's token, which is a reach O1 did not announce
-# and no reviewer priced.
-resource "google_service_account_iam_member" "mobile_token_minter" {
-  count = local.credentials_service_on ? 1 : 0
-
-  service_account_id = "projects/${var.credentials_service.firebase_project}/serviceAccounts/fugaro-device-signer@${var.credentials_service.firebase_project}.iam.gserviceaccount.com"
-  role               = "projects/${var.credentials_service.firebase_project}/roles/fugaroTokenMinter"
-  member             = google_service_account.mobile[0].member
-
-  depends_on = [google_service_account.mobile]
-}
+# WHERE THE RUNTIME ACCOUNT'S OWN signJwt IS. Not here. The role and the
+# account it is bound on both belong to the FIREBASE root, and this root is
+# applied BEFORE that one on every `fugaro update` (internal/cli/init_stages.go:
+# preflight, installation, Firebase, images, ...), so a plan written here would
+# name an account the Firebase root had not created yet on the first update that
+# carried it, and the IAM call would 404 and fail the apply. The row therefore
+# lives in modules/firebase/iam.tf, beside the device-only signer it is on and
+# the account of the installation it admits — handed over as var.mobile_account,
+# which that root's tfvars carry exactly when this switch is on. What the
+# account may do with that grant, and the sentence the task's acceptance
+# requires, is stated there (mobile_token_minter in iam.tf); nothing in this
+# file reaches the Firebase project's signer, and that is the property
+# internal/infra's TestCredentialsMobileIsOneServiceAcrossTwoRoots reads off
+# both plans.

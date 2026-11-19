@@ -681,6 +681,17 @@ variable "credentials_service" {
   }
 }
 
+variable "enable_mobile_service" {
+  description = "The public mobile service (mobile plan task P5; D2782 as amended by F31, O8): the second Cloud Run service of the credentials service's own image, which a paired phone reaches — beside the private service, which stays private. It is OFF, and it stays off until a released credentials image can be started in the mode this module starts it in. mobile_service.tf writes that argv (credentials serve --mobile, internal/cli/credentials_serve.go); internal/cli's own test runs it through the real command tree and fails while the two disagree, because a container whose command line the binary refuses is never ready, and the apply that created it — an update of an installation whose runs are doing nothing wrong — fails. What turns it on is the release that lands the mode (I1), and that release passes the runtime account to the Firebase root as mobile_account in the same change: the account's one signJwt is written where its signer is created (modules/firebase/iam.tf), because `fugaro update` applies THIS root before the Firebase stage and a grant naming an account the Firebase root has not created yet fails the apply (internal/cli/init_stages.go). A bool rather than a block of its own: the service carries no configuration this block could hold — every name it is configured with is var.credentials_service's own member, and it exists exactly when that block does."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_mobile_service || var.credentials_service != null
+    error_message = "enable_mobile_service needs var.credentials_service: the mobile service is that service's image, its account, and the whole of what it is configured with is that block's members — with the block null the switch turns nothing on, and an installation whose tfvars name it is one whose two halves were hand-edited apart."
+  }
+}
+
 variable "intake" {
   description = "The secrets intake (D1931, DS2.2): the installation's own Cloud Run service that alone creates, versions and deletes the dynamic per-secret containers — fugaro_u_<sub>_<name> and fugaro_p_<name>, the internal/secretname grammar — and the identity the credentials service reads them back through a prefix-conditioned accessor for. OFF by default (null): with it off this module creates no account, no role and no service, and no container of the dynamic class is ever written. It is on for an installation whose owner has the feature, and turning it off again removes a service and an account and touches no container (nothing here reads a value, so nothing here carries a prevent_destroy). account_id and service are the account's ID and the Cloud Run service's name; image is the released image, pinned BY DIGEST and never by a tag — the same rule and the same reason as credentials_service.image, because this process runs as the account that writes an installation's credentials and the repository grants roles/artifactregistry.writer to every operator (iam.tf); url is the service's OWN URL, the audience a caller's Google ID token is minted for, and it is optional because Cloud Run assigns it — no expression can read google_cloud_run_v2_service.intake[0].uri from inside that resource, so the first apply creates the revision with intake.tf's unassigned placeholder (an .invalid host no ID token is ever minted for: the revision starts, is healthy and admits nobody) until the apply that carries the URL this module's output publishes."
   type = object({

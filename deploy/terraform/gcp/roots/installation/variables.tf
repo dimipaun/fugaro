@@ -329,6 +329,20 @@ variable "voice_service" {
   default = null
 }
 
+# The public mobile service's switch (mobile plan task P5; D2782 as amended by
+# F31, O8). OFF, and it stays off until a released credentials image runs the
+# mode the module starts that service in: `fugaro update` writes no key for it,
+# so an installation gets it only from a hand-edited tfvars — which is what this
+# root has to declare it for, and what internal/infra's own test holds the
+# binary to (it writes no such key, so nothing this release does turns it on).
+# The module's variable carries the reasoning; the release that lands the mode
+# sets it here and hands the account to the Firebase root in the same change.
+variable "enable_mobile_service" {
+  type     = bool
+  default  = false
+  nullable = false
+}
+
 variable "credentials_service" {
   type = object({
     account_id       = string

@@ -700,15 +700,20 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
-					// The three names whose blocks may name a serviceAccount:
+					// The four names whose blocks may name a serviceAccount:
 					// the history and coordinator accounts (the FP's own
-					// sweeper and its writer) and the member's pinned
-					// workspace account (workspace_access.tf, W7), which is
-					// the one principal from outside this installation. The
-					// workspace's exception is its exact address and not a
+					// sweeper and its writer), the member's pinned workspace
+					// account (workspace_access.tf, W7), which is the one
+					// principal from outside this installation, and the public
+					// mobile service (mobile plan task P5, mobile_token_minter
+					// below) — the installation root creates that account and
+					// hands it over as var.mobile_account, so the row is the
+					// Firebase module's and the principal is the installation's.
+					// The workspace's exception is its exact address and not a
 					// name prefix, so no later block whose name merely
-					// contains workspace_ can borrow it.
-					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || blk.name == "google_project_iam_member.workspace_read")) {
+					// contains workspace_ can borrow it; the mobile one is its
+					// exact block name for the same reason.
+					if strings.Contains(blk.body, bad) && !(bad == "serviceAccount:" && (strings.Contains(blk.name, "history_") || strings.Contains(blk.name, "coordinator_") || blk.name == "google_project_iam_member.workspace_read" || blk.name == "google_service_account_iam_member.mobile_token_minter")) {
 						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
 					}
 				}
@@ -1859,7 +1864,15 @@ var (
 	// object, so it is read as the email it is rather than as a reference to a
 	// resource: the account belongs to the installation, and the repository
 	// root is a different apply of a different directory.
-	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
+	//
+	// var.mobile_account is the same shape one plan earlier (mobile plan task
+	// P5): the public mobile service's runtime account is created by the
+	// INSTALLATION root and reaches the Firebase root as this string, because
+	// the one grant on it — iam.serviceAccounts.signJwt on the device-only
+	// signer — is written where that signer is
+	// (modules/firebase/iam.tf's mobile_token_minter, and its comment states
+	// why the grant cannot live in the root that creates the account).
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|each\.value\.member|google_service_account\.(job|build|scheduler|reaper|preload|fugaro_deployer)\.member|google_service_account\.(history|credentials|coordinator|mcp_server|fugaro_verifier|intake|build_identity|mobile)\[0\]\.member|google_service_account\.(catalog_check|reports|licence|voice)\[0\]\.member|google_service_account\.workspace\.member|local\.cloud_(build|scheduler)_agent|"serviceAccount:\$\{var\.(history_account|coordinator_account|mobile_account|workspace_service_account|installation\.scheduler_service_account|installation\.catalog_check_service_account|credentials_service\.account)\}"|"serviceAccount:\$\{var\.orchestrator\.account_id\}@\$\{var\.project\}\.iam\.gserviceaccount\.com")$`)
 
 	// workspaceRolePath and workspaceRoleType name the ONE custom role in this
 	// tree no module creates: the workspace root's own (W3 of the workspaces
@@ -5286,6 +5299,19 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 	// kept beside it because it reads the gate itself, the exact expression and
 	// not the boolean's name, so a resource that mentions the boolean without
 	// counting on it is caught here and not there.
+	//
+	// local.mobile_service_on is the second gate this file carries, and it is
+	// the FIRST boolean's own: mobile_service.tf declares it as
+	// `local.credentials_service_on && var.enable_mobile_service`, so the one
+	// resource of this file that is the mobile service's — mobile_database, the
+	// database role bound to the second service's account — is created on a
+	// strictly narrower switch than credentials_service_on and never without it.
+	// It is written that way rather than as a repeat of the first boolean
+	// because it is THE gate the four mobile resources share (one spelling, the
+	// account, the service, the public binding there and this row), and a plan
+	// whose switch is on while the credentials service is null must create
+	// nothing here at all — which a `credentials_service_on` row would, by
+	// reaching into a null var.credentials_service's fields.
 	gated := 0
 	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
 		end := matchBrace(code, m[1]-1)
@@ -5293,8 +5319,8 @@ func TestCredentialsServiceGrantsAreTheOneBundle(t *testing.T) {
 			t.Fatalf("%s: unbalanced braces in %s.%s", path, code[m[2]:m[3]], code[m[4]:m[5]])
 		}
 		body := squash(code[m[1]:end])
-		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") {
-			t.Errorf("%s: %s.%s is not gated on local.credentials_service_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
+		if !strings.Contains(body, "count = local.credentials_service_on ? 1 : 0") && !strings.Contains(body, "count = local.mobile_service_on ? 1 : 0") {
+			t.Errorf("%s: %s.%s is gated on neither local.credentials_service_on nor local.mobile_service_on, so it is created in an installation that never opted in:\n%s", path, code[m[2]:m[3]], code[m[4]:m[5]], body)
 			continue
 		}
 		gated++
@@ -5657,7 +5683,11 @@ func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 	}
 	// And every one of them is behind the one boolean: "keeps the N resources
 	// of this file in step" is a statement about all N, and the file's first
-	// promise is that a null var.credentials_service creates nothing.
+	// promise is that a null var.credentials_service creates nothing. The
+	// mobile service's database binding is counted here too, and its own gate
+	// (local.mobile_service_on, mobile_service.tf) is the first boolean AND the
+	// mobile switch: strictly narrower, and null var.credentials_service still
+	// leaves it creating nothing.
 	for _, r := range all {
 		name := code[r[2]:r[3]] + "." + code[r[4]:r[5]]
 		open := r[1] - 1
@@ -5665,8 +5695,8 @@ func TestCredentialsServiceResourcesAreCounted(t *testing.T) {
 		if end < 0 {
 			t.Fatalf("%s: unbalanced braces in %s", path, name)
 		}
-		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") {
-			t.Errorf("%s: %s is not gated on local.credentials_service_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
+		if body := code[open+1 : end]; !strings.Contains(body, "local.credentials_service_on") && !strings.Contains(body, "local.mobile_service_on") {
+			t.Errorf("%s: %s is gated on neither local.credentials_service_on nor local.mobile_service_on, so a null var.credentials_service does not leave the file creating nothing (D147):\n%s", path, name, squash(body))
 		}
 	}
 }
@@ -5795,10 +5825,21 @@ func TestCredentialsDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	members := map[string]bool{}
 	for _, g := range database {
 		grant := squash(g.body)
+		// The two rows are gated on two expressions, and the mobile one's is the
+		// stricter (mobile_service.tf's local: credentials_service_on AND the
+		// mobile switch). Which row is which is read off its own member below —
+		// the private service's account or the mobile service's — so a row that
+		// carried the other's gate would be created for a service that is not
+		// there: an account no switch made, or a public endpoint with no
+		// database reach.
+		gate := "count = local.credentials_service_on ? 1 : 0"
+		if strings.Contains(firstAttr(g.body, "member"), "google_service_account.mobile") {
+			gate = "count = local.mobile_service_on ? 1 : 0"
+		}
 		for _, want := range []string{
 			"project = var.credentials_service.firebase_project",
 			`role = "projects/${var.credentials_service.firebase_project}/roles/` + tf.CredentialsDatabaseRole + `"`,
-			"count = local.credentials_service_on ? 1 : 0",
+			gate,
 		} {
 			if !strings.Contains(grant, want) {
 				t.Errorf("%s: %s does not hold %q:\n%s", path, g.name, want, grant)
@@ -5929,7 +5970,7 @@ func TestMobileServiceNamesAreTheGoSpellings(t *testing.T) {
 		`member = "allUsers"`,
 		`role = "roles/run.invoker"`,
 		"name = google_cloud_run_v2_service.mobile[0].name",
-		"count = local.credentials_service_on ? 1 : 0",
+		"count = local.mobile_service_on ? 1 : 0",
 	} {
 		if !strings.Contains(binding, want) {
 			t.Errorf("%s: the public binding does not hold %q:\n%s", path, want, binding)
@@ -5940,60 +5981,192 @@ func TestMobileServiceNamesAreTheGoSpellings(t *testing.T) {
 	}
 }
 
-// TestDeviceSignerIsOneSpelling holds the two sides of the cross-root grant the
-// mobile plan introduced together (P5; D2782 as amended by F31, O1, O8): the
-// devices' signer account is created in the FIREBASE root
-// (modules/firebase/iam.tf) and named by a literal in the INSTALLATION root
-// (mobile_service.tf's mobile_token_minter), and no variable carries the ID
-// between them.
+// TestMobileServiceIsOffUntilTheImagesModeExists holds the public mobile
+// service behind its switch (mobile plan task P5; D2782 as amended by F31, O8).
 //
-// Why it must be a literal on both sides, and why that is not a smell to
-// remove. The Firebase root's own signer arrives through var.names (the Go
-// binary writes names.signer_account_id and names.minter_role_id, internal/infra
-// firebase.go), and an installation can point that root at a project of its own
-// (D6, D2781). The credentials block carries no signer field, so the
-// installation root has nothing to read a signer's ID from: it could invent one
-// from a variable, and then the two roots would hold two spellings of one
-// account — the failure this test exists to make impossible, because the grant
-// would be on an account the Firebase root never created and the plan would
-// still be green (IAM accepts a binding on an account nothing creates, and the
-// device's first token would fail in production).
+// What it is for. The module starts that service's container with
+// `credentials serve --mobile`, and the flag is I1's: a released credentials
+// image today runs no such mode, so cobra answers `unknown flag: --mobile`, the
+// revision never becomes ready and the apply that created it fails. The
+// service, its account, its public invoker binding and credentials.tf's
+// database binding for it are therefore all created on ONE local
+// (mobile_service_on), which is the credentials service's own switch AND
+// var.enable_mobile_service — off by default, with no key `fugaro update`
+// writes, so nothing this release does starts the service.
+// internal/cli's TestMobileServiceIsOffUntilThisBinaryRunsIt is the other half
+// of this: it runs the argv through the real command tree and fails while the
+// switch and the binary disagree.
 //
-// internal/infra/tf's mobileMinterGrant narrows the same fact from the plan's
-// side (the service_account_id must be DeviceSignerAccountID@<one of this run's
-// projects>); the constants are tf.DeviceSignerAccountID on both counts.
+// Every resource of the file is checked, not the ones a hand-written list names:
+// a resource added here and gated on something wider is exactly the failure
+// this test is for, and the file's own signJwt row is gone from it
+// (mobile_token_minter moved to iam.tf of the Firebase root), which the check
+// below states.
 //
-// Mutation (verified, run and restored): renaming the account in either file
-// alone fails this test; renaming it in firebase/iam.tf alone also fails the
-// Firebase root's own tftest, which pins the signer's account_id.
-func TestDeviceSignerIsOneSpelling(t *testing.T) {
-	const firebasePath = "gcp/modules/firebase/iam.tf"
-	fb, err := os.ReadFile(firebasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	device := ""
-	for _, blk := range resourceBlocks(t, firebasePath, fb, "google_service_account") {
-		if blk.name != "google_service_account.device_signer" {
-			continue
-		}
-		device = firstAttr(blk.body, "account_id")
-		if project := firstAttr(blk.body, "project"); project != "var.project" {
-			t.Errorf("%s: the device signer is created in %s. var.project of the Firebase root IS the Firebase project, which is the whole reason this second account exists: the Auth API accepts a custom token only from an account of the project the user lives in", firebasePath, project)
-		}
-	}
-	if device == "" {
-		t.Fatalf("%s declares no google_service_account.device_signer: the mobile service's one signJwt is on an account of the Firebase project, and this is where that account is created", firebasePath)
-	}
-	if device != strconv.Quote(tf.DeviceSignerAccountID) {
-		t.Errorf("%s: the devices' signer is %s, internal/infra/tf's DeviceSignerAccountID is %q: the mobile service's grant names this account by a literal of another root, so the two spellings are one fact in two files", firebasePath, device, tf.DeviceSignerAccountID)
-	}
-
-	const path = "gcp/modules/installation/mobile_service.tf"
+// Mutation (verified, run and restored): relaxing the local to
+// `local.credentials_service_on` fails the local's comparison, and swapping the
+// mobile local back to the credentials one on any single resource fails that
+// resource's.
+func TestMobileServiceIsOffUntilTheImagesModeExists(t *testing.T) {
+	const (
+		path          = "gcp/modules/installation/mobile_service.tf"
+		credentialsTF = "gcp/modules/installation/credentials.tf"
+		rootVars      = "gcp/roots/installation/variables.tf"
+		rootMain      = "gcp/roots/installation/main.tf"
+	)
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+	body := stripComments(string(b))
+	m := regexp.MustCompile(`(?m)^\s*mobile_service_on\s*=\s*(.+?)\s*$`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("%s has no local mobile_service_on: every resource of this file is gated on it, and without it the mobile service is created whenever the credentials service is", path)
+	}
+	if want := "local.credentials_service_on && var.enable_mobile_service"; m[1] != want {
+		t.Errorf("%s: mobile_service_on is %q, want %q. The conjunction is the whole of the rule: this service is the credentials service's own image and can exist only beside it, and var.enable_mobile_service is what keeps it off until the released image runs the mode its container is started in", path, m[1], want)
+	}
+
+	// The file's resource blocks, by address: exactly the three this task's
+	// acceptance names, each gated on the local.
+	const gate = "count = local.mobile_service_on ? 1 : 0"
+	seen := map[string]bool{}
+	for _, typ := range []string{"google_service_account", "google_cloud_run_v2_service", "google_cloud_run_v2_service_iam_member", "google_service_account_iam_member"} {
+		for _, blk := range resourceBlocks(t, path, b, typ) {
+			seen[blk.name] = true
+			if squashed := squash(blk.body); !strings.Contains(squashed, gate) {
+				t.Errorf("%s: %s does not hold %q, so it is created outside the switch:", path, blk.name, gate)
+			}
+		}
+	}
+	for _, want := range []string{
+		"google_service_account.mobile",
+		"google_cloud_run_v2_service.mobile",
+		"google_cloud_run_v2_service_iam_member.mobile_public",
+	} {
+		if !seen[want] {
+			t.Errorf("%s declares no %s: this test reads the gate of every resource of the file, so a missing one would pass it by not being there", path, want)
+		}
+	}
+	// ... and the signJwt is NOT among them: a service-account grant of this
+	// file would be a binding planned by a root that `fugaro update` applies
+	// BEFORE the Firebase root that creates the account (internal/cli/
+	// init_stages.go), which is the 404 this file's header points at iam.tf's
+	// mobile_token_minter for.
+	if seen["google_service_account_iam_member.mobile_token_minter"] {
+		t.Errorf("%s declares google_service_account_iam_member.mobile_token_minter again: the grant belongs with the signer it is on and the role it names (gcp/modules/firebase/iam.tf), because the account it is bound to is created by that root and this one is applied first", path)
+	}
+
+	// The database binding, one file over: the same local, so the account's
+	// whole reach is created and removed with the service.
+	cb, err := os.ReadFile(credentialsTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := ""
+	for _, blk := range resourceBlocks(t, credentialsTF, cb, "google_project_iam_member") {
+		if blk.name == "google_project_iam_member.mobile_database" {
+			db = squash(blk.body)
+		}
+	}
+	if db == "" {
+		t.Fatalf("%s declares no google_project_iam_member.mobile_database: the public service reads the kill switches and writes the device nodes under the rules' floor, and without this binding it answers a refusal to every pairing (O1)", credentialsTF)
+	}
+	if !strings.Contains(db, gate) {
+		t.Errorf("%s: google_project_iam_member.mobile_database does not hold %q, so a plan could bind a role to an account no switch created — which IAM accepts and the apply fails on", credentialsTF, gate)
+	}
+
+	// The root's own two sides: the variable (a bool, off, never null) and the
+	// pass-through, which is what makes a hand-edited tfvars able to turn this
+	// on and what internal/cli's test reads a default out of.
+	rb, err := os.ReadFile(rootVars)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := ""
+	for _, m := range regexp.MustCompile(`(?s)variable "enable_mobile_service" \{(.*?)\n\}`).FindAllStringSubmatch(string(rb), -1) {
+		decl = m[1]
+	}
+	if decl == "" {
+		t.Errorf("%s declares no variable enable_mobile_service: the module's switch would then be a value no tfvars can set, and the release that lands the mode (I1) would have to edit the module instead of the installation", rootVars)
+	}
+	for _, want := range []string{"type     = bool", "default  = false", "nullable = false"} {
+		if decl != "" && !strings.Contains(decl, want) {
+			t.Errorf("%s: enable_mobile_service does not hold %q:\n%s", rootVars, want, decl)
+		}
+	}
+	rm, err := os.ReadFile(rootMain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stripComments(string(rm)), "enable_mobile_service     = var.enable_mobile_service") {
+		t.Errorf("%s does not pass enable_mobile_service to the module, so the root's variable is a switch nothing reads", rootMain)
+	}
+}
+
+// TestDeviceSignerIsOneSpelling holds the devices' signer account and the one
+// grant that names it together (mobile plan task P5; D2782 as amended by F31,
+// O1, O8). Both sides are in the FIREBASE module's own iam.tf — the account
+// beside the runs' signer, and the public mobile service's signJwt on it — and
+// that is the fix of a review finding rather than a preference: the grant was
+// written in the installation root at first, and `fugaro update` applies THAT
+// root before the Firebase stage (internal/cli/init_stages.go), so the plan
+// that first carried it bound a role on an account the Firebase root had not
+// created yet and the apply failed with a 404. Written where the signer is
+// created, the plan that carries the grant is also the plan that creates what
+// it is on.
+//
+// Why the two literals, and why that is not a smell to remove. The resource
+// `google_service_account.device_signer[0].name` and
+// `google_project_iam_custom_role.token_minter.name` are COMPUTED, so a grant
+// written with them reaches a plan as an unknown string: a principal and a role
+// no review screen can read, which internal/infra/tf's cover refuses
+// (mobileMinterGrant). The literals are therefore what makes the plan readable,
+// and this test is what holds them to the resources they stand for — the failure
+// it makes impossible is a grant on an account nothing creates, which IAM
+// accepts and the first device's token then fails on.
+//
+// The role is the literal `fugaroTokenMinter`, the ID internal/infra's
+// FirebaseNames writes into the Firebase root's tfvars as names.minter_role_id
+// and the ID the installation root's own signJwt row on the runs' signer spells
+// too (orchestrator.tf, section 4.3, pinned by the module's own test). One
+// Firebase root declares one token-minter role, and the two roots' rows name it
+// the way this tree names every project role a plan has to be readable through:
+// a literal, of the file that reads it
+// (TestIAMResourcesUseKnownExpressions holds it to tf.FugaroRoles, the roles
+// the modules create).
+//
+// Mutation (verified, run and restored): renaming the account in the grant alone
+// fails here; so does dropping the count (the two resources would be created on
+// every Firebase project, including one whose installation runs no mobile
+// service).
+func TestDeviceSignerIsOneSpelling(t *testing.T) {
+	const path = "gcp/modules/firebase/iam.tf"
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const off = `var.mobile_account == "" ? 0 : 1`
+	device := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_service_account") {
+		if blk.name != "google_service_account.device_signer" {
+			continue
+		}
+		device = squash(blk.body)
+		if project := firstAttr(blk.body, "project"); project != "var.project" {
+			t.Errorf("%s: the device signer is created in %s. var.project of the Firebase root IS the Firebase project, which is the whole reason this second account exists: the Auth API accepts a custom token only from an account of the project the user lives in", path, project)
+		}
+	}
+	if device == "" {
+		t.Fatalf("%s declares no google_service_account.device_signer: the mobile service's one signJwt is on an account of the Firebase project, and this is where that account is created", path)
+	}
+	if !strings.Contains(device, "account_id = "+strconv.Quote(tf.DeviceSignerAccountID)) {
+		t.Errorf("%s: the devices' signer is not %q, internal/infra/tf's DeviceSignerAccountID: the grant below spells that ID out as a literal of the same file, so the two are one fact in two spellings", path, tf.DeviceSignerAccountID)
+	}
+	if !strings.Contains(device, "count = "+off) {
+		t.Errorf("%s: google_service_account.device_signer is not created on var.mobile_account, so a Firebase project whose installation runs no mobile service would carry a signer key nothing holds a grant on — the first `fugaro update` after this change has to plan nothing new, and that is the switch", path)
+	}
+
 	grant := ""
 	for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
 		if blk.name == "google_service_account_iam_member.mobile_token_minter" {
@@ -6004,10 +6177,10 @@ func TestDeviceSignerIsOneSpelling(t *testing.T) {
 		t.Fatalf("%s declares no google_service_account_iam_member.mobile_token_minter: without it the public mobile service signs no custom token and no device can ever pair", path)
 	}
 	for _, want := range []string{
-		"service_account_id = \"projects/${var.credentials_service.firebase_project}/serviceAccounts/" + tf.DeviceSignerAccountID + "@${var.credentials_service.firebase_project}.iam.gserviceaccount.com\"",
-		`role = "projects/${var.credentials_service.firebase_project}/roles/fugaroTokenMinter"`,
-		"member = google_service_account.mobile[0].member",
-		"count = local.credentials_service_on ? 1 : 0",
+		"count = " + off,
+		"service_account_id = \"projects/${var.project}/serviceAccounts/" + tf.DeviceSignerAccountID + "@${var.project}.iam.gserviceaccount.com\"",
+		`role = "projects/${var.project}/roles/fugaroTokenMinter"`,
+		"member = \"serviceAccount:${var.mobile_account}\"",
 	} {
 		if !strings.Contains(grant, want) {
 			t.Errorf("%s: the signJwt grant on the devices' signer does not hold %q:\n%s", path, want, grant)
@@ -6016,34 +6189,19 @@ func TestDeviceSignerIsOneSpelling(t *testing.T) {
 	if strings.Contains(grant, "condition") {
 		t.Errorf("%s: the signJwt grant carries a condition. iam.serviceAccounts.signJwt cannot be limited to a claim set — that is the sentence this row must carry — and a condition here would read as one that did:\n%s", path, grant)
 	}
-	// The role is the Firebase root's own: the row above it in this module
-	// grants the same role to the resident orchestrator on the runs' signer
-	// (orchestrator.tf, section 4.3), and one Firebase root has one minter role.
-	// internal/infra's MinterRoleID is the spelling that writes it into the
-	// root's tfvars, and the firebase golden carries what the module made of
-	// it, so this comparison is what keeps the installation root's literal the
-	// same role rather than a look-alike the server would refuse at apply.
-	ob, err := os.ReadFile("gcp/modules/installation/orchestrator.tf")
-	if err != nil {
-		t.Fatal(err)
-	}
-	role := regexp.MustCompile(`roles/([A-Za-z0-9_.]+)"`).FindStringSubmatch(grant)
-	if role == nil {
-		t.Fatalf("%s: the signJwt grant names no literal role path:\n%s", path, grant)
-	}
-	other := ""
-	for _, blk := range resourceBlocks(t, "gcp/modules/installation/orchestrator.tf", ob, "google_service_account_iam_member") {
-		if blk.name == "google_service_account_iam_member.orchestrator_token_minter" {
-			if m := regexp.MustCompile(`roles/([A-Za-z0-9_.]+)"`).FindStringSubmatch(squash(blk.body)); m != nil {
-				other = m[1]
-			}
+	// The role the row's literal names is the role this module declares: the ID
+	// is written by internal/infra into names.minter_role_id, and role_id is
+	// where the role is created from it. A role_id that drifted from the
+	// literal would be a path nothing creates — which IAM accepts and the first
+	// device's token then fails on.
+	role := ""
+	for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+		if blk.name == "google_project_iam_custom_role.token_minter" {
+			role = firstAttr(blk.body, "role_id")
 		}
 	}
-	if other == "" {
-		t.Fatalf("orchestrator.tf declares no google_service_account_iam_member.orchestrator_token_minter: this test compares the two rows' roles")
-	}
-	if role[1] != other {
-		t.Errorf("%s grants role %q and orchestrator.tf's own signJwt row grants %q: one Firebase root declares one token-minter role, and the second spelling is a role path nothing creates — which IAM accepts and the first device's token then fails on", path, role[1], other)
+	if role != "var.names.minter_role_id" {
+		t.Errorf("%s: google_project_iam_custom_role.token_minter declares role_id %s, want var.names.minter_role_id: this module declares the role the grant above names, and internal/infra writes that variable — an installation pinned to a different ID would have the grant name a role nothing creates", path, role)
 	}
 }
 

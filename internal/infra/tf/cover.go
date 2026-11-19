@@ -1983,6 +1983,22 @@ var (
 	}
 )
 
+// MobileServiceArgs is mobileServiceArgs for a caller outside this package, and
+// the coupling it exists for is one this package cannot test: the argv the
+// module writes has to be a command the CLI CAN RUN. The `--mobile` mode is
+// I1's (internal/cli/credentials_serve.go defines none until the mobile routes
+// land), and cobra answers a flag it does not know with `unknown flag: --mobile`
+// — so a revision started with these args never becomes ready and the apply
+// that carried it fails, on an installation whose runs are doing nothing wrong.
+// Until that flag exists the module starts nothing with them (its own switch is
+// OFF, var.enable_mobile_service); internal/cli's
+// TestMobileServiceIsOffUntilThisBinaryRunsIt runs this slice through the real
+// command tree and fails while the switch and the binary disagree.
+//
+// A copy rather than the slice itself: the caller is a test, and the slice it
+// would otherwise hold is what every plan of this tree is checked against.
+func MobileServiceArgs() []string { return slices.Clone(mobileServiceArgs) }
+
 // orchestratorServiceResource, orchestratorServiceArgs, orchestratorServiceEnv
 // and orchestratorTickPath are the same quartet for the resident orchestrator's
 // own service (mobile plan task P5.1c; modules/installation/orchestrator.tf):
@@ -3282,11 +3298,12 @@ func (c Cover) orchestratorMinterGrant(ch Change) string {
 // every run's and every launcher's token; one that pointed it at a job account
 // would put the model credentials' identity behind a URL anyone may call.
 //
-// The account has to be named: the module writes the ID out as a literal
-// (mobile_service.tf), because the credentials block carries no signer field
-// and a name computed from a variable would be a second spelling of one the
-// Firebase root already writes (firebase/iam.tf, DeviceSignerAccountID). A plan
-// that computes it is refused, as a computed role is.
+// The account has to be named: the row is written in the root that CREATES the
+// signer (modules/firebase/iam.tf's mobile_token_minter), and it spells the
+// account and the role out as literals rather than referencing the two
+// resources beside it, because a reference reaches a plan as UNKNOWN — a
+// principal and a role nobody can read off the review screen. A plan that
+// computes either is refused, as a computed role is.
 //
 // The project is this run's and not a fixed one, for orchestratorMinterGrant's
 // reason: the Firebase project may be the installation's own or one of its own
@@ -3299,7 +3316,7 @@ func (c Cover) mobileMinterGrant(ch Change) string {
 		return ""
 	}
 	if unknown(ch, "service_account_id") {
-		return "a fugaroTokenMinter grant to the public mobile service whose account is not known: the account is the device-only signer of the Firebase project, written out as a literal in mobile_service.tf, and a plan that computes it is one whose signer nobody can name"
+		return "a fugaroTokenMinter grant to the public mobile service whose account is not known: the account is the device-only signer of the Firebase project, written out as a literal in the row that binds it (firebase/iam.tf's mobile_token_minter), and a plan that computes it is one whose signer nobody can name"
 	}
 	id := str(ch.After["service_account_id"])
 	if m := saName.FindStringSubmatch(id); m != nil {
