@@ -147,6 +147,12 @@ type MessagesDoc struct {
 	// reads messages and received none, which is not the same run as one whose
 	// record carries no block: Accepting tells those apart.
 	Messages []MessageFate `json:"messages"`
+	// Truncated says the list is short: the channel holds a bounded number of
+	// messages, so a record with more entries than that — one a hand wrote, no
+	// runner ever writing past the cap (F12) — is printed up to the bound and
+	// flagged here, and a diagnosis stops a few numbers past it for the same
+	// reason. Absent on every list that is the whole of what was read.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // MessageFate is one message as both commands print it: the number, the fate
@@ -231,6 +237,10 @@ func messagesOf(rec *runstore.Record, red func(string) string) *MessagesDoc {
 	doc := &MessagesDoc{Accepting: src.Accepting, Format: src.Format, Flags: redactAll(src.Flags, red), Messages: []MessageFate{}}
 	for i, d := range src.Messages {
 		if i == runmsg.MaxMessages {
+			// A record with more entries than the channel holds is one a hand
+			// wrote; the list stops here and says so rather than printing an
+			// unbounded one (F12).
+			doc.Truncated = true
 			break
 		}
 		doc.Messages = append(doc.Messages, MessageFate{
@@ -327,11 +337,11 @@ func writeMessages(w io.Writer, m *MessagesDoc) error {
 	if m.Accepting && len(m.Messages) == 0 {
 		fmt.Fprintf(w, "  no message reached this run\n")
 	}
-	// The list is bounded at the channel's own cap, which sits above what a
-	// runner writes: a list that reaches it is a record a hand edited, and
-	// saying so is the difference between a short list and a complete one.
-	if len(m.Messages) == runmsg.MaxMessages {
-		fmt.Fprintf(w, "  … at most %d messages are printed\n", runmsg.MaxMessages)
+	// A short list says it is short: the difference between a list of every
+	// message and a list that stopped at a bound is the difference between a
+	// run that was sent two messages and one that was sent a thousand.
+	if m.Truncated {
+		fmt.Fprintf(w, "  … more messages are there than are listed: a run reads at most %d of them\n", runmsg.MaxMessages)
 	}
 	return nil
 }

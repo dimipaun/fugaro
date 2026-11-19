@@ -2703,6 +2703,28 @@ func TestDiagnoseMessages(t *testing.T) {
 		}
 	})
 
+	t.Run("a record with more entries than a run reads", func(t *testing.T) {
+		// No runner writes past the channel's cap, so this is a record someone
+		// wrote by hand; the list stops at the cap and says it is short rather
+		// than printing an unbounded one (F12).
+		full := &runmsg.Record{Accepting: true, Format: runmsg.Format}
+		for seq := 1; seq <= runmsg.MaxMessages+1; seq++ {
+			full.Messages = append(full.Messages, runmsg.Delivery{Seq: seq, State: runmsg.StateDelivered})
+		}
+		diagnoseMsgRig(t, full)
+		text, _, err := execute(t, "diagnose", diagnoseMsgRun)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(text, "more messages are there than are listed") {
+			t.Errorf("a list that stopped at the cap does not say it is short:\n%s", text)
+		}
+		doc := diagnoseMsgBlock(t, diagnoseMsgRun)
+		if !doc.Truncated || len(doc.Messages) != runmsg.MaxMessages {
+			t.Errorf("block holds %d messages (truncated %v), want the channel's %d and the note that it is short", len(doc.Messages), doc.Truncated, runmsg.MaxMessages)
+		}
+	})
+
 	t.Run("a run that reads messages and was sent none", func(t *testing.T) {
 		diagnoseMsgRig(t, &runmsg.Record{Accepting: true, Format: runmsg.Format})
 		text, _, err := execute(t, "diagnose", diagnoseMsgRun)

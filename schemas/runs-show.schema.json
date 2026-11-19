@@ -181,6 +181,10 @@
           "items": {
             "$ref": "#/$defs/fate"
           }
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "Whether the list above is short of what is there: the channel holds at most runmsg.MaxMessages messages, so a record with more rows than that — one a hand wrote, no runner writing past the cap (F12) — is printed up to the bound, and a diagnosis, which also lists a few numbers past it, stops its own bound above. Absent, never false, on a list that is the whole of what was read, so a consumer reads the member rather than counting rows."
         }
       },
       "description": "The run's own account of its message channel (docs/run-messages, D2940, F13): whether it was reading messages and what it recorded about each one it saw. The record is written by the run, whose own agent can rewrite it, so every fate here is what the run recorded and not what happened — `fugaro diagnose` is the reader that cross-checks these rows against the message objects under the bucket's `tokens/<slug>/<run>/messages/` and prints a number the record never mentions as one the run never read (F18, F20). The members that say so — `object`, `text_expired`, `text`, `line`, `line_note` — are a diagnosis's: this document is read off the record alone, and never opens the bucket."

@@ -1185,6 +1185,7 @@ func diagnoseMessages(ctx context.Context, env *cloudEnv, s *runstore.Store, rec
 	slices.SortFunc(doc.Messages, func(a, b MessageFate) int { return a.Seq - b.Seq })
 	if len(doc.Messages) > diagnoseMessageFates {
 		doc.Messages = doc.Messages[:diagnoseMessageFates]
+		doc.Truncated = true
 	}
 	// Every entry was looked for, so every one carries the answer: the object is
 	// there or the bucket has reaped it (F11). Nil -- "not read" -- is what
