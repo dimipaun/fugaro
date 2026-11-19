@@ -1,6 +1,7 @@
 package mobilesession
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/access"
 )
 
 // The vectors are the data half of this contract: shared/mobile-session/vectors.json
@@ -346,6 +349,117 @@ func roundTripKeySet(t *testing.T, v contractVectors) {
 	}
 	if !ed25519.Verify(ed25519.PublicKey(root), []byte(ks.SigningInput), sig) {
 		t.Error("the envelope's signature does not verify against the root key over the signing input: the vector is what A4 signs and P1 checks, so it has to be a signature and not a description of one")
+	}
+}
+
+// TestStubsDecideNothing is the other half of C1's acceptance: the stub returns
+// fixed shapes and does nothing else. Each one is called with plausible
+// arguments and has to answer with the fail-closed zero value — no claims, no
+// admission, nothing found, nothing spent, nothing minted, no credential — so
+// that a side written in parallel (A1, P1-P4, K1-K3, M1-M3) cannot pass on a
+// decision no side has made. Its own arguments must not reach the answer: what
+// a stub echoes is what the caller already held.
+func TestStubsDecideNothing(t *testing.T) {
+	ctx := context.Background()
+	claims := Claims{Issuer: "https://identity.example.com", Audience: "https://mobile-example.a.run.app", Email: "dimi@example.com", EmailVerified: true}
+
+	got, err := StubVerifier().Verify(ctx, "not-a-credential-test-assertion", Binding{Audience: claims.Audience, Challenge: "not-a-credential-test-nonce"})
+	if err != nil {
+		t.Errorf("the stub verifier failed with %v: a stub answers the shape without judging the assertion", err)
+	}
+	if got != (Claims{}) {
+		t.Errorf("the stub verifier answered %+v, want the zero Claims: an identity nobody verified has no claims", got)
+	}
+
+	verdict, err := StubPolicy().Allow(ctx, "fugaro-example", claims)
+	if err != nil {
+		t.Errorf("the stub policy failed with %v", err)
+	}
+	if verdict.Allowed || verdict.Code != "" || verdict.Role != access.RoleNone || len(verdict.Accepted) != 0 {
+		t.Errorf("the stub policy answered %+v, want the zero Verdict: a policy nobody wrote admits nobody", verdict)
+	}
+
+	invite, ok, err := StubInviteStore().Consume(ctx, "fugaro-example", "not-a-credential-test-nonce")
+	if err != nil {
+		t.Errorf("the stub invite store failed with %v", err)
+	}
+	if ok || !reflect.DeepEqual(invite, Invite{}) {
+		t.Errorf("the stub invite store found %+v (ok %v), want nothing found: it spends no nonce", invite, ok)
+	}
+
+	member, ok, err := StubMemberStore().Member(ctx, "fugaro-example", "dimi@example.com")
+	if err != nil {
+		t.Errorf("the stub member store failed with %v", err)
+	}
+	if ok || member != (Member{}) {
+		t.Errorf("the stub member store found %+v (ok %v), want no record", member, ok)
+	}
+	memberStore := StubMemberStore()
+	if err := memberStore.Record(ctx, "fugaro-example", Member{Email: "dimi@example.com", Provider: "google", Sub: "104729384756102938475"}); err != nil {
+		t.Errorf("the stub member store failed to record: %v", err)
+	}
+	if err := memberStore.Remove(ctx, "fugaro-example", "dimi@example.com"); err != nil {
+		t.Errorf("the stub member store failed to remove: %v", err)
+	}
+
+	refreshes := StubRefreshStore()
+	for _, call := range []struct {
+		name string
+		run  func() (RefreshGrant, error)
+	}{
+		{"issue", func() (RefreshGrant, error) { return refreshes.Issue(ctx, "fugaro-example", "m~device") }},
+		{"rotate", func() (RefreshGrant, error) {
+			return refreshes.Rotate(ctx, "fugaro-example", "not-a-credential-test-refresh-token")
+		}},
+	} {
+		grant, err := call.run()
+		if err != nil {
+			t.Errorf("the stub refresh store failed on %s: %v", call.name, err)
+		}
+		if grant != (RefreshGrant{}) {
+			t.Errorf("the stub refresh store's %s answered %+v, want the zero grant: a token nobody issued is a token that cannot be presented", call.name, grant)
+		}
+	}
+	if err := refreshes.Revoke(ctx, "fugaro-example", "family"); err != nil {
+		t.Errorf("the stub refresh store failed to revoke: %v", err)
+	}
+
+	token, err := StubMinter().Mint(ctx, MintRequest{UID: "m~device", Role: access.RoleOperator})
+	if err != nil {
+		t.Errorf("the stub minter failed with %v", err)
+	}
+	if token != (CustomToken{}) {
+		t.Errorf("the stub minter answered %+v, want the zero CustomToken: it holds no signer grant", token)
+	}
+
+	claimed, err := StubClaimStore().Claim(ctx, NamespaceJTI, "not-a-credential-test-jti", time.Minute)
+	if err != nil {
+		t.Errorf("the stub claim store failed with %v: a value already spent is not an error", err)
+	}
+	if claimed {
+		t.Error("the stub claim store claimed a value: a store that claims nothing is the fail-closed end of single-use")
+	}
+
+	session := StubSessionResponse("fugaro-example", "https://mobile-example.a.run.app")
+	if session.ProjectID != "fugaro-example" || session.Endpoint != "https://mobile-example.a.run.app" {
+		t.Errorf("the stub session response dropped the facts it was handed: %+v", session)
+	}
+	wantSession := SessionResponse{ProjectID: "fugaro-example", Endpoint: "https://mobile-example.a.run.app", Role: access.RoleNone}
+	if !reflect.DeepEqual(session, wantSession) {
+		t.Errorf("the stub session response is %+v, want %+v: no credential, no policy and no consumer key", session, wantSession)
+	}
+	if refresh := StubRefreshResponse(); !reflect.DeepEqual(refresh, RefreshResponse{}) {
+		t.Errorf("the stub refresh response is %+v, want the zero value", refresh)
+	}
+
+	for _, code := range Codes() {
+		refusal := StubError(code)
+		if refusal.Code != code || refusal.Message != "" || len(refusal.AcceptedProviders) != 0 {
+			t.Errorf("StubError(%q) is %+v, want the code alone: the stub decides nothing, including why", code, refusal)
+		}
+		if !strings.Contains(refusal.Error(), string(code)) {
+			t.Errorf("StubError(%q).Error() is %q, which does not name the code", code, refusal.Error())
+		}
 	}
 }
 

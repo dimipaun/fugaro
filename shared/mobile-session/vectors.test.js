@@ -37,6 +37,8 @@ import { createPublicKey, verify as verifySignature } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
+import * as session from './index.js';
+
 const vectors = JSON.parse(readFileSync(new URL('./vectors.json', import.meta.url), 'utf8'));
 
 // The sections this reader knows. A section added to the file and not here is a
@@ -306,6 +308,57 @@ test('no value in the vectors reads like a credential', () => {
       assert.ok(!value.startsWith(prefix), `${path} starts with ${prefix}, which is a credential's shape`);
     }
     assert.ok(!/^eyJ[\w-]*\.[\w-]+\.[\w-]+$/.test(value), `${path} is a three-part token, which is a credential's shape`);
+  }
+});
+
+// The module the phone imports carries the same contract, and a third copy that
+// disagrees is a phone and a service that disagree in the field. The test's own
+// lists above stay independent of it: they are the second implementation, and
+// this is the check that the app's first one says the same thing.
+test('the module the phone imports carries the vectors, and imports nothing itself', () => {
+  const source = readFileSync(new URL('./index.js', import.meta.url), 'utf8');
+  assert.equal(/^\s*import\b/m.test(source), false, 'no import statement in index.js');
+  assert.equal(/\bfrom\s+['"]/.test(source), false, 'nothing is imported into index.js');
+  assert.equal(/\bBuffer\b/.test(source), false, 'no Node buffer type in index.js: React Natives engine has none');
+  assert.equal(/\brequire\s*\(/.test(source), false, 'no require in index.js');
+
+  assert.equal(session.VECTORS_FORMAT, vectors.format);
+  assert.deepEqual([...session.CLAIM_NAMES], vectors.claims);
+  assert.deepEqual([...session.REFUSAL_CODES], vectors.codes);
+  assert.deepEqual(Object.values(session.ROUTES), vectors.routes);
+  assert.deepEqual(Object.values(session.SECURE_STORE_ITEMS), vectors.secure_store_items);
+  assert.deepEqual(
+    {
+      assertion: session.LIFETIMES_SECONDS.ASSERTION,
+      invite: session.LIFETIMES_SECONDS.INVITE,
+      challenge: session.LIFETIMES_SECONDS.CHALLENGE,
+      custom_token: session.LIFETIMES_SECONDS.CUSTOM_TOKEN,
+      idle: session.LIFETIMES_SECONDS.IDLE,
+    },
+    vectors.lifetimes_seconds,
+  );
+  assert.equal(session.SIGNATURE_LABEL, vectors.signature.label);
+  assert.equal(session.SIGNATURE_SEPARATOR, vectors.signature.separator);
+  assert.deepEqual(
+    [...new Set(vectors.signature.messages.map((m) => m.purpose))].sort(),
+    Object.values(session.SIGNATURE_PURPOSES).sort(),
+  );
+  assert.equal(session.KEY_SET_FORMAT, vectors.key_set.payload.format);
+  assert.equal(session.KEY_SET_ALG, vectors.key_set.header.alg);
+  assert.equal(session.KEY_SET_TYP, vectors.key_set.header.typ);
+
+  const decoder = new TextDecoder();
+  for (const { purpose, value, message } of vectors.signature.messages) {
+    assert.equal(decoder.decode(session.signatureMessage(purpose, value)), message, `${purpose} of ${value}`);
+  }
+  assert.equal(session.signatureMessage('not-a-purpose', 'value'), null, 'an unknown purpose signs nothing');
+  assert.equal(session.signatureMessage(session.SIGNATURE_PURPOSES.REFRESH, ''), null, 'an empty value signs nothing');
+
+  for (const { endpoint, audience } of vectors.audience.cases) {
+    assert.equal(session.audienceOf(endpoint), audience, `${JSON.stringify(endpoint)} through the app's own derivation`);
+  }
+  for (const { provider, sub, identity } of vectors.identity_id.cases) {
+    assert.equal(session.identityId(provider, sub), identity, `${provider}/${sub} through the app's own join`);
   }
 });
 
