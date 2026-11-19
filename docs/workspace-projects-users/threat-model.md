@@ -149,10 +149,11 @@ the account's own to leak; the theft paths are an impersonation grant and the wo
 A member whose owner runs `unlink` takes the account's `roles/owner` away (D2822), and the account
 holds nothing on that member afterwards.
 
-### The workspace credentials service's account can rewrite the roster, `Admins` included
+### Four accounts can rewrite the workspace's database, `Admins` included
 
 The roster now lives in the workspace's own database, at `workspaceRosters/<name>` (R5, D2817), and
-two service accounts hold a get-and-update role on that database, neither of them path-scoped:
+the workspace's project is converged by the installation's roots exactly as a member's is, so **four
+accounts hold a whole-database write on that database**, none of them path-scoped:
 
 - the **workspace's credentials service**, whose custom role is `fugaroCredentialsDatabase` —
   `firebasedatabase.instances.get` and `.update`, the pair every installation's credentials service is
@@ -160,23 +161,36 @@ two service accounts hold a get-and-update role on that database, neither of the
   (`deploy/terraform/gcp/modules/installation/credentials.tf`);
 - the **workspace's own service account**, holding `fugaroWorkspaceDatabase`, the same pair, for the
   workspace's own service (`deploy/terraform/gcp/roots/workspace/main.tf`, whose plan is pinned to that
-  one account and that one grant).
+  one account and that one grant);
+- the **history account** the installation's Firebase root creates and grants on every converged
+  project, `fugaro-history@<project>` with `roles/firebasedatabase.admin` — all eight
+  `firebasedatabase.instances.*` — where a `history_account` left empty is filled in from the
+  project's own name (`deploy/terraform/gcp/modules/firebase/iam.tf`);
+- the **coordinator's writer account**, holding that same admin role on the project where the owner has
+  opted the coordinator in, and nothing where they have not (`internal/infra/firebase.go` leaves it
+  empty unless the installation spec carries the coordinator).
 
-A grant on a Realtime Database has no path-level scope, so either role is a whole-database read and a
-whole-database write: **a compromise of either identity can rewrite the member list, the domains and
-the `Admins` list whole**, and the workspace's cap, kill switch and its own meter figures beside them.
+A grant on a Realtime Database has no path-level scope, so any of the four is a whole-database read
+and a whole-database write: **a compromise of any of them can rewrite the member list, the domains
+and the `Admins` list whole**, and the workspace's cap, kill switch and its own meter figures beside
+them. **The two `roles/firebasedatabase.admin` holders are the wider pair**: that role adds the
+instance lifecycle (`create`, `delete`, `disable`, `reenable`, `undelete`), so the history account and
+the coordinator's writer can also delete or disable the workspace's database, where the two
+custom-role accounts can rewrite it and not remove it.
 
 **What it cannot do is become an admin by writing the list.** D2823 is the fence: only an entry of
 `Admins` that also holds the live folder-owner (or service-account token-creator) binding is
 propagated or trusted, `project add` and `reconcile` use that intersection, and `status` flags both
 directions of the difference (WU11 `TestStatusFlagsAdminTampering`, WU12
-`TestDriftTrustsOnlyBoundAdmins`). Neither account can mint a binding: the credentials service holds
-no IAM write on the workspace's project and **no write on any member at all** (D1299), and the
-workspace root's plan carries its one service account and its one database grant (WU3 keeps the SA
-fallback's new IAM account, D2803, distinct from both). What a compromised service *can* do is make the
-workspace manage the wrong people — drop a member's entry, mark an address external, suspend or
-restore the workspace's own stop — until a workspace admin reads `status`. It is a write the
-intersection makes visible, not one it prevents.
+`TestDriftTrustsOnlyBoundAdmins`). None of the four can mint that binding: none of their roles writes
+the workspace project's IAM policy, the credentials service holds no IAM write on the workspace's
+project and **no write on any member at all** (D1299), and the workspace root's plan carries its one
+service account and its one database grant (WU3 keeps the SA fallback's new IAM account, D2803,
+distinct from both). What a compromise *can* do is make the workspace manage the wrong people — drop a
+member's entry, mark an address external, suspend or restore the workspace's own stop — until a
+workspace admin reads `status`, and, for the two admin-role holders, take the workspace's own database
+away outright. The intersection is what keeps a rewrite out of authority and `status` what makes it
+visible; a database that is gone is the workspace's own state lost, not authority anyone gained.
 
 ### The workspace project's owners, editors and budget admins are workspace admins de facto
 
@@ -320,11 +334,16 @@ away, which is the same clock every workspace grant runs on.
 2. **The workspace project's own IAM is the workspace's root of trust** (§3): its owners and editors
    are workspace admins whatever `Admins` says, and its budget admins can rewrite the roster. D2823
    makes the difference visible; nothing makes it impossible. Stated, not closed.
-3. **The workspace credentials service's account can rewrite the roster** (§3): `Admins` included, and
-   the whole workspace database beside it — and the workspace's own service account, which holds the
-   same get-and-update pair on that database, is the same reach. D2823's intersection is what keeps a
-   rewrite out of authority, and `status` is what shows it; a compromise of either identity is a
-   compromise of the workspace's own state either way.
+3. **Four accounts can rewrite the workspace's database, `Admins` included** (§3): the workspace
+   credentials service's account and the workspace's own service account, each holding the same
+   get-and-update pair there; and the history account, unconditionally, and the coordinator's writer
+   account, where the owner has opted the coordinator in, holding `roles/firebasedatabase.admin`
+   instead — the same whole-database write plus the instance lifecycle, so those two can delete or
+   disable the workspace's database as well. Neither a
+   rewrite nor a deletion becomes authority: D2823's intersection is what keeps a rewritten `Admins`
+   out of it, and `status` is what shows the rewrite, while a deleted database is the workspace losing
+   its own state rather than anyone gaining a member. A compromise of any of the four is a compromise
+   of the workspace's own state either way.
 4. **The mirror discloses the workspace's member addresses and external marks to every member's
    launchers and viewers** (§3), and to the workspace project's own people. Bounded to addresses,
    kinds and marks; no rules change narrows it.
