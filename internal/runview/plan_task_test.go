@@ -38,6 +38,16 @@ var planTaskNaming = regexp.MustCompile(`\bPlanTask\b|plan_task`)
 var planTaskReaders = map[string]string{
 	// The field's own definition and its shape rule.
 	"internal/task/task.go": "defines task.Spec.PlanTask and PlanTaskProblem, the shape the launcher applies on write and task.Parse on read",
+	// The copy a launched review's spec carries (docs/review-against-task R2):
+	// the launcher copies the id off the root task onto the spec the review job
+	// is handed, because that job holds no other run of its own (F3), and the
+	// runner then quotes the section of the plan it names, as data, to the
+	// reviewer (D2932). The plan is matched by id against an enumerated list of
+	// the plan graphs the operator holds -- never a path built from this text,
+	// and never an authorisation -- so the worst a forged id can reach is the
+	// text of a plan document a person already has, shown to a reviewer. It
+	// admits no run, budgets nothing and grants nothing.
+	"internal/task/reviewspec.go": "defines task.ReviewSpec.PlanTask, the copy the launcher carries onto a launched review's spec so its job can quote that plan task's section",
 	// The launch record it is read from, which is the untrusted object.
 	"internal/runstore/launch.go": "defines runstore.Launch.PlanTask, the launch.json field itself",
 	// The id a run carries out in its own record, which is the field and not a
