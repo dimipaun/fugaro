@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -662,6 +663,41 @@ func TestDocsMobileIdentityPairingCarriesNoSecretShape(t *testing.T) {
 	}
 }
 
+// mobileIdentityPairingCensusRowRE reads the rigor-modes census' own row of the
+// `internal/cli` docs pins, capturing its count: the label, the number and the
+// row's own `ls internal/cli/docs_*_test.go | wc -l` command. The count is read
+// and not matched as text, so the assertion below holds it to a floor rather
+// than to one value -- the row is a running total every folder that adds a pin
+// moves, and an equality here goes stale on the next such merge.
+var mobileIdentityPairingCensusRowRE = regexp.MustCompile("\\| Docs folders that ship their own `internal/cli/docs_\\*_test\\.go` pin \\| ([0-9]+) \\| `ls internal/cli/docs_\\*_test\\.go \\\\?\\| wc -l` \\|")
+
+// TestDocsMobileIdentityPairingMovesTheCensusRow: this file is one more
+// `internal/cli/docs_*_test.go` pin, so it moves the running total of them in
+// docs/rigor-modes/reconciliation.md, whose own rule is that the folder which
+// writes one moves the row in the same commit and names itself in the sentence
+// beside it. A row that moved without a sentence is the merge that row calls the
+// one that did not, and every pin in this package is held to it the same way.
+//
+// The count is read as "at least 150", the figure this commit moved it from, and
+// not pinned to 151: the row is a total of other folders' guards, and an equality
+// would fail on the next pin rather than on this one. The count is not computed
+// here -- running `ls` would make this test not hermetic -- because the row's own
+// command is the check the owner runs.
+func TestDocsMobileIdentityPairingMovesTheCensusRow(t *testing.T) {
+	const recon = "docs/rigor-modes/reconciliation.md"
+	census := flattenDoc(readDoc(t, recon))
+	row := mobileIdentityPairingCensusRowRE.FindStringSubmatch(census)
+	if row == nil {
+		t.Fatalf("%s carries no `Docs folders that ship their own `internal/cli/docs_*_test.go` pin` row with a count in it and the `ls internal/cli/docs_*_test.go | wc -l` command beside it: the row is a running total of other folders' guards, and the folder that adds one is the folder that moves it", recon)
+	}
+	if count, err := strconv.Atoi(row[1]); err != nil || count < 150 {
+		t.Errorf("%s's `internal/cli/docs_*_test.go` pin row reads %q, want a number at least 150: this file's commit moved the row, the running total never falls, and a row below this one is a total that lost the guards of a folder it counted", recon, row[1])
+	}
+	if !strings.Contains(census, "Amended 2026-11-19: `internal/cli/docs_mobile_identity_pairing_test.go`, the mobile-identity-pairing folder's pin") {
+		t.Errorf("%s does not name this pin as the amendment that moved its `internal/cli/docs_*_test.go` count: the row is a total of other folders' guards, and a folder that writes one says so in its own commit", recon)
+	}
+}
+
 // mobileIdentityPairingChecks are the eight live checks T0 writes, with the
 // plan task each one is read against and the phrases its section has to keep.
 // The numbers are the block the folder's reconciliation took -- "checks 730-739
@@ -783,6 +819,7 @@ func TestDocsMobileIdentityPairingChecksAreRegistered(t *testing.T) {
 	if end := strings.Index(paragraph, "\n\n"); end >= 0 {
 		paragraph = paragraph[:end]
 	}
+	paragraph = flattenDoc(paragraph)
 	for _, want := range []string{
 		// The reading itself, in the register's own words.
 		"the first free number past every claim",
@@ -791,7 +828,7 @@ func TestDocsMobileIdentityPairingChecksAreRegistered(t *testing.T) {
 		"700", "703", "710", "712", "720", "729",
 		// What the block is: eight owner-run checks, one command each, and a
 		// paragraph that says who may run them.
-		"one command each",
+		"one command",
 		"no agent runs any step",
 		"never `belong`",
 		"NOT RUN",
@@ -807,8 +844,9 @@ func TestDocsMobileIdentityPairingChecksAreRegistered(t *testing.T) {
 			t.Errorf("%s's register has no `| %s |` row: Check %s is written below it, and the table is where a reader finds it", liveChecksDoc, check.number, check.number)
 			continue
 		}
-		for _, want := range []string{"NOT RUN", "no agent runs any step", "never `belong`", check.rowSays} {
-			if !strings.Contains(row, want) {
+		flatRow := strings.ToLower(flattenDoc(row))
+		for _, want := range []string{"not run", "no agent runs any step", "never `belong`", check.rowSays} {
+			if !strings.Contains(flatRow, want) {
 				t.Errorf("Check %s's row does not carry %q: the row is the whole check's registration, and a reader takes a row that lost one of these for a check that was run, by someone, somewhere", check.number, want)
 			}
 		}
