@@ -82,6 +82,14 @@ const (
 	// a recipe may hold it only as the first step of a mode: implement
 	// recipe, at most once, and only with the review step after it.
 	StepDigest StepKind = "digest"
+	// StepCommitReports is the commit run's deterministic step (E5, D2750):
+	// the runner writes the stored reports the launcher handed in into the
+	// repository and folder the project designates and commits them, so a
+	// recipe may hold it only as the first step of a mode: implement recipe,
+	// at most once, and only with the review step after it — the shape the
+	// digest step beside it takes, and for the same reason: neither is a
+	// model's work, and what either commits is handed to one senior review.
+	StepCommitReports StepKind = "commit_reports"
 	// StepPlan is the optional agent stage a mode: artifact recipe may begin
 	// with: it writes a render plan, and nothing else (design
 	// artifact-runs.md §6).
@@ -201,17 +209,18 @@ func StepKindRegistered(kind StepKind) bool { return registeredKind(string(kind)
 // message of its own in steps(): it is a spelling of check, and a registered
 // kind of that name would make `checks:` mean something else.
 var builtinStepKinds = map[StepKind]bool{
-	StepFirstLine:   true,
-	StepReview:      true,
-	StepAdversarial: true,
-	StepCheck:       true,
-	StepDigest:      true,
-	StepPlan:        true,
-	StepRender:      true,
-	StepRebase:      true,
-	StepMergeJudge:  true,
-	StepDiagnose:    true,
-	"checks":        true,
+	StepFirstLine:     true,
+	StepReview:        true,
+	StepAdversarial:   true,
+	StepCheck:         true,
+	StepDigest:        true,
+	StepCommitReports: true,
+	StepPlan:          true,
+	StepRender:        true,
+	StepRebase:        true,
+	StepMergeJudge:    true,
+	StepDiagnose:      true,
+	"checks":          true,
 }
 
 // paidStepKinds are the step kinds whose code Fugaro Subscription Edition
@@ -418,6 +427,20 @@ func UsesV08(r *Recipe) bool {
 // cannot judge, a development base image among them.
 func UsesDigest(r *Recipe) bool {
 	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepDigest })
+}
+
+// UsesCommitReports reports whether r holds the commit-reports step, the
+// commit run's own step (commit-reports, E5). It reads the parsed steps rather
+// than a parse-time flag, exactly as UsesDigest does: a parser that predates
+// the step refuses the whole recipe ("is not a step type") instead of dropping
+// it, so no recipe that parses without the step can have carried one.
+//
+// It is read by the runner, right after the recipe is resolved (the step takes
+// implement's place: internal/runner/runner.go), and by the launch gate's own
+// half in internal/cli, which refuses a commit launch against a job image
+// whose runner predates the release that executes it.
+func UsesCommitReports(r *Recipe) bool {
+	return slices.ContainsFunc(r.Steps, func(s Step) bool { return s.Kind == StepCommitReports })
 }
 
 // UsesAdversarial reports whether r holds the adversarial step, review level
@@ -870,6 +893,8 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			r.newKeysV08 = true
 		case string(StepDigest):
 			kind = StepDigest
+		case string(StepCommitReports):
+			kind = StepCommitReports
 		case string(StepRebase):
 			kind = StepRebase
 		case string(StepMergeJudge):
@@ -890,7 +915,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 				p.add(kpath, k.Line, "%s", paidStepMsg(k.Value))
 				continue
 			default:
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, plan, render, rebase, merge_judge and diagnose)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, review, adversarial, check, digest, commit_reports, plan, render, rebase, merge_judge and diagnose)")
 				continue
 			}
 		}
@@ -911,7 +936,7 @@ func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 			idx = append(idx, i)
 			continue
 		}
-		if kind == StepPlan || kind == StepRender || kind == StepDigest || kind == StepRebase || kind == StepMergeJudge || kind == StepDiagnose {
+		if kind == StepPlan || kind == StepRender || kind == StepDigest || kind == StepCommitReports || kind == StepRebase || kind == StepMergeJudge || kind == StepDiagnose {
 			p.emptyStepBody(kpath, body)
 			out = append(out, s)
 			idx = append(idx, i)
@@ -1186,6 +1211,7 @@ func (p *parser) order(r *Recipe, src []int) {
 	checks, firsts, reviews, adversarials, rebases := 0, 0, 0, 0, 0
 	sawOther, firstSeen := false, false
 	digests, digestAt := 0, -1
+	commits, commitAt := 0, -1
 	handOverAt := -1
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
@@ -1202,6 +1228,24 @@ func (p *parser) order(r *Recipe, src []int) {
 			}
 			if r.Mode != ModeImplement {
 				p.add(path, 0, "digest is only for mode: implement")
+			}
+		case StepCommitReports:
+			// The commit step is the digest step's shape (E5, D2750): the
+			// runner does the work itself, with no model call, and what it
+			// commits is what the recipe's senior review reads -- so it is
+			// the first step or nothing, once, and only in the mode whose
+			// loop is the one it takes implement's place in.
+			sawOther = true
+			commits++
+			commitAt = i
+			if commits > 1 {
+				p.add(path, 0, "commit_reports may appear at most once")
+			}
+			if i != 0 {
+				p.add(path, 0, "commit_reports must be the first step")
+			}
+			if r.Mode != ModeImplement {
+				p.add(path, 0, "commit_reports is only for mode: implement")
 			}
 		case StepCheck:
 			checks++
@@ -1299,6 +1343,13 @@ func (p *parser) order(r *Recipe, src []int) {
 	if digestAt >= 0 && (len(steps) != 2 || steps[1].Kind != StepReview) {
 		p.add(fmt.Sprintf("steps[%d]", src[digestAt]), 0, "digest must be followed by one review step")
 	}
+	// The commit step commits the reports the project designated and the
+	// launcher handed in: it asks no model for anything, so a first_line loop
+	// or a second review would be the loop's shape over work no model did.
+	// Exactly commit_reports then review, as the digest recipe is.
+	if commitAt >= 0 && (len(steps) != 2 || steps[1].Kind != StepReview) {
+		p.add(fmt.Sprintf("steps[%d]", src[commitAt]), 0, "commit_reports must be followed by one review step")
+	}
 	switch {
 	case rebases > 0:
 		// The rebase step is the whole run (its own case above refuses it
@@ -1365,7 +1416,7 @@ func (p *parser) orderArtifact(steps []Step, src []int) {
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
-		case StepCheck, StepFirstLine, StepDigest, StepReview, StepAdversarial, StepRebase, StepMergeJudge:
+		case StepCheck, StepFirstLine, StepDigest, StepCommitReports, StepReview, StepAdversarial, StepRebase, StepMergeJudge:
 			// check included: an artifact recipe has no implement for a
 			// gate to judge, no report to write and no review to give a
 			// ship verdict.

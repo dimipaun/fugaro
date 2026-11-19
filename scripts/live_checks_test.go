@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -139,6 +140,24 @@ import (
 // keeps a run in flight until its second poll and writes that run's transcript
 // only where the row turns terminal, so a check that read a run id off the human
 // line or read a transcript before its run ended fails these cases.
+// Check 292 drives a fake `fugaro`, a fake `gcloud`, a fake `docker` and a
+// fake `git` over the catalog build context: the fake `fugaro` answers
+// `version`, `doctor --json`, `image add`, `image ls --json`, `image rm`,
+// `project policy show --json` and `update`, and its `image build` stages the
+// entry's Dockerfile, the commit and a digest of the tree under the entry's
+// context before it prints the submitted line, writes the record the build's
+// own last step writes and stamps the image's revision label -- so the case
+// that cancels a submitted copy can decide whether the record moved with the
+// staged digest or not. The fake `gcloud` serves the runs bucket, the two
+// staged objects, the build's own steps and Cloud Logging (one JSON line per
+// entry, stamped by the case, filtered as the check filters it) and removes
+// what a `storage rm` names -- refusing one when the case asks, so the restore
+// row that names a removal it could not make is pinned too -- the fake
+// `docker` reads the copied file out of the image and the image's
+// `org.opencontainers.image.revision`, and the fake `git` answers the
+// checkout's origin, cuts the branch, commits and pushes what the check
+// writes, logging every call -- so a case says which commit the record and
+// the label name, what a decision carried, and that a refusal pushed nothing.
 // Checks 490 to 492 drive a fake `fugaro` and a fake `gcloud` over the
 // post-review triage work, one per reading an owner takes on a real run: 490
 // launches ONE sandbox run and reads its record's triage block and its
@@ -369,6 +388,29 @@ import (
 // and assert that no sentinel survives a run, and both fake servers echo back
 // what they were sent in a hostile mode, so an endpoint's own text can never
 // reach the block.
+// Check 610 is the review-only job's own owner-run check (RJ9 of the review-job
+// plan): one `fugaro review --pr N` on a pull request of a sandbox repository
+// whose `fugaro.yaml` carries no `profiles:` block and a baked workflow, which is
+// the repository a review resolves onto the implicit review-only job for. Its
+// fakes are a fake `fugaro`, `gh`, `gcloud` and `git`, each answering out of the
+// case's own documents and logging every call, so a case says which command read
+// what: the doctor that names the installation and its base image, the checkout's
+// resolved config (a mode for a `profiles:` key of its own, a workflow that is
+// not baked, no workflow at all and an auth that is neither an API key nor
+// Vertex), the published policy (a profiles block, a default account that does
+// not admit the repository, a budget mode of `off`, no mode at all), the job list
+// (no implicit job, two of them, one without the service's address, one naming
+// the secret env or mounting a secret volume, one on another image, one beside a
+// coding project job), the launch document (another job, a named account, no run,
+// no job), the run's own row (still running, failed, another pull request,
+// another run) and the review's artifact (no artifact, another run, another pull
+// request, no verdict, another reviewer account) -- plus the service's own
+// `credsvc: audit` lines, which the fake `gcloud` serves for the run the fake
+// `fugaro` recorded and which a case bends into no served line at all, a first
+// call under another credential, two calls whose earliest by its own timestamp is
+// not the document's first, a line of another run, and a read that fails. The
+// four UNVERIFIED items of the plan are one row each, and every case asserts on
+// that row's own sentence.
 var liveCheckScripts = []struct {
 	name string
 	test string
@@ -394,6 +436,7 @@ var liveCheckScripts = []struct {
 	{"check195.sh", "check195_test.sh"},
 	{"check197.sh", "check197_test.sh"},
 	{"check291.sh", "check291_test.sh"},
+	{"check292.sh", "check292_test.sh"},
 	{"check300.sh", "check300_test.sh"},
 	{"check301.sh", "check301_test.sh"},
 	{"check302.sh", "check302_test.sh"},
@@ -421,6 +464,9 @@ var liveCheckScripts = []struct {
 	{"check511.sh", "check511_test.sh"},
 	{"check520.sh", "check520_test.sh"},
 	{"check521.sh", "check521_test.sh"},
+	{"check540.sh", "check540_test.sh"},
+	{"check541.sh", "check541_test.sh"},
+	{"check542.sh", "check542_test.sh"},
 	{"check440.sh", "check440_test.sh"},
 	{"check420.sh", "check420_test.sh"},
 	{"check421.sh", "check421_test.sh"},
@@ -444,6 +490,9 @@ var liveCheckScripts = []struct {
 	{"check127.sh", "check127_test.sh"},
 	{"check590.sh", "check590_test.sh"},
 	{"check591.sh", "check591_test.sh"},
+	{"check610.sh", "check610_test.sh"},
+	{"check611.sh", "check611_test.sh"},
+	{"check640.sh", "check640_test.sh"},
 }
 
 // liveCheckTimeout is each shard's own deadline. The scripts are independent
@@ -508,13 +557,11 @@ func parseLiveCheckCIShard(env string) (index, of int, set bool, err error) {
 // TestLiveCheckCIShardCoversTheSuiteOnce: the split CI makes is a partition of
 // this file's items -- every one of them on exactly one runner, each item
 // unchanged -- and a variable it cannot read is refused rather than run whole.
-// The suite is 198 items on one runner (66 scripts, three shards each) and under
+// The suite is 222 items on one runner (74 scripts, three shards each) and under
+// The suite is 219 items on one runner (73 scripts, three shards each) and under
 // a minute each; a split that dropped one, ran one twice or fell back to
 // everything would show up as a green run that tested less, which is the failure
 // this pins.
-// The suite is 195 items on one runner and under a minute each; a split that
-// dropped one, ran one twice or fell back to everything would show up as a
-// green run that tested less, which is the failure this pins.
 func TestLiveCheckCIShardCoversTheSuiteOnce(t *testing.T) {
 	var items []liveCheckShard
 	for _, c := range liveCheckScripts {
@@ -710,6 +757,53 @@ func TestLiveCheckScripts(t *testing.T) {
 	wg.Wait()
 	for _, msg := range failures {
 		t.Error(msg)
+	}
+}
+
+// TestLiveCheck610NamesTheImplicitReviewJobs pins Check 610's spelled-out job names
+// to the derivation that produces them. check610.sh cannot compute a job name --
+// gcp's derivation sanitizes the profile, provider and account into a readable part,
+// cuts that part to thirty-six characters and appends twelve hex of a hash -- so it
+// carries the two implicit review-only names as constants, and it tells a review
+// variant from a job of a profile by the derivation rather than by a segment of the
+// name: the cut is why the github job's account segment reads `default-rev` and never
+// `default-review`, so the substring a reader would look for is not in the name at
+// all. A rename in infra has to break here instead of making the live check report
+// that a real installation deploys no review-only job.
+func TestLiveCheck610NamesTheImplicitReviewJobs(t *testing.T) {
+	dir := filepath.Join(testutil.ModuleRoot(), "scripts", "live-checks")
+	scripts := map[string]string{}
+	for _, name := range []string{"check610.sh", "check610_test.sh"} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		scripts[name] = string(b)
+	}
+	for _, provider := range infra.ImplicitReviewProviders {
+		name := infra.ImplicitReviewJobName(provider)
+		for _, script := range []string{"check610.sh", "check610_test.sh"} {
+			if !strings.Contains(scripts[script], name) {
+				t.Errorf("%s does not carry the implicit review-only job name infra.ImplicitReviewJobName(%q) derives, %q, so the check would read a real installation as one that deploys no such job", script, provider, name)
+			}
+		}
+	}
+	// The stem is what the job-list reader counts the jobs of, and it is also what a
+	// message about two deployments names: it has to be the github name without its
+	// trailing hash, never a name of its own.
+	const assignment = `IMPLICIT_PREFIX="`
+	i := strings.Index(scripts["check610.sh"], assignment)
+	if i < 0 {
+		t.Fatalf("check610.sh carries no %s assignment", assignment)
+	}
+	rest := scripts["check610.sh"][i+len(assignment):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("check610.sh's %s assignment is not closed", assignment)
+	}
+	stem, github := rest[:j], infra.ImplicitReviewJobName("github")
+	if github == stem || !strings.HasPrefix(github, stem) {
+		t.Errorf("check610.sh counts jobs of the stem %q, which is not the github implicit review-only job's name %q with its hash taken off", stem, github)
 	}
 }
 

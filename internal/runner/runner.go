@@ -218,6 +218,19 @@ type run struct {
 	// coder pass and no review (rebase.go). Set once at bootstrap, from the
 	// recipe the run resolved.
 	rebase bool
+	// commitReports is whether the resolved recipe's first step is the
+	// commit-reports step (recipe.UsesCommitReports, periodic-reviews R9): the
+	// run commits the stored reports the launcher handed in (spec.Reports) into
+	// the project's designated folder, with no model call and no implement
+	// stage (reports_commit.go). Set once at bootstrap, from the recipe the run
+	// resolved, together with reportsDir.
+	commitReports bool
+	// reportsDir is the folder the run commits those reports into, resolved
+	// with commitReports from the published policy's reports_commit at
+	// bootstrap (reportsCommitDesignation): relative to the checkout, never
+	// absolute and never carrying a ".." segment, which is what the
+	// designation's own path check and the step's symlink walk both hold it to.
+	reportsDir string
 	// review is whether this run is mode: review (reviewmode.go, Task 12
 	// of the generic-tool plan): set from spec.ReviewPRs at bootstrap,
 	// before the recipe is resolved, the same way follow is set from
@@ -3049,6 +3062,36 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// release image that predates the step (escalationSince, internal/cli/
 	// recipes_skew.go).
 	r.rebase = recipe.UsesRebase(rcp)
+	// The commit-reports step is the runner's own work too (periodic-reviews
+	// R9, E5): it writes the stored reports the launcher handed in into the
+	// project's designated folder and commits them, with no model call and no
+	// implement stage, and planOf has no arm for it (it must be the first step
+	// of a mode: implement recipe, recipe.order). Marked here, right after the
+	// recipe is resolved and before any stage, and dispatched in agentLoop in
+	// place of implement for the digest step's own reason: a run that reached
+	// implement instead would spend a full stage on the recipe's prompt and
+	// open a pull request that holds a model's edits rather than the store's
+	// documents.
+	//
+	// Its folder comes from the published policy and is resolved here with it,
+	// before any stage, because a run with no designation -- or one that names
+	// another repository, or a folder no report may be written under -- has
+	// nothing to commit and must be refused while it still costs nothing: a
+	// designation read at the step would spend the recipe's review round first
+	// and fail after it. The launcher's image gate refuses a commit-reports
+	// launch against a release image that predates the step (reportsCommitSince,
+	// internal/cli/recipes_skew.go).
+	r.commitReports = recipe.UsesCommitReports(rcp)
+	if r.commitReports {
+		dir, err := r.reportsCommitDesignation(ctx, rrec.Name)
+		if err != nil {
+			// The refusal is the launch that was wrong, not the machinery: it
+			// carries the designation's own class, the way an unregistered
+			// step's or an --attach recipe's refusal does.
+			return endClass{failure.ConfigInvalid, err}
+		}
+		r.reportsDir = dir
+	}
 	// A follow-up cannot run one whatever this image executes: a report run
 	// is launched on its own, because it lists the records it may read and
 	// refuses while another report run of the repository is going
@@ -3060,6 +3103,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 	// (refuseFollowUpReportMode, internal/cli/recipes_resolve.go).
 	if r.follow != nil && recipe.UsesDigest(rcp) {
 		return fmt.Errorf("recipe %s holds the digest step, which writes this repository's run reports; this task continues pull request #%d, and a report run is launched on its own — it lists the records it may read and refuses while another report run of the repository is going — so it cannot continue one", rrec.Name, spec.PR)
+	}
+	// The commit-reports step has no such reason and no way to work without
+	// one either: a follow-up carries no reports at all, because the list is
+	// the launcher's and a fresh commit launch writes it (spec.Reports), so a
+	// follow-up of a commit run would reach the step, find nothing handed in
+	// and die inside it as an infrastructure failure rather than as the launch
+	// that was wrong. Refused here by the same rule and for the same reason the
+	// digest step is: a report run is launched on its own, from the designated
+	// repository's checkout, and never continues a pull request.
+	if r.follow != nil && recipe.UsesCommitReports(rcp) {
+		return fmt.Errorf("recipe %s holds the commit-reports step, which commits this project's stored run reports; this task continues pull request #%d, and the reports are handed to a launch rather than to a follow-up, which carries none — so it cannot continue one", rrec.Name, spec.PR)
 	}
 	// A rebase recipe puts an existing branch back on its base (E5): a first
 	// run has none — it cuts its own branch from the task's ref, whose base
@@ -4018,6 +4072,38 @@ func (r *run) agentLoop(ctx context.Context) {
 				r.endHalted(ctx, h)
 			}
 			return // nothing was due: the step ended the run with no pull request
+		}
+		skipImplement = true
+	}
+	// The commit-reports step takes implement's place the same way
+	// (reports_commit.go, periodic-reviews R9): the reports a commit run
+	// delivers are the store's documents, handed in by the launcher, so the
+	// runner writes and commits them itself and starts no implement stage and
+	// no model call before its review. Like the digest step, it either ends the
+	// run (every report is already in the folder: no pull request to open) or
+	// hands what it committed to the review loop below, which is the recipe's
+	// one senior round.
+	if r.commitReports {
+		if err := r.reportsCommitStep(ctx); err != nil {
+			// A halt recorded while the step read or committed outranks the
+			// error, exactly as it does around the check gate and the digest
+			// step.
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+				return
+			}
+			if errors.Is(context.Cause(ctx), ErrCancelled) && r.markCancelled() {
+				r.endCancelled(ctx, "cancelled during the commit-reports step")
+			} else {
+				r.failInfra(ctx, err)
+			}
+			return
+		}
+		if r.skipPR {
+			if h := r.haltValue(); h != nil {
+				r.endHalted(ctx, h)
+			}
+			return // nothing differed: the step ended the run with no pull request
 		}
 		skipImplement = true
 	}
@@ -6060,11 +6146,12 @@ func (r *run) finalize(ctx context.Context) error {
 		return r.shadowFinalize(ctx)
 	}
 	// A report run's last word before anything is pushed: the files it commits
-	// under docs/fugaro-reviews/ are the runner's own, byte for byte
-	// (digest.go, T3.2's call, which T3.3 fills). The commit it put the branch
-	// back to is held to once more after the leftover commit below, because
-	// that is the last moment before the push.
-	step, err := r.digestFinalize(ctx)
+	// -- the digest step's generated reports (digest.go, T3.2's call, which
+	// T3.3 fills) or the commit-reports step's stored ones (reports_commit.go,
+	// periodic-reviews R9) -- are the runner's own, byte for byte. The commit it
+	// put the branch back to is held to once more after the leftover commit
+	// below, because that is the last moment before the push.
+	step, err := r.deterministicFinalize(ctx)
 	if err != nil {
 		return err
 	}
@@ -6131,10 +6218,10 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
-	// A report run's branch must still be the commit the digest step made, and
-	// nothing committed on top of it: what finalize commits is what the pull
-	// request carries (digest.go's digestRefuseChangedBranch).
-	r.digestRefuseChangedBranch(ctx, step, committed)
+	// A report run's branch must still be the commit its own first step made,
+	// and nothing committed on top of it: what finalize commits is what the pull
+	// request carries (digest.go's deterministicRefuseChangedBranch).
+	r.deterministicRefuseChangedBranch(ctx, step, committed)
 	if r.follow == nil {
 		// A follow-up's branch is already ahead of its base: when its
 		// agent adds nothing, the report says so rather than an empty
@@ -6637,12 +6724,18 @@ const truncatedNote = "\n\n*(Truncated by Fugaro: the description was longer tha
 
 // prText returns the pull request's title and body, redacted and clipped
 // to what every provider accepts.
+//
+// It is the body of a run whose pull request is opened at finalize alone
+// (git.pr.early_draft off), and earlyPRText beside it is the body of one that
+// carries a status section: each is a run's whole published body on its own
+// path, so the closing line a run for a GitHub item owes its issue goes on
+// both (withFixes, prflow.go, D2727).
 func (r *run) prText() (string, string) {
 	title, body := r.rawPRText()
 	if runes := []rune(title); len(runes) > maxTitleRunes {
 		title = string(runes[:maxTitleRunes-1]) + "…"
 	}
-	return title, clipBody(body, maxBodyBytes)
+	return title, r.withFixes(clipBody(body, maxBodyBytes))
 }
 
 // clipBody cuts body to at most limit bytes, ending with a note when it

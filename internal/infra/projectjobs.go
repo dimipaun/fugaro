@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/catalog"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
@@ -151,6 +152,58 @@ func ProjectKeyAccountJobs(lc *localcfg.Config, carried []string) []ProjectJobAc
 	return out
 }
 
+// projectJobImage is the image every shared job of this project runs: the
+// project's own answer for a job that names no catalog entry and needs no tag,
+// which is what catalog.JobImage gives the empty request (D1900, IS1) — the
+// catalog's default entry when the project marks one, and the installation's
+// base image when it marks none, which is the image these jobs were deployed
+// with before the catalog decided anything.
+//
+// A profile has no image field (R1), so the catalog's default is the only
+// place a project states which image its shared jobs run, and `fugaro update`
+// writes one on the pinned base image (D2305) so that a project has an entry
+// its jobs run and a place to curate a baked image into. Asking the one
+// resolver here rather than spelling the base image is what keeps the
+// deployer, the launcher, doctor and the image commands on one answer about
+// which image a project's jobs run (F21): the shared job's image and the
+// per-repository job's are two answers to the same question, and a second
+// spelling of the default in this file is how they would come apart.
+//
+// The references are this deployer's own, exactly as repoCtx's are: the
+// installation's base image stands for both the base and the repository
+// reference, because a shared job belongs to no repository and has no derived
+// image of its own, and an entry's image is the reference the catalog build
+// pushes it to (repoCtx.catalogImage's rule, written once below).
+func projectJobImage(lc *localcfg.Config) (string, error) {
+	host, err := RegistryHost(lc)
+	if err != nil {
+		return "", err
+	}
+	base := lc.BaseImage(config.BaseKind)
+	sel, err := catalog.JobImage(catalog.ImageRequest{Catalog: lc.ImageCatalog, Backend: catalog.Backend(lc.Backend())})
+	if err != nil {
+		return "", userErr("the project's image for its shared jobs: %v", err)
+	}
+	return sel.Image(catalog.Images{
+		Base:    base,
+		Repo:    base,
+		Catalog: func(e config.Entry) string { return catalogEntryImage(host, gcp.SharedRegistryRepoID(), e) },
+	}), nil
+}
+
+// catalogEntryImage is where a catalog entry's image is (D1152): a prebuilt
+// entry's own reference, and otherwise the installation's one shared registry,
+// one image per entry, named catalog-<entry> with the moving :latest tag a job
+// spec names. It is repoCtx.catalogImage's rule and the same function, so that
+// the reference a repository's job runs and the reference a shared job runs
+// cannot come apart.
+func catalogEntryImage(registryHost, sharedRegistry string, e config.Entry) string {
+	if e.Source.Kind == config.SourceImage {
+		return e.Source.Image
+	}
+	return registryHost + "/" + sharedRegistry + "/" + catalogImagePrefix + e.Name + ":latest"
+}
+
 // projectJobs is ProjectJobs with the named profiles carried: no job is
 // composed for them, and the installation's own document carries the job it
 // deployed for each instead (CarriedProjectJobs, and internal/cli's
@@ -178,6 +231,15 @@ func ProjectKeyAccountJobs(lc *localcfg.Config, carried []string) []ProjectJobAc
 func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []string) (map[string]ProjectJob, error) {
 	if len(lc.Profiles) == 0 {
 		return nil, nil
+	}
+	// The image every job below runs, resolved once: the project's own answer
+	// for a job no repository states one for (projectJobImage). A config the
+	// resolver refuses — a default entry tagged docker, which needs a VM
+	// backend — stops here, where the job's image is written, rather than
+	// deploying a job that dies on its first docker command (D1149).
+	image, err := projectJobImage(lc)
+	if err != nil {
+		return nil, err
 	}
 	isCarried := func(name string) bool { return slices.Contains(carried, name) }
 	// The profiles are the policy's own document (config.JobProfile, one
@@ -405,7 +467,7 @@ func projectJobs(lc *localcfg.Config, bucket string, vertex bool, carried []stri
 				Account:        account,
 				Job:            gcp.ProjectJobName(name, pr.Provider, account),
 				ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(name, pr.Provider, account)},
-				Image:          lc.BaseImage(config.BaseKind),
+				Image:          image,
 				CPU:            strconv.Itoa(pr.CPU),
 				Memory:         pr.Memory,
 				TaskTimeoutS:   int((timeout + backend.TaskTimeoutSlack) / time.Second),
@@ -519,8 +581,17 @@ func projectReviewJobs(lc *localcfg.Config, bucket string, vertex bool, carried 
 			return nil, err
 		}
 	}
+	// The implicit variant's image, which no coding job of this set carries:
+	// a project that declares no profile deploys no coding job for it to
+	// inherit one from, and it is a shared job of this project all the same,
+	// so it runs the project's own image like every other (S10, D2305). It is
+	// resolved where such a variant is really built and not here, so a project
+	// that deploys no project job at all asks the resolver nothing.
 	for _, provider := range ImplicitReviewProviders {
-		v, ok := implicitReviewVariant(lc, coding, bucket, vertex, provider)
+		v, ok, err := implicitReviewVariant(lc, coding, bucket, vertex, provider)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
@@ -749,27 +820,39 @@ const implicitReviewJobTimeout = 3 * time.Hour
 //     RefuseProjectJobDeletes stops the whole update on, with "restore the
 //     profile as it was" as the only way out. Adding a profile is an ordinary
 //     act, so the job stays and the profile's own variants are added beside it.
-func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bucket string, vertex bool, provider string) (ProjectJob, bool) {
+func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bucket string, vertex bool, provider string) (ProjectJob, bool, error) {
 	if lc.CredentialsService == nil {
-		return ProjectJob{}, false
+		return ProjectJob{}, false, nil
 	}
 	env := projectJobEnv(lc, bucket, vertex)
 	switch provider {
 	case githubProvider:
 		appID, err := recordedGitHubAppID(lc)
 		if err != nil || appID == "" {
-			return ProjectJob{}, false
+			return ProjectJob{}, false, nil
 		}
 		env[providers.EnvGitHubAppID] = appID
 	case bitbucketProvider:
 		if !recordedBitbucketRepo(lc) {
-			return ProjectJob{}, false
+			return ProjectJob{}, false, nil
 		}
 	default:
 		// A kind this deployer deploys no implicit job for: ImplicitReviewProviders
 		// is the list, and a provider added to config.Providers is not on it
 		// until it is named there.
-		return ProjectJob{}, false
+		return ProjectJob{}, false, nil
+	}
+	// The project's own image, asked for here and not by the caller: this is
+	// the one job of a project that declares no profile, so there is no coding
+	// job of the same set to inherit an image from (S10, D2305). It is asked
+	// only where a job is really built — a project that deploys none must not
+	// meet the resolver's refusal — and it is the only error this function has:
+	// every other gate above is a fact the job is not deployed for and never a
+	// refusal, because this job is deployed for nobody who asked for it and
+	// must never be the reason an update that converges today stops converging.
+	image, err := projectJobImage(lc)
+	if err != nil {
+		return ProjectJob{}, false, err
 	}
 	// The variant of the no-account job the default profile would have if the
 	// project declared one, and a coding job is not deployed for it: reviewVariant
@@ -784,7 +867,7 @@ func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bu
 		Provider:       provider,
 		Job:            gcp.ProjectJobName(ImplicitReviewProfile, provider, ""),
 		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.ProjectSADisplayName(ImplicitReviewProfile, provider, "")},
-		Image:          lc.BaseImage(config.BaseKind),
+		Image:          image,
 		CPU:            strconv.Itoa(config.DefaultCPU),
 		Memory:         config.DefaultMemory,
 		TaskTimeoutS:   int((implicitReviewJobTimeout + backend.TaskTimeoutSlack) / time.Second),
@@ -802,10 +885,10 @@ func implicitReviewVariant(lc *localcfg.Config, coding map[string]ProjectJob, bu
 	v := reviewVariant(lc, twin)
 	for _, c := range coding {
 		if t := reviewVariant(lc, c); t.Job == v.Job || t.ServiceAccount.AccountID == v.ServiceAccount.AccountID {
-			return ProjectJob{}, false
+			return ProjectJob{}, false, nil
 		}
 	}
-	return v, true
+	return v, true, nil
 }
 
 // addProjectJob adds j to the job set, refusing a job whose name or service

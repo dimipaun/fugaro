@@ -605,26 +605,30 @@ func converge(t *testing.T, node map[string]any, stale []string) {
 	}
 	// This run onboarded the repository itself (it is the run the anchor writes
 	// fugaro.yaml's gcp_project: line in, which leaves the working tree
-	// different from the default branch): the job images are built here, from
-	// the repository this run converged, and a run that built neither of them
-	// would be one refusing to build from a file it did onboard.
+	// different from the default branch) — and it onboarded it apply-free: the
+	// repository is admitted by the profile this same run writes for its
+	// provider (S5's default, `standard` here), so it runs on the project's
+	// shared job and no repository-level Terraform is applied for it at all
+	// (M7, D2312 as amended).
 	//
-	// Two builds reach Cloud Build, and both are the checkout stage's cloud
-	// step — not the repository stage's: that stage offers a first build only
-	// for a workflow with no build record (infra.NeedsBuild), and both of this
-	// rig's workflows carry one, the release behind's, built FROM that release's
-	// base image. What is behind is those two images, and the refresh is what
-	// rebuilds them off those records (refreshVerdict).
+	// That is why NO job image reaches Cloud Build here, and the count is still
+	// the whole point of the assertion: the two per-repository images the
+	// records of the release behind show are the images the checkout stage's
+	// cloud step used to rebuild off those records (refreshVerdict), and a
+	// repository on a shared job has none of its own to rebuild — its
+	// workflows' images are the project's, built FROM the base pin this same run
+	// records, per project and not per repository (spec decision 3, F5).
 	//
-	// The count is the whole point of the assertion: that gap is not one the
-	// repository stage covers, so a run whose checkout stage never applies
-	// builds nothing at all. The cloud step's own check reads fugaro.yaml and
-	// the local config and never a build record (upgrade_cloud.go's cloudCheck),
-	// and by the time the checkout stage runs the images stage has already
-	// pinned this release's base in that config — so the stage's own answer is
-	// not the verdict that check gives (init_checkout_upgrade.go's Check).
-	if n := len(r.builder.specs); n != 2 {
-		t.Errorf("%d job image(s) reached Cloud Build, want the two the checkout stage's cloud step rebuilds from the records of the release behind: the job images of a repository this run onboarded are refreshed here", n)
+	// Put M7's guard back — let refreshBuilds run for a shared repository — and
+	// this fails with the two builds the records of the release behind name.
+	// The step's own line saying why it rebuilt nothing is on the run's log
+	// rather than here (stageDetail: a stage line of a converge is the run's
+	// account, D1352), and TestImagesStageSkipsASharedRepo is where it is read.
+	//
+	// TestUpdateConvergesSlimBase asserts the half that still moves for such an
+	// installation, the base pin.
+	if n := len(r.builder.specs); n != 0 {
+		t.Errorf("%d job image(s) reached Cloud Build, want none: a repository the project's profile admits runs on the shared job and has no per-repository image of its own (M7, D2312)\n%s", n, out)
 	}
 }
 
@@ -684,9 +688,10 @@ func convergeOn(t *testing.T, r *convergeRig, stale []string) string {
 	}
 	for _, c := range after.Checks {
 		// The per-workflow settings comparison, which is the update's own
-		// work: its images stage rebuilds the workflow images the records
-		// still show on the previous release's base, so no image-config- line
-		// may be firing when it is done.
+		// work: the images stage re-pins the base the workflow images the
+		// records still show were built from — and for a repository the project
+		// admits, M7's cloud step rebuilds none of them — so no image-config-
+		// line may be firing when it is done.
 		//
 		// image-catalog-<workflow> is deliberately not asserted here, and
 		// asserting it would be wrong rather than merely weak: `fugaro update`
@@ -891,9 +896,12 @@ func TestUpdateConvergesPreviousPolicy(t *testing.T) {
 // RULE is about: a project whose image catalog marks no default still converges
 // with `fugaro update` alone. The catalog is the one thing that could take the
 // per-repository image away, so a project that publishes entries without
-// choosing one has to keep the images its workflows were built as — every job
-// on the per-repository tag, and the images stage rebuilding exactly those —
-// rather than stopping on a project that names no entry for a workflow.
+// choosing one must not stop on a project that names no entry for a workflow:
+// on the release behind it kept the images its workflows were built as, every
+// job on the per-repository tag and the images stage rebuilding exactly those,
+// and since M7 — where such a repository runs on the project's shared job and
+// has no per-repository image left — what the run has to do instead is publish
+// the catalog and re-pin the base, with no entry marked default either way.
 //
 // The alternative the plan rejected, a resolver that refuses when no default
 // exists, would leave this installation needing a second command: `fugaro
@@ -907,7 +915,7 @@ func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
 	p := convergeNode(t, r)
 	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry {
@@ -918,24 +926,20 @@ func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 			t.Errorf("after one fugaro update, the published entry %s is the default, want none: the project's config named no entry for its workflows", e.Name)
 		}
 	}
-	// Two builds reach Cloud Build, one per workflow, and both are the checkout
-	// stage's cloud step's — as in the converge rig's own count above: each of
-	// the two workflows carries a build record of the release behind, so the
-	// repository stage offers no first build (infra.NeedsBuild), and what the
-	// cloud step rebuilds off those records is each workflow's own job image.
-	if n := len(r.builder.specs); n != 2 {
-		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow, the cloud step's: with no catalog default every workflow keeps its own image", n)
-	}
-	// The pin the fixture records carries a digest the fake source registry
-	// answers differently, so what is compared is the repo:tag the pin names.
-	pinned, _, _ := strings.Cut(pinnedRef("base", convergeRelease), "@")
-	for _, s := range r.builder.specs {
-		if strings.Contains(s.Image, "catalog-"+entry) {
-			t.Errorf("workflow %s was built as %s, want the repository's own derived image: no catalog entry is this project's default, so no job runs one (O4 b)", s.Workflow, s.Image)
-		}
-		if base, _, _ := strings.Cut(s.Base, "@"); base != pinned {
-			t.Errorf("workflow %s was built from %s, want this release's pinned base %s: the rebuild is the per-repository image's", s.Workflow, s.Base, pinned)
-		}
+	// And no build reaches Cloud Build, which is M7's change to this door
+	// rather than a gap in it: the checkout is admitted by the profile this
+	// same run writes for its provider (S5's default), so its workflows run on
+	// the project's shared job and the two per-repository images the records of
+	// the release behind show are not the run's to rebuild (D2312 as amended,
+	// spec decision 3). The cloud step prints the line that says which of the
+	// two reasons left the images alone, and it is on the run's log rather than
+	// on this stream (stageDetail, D1352).
+	//
+	// The reading this test is about is unaffected and still asserted above:
+	// the catalog reaches the node with no entry marked default, which is the
+	// half a resolver refusing on a default-less catalog would have broken.
+	if n := len(r.builder.specs); n != 0 {
+		t.Errorf("%d job image(s) reached Cloud Build, want none: a repository the project's profile admits runs on the shared job and has no per-repository image of its own (M7, D2312)\n%s", n, out)
 	}
 }
 
@@ -952,11 +956,15 @@ func TestUpdateConvergesNoCatalogDefault(t *testing.T) {
 //
 // The resolver sets that default aside for a workflow that wrote an image of
 // its own (catalog.JobImage), so the installation converges on the images it
-// already runs: no catalog entry is any job's, and the images stage rebuilds
-// exactly the per-repository images the records show. Both workflows write the
-// key, because a workflow that wrote none has no image of its own to keep and
-// is refused in so many words — the shape D1191 exists for, on this release and
-// on the one behind alike.
+// already runs: no catalog entry is any job's, and on the release behind the
+// images stage rebuilt exactly the per-repository images the records showed.
+// Since M7 there is no per-repository image to rebuild for this checkout — the
+// profile the same run writes for its provider admits it, so it runs on the
+// project's shared job — and what the test still pins is the half D1191 is
+// about: the door converges rather than stopping to ask for a config edit.
+// Both workflows write the key, because a workflow that wrote none has no image
+// of its own to keep and is refused in so many words — the shape D1191 exists
+// for, on this release and on the one behind alike.
 func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
 	const entry = "standard"
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
@@ -981,23 +989,24 @@ func TestUpdateConvergesAPrebuiltDefaultBesideAWorkflowsOwnImage(t *testing.T) {
 		t.Fatalf("the fixture's node already carries a catalog (%v): it is not an installation whose policy predates it", p.ImageCatalog)
 	}
 
-	convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
+	out := convergeOn(t, r, []string{"policy-rules-skew", "plugin-pin"})
 
 	p := convergeNode(t, r)
 	if p.ImageCatalog == nil || len(p.ImageCatalog.Entries) != 1 || p.ImageCatalog.Entries[0].Name != entry || !p.ImageCatalog.Entries[0].Default {
 		t.Fatalf("after one fugaro update, the published node's image_catalog = %+v, want the one local entry %s, marked default: the catalog did not reach the node", p.ImageCatalog, entry)
 	}
-	// The same two builds as the converge rig's own count: a workflow that
-	// wrote a dockerfile: keeps the image this project builds for it, so the
-	// cloud step rebuilds each workflow's own job image and no job is handed
-	// the prebuilt entry the catalog marks.
-	if n := len(r.builder.specs); n != 2 {
-		t.Fatalf("%d job image(s) reached Cloud Build, want one per workflow: a workflow that wrote a dockerfile: of its own keeps its own image, because the catalog's default is one its job cannot run", n)
-	}
-	for _, s := range r.builder.specs {
-		if strings.Contains(s.Image, "catalog-"+entry) {
-			t.Errorf("workflow %s was built as %s, want the repository's own derived image: the prebuilt default holds no checkout of this repository, so it is set aside for a job that wrote an image of its own (D1191, D1900)", s.Workflow, s.Image)
-		}
+	// And no build reaches Cloud Build, as in the converge rig's own count and
+	// for M7's reason: the checkout is admitted by the profile this run writes
+	// for its provider, so its workflows run on the project's shared job and
+	// the per-repository images the records show are not the run's to rebuild
+	// (D2312 as amended). No job was handed the prebuilt entry either — that
+	// much is what the run converging at all shows, since a workflow whose job
+	// the catalog would hand an image that holds no checkout of the repository
+	// is refused in so many words (D1191, infra's unbuiltOnBaked) — and the
+	// cloud step's line says which of the two reasons left the images alone, on
+	// the run's log rather than on this stream (stageDetail, D1352).
+	if n := len(r.builder.specs); n != 0 {
+		t.Errorf("%d job image(s) reached Cloud Build, want none: a repository the project's profile admits runs on the shared job and has no per-repository image of its own (M7, D2312)\n%s", n, out)
 	}
 }
 

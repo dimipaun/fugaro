@@ -241,7 +241,7 @@ func TestValidateProjectSecretsRefusesWideningWildcards(t *testing.T) {
 // another entry would be a setting nothing reads, written by an operator who
 // believes their installation is proxied.
 func TestProjectSecretProxyOnlyOnBitbucketToken(t *testing.T) {
-	proxied := ProjectSecret{AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: true}
+	proxied := ProjectSecret{AllowDataTo: []string{"workspace-a/repo-a"}, Proxy: ProxyFlag(true)}
 	if ps := ValidateProjectSecrets(map[string]ProjectSecret{BitbucketSecret: proxied}); len(ps) != 0 {
 		t.Fatalf("proxy on %s was refused: %+v", BitbucketSecret, ps)
 	}
@@ -258,14 +258,14 @@ func TestProjectSecretProxyOnlyOnBitbucketToken(t *testing.T) {
 	if err := yaml.Unmarshal([]byte("allow_data_to: [workspace-a/repo-a]\nproxy: true\n"), &entry); err != nil {
 		t.Fatalf("decoding a project_secrets entry: %v", err)
 	}
-	if !entry.Proxy || !entry.AllowsData("workspace-a/repo-a") {
+	if !entry.Proxying() || !entry.AllowsData("workspace-a/repo-a") {
 		t.Errorf("decoded entry = %+v, want proxy true with its allow_data_to", entry)
 	}
 	var absent ProjectSecret
 	if err := yaml.Unmarshal([]byte("allow_data_to: [workspace-a/repo-a]\n"), &absent); err != nil {
 		t.Fatalf("decoding a project_secrets entry: %v", err)
 	}
-	if absent.Proxy {
+	if absent.ProxyStated() {
 		t.Error("an entry that writes no proxy is proxied")
 	}
 }

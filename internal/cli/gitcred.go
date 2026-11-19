@@ -1,10 +1,16 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -13,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/buildtoken"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/credsvc"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -28,6 +35,18 @@ const (
 	gitCredUserEnv   = "GIT_USER"       // Bitbucket: the token's https username
 	gitCredAppKeyEnv = "GITHUB_APP_KEY" // GitHub: the App's private key, PEM
 	gitCredAppIDEnv  = "GITHUB_APP_ID"  // GitHub: the App's ID
+
+	// The three a build that fetches its credentials from the installation's
+	// credentials service is handed instead (B4.5, envCredentialsServiceURL for
+	// the address): the workflow whose secrets the build mounts, the variables
+	// it mounts them under, and the volume the fetched values are left in for
+	// the build step. They are variables and not flags for the reason above,
+	// and because the credential step has to go on running on a base image
+	// whose fugaro predates this: an older binary ignores what it does not
+	// read, while an unknown flag would be refused before it ran at all.
+	gitCredWorkflowEnv   = "WORKFLOW"
+	gitCredSecretEnvsEnv = "SECRET_ENVS"
+	gitCredSecretDirEnv  = "SECRET_DIR"
 )
 
 // gitCredGitHubAPI is the GitHub API the credential step mints its token
@@ -104,6 +123,15 @@ func runGitCredential(cmd *cobra.Command, o gitCredentialOptions) error {
 	if err != nil {
 		return userErr("the repository URL %s does not parse", gcp.RedactURL(o.repoURL))
 	}
+	// A repository the installation's credentials service serves (B4.5): the
+	// credential comes from the service and no longer from this step's
+	// environment, which is empty for it once the mounts are dropped (B4.9).
+	// The switch is the address and nothing else, and it is read rather than
+	// derived: an installation whose service is not deployed sets nothing, and
+	// the step below is then exactly what it was.
+	if raw := os.Getenv(envCredentialsServiceURL); raw != "" {
+		return fetchBuildCredentials(cmd, o, u, raw)
+	}
 	var user, token string
 	switch o.provider {
 	case gitprov.KindBitbucket:
@@ -126,6 +154,288 @@ func runGitCredential(cmd *cobra.Command, o gitCredentialOptions) error {
 	}
 	line := "https://" + credEscape(user) + ":" + credEscape(token) + "@" + u.Host + "\n"
 	return writeCredential(o.out, line)
+}
+
+// fetchBuildCredentials is the credential step of a build whose repository the
+// installation's credentials service serves (B4.5): one call to B4.3's build
+// route, and the two things the build needs written from its answer — the git
+// credential its clone reads, and the workflow secrets its build step mounts.
+//
+// Everything this step holds is a name: the provider it was asked for, the URL
+// it clones from, the workflow, the variables and, for GitHub, the App's id,
+// which is not a secret. The credential itself is the answer's, and that is the
+// point of the route: the deployment binds a build account to one repository,
+// and the service is what decides what that repository's build is served (G20).
+//
+// It fails closed: a build whose fetch is refused is a build with no credential
+// at all, which is the state its clone step fails in rather than one it falls
+// back from to a secret of its own.
+func fetchBuildCredentials(cmd *cobra.Command, o gitCredentialOptions, u *url.URL, raw string) error {
+	service, err := checkBuildServiceURL(raw)
+	if err != nil {
+		return userErr("%s: %v", envCredentialsServiceURL, err)
+	}
+	workflow := os.Getenv(gitCredWorkflowEnv)
+	if !config.WorkflowNameRE.MatchString(workflow) {
+		return userErr("%s must name the workflow this build's secrets belong to (the build's own _WORKFLOW), and it is %s",
+			gitCredWorkflowEnv, pluginwire.Printable(workflow))
+	}
+	secrets, err := buildSecretEnvs()
+	if err != nil {
+		return err
+	}
+	dir := ""
+	if len(secrets) > 0 {
+		if dir = os.Getenv(gitCredSecretDirEnv); dir == "" {
+			return userErr("%s must name the directory the build step reads its workflow secrets from, and this build mounts %s",
+				gitCredSecretDirEnv, strings.Join(secrets, " "))
+		}
+	}
+	var appID string
+	if o.provider == gitprov.KindGitHub {
+		// The App's id is the one thing this step holds and the service does
+		// not — its bundle holds the key — and the token this build clones with
+		// is minted as that App.
+		if appID = os.Getenv(gitCredAppIDEnv); appID == "" {
+			return userErr("%s must be set: the GitHub installation token this build clones with is minted as the App, and the service's bundle holds its key and not its id", gitCredAppIDEnv)
+		}
+	}
+	ans, err := askBuildCredentials(cmd.Context(), service, credsvc.BuildCredentialsRequest{
+		Workflow: workflow, Secrets: secrets, AppID: appID,
+	})
+	if err != nil {
+		return err
+	}
+	// Every refusal is taken BEFORE anything is written, so a refused answer
+	// leaves no half of a build's credentials behind.
+	user, token, err := servedGitCredential(o.provider, u, ans.Git)
+	if err != nil {
+		return err
+	}
+	if err := writeBuildSecrets(dir, secrets, ans.Secrets); err != nil {
+		return err
+	}
+	return writeCredential(o.out, "https://"+credEscape(user)+":"+credEscape(token)+"@"+u.Host+"\n")
+}
+
+// buildSecretEnvs is the workflow-secret variables this build mounts, read from
+// the step's own environment (gitCredSecretEnvsEnv, the template's
+// _SECRET_ENVS): the same space-separated list the build step mounts, so what
+// this fetches and what that hands BuildKit cannot be two different answers.
+//
+// A name is held to the shape a job could mount a secret under (config.EnvNameRE,
+// the rule the record's own entries carry) and the same name twice is refused:
+// what the build mounts is a set, and the route refuses both by name — a build
+// that learned it here failed without a round trip and without an audit line for
+// a call it should not have made.
+func buildSecretEnvs() ([]string, error) {
+	fields := strings.Fields(os.Getenv(gitCredSecretEnvsEnv))
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(fields))
+	for _, env := range fields {
+		if !config.EnvNameRE.MatchString(env) {
+			return nil, userErr("%s names %s, which is not an environment variable a workflow secret is mounted under (upper-case letters, digits and '_', starting with a letter or '_')",
+				gitCredSecretEnvsEnv, pluginwire.Printable(env))
+		}
+		if seen[env] {
+			return nil, userErr("%s names %s twice, and the secrets this build mounts are a set", gitCredSecretEnvsEnv, pluginwire.Printable(env))
+		}
+		seen[env] = true
+	}
+	return fields, nil
+}
+
+// servedGitCredential is the username and the token a build clones with, from
+// the service's answer, held to what the build itself is doing.
+//
+// The provider the answer echoes has to be the one this build clones from, and
+// the host it names has to be the host of the URL this build clones: git reads
+// a credential for the host it was asked about, so an answer naming another host
+// would hand this token to a server that never minted it, and a GitHub token
+// answered to a Bitbucket build would be read as a Bitbucket credential.
+//
+// The token reaches no refusal and no error: a build's log is read by everyone.
+func servedGitCredential(provider string, u *url.URL, cred credsvc.BuildGitCredential) (user, token string, err error) {
+	if cred.Provider != provider {
+		return "", "", userErr("the credentials service answered a credential for the provider %s, and this build clones from %s",
+			pluginwire.Printable(cred.Provider), provider)
+	}
+	if cred.Host != u.Host {
+		return "", "", userErr("the credentials service answered a credential for the host %s, and this build clones from %s",
+			pluginwire.Printable(cred.Host), pluginwire.Printable(u.Host))
+	}
+	if cred.Username == "" || cred.Token == "" {
+		return "", "", userErr("the credentials service answered an incomplete credential")
+	}
+	// git refuses a credential holding a newline or another control character,
+	// so the clone would run without one.
+	if strings.ContainsFunc(cred.Username+cred.Token, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", "", userErr("the credentials service's credential holds a control character")
+	}
+	return cred.Username, cred.Token, nil
+}
+
+// writeBuildSecrets leaves the workflow secrets the service answered in the
+// volume the build step reads (SECRET_DIR), one file per variable, mode 0600.
+//
+// The answer has to be the one this build asked for: a variable it does not
+// mount, a variable answered twice, or fewer variables than it mounts is
+// refused whole, and nothing is written. The build step mounts exactly the
+// variables its own list names and fails a build whose file is not there, so a
+// partial answer would be a build that fails after half of its secrets were
+// handed over — the state this refuses to reach.
+func writeBuildSecrets(dir string, asked []string, answered []credsvc.BuildSecretValue) error {
+	want := make(map[string]bool, len(asked))
+	for _, env := range asked {
+		want[env] = true
+	}
+	seen := make(map[string]bool, len(answered))
+	for _, s := range answered {
+		if !want[s.Env] {
+			return userErr("the credentials service answered a secret under %s, which this build does not mount", pluginwire.Printable(s.Env))
+		}
+		if seen[s.Env] {
+			return userErr("the credentials service answered %s twice", pluginwire.Printable(s.Env))
+		}
+		seen[s.Env] = true
+	}
+	if len(seen) != len(want) {
+		return userErr("the credentials service answered %d of the %d build secrets this build mounts", len(seen), len(want))
+	}
+	for _, s := range answered {
+		if err := writeBuildSecret(dir, s.Env, s.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeBuildSecret writes one fetched workflow secret into the volume, mode
+// 0600 and exactly the value's bytes.
+//
+// No newline is added and none is stripped: the build step hands BuildKit the
+// same bytes whether it wrote them from its own environment or took this file,
+// and a value that gained a trailing newline here would be a secret the image
+// carries differently from every other build of it.
+func writeBuildSecret(dir, env, value string) error {
+	// The name is one config.EnvNameRE admitted, so it names a file in dir and
+	// cannot name a path out of it.
+	path := filepath.Join(dir, env)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return userErr("writing the build secret for %s: %v", env, err)
+	}
+	err = f.Chmod(0o600)
+	if err == nil {
+		_, err = f.WriteString(value)
+	}
+	if err = errors.Join(err, f.Close()); err != nil {
+		_ = os.Remove(path)
+		return userErr("writing the build secret for %s: %v", env, err)
+	}
+	return nil
+}
+
+// askBuildCredentials makes the one call this step makes: the build route's
+// path, the contract's request, and the build's own identity token as the
+// bearer (buildIdentityToken: Cloud Run IAM admits the call with it and the
+// route verifies its caller by it). Nothing is retried — a refusal is the
+// service's decision and asking again answers the same thing — and no redirect
+// is followed, because the header carries that token.
+func askBuildCredentials(ctx context.Context, service string, req credsvc.BuildCredentialsRequest) (credsvc.BuildCredentialsResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return credsvc.BuildCredentialsResponse{}, errors.New("the build's credential request could not be built")
+	}
+	tok, err := buildIdentityToken(ctx, service)
+	if err != nil {
+		return credsvc.BuildCredentialsResponse{}, fmt.Errorf("the build could not present its own identity to the credentials service: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, service+credsvc.BuildCredentialsPath, bytes.NewReader(body))
+	if err != nil {
+		return credsvc.BuildCredentialsResponse{}, errors.New("the build's credential request could not be built")
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := buildTokenHTTPClient().Do(httpReq)
+	if err != nil {
+		// The body sent holds no credential — a workflow, variables and an App
+		// id — and no answer of this contract's exists yet.
+		return credsvc.BuildCredentialsResponse{}, fmt.Errorf("the credentials service could not be reached at %s", service)
+	}
+	defer resp.Body.Close()
+	limit := buildCredentialsAnswerLimit(len(req.Secrets))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return credsvc.BuildCredentialsResponse{}, errors.New("the credentials service's answer could not be read")
+	}
+	if int64(len(data)) > limit {
+		return credsvc.BuildCredentialsResponse{}, fmt.Errorf("the credentials service's answer is larger than the %d bytes this call reads", limit)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return credsvc.BuildCredentialsResponse{}, buildCredentialsRefusal(service, resp.StatusCode, data)
+	}
+	var ans credsvc.BuildCredentialsResponse
+	if err := decodeBuildCredentialsAnswer(data, &ans); err != nil {
+		return credsvc.BuildCredentialsResponse{}, err
+	}
+	return ans, nil
+}
+
+// buildCredentialsAnswerLimit bounds the answer this step reads, from the
+// request it made: the git credential is one token, and the answer carries one
+// workflow secret per variable this build mounts, each of which is at most
+// Secret Manager's payload (maxSecretBytes) with room for the JSON string that
+// carries it — six times the bytes it holds is the most a JSON encoder can need
+// for one, a control byte being \u00XX — and for the envelope around it.
+func buildCredentialsAnswerLimit(asked int) int64 {
+	return maxBuildTokenAnswerBytes + int64(asked)*(6*maxSecretBytes+256)
+}
+
+// buildCredentialsRefusal turns a non-200 answer into this step's refusal: the
+// route's own typed body where the answer is one (credsvc.ReadWireError), and
+// otherwise the status alone.
+//
+// The status is not decoration: a call Cloud Run's IAM refused before the route
+// saw it — a build account not granted the invoker, an identity token minted
+// for another service — answers 403 with no body of this contract's, and an
+// operator who read only "refused" would look in the route for a fault that is
+// in the deployment. Nothing here repeats the body: the refusal's own message
+// is the service's, held to one printable line by the reader that reads it.
+func buildCredentialsRefusal(serviceURL string, status int, body []byte) error {
+	if e, err := credsvc.ReadWireError(status, body); err == nil {
+		msg := fmt.Sprintf("the installation's credentials service refused this build's credentials (%s, %d)", oneLine(e.Error), status)
+		if e.Message != "" {
+			msg += ": " + oneLine(e.Message)
+		}
+		return errors.New(msg)
+	}
+	if status == http.StatusForbidden {
+		return fmt.Errorf("the credentials service at %s refused this build before its route saw it (%d): the build's service account needs the invoker role on the service, and the identity token it presents has to be minted for the service's own URL", serviceURL, status)
+	}
+	return fmt.Errorf("the installation's credentials service refused this build's credentials (%d) and its answer is not one this release reads", status)
+}
+
+// decodeBuildCredentialsAnswer reads the route's answer: exactly one JSON
+// object of the contract's fields, and nothing after it. A field this release
+// does not know is refused rather than ignored (Convention 6, credsvc's own
+// decodeStrict), because a later service's answer read generously is a
+// credential read out of a document this release does not understand.
+//
+// No error here repeats what it read: the answer holds the token and the
+// secrets, and a decoder's own message names the byte it choked on.
+func decodeBuildCredentialsAnswer(raw []byte, out *credsvc.BuildCredentialsResponse) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(out); err != nil {
+		return errors.New("the credentials service's answer is not a build credentials answer")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("the credentials service's answer carries more than one document")
+	}
+	return nil
 }
 
 // runGitCredentialForEntry is the catalog build's half of the build route

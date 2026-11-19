@@ -349,6 +349,27 @@ var closedStdinFixtures = map[string]closedStdinFixture{
 		reaches: "remove clone_urls[github/acme/app] from",
 		seed:    closedStdinCloneURLSeed,
 	},
+	// The three binaries writes are the same kind over another block of the same
+	// file (K2 of docs/config-ownership). The allow states the block itself, so
+	// its fixture needs no seed; the deny and the lowering max-bytes take a
+	// member away from a block the seed writes first, whose entry the deny names
+	// and whose cap the fixture lowers — a removal from a file that states no
+	// block is this command's own refusal, and a sentence naming the change is
+	// the proof each run reached its write rather than one of them.
+	"fugaro project binaries allow": {
+		args:    []string{"brand/*.png"},
+		reaches: "add brand/*.png to binaries.allow in",
+	},
+	"fugaro project binaries deny": {
+		args:    []string{"brand/*.png"},
+		reaches: "remove brand/*.png from binaries.allow in",
+		seed:    closedStdinBinariesSeed,
+	},
+	"fugaro project binaries max-bytes": {
+		args:    []string{"1048576"},
+		reaches: "set binaries.max_bytes to 1048576 in",
+		seed:    closedStdinBinariesSeed,
+	},
 	// watch is the one leaf whose contract is not to return: it follows the
 	// project until it is interrupted. --once is its own one snapshot, which is
 	// the run this harness can hold to a deadline.
@@ -907,6 +928,15 @@ func closedStdinSetProvider(t *testing.T, f *budgetFixture) {
 func closedStdinCloneURLSeed(t *testing.T, f *budgetFixture) {
 	t.Helper()
 	f.appendConfig(t, "clone_urls:\n  github/acme/app: https://github.com/acme/app\n  github/acme/other: https://github.com/acme/other.git\n")
+}
+
+// closedStdinBinariesSeed gives the world the binaries block the two narrowing
+// writes take a member out of: the pattern the deny removes, and a cap above
+// the one the fixture writes, so the write is the lowering direction — the one
+// a session may make and the one whose sentence names the member (D2617).
+func closedStdinBinariesSeed(t *testing.T, f *budgetFixture) {
+	t.Helper()
+	f.appendConfig(t, "binaries:\n  allow:\n    - brand/*.png\n  max_bytes: 2097152\n")
 }
 
 // closedStdinPoolSeed gives the world the two things a pool write needs to

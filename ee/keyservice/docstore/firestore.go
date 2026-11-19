@@ -169,6 +169,20 @@ func (t *firestoreTx) Put(_ context.Context, collection, id string, doc any) err
 	return nil
 }
 
+// Delete stages one document's removal in the transaction, so it lands with the
+// transaction's other writes and never before them. It counts as a write for the
+// read-before-write rule the way a Set does, and the SDK counts it as one too.
+func (t *firestoreTx) Delete(_ context.Context, collection, id string) error {
+	if err := named(collection, id); err != nil {
+		return err
+	}
+	if err := t.tx.Delete(t.ref(collection, id)); err != nil {
+		return err
+	}
+	t.wrote = true
+	return nil
+}
+
 func (t *firestoreTx) Query(_ context.Context, collection string, q Query) ([]Document, error) {
 	if err := namedCollection(collection); err != nil {
 		return nil, err

@@ -1943,6 +1943,41 @@ func CarriedOrchestrator(vars, prev []byte) ([]byte, error) {
 	return sortedJSON(doc)
 }
 
+// OrchestratorRecorded is whether the installation root's tfvars document vars
+// carries the resident orchestrator's block: the key present with a block (the
+// installation has opted in), or absent or null (it has not).
+//
+// It is the reader of the same switch the module's own root reads — var.
+// orchestrator is null by default and orchestrator.tf creates NOTHING when it
+// is (its local.orchestrator_on) — and it exists because the block's presence
+// is a fact about the INSTALLATION and not about a run's spec: nothing in this
+// tree composes the block (CarriedOrchestrator says why), so the one
+// installation that holds it is one whose owner put it there, and everything
+// the account is — the account itself, its five bindings, the caller class
+// credentials.tf renders and the invoker grant orchestrator.tf adds — exists on
+// exactly the installations this answers true for.
+//
+// A key present as null is NOT recorded. VoiceServiceRecorded answers the other
+// way for the same shape, because the question there is whether a run may
+// compose a block over the owner's own no; here the question is whether the
+// account exists, and the module creates it only when the variable is not null.
+//
+// nil is a workdir that holds no document and answers false; a document that
+// cannot be read is an error, the same way CarriedOrchestrator treats one,
+// because a tfvars this program cannot read is not evidence that the
+// installation has not opted in.
+func OrchestratorRecorded(vars []byte) (bool, error) {
+	if vars == nil {
+		return false, nil
+	}
+	doc, err := varsDoc(vars)
+	if err != nil {
+		return false, fmt.Errorf("the installation's terraform.tfvars.json is not readable: %w", err)
+	}
+	block, ok := doc[OrchestratorKey]
+	return ok && block != nil, nil
+}
+
 // LicenceKey is the installation root's variable for the licence renewal job's
 // block (plan K4.2 of docs/licence-key-v2) — the account, the job, the empty
 // container and its two bucket conditions — and it is the key CarriedLicence
@@ -2145,7 +2180,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	s.ProjectReviewJobs = review
 	s.ManagedDeployerScoped = o.ManagedDeployerScoped
-	cc, err := CatalogCheck(lc, bucket, jobPaused(o.CatalogCheckPaused))
+	cc, err := CatalogCheck(lc, bucket, jobPaused(o.CatalogCheckPaused), s.ProjectSecrets)
 	if err != nil {
 		return InstallationSpec{}, err
 	}

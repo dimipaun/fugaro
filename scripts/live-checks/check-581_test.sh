@@ -14,7 +14,10 @@
 # note that names one repository or leaves one out, a build whose steps have no
 # scan or put it after the promote, a build that cannot be described, a build
 # that reports another digest than the entry records, a repeated build that
-# records nothing, and an entry that records no digest.
+# records nothing, an entry that records no digest, and a checkout the billable
+# build would be submitted from that belongs to another project — or to one
+# naming belong — while the sandbox checkout belongs to the project this check
+# is about.
 #
 # Usage: bash scripts/live-checks/check-581_test.sh
 set -euo pipefail
@@ -128,7 +131,18 @@ note_baked() { # note_baked ENTRY REPO...
 case "${1:-}" in
 version) printf '0.24.0\n' ;;
 doctor)
-  cat "$FAKE_JSON_DIR/doctor.json"
+  # The checkout the billable build is submitted from can belong to another
+  # project: when the case names a directory and a project, the fake answers that
+  # project in that directory and the sandbox checkout's own document anywhere
+  # else, which is what a --checkout pointing at another project's repository
+  # looks like on a real machine.
+  if [ -n "${FAKE_CHECKOUT_PROJECT:-}" ] && [ "$PWD" = "${FAKE_CHECKOUT_DIR:-}" ]; then
+    printf '{"version":1,"ok":true,"checks":[],"project":{"name":"other","gcp_project":"%s","region":"us-east5"}}\n' "$FAKE_CHECKOUT_PROJECT"
+    # ... and it can fail to answer there at all, which is no project to name.
+    [ -z "${FAKE_CHECKOUT_DOCTOR_STATUS:-}" ] || exit "$FAKE_CHECKOUT_DOCTOR_STATUS"
+  else
+    cat "$FAKE_JSON_DIR/doctor.json"
+  fi
   # exits 1 with its document, as the real doctor does when a check is a warning
   [ ! -f "$FAKE_JSON_DIR/doctor.exit" ] || exit "$(cat "$FAKE_JSON_DIR/doctor.exit")"
   ;;
@@ -662,8 +676,51 @@ test_an_entry_can_be_built_from_its_own_checkout() {
   prepare "$dir"
   run_check "$dir" CHECK581_CHECKOUT="$dir/other"
   expect_status "$status" 0 "a checkout named with CHECK581_CHECKOUT"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "doctor --json (in $dir/other)" "a checkout named: that checkout's own project is read before the build"
   expect_contains "$(cat "$dir/logs/fugaro.calls")" "image build web (in $dir/other)" "a checkout named: the build runs in it"
   expect_contains "$out" "run from $dir/other" "a checkout named: the row says where from"
+}
+
+test_a_checkout_of_a_belong_project_is_refused() {
+  local dir=$work/checkout-belong
+  prepare "$dir"
+  # The sandbox checkout belongs to the project this check is about; the checkout
+  # the billable build would be submitted from answers belong's. Every guard
+  # above passes — nothing is refused by name until this checkout's own project is
+  # read — so a check that read only the --sandbox checkout would submit a real
+  # Cloud Build in belong and promote that entry's latest.
+  run_check "$dir" CHECK581_CHECKOUT="$dir/other" \
+    FAKE_CHECKOUT_DIR="$dir/other" FAKE_CHECKOUT_PROJECT=belong-prod
+  expect_status "$status" 1 "a checkout of a belong project named with CHECK581_CHECKOUT"
+  expect_contains "$(cat "$dir/logs/fugaro.calls")" "doctor --json (in $dir/other)" "a checkout of a belong project: that checkout's own project is read"
+  expect_contains "$out" "FACT build: FAIL — not reached" "a checkout of a belong project: no build row is measured"
+  expect_contains "$out" "FACT aborted: FAIL" "a checkout of a belong project: the run is stopped"
+  expect_contains "$err" "belongs to belong-prod" "a checkout of a belong project: the refusal names it"
+  assert_no_build "$dir" "a checkout of a belong project"
+}
+
+test_a_checkout_of_another_project_than_the_sandbox_one_is_refused() {
+  local dir=$work/checkout-other-project
+  prepare "$dir"
+  run_check "$dir" CHECK581_CHECKOUT="$dir/other" \
+    FAKE_CHECKOUT_DIR="$dir/other" FAKE_CHECKOUT_PROJECT=another-chk581-project
+  expect_status "$status" 1 "a checkout of a project that is not the sandbox one"
+  expect_contains "$out" "FACT build: FAIL — not reached" "a checkout of another project: no build row is measured"
+  expect_contains "$err" "belongs to another-chk581-project and the sandbox checkout at $dir/sandbox belongs to ${project}" "a checkout of another project: the refusal names both projects"
+  assert_no_build "$dir" "a checkout of another project"
+}
+
+test_a_checkout_whose_project_cannot_be_read_is_not_measured() {
+  local dir=$work/checkout-unreadable
+  prepare "$dir"
+  # A doctor that does not answer is no answer, not an empty project: the check
+  # cannot say which project the build would run in, so it runs none.
+  run_check "$dir" CHECK581_CHECKOUT="$dir/other" \
+    FAKE_CHECKOUT_DIR="$dir/other" FAKE_CHECKOUT_PROJECT=another-chk581-project \
+    FAKE_CHECKOUT_DOCTOR_STATUS=2
+  expect_status "$status" 2 "a checkout whose project cannot be read"
+  expect_contains "$out" "FACT build: FAIL — fugaro doctor --json did not answer in $dir/other" "a checkout whose project cannot be read: the row says why"
+  assert_no_build "$dir" "a checkout whose project cannot be read"
 }
 
 test_a_checkout_that_is_not_one_is_not_measured() {
@@ -911,6 +968,9 @@ t test_a_named_entry_the_catalog_lacks_is_a_finding
 t test_a_build_that_fails_is_a_finding
 t test_a_build_refused_for_the_checkout_says_so
 t test_an_entry_can_be_built_from_its_own_checkout
+t test_a_checkout_of_a_belong_project_is_refused
+t test_a_checkout_of_another_project_than_the_sandbox_one_is_refused
+t test_a_checkout_whose_project_cannot_be_read_is_not_measured
 t test_a_checkout_that_is_not_one_is_not_measured
 t test_a_build_with_no_build_id_is_a_finding
 t test_a_note_that_names_one_repository_is_a_finding

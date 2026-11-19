@@ -71,8 +71,8 @@ records (the two-writer rule the layout package exists for, `internal/digest/lay
 2. **A report run** — `fugaro run --recipe run-digest TEXT` — whose first step is the runner's own
    `digest` step: it writes every **due** period the tree does not hold, commits them under the
    runner's identity and opens the pull request, whose diff against its base is exactly the generated
-   files, byte for byte: `writeDueReports` writes them (`internal/runner/digest.go:301`) and
-   `digestFinalize` is the guard that says so (`:168`). The periods a launch
+   files, byte for byte: `writeDueReports` writes them (`internal/runner/digest.go:328`) and
+   `deterministicFinalize` is the guard that says so (`:193`). The periods a launch
    may write are listed in its own manifest, and a launch with no runs in the window is refused
    before anything starts.
 3. **The user's own CI or cron**, running (1) and committing what it wrote.

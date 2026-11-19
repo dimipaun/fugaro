@@ -356,8 +356,26 @@ resource "google_cloud_run_v2_service" "api" {
 
     # Scale to zero: a public endpoint nobody is calling costs nothing, and a
     # cold start is what a caller waits for.
+    #
+    # **And one instance at most, which is what makes the two mint limits the
+    # limits the specs state.** D454's per-tier rate (ops.go) and a reseller's
+    # credit limit (accrual.go) are counted in the process's own memory, in the
+    # one lock each takes: the store has no counter for either — both are counted
+    # over the entitlements by queries of their own, and a query inside a grant's
+    # transaction is a read every concurrent write conflicts with — so what each
+    # lock closes is one process's window. The platform's own ceiling is about a
+    # hundred instances, scaled by the caller's traffic, which is the shape that
+    # makes the gap dangerous rather than merely wide: the caller a mint limit is
+    # meant to refuse is the one whose traffic buys the instances, so a reseller
+    # minting in a burst would get a limit's worth of sales on each replica and
+    # the plan's own constraint — two concurrent reseller mints cannot pass the
+    # credit limit together — would hold of a process and not of the
+    # installation. A second instance buys this API nothing it cannot serve from
+    # the first: it answers the console's own requests and the platform's
+    # callbacks, and a cold start is what a caller pays for either way.
     scaling {
       min_instance_count = 0
+      max_instance_count = 1
     }
 
     containers {
@@ -597,6 +615,38 @@ resource "google_kms_key_ring_iam_member" "minter_signs" {
 resource "google_project_iam_member" "api_datastore" {
   project = var.project
   role    = "roles/datastore.user"
+  member  = google_service_account.api.member
+}
+
+# A person deleting their own account takes their sign-in with them (D2195), and
+# the act on the Identity Toolkit that does it — `accounts:delete` — is an admin
+# call: the API is the process that makes it, through the account it already runs
+# as, and `firebaseauth.users.delete` is the whole of what that call needs.
+#
+# The predefined role that permission comes in, `firebaseauth.admin`, is not that
+# call's reach and is not what this account may hold: it also lists and reads
+# every user in the project, creates and updates users (an address set as
+# verified among them) and changes the project's sign-in settings — its providers
+# and its authorized domains. The internet-facing account holds none of those, so
+# the role is a custom one with the one permission. The history job holds the
+# predefined role for its own deletion of Auth users (the firebase module), where
+# no request reaches the account.
+resource "google_project_iam_custom_role" "deletes_signins" {
+  project     = var.project
+  role_id     = var.deletes_signins_role
+  title       = "Fugaro sign-in deleter"
+  description = "Deletes a sign-in on the Identity Toolkit, which the API does only for the account that asked for its own deletion. The API's service account is its only holder (D2195, Check 571)."
+  permissions = ["firebaseauth.users.delete"]
+
+  depends_on = [google_project_service.this]
+}
+
+# The API's grant of that role, and the whole of it: one member, the account the
+# internet-facing service runs as. It reaches no key, so Check 571's boundary
+# around the API's other four reaches is where it was.
+resource "google_project_iam_member" "api_deletes_signins" {
+  project = var.project
+  role    = "projects/${var.project}/roles/${var.deletes_signins_role}"
   member  = google_service_account.api.member
 }
 

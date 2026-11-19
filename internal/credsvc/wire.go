@@ -200,6 +200,133 @@ type WorkflowSecretsResponse struct {
 	Value string `json:"value"`
 }
 
+// BuildCredentialsPath is the path a REPOSITORY's build asks this service for
+// its credentials on (B4.3, R5, D2076, D2077): the git credential of the one
+// repository the calling account is bound to, and the build secrets of the
+// workflow the call names out of the record `fugaro update` wrote for that same
+// repository.
+//
+// It is a path of its own and not a field of BuildTokenPath, because the two
+// routes have two caller classes: that one's caller is the installation's
+// catalog-build identity, which names no repository and is answered the
+// repositories a published image map puts on the entry it names, while this
+// one's is a repository's build service account, whose whole binding is the one
+// repository it bakes (G20). One path with a class switch would be a route
+// whose answer depends on which list the caller happened to be in, which is
+// exactly what this service's one-class-per-route rule refuses everywhere.
+//
+// The contract is here rather than beside the route because the caller is
+// another package — the build step's `fugaro image git-credential` (B4.5) —
+// and a contract two packages spell is written down once, in this file.
+const BuildCredentialsPath = "/v1/build/credentials"
+
+// maxBuildCredentialsRequestBytes bounds a build-credentials call's body. The
+// whole request is a workflow name, a short list of environment-variable names
+// and an App ID, so the bound is the mint's and small on purpose: a body larger
+// than this is not one of these calls, and it is refused before it is decoded.
+const maxBuildCredentialsRequestBytes = 8 << 10
+
+// BuildCredentialsRequest is what such a call carries: the workflow whose build
+// secrets the build needs, the environment variables it needs them under, and —
+// for a GitHub repository — the App ID the mint's JWT is signed as.
+//
+// There is deliberately no field for the repository, the slug or the provider.
+// All three are the VERIFIED caller's own row (RepoBuildAccount), which the
+// deployment derived: a contract that let a build name its own repository would
+// be a contract whose service decided from what the call said about itself, and
+// a build of one repository would be able to ask for another's credentials —
+// the whole of what G20 refuses. A body that carries any of them is refused by
+// the strict decoder rather than read for the fields it does know.
+//
+// Workflow is the caller's text and is trusted for nothing: the record decides
+// whether it holds a secret for that workflow, and a workflow the record does
+// not hold is refused with a typed refusal rather than served the repository's
+// union. The account is per repository and not per workflow — that is what
+// makes it a build's account and not a job's — so the workflow is a SELECTOR
+// within the caller's own record and never a widening of what the caller may
+// reach: every entry the record holds under it belongs to the calling
+// repository.
+//
+// Secrets is the list of environment variables the build needs. It is the
+// build's own declaration (the derived image's `_SECRET_ENVS`) and it can only
+// NARROW: a name the record does not hold under the named workflow is refused
+// (workflowSecretNoSuchEnv's rule, B3.2), so a caller that names a name the
+// record does not hold learns that it is not recorded and nothing else. An
+// empty list is a workflow with no build secrets, which is a build served its
+// git credential alone.
+type BuildCredentialsRequest struct {
+	// Workflow is the workflow whose build secrets the build needs, spelled the
+	// way the record's own map is keyed (creds.WorkflowSecrets.Workflows).
+	Workflow string `json:"workflow"`
+	// Secrets are the environment variables the build needs the workflow's
+	// secrets under, held to config.EnvNameRE — the shape a job could mount a
+	// secret under, which is the shape the record's own entries carry.
+	Secrets []string `json:"secrets"`
+	// AppID is the GitHub App ID the mint's JWT is signed as (1 to 20 digits).
+	// It is required for a GitHub repository and refused for a Bitbucket one,
+	// and it is not a secret: it is the mint route's own field for the mint
+	// route's own reason — the service's environment does not hold it, so the
+	// caller supplies the project's own configuration value. A wrong App ID
+	// makes GitHub refuse the JWT; it cannot make the service sign with another
+	// App's key, because the key is the bundle's.
+	AppID string `json:"app_id,omitempty"`
+}
+
+// BuildGitCredential is the git credential the build clones and pushes with:
+// the username, the token's value and the host it is for. It is
+// provider-shaped rather than GitHub-shaped because the two providers answer
+// differently (D2076): a GitHub repository is answered a read-only installation
+// token the service just minted for it, and a Bitbucket one the bundle's own
+// token, whose reach is unchanged.
+//
+// ExpiresAt is GitHub's own instant and the zero time for a Bitbucket token,
+// which carries no expiry the service can read — so a client reads the zero
+// value as "no instant is known" and not as "expired".
+type BuildGitCredential struct {
+	// Provider is the provider the credential is for, echoed from the caller's
+	// own row so a client can never use a GitHub credential as a Bitbucket one.
+	Provider string `json:"provider"`
+	// Username is the git username the provider's HTTPS basic auth takes
+	// (github.GitUsername, bitbucket.GitUsername).
+	Username string `json:"username"`
+	// Token is the credential's value and the reason this endpoint exists.
+	// Nothing in this package logs it, and a caller must not either (G18).
+	Token string `json:"token"`
+	// Host is the host the credential is for (repourl.ProviderHost), which the
+	// service answers rather than the caller: a credential's destination is the
+	// provider's and never a call's.
+	Host string `json:"host"`
+	// ExpiresAt is when the token stops working, for a provider that says.
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+}
+
+// BuildSecretValue is one workflow secret the build asked for: the variable and
+// the value the record's container holds for it. It is the workflow-secrets
+// route's answer, in a list, for the build's own reason — a build needs the
+// whole set its workflow declares at once, and the one-line audit rule is kept
+// by the answer being one act.
+//
+// The value is a credential and this answer is the only place it appears
+// (G18): it is written no-store (writeReadAnswer), no header of the answer
+// carries it, and neither the audit line nor any refusal of this route can hold
+// it.
+type BuildSecretValue struct {
+	// Env is the variable the value is for, echoed so a client can never read
+	// one value as another variable's.
+	Env string `json:"env"`
+	// Value is the credential's value.
+	Value string `json:"value"`
+}
+
+// BuildCredentialsResponse is the route's answer: the git credential, and the
+// workflow secrets the call asked for in the order it asked for them. An empty
+// Secrets is a workflow with no build secrets, which is a build answered its
+// git credential alone.
+type BuildCredentialsResponse struct {
+	Git     BuildGitCredential `json:"git"`
+	Secrets []BuildSecretValue `json:"secrets"`
+}
+
 // The response headers.
 const (
 	// HeaderTier is the credential tier that answered: TierA, TierB or

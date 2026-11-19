@@ -15,9 +15,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/projectpolicy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -1037,5 +1039,201 @@ func TestRepoEngineRefusesTheFirstBuildWithoutFugaroYAMLOnTheBaseBranch(t *testi
 	}
 	if got := lc.Repos["acme/sandbox"]; len(got.Workflows) != 1 || got.Workflows[0] != "app" || got.BaseBranch != "main" {
 		t.Errorf("the local config records %+v, want the repository the run onboarded: the run did not reach its end", got)
+	}
+}
+
+// publishSharedNode publishes the policy node that marks a project's shared
+// jobs (M6, docs/shared-jobs-default): the rules marker that makes the node
+// visible to this run's own read (projectpolicy.ReadCarriedForwardShapeFree),
+// the project's allow-list, and one profile serving provider for the
+// repositories named. A repository these lists do not name is one no profile
+// admits, which is the path M7 leaves exactly as it was.
+func publishSharedNode(t *testing.T, db *gcpfake.RTDB, provider string, repos ...string) {
+	t.Helper()
+	publishSharedNodeAt(t, db, projectpolicy.Version, provider, repos...)
+}
+
+// publishSharedNodeAt is publishSharedNode with the version the node STATES,
+// for the readers that have to answer the same way on a node written by the
+// release behind (projectpolicy.Version-1) as on this release's: the version is
+// the one fact a strict read refuses and the carried-forward read carries.
+func publishSharedNodeAt(t *testing.T, db *gcpfake.RTDB, version int, provider string, repos ...string) {
+	t.Helper()
+	if len(repos) == 0 {
+		t.Fatal("publishSharedNode needs the repositories the profile admits")
+	}
+	db.Set(projectpolicy.PathRulesMarker(), projectpolicy.RulesVersion)
+	db.Set(projectpolicy.PathShared(), map[string]any{
+		"version":     version,
+		"allow_repos": repos,
+		"profiles": map[string]any{
+			projectpolicy.DefaultProfileName: map[string]any{
+				"provider": provider, "cpu": 2, "memory": "8Gi", "timeout_class": "6h",
+				"allow_repos": repos,
+			},
+		},
+	})
+}
+
+// sharedRepoCheckout is the checkout both halves of the M7 tests drive: a
+// bitbucket repository whose profile admits it on main, with one workflow that
+// would build an image of its own and one repository-level secret. It is a
+// repository the shared path must reach no build for, and a file whose
+// `secrets:` earns M1's warning.
+func sharedRepoCheckout(t *testing.T) string {
+	t.Helper()
+	return repoCheckout(t, "https://bitbucket.org/acme/sandbox.git",
+		"version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket, base_branch: main }\n"+
+			"agent: { auth: oauth }\n"+
+			"workflows:\n  app:\n    commands: { build: sh build.sh, test: sh test.sh }\n"+
+			"    secrets:\n      - { name: npm-token, env: WORKFLOW_SECRET }\n")
+}
+
+// TestOnboardingASharedRepoAppliesNoTerraform: a repository a deployed profile
+// admits is onboarded by its local config entry, the profile's allow_repos (the
+// shared config the same write publishes) and the project's records — and by
+// nothing else (M7, D2312 as amended). No Terraform of its own runs at all:
+// not the plan of a root nobody applies, not a state read, not a `state rm`;
+// and no first image build, which is F5's per-repository half — the run reaches
+// the machinery that would submit one and stops before it.
+//
+// M1's warning (D2313) is one line for the repository, printed once: the
+// enrolment is the door with no secrets stage before it to say it, and a file
+// declaring four secrets still earns one sentence.
+//
+// Mutation (run, restore): drop the `if spec.Shared` branch of repoEngine and
+// this test fails on its first assertion — the repository root's plan and apply
+// are in the fake's log, and its first build is submitted.
+func TestOnboardingASharedRepoAppliesNoTerraform(t *testing.T) {
+	repoSecretsOn(t) // the door as it ships, which is what M1's warning is about
+	r := repoBuildRig(t, "")
+	db := buildBudgetForRig(t, r)
+	publishSharedNode(t, db, "bitbucket", "bitbucket/acme/sandbox")
+	t.Chdir(sharedRepoCheckout(t))
+	e := rigEngine(t, r, &initOptions{yes: true})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, "")
+	res, err := initflow.Run(t.Context(), []initflow.Stage{newRepositoryStage(e)}, e.options())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	for _, sub := range []string{"plan", "apply", "state rm"} {
+		if got := r.ran(t, sub); len(got) != 0 {
+			t.Errorf("terraform %s ran for a shared repository: %q\n%s", sub, got, out.String())
+		}
+	}
+	if len(fb.specs) != 0 {
+		t.Errorf("the run submitted a build for a shared repository: %+v", fb.specs)
+	}
+	st := res.Stages[0]
+	if st.State != initflow.Changed || !strings.Contains(st.Detail, "enrolled acme/sandbox with no repository-level Terraform") {
+		t.Errorf("stage = %+v, want the enrolment as the stage's own outcome: a run that wrote the local config and the project's records is not 'No changes'", st)
+	}
+	if got := strings.Count(out.String(), "workflows.app.secrets: "); got != 1 {
+		t.Errorf("M1's warning appears %d times, want once:\n%s", got, out.String())
+	}
+	if !strings.Contains(out.String(), "repository-level secrets (npm-token) are disabled for now and ignored") {
+		t.Errorf("the warning is not M1's own sentence:\n%s", out.String())
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lc.Repos["acme/sandbox"]; len(got.Workflows) != 1 || got.Workflows[0] != "app" || got.BaseBranch != "main" {
+		t.Errorf("the local config records %+v, want the repository this run enrolled", got)
+	}
+	warned := false
+	for _, w := range e.r.res.Warnings {
+		warned = warned || strings.Contains(w, "repository-level secrets (npm-token)")
+	}
+	if !warned {
+		t.Errorf("the warning is not in the run's result: %v", e.r.res.Warnings)
+	}
+}
+
+// TestARepoNoProfileAdmitsKeepsTheRepoRoot: M7 is a branch, not a replacement.
+// A project that has published profiles is not a project whose every repository
+// runs on a shared job: a repository no profile admits keeps the whole path it
+// had — its own plan, its own apply, its own root — and the stage reports the
+// apply and not an enrolment.
+//
+// Mutation (run, restore): make SharedRepo answer true for a repository no
+// profile admits (drop the Admits call) and this test fails: no apply runs and
+// the stage reports the enrolment line.
+func TestARepoNoProfileAdmitsKeepsTheRepoRoot(t *testing.T) {
+	r := repoBuildRig(t, catalogTeam())
+	db := buildBudgetForRig(t, r)
+	publishSharedNode(t, db, "bitbucket", "bitbucket/other/repo")
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket, base_branch: main }\n" +
+		"agent: { auth: oauth }\n" +
+		"workflows:\n  app: { image_name: team, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	t.Chdir(repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml))
+	e := rigEngine(t, r, &initOptions{yes: true})
+	fb := useFakeBuilder(t)
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 4))
+	res, err := initflow.Run(t.Context(), []initflow.Stage{newRepositoryStage(e)}, e.options())
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if got := r.ran(t, "apply"); len(got) != 1 {
+		t.Errorf("apply ran %d times, want the repository root's one: a repository no profile admits keeps its own root\n%s", len(got), out.String())
+	}
+	if st := res.Stages[0]; !strings.Contains(st.Detail, "applied:") {
+		t.Errorf("stage = %+v, want the apply as the stage's own outcome", st)
+	}
+	if strings.Contains(out.String(), "with no repository-level Terraform") {
+		t.Errorf("a repository no profile admits was enrolled instead of applied:\n%s", out.String())
+	}
+	if len(fb.specs) != 0 {
+		t.Errorf("a build was submitted for a workflow whose image the catalog entry gives: %+v", fb.specs)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lc.Repos["acme/sandbox"]; len(got.Workflows) != 1 || got.Workflows[0] != "app" {
+		t.Errorf("the local config records %+v, want the repository this run onboarded", got)
+	}
+}
+
+// TestRemovingASharedRepoIsAConfigChange: `--forget` for a repository a
+// deployed profile admits is the local config entry taken away (and the shared
+// config published again, which is what takes it out of the profile's
+// allow_repos). Nothing of the root's removal runs, because there is no root
+// of this door's to remove: no state is read, no address is removed from it and
+// no state object is deleted, so nothing is confirmed either — the removal
+// destroys nothing, and a confirmation for it would be a step with no fact
+// behind it.
+//
+// The mutation is the shared arm of repoEngine's forget branch: drop it and
+// this test fails on the first assertion, because forgetRepo reads the state
+// and runs `state rm`.
+func TestRemovingASharedRepoIsAConfigChange(t *testing.T) {
+	r := repoBuildRig(t, "")
+	db := buildBudgetForRig(t, r)
+	publishSharedNode(t, db, "bitbucket", "bitbucket/acme/sandbox")
+	t.Chdir(sharedRepoCheckout(t))
+	e := rigEngine(t, r, &initOptions{yes: true, forget: true})
+	out := atTerminal(t, e, "")
+	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	for _, sub := range []string{"plan", "apply", "state rm"} {
+		if got := r.ran(t, sub); len(got) != 0 {
+			t.Errorf("terraform %s ran for a shared repository's removal: %q\n%s", sub, got, out.String())
+		}
+	}
+	if !e.r.res.Forgotten {
+		t.Error("the result does not say the repository was forgotten")
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := lc.Repos["acme/sandbox"]; ok {
+		t.Errorf("the local config still records the repository this run removed: %+v", lc.Repos)
+	}
+	if !strings.Contains(out.String(), "left the local config; no repository-level Terraform ran, and nothing was destroyed") {
+		t.Errorf("the run does not say what it did:\n%s", out.String())
 	}
 }

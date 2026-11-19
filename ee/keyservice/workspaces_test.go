@@ -23,7 +23,6 @@ package keyservice
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1167,9 +1166,10 @@ func (d *docsOnDocstore) Update(ctx context.Context, fn func(context.Context, Tx
 	})
 }
 
-// docstoreTx is one of those transactions. The document store's own transaction
-// has no Delete — the portal's seam has one for the records §7 keeps — and a
-// case that needed it would be a case about a record this seam has not reached.
+// docstoreTx is one of those transactions, and its removals are the document
+// store's own: the store's transaction drops a document with the writes it
+// commits, which is what the portal's seam means by a delete (docstore's
+// docs.go).
 type docstoreTx struct {
 	tx     docstore.Transaction
 	refuse string
@@ -1210,8 +1210,11 @@ func (t *docstoreTx) Put(ctx context.Context, collection, id string, doc Doc) er
 	return t.tx.Put(ctx, collection, id, doc)
 }
 
-func (t *docstoreTx) Delete(_ context.Context, collection, id string) error {
-	return fmt.Errorf("keyservice: this case's document store has no delete (%s/%s)", collection, id)
+func (t *docstoreTx) Delete(ctx context.Context, collection, id string) error {
+	if t.refuse != "" && collection == t.refuse {
+		return errStoreRefused
+	}
+	return t.tx.Delete(ctx, collection, id)
 }
 
 // Revoke withdraws keys inside this transaction, which is what store.go's own

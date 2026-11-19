@@ -105,6 +105,15 @@ describe('the stub’s command keys', () => {
       // group's other words -- `policy publish`, `repos add`, `repos rm`, `sync`
       // -- are on no row of this table.
       'project policy show',
+      // The repos-management plan's RE5 (`repos.ls` / `listRepos` and
+      // `repos.status` / `reposStatus`): the `project repos` group's two reads
+      // and the whole of its reach -- `repos add` and `repos rm` are on the
+      // never table, so neither is a key here. Each key is the command path,
+      // because `--json` is the row's own word and neither row carries an
+      // argument (`repos.status`'s optional repository is deliberately not one,
+      // so no scenario can ask for it either).
+      'project repos ls',
+      'project repos status',
       // The subscriptions plan's S4.2 (`seats.read` / `readSeats`): the Project
       // tab's advisory seat estimate, and the one read here whose child lists
       // the installation's bucket -- its key is the command word, because the

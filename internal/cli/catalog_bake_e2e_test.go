@@ -446,6 +446,10 @@ func (v *buildRouteVerifier) VerifyLauncher(context.Context, string) (credsvc.La
 	return credsvc.LauncherCaller{}, errNoBuildRoute
 }
 
+func (v *buildRouteVerifier) VerifyRepoBuild(context.Context, string) (credsvc.RepoBuildAccount, error) {
+	return credsvc.RepoBuildAccount{}, errNoBuildRoute
+}
+
 // buildRoutePolicy is the published policy the route narrows a call against: the
 // image map, which is where the entry's repositories come from (rule 8, D1906).
 // The build route reads the shared node and no repository's own.

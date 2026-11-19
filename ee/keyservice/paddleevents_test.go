@@ -1059,7 +1059,7 @@ func TestUnverifiedBodyIsNeverStored(t *testing.T) {
 		header string
 	}{
 		{name: "no signature at all", body: body, header: ""},
-		{name: "another deployment's secret", body: body, header: signEvent([]byte(otherAdminSecret), f.now, body)},
+		{name: "another deployment's secret", body: body, header: signEvent([]byte(otherDeploySecret), f.now, body)},
 		{name: "a signature over another body", body: body, header: signEvent(f.secret, f.now, append(append([]byte(nil), body...), ' '))},
 		{name: "a header that is not the merchant's scheme", body: body, header: "h1=deadbeef"},
 		{name: "an undecodable body with no signature", body: []byte("{}"), header: ""},

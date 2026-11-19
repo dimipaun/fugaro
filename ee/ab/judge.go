@@ -265,6 +265,21 @@ type judgeVerdict struct {
 	Input string `json:"input,omitempty"`
 	// Passes are the two calls this pair got, in the order they were made.
 	Passes []judgePass `json:"passes,omitempty"`
+	// Misses and FalseAlarms are the judge's marking of the pair's two finding
+	// sets (D728, read for a reviewer pair by review.go): the champion's
+	// findings the challenger's review lacked, and the challenger's findings it
+	// called not real. Both are pointers because absent is not zero — a judge
+	// that matched nothing has said nothing about the pair, while a marking of
+	// zero says it matched the two sets and found neither — and because the two
+	// keys are optional, the wire stays readable by a judge run that writes a
+	// verdict the way this build's does, with neither.
+	//
+	// Nothing writes them yet: the judgement they carry is a reading of the two
+	// finding sets' free text, which F18 rules has no identity to match on, so
+	// whether it can be relied on is U4 and its check (Check 211) has not been
+	// run (B1.3's first commit).
+	Misses      *int `json:"misses,omitempty"`
+	FalseAlarms *int `json:"false_alarms,omitempty"`
 }
 
 // judgePass is one of a pair's two calls: which arm the pass labelled A, and
@@ -550,7 +565,22 @@ func JudgeVerdicts(ctx context.Context, bucket *blobx.Bucket, slug, runID string
 	}
 	out := make(map[string]Verdict, len(v.Pairs))
 	for _, pv := range v.Pairs {
-		out[pv.PairID] = Verdict{Winner: pv.Winner, Reason: pv.Reason, Skipped: pv.Skipped, JudgeModel: v.JudgeModel}
+		// Absent is not zero: a pair the object carries no marking for is a
+		// pair nobody matched, so Matched is read from the keys being there
+		// rather than from the numbers, and a marking of one key without the
+		// other is read as the marking it is (the absent one is the zero it
+		// reports either way).
+		vd := Verdict{Winner: pv.Winner, Reason: pv.Reason, Skipped: pv.Skipped, JudgeModel: v.JudgeModel}
+		if pv.Misses != nil || pv.FalseAlarms != nil {
+			vd.Matched = true
+			if pv.Misses != nil {
+				vd.Misses = *pv.Misses
+			}
+			if pv.FalseAlarms != nil {
+				vd.FalseAlarms = *pv.FalseAlarms
+			}
+		}
+		out[pv.PairID] = vd
 	}
 	return out, nil
 }

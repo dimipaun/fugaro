@@ -66,8 +66,12 @@
 #             release: the build this check drives is the one you have).
 # Where:      your own machine and the **sandbox project** (`fugaro-dev`) and the
 #             **sandbox repository** only. A project or region naming belong is
-#             refused by name, and so is a coding agent's session: every command
-#             this check runs is one you could type yourself.
+#             refused by name, and so is a checkout the billable build would be
+#             submitted from that belongs to another project (its own `fugaro
+#             doctor --json` is read, and the check stops — no build runs — when
+#             that names another project or one naming belong). A coding agent's
+#             session is refused too: every command this check runs is one you
+#             could type yourself.
 # Creates:    one Cloud Build of an entry the catalog already lists, and the
 #             promotion that build makes. On disk: one scratch directory,
 #             removed at the end, holding the commands' output.
@@ -103,7 +107,10 @@
 # on, two at least, and says which and why), CHECK581_CHECKOUT (or --checkout:
 # the checkout the build is run from; the sandbox checkout by default, and the
 # right value when the entry's Dockerfile belongs to another repository of the
-# project), CHECK581_DRY_RUN, CHECK581_KEEP_SCRATCH, CHECK581_REGION (the region
+# project — it has to be a repository of the same project, and its own `fugaro
+# doctor --json` is read and the check stops rather than submit the billable
+# build in another project, or in one naming belong), CHECK581_DRY_RUN,
+# CHECK581_KEEP_SCRATCH, CHECK581_REGION (the region
 # the build is described in — the project's own region, as `fugaro doctor`
 # reports it, unless the knob names another, which is what an installation whose
 # `build.region` differs needs; the guard that refuses a project or region naming
@@ -280,6 +287,15 @@ field() { # field FILE KEY — the value of one `key=value` line, "" when absent
   sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
 }
 
+# doctor_field FILE KEY — one field of `fugaro doctor --json`'s project block,
+# `gcp_project` and `region` being the two this check reads. "" is a document
+# that carries no project block, or one read for a value the document has not
+# got: a checkout whose project the check cannot name is one it must not build
+# from.
+doctor_field() { # doctor_field FILE KEY
+  python3 -c 'import json,sys; print(((json.load(open(sys.argv[1])) or {}).get("project") or {}).get(sys.argv[2]) or "")' "$1" "$2" 2>/dev/null || true
+}
+
 # entry_field FILE NAME COLUMN — one column of the entry this check builds, out
 # of the last `fugaro image ls --json` read.
 entry_field() { # entry_field FILE NAME COLUMN
@@ -412,7 +428,7 @@ step_sandbox() {
     unmeasured sandbox "fugaro doctor --json did not answer in ${SANDBOX} (exit ${BOUNDED_STATUS}): this check cannot read the project this checkout belongs to, and every row below is about that project. Its output is in $SCRATCH/doctor.out and $SCRATCH/doctor.err"
     return 0
   fi
-  PROJECT=$(python3 -c 'import json,sys; print(((json.load(open(sys.argv[1])) or {}).get("project") or {}).get("gcp_project") or "")' "$SCRATCH/doctor.out" 2>/dev/null || true)
+  PROJECT=$(doctor_field "$SCRATCH/doctor.out" gcp_project)
   if [ -z "$PROJECT" ]; then
     unmeasured sandbox "fugaro doctor --json answered without a project block: this check cannot say which project the sandbox checkout belongs to, and the rows below are about the project, its catalog and the build. What it printed is in $SCRATCH/doctor.out"
     return 0
@@ -425,7 +441,7 @@ step_sandbox() {
   # how the owner names that one.
   if [ -z "${CHECK581_REGION:-}" ]; then
     local doc_region
-    doc_region=$(python3 -c 'import json,sys; print(((json.load(open(sys.argv[1])) or {}).get("project") or {}).get("region") or "")' "$SCRATCH/doctor.out" 2>/dev/null || true)
+    doc_region=$(doctor_field "$SCRATCH/doctor.out" region)
     [ -z "$doc_region" ] || REGION=$doc_region
   fi
   case "${PROJECT}${REGION}" in
@@ -549,6 +565,42 @@ step_map() {
   fact map PASS "the entry ${ENTRY} is over ${count} repositories — ${ENTRY_REPOS} — read from the project's own map (setup.image_map), and its definition is ${ENTRY_SOURCE}. bake_repos=${bake:-true}${ENTRY_CLI_SET:+, and CHECK581_ENTRY named this entry rather than the check picking the widest one}"
 }
 
+# guard_checkout_project: the checkout the billable build is submitted from has
+# to belong to the project this check is about. step_sandbox reads the project
+# off the sandbox checkout and everything above the build is that project's
+# catalog and map; the build, though, runs in $CHECKOUT (the sandbox checkout
+# unless CHECK581_CHECKOUT names another), as the build account of the repository
+# it is submitted from, and it promotes the entry in the project that repository
+# belongs to. A checkout whose own doctor names another project — or one naming
+# belong — would therefore run a real Cloud Build in that project and move its
+# `latest`. Read here rather than assumed, and only when the two directories
+# differ: the sandbox checkout has been read already. 0 when the build may run
+# there, 1 when the checkout's project could not be read (the build row says so
+# and no build runs).
+guard_checkout_project() {
+  [ "$CHECKOUT" != "$SANDBOX" ] || return 0
+  say "reading the checkout the build runs from: fugaro doctor --json, in ${CHECKOUT}"
+  run_bounded "$DOCTOR_TIMEOUT" checkout "$CHECKOUT" "$FUGARO_BIN" doctor --json
+  # As in step_sandbox: doctor exits 1 whenever any of its checks is not ok and
+  # still prints its document, so only a timeout or another status is no answer.
+  if [ "$BOUNDED_TIMED_OUT" = yes ] || { [ "$BOUNDED_STATUS" != 0 ] && [ "$BOUNDED_STATUS" != 1 ]; }; then
+    unmeasured build "fugaro doctor --json did not answer in ${CHECKOUT} (exit ${BOUNDED_STATUS}), the checkout the build would be submitted from: this check cannot say which project that billable build would run in, and whose latest it would move, and the build this row is about is ${PROJECT}'s. Its output is in $SCRATCH/checkout.out and $SCRATCH/checkout.err"
+    return 1
+  fi
+  local checkout_project
+  checkout_project=$(doctor_field "$SCRATCH/checkout.out" gcp_project)
+  if [ -z "$checkout_project" ]; then
+    stop "fugaro doctor --json answered without a project in ${CHECKOUT}, the checkout the build would be submitted from: this check cannot say which project that billable build would run in, and it submits none it cannot name"
+  fi
+  case "$checkout_project" in
+  *belong*) stop "the checkout the build would be submitted from, $CHECKOUT, belongs to ${checkout_project}: this check is never run there, and a build from it would be a billable Cloud Build in that project, moving its latest" ;;
+  esac
+  if [ "$checkout_project" != "$PROJECT" ]; then
+    stop "the checkout at $CHECKOUT belongs to ${checkout_project} and the sandbox checkout at $SANDBOX belongs to ${PROJECT}: a build submitted from the first would be a billable Cloud Build in ${checkout_project}, promoting that project's entry, and this check is about ${PROJECT}'s catalog, its map and its build. Point --checkout (or CHECK581_CHECKOUT) at the checkout of a repository of ${PROJECT}, or run the check with --sandbox at the checkout of ${checkout_project}"
+  fi
+  return 0
+}
+
 # step_build: the build that counts. One Cloud Build of the entry, from the
 # checkout of the repository its Dockerfile belongs to, because the CLI refuses a
 # build from another repository by name — a Dockerfile built against the wrong
@@ -562,6 +614,9 @@ step_build() {
     unmeasured build "--checkout carries no fugaro.yaml: $CHECKOUT is not a Fugaro repository's checkout, and a catalog build is run from the checkout of the repository the entry's Dockerfile belongs to. The entry's definition is ${ENTRY_SOURCE}, so point CHECK581_CHECKOUT at that repository's checkout"
     return 0
   fi
+  # Before the build and before anything billable: the checkout the build would
+  # be submitted from has to be the sandbox project's.
+  guard_checkout_project || return 0
   say "building ${ENTRY} from ${CHECKOUT} (a real Cloud Build: billable)"
   run_bounded "$BUILD_TIMEOUT" build "$CHECKOUT" "$FUGARO_BIN" image build "$ENTRY"
   local text
@@ -779,6 +834,9 @@ finish() {
 plan() {
   say "CHECK 581 plan (dry run: nothing below is run, and no row in the block was measured)"
   say "  [read] fugaro doctor --json in ${SANDBOX} — the project this checkout belongs to"
+  if [ "$CHECKOUT" != "$SANDBOX" ]; then
+    say "  [read] fugaro doctor --json in ${CHECKOUT} — the project the checkout the build would be submitted from belongs to, which has to be the same one"
+  fi
   say "  [read] fugaro image ls --json — the catalog: the entries, their digests and the default"
   say "  [network, read-only, no clone] fugaro image survey --json — the image map the entry over two repositories is chosen from"
   say "  [network, BILLABLE] one Cloud Build — fugaro image build <the entry the map puts the most repositories on> from ${CHECKOUT}"

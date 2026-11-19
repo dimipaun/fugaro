@@ -308,10 +308,14 @@ func (p *policyReadOnce) read(ctx context.Context, lc *localcfg.Config) (*projec
 // "" deliberately rather than falling back to the local mode: every published
 // node carries a mode (buildProjectPolicy refuses one without it), so a
 // missing node is a project that has not published, and its runs are the ones
-// the launch already refuses or runs on the environment ceiling. The
-// fail-closed direction costs a switched `api-key` repository its address and
-// nothing else — its mounts are all still there (config.ServiceServedAuths is
-// empty until B2.7) — and `fugaro doctor` is where an operator reads why.
+// the launch already refuses or runs on the environment ceiling. What the
+// fail-closed direction costs a switched repository is its address and nothing
+// else, which is D2071's own reading of it: the two ways this can answer ""
+// without refusing the launch — no database to read a node from, and none
+// published — are also the two ways the repository's own root read no mode when
+// it was applied, so that root kept every mount (infra.ModelSecretsServed's
+// `none`) and the launch it withholds the address from is one whose job still
+// holds the credential it reads. `fugaro doctor` is where an operator reads why.
 func (e *cloudEnv) policyMode(ctx context.Context) string {
 	if e.lc == nil {
 		return ""
@@ -834,6 +838,75 @@ func (e *cloudEnv) proxyGate(ctx context.Context, slug string, spec *task.Spec, 
 		return checkCloneImageSince(e.lc, spec, proxySince, subject, knows, "", warn)
 	}
 	return checkImageSince(ctx, e, slug, spec, kind, proxySince, subject, knows, "", warn)
+}
+
+// serviceAuthGate refuses a launch of a repository whose model credential the
+// credentials service serves (B2.7's flip) on a job image whose runner predates
+// the service as that credential's source (serviceAuthSince): the job such a
+// root deploys mounts neither the Anthropic key nor the Claude OAuth token, so
+// a runner that does not know to call the service has no model credential at
+// all.
+//
+// The condition is the launch's own, asked of the function that answers it for
+// the launch and not of a copy of its clauses, exactly as proxiedRepo asks it:
+// the run's agent.auth, read the way the run itself will read it (the ref's
+// fugaro.yaml, else this machine's checkout), is one the service serves to a
+// switched repository (config.ServiceServedAuths, and infra's
+// CredentialsServiceServes behind it), and the execution is really handed the
+// service's address (credentialsServiceLaunchEnv). The two together are the
+// whole of "this job holds no model mount of its own": a repository whose
+// document could not be read at all leaves the auth unknown, and this gate
+// refuses nothing there — the shape is a launch from outside a checkout (the
+// desktop console's own), where the repository's document is the only thing
+// that could say `api-key` or `oauth`, and treating "unknown" as "switched"
+// would refuse every documentless `vertex` repository, whose job keeps every
+// mount and works.
+//
+// It is judged beside the proxy's and the seal's gates, from the same build
+// record and the same local config, and before the claim and the task like
+// every gate there. A launch whose repository the service does not serve — no
+// service block, a repository whose own switch is off, a mode that is off, a
+// `vertex` or `cascade` auth, a document this launcher cannot read — is not
+// judged at all.
+func (e *cloudEnv) serviceAuthGate(ctx context.Context, slug string, spec *task.Spec, kind string, clone bool, warn io.Writer) error {
+	auth := e.switchedServiceAuth(ctx, spec)
+	if auth == "" {
+		return nil
+	}
+	subject := fmt.Sprintf("a run of a repository whose model credential is brokered (agent.auth %s on a repository the credentials service serves, so its job mounts neither the Anthropic key nor the Claude OAuth token)", auth)
+	const knows = "the credentials service as the source of its model credential (the key and the account its own job no longer holds)"
+	if clone {
+		return checkCloneImageSince(e.lc, spec, serviceAuthSince, subject, knows, "", warn)
+	}
+	return checkImageSince(ctx, e, slug, spec, kind, serviceAuthSince, subject, knows, "", warn)
+}
+
+// switchedServiceAuth is the auth a switched repository's run reaches the
+// credentials service for its model calls under, "" where this launch's run is
+// not one: the document's auth is one the flip list carries
+// (config.ServiceServedAuths) AND the execution really is handed the service's
+// address.
+//
+// The second half is credentialsServiceLaunchEnv's own answer, for proxiedRepo's
+// reason: a repository whose root was applied with the switch off, or whose
+// project's mode is off, is handed no address, keeps every mount it had, and
+// would work on the oldest image there is. Asking the same function keeps this
+// gate from disagreeing with the launch it judges — one reader, one answer.
+//
+// An unknown document answers "" here, so the gate refuses nothing on the
+// console's launches (see serviceAuthGate).
+func (e *cloudEnv) switchedServiceAuth(ctx context.Context, spec *task.Spec) string {
+	if e.lc == nil || e.lc.CredentialsService == nil {
+		return ""
+	}
+	auth, deployed := e.repoServiceAuth(ctx, spec, io.Discard)
+	if !slices.Contains(config.ServiceServedAuths, auth) {
+		return ""
+	}
+	if len(credentialsServiceLaunchEnv(e.lc, "", spec.Repo, auth, e.policyMode(ctx), deployed, false)) == 0 {
+		return ""
+	}
+	return auth
 }
 
 // nodeBrokersBitbucket is the published node's own answer to whether this
