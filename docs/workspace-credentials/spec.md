@@ -1,10 +1,9 @@
 # Workspace credentials: a person's tokens and the shared keys, held once
 
-**Status: a draft for the owner's ruling. Nothing here is decided and no task exists.** Written on
+**Status: the owner answered D2930–D2937 on 2026-11-19, every one as recommended. No task exists and none is approved.** Written on
 2026-11-18 at the owner's request, against `origin/main` at `e2ec97c1a`. It is an addendum to
 [the workspaces design](../workspaces/README.md) and to
-[workspace projects and users](../workspace-projects-users/README.md). Once the decisions in §4 are
-answered, the reconciliation and the plan follow in this folder.
+[workspace projects and users](../workspace-projects-users/README.md). The reconciliation and the plan follow in this folder; U1–U4 of §6 are theirs to settle.
 
 **Numbers reserved:** decisions **D2930–D2939** (D2930–D2937 used). Read on 2026-11-18: no file on
 `main` and no open pull request uses a number of this block; D2900–D2929 and D2940–D2959 are taken.
@@ -53,9 +52,9 @@ The project's own store stays for a project in no workspace, and as a tighter ov
 The two rules of the workspaces design hold as written. A member's own policy still narrows
 everything the workspace offers. No run, CLI or person is ever handed a credential's value.
 
-## 4. Decisions for the owner
+## 4. Decisions
 
-The first option of each is the recommendation.
+**Answered by the owner on 2026-11-19: option (a) of every one, which was the recommendation.**
 
 | # | Question | Options | Why the first |
 | --- | --- | --- | --- |
