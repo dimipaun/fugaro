@@ -1891,12 +1891,6 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 	if co != nil {
 		agentRecipe = co.Agent.Recipe
 	}
-	// --attach, before the gates below: its recipe refusal, its caps,
-	// D9's line and its image gate (design §4, plan P7/P9). It uploads
-	// nothing here — attachUpload does that below, after the last gate
-	// that can still refuse this launch, so a refused launch leaves
-	// nothing in the bucket under a run id that never gets a task. A
-	// launch with no --attach does nothing here at all.
 	// --commit-reports, ahead of --attach: its pair refusal is the one that
 	// must fire when both flags are given, and it is the sentence that names
 	// both of them (commitReportsLaunch). It uploads nothing here either —
@@ -1907,6 +1901,12 @@ func freshLaunchGates(ctx context.Context, env *cloudEnv, o *runOptions, slug st
 			return config.Inputs{}, err
 		}
 	}
+	// --attach, before the gates below: its recipe refusal, its caps,
+	// D9's line and its image gate (design §4, plan P7/P9). It uploads
+	// nothing here — attachUpload does that below, after the last gate
+	// that can still refuse this launch, so a refused launch leaves
+	// nothing in the bucket under a run id that never gets a task. A
+	// launch with no --attach does nothing here at all.
 	caps, err := attachLaunch(ctx, env, slug, spec, s.Prefix(), o.attach, kind, clone, warn)
 	if err != nil {
 		return config.Inputs{}, err
