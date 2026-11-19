@@ -35,7 +35,8 @@
           "internal/cli/tell.go",
           "internal/cli/tell_test.go",
           "internal/cli/root.go",
-          "plugin/skills/working/SKILL.md"
+          "internal/cli/report_json_fixtures_test.go",
+          "website/content/cli-reference.md"
         ]
       }
     },
@@ -59,7 +60,7 @@
     },
     {
       "id": "RM3",
-      "title": "the agent's quiet point and an interrupt that is not a failure",
+      "title": "the agent's quiet point and a yield that is not a failure",
       "run": null,
       "version": null,
       "size": 2,
@@ -67,9 +68,9 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/agent/stream.go",
+          "internal/agent/quiet.go",
+          "internal/agent/quiet_test.go",
           "internal/agent/agent.go",
-          "internal/agent/interrupt_test.go",
           "internal/agent/fakeclaude/main.go"
         ]
       }
@@ -84,8 +85,8 @@
       "footprint": {
         "prediction": true,
         "paths": [
-          "internal/runner/interrupt.go",
-          "internal/runner/interrupt_test.go",
+          "internal/runner/yield.go",
+          "internal/runner/yield_test.go",
           "internal/runner/runner.go",
           "internal/runner/prompts.go"
         ]
@@ -93,19 +94,16 @@
     },
     {
       "id": "RM5",
-      "title": "the report, diagnose and runs show",
+      "title": "the report's Messages section",
       "run": null,
       "version": null,
-      "size": 2,
-      "tier": "medium",
+      "size": 1,
+      "tier": "small",
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/runner/report.go",
-          "internal/runner/report_test.go",
-          "internal/cli/diagnose.go",
-          "internal/cli/runs_show.go",
-          "schemas/runs-show.schema.json"
+          "internal/runner/report_test.go"
         ]
       }
     },
@@ -114,13 +112,16 @@
       "title": "the lifecycle rule for message objects",
       "run": null,
       "version": null,
-      "size": 1,
-      "tier": "small",
+      "size": 1.5,
+      "tier": "medium",
       "footprint": {
         "prediction": true,
         "paths": [
           "deploy/terraform/gcp/modules/installation/bucket.tf",
-          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl"
+          "deploy/terraform/gcp/roots/installation/tests/installation.tftest.hcl",
+          "deploy/terraform/gcp/modules/project/sa.tf",
+          "internal/infra/msglifecycle_test.go",
+          "internal/infra/tf/testdata/golden/installation*.plan.json"
         ]
       }
     },
@@ -135,8 +136,10 @@
         "prediction": true,
         "paths": [
           "SECURITY.md",
+          "website/content/security.md",
           "docs/design/v1.md",
-          "docs/design/bucket-iam.md"
+          "docs/design/bucket-iam.md",
+          "docs/design/budget-token-channel.md"
         ]
       }
     },
@@ -155,6 +158,38 @@
           "docs/gcp-live-checklist.md"
         ]
       }
+    },
+    {
+      "id": "RM9",
+      "title": "the working skill names fugaro tell",
+      "run": null,
+      "version": null,
+      "size": 0.5,
+      "tier": "small",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "RM10",
+      "title": "diagnose and runs show",
+      "run": null,
+      "version": null,
+      "size": 2,
+      "tier": "medium",
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/cli/diagnose.go",
+          "internal/cli/diagnose_test.go",
+          "internal/cli/runs_show.go",
+          "internal/cli/runs_show_test.go",
+          "schemas/runs-show.schema.json"
+        ]
+      }
     }
   ],
   "edges": [
@@ -171,7 +206,22 @@
     {
       "task": "RM5",
       "needs": "RM0",
-      "reason": "reads the record type only; a contract gains nothing"
+      "reason": "reads the record type and runmsg.ShellQuote; a contract gains nothing"
+    },
+    {
+      "task": "RM6",
+      "needs": "RM0",
+      "reason": "the pinning test imports runmsg.Suffix"
+    },
+    {
+      "task": "RM10",
+      "needs": "RM0",
+      "reason": "reads the record type, runmsg.Path and runmsg.ShellQuote; a contract gains nothing"
+    },
+    {
+      "task": "RM9",
+      "needs": "RM1",
+      "reason": "the plugin test checks the command a skill names exists"
     },
     {
       "task": "RM4",
@@ -181,17 +231,32 @@
     {
       "task": "RM4",
       "needs": "RM3",
-      "reason": "needs the interrupt's behaviour, the stop that keeps the session, not only its signature"
+      "reason": "needs the yield's behaviour, the stop that keeps the session, not only its signature"
     },
     {
       "task": "RM7",
       "needs": "RM1",
-      "reason": "the documents name the command as built"
+      "reason": "the documents name the command and its access rule as built"
     },
     {
       "task": "RM7",
       "needs": "RM4",
       "reason": "the documents describe --now and --wrap-up as built"
+    },
+    {
+      "task": "RM7",
+      "needs": "RM5",
+      "reason": "the documents describe rule 5 as the report shows it"
+    },
+    {
+      "task": "RM7",
+      "needs": "RM6",
+      "reason": "the documents carry the lifecycle row"
+    },
+    {
+      "task": "RM7",
+      "needs": "RM10",
+      "reason": "the documents describe rule 5 as diagnose shows it"
     },
     {
       "task": "RM8",
