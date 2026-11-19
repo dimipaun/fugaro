@@ -28,8 +28,10 @@
 # a temporary directory. The stub sleeps a declared time per command and prints
 # a payload of a declared size, and the test fails unless the ranking the script
 # prints puts the slowest stub first -- so "the three slowest reads" is a tested
-# claim about the ranking rather than one read by eye. It touches no
-# installation and needs no CLI.
+# claim about the ranking rather than one read by eye. The stub logs every argv
+# it is handed as well, and the test fails if one of them is a write row's own
+# argv, so the paragraph above is a tested claim too and not a comment. It
+# touches no installation and needs no CLI.
 #
 # Every read is bounded, because a read that hangs is exactly the kind of
 # finding this check is for: an ordinary one is killed at --limit-seconds (90 by
@@ -123,6 +125,17 @@ STUB_SLEEP_THIRD=${CHECK711_STUB_SLEEP_THIRD:-0.20}
 STUB_SLEEP_REST=${CHECK711_STUB_SLEEP_REST:-0.02}
 STUB_BYTES_SLOWEST=${CHECK711_STUB_BYTES_SLOWEST:-3000}
 STUB_BYTES_REST=${CHECK711_STUB_BYTES_REST:-200}
+# The SPAWN_COMMANDS table's three write rows -- operation and the argv this pass
+# would spawn for each of them -- frozen here for --self-test to hold the pass to
+# never running one. They are written out rather than read from WRITE_OPS on
+# purpose: a check that took its expectation from the list a mistake edits would
+# pass whatever that list said, and moving these three into READ_OPS while
+# emptying WRITE_OPS spawns all three while every other check here still passes.
+# (The argv are the self-test's own: it adds no --project, no --config, no --set.)
+STUB_WRITE_ARGV="settings.edit|settings
+roadmap.move|coordinator roadmap move --json
+run.launch|run --task-file - --json"
+
 STUB_DISPLAY_SLOWEST="runs ls --json"
 STUB_DISPLAY_SECOND="report --json"
 STUB_DISPLAY_THIRD="budget show --json"
@@ -156,6 +169,7 @@ T_STATUS=0
 T_SENTENCE=""
 T_NOTE=""
 RUN_KILLED=""
+ARGV=()
 
 SELF_FAILURES=""
 self_fail() {
@@ -193,6 +207,8 @@ scratch_up() {
   SCRATCH=$(mktemp -d "${TMPDIR:-/tmp}/chk711.XXXXXXXX") || die "Check 711 cannot make a scratch directory"
   chmod 700 "$SCRATCH"
   : >"$SCRATCH/reads"
+  : >"$SCRATCH/writes"
+  : >"$SCRATCH/stub.argv"
   : >"$SCRATCH/results"
   : >"$SCRATCH/ranking"
 }
@@ -338,7 +354,13 @@ read_table() {
       printf '%s|%s|%s\n' "$op" "$words" "$takes" >>"$SCRATCH/reads"
       rows=$((rows + 1))
       ;;
-    write) say "skipping $op: it is a write row of the table, and this check reads only" ;;
+    write)
+      # Kept as well as skipped: the self-test holds the pass to having spawned
+      # none of these, and it matches the argv the stub was handed back to this
+      # file to name which write row it was.
+      printf '%s|%s|%s\n' "$op" "$words" "$takes" >>"$SCRATCH/writes"
+      say "skipping $op: it is a write row of the table, and this check reads only"
+      ;;
     *)
       die "Check 711 stopped: the table has a row this script does not know ($op). The reads it times are a closed list: add the row to READ_OPS if it changes nothing, or to WRITE_OPS if it writes, and run it again -- a new row is a new command, and this check must never spawn a write by accident"
       ;;
@@ -449,6 +471,21 @@ first_line() {
   fi
 }
 
+# fill_argv WORDS TAKES fills ARGV with one row of the table as this pass spawns
+# it: the row's own words, then --project and --config for a row that takes them,
+# then --set's words. It is the one place that argv is built, so the spawn and
+# the self-test's match of the stub's log against the table cannot drift apart.
+fill_argv() {
+  ARGV=()
+  local w
+  for w in $1; do ARGV+=("$w"); done
+  if [ "$2" = true ]; then
+    if [ -n "$PROJECT" ]; then ARGV+=(--project "$PROJECT"); fi
+    if [ -n "$CONFIG" ]; then ARGV+=(--config "$CONFIG"); fi
+  fi
+  for w in $SET_WORDS; do ARGV+=("$w"); done
+}
+
 # time_one PHASE OPERATION WORDS TAKES: runs one read once and leaves the
 # outcome in T_SECONDS, T_BYTES, T_STATUS, T_NOTE. The seconds are bash's own
 # `time` (TIMEFORMAT %R) around the spawn, which is what the console's read
@@ -456,20 +493,13 @@ first_line() {
 time_one() {
   local phase=$1 op=$2 words=$3 takes=$4
   local out="$SCRATCH/$phase.$op.out" err="$SCRATCH/$phase.$op.err" clock="$SCRATCH/$phase.$op.time"
-  local -a argv=()
-  local w
-  for w in $words; do argv+=("$w"); done
-  if [ "$takes" = true ]; then
-    if [ -n "$PROJECT" ]; then argv+=(--project "$PROJECT"); fi
-    if [ -n "$CONFIG" ]; then argv+=(--config "$CONFIG"); fi
-  fi
-  for w in $SET_WORDS; do argv+=("$w"); done
+  fill_argv "$words" "$takes"
   T_STATUS=0
   TIMEFORMAT='%R'
   if is_stream "$op"; then
-    { time run_bounded line "$WATCH_SECONDS" "$out" "$err" "$FUGARO_BIN" "${argv[@]}"; } 2>"$clock" || T_STATUS=$?
+    { time run_bounded line "$WATCH_SECONDS" "$out" "$err" "$FUGARO_BIN" "${ARGV[@]}"; } 2>"$clock" || T_STATUS=$?
   else
-    { time run_bounded exit "$LIMIT_SECONDS" "$out" "$err" "$FUGARO_BIN" "${argv[@]}"; } 2>"$clock" || T_STATUS=$?
+    { time run_bounded exit "$LIMIT_SECONDS" "$out" "$err" "$FUGARO_BIN" "${ARGV[@]}"; } 2>"$clock" || T_STATUS=$?
   fi
   T_SECONDS=$(normalise_seconds "$(head -n 1 "$clock" 2>/dev/null || true)")
   T_BYTES=$(bytes_of "$out")
@@ -588,6 +618,12 @@ write_stub() {
 # script prints can be held to a known order. It reads nothing, writes nothing
 # and always answers 0.
 set -u
+# Every argv this stub is handed is logged, before it answers anything: the
+# self-test matches each one back to the table's own rows, which is what holds
+# the script's guard that it reads only.
+if [ -n "${CHECK711_STUB_LOG:-}" ]; then
+  printf '%s\n' "$*" >>"$CHECK711_STUB_LOG"
+fi
 sleep_seconds="${CHECK711_STUB_SLEEP_REST:-0.02}"
 payload_bytes="${CHECK711_STUB_BYTES_REST:-200}"
 case "${1:-} ${2:-}" in
@@ -615,6 +651,7 @@ run_self_test() {
   export CHECK711_STUB_SLEEP_REST="$STUB_SLEEP_REST"
   export CHECK711_STUB_BYTES_SLOWEST="$STUB_BYTES_SLOWEST"
   export CHECK711_STUB_BYTES_REST="$STUB_BYTES_REST"
+  export CHECK711_STUB_LOG="$SCRATCH/stub.argv"
   FUGARO_BIN=$stub
   PROJECT=""
   CONFIG=""
@@ -674,6 +711,8 @@ self_test_verdict() {
     self_fail "the biggest payload is '$biggest' and the stub prints it for '$STUB_DISPLAY_SLOWEST' (${STUB_BYTES_SLOWEST} bytes against ${STUB_BYTES_REST}): the byte column is not the size of what the read wrote"
   fi
 
+  self_test_read_only
+
   if [ -z "$SELF_FAILURES" ]; then
     printf '\nCHECK 711 SELF-TEST: PASS — the ranking printed above is the one the stub declares: %s first at %ss, then %s at %ss, then %s at %ss\n' \
       "$STUB_DISPLAY_SLOWEST" "$STUB_SLEEP_SLOWEST" "$STUB_DISPLAY_SECOND" "$STUB_SLEEP_SECOND" "$STUB_DISPLAY_THIRD" "$STUB_SLEEP_THIRD"
@@ -681,6 +720,70 @@ self_test_verdict() {
   fi
   printf '\nCHECK 711 SELF-TEST: FAIL%s\n' "$SELF_FAILURES"
   return 1
+}
+
+# self_test_read_only holds the script's central claim -- this pass reads, and the
+# table's write rows are never spawned -- to what the pass actually did. The stub
+# logs every argv it was handed, and each one is held to three things: not one of
+# the three write rows' argv (STUB_WRITE_ARGV, frozen above so the check cannot
+# read its expectation from the list the mistake would edit), the argv of a row
+# the table holds, and a row the lists agree is a read. Without this the guard is
+# a claim nothing tests: moving `settings.edit`, `roadmap.move` and `run.launch`
+# into READ_OPS and emptying WRITE_OPS spawns all three and leaves the ranking
+# checks above passing exactly as they were.
+self_test_read_only() {
+  local logged matched name argv_words wop rop rwords rtakes wwords wtakes
+  if [ ! -s "$SCRATCH/stub.argv" ]; then
+    self_fail "the stub was handed no argv at all, so nothing here says which rows this pass spawns"
+  fi
+  while IFS= read -r logged; do
+    [ -n "$logged" ] || continue
+    matched=""
+    while IFS='|' read -r name argv_words; do
+      [ -n "$name" ] || continue
+      if [ "$logged" = "$argv_words" ]; then
+        self_fail "the stub was run as '$logged', which is the write row $name's own argv: this check reads only, and a write row it spawns is the one thing its list of reads must never do"
+        matched=$name
+        break
+      fi
+    done < <(printf '%s\n' "$STUB_WRITE_ARGV")
+    if [ -n "$matched" ]; then
+      continue
+    fi
+    while IFS='|' read -r rop rwords rtakes; do
+      [ -n "$rop" ] || continue
+      fill_argv "$rwords" "$rtakes"
+      if [ "$logged" = "${ARGV[*]}" ]; then
+        matched=$rop
+        break
+      fi
+    done <"$SCRATCH/reads"
+    if [ -n "$matched" ]; then
+      continue
+    fi
+    while IFS='|' read -r wop wwords wtakes; do
+      [ -n "$wop" ] || continue
+      fill_argv "$wwords" "$wtakes"
+      if [ "$logged" = "${ARGV[*]}" ]; then
+        matched=$wop
+        break
+      fi
+    done <"$SCRATCH/writes"
+    if [ -z "$matched" ]; then
+      self_fail "the stub was run as '$logged', which is the argv of no row of the SPAWN_COMMANDS table in $SPAWN_TS: this pass spawns the table's own rows and nothing else"
+    fi
+  done <"$SCRATCH/stub.argv"
+  while IFS='|' read -r rop rwords rtakes; do
+    [ -n "$rop" ] || continue
+    case " $WRITE_OPS " in
+    *" $rop "*) self_fail "$rop is a write row and read_table handed it to the pass as a read: the two lists disagree about it, and the write would be spawned" ;;
+    esac
+  done <"$SCRATCH/reads"
+  for wop in $WRITE_OPS; do
+    case " $READ_OPS " in
+    *" $wop "*) self_fail "$wop is on both lists: read_table checks the reads first, so a shared name is spawned as a read whatever the write list says" ;;
+    esac
+  done
 }
 
 # ----------------------------------------------------------------------- main

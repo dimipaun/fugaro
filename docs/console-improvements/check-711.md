@@ -109,5 +109,11 @@ THREE SLOWEST BY COLD TIME (--top changes the count; ...)
 sleeps a declared time per command and prints a payload of a declared size, runs the whole pass against it, and
 fails unless the slowest stub is ranked first, the ranking is sorted, every row has a time and a byte count, and
 the biggest payload is ranked with the row that printed it. That is the part that can be pinned in a checkout, and
-a ranking that is not sorted fails it. The timings themselves cannot be: they are facts about your installation,
+a ranking that is not sorted fails it.
+
+It holds the read-only promise above to what the pass did, too. The stub logs every argv it is handed, and the
+self-test fails if any of them is one of the table's three write rows' own argv (`settings`, `coordinator roadmap
+move --json`, `run --task-file - --json`), or if a write row reached the pass as a read. Those three are written
+out in the test rather than read from the script's own list of writes, because a check that took its expectation
+from the list a mistake edits would pass whatever that list said. The timings themselves cannot be: they are facts about your installation,
 which is why this document exists, and why the plan asks you to run it twice.
