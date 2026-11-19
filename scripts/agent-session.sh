@@ -1,9 +1,10 @@
-# Sourced by scripts/release.sh and scripts/release-rehearsal.sh: the one
-# reading of "this is a coding agent's session", so the release refuses the same
-# thing in both places it has to. A release is the person's to make -- the tag
-# it cuts is permanent and the pull request it opens merges the version bump to
-# main -- and the catalog build its rehearsal submits is billable, so an agent's
-# session neither submits that build nor cuts the tag.
+# Sourced by scripts/release.sh: the one reading of "this is a coding agent's
+# session", which the release refuses in its preconditions. A release is the
+# person's to make -- the tag it cuts is permanent and the pull request it opens
+# merges the version bump to main -- so an agent's session cuts none. The
+# pre-tag rehearsal that run does at step 4 is not why: it builds in the sandbox
+# project only and tags nothing, and by the owner's ruling of 2026-11-19 an
+# agent's session runs it (scripts/release-rehearsal.sh holds no guard).
 #
 # The markers are internal/agentenv's, and the rule is that package's Session:
 # one of AgentMarkers, which an agent's own processes set and its tool calls

@@ -90,22 +90,22 @@ func requireNoRehearsalCalls(t *testing.T, r *releaseRepo) {
 	}
 }
 
-// TestReleaseRehearsalRefusesACodingAgentsSession: the build is billable and
-// the tag it gates is permanent, so `run` refuses an agent's session itself --
-// guard_agent, over the markers internal/agentenv names, the shape
-// scripts/land-prs.sh uses. Nothing is built and no record is written, and the
-// refusal hands over the command to run instead.
+// TestReleaseRehearsalRunsInACodingAgentsSession: the rehearsal holds no fence
+// against a session, and the markers are set here to pin that it does not come
+// back. The owner's ruling of 2026-11-19 is why: `run` builds in the sandbox
+// project only (guard_project) and tags nothing, so a session that runs it can
+// spoil nothing outward-facing. What stays the person's is the release around
+// it, and scripts/release.sh refuses a coding agent's session in its own
+// preconditions (TestReleaseRefusesToCutTheTagInACodingAgentsSession): from a
+// release this build is still the person's to run, by hand it is anybody's.
 //
-// This is the fence, and it has to be: the CLI's own gate is not one. It admits
-// a coding agent's session whose plan it admitted and prints AgentProceeded
-// there (internal/cli/image_build_managed.go), refusing only where no verdict
-// came -- and internal/cli's own TestImageBuildManagedAnAgentSessionIsAdmittedAndRecorded
-// pins that an agent's admitted build IS submitted -- so a rehearsal that
-// leaned on the CLI would submit the build from an agent's session. The guard
-// is a courtesy against the accident and not a barrier (D1590): an agent can
-// unset its markers, which is what the cleared environment below does for every
-// other test here.
-func TestReleaseRehearsalRefusesACodingAgentsSession(t *testing.T) {
+// The CLI's own gate is not such a fence either: it admits a coding agent's
+// session whose plan it admitted and prints AgentProceeded there
+// (internal/cli/image_build_managed.go), refusing only where no verdict came --
+// and internal/cli's own TestImageBuildManagedAnAgentSessionIsAdmittedAndRecorded
+// pins that an agent's admitted build IS submitted -- which is why nothing here
+// leans on it.
+func TestReleaseRehearsalRunsInACodingAgentsSession(t *testing.T) {
 	for _, tc := range []struct {
 		name, marker, value string
 	}{
@@ -121,11 +121,15 @@ func TestReleaseRehearsalRefusesACodingAgentsSession(t *testing.T) {
 
 			res := runRehearsal(t, r, []string{tc.marker + "=" + tc.value}, "run", sha)
 
-			res.requireFailureContaining(t, tc.marker+" says this is a coding agent's session")
-			res.requireFailureContaining(t, "release-rehearsal.sh run "+sha)
-			requireNoRehearsalCalls(t, r)
-			if _, err := os.Stat(filepath.Join(r.recordDir, "record")); !os.IsNotExist(err) {
-				t.Error("an agent's session wrote a record: the record says a build happened, and this session built nothing")
+			res.requireSuccess(t)
+			calls := fugaroCalls(t, r)
+			want := "image build go --gcp-project " + rehearsalSandbox
+			if len(calls) != 1 || calls[0] != want {
+				t.Errorf("the rehearsal made %v, want exactly one %q: a coding agent's session builds the entry it names in the sandbox it was given, the same as any other", calls, want)
+			}
+			record := rehearsalRecord(t, r)
+			if !strings.Contains(record, "commit="+sha) || !strings.Contains(record, "verdict=pass") {
+				t.Errorf("the rehearsal of a coding agent's session did not record a green verdict for %s:\n%s", sha, record)
 			}
 		})
 	}
@@ -367,15 +371,18 @@ func TestReleaseRefusesTheTagOnARedRehearsal(t *testing.T) {
 }
 
 // TestReleaseRefusesToCutTheTagInACodingAgentsSession: an agent's session cuts
-// no release, and release.sh refuses it in its PRECONDITIONS rather than only at
-// the rehearsal's own guard, which step 4 reaches after the release branch is
-// pushed, the pull request is opened and squash-merged and the gate has passed.
-// An agent that followed the new-release skill that far would by then have put
-// the version bump on main with no tag -- the half of the release nobody can
-// undo -- so the test pins that nothing outward-facing happened at all: no
-// branch on origin, no pull request, no merge, main where it was, and not even
-// the fake CLI called. The rehearsal's guard is covered on its own above, and
-// it stays, for a session that runs that script by hand.
+// no release, and release.sh refuses it in its PRECONDITIONS -- ahead of the
+// release branch, the pull request, the merge and the tag. An agent that
+// followed the new-release skill that far would otherwise have put the version
+// bump on main with no tag -- the half of the release nobody can undo -- so the
+// test pins that nothing outward-facing happened at all: no branch on origin, no
+// pull request, no merge, main where it was, and not even the fake CLI called.
+//
+// The refusal is this script's, and it is the only fence on the path: the
+// rehearsal it runs at step 4 holds none (the owner's ruling of 2026-11-19, and
+// TestReleaseRehearsalRunsInACodingAgentsSession above), so an agent that calls
+// scripts/release-rehearsal.sh by hand is admitted and this is what keeps the
+// release itself the person's.
 func TestReleaseRefusesToCutTheTagInACodingAgentsSession(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks()).with("CLAUDECODE=1")

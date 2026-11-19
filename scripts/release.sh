@@ -76,7 +76,7 @@ cd "$repo_root"
 # below and by scripts/release-rehearsal.sh's own guard.
 . scripts/belong.sh
 # The one reading of "this is a coding agent's session", refused by the
-# precondition below and, late, by scripts/release-rehearsal.sh's guard.
+# precondition below.
 . scripts/agent-session.sh
 # The rule scripts/verify-release.sh holds a patch tag's own commits to, run in
 # run_hotfix while the branch is still a branch (scripts/hotfix-commits.sh).
@@ -657,19 +657,21 @@ fi
 
 # A coding agent's session cuts no release, on either path: it is checked here
 # with the other preconditions, ahead of the --hotfix branch below as well as of
-# the ordinary steps, rather than left to the rehearsal's own guard at step 4:
-# by then the release branch is pushed, the pull request is opened and
-# squash-merged and the gate has passed, so an agent that followed the
-# new-release skill that far would have merged the version bump to main and
-# stopped with no tag -- the half of the release that cannot be undone. --hotfix
-# is the same release by another door (release/X.Y, then a permanent tag), so a
-# refusal that only covered the ordinary path would leave the skill's own
-# "the same command with --hotfix" a way around it. The reading is the
-# rehearsal's guard's own (scripts/agent-session.sh, internal/agentenv's
-# markers), so a session is refused the same way in both places. --dry-run is
-# not refused: it creates nothing outside its own scratch worktree and removes
-# that however it ends, which is exactly what the skill has an agent run, and
-# --hotfix --dry-run is covered by the same exemption.
+# the ordinary steps, so the refusal lands before the bump PR is opened, before
+# anything is pushed and before the tag: a refusal that landed after those would
+# leave the version bump merged to main with no tag on it, which is the half of
+# a release nobody can undo. --hotfix is the same release by another door
+# (release/X.Y, then a permanent tag), so a refusal that covered only the
+# ordinary path would leave the skill's own "the same command with --hotfix" a
+# way around it. The reading is scripts/agent-session.sh's
+# (internal/agentenv's markers). The pre-tag rehearsal at step 4 is not what
+# this fence is for, and holds no fence of its own: it builds in the sandbox
+# project only and tags nothing, so an agent's session may run it by hand
+# (scripts/release-rehearsal.sh, the owner's ruling of 2026-11-19) while the
+# release that would call it stays the person's. --dry-run is not refused: it
+# creates nothing outside its own scratch worktree and removes that however it
+# ends, which is exactly what the skill has an agent run, and --hotfix --dry-run
+# is covered by the same exemption.
 if [ "$dry_run" = 0 ]; then
   agent_marker=$(agent_session_marker)
   if [ -n "$agent_marker" ]; then
@@ -1142,14 +1144,13 @@ GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_sec
 # build of this repository's own `go` catalog entry, in the sandbox project
 # only, with the CLI built from the very commit being tagged.
 #
-# `run` is the billable half, and it refuses a coding agent's session itself
-# (scripts/release-rehearsal.sh's guard_agent, the shape scripts/land-prs.sh
-# uses): a courtesy against the accident and not a barrier (D1590), because the
-# markers are environment variables an agent can unset. The CLI is NOT that
-# refusal — its gate admits an agent's session whose plan it admitted — so the
-# guard is where this release's owner-run claim is made true, and an agent
-# session running this script stops here, before the build and before the tag,
-# with the command to hand over. `check` is the gate: the record on disk --
+# `run` is the billable half, and it refuses no session of its own: it builds in
+# the sandbox project only and tags nothing, so a coding agent may run it by hand
+# (the owner's ruling of 2026-11-19). What keeps this step the person's is the
+# release around it — the preconditions above refuse a coding agent's session,
+# before the branch, the pull request and the merge — and the CLI is not a fence
+# either: its gate admits an agent's session whose plan it admitted. `check` is
+# the gate: the record on disk --
 # commit, Cloud Build id, verdict -- is what the tag is cut on, never this run's
 # own memory of it, so a missing, red, or other-commit record refuses the tag
 # and names the Cloud Build to read. The record is a local convention and no

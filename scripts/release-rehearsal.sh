@@ -40,8 +40,7 @@
 # it worth having is not that it cannot be forged but that the thing which
 # writes it is a real build's own outcome (write_record is called with the
 # CLI's exit status and the Cloud Build id it printed, and never with a verdict
-# the script decided) and that the run which calls it is the owner's, guarded
-# below.
+# the script decided).
 #
 # Where, and why it is the sandbox: FUGARO_LIVE_GCP_PROJECT names the live-test
 # project the register's owner-run checks use (docs/gcp-live-checklist.md, and
@@ -60,14 +59,17 @@
 # build, the smoke, the scan and the promotion), and the CLI's own budget lease
 # judges it against the project's caps before it is submitted, as it does for
 # every `fugaro image build`. Nothing else is spent: no run, no model call.
-# Runs: by YOU, at your own terminal. `run` refuses a coding agent's session
-# itself (guard_agent below, the way scripts/land-prs.sh refuses a merge): the
-# CLI's own gate is not that refusal — it admits an agent's session whose plan
-# it admitted and prints AgentProceeded (internal/cli/image_build_managed.go),
-# refusing only where no verdict came — so a rejection of the agent's session
-# had to live here for this file's claim to be true. It is what every such fence
-# in this repository is: a courtesy against the accident, not a barrier (D1590,
-# internal/agentenv). An agent that unsets its own markers is not stopped by it.
+# Runs: in any session, a coding agent's included (the owner's ruling of
+# 2026-11-19). `run` builds in the sandbox project only and tags nothing, so
+# nothing outward-facing turns on who started it, and this script holds no fence
+# against a session — there is nothing here for one to keep. The CLI's own gate
+# is no such fence either: it admits an agent's session whose plan it admitted
+# and prints AgentProceeded (internal/cli/image_build_managed.go), refusing only
+# where no verdict came, which is why nothing here leans on it. The release this
+# is a step of is another matter — scripts/release.sh refuses a coding agent's
+# session in its own preconditions, before the branch, the pull request and the
+# merge — so from a release this build still happens in the person's session;
+# run by hand, it happens in anybody's.
 # Needs: bash, git, mktemp, sed, grep, cut, tr, head, go (the CLI is built from
 # the commit), and a checkout of this repository at that commit.
 # Env: FUGARO_LIVE_GCP_PROJECT the sandbox GCP project (required for `run`),
@@ -77,7 +79,6 @@
 set -eu
 
 . "$(dirname "$0")/belong.sh"
-. "$(dirname "$0")/agent-session.sh"
 
 prog=${0##*/}
 # This repository's own entry, and the only one this rehearses: the point is that
@@ -135,25 +136,6 @@ guard_project() {
   fi
 }
 
-# guard_agent refuses a coding agent's session before anything is built: the
-# build is billable and the tag that follows it is permanent, and both are the
-# person's to make. The reading is scripts/agent-session.sh's (internal/agentenv
-# Session's markers, the shape scripts/land-prs.sh uses for a merge); this is
-# the late half of the fence, and scripts/release.sh refuses the same session in
-# its preconditions, before the branch, the pull request or the merge. Whoever
-# runs this script by hand rather than through the release gets it here.
-#
-# It is a courtesy against the accident, not a barrier (D1590, and agentenv's
-# own sentence): an agent that unsets its own markers gets past it, and the
-# guard is not why the record can be trusted — that is said where the record is
-# described, above.
-guard_agent() {
-  marker=$(agent_session_marker)
-  if [ -n "$marker" ]; then
-    die "$marker says this is a coding agent's session, and this rehearsal is yours to run: a catalog build is billable and the tag it gates is permanent, so an agent's session neither builds it nor cuts the tag. Run it at your own terminal — scripts/release-rehearsal.sh run $sha, or the whole release, scripts/release.sh <version> — or hand that command to the person. (The markers are internal/agentenv's: a courtesy against accidents, not a barrier.)"
-  fi
-}
-
 # check_sha SHA refuses a record this commit's release may not proceed on.
 check_sha() {
   sha=$1
@@ -174,7 +156,6 @@ check_sha() {
 # run_sha SHA builds the entry for SHA and records what happened.
 run_sha() {
   sha=$1
-  guard_agent
   guard_project
   command -v git >/dev/null 2>&1 || die "git is not on PATH; this rehearses the checkout's commit and reads nothing else"
   root=$(git rev-parse --show-toplevel 2>/dev/null) \
@@ -208,11 +189,12 @@ run_sha() {
   fi
 
   # The build runs in $root with this session's stdin inherited, so the CLI can
-  # read the session it is in for itself. That read is not this script's fence
-  # -- the guard above is, and it has already refused a coding agent's session --
-  # and it is not a refusal the CLI owes this script either: the gate admits an
-  # agent's session whose plan it admitted. --gcp-project is the sandbox name,
-  # so a config in force that names another GCP project is refused by the CLI.
+  # read the session it is in for itself. That read is the CLI's own, and it is
+  # not a fence this script holds -- a rehearsal builds in the sandbox and tags
+  # nothing, so no session is refused here (the owner's ruling of 2026-11-19) --
+  # nor a refusal the CLI owes this script: its gate admits an agent's session
+  # whose plan it admitted. --gcp-project is the sandbox name, so a config in
+  # force that names another GCP project is refused by the CLI.
   status=0
   "$fugaro" image build "$entry" --gcp-project "$project" >"$scratch/out" 2>&1 || status=$?
   cat "$scratch/out"

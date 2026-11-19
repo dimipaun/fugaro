@@ -440,12 +440,14 @@ const rehearsalSandbox = "fake-sandbox"
 // red, missing or other-commit record overrides these with g.with(...) or by
 // writing the record file itself.
 //
-// It also clears the coding-agent markers the rehearsal's guard_agent refuses
-// on (internal/agentenv's list): the fixture is a person at a terminal, and the
-// machine running these tests may itself be an agent's session, where every run
-// here would otherwise be refused before it started. A test that means to be an
-// agent's session sets one of them last (g.with("CLAUDECODE=1"), or extra in
-// runRehearsal), which wins over this.
+// It also clears the coding-agent markers release.sh's own precondition refuses
+// on (internal/agentenv's list, scripts/agent-session.sh): the fixture is a
+// person at a terminal, and the machine running these tests may itself be an
+// agent's session, where every run here would otherwise be refused before it
+// started. The rehearsal reads no markers itself -- an agent's session runs it
+// (the owner's ruling of 2026-11-19) -- so this is release.sh's refusal alone.
+// A test that means to be an agent's session sets one of them last
+// (g.with("CLAUDECODE=1"), or extra in runRehearsal), which wins over this.
 func rehearsalEnv(r *releaseRepo, bin string) []string {
 	return []string{
 		"FUGARO_LIVE_GCP_PROJECT=" + rehearsalSandbox,
