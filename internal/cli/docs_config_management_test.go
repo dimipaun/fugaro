@@ -274,8 +274,18 @@ const (
 // rows name the `project` family — `fugaro project policy publish` is the door
 // that carries the block onto the node, which is where a report run reads it —
 // so the generic path carries neither.
+//
+// W2 of docs/config-ownership is the last mover, by twenty-one rows and by
+// twenty-one: the governance block's own spelling — a stage's budget, token cap
+// and timeout and a tier's three figures — is a row a person writes at the
+// project layer and at the repository's own file (D2604), where the only
+// concrete spelling before it was the layer file's own `layer.governance.*`, and
+// the `governance.` prefix this list already names reaches all twenty-one. The
+// block's four own rows stay as rows of the read and the write refuses their own
+// spelling, so the named half does not move and the prefix-reached half carries
+// one more for every leaf.
 const (
-	cfmRegistryRows   = 484
+	cfmRegistryRows   = 505
 	cfmAllowlistNamed = 118
 )
 
