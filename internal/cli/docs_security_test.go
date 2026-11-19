@@ -556,7 +556,7 @@ func TestSecurityMdStatesTheCredentialsService(t *testing.T) {
 		// `availableSecrets` entry the build step prefers over the fetched
 		// file. Pinned because the blanket "the fetched value wins" the first
 		// draft carried was wrong for the second class.
-		"the git credential's fetched value wins over the mounted one",
+		"**The git credential's fetched value wins over the mounted one**",
 		"**a workflow build secret's mounted value wins until B4.9**",
 		// The invariant, spelled as the code enforces it.
 		"an OAuth token is only ever sent to Anthropic's own endpoint",
