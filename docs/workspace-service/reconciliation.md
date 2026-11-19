@@ -2,7 +2,8 @@
 
 Checked against `origin/main` at `21b0a622b` on 2026-11-19. **Where this file disagrees with
 [spec.md](spec.md), this file wins.** It cites paths and symbols, never line numbers. Decisions are
-**D2980–D2987**, all answered by the owner on 2026-11-19; the settled decisions it builds on are
+**D2980–D2991**, all answered by the owner on 2026-11-19 (D2988–D2991 were added by review round 1,
+and D2987 was amended by it); the settled decisions it builds on are
 D1290–D1305 ([the workspaces design](../workspaces/reconciliation.md)) and D2960–D2979
 ([workspace credentials](../workspace-credentials/spec.md)).
 
@@ -134,15 +135,62 @@ and `.claude/rules/credentials-service.md` applies).
 `go test ./internal/cli/ -run DocsWorkspaces` and moves the citations in the same change.
 
 **F20 — Gap.** `budget.ReconcileWorkspace` has no caller outside tests, and `fugaro doctor` has one
-workspace check (`doctorWorkspaceSplitCheck`). Consequence: D2987, WS13.
+workspace check (`doctorWorkspaceSplitCheck`). Consequence: D2987 as amended by D2991, WS14.
 
-**F21 — Gap.** Nothing published says which credentials a project holds itself. A member's policy
+**F21 — Gap.** Nothing a run can read says which credentials a project holds itself. A member's policy
 names the accounts it admits (`projectpolicy.MemberAdmitsShared` asks whether the name is a key of
 the member's `accounts`), which is true of a workspace's credential and of the project's own alike.
 Consequence: D2982 needs a published route per credential; R4.
 
 **F22 — Open, answered here.** V5 of the workspaces design: D2973 and D2978 answer it, and R4 and
 R5 say how.
+
+**F23 — Rule (review round 1).** A run cannot read the credential state: the database rules hold
+`"creds": { ".read": false, ".write": false }` (`internal/budget/rules/rules.json.tmpl`). The first
+draft of R4 put the route there. Consequence: the route lives in a policy-side leaf a run may read
+and no run may write, which needs a rules change, a `RulesVersion` bump and a convergence test
+(R4, WS22). This settles U1.
+
+**F24 — Gap (review round 1).** The routes verify ten caller classes between them
+(`VerifyOrchestrator`, `VerifyBuildCaller`, `VerifyReadCaller`, `VerifyPersonCaller`,
+`VerifyLauncher`, `VerifyVerifier`, `VerifyRepoBuild` and the job classes), and `Workspace.Caller`
+admits only a member's job accounts and the workspace owner's people. Consequence: workspace mode
+serves a stated set of routes and refuses the rest (R14), and a member's coordinator, orchestrator
+and image builds are not served by it (D2988).
+
+**F25 — Gap (review round 1).** `tf.WorkspaceNotCovered` refuses every action but create, update,
+no-op and read, so removing a member, which deletes its invoke grants, would refuse the plan and
+leave an operator repair. It also takes the project and the account id only, so admitting member
+principals changes its signature and its caller in `internal/cli/workspace_create.go`. Consequence:
+WS6 changes the cover to admit the deletion of an invoke grant and nothing else, with its caller.
+
+**F26 — Gap (review round 1).** `WorkspaceConfig.Members` is read once, in `NewWorkspace`. A member
+added or an entry shared after the service started would not be seen by a running instance.
+Consequence: R13.
+
+**F27 — Gap (review round 1).** `WorkspaceMeter.Reserve` takes a worst-case amount, and
+`cascade.go`, `forward.go` and `server.go` hold no price. Consequence: R15.
+
+**F28 — Rule (review round 1).** The workspaces design's O3 answer has two halves: the column, and
+holding the run's verified slug to it. The first draft carried only the column. Consequence: WS2
+enforces the pairing in the workspace's scope and moves the test and the `SECURITY.md` sentence
+that describe the gap.
+
+**F29 — Rule (review round 1).** `SECURITY.md` pins, by test, "Unreachable halts, never falls back"
+(`internal/cli/docs_security_test.go`) and that no member holds a grant on the workspace's project.
+D2983 and D2981 change both. Consequence: WS12 and WS6 own those sentences.
+
+**F30 — Rule (review round 1).** The run's gateway sends the run's Firebase token with a service
+call (`Service.RunIDToken`), and that token can write the run's own nodes in the member's database.
+Sent to the workspace's service it is in the hands of a service outside the member. This is the
+identity design the workspaces review accepted (W6: `verifyRun` under each member's issuer), and it
+weakens the sentence that the workspace's service cannot write a member. Consequence: O4, and WS11
+owns the sentence.
+
+**F31 — Gap (review round 1).** `budget.WorkspaceLedger` is built by nothing that runs, no member
+records what the workspace paid for it, and a member grants its read only to the workspace's
+service account. The alarm of D2987 cannot be computed from the owner's machine. Consequence:
+D2991.
 
 ## 4. Decisions
 
@@ -157,7 +205,11 @@ All answered by the owner on 2026-11-19.
 | **D2984** | In what order are the credential kinds built (F15)? | **All kinds at once**: model, Bitbucket and GitHub credentials are served by the workspace's service from the first release | **not the recommendation** (which was model first) |
 | **D2985** | What keeps the service warm (F16)? | The run's beat, as Check 511, **with a way to turn it off**: "I'm not sure we actually need it" | the recommendation, **with the owner's addition** |
 | **D2986** | At how many concurrent runs is the load check measured? | 100 | as recommended |
-| **D2987** | Where does the reconciliation alarm run (F20)? | On demand: `fugaro doctor` and `fugaro workspace show`, from the workspace owner's machine | as recommended |
+| **D2987** | Where does the reconciliation alarm run (F20)? | On demand: `fugaro doctor` and `fugaro workspace show`, from the workspace owner's machine | as recommended; **amended after review**: deferred by D2991, because it cannot be computed there (F31) |
+| **D2988** | A member's coordinator, orchestrator and image builds also use forge credentials. What serves them when the member's only forge credential is the workspace's (F24)? | The workspace's service serves a member's **runs only**, for now. A member that uses an orchestrator, a coordinator or image builds keeps its own forge credential, which then also wins for its runs | added by review round 1; as recommended |
+| **D2989** | Does a run fall through to the workspace when the project's own model credential is exhausted mid-run? | No. The route is by kind and fixed at the run's start; a project that holds a usable model credential uses its own service for the whole run and waits when exhausted, as today | added by review round 1; as recommended |
+| **D2990** | Is there a per-member share of the workspace cap? | No: one cap for now. Each member's own caps still bound that member | added by review round 1; as recommended |
+| **D2991** | The alarm cannot be computed as D2987 placed it (F31). What now? | **Deferred.** The cap is enforced at the meter without it; the alarm stays unbuilt, `SECURITY.md` keeps saying so, and it gets its own spec | added by review round 1; as recommended |
 
 **What D2984 costs, stated because it is not the recommendation.** Git traffic depends on the
 workspace's service from the first release, so Check 770 measures git pushes and clones beside
@@ -178,11 +230,13 @@ Each has one defensible answer given the decisions and the owner's constraints.
   workspace must not be able to move a member's calls by publishing a different address. The
   member's `fugaro update` puts it in its jobs' environment. A pin without it is valid and means
   "this member takes no workspace credential", so an existing pin converges with no edit.
-- **R4. The route, published.** The member's `fugaro update` works out, for each credential name
-  the member's policy admits, whether the project's own bundle holds it, and publishes the route
-  (`project` or `workspace`) beside the member's credential state. The run reads it at bootstrap
-  (D2982). The project's copy wins when both exist (D2973). A name with no route is served by the
-  project, as today.
+- **R4. The route, published, by kind.** A model call names no credential, so the route is per
+  kind of credential: model, Bitbucket, GitHub. The member's `fugaro update` works out, for each
+  kind, whether the project's own bundle holds a credential its policy admits, and publishes
+  `project` or `workspace` in a policy-side leaf that a run may read and no run may write (F23).
+  The run reads it at bootstrap and keeps it for the run (D2982, D2989). The project's copy wins
+  when both exist (D2973), and `fugaro update` reports a project copy that shadows a workspace one.
+  A kind with no route is served by the project, as today.
 - **R5. The fallback is still fenced.** A call routed to the workspace passes the workspace
   entry's allow-list, the member's own policy and the repository's admission, exactly as
   `Workspace.Shared` intersects them today (D1298, D2978).
@@ -190,21 +244,38 @@ Each has one defensible answer given the decisions and the owner's constraints.
   account carries the repository it is a job of (the workspaces design's O4 and O3).
   `fugaro workspace member add` takes both.
 - **R7. `all_members`.** A new key of a shared entry, exclusive with `projects`. The node's version
-  becomes 2 with a migrator. The writer refuses to publish version 2 to a workspace whose deployed
-  service is older than the release that reads it, and the key is written only once WS8 has landed
+  becomes 2 with a migrator. The guard for an older service is an order, not a version probe: the
+  workspace owner's `fugaro update` publishes the node only after its own deploy of the service
+  succeeded in the same update, so the service that reads the node is never older than the CLI that
+  wrote it. The key is written only once WS8 has landed and only for a workspace with a cap set
   (D2977).
 - **R8. State lives at the workspace.** Cooldowns, round-robin position and the spend figure for a
   workspace credential are written to the workspace's own database. The service holds no write on
   any member (D1299 as amended).
-- **R9. Limits.** The workspace's Cloud Run service states its maximum instance count and its
-  concurrency. The first values are the plan's; Check 770 confirms or corrects them at 100
+- **R9. Limits.** The workspace's Cloud Run service states a maximum of 10 instances and a
+  concurrency of 40 per instance. They are first values: Check 770 confirms or corrects them at 100
   concurrent runs (D2986).
 - **R10. The beat's switch.** A setting turns the workspace beat off. On is the default (D2985).
-- **R11. Update with runs in flight.** A run in flight keeps the environment it started with, so
-  it never sees a route or an address change. Deploying a new revision of the workspace's service
-  drains the old one. `fugaro update` says so in the one line it prints when runs are running.
+- **R11. Update with runs in flight.** A run in flight keeps the environment and the route it
+  started with. Two steps can still reach one, and `fugaro update` names each in a short line, as
+  the HARD RULE asks: an entry unshared or a member removed, which the service refuses from its
+  next read of the node (R13), and a new revision of the service, which drains the old one.
 - **R12. Split Firebase.** For a workspace whose Firebase is another project's, `fugaro update`
   deploys no workspace service and says why (A4).
+
+- **R13. The service re-reads its node.** The workspace's scope re-reads the published node when
+  it is older than 60 seconds, conditionally, so a member added or an entry shared or unshared
+  takes effect within a minute with no new revision (F26). A member's new repository still needs
+  the workspace owner's `fugaro update`, for the invoke grant (F17).
+- **R14. What workspace mode serves.** The model routes, and the forge routes a run calls (the git
+  proxy and a run's own token mint). Every other route (review signing, slips, workflow secrets,
+  build tokens, the read mints, the merge, label and issue routes) is refused in workspace mode
+  with a typed refusal, and a member's run keeps calling its own project's service for them (A2,
+  D2988).
+- **R15. What is reserved.** For a paid credential the reservation is the call's worst case from
+  the price table (`internal/pricing`), settled on the answer's usage. A call on a subscription
+  token reserves nothing and is counted in the notional figures, as an OAuth run is today (D1300,
+  D2965). A reservation whose call never settles expires at `budget.WorkspaceReservationTTL`.
 
 ## 6. Open tensions and open items
 
@@ -215,15 +286,23 @@ No two answers pull against each other.
 - **O2.** D2983 changes what a run does when its **project's** service is unreachable (a bounded
   wait where it halts at once today). It follows from the one-code-path constraint; it is named
   here so it is not a surprise in review.
+- **O4.** F30: the run's Firebase token reaches the workspace's service. It is the accepted
+  identity design, and it is named here for the independent security review of C1 and WS11 to
+  confirm or to ask for a narrower token.
+- **O5.** The graph cannot record that the tasks building a contract's other side wait on that
+  contract (the plan's §5 says which). A launcher follows the plan's levels table, not the graph's
+  ready column.
+- **O6.** One member can use up the workspace's cap for the others (D2990). Stated in
+  `SECURITY.md` by WS8.
 - **O3.** The workspaces design's own open checks U1 to U5 (a member job account admitted by a real
-  deployment, and the rest) are still open. Checks 771 to 773 below cover U1 and U5; U3 and U4 stay
+  deployment, and the rest) are still open. Checks 771 to 773 cover U1; U5's alarm half waits on the alarm's own spec (D2991); U3 and U4 stay
   that design's.
 
 ## 7. UNVERIFIED
 
-- **U1.** Where exactly the route of R4 is published, and whether the member's policy must name an
-  account before the workspace may serve it. Settled by WS9's first step, reading
-  `internal/creds/repoauth.go` and `projectpolicy.MemberAdmitsShared`'s callers.
+- **U1.** *Settled by review round 1 (F23):* the route cannot live beside the credential state; it
+  is a policy-side leaf. What stays unverified is whether a member's policy must name an account
+  before the workspace may serve it (`projectpolicy.MemberAdmitsShared`); WS9's first step settles it.
 - **U2.** How a Bitbucket token's coverage and a GitHub App's installation are expressed for a
   member's repository in the workspace's node. Settled by contract C3.
 - **U3.** Whether a database read through `fugaroWorkspaceRead` (`instances.get` only) is enough
@@ -233,6 +312,5 @@ No two answers pull against each other.
   (the owner's doubt in D2985). Settled by Check 772, owner-run.
 - **U5.** The exact hook in `Server.answer` where usage is known for the settle. Settled by WS8's
   red step.
-- **U6.** Which test holds the resource count of `credentials.tf`
-  (`TestCredentialsServiceResourcesAreCounted` is referenced; its file was not found), and whether
-  the workspace root gets a like count. Settled in WS6.
+- **U6.** *Settled by review round 1:* `TestCredentialsServiceResourcesAreCounted` is in
+  `deploy/terraform/terraform_test.go`. Whether the workspace root gets a like count is WS6's.

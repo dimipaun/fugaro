@@ -64,7 +64,7 @@
     },
     {
       "id": "WS1",
-      "title": "the server on the scope, and the installation's scope",
+      "title": "the front door and the model path on the scope",
       "run": null,
       "version": null,
       "tier": "large",
@@ -85,15 +85,18 @@
       "title": "the workspace's scope",
       "run": null,
       "version": null,
-      "tier": "medium",
-      "size": 2,
+      "tier": "large",
+      "size": 3,
       "footprint": {
         "prediction": true,
         "paths": [
           "internal/credsvc/scope_workspace.go",
           "internal/credsvc/scope_workspace_test.go",
           "internal/credsvc/workspace.go",
-          "docs/workspaces/*.md"
+          "internal/credsvc/workspace_test.go",
+          "docs/workspaces/*.md",
+          "SECURITY.md",
+          "website/content/security.md"
         ]
       }
     },
@@ -152,15 +155,21 @@
       "title": "the workspace root deploys the service",
       "run": null,
       "version": null,
-      "tier": "medium",
-      "size": 2,
+      "tier": "large",
+      "size": 3,
       "footprint": {
         "prediction": true,
         "paths": [
           "deploy/terraform/gcp/roots/workspace/**",
           "internal/infra/tf/workspace.go",
           "internal/infra/tf/workspace_test.go",
-          "deploy/terraform/terraform_test.go"
+          "internal/cli/workspace_create.go",
+          "deploy/terraform/terraform_test.go",
+          "deploy/terraform/secret_readers_test.go",
+          "docs/secrets-brokering/secret-readers.md",
+          "internal/infra/managed/marker_test.go",
+          "SECURITY.md",
+          "website/content/security.md"
         ]
       }
     },
@@ -193,9 +202,10 @@
           "internal/credsvc/cascade.go",
           "internal/credsvc/forward.go",
           "internal/credsvc/probe.go",
+          "internal/credsvc/meter_test.go",
+          "internal/cli/docs_workspaces_security_test.go",
           "SECURITY.md",
-          "website/content/security.md",
-          "internal/cli/docs_workspaces_security_test.go"
+          "website/content/security.md"
         ]
       }
     },
@@ -233,7 +243,7 @@
     },
     {
       "id": "WS11",
-      "title": "the run routes each credential",
+      "title": "the run routes each kind",
       "run": null,
       "version": null,
       "tier": "large",
@@ -244,7 +254,9 @@
           "internal/gateway/gateway.go",
           "internal/gateway/service.go",
           "internal/runner/gateway.go",
-          "internal/gateway/workspace_route_test.go"
+          "internal/gateway/workspace_route_test.go",
+          "SECURITY.md",
+          "website/content/security.md"
         ]
       }
     },
@@ -260,7 +272,10 @@
         "paths": [
           "internal/gateway/service.go",
           "internal/runner/creds_wait.go",
-          "internal/gateway/service_unreachable_test.go"
+          "internal/gateway/service_unreachable_test.go",
+          "internal/cli/docs_security_test.go",
+          "SECURITY.md",
+          "website/content/security.md"
         ]
       }
     },
@@ -269,33 +284,34 @@
       "title": "the beat, and its switch",
       "run": null,
       "version": null,
-      "tier": "small",
-      "size": 1,
-      "footprint": {
-        "prediction": true,
-        "paths": [
-          "internal/runner/budget_session.go",
-          "internal/settings/registry.go",
-          "internal/config/defaults.go",
-          "internal/runner/workspace_beat_test.go"
-        ]
-      }
-    },
-    {
-      "id": "WS14",
-      "title": "doctor, and the alarm on demand",
-      "run": null,
-      "version": null,
       "tier": "medium",
       "size": 2,
       "footprint": {
         "prediction": true,
         "paths": [
+          "internal/runner/budget_session.go",
+          "internal/runner/workspace_beat_test.go",
+          "internal/settings/registry.go",
+          "internal/config/config.go",
+          "internal/config/defaults.go",
+          "schemas/fugaro.schema.json",
+          "schemas/settings.schema.json",
+          "docs/config-management/**"
+        ]
+      }
+    },
+    {
+      "id": "WS14",
+      "title": "doctor for the workspace's service",
+      "run": null,
+      "version": null,
+      "tier": "small",
+      "size": 1,
+      "footprint": {
+        "prediction": true,
+        "paths": [
           "internal/cli/doctor_workspace.go",
-          "internal/cli/workspace_alarm.go",
-          "internal/cli/workspace_json.go",
-          "internal/cli/doctor_workspace_service_test.go",
-          "schemas/workspace.schema.json"
+          "internal/cli/doctor_workspace_service_test.go"
         ]
       }
     },
@@ -317,7 +333,7 @@
     },
     {
       "id": "WS16",
-      "title": "the Bitbucket routes on the scope",
+      "title": "the Bitbucket git proxy on the scope",
       "run": null,
       "version": null,
       "tier": "large",
@@ -326,14 +342,13 @@
         "prediction": true,
         "paths": [
           "internal/credsvc/bitbucketproxy.go",
-          "internal/credsvc/bitbucket.go",
           "internal/credsvc/bitbucket_workspace_test.go"
         ]
       }
     },
     {
       "id": "WS17",
-      "title": "the GitHub routes on the scope",
+      "title": "a run's GitHub mint on the scope",
       "run": null,
       "version": null,
       "tier": "medium",
@@ -342,8 +357,6 @@
         "prediction": true,
         "paths": [
           "internal/credsvc/github.go",
-          "internal/credsvc/githubread.go",
-          "internal/credsvc/mergemint.go",
           "internal/credsvc/github_workspace_test.go"
         ]
       }
@@ -360,6 +373,8 @@
         "paths": [
           "internal/gateway/gitforward.go",
           "internal/runner/gateway.go",
+          "internal/runner/runner.go",
+          "internal/gitprov/providers/providers.go",
           "internal/gateway/gitforward_route_test.go"
         ]
       }
@@ -407,8 +422,25 @@
         "prediction": true,
         "paths": [
           "docs/workspaces/*.md",
+          "internal/cli/docs_workspaces_test.go",
           "docs/releases/*.md",
           "plugin/skills/working/SKILL.md"
+        ]
+      }
+    },
+    {
+      "id": "WS22",
+      "title": "the route's rule",
+      "run": null,
+      "version": null,
+      "tier": "medium",
+      "size": 2,
+      "footprint": {
+        "prediction": true,
+        "paths": [
+          "internal/budget/rules/**",
+          "internal/projectpolicy/paths.go",
+          "internal/cli/update_converge_test.go"
         ]
       }
     },
@@ -498,7 +530,7 @@
     {
       "task": "WS5",
       "needs": "C1",
-      "reason": "the resolver"
+      "reason": "the resolver's constructor"
     },
     {
       "task": "WS5",
@@ -506,14 +538,24 @@
       "reason": "the environment names"
     },
     {
+      "task": "WS5",
+      "needs": "C3",
+      "reason": "the node it decodes"
+    },
+    {
       "task": "WS7",
       "needs": "WS6",
-      "reason": "it plans against the root's variables and cover, which are behaviour"
+      "reason": "it plans against the root's variables and cover, and both edit workspace_create.go"
+    },
+    {
+      "task": "WS7",
+      "needs": "WS22",
+      "reason": "both edit update_converge_test.go"
     },
     {
       "task": "WS8",
       "needs": "WS1",
-      "reason": "both rewrite cascade.go"
+      "reason": "both rewrite cascade.go, and the meter is read from the scope WS1 threads"
     },
     {
       "task": "WS10",
@@ -538,17 +580,12 @@
     {
       "task": "WS14",
       "needs": "C2",
-      "reason": "the names"
+      "reason": "the names and the route record"
     },
     {
       "task": "WS14",
       "needs": "C3",
       "reason": "the node it reads"
-    },
-    {
-      "task": "WS14",
-      "needs": "WS3",
-      "reason": "both edit schemas/workspace.schema.json"
     },
     {
       "task": "WS15",
@@ -579,6 +616,11 @@
       "task": "WS18",
       "needs": "WS11",
       "reason": "it uses the upstream WS11 builds and both edit runner/gateway.go"
+    },
+    {
+      "task": "WS18",
+      "needs": "WS12",
+      "reason": "it reuses WS12's wait"
     },
     {
       "task": "WS19",
@@ -616,6 +658,11 @@
       "reason": "the statements become true only then"
     },
     {
+      "task": "WS22",
+      "needs": "C2",
+      "reason": "the leaf's path"
+    },
+    {
       "task": "I1",
       "needs": "C1",
       "reason": "the contract it rejoins"
@@ -633,61 +680,31 @@
     {
       "task": "I1",
       "needs": "WS1",
-      "reason": "it wires this side and deletes the stubs"
+      "reason": "it is a side of an edge a contract broke, re-joined here"
     },
     {
       "task": "I1",
       "needs": "WS2",
-      "reason": "it wires this side and deletes the stubs"
+      "reason": "it is a side of an edge a contract broke, re-joined here"
     },
     {
       "task": "I1",
       "needs": "WS4",
-      "reason": "it wires this side and deletes the stubs"
+      "reason": "it is a side of an edge a contract broke, re-joined here"
     },
     {
       "task": "I1",
       "needs": "WS5",
-      "reason": "it wires this side and deletes the stubs"
-    },
-    {
-      "task": "I1",
-      "needs": "WS8",
-      "reason": "it wires this side and deletes the stubs"
-    },
-    {
-      "task": "I1",
-      "needs": "WS9",
-      "reason": "it wires this side and deletes the stubs"
-    },
-    {
-      "task": "I1",
-      "needs": "WS11",
-      "reason": "it wires this side and deletes the stubs"
-    },
-    {
-      "task": "I1",
-      "needs": "WS15",
-      "reason": "it wires this side and deletes the stubs"
-    },
-    {
-      "task": "I1",
-      "needs": "WS16",
-      "reason": "it wires this side and deletes the stubs"
-    },
-    {
-      "task": "I1",
-      "needs": "WS17",
-      "reason": "it wires this side and deletes the stubs"
-    },
-    {
-      "task": "I1",
-      "needs": "WS18",
-      "reason": "it wires this side and deletes the stubs"
+      "reason": "it is a side of an edge a contract broke, re-joined here"
     },
     {
       "task": "I1",
       "needs": "WS6",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS9",
       "reason": "it is a side of an edge a contract broke, re-joined here"
     },
     {
@@ -697,13 +714,48 @@
     },
     {
       "task": "I1",
+      "needs": "WS11",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
       "needs": "WS14",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS15",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS16",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS17",
       "reason": "it is a side of an edge a contract broke, re-joined here"
     },
     {
       "task": "I1",
       "needs": "WS20",
       "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS22",
+      "reason": "it is a side of an edge a contract broke, re-joined here"
+    },
+    {
+      "task": "I1",
+      "needs": "WS8",
+      "reason": "the end-to-end test meters a call"
+    },
+    {
+      "task": "I1",
+      "needs": "WS18",
+      "reason": "the end-to-end test pushes through the routed git path"
     },
     {
       "task": "R-route-home",
@@ -770,6 +822,24 @@
     {
       "contract": "C2",
       "was": {
+        "task": "WS14",
+        "needs": "WS9"
+      },
+      "integration": "I1",
+      "reason": "doctor reads the route record, not who publishes it"
+    },
+    {
+      "contract": "C2",
+      "was": {
+        "task": "WS22",
+        "needs": "WS9"
+      },
+      "integration": "I1",
+      "reason": "the rule names the leaf's path, not who writes the leaf"
+    },
+    {
+      "contract": "C2",
+      "was": {
         "task": "WS5",
         "needs": "WS6"
       },
@@ -793,6 +863,15 @@
       },
       "integration": "I1",
       "reason": "the scope reads the node's shape, not its writer"
+    },
+    {
+      "contract": "C3",
+      "was": {
+        "task": "WS5",
+        "needs": "WS4"
+      },
+      "integration": "I1",
+      "reason": "serve decodes the node's shape, not its writer"
     },
     {
       "contract": "C3",
@@ -829,15 +908,6 @@
       },
       "integration": "I1",
       "reason": "the route reads a forge entry's shape, not the pool's code"
-    },
-    {
-      "contract": "C2",
-      "was": {
-        "task": "WS14",
-        "needs": "WS9"
-      },
-      "integration": "I1",
-      "reason": "doctor reads the route record, not who publishes it"
     }
   ],
   "contract_changes": [
@@ -845,10 +915,11 @@
       "change": "R-route-home",
       "contract": "C2",
       "raised_by": "WS9",
-      "reason": "if the route must live in the member's policy rather than beside its credential state",
+      "reason": "if the route's leaf must sit elsewhere under the policy",
       "affects": [
         "WS11",
-        "WS14"
+        "WS14",
+        "WS22"
       ]
     },
     {
