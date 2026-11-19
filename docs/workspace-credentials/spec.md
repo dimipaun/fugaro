@@ -1,6 +1,6 @@
 # Workspace credentials: a person's tokens and the shared keys, held once
 
-**Status: every decision is answered (D2960–D2977, owner, 2026-11-19); no plan is written, no task
+**Status: every decision is answered (D2960–D2979, owner, 2026-11-19); no plan is written, no task
 exists and none is approved.** An independent review of 2026-11-19 found that four of the first
 eight answers could not be built as written; §5's ten decisions replace or complete them, and the
 owner answered those the same day. **This work waits on the workspace's service being deployed
@@ -9,7 +9,7 @@ under its own plan (D2968), and D2975 is wider than this addendum (§5).** Writt
 [the workspaces design](../workspaces/README.md) and to
 [workspace projects and users](../workspace-projects-users/README.md).
 
-**Numbers reserved:** decisions **D2960–D2979** (D2960–D2977 used). **The first eight were asked and
+**Numbers reserved:** decisions **D2960–D2979** (all twenty used). **The first eight were asked and
 answered as D2930–D2937**; that block was taken by `docs/review-against-task` while this draft was
 open, so they are renumbered here one for one (D2930 is D2960, and so on to D2937 as D2967). Read on
 2026-11-19: no file on `main` and no open pull request uses D2960 or higher.
@@ -110,6 +110,28 @@ The first option of each is the recommendation.
 | **D2975** | OpenRouter, given D150, D1634 and D1670 | **(a) Leave it mounted per project for now**; revisit when Check 50 opens the provider tier. (b) Reverse the three decisions for workspace members now | The key is deliberately on the runner path, answered on 2026-11-17. Moving it also needs the per-repository flip discipline of secrets brokering |
 | **D2976** | Lending a personal token | **(a) Never**; what is shared is a shared entry (D2969). (b) An opt-in per token, amending R7 and R11 | Keeps one meaning for "personal". Consequence either way: a run launched by a service account (the coordinator, the orchestrator) never holds a personal token |
 | **D2977** | "Every member" for a shared entry | **(a) A new key `all_members`**, with a version bump of the node and a guard for an older service, and only once the cap meter is wired. (b) `*` in the list | The allow-list is the workspace owner's fence over its own money. Without the meter nothing bounds a member that joins later |
+
+## 5a. The uniform rule, and what the plan is held to
+
+The owner, 2026-11-19, after the ten answers above: the rule should apply uniformly to every key and
+token, the Bitbucket token included. Two decisions record it, both answered that day as recommended.
+
+| # | Question | Answer | Why |
+| --- | --- | --- | --- |
+| **D2978** | Is there one rule for every credential kind? | **Yes.** Any credential (a Claude token, an Anthropic or OpenRouter key, a Bitbucket or GitHub credential) may be stored at the project or at the workspace. The project's copy is looked up first and the workspace's is the fallback, and on the fallback the workspace's allow-list still decides. A personal token still never falls back to a shared entry (D2974) | One rule and no special cases; it is D2973 stated for every kind |
+| **D2979** | Which service carries the traffic of a credential the workspace holds? | **The one that holds it.** The workspace's service proxies the calls, git included, and never hands the value to a member's service. A project that wants its git traffic local stores its own token | A member's admins control their own service, so a value handed to it is a value they can take. The load is measured and scaled instead |
+
+Three constraints on the plan follow, the first two the owner's own concerns of the same day:
+
+- **One code path.** The workspace's service and a project's are one binary and one implementation
+  (`internal/credsvc`); the workspace's differs only in its per-member checks, and a project's
+  service is the one-member case. The plan adds no second implementation of a route.
+- **A live load check before anything depends on it.** The workspace's service carries every
+  member's model calls on shared credentials, and the git traffic of any Bitbucket token it holds.
+  A numbered check measures it at a realistic count of concurrent runs, and the plan sets the
+  instance and concurrency limits explicitly; today they are the platform's defaults.
+- **One service down stops every member's shared calls.** The plan states what a member's run does
+  then, and keeps the service warm as Check 511 does for a project's.
 
 ## 6. What it costs
 
