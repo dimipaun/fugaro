@@ -1785,12 +1785,12 @@ func TestCoverRefusesAVoiceServiceThatIsNotTheModules(t *testing.T) {
 // TestCoverRefusesAMobileServiceThatIsNotTheModules is the public mobile
 // service's counterpart of the hop's test above (mobile plan task P5): the
 // second public Cloud Run service of the credentials service's own image,
-// served from the same module, and the fixture is the golden plan
-// scripts/gen-golden-plans.sh makes from
-// internal/infra/testdata/installation-credentials.tfvars.json — the ONE
-// installation golden whose credentials service is on, which is the local the
-// mobile service's own switch is — so the "as the module writes it" row is the
-// module's real service and every other row is one attribute of it moved.
+// served from the same module, and the plan read here is installation-mobile:
+// the golden scripts/gen-golden-plans.sh makes from the credentials fixture
+// with the switch on, which is the ONE installation golden whose tfvars pass it
+// (the switch is off by default, and `fugaro update` writes no key for it) — so
+// the "as the module writes it" row is the module's real service and every
+// other row is one attribute of it moved.
 //
 // Every rule mobileServiceChange carries is a row below, and each is the
 // service's own rather than a general one: this address answers anyone on the
@@ -1811,7 +1811,7 @@ func TestCoverRefusesAMobileServiceThatIsNotTheModules(t *testing.T) {
 	// A fresh golden per row: a change's After is the plan's own map, so a
 	// mutation written into the plan one row loaded would carry into the next.
 	load := func() (ResourceChange, ResourceChange) {
-		p := goldenPlan(t, "installation-credentials")
+		p := goldenPlan(t, "installation-mobile")
 		return resource(t, p, svcAddr), resource(t, p, acctAddr)
 	}
 	_, first := load()

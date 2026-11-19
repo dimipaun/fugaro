@@ -66,6 +66,21 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 		// for the same reason any other person-grant is, and the one grant of
 		// theirs the run does not cover whole is pinned below.
 		"installation-credentials": {"user:person-1@example.com"},
+		// The mobile switch ON beside the credentials service (mobile plan task
+		// P5; D2782 as amended by F31, O8): the second Cloud Run service of the
+		// credentials image, its account, its database binding and its public
+		// invoker binding are planned here, and that binding is the plan's
+		// single finding below — the cover names no kind for `allUsers`, exactly
+		// as on the front door's and the hop's own bindings. It is a golden of
+		// its own and not installation-credentials with the key: `fugaro update`
+		// writes no key for the switch, so every other installation golden here
+		// is what a previous-version installation plans, and
+		// installation-credentials and installation-voice stay the pair that
+		// differs by the voice hop alone (deploy/terraform's
+		// TestVoiceProviderKeyOptOutIsTwoSteps reads the two against each other).
+		// The fixture is the credentials golden's own, so it carries that
+		// operator's grants too.
+		"installation-mobile": {"user:person-1@example.com"},
 		// The credentials service ON and NO profiles at all: the ONE implicit
 		// default review job (the owner's requirement of 2026-11-13) is
 		// planned here and nowhere else — its job, its own account and its two
@@ -133,9 +148,11 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 				c.LicenceRenewalSecret = "fugaro-project-aurora-licence-renewal-0e382f732fd21bbd"
 			}
 			got := c.NotCovered(p, nil)
-			// installation-credentials is the one golden whose fixture names an
-			// operator, so it is also the one plan that creates the grants an
-			// operator receives (iam.tf's `for_each = toset(var.operators)`) —
+			// The credentials fixture is the one fixture that names an operator,
+			// and the three goldens made from it (installation-credentials,
+			// installation-voice and installation-mobile) are the plans that
+			// create the grants an operator receives (iam.tf's
+			// `for_each = toset(var.operators)`) —
 			// and one of those, objectAdmin on the installation's state bucket,
 			// is on a bucket a run's own cover does not carry: Cover.Buckets is
 			// the runs bucket alone, because `fugaro setup` creates the state
@@ -161,29 +178,29 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 			// really emits.
 			// The public mobile service's own invoker binding (mobile plan task
 			// P5; D2782 as amended by F31, O8) is the same state one service
-			// over, and it is in ONE plan of this root: installation-credentials,
+			// over, and it is in ONE plan of this root: installation-mobile,
 			// whose tfvars carry the mobile switch beside the credentials
-			// service the fixture already turns on. The switch is what creates
-			// the mobile service, its account and this binding
-			// (mobile_service.tf), and the script adds the key rather than a
-			// fixture writing it, because `fugaro update` writes no key for it
-			// until a released image runs the mode the service is started in.
-			// installation-review and installation-voice carry the credentials
-			// service and NOT the switch, which is the shape a
-			// previous-version installation's plan has: no service, no public
-			// binding, no finding. The member is on purpose, the cover names no
-			// kind for `allUsers` (the front door's and the hop's state), and
-			// what refuses the member everywhere else is deploy/terraform's
+			// service. The switch is what creates the mobile service, its
+			// account and this binding (mobile_service.tf), and the script adds
+			// the key rather than a fixture writing it, because `fugaro update`
+			// writes no key for it until a released image runs the mode the
+			// service is started in. Every other plan of this root — the three
+			// credentials goldens among them — carries the credentials service
+			// and NOT the switch, which is the shape a previous-version
+			// installation's plan has: no service, no public binding, no finding.
+			// The member is on purpose, the cover names no kind for `allUsers`
+			// (the front door's and the hop's state), and what refuses the member
+			// everywhere else is deploy/terraform's
 			// TestAllUsersIsRefusedOnEveryOtherResource. The two appends are in
 			// the order the plans emit their changes, sorted by address.
 			want := []string{}
-			if name == "installation-credentials" {
+			if name == "installation-mobile" {
 				want = append(want, `module.installation.google_cloud_run_v2_service_iam_member.mobile_public[0] (grants to allUsers, who is not on the review screen)`)
 			}
 			if name == "installation-voice" {
 				want = append(want, `module.installation.google_cloud_run_v2_service_iam_member.voice_public[0] (grants to allUsers, who is not on the review screen)`)
 			}
-			if name == "installation-credentials" || name == "installation-voice" {
+			if name == "installation-credentials" || name == "installation-voice" || name == "installation-mobile" {
 				want = append(want, `module.installation.google_storage_bucket_iam_member.state["user:person-1@example.com"] (on bucket fugaro-tfstate-proj-1234, which is not this run's)`)
 			}
 			if !slices.Equal(got, want) {

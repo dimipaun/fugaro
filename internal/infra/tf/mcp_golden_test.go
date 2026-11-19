@@ -29,7 +29,8 @@ import (
 // resources).
 func TestNoGoldenPlanCreatesTheFrontDoor(t *testing.T) {
 	goldens := []string{"installation", "installation-accounts", "installation-managed", "installation-credentials", "installation-review",
-		"installation-adopt", "installation-coordinator", "installation-viewers", "firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator", "firebase-viewers",
+		"installation-adopt", "installation-coordinator", "installation-viewers", "installation-mobile",
+		"firebase", "firebase-same-project", "firebase-adopt", "firebase-coordinator", "firebase-viewers", "firebase-mobile",
 		"installation-catalog-add-repo"}
 	var sawCoordinator bool
 	for _, name := range goldens {
@@ -49,11 +50,13 @@ func TestNoGoldenPlanCreatesTheFrontDoor(t *testing.T) {
 				// The mobile service's binding (mobile plan task P5) is the one
 				// `allUsers` member these goldens legitimately carry: the mobile
 				// switch creates that service and its public binding, and
-				// installation-credentials is the ONE golden whose tfvars pass
-				// it — the script adds the key rather than a fixture writing it,
+				// installation-mobile is the ONE golden whose tfvars pass it —
+				// the script adds the key rather than a fixture writing it,
 				// because `fugaro update` writes none until a released image can
 				// run the mode the service is started in — so the member is
-				// named here rather than that plan dropped from the list. The hop's
+				// named here rather than that plan dropped from the list, and
+				// installation-mobile stays in it so the exception is read
+				// against the plan it is about. The hop's
 				// binding — the tree's other designed public endpoint — is why
 				// installation-voice is not in this list at all, and the front
 				// door's is what this test is about: it is refused above by
