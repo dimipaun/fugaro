@@ -511,6 +511,19 @@ type WorkflowSpec struct {
 	// anthropic arm). False for every other job of the repository, the base
 	// variant included.
 	StageAccount bool `json:"stage_account"`
+	// VaultSecretNames are the logical names of the workflow's OWN secrets
+	// whose values the credentials service fetches for this job (B3.8, S3,
+	// config.VaultFetchedSecretClasses): sorted, and empty while no class of
+	// secrets is fetched or while this repository is one the switch holds off.
+	//
+	// The names are here because the module needs them and cannot derive them:
+	// the job mounts none of them, so var.workflow.secret_env no longer names
+	// them, and the credentials service still has to be able to READ each one's
+	// container — it is the service, and not the job, that fetches the value now
+	// (D2074's grant, B3.4's fetch). The containers stay declared and the job's
+	// own accessors on them go (modules/workflow/sa.tf drops both through this
+	// list, and internal/infra's dropVaultMounts takes the mounts away here).
+	VaultSecretNames []string `json:"vault_secret_names,omitempty"`
 
 	Name                string            `json:"-"`
 	Slug                string            `json:"-"`
@@ -1170,10 +1183,7 @@ func (c *repoCtx) registryPath() string { return c.registryHost + "/" + gcp.Regi
 // (PIC4), which does not exist yet; when it lands, this is the reader the two
 // halves must agree through, so the name is written once.
 func (c *repoCtx) catalogImage(e config.Entry) string {
-	if e.Source.Kind == config.SourceImage {
-		return e.Source.Image
-	}
-	return c.registryHost + "/" + c.inst.SharedRegistry + "/" + catalogImagePrefix + e.Name + ":latest"
+	return catalogEntryImage(c.registryHost, c.inst.SharedRegistry, e)
 }
 
 // effectiveCatalog is the catalog the repository's specs are computed from:
@@ -1726,6 +1736,32 @@ func (c *repoCtx) workflow(name, token string) (WorkflowSpec, error) {
 	ws.StageAccount = mixedStageAccountJob(c.in.Cfg, c.lc, c.in.Repo, token)
 	if served := ModelSecretsServed(c.credentialsServiceOn, c.in.Cfg.Agent.Auth); served != config.ModelSecretServedNone {
 		dropModelMounts(&ws, served)
+	}
+	// And the workflow's OWN secrets go the same way for a repository the
+	// service serves once the class list names them (B3.8, S3): the runner
+	// fetches their values from the service at bootstrap (B3.4) instead of
+	// reading them from its own environment, so the job mounts none of them and
+	// the module drops the matching accessor — while the containers stay
+	// declared, because the service is what reads them now (D2074's grant,
+	// B3.1's record, dropVaultMounts).
+	//
+	// The class list is the switch (config.VaultFetchedSecretClasses, which has
+	// carried VaultSecretClassWorkflow since the flip's second commit; with it
+	// empty this call is a no-op), and it is the same list
+	// modules/workflow/sa.tf's own clause reads, held to it by that module's
+	// guard test. Read beside dropModelMounts because it is the same rule — a
+	// mount and an accessor are one answer — for a second class of secret.
+	if c.credentialsServiceOn {
+		dropVaultMounts(&ws, w, func(name string) bool {
+			// The repository's eligibility to use the name project-wide, which
+			// is ProjectSecretCandidates' own predicate for this name
+			// (ProjectSecretCandidateFromNode, with the two facts only this
+			// context has) and so the same answer ignoredRepoSecret and
+			// B3.1's record read: a name this says no to is one D2313 leaves
+			// storeless here, with no row for the service to serve.
+			_, ok := ProjectSecretCandidateFromNode(c.lc, name, c.in.Repo, c.provider, c.in.Policy)
+			return ok
+		})
 	}
 	ws.BuildSecrets = []string{c.gitSecret}
 	for _, s := range w.Secrets {
@@ -2423,7 +2459,17 @@ func (rs RepoSpec) Addresses() []string {
 		// read backwards: a mount the job keeps an accessor on is one the
 		// service may still be asked for (the module's set is the mounts), and
 		// a mount the job has given up is one the service is not granted.
-		for _, logical := range uniqueSecrets(ws) {
+		//
+		// Plus the containers no job mounts any more and the service fetches
+		// for it instead (B3.8, WorkflowSpec.VaultSecretNames): the module's
+		// service_secret_names is its job_mounts together with that list, so
+		// the mirror reads both. Its job_secret_names half needs nothing here
+		// — the names left ws.SecretEnv when the drop took their mounts, so
+		// uniqueSecrets below no longer names them.
+		serviceNames := uniqueSecrets(ws)
+		serviceNames = append(serviceNames, ws.VaultSecretNames...)
+		slices.Sort(serviceNames)
+		for _, logical := range slices.Compact(serviceNames) {
 			if serviceReadsSecret(rs.Installation.CredentialsService, logical, rs.BitbucketProxied) {
 				add(p + "google_secret_manager_secret_iam_member.service[" + q(logical) + "]")
 			}
@@ -2527,11 +2573,14 @@ func (rs RepoSpec) DropsBitbucketToken() bool {
 
 // serviceReadsSecret reports whether the credentials service's own account is
 // granted this logical secret's container in this repository's root (D2074,
-// B3.3): the module's service_secret_names is the values of its job_mounts, so
-// the test is "does this job still MOUNT the secret" — every mounted secret
-// except the two whose mount the module's own drop takes away once the service
-// is on, by logical name (the GitHub App's private key, C2.3) or for this
-// repository alone (a proxied repository's git credential, B1.13, G9/G15).
+// B3.3): the module's service_secret_names is the values of its job_mounts
+// together with the names the job no longer mounts and the service fetches for
+// it (B3.8, vault_secret_names; the caller passes both), so the test is "does
+// this job still MOUNT the secret, or is it one the service fetches for this
+// job" — every mounted secret except the two whose mount the module's own drop
+// takes away once the service is on, by logical name (the GitHub App's private
+// key, C2.3) or for this repository alone (a proxied repository's git
+// credential, B1.13, G9/G15).
 // config.ServiceHeldSecretNames is the same list the module's literal is held
 // to (deploy/terraform's TestServiceHeldSecretsMatchTheCredentialsService).
 //

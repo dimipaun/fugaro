@@ -316,7 +316,7 @@ func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 		}
 	}
 	if strings.Contains(rmErr.Error(), "crafts.coder.access") {
-		t.Errorf("the refusal names a craft key no command of this release could have repointed: %v", rmErr)
+		t.Errorf("the refusal names a craft key the pool already lists, so the remedy it asks for does not touch it: %v", rmErr)
 	}
 	if got := r.sm.Deleted(); len(got) != 0 {
 		t.Errorf("the command deleted %v while it was refusing", got)
@@ -326,13 +326,12 @@ func TestAccountsRmRefusesWhileAPoolStillListsTheCredential(t *testing.T) {
 	}
 }
 
-// TestAccountsRmClearsTheCraftThatNamedTheCredential: a craft's access is the
-// one key that names a credential and that no command of this release can write
-// — `fugaro update`'s own conversion writes it (init_craft_migrate.go) and the
-// generic settings path refuses a family-owned row — so refusing here would
-// leave the owner a hand edit as the only way through. The access goes with the
-// entry it named, the sentence names the key it cleared, and the file that is
-// left is one this config's own loader reads.
+// TestAccountsRmClearsTheCraftThatNamedTheCredential: the access a craft names
+// the entry with goes with it — an access left behind resolves to no credential
+// at all — while the craft's own block stays, because its model is the owner's.
+// The sentence names the key it cleared and the record it wrote
+// (node_removals), and the file that is left is one this config's own loader
+// reads. `fugaro accounts craft set` is what points the craft somewhere else.
 func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
 	r := newAddRigWith(t, accountsRmTypedCraftLocal)
 
@@ -359,9 +358,9 @@ func TestAccountsRmClearsTheCraftThatNamedTheCredential(t *testing.T) {
 // TestAccountsRmClearsTheRepositoryEntryThatNamedTheAccount: the second source
 // of an account's admission is a repository's own claude_accounts
 // (docs/project-claude-accounts.md §3), and the removal that drops the
-// declaration has to clear it too. Nothing of this release edits that list —
-// `repos.*.claude_accounts` is not a `settings set` path — so a refusal would
-// name a remedy that does not exist, and an entry left behind is a repository
+// declaration has to clear it too. `fugaro accounts repo add` is the one
+// command that writes that list and it only ever adds, so a refusal would name
+// a remedy that does not exist, and an entry left behind is a repository
 // naming an account this file no longer defines, which the publish that derives
 // the admission refuses: the repository's own runs would be left with no
 // account and the owner with a command that no longer publishes.

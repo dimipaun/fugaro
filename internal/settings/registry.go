@@ -1232,10 +1232,10 @@ var localRows = []Row{
 	// projectpolicy.ValidReportsCommitDir's, which are checks no scalar write
 	// can make. The default of `dir` is the node's own
 	// (projectpolicy.DefaultReportsCommitDir), because a block that designates
-	// a repository and names no folder commits into the folder the reports
-	// already live in (D960).
+	// a repository and names no folder commits into a folder run-digest never
+	// writes (owner ruling 2026-11-18).
 	locLocal("reports_commit.repo", "none: the project commits no report anywhere, and a written empty block is how the owner takes a designation away", "project", docPeriodicReviews),
-	locLocal("reports_commit.dir", "docs/fugaro-reviews: the report layout's own folder, which a designation that names no folder commits into (D960)", "project", docPeriodicReviews),
+	locLocal("reports_commit.dir", "docs/fugaro-reviews-mirror: a folder the report layout never writes, so a designated repository's own reports and the mirror cannot meet", "project", docPeriodicReviews),
 
 	// The node-only blocks' local carriers (config-ownership plan task N1,
 	// D2607, F22, F23): the cascade, and the record that states an explicit
@@ -1401,11 +1401,10 @@ var localRows = []Row{
 	// (docs/project-claude-accounts.md §3), so it is local-only, and it is
 	// stripped from the published copy of this map besides
 	// (localcfg.withoutRepoLocalKeys, internal/cli/sharedcfg.go's refusal on
-	// the key). The owner is the accounts family, whose `accounts rm` is what
-	// edits the list: it clears a name with the declaration it names, and this
-	// release gives no command a write that ADDS one — the list is written by
-	// hand, and `repos.*.claude_accounts` is not a `settings set` path, which
-	// is what the read's owner column may say rather than a bare command.
+	// the key). The owner is the accounts family: `fugaro accounts repo add`
+	// adds to the list and `accounts rm` clears a name with the declaration it
+	// names, and neither is a `settings set` path — which is what the read's
+	// owner column may say rather than a bare command.
 	locLocal("repos.*.claude_accounts", "nobody: the repository's runs are served by the accounts the profiles of its jobs name", "accounts", docAccounts),
 	loc("repos.*.provider", "none", "settings set", docSetup),
 	loc("repos.*.base_branch", "the project's base_branch", "settings set", docSetup),

@@ -67,16 +67,17 @@ type checkpointState struct {
 // stage-boundary pushes and the mid-stage poll both start from here, so a
 // run that never checkpoints never has a tip pushed for it. A report run
 // never does either, for the same reason and the same gate: its branch must
-// hold the commit the digest step made and nothing else (digest.go, T3.3),
-// and what a stage commits is discarded at finalize — so a tip pushed while
-// a stage runs would publish a state of the branch no run of the recipe
-// ever meant to, whatever finalize pushes after it. Finalize pushes the
-// step's own commit, once digestFinalize has put the branch back to it. A
-// challenger arm never checkpoints either, for the same reason and the same
-// gate (A2.1): it pushes nothing at all, at a stage boundary or mid-stage,
-// so no tip of it may exist for a developer to fetch.
+// hold the commit its own first step made and nothing else (the digest step's
+// generated reports, digest.go T3.3; the commit-reports step's stored ones,
+// reports_commit.go R9), and what a stage commits is discarded at finalize —
+// so a tip pushed while a stage runs would publish a state of the branch no
+// run of the recipe ever meant to, whatever finalize pushes after it. Finalize
+// pushes the step's own commit, once deterministicFinalize has put the branch
+// back to it. A challenger arm never checkpoints either, for the same reason
+// and the same gate (A2.1): it pushes nothing at all, at a stage boundary or
+// mid-stage, so no tip of it may exist for a developer to fetch.
 func (r *run) checkpointsOn() bool {
-	return r.follow == nil && !r.artifact && !r.digest && !r.shadow && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
+	return r.follow == nil && !r.artifact && !r.digest && !r.commitReports && !r.shadow && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
 }
 
 // startCheckpoints starts the stage's checkpoint goroutine on stageCtx and

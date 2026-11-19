@@ -35,7 +35,13 @@ spec, the reconciliation wins.
   flipped repository's runs reach the service through the address the release BEFORE the flip already
   handed out (B2.3, and its image half is `serviceAuthSince`), so the flip takes a mount away only
   where the serving is already in place, and the check the owner now runs afterwards is what proves it
-  on a real installation. B2.7 ships in **0.26.0**.
+  on a real installation. B2.7 ships in **0.26.0**. **B3.8's go is the same ruling's, for the S3
+  flip**: it launches now, **B3.7** (Check 194) is waived as a gate on it exactly as B2.6 is on
+  B2.7, and both B3.7 and **B3.9** (`--after-flip`) are run by the owner on the release that carries
+  the flip, in one sitting, which is what **B3.10** records afterwards. B3.8 ships in **0.27.0** —
+  the release after the 0.26.0 that carries B3.4's fetch — and its `### For operators` is the two
+  commands the flip owes (`fugaro update`, then `fugaro update --repo` per repository to switch),
+  with a repository that is not switched keeping every mount, before and after.
 - **The owner's answers of 2026-10-27 that shape the plan** (reconciliation §5):
   - **D490:** S0 in **0.13.0**; the Bitbucket proxy (S1) in **0.14.0** — the owner moved S1's proxy
     chain to **0.15.0** on 2026-10-30 (below), so 0.14.0 carries only S1's inert and data-only
@@ -898,8 +904,8 @@ name any repository its identity names (G21 binds it to the profile; D475 is the
 
 ##### B3.7: Check 194 — OWNER-RUN
 
-- **The owner types,** on a release carrying B3.1–B3.6, installation `fugaro` only: `fugaro update`, `fugaro update --repo` from the sandbox checkout, `CHECK194_REPO=<sandbox repository> bash scripts/live-checks/check194.sh --dry-run`, then without `--dry-run`, and pastes the block back.
-- **Depends on:** B3.6 on a release.
+- **The owner types,** on the released build that carries B3.1–B3.6 **and B3.8's flip** (`brew upgrade dimipaun/tap/fugaro`; the owner's 2026-11-18 ruling moved this run behind the flip), installation `fugaro` only: `fugaro update`, `fugaro update --repo` from the sandbox checkout, `CHECK194_REPO=<sandbox repository> bash scripts/live-checks/check194.sh --dry-run`, then without `--dry-run`, and pastes the block back. No agent runs any step.
+- **Depends on:** B3.6, and on the release carrying B3.8. **The PASS this task was to give B3.8 is waived by the owner's 2026-11-18 ruling**: the check is run after the flip, in the same sitting as B3.9, and B3.10 records both.
 
 ##### B3.8: The S3 flip (G17) — SECURITY-SENSITIVE, owner-gated
 
@@ -907,13 +913,14 @@ name any repository its identity names (G21 binds it to the profile; D475 is the
 - **Tests:** `TestVaultFetchedClassesMatchTheModule`, `TestEmptyVaultListChangesNothing`, `TestFilledVaultListDropsWorkflowMountsAndAccessors`, `TestFilledVaultListKeepsAnUnswitchedRepository`, `TestLaunchRefusesAVaultRunOnAnOldImage`; `TestUpdateLeavesARunInFlightRunning`.
 - **Command:** B1.8's Terraform command, then `go test ./internal/infra/ ./deploy/terraform/ -run 'VaultFetched|VaultList' -count=1 && GOFLAGS=-p=2 go test ./internal/cli/ -run 'TestLaunchRefusesAVaultRun|TestUpdateLeavesARunInFlightRunning' -count=1`
 - **Red step:** `TestVaultFetchedClassesMatchTheModule`: neither side exists.
-- **Depends on:** B3.7 PASS and the owner's go (the second commit). **Serialize after** B2.7 (`providers.go`, `recipes_skew.go`, `launch_budget.go`, `.claude/rules/credentials-service.md`) and B3.3 (`sa.tf`). **Reviewer tier:** opus + mandatory independent review.
+- **The owner's go:** **given, 2026-11-18**, together with the launch of the other three flips (B2.7, B4.9, B5.7) and the move of the owner-run checks (B3.7, B3.9) to after the flip — so this task is not gated on B3.7's PASS. It ships in **0.27.0** — the release after the 0.26.0 that carries B3.4's fetch, which is the release `vaultSince` names — and the release's `### For operators` is what the flip owes an operator: run `fugaro update`, then `fugaro update --repo` from the checkout of each repository whose workflow secrets are to be brokered, and a repository that is not switched keeps every mount, before and after.
+- **Depends on:** the owner's go (given) and B3.6 (whose check the owner moved behind the flip). **Serialize after** B2.7 (`providers.go`, `recipes_skew.go`, `launch_budget.go`, `.claude/rules/credentials-service.md`) and B3.3 (`sa.tf`). **Reviewer tier:** opus + mandatory independent review.
 - **Commit:** `config, terraform: switched repositories fetch their workflow secrets and stop mounting them`
 
 ##### B3.9: Check 194 `--after-flip` — OWNER-RUN
 
 - **The owner types,** on the release carrying B3.8: `fugaro update`, `fugaro update --repo` with a run in flight, `bash scripts/live-checks/check194.sh --after-flip`, and pastes the block back.
-- **Depends on:** B3.8 on a release.
+- **Depends on:** B3.8 on a release; **run in the same sitting as B3.7**, which the owner's 2026-11-18 ruling moved behind the flip, and followed by B3.10's two commits.
 
 ##### B3.10: Check 194's runs recorded
 
@@ -1085,7 +1092,8 @@ D1982's one sentence; **T2.6**'s phase-3 half and **T2.7** (Check 181) follow T2
 
 **Edges:** B2.1→B2.2; {B2.2, B2.3}→B2.4; {B2.3, B2.4}→B2.5; B2.5→B2.7 (the owner's go of 2026-11-18
 waived B2.6's PASS as a gate, so B2.6 runs after the flip); B2.7→B2.6→B2.8, and {B2.6, B2.8}→B2.9.
-B3.1→B3.2→B3.4; {B3.3, B3.4}→B3.5; {B3.4, B3.5}→B3.6→B3.7→B3.8→B3.9; {B3.7, B3.9}→B3.10.
+B3.1→B3.2→B3.4; {B3.3, B3.4}→B3.5; {B3.4, B3.5}→B3.6; B3.6→B3.8 (the owner's go of 2026-11-18
+waived B3.7's PASS as a gate, so B3.7 runs after the flip); B3.8→B3.7→B3.9, and {B3.7, B3.9}→B3.10.
 B4.1→B4.2→{B4.3, B4.4}; B3.2→B4.3; {B4.3, B4.4}→B4.5→B4.6; {B4.5, B4.6}→B4.7→B4.8→B4.9→B4.10;
 {B4.2, B4.8, B4.10}→B4.11. B5.1→B5.2→B5.3→B5.4; {B5.3, B5.4}→B5.5→B5.6→B5.7→B5.8; {B5.6, B5.8}→B5.9.
 Decisions: D2070→B2.1; D2071→{B2.2, B2.3}; D2072→{B2.3, B2.7}; D2073→B3.1; D2074→B3.3; D2075→B3.5;
@@ -1107,9 +1115,9 @@ B5.1}; #2274, #2275→B2.2; #2166→{B2.3, B2.4, B3.3, B4.4}.
 | S3 | 2 | B3.4 |
 | S3 | 3 | B3.5 |
 | S3 | 4 | B3.6 |
-| S3 | 5 | B3.7 (OWNER-RUN) |
-| S3 | 6 | B3.8, B3.10 (first commit) |
-| S3 | 7 | B3.9 (OWNER-RUN), then B3.10 (second commit) |
+| S3 | 5 | B3.8, B3.10 (first commit) |
+| S3 | 6 | B3.7 (OWNER-RUN, on the release the flip ships in) |
+| S3 | 7 | B3.9 (OWNER-RUN, the same sitting), then B3.10 (second commit) |
 | S4 | 0 | B4.1 |
 | S4 | 1 | B4.2 (OWNER-RUN, the gate) |
 | S4 | 2 | B4.3, B4.4 |

@@ -169,10 +169,13 @@ const (
 	// have accepted it, and this is the account a PHONE's request runs as — an
 	// endpoint anyone on the internet can reach (voice.tf's allUsers binding),
 	// reading the installation's whole Realtime Database instance through
-	// fugaroStateRead. Exactly one row carries the bit (the custom read role,
-	// which is also the front door's), and voiceStateReadGrant narrows it
-	// further to that role, on the project the module declares it in, under no
-	// condition. Appended rather than inserted, for toReports' reason.
+	// fugaroStateRead. Two rows carry the bit: the custom read role, which is
+	// also the front door's, narrowed further by voiceStateReadGrant to that
+	// role, on the project the module declares it in, under no condition; and
+	// — since P5.3.5's forwarding half — the per-container
+	// roles/secretmanager.secretAccessor on the provider-key container, whose
+	// target voiceProviderKeyGrant reads for the renewal job's reason.
+	// Appended rather than inserted, for toReports' reason.
 	//
 	// The hop's OTHER reach — the allUsers member on its own invoker binding —
 	// is deliberately NOT a kind here, which is the front door's own state and
@@ -475,7 +478,18 @@ var grantRules = map[string]map[string]who{
 		// project-wide one above, and it is a reader in section 4.3's table
 		// rather than the only one: a project Owner or Editor reads any
 		// container's value past its own policy.
-		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toBuildIdentity | toOrchestrator,
+		// toVoice is P5.3.5's row and the hop's second reach: the provider-key
+		// container secrets.tf creates and binds to its own account, which is
+		// the one credential the forwarding half holds (voice.tf's header,
+		// SECURITY.md). Like the renewal job's row above it is a binding whose
+		// CONTAINER is what makes it the modules', so voiceProviderKeyGrant
+		// reads the target — the literal ID internal/backend/gcp's
+		// VoiceProviderKeysSecret carries and secrets.tf repeats — and refuses
+		// a binding of this account on any other container of the project. The
+		// bit alone would admit the hop as a reader of every container the
+		// other kinds here are bound on, which is why the grant is checked
+		// rather than accepted by the row.
+		"roles/secretmanager.secretAccessor":     toAccounts | toCredentials | toCoordinator | toBuildIdentity | toOrchestrator | toVoice,
 		"roles/secretmanager.secretVersionAdder": toPeople,
 		"roles/secretmanager.viewer":             toPeople,
 	},
@@ -1380,9 +1394,11 @@ func (c Cover) isOrchestratorMember(m string) bool {
 
 // isVoiceMember is whether m is the voice hop's own account as an IAM member,
 // in the installation's project: the account voice.tf creates and the service
-// runs as (VoiceAccountID). It classifies the account's PROJECT grant — the one
-// read role — and nothing else: the hop's other grant is to nobody at all, and
-// the member it names is allUsers, which no kind here carries (toVoice).
+// runs as (VoiceAccountID). It classifies the account's two grants — the
+// project read role voiceStateReadGrant narrows and, since P5.3.5, the
+// provider-key binding voiceProviderKeyGrant narrows — and nothing else: the
+// hop's remaining reach is its PUBLIC invoker binding, whose member is
+// allUsers, which no kind here carries (toVoice).
 func (c Cover) isVoiceMember(m string) bool {
 	p := c.installationProject()
 	return p != "" && m == "serviceAccount:"+VoiceAccountID+"@"+p+".iam.gserviceaccount.com"
@@ -1417,6 +1433,49 @@ func (c Cover) voiceStateReadGrant(rc ResourceChange) string {
 		return why
 	case len(conds) != 0:
 		return "grants the voice hop's account its database read under a condition, which the module never sets: RTDB IAM cannot express a path prefix, so a condition here would fence nothing"
+	}
+	return ""
+}
+
+// voiceProviderKeyGrant is licenceSecretGrant's rule for the hop's
+// provider-key binding (P5.3.5): the role is the row's own
+// (roles/secretmanager.secretAccessor on google_secret_manager_secret_iam_member,
+// checked before this is called) and what is left is WHICH container it is on —
+// the module-owned literal secrets.tf writes and internal/backend/gcp's
+// VoiceProviderKeysSecret repeats, holding the document of register names to
+// provider keys the forwarding half reads as this account.
+//
+// Why the container is checked rather than the row trusted: the bit admits
+// this account to the per-secret accessor cell, and a cell is every container
+// the other kinds of that row are bound on — the installation's credentials
+// bundle, a repository's own secrets, the front door's App key, the renewal
+// container. A plan that pointed the hop's binding at one of those would hand
+// a service anyone on the internet may call the credentials of another part of
+// the installation, and the target is the only thing left that says otherwise.
+//
+// The container may be unknown, and then the grant is refused: the ID is a
+// literal in the module (Terraform cannot compute a gcp.ProjectSecretID — the
+// suffix is a hash), never a computed attribute of a resource in this plan, so
+// "unknown" means the plan did not take it from the module's own text. The
+// comparison is against the Go constant and not against a value the caller
+// carries (licenceSecretGrant's Cover.LicenceRenewalSecret), because this
+// container's name is the same literal for every installation: secrets.tf
+// writes it, deploy/terraform's TestVoiceProviderKeysContainerIsTheGoSpelling
+// holds the two spellings together, and a cover with a different one to name
+// would be a second place the name could drift.
+func (c Cover) voiceProviderKeyGrant(rc ResourceChange) string {
+	if unknown(rc.Change, "secret_id") {
+		return "grants the voice hop's account a secret whose secret_id is not known: it is the provider-key container, which the module writes as the literal " + safetext.Field(gcp.VoiceProviderKeysSecret) + " and never as a computed attribute"
+	}
+	if id := str(rc.Change.After["secret_id"]); id != gcp.VoiceProviderKeysSecret {
+		return "grants the voice hop's account roles/secretmanager.secretAccessor on the secret " + safetext.Field(id) + ", which is not its provider-key container (" + safetext.Field(gcp.VoiceProviderKeysSecret) + "): those keys are the one credential the forwarding half holds, and every other container of this project belongs to another part of the installation (P5.3.5)"
+	}
+	conds, why := grantConditions(rc.Change, "a secret grant")
+	switch {
+	case why != "":
+		return why
+	case len(conds) != 0:
+		return "grants the voice hop's account its provider keys under a condition: the container is the fence, and the module never adds one (secrets.tf)"
 	}
 	return ""
 }
@@ -1766,24 +1825,29 @@ var (
 )
 
 // voiceServiceArgs and voiceServiceEnv are the argv and the environment
-// voice.tf writes for the voice hop's container (P5.3.3), and nothing else is
-// admitted on it: the released image's `voice serve` subcommand — the same
-// image and the same pin the credentials service and the intake run, whose
-// default command serves the credentials service — and the TWO names
-// internal/cli/voice_serve.go reads, the Firebase project whose ID tokens the
-// process verifies and the Realtime Database it reads the device node and the
-// policy from.
+// voice.tf writes for the voice hop's container (P5.3.3, extended by P5.3.5),
+// and nothing else is admitted on it: the released image's `voice serve`
+// subcommand — the same image and the same pin the credentials service and the
+// intake run, whose default command serves the credentials service — and the
+// THREE names internal/cli/voice_serve.go reads: the Firebase project whose ID
+// tokens the process verifies, the Realtime Database it reads the device node
+// and the policy from, and the installation's GCP project, which is where the
+// provider-key container the forwarding half reads lives.
 //
-// Two names and not the credentials service's twelve, because the hop holds no
-// bundle, no job table and no address of its own: its callers are phones whose
-// tokens are minted for the Firebase project, so there is no service URL in its
-// environment (and no second apply to fill one). A name added here is a value
-// the process would read out of the module rather than the deployment, which is
-// the one path a credential could reach a container without a Secret Manager
-// read — the reason the credentials service's own allow-list is enumerated.
+// Three names and not the credentials service's twelve, because the hop holds
+// no bundle, no job table and no address of its own: its callers are phones
+// whose tokens are minted for the Firebase project, so there is no service URL
+// in its environment (and no second apply to fill one). A name added here is a
+// value the process would read out of the module rather than the deployment,
+// which is the one path a credential could reach a container without a Secret
+// Manager read — the reason the credentials service's own allow-list is
+// enumerated, and the reason the provider-key container's ID is NOT one of
+// these three: FUGARO_GCP_PROJECT plus the constant in
+// internal/backend/gcp names that container, so no secret ID is a value of this
+// environment at all.
 var (
 	voiceServiceArgs = []string{"voice", "serve"}
-	voiceServiceEnv  = []string{"FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL"}
+	voiceServiceEnv  = []string{"FUGARO_FIREBASE_PROJECT", "FUGARO_RTDB_URL", "FUGARO_GCP_PROJECT"}
 )
 
 // orchestratorServiceResource, orchestratorServiceArgs, orchestratorServiceEnv
@@ -2324,10 +2388,19 @@ func (c Cover) grant(rc ResourceChange, creates, createdSAIDs, heldSAIDs map[str
 		}
 	}
 	// The renewal job's one secret binding is a row on a container:
-	// licenceSecretGrant reads the target, and it is the only secret grant in
-	// this file whose container is checked (plan K4.2).
+	// licenceSecretGrant reads the target, and it is one of the two secret
+	// grants in this file whose container is checked (plan K4.2).
 	if why == "" && t == "google_secret_manager_secret_iam_member" && c.isLicenceMember(str(rc.Change.After["member"])) {
 		why = c.licenceSecretGrant(rc)
+	}
+	// ... and the hop's provider-key binding is the other (P5.3.5): the same
+	// shape and the same reason, over the container secrets.tf writes for the
+	// forwarding half. The account's OTHER grant — the database read — is the
+	// project row checked above (voiceStateReadGrant), and the two are read
+	// here rather than in one function because their rows and their targets
+	// are different.
+	if why == "" && t == "google_secret_manager_secret_iam_member" && c.isVoiceMember(str(rc.Change.After["member"])) {
+		why = c.voiceProviderKeyGrant(rc)
 	}
 	if why == "" && t == "google_project_iam_member" && !unknown(rc.Change, "role") && str(rc.Change.After["role"]) == "roles/batch.jobsEditor" {
 		why = c.jobsCondition(rc.Change)
@@ -4602,7 +4675,7 @@ func (c Cover) intakeServiceChange(rc ResourceChange, a map[string]any, unk any,
 //     at BOTH levels because the provider computes one of them otherwise (the
 //     service-level block's), which is why both are read here.
 //
-// The environment is the two names the process reads (voiceServiceEnv), held
+// The environment is the three names the process reads (voiceServiceEnv), held
 // to literal values and no value_source for the credentials service's reason:
 // the environment is the one path a value could reach this process without a
 // Secret Manager read — and this process is reachable by anyone, so an entry

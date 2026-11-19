@@ -342,7 +342,13 @@ func refuseCredentialIn(e config.Entry, data []byte) error {
 	lines, esc := dockerfileLines(data)
 	for _, line := range lines {
 		if asksForASecret(line.text) {
-			return SecretRefusal(e.Name, line.line)
+			err := SecretRefusal(e.Name, line.line)
+			if e.Source.Kind == config.SourceDockerfile {
+				// The file is read at the entry's own branch, which can be an
+				// old one that still carries what main no longer does.
+				return fmt.Errorf("%w (read from %s at %s)", err, pluginwire.Printable(e.Source.Repo), pluginwire.Printable(cmp.Or(e.Source.Branch, "its default branch")))
+			}
+			return err
 		}
 		if err := refuseCredentialNames(e, line.text, esc); err != nil {
 			return err

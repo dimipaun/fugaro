@@ -112,7 +112,8 @@ output "job_mounts" { value = local.job_mounts }
 			// the exemption means for the jobs below, and with the cascade arm
 			// (model_secrets_served = "all") it changes nothing either way: the
 			// exception is the anthropic arm's alone.
-			"stage_account": false,
+			"stage_account":      false,
+			"vault_secret_names": []string{},
 		},
 		"bitbucket_proxied": proxied,
 		// The arms these tests evaluate are the cascade's, which is what every
