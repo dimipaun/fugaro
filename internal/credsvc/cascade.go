@@ -26,20 +26,24 @@ import (
 // candidates narrows the bundle to the credentials this call may use, and
 // reports the ones it did not, with why.
 //
-// A tier-B credential needs no admission: it is the project's own paid key,
-// and the policy that admits spending at all (`fallback: auto`) is the same
-// policy that admits it. A tier-A credential needs O4's three-legged
-// admission, and that is why the admission is read only when the bundle holds
-// one: a repository with no shared token is never given tier A, and an
-// installation whose bundle holds no tier-A credential never consults an
-// admission at all (Global Constraint 4's drop, if it had applied).
+// It is the scope's narrowing in two halves (C1, R1). The SCOPE answers what the
+// caller may be offered at all — the bundle's entries for an installation, the
+// workspace's shared node over them for a member (Offering) — and this function
+// narrows that list by what the scope's own policy admits and by what the
+// repository's own record says. A tier-B credential needs no admission: it is
+// the project's own paid key, and the policy that admits spending at all
+// (`fallback: auto`) is the same policy that admits it. A tier-A credential
+// needs O4's three-legged admission, and that is why the admission is read only
+// when the list holds one: a repository with no shared token is never given
+// tier A, and an installation whose bundle holds no tier-A credential never
+// consults an admission at all (Global Constraint 4's drop, if it had applied).
 //
 // A review caller is the one caller whose candidate list is not this
 // narrowing: the pairing has already resolved the ONE credential it may be
-// served by, and the class buys no other (reviewCandidates). It is asked here rather
-// than after the selector because this function is the one place that decides
-// which credentials a call may be offered — a review caller's list must never
-// contain an entry the cascade could fall to.
+// served by, and the class buys no other (reviewCandidates). The scope answers
+// that list as final (Offered), because a narrowed list would never contain an
+// entry a review caller may fall to — and this function is where the two are
+// told apart rather than after the selector, because the list is decided here.
 //
 // The project's crafts narrow it once more (poolOffering, MC6): a node that
 // publishes crafts offers the union of what they go out on and nothing beside
@@ -57,53 +61,78 @@ import (
 // cascade's rule, which is what a list no strategy was written for has always
 // had.
 func (s *Server) candidates(ctx context.Context, id Identity, canonical string, shared *projectpolicy.Policy, b *Bundle) ([]creds.Credential, creds.Strategy, []Tried, error) {
-	// b.Credentials() and never b.Entries(): the bundle holds the GitHub App
-	// key (C2.1), the upstream Bitbucket token (D506), the read consumer (F21),
-	// the review-signing keys (D1069) and the provider key (AK6b) as well, and
-	// none of them is a candidate for a caller's Anthropic calls. A cascade that
-	// offered one would attach an App private key, the caller's own git token or
-	// a signing key to an Anthropic call as its credential, and the provider key
-	// would refuse the whole call (a tier-C candidate is refused by
-	// checkCandidates rather than skipped) — so the filter is the accessor's
-	// rather than this loop's. The one caller offered an entry outside
-	// Credentials is a review caller, and it is offered it by its own list
-	// (reviewOfferings).
-	all := b.Credentials()
+	// The pool this call may be served from is the SCOPE's (C1, R1): which
+	// credentials a call may be served is a fact about the caller the scope
+	// verified — the member it resolved to — and the scope is what decides it,
+	// out of the bundle's entries for an installation and out of the
+	// workspace's shared node over them for a member. The identity and the
+	// repository arrive as arguments because that is how the front door passes
+	// them down; they were read from the scope (ServeHTTP), and so is every
+	// reader below.
+	sc := scopeOfCall(ctx, s)
+	pool, err := sc.Offering().Offering(ctx, b)
+	if err != nil {
+		// The scope could not read what it offers: the refusal's own sentence is
+		// the answer, and it travels as this error rather than as an empty list,
+		// which the selector would answer with a sentence about the bundle.
+		return nil, creds.StrategyFailover, nil, err
+	}
 	if id.JobClass == ClassReview {
-		// The lookup is guarded although the pairing has already refused an
-		// account this table does not hold (pairReview): the class is the
-		// verifier's answer and the two lists are configured separately, so a
-		// caller admitted as a review one whose email this table does not carry
-		// is a deployment disagreeing with itself — and a service that panicked
-		// on a state it cannot name would be the worse answer to it.
+		// A review caller's list is its own and final (reviewCandidates): that
+		// class's credentials are decided before the cascade's own narrowing,
+		// and what it is served is the account's read-only set rather than the
+		// pool. The rule is the class's and not the scope's, because it is the
+		// pairing's answer read one way for one class (spec §2.3); what the
+		// scope answered above is asked for the same reason every other reader
+		// is — it is the pool this call belongs to — and is then not what a
+		// review call is served by.
 		ra, ok := s.reviewAccount(id.JobAccount)
 		if !ok {
+			// The lookup is guarded although the pairing has already refused an
+			// account this table does not hold (pairReview): the class is the
+			// verifier's answer and the two lists are configured separately, so
+			// a caller admitted as a review one whose email this table does not
+			// carry is a deployment disagreeing with itself — and a service that
+			// panicked on a state it cannot name would be the worse answer to
+			// it.
 			return nil, creds.StrategyFailover, nil, fmt.Errorf("%w: the calling account is not one of this service's review job accounts", ErrUnavailable)
 		}
 		out, skipped := reviewCandidates(reviewOfferings(b), ra.Account)
 		return out, creds.StrategyFailover, skipped, nil
 	}
-	cands := all
-	strategy := creds.StrategyFailover
-	var skipped []Tried
-	if offer, offerStrategy, narrowed, err := poolOffering(shared, b); err != nil {
+	// The project's crafts narrow the pool one step further (poolOffering, MC6),
+	// which is where a pool's members enter this list and where a credential no
+	// craft names leaves it. A node that publishes no crafts block narrows
+	// nothing and the call is served the whole pool — which is every
+	// installation today.
+	crafted, strategy, narrowed, err := poolOffering(shared, b)
+	if err != nil {
 		// The crafts leave this call nothing at all (poolRefusal): the refusal's
-		// own sentence is the answer, and it travels as this error rather than
-		// as an empty list, which the selector would answer with a sentence
-		// about the bundle.
+		// own sentence is the answer, and it names the crafts and not the bundle
+		// an operator would otherwise go looking in.
 		return nil, creds.StrategyFailover, nil, err
-	} else if narrowed {
-		cands, strategy = offer, offerStrategy
-		// The credentials the crafts leave out are ones this call may not be
-		// served by, which is what not_admitted means for a caller (the rule a
-		// review caller's list is built by). They are reported rather than
-		// dropped, so the run's halt message reads the same list either way:
-		// what was considered, and why each one was skipped. A fifth reason
-		// would be a value this contract's closed set does not carry.
-		for _, c := range all {
-			if !named(offer, c.Name) {
-				skipped = append(skipped, Tried{Name: c.Name, Tier: wireTier(c.Tier), Reason: ReasonNotAdmitted})
-			}
+	}
+	cands := pool
+	var skipped []Tried
+	if narrowed {
+		// The crafts are a narrowing of the POOL and never a widening of it: the
+		// list is the intersection, so a workspace's pool can only ever lose
+		// entries to a node that names more, and every credential the crafts and
+		// the pool disagree about is reported rather than dropped, so the run's
+		// halt message reads the list it was served from and what the two
+		// documents differed on.
+		cands = heldBy(crafted, pool)
+		skipped = append(skipped, craftsAndPoolSkips(crafted, pool)...)
+		if len(cands) == 0 {
+			// The crafts and this call's pool hold nothing in common: every name
+			// the crafts go out on is one the pool does not hold, so this call
+			// has no candidate at all. The refusal is the crafts' own
+			// (poolRefusal) and not an empty list handed to the selector, which
+			// answers an empty list with a sentence about the bundle — the one
+			// document that is not at fault, since what disagrees is the
+			// published node and the pool this call belongs to.
+			return nil, creds.StrategyFailover, nil, &poolRefusal{message: poolRefusalHead +
+				"the crafts go out on " + credentialNames(crafted) + ", and the pool this call belongs to holds " + credentialNames(pool)}
 		}
 	}
 	hasA := false
@@ -113,6 +142,11 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 			break
 		}
 	}
+	// The admission is the scope's policy read (R1): the child node of the
+	// repository the pairing resolved, intersected with the project's shared
+	// node. For a workspace's member it is that member's own node, read from
+	// the member's database — never the installation's, and never another
+	// member's.
 	admitted := map[string]bool{}
 	if hasA {
 		var err error
@@ -135,7 +169,16 @@ func (s *Server) candidates(ctx context.Context, id Identity, canonical string, 
 	// R7): the declaration is checked against the record and never trusted, and
 	// a repository whose record says something this call does not declare is
 	// refused rather than served the cascade (G16).
-	rec, found, err := s.cfg.State.RepoAuth(ctx, id.Slug)
+	//
+	// The record is read through the scope's OWN reader and never through its
+	// state (C1's rule 2): `fugaro update` writes it in the database of the
+	// repository's own project, so an installation answers it out of its own
+	// database and a workspace out of the MEMBER's, while the state the cascade
+	// keeps its marks and leases in is the workspace's own — and a record read
+	// out of the wrong database is an absent one, which narrowToRepoAuth reads
+	// as "the cascade, unchanged" and would serve a member's run the whole of
+	// the workspace's pool.
+	rec, found, err := sc.RepoAuth().RepoAuth(ctx, id.Slug)
 	if err != nil {
 		return nil, creds.StrategyFailover, nil, err
 	}
@@ -387,15 +430,22 @@ func offeredToReview(c creds.Credential, account string) bool {
 // The profile is the identity's own — id.Profile, which only a shared caller
 // carries and which the verifier read from this service's own row — and never
 // anything the caller sent (G21, spec §2.1).
+//
+// The policy all three facts are read from is the call's SCOPE's (R1) and not
+// this server's configuration: the installation's own published node for a call
+// an installation serves, and the member's for one a workspace serves, which is
+// what lets one admission serve both deployments. It is read from the call's
+// context, exactly as `candidates` reads its own scope (scopeOfCall).
 func (s *Server) admittedAccounts(ctx context.Context, id Identity, canonical string) (map[string]bool, error) {
-	child, found, err := s.cfg.Policy.Admissions(ctx, id.Slug)
+	policy := scopeOfCall(ctx, s).Policy()
+	child, found, err := policy.Admissions(ctx, id.Slug)
 	if err != nil {
 		return nil, err
 	}
 	if !found || child == nil || child.Credentials == nil {
 		return map[string]bool{}, nil
 	}
-	shared, found, err := s.cfg.Policy.Shared(ctx)
+	shared, found, err := policy.Shared(ctx)
 	if err != nil {
 		return nil, err
 	}

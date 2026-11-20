@@ -194,10 +194,12 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/compute/outputs.tf",
 		"gcp/roots/compute/.terraform.lock.hcl",
 		"gcp/roots/compute/tests/compute.tftest.hcl",
-		// The workspace root (workspaces plan W3): the workspace's own service
-		// and the one grant that reaches the workspace's own database, and
-		// nothing else — a job, a bucket or a repository here would be a
-		// workspace holding a member's work (spec §9).
+		// The workspace root (workspaces plan W3; WU3 of the
+		// workspace-projects-users plan added its second account): the
+		// workspace's own service, the SA fallback's IAM account that Terraform
+		// grants nothing, and the one grant that reaches the workspace's own
+		// database, and nothing else — a job, a bucket or a repository here
+		// would be a workspace holding a member's work (spec §9).
 		"gcp/roots/workspace/main.tf",
 		"gcp/roots/workspace/variables.tf",
 		"gcp/roots/workspace/outputs.tf",
@@ -1765,6 +1767,19 @@ var (
 	// that root's (internal/infra/tf's WorkspaceNotCovered, which reads the
 	// member out of the plan, and the runAccountGrants row in
 	// internal/infra/managed, which pins the whole grant).
+	// google_service_account.workspace_iam — the SA fallback's IAM account, the
+	// second account the same root creates (WU3 of the workspace-projects-users
+	// plan, D2803) — is deliberately ABSENT from the expression list below, and
+	// the absence is a decision rather than an omission: Terraform grants that
+	// account nothing anywhere in the tree. Its reach on a member is the member
+	// owner's `roles/owner` grant and its token creators are the workspace
+	// admins, both written live by the CLI (D2818, WU20), so a member
+	// expression naming it would be a plan granting an identity that already
+	// holds `roles/owner` on every linked member some further reach — and the
+	// add has to be a reviewed one.
+	// TestTheWorkspaceIAMAccountIsGrantedNowhere pins both halves: the
+	// expression is refused here, and no .tf file outside the root names the
+	// account at all.
 	// CI's `terraform` job does not reach this root yet — its loop names
 	// `installation firebase repo compute`, and the `workspace` root is staged
 	// as docs/pending-workflows/ci.yml for the owner to copy in
@@ -1898,6 +1913,12 @@ var (
 	// cover.go's grantRules, are about an installation's plan).
 	workspaceRolePath = "gcp/roots/workspace/main.tf"
 	workspaceRoleType = "google_project_iam_custom_role"
+
+	// workspaceIAMResource is the resource label of the SA fallback's account
+	// in the workspace root (WU3): the second account that root creates
+	// (D2803), which Terraform grants nothing and writes no key for. It is
+	// named here so the tests below read the root by one spelling.
+	workspaceIAMResource = "workspace_iam"
 
 	// A custom role of one of this run's projects, spelled as the literal path
 	// "projects/${var.<project>}/roles/<id>" rather than read from the role
@@ -6507,6 +6528,68 @@ func TestWorkspaceDatabaseRoleIsTheTwoDataPermissions(t *testing.T) {
 	})
 	if seen == 0 {
 		t.Errorf("no grant naming the workspace was found: this test is not reading the tree")
+	}
+}
+
+// TestTheWorkspaceIAMAccountIsGrantedNowhere is the tree-level half of the
+// workspace root's second account (WU3 of
+// docs/workspace-projects-users/implementation-plan.md, D2803, F20): Terraform
+// grants it nothing and writes no key for it, so no file outside the root that
+// creates it may name it, and a member expression for it is refused by the
+// allowlist the whole tree is held to.
+//
+// What the account IS granted is written live by the CLI, never by a plan: a
+// member's owner gives it roles/owner on their own project and its Firebase
+// project (WU20's Link), and the workspace admins hold its token-creator
+// bindings (D2818). Both are audited where they happen (D2811) and neither is
+// Terraform's to write — a plan carrying either would put the workspace's
+// authority over every linked member into the same apply that converges the
+// workspace's own project, under one confirmation.
+//
+// "Terraform writes no key" is a fact about this tree and not a claim that no
+// key can exist: iam.serviceAccounts.actAs (which roles/editor and
+// roles/iam.serviceAccountUser carry) and iam.serviceAccountKeys.create (which
+// roles/editor resolves to) make one anyway on a project Fugaro does not own
+// alone, and constraints/iam.disableServiceAccountKeyCreation is the only
+// control that closes the second. What this test reads is the tree's text;
+// internal/infra/tf/workspace_test.go's TestWorkspaceRootMakesNoKeyForTheIAMAccount
+// reads the root's, and the tftest case beside the root says what the claim is.
+func TestTheWorkspaceIAMAccountIsGrantedNowhere(t *testing.T) {
+	raw, err := os.ReadFile(workspaceRolePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), workspaceIAMResource) {
+		t.Fatalf("%s names no %s: this test is not reading the root it is about, which creates the SA fallback's account", workspaceRolePath, workspaceIAMResource)
+	}
+	// The only files that may name the account at all: the root that creates it
+	// and the outputs that publish its address. A module or another root cannot
+	// reference another root's resource, so a mention anywhere else is a string
+	// somebody wrote by hand.
+	allowed := map[string]bool{
+		"gcp/roots/workspace/main.tf":    true,
+		"gcp/roots/workspace/outputs.tf": true,
+	}
+	walk(t, func(path string, b []byte) {
+		if !strings.HasSuffix(path, ".tf") || allowed[path] {
+			return
+		}
+		if strings.Contains(stripComments(string(b)), "workspace_iam") {
+			t.Errorf("%s names the workspace's IAM account: the SA fallback's account is created by %s and granted nothing by Terraform — its roles/owner on a member and its token creators are written live by the CLI (D2803, D2818)", path, workspaceRolePath)
+		}
+	})
+	if memberAllowed(workspaceRolePath, "google_service_account_iam_member.workspace_iam", "google_service_account.workspace_iam.member") {
+		t.Errorf("a member expression of the SA fallback's IAM account is admitted by allowedMemberExprs: Terraform never grants that account, and admitting the expression here would let the next grant of it pass this whole suite")
+	}
+	code := stripComments(string(raw))
+	for _, bad := range []struct{ needle, why string }{
+		{"google_service_account_key", "a key resource, and the SA fallback's account is never keyed by Terraform (D2803): a key here is a credential of the account that holds roles/owner on every linked member"},
+		{"workspace_iam.member", "a reference to the account as a grant's member"},
+		{"google_service_account_iam_member", "a service-account IAM resource: the root's one IAM resource is the project member that binds its database role"},
+	} {
+		if strings.Contains(code, bad.needle) {
+			t.Errorf("%s mentions %s: %s", workspaceRolePath, bad.needle, bad.why)
+		}
 	}
 }
 
