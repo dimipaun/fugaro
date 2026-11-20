@@ -51,12 +51,27 @@ var Fields = []string{
 	"id", "title", "level", "kind", "area", "status", "filed-by", "filed-in", "date",
 }
 
+// kindDeferred is the kind an item takes when its front matter names none: a
+// folder filed before LD5 carries no `kind` at all, and what such an item left
+// open was left as a deferral — the one kind the folder could write when it was
+// filed.
+const kindDeferred = "deferred"
+
 // Kinds are LD5's two kinds of item, and there is no third: a `deferred` item
 // is something a run or a person consciously left open — the findings Startup
 // and Pro tolerate, the deferrals they list, the fix a Hotfix owes — and an
 // `open-risk` item is a risk Critical could not close, which is the one thing
 // D30's amended row files of its own.
-var Kinds = []string{"deferred", "open-risk"}
+var Kinds = []string{kindDeferred, "open-risk"}
+
+// releasedLevelField is the key D27 filed an item's level under before LD2
+// renamed the field to `level`: it is read and never written, the same rule
+// LV1.1 keeps for the area rule's key (`internal/rigor.Mode` is the pre-LD2
+// spelling of its `Level`). Every released version — through v0.27.0 — files
+// its items this way, and `fugaro update` folds such a folder while
+// `fugaro backlog index` regenerates its index still: a refusal here would
+// leave a person hand-editing every item, which is a repair no command performs.
+const releasedLevelField = "mode"
 
 // Statuses are D27's three words for `status`, and there is no fourth.
 var Statuses = []string{"open", "closed", "dropped"}
@@ -137,7 +152,10 @@ type Item struct {
 // missing or unknown field, an empty value, a status outside the three words,
 // a kind outside the two, a date that is not a day, an id that disagrees with
 // the file name, a duplicate field, a filed-by that is an email address and a
-// body missing a required heading. An item the folder's
+// body missing a required heading. The one field a released folder spells
+// differently — `mode` for the level — is read and not refused: an item filed
+// before the rename loads with the level it states and the kind a folder of
+// that age could carry (see releasedLevelField). An item the folder's
 // pin accepts and this refuses would be one `fugaro backlog list` cannot show,
 // which is why the two are checked against each other.
 func Parse(path string, data []byte) (Item, error) {
@@ -183,7 +201,8 @@ func Parse(path string, data []byte) (Item, error) {
 
 // parseFrontMatter splits the `---` fenced front matter from the body, and
 // holds the nine fields to D27's list: each present, each non-empty, each
-// once, and no tenth.
+// once, and no tenth — the released `mode` is the one other key it reads, and
+// only ever as the level.
 func parseFrontMatter(path, doc string) (Item, string, error) {
 	lines := strings.Split(doc, "\n")
 	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
@@ -205,7 +224,7 @@ func parseFrontMatter(path, doc string) (Item, string, error) {
 			return Item{}, "", fmt.Errorf("%s: front-matter line %d (%q) is not `key: value`", path, i+1, line)
 		}
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
-		if !contains(Fields, key) {
+		if !contains(Fields, key) && key != releasedLevelField {
 			return Item{}, "", fmt.Errorf("%s: front matter carries %q, which is not one of D27's nine fields", path, key)
 		}
 		if _, dup := values[key]; dup {
@@ -218,6 +237,19 @@ func parseFrontMatter(path, doc string) (Item, string, error) {
 	}
 	if closed < 0 {
 		return Item{}, "", fmt.Errorf("%s: the front matter is never closed with a `---` fence (D27)", path)
+	}
+	// A folder filed by a release up to v0.26.0 carries `mode` for the level and
+	// no `kind` at all, and it is read as what it was: its level is the one
+	// `mode` states, and what it left open it left as a deferral (LD5). `level`
+	// decides where an item carries both, so the released key is a fallback and
+	// never an override; a `kind` the item does state is always the item's own.
+	if released, ok := values[releasedLevelField]; ok {
+		if _, ok := values["level"]; !ok {
+			values["level"] = released
+		}
+		if _, ok := values["kind"]; !ok {
+			values["kind"] = kindDeferred
+		}
 	}
 	for _, key := range Fields {
 		if _, ok := values[key]; !ok {

@@ -55,6 +55,16 @@ and an `open-risk` item is a risk Critical could not close, which is the one
 thing Critical files for itself. Every item filed by hand takes `deferred`
 unless it says `open-risk`.
 
+An item filed by a released version — every one through v0.27.0 — spells the
+level **`mode`**, the name D27 gave it before LD2 renamed the field, and carries
+no `kind` at all. A reader reads such an item rather than refusing it: its level
+is the `mode` it states, and its kind is `deferred`, the one kind a folder of
+that age could hold. That is what makes an upgrade need no hand-editing —
+`fugaro update` folds a folder still on disk into the project's backlog, and
+`fugaro backlog index` regenerates its index still. `mode` is a released
+spelling that is **read and never written**, and `level` decides where an item
+carries both.
+
 `filed-in`'s third value is the one word D27 does not name: it names the two
 shapes a **run** produces (`run:<run id>` and the `pr:<number>` of the pull
 request the run opened), and an item a person files has neither behind it.

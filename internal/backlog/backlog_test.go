@@ -137,6 +137,60 @@ func TestParseAcceptsEachKind(t *testing.T) {
 	}
 }
 
+// TestParseReadsTheReleasedLevelKey: a folder filed by a released version
+// states its level as `mode` and carries no `kind` at all, and an upgrade must
+// not make it unreadable — `fugaro update` folds such a folder into the
+// project's backlog, and `fugaro backlog index` regenerates its index still, so
+// a refusal here would leave the person hand-editing every item, a repair no
+// command performs (v0.26.0's release notes, item 19). The item is read as
+// what it was: the level it states, and the deferral a folder of that age could
+// carry.
+//
+// Mutation (verified, run and restored): the fallback is what both halves need
+// — dropping it refuses the item for a missing `level`, and accepting the
+// released key without reading it refuses it as a tenth field.
+func TestParseReadsTheReleasedLevelKey(t *testing.T) {
+	doc := item(func(d *string) {
+		*d = strings.Replace(*d, "level: none\nkind: deferred\n", "mode: pro\n", 1)
+	})
+	it, err := Parse(itemPath, []byte(doc))
+	if err != nil {
+		t.Fatalf("Parse refused an item a released version filed: %v", err)
+	}
+	if it.Level != "pro" {
+		t.Errorf("Parse read the level as %q, want the released `mode` value %q", it.Level, "pro")
+	}
+	if it.Kind != kindDeferred {
+		t.Errorf("Parse read the kind as %q, want %q: an item filed before LD5 carries no kind, and what it left open it left as a deferral", it.Kind, kindDeferred)
+	}
+}
+
+// TestParseLetsTheLevelKeyDecideOverTheReleasedOne: `level` is the format's key
+// and `mode` its released spelling, so an item carrying both is read by `level`
+// (the released key is a fallback, never an override) — and a kind the item
+// states is the item's own, whatever else it carries. The pair is what makes
+// the fallback safe for a folder that was migrated by hand before an upgrade
+// read it: the migration's `level` wins over the `mode` left beside it.
+//
+// Mutation (verified, run and restored): setting the level from the released
+// key unconditionally reads `poc` here where the item's own `level` says
+// `critical`.
+func TestParseLetsTheLevelKeyDecideOverTheReleasedOne(t *testing.T) {
+	doc := item(func(d *string) {
+		*d = strings.Replace(*d, "level: none\nkind: deferred\n", "level: critical\nmode: poc\nkind: open-risk\n", 1)
+	})
+	it, err := Parse(itemPath, []byte(doc))
+	if err != nil {
+		t.Fatalf("Parse refused an item carrying both spellings of the level: %v", err)
+	}
+	if it.Level != "critical" {
+		t.Errorf("Parse read the level as %q, want %q: `level` decides where an item carries both", it.Level, "critical")
+	}
+	if it.Kind != "open-risk" {
+		t.Errorf("Parse read the kind as %q, want %q: a kind the item states is the item's own", it.Kind, "open-risk")
+	}
+}
+
 // TestParseAcceptsAClosedItemAndItsClosingHeading: D31 says a `closed` item
 // carries a `## Closed by` line, so the heading has to be one the format
 // accepts — a parser that refused it would make the closing D31 describes
