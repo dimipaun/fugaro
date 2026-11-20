@@ -11,13 +11,17 @@
 // cannot show a 16 KiB task scrollably, and the design names the window for
 // exactly that reason.
 //
-// **One window, two questions** (the owner's ruling of 2026-11-01, D1115). The
-// launch (rule 11) and a settings edit (rule 12) are the same window, the same
-// gate and the same keyboard: what differs is the *subject* -- `ConfirmSubject`,
-// the union of a frozen launch's view and a settings edit's -- and one extra
-// gate the settings edit carries, the tick a widening needs (D1109,
-// `CONFIRM_TICK_NEEDED`). Two windows would have been two copies of the three
-// properties below, and the copy is the one that would drift.
+// **One window, two questions** (the owner's ruling of 2026-11-01, D1115), and
+// **one modal for entry, diff and confirmation** (D2902, SU1). The launch (rule
+// 11) and a settings edit (rule 12) are the same window, the same gate and the
+// same keyboard: what differs is the *subject* -- `ConfirmSubject`, the union of
+// a frozen launch's view, a settings edit's entry form and the diff that
+// replaces it in the same window -- and the gates a question carries: the tick a
+// widening needs (D1109, `CONFIRM_TICK_NEEDED`), and, for the entry form, the
+// answer being a **value** rather than a yes. Two windows would have been two
+// copies of the three properties below, and the copy is the one that would
+// drift; a second window for the diff would have been a second question asked
+// after a first one had already been answered, which is what D2902 rules out.
 //
 // **The three properties that make it a confirmation rather than a prompt.**
 //
@@ -66,10 +70,12 @@ import { join } from 'node:path'
 
 import type { BrowserWindow, BrowserWindowConstructorOptions, Session } from 'electron'
 
-import type { ConfirmSubject, LaunchConfirmer } from './launch'
+import type { ConfirmSubject, LaunchConfirmer, SettingsConfirmView } from './launch'
 import type { ConsoleEventLike, IpcMainLike } from './ipc'
 import { SENDER_REFUSAL } from './ipc'
+import type { SettingsEditorAnswer, SettingsEditorConfirmer } from './settingsedit'
 import { settingsConfirmID } from './settingsedit'
+import type { SettingsEntryView } from './settingsview'
 import { settingsConfirmAnswerable } from './settingsview'
 import { APP_ORIGIN } from './protocol'
 import {
@@ -78,6 +84,15 @@ import {
   denyPageTitleUpdate,
   installWebContentsSecurity,
 } from './window'
+
+/** ConfirmWindowSeams is what `createConfirmWindow` answers with: the launch's
+ * one-question seam (`LaunchConfirmer`) and the settings editor's two-phase one
+ * (`SettingsEditorConfirmer`), over **one** window (D1115, D2902). The entry
+ * point hands the one object to both, which is what makes "one modal" a property
+ * of the process rather than a promise each caller keeps; the two seams share
+ * `close`, so an installation that moves reaches whichever question is on
+ * screen. */
+export type ConfirmWindowSeams = LaunchConfirmer & SettingsEditorConfirmer
 
 /** CONFIRM_CHANNEL_PREFIX is the whole of this window's IPC surface, and it is a
  * prefix of its own: neither the dashboard's `fugaro:console/` nor the picker's
@@ -123,10 +138,53 @@ export function confirmPreloadPath(appPath: string): string {
   return join(appPath, 'dist', 'preload', 'confirm.js')
 }
 
-/** CONFIRM_ANSWER_REFUSAL is what a message that is not a yes-or-no and a tick
+/** ConfirmAnswer is what the window's `answer` channel carries: the operator's
+ * own answer to whichever question the window is asking, and it is **one
+ * argument** rather than the boolean (and optional tick) it used to be, because
+ * the entry form answers with a **value** (SU1, D2902). The three shapes are the
+ * three things a window can be answered with, and the main process checks the
+ * one it receives against the phase the window is in: a `submit` to a window
+ * showing a diff, or a `yes` to one showing a form, is refused
+ * (`CONFIRM_PHASE_REFUSAL`) rather than guessed at.
+ *
+ *   - `{ answer: 'no' }` -- the operator's way out of either question. It takes
+ *     no readiness delay and no tick.
+ *   - `{ answer: 'yes', ticked? }` -- a confirmation, the shape the launch and
+ *     the settings diff have always answered with (`ticked` is a widening's
+ *     checkbox, which the main process checks rather than trusts).
+ *   - `{ answer: 'submit', value }` -- the entry form's OK: the value the
+ *     operator typed, or `null` for "Reset to default", which writes no value at
+ *     all (`settings unset`, A4). `value` is required and explicit, so a reset
+ *     cannot be a message that merely forgot to carry one.
+ *
+ * The shape is strict -- an unknown member refuses the answer as
+ * `CONFIRM_ANSWER_REFUSAL` -- because it is the one place a document's bytes
+ * become an argv word (through `settings.editor.open`'s flow), and a lenient
+ * reader here would be a value nobody typed.
+ */
+export type ConfirmAnswer =
+  | { readonly answer: 'no' }
+  | { readonly answer: 'yes'; readonly ticked?: boolean }
+  | { readonly answer: 'submit'; readonly value: string | null }
+
+/** CONFIRM_ANSWER_REFUSAL is what a message that is not one of the three answers
  * is answered with. It carries nothing the sender supplied. */
 export const CONFIRM_ANSWER_REFUSAL =
-  'a confirmation is answered with a yes or a no, and a tick where the window draws one, and nothing else'
+  'a confirmation is answered with a yes, a no, or the form’s own value or reset, and nothing else'
+
+/** CONFIRM_PHASE_REFUSAL is what an answer to a question the window is not
+ * asking is answered with: a `submit` for a window showing a diff (whose dry run
+ * is long over), a `yes` for one showing the entry form (which has nothing to
+ * confirm yet). The click decides nothing and the window stays open. */
+export const CONFIRM_PHASE_REFUSAL = 'this window is not asking that question: answer it as it is drawn'
+
+/** CONFIRM_NOT_SETTLED is what the entry form's OK is answered with when the
+ * window's own flow gave up before the diff existed -- the dry run refused, the
+ * read disagreed, or an installation moved under it -- so the operator is told
+ * what happened rather than left looking at a form whose edit is already over.
+ * The screen that asked for the window draws the flow's own sentence; this one
+ * is the document's, and the window is closed behind it. */
+export const CONFIRM_NOT_SETTLED = 'the edit did not reach a confirmation: nothing was written'
 
 /** CONFIRM_TICK_NEEDED is what a yes is answered with when the window is a
  * widening whose tick is not set (D1109). It is enforced **here** and not only
@@ -137,13 +195,17 @@ export const CONFIRM_ANSWER_REFUSAL =
 export const CONFIRM_TICK_NEEDED = 'this confirmation raises a limit: tick the box that says so before confirming'
 
 /** confirmSubjectID is the one spelling of "which window this is", read by
- * `close` and by nothing else. A launch's identity is its run id, which is what
- * every caller of `close` before this task passed; a settings window's is
- * `settingsConfirmID(project)`, whose definition sits beside the flow that opens
- * one (`settingsedit.ts`), because that module is the one that must know a
- * project's identity without loading this one's Electron. */
+ * `close`, by `settle` and by nothing else. A launch's identity is its run id,
+ * which is what every caller of `close` before this task passed; both of a
+ * settings edit's subjects -- the entry form and the diff that replaces it in
+ * the same window -- are `settingsConfirmID(project)`, whose definition sits
+ * beside the flow that opens one (`settingsedit.ts`), because that module is the
+ * one that must know a project's identity without loading this one's Electron.
+ * The two settings subjects sharing one identity is what makes the entry form's
+ * window and the diff it settles into **one window** for a caller that only
+ * knows the project. */
 export function confirmSubjectID(subject: ConfirmSubject): string {
-  return subject.kind === 'settings' ? settingsConfirmID(subject.project) : subject.runId
+  return subject.kind === 'launch' ? subject.runId : settingsConfirmID(subject.project)
 }
 
 /** CONFIRM_ALREADY_ANSWERED is what a second answer for one window is answered
@@ -253,9 +315,22 @@ export function confirmOptions(
   }
 }
 
+/** ConfirmState is where one open window is: `asking` is a question put and not
+ * yet answered, `submitted` is an entry form whose OK has arrived and whose flow
+ * is running the dry run (the window stays open on the form, and it is the one
+ * state in which a `no` closes the window without deciding anything new), and
+ * `answered` is a window that has decided and is on its way out. */
+type ConfirmState = 'asking' | 'submitted' | 'answered'
+
+/** AnswerReply is what the `answer` channel answers with, and it is the shape
+ * the preload's `isConfirmReply` narrows. A submit's is **held** until the flow
+ * has settled the window or given up on it, so the document learns the outcome
+ * of its OK rather than having to ask again and race a dry run. */
+type AnswerReply = { readonly ok: true; readonly data: unknown } | { readonly ok: false; readonly reason: string }
+
 /** ConfirmEntry is one open window: the subject it may read, the `decide` its
- * answer resolves, and whether it has answered yet. It lives until the window is
- * gone.
+ * answers resolve, and where it is in the two questions it may ask. It lives
+ * until the window is gone.
  *
  * `contents` is the window's own `webContents`, **read once while the window is
  * alive and kept here**. Electron's `BrowserWindow.webContents` getter throws
@@ -264,18 +339,30 @@ export function confirmOptions(
  * entry or decide, leaving the launch unsettled -- and the run id, the
  * installation's in-flight reservation and one of the app-wide slots held -- for
  * the life of the process. The map is keyed by this same value, so a window that
- * is gone is reachable by neither channel. */
+ * is gone is reachable by neither channel.
+ *
+ * `subject` is mutable for one reason and one only: `settle` puts the dry run's
+ * diff into the window the entry form is still open in (D2902's one modal), and
+ * the subject is what both the document reads and the gates below read. Nothing
+ * else ever changes it, and the frozen subject it is replaced with was built by
+ * `settingsView` before the flow asked for it. */
 interface ConfirmEntry {
-  readonly subject: ConfirmSubject
-  readonly decide: (yes: boolean, reason?: string) => void
+  subject: ConfirmSubject
+  readonly decide: (answer: SettingsEditorAnswer) => void
   readonly window: BrowserWindow
   readonly contents: BrowserWindow['webContents']
-  answered: boolean
-  /** readyAt is the instant from which a yes is an answer: `CONFIRM_READY_DELAY_MS`
-   * after the window was last shown or focused. It starts at infinity, so a
-   * window that has not appeared is a window whose yes is refused until it has --
-   * the state a document can only reach by loading and being shown, and never by
-   * waiting.
+  state: ConfirmState
+  /** pending is a submit's answer, held until the window settles or goes away:
+   * the document's `answer({answer:'submit'})` does not resolve while the dry
+   * run is in flight, so what it draws afterwards is the diff the flow really
+   * put in the window. A window that never settles answers it refused, which is
+   * what makes an operator's Cancel during a dry run reach the document at all. */
+  pending: ((reply: AnswerReply) => void) | null
+  /** readyAt is the instant from which an answer that moves the edit on is
+   * answerable: `CONFIRM_READY_DELAY_MS` after the window was last shown,
+   * focused, or settled. It starts at infinity, so a window that has not
+   * appeared is a window whose yes is refused until it has -- the state a
+   * document can only reach by loading and being shown, and never by waiting.
    *
    * Infinity is also what this entry holds if Electron emits **neither** event
    * for this window, and then every yes to it is refused and nothing can be
@@ -296,7 +383,7 @@ interface ConfirmEntry {
  * never been opened has nothing to reach with, and a window that is gone is gone
  * from the map as well as from the screen.
  */
-export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
+export function createConfirmWindow(deps: ConfirmWindowDeps): ConfirmWindowSeams {
   const entries = new Map<object, ConfirmEntry>()
   const now = deps.now ?? ((): number => performance.now())
 
@@ -320,19 +407,86 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
     }
   }
 
-  /** finish is the one path to a decision, and it is reachable at most once per
-   * window: an answer already given is not given again, and the close that
-   * follows it is not a cancel.
+  /** readAnswer reads the channel's one argument **strictly**: one of the three
+   * answers and no member the shape does not carry. It answers null for anything
+   * else, which the handler refuses as `CONFIRM_ANSWER_REFUSAL`. A `submit` must
+   * carry `value` explicitly -- a null that means "Reset to default" and a
+   * message that merely forgot the member are different facts, and only one of
+   * them is a reset. */
+  function readAnswer(raw: unknown): ConfirmAnswer | null {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const record = raw as Record<string, unknown>
+    const names = Object.keys(record)
+    switch (record['answer']) {
+      case 'no':
+        return names.length === 1 ? { answer: 'no' } : null
+      case 'yes': {
+        const ticked = record['ticked']
+        if (ticked !== undefined && typeof ticked !== 'boolean') return null
+        if (names.some((name) => name !== 'answer' && name !== 'ticked')) return null
+        return ticked === undefined ? { answer: 'yes' } : { answer: 'yes', ticked }
+      }
+      case 'submit': {
+        const value = record['value']
+        if (value !== null && typeof value !== 'string') return null
+        if (names.some((name) => name !== 'answer' && name !== 'value')) return null
+        return { answer: 'submit', value }
+      }
+      default:
+        return null
+    }
+  }
+
+  /** phaseTakes is whether the question the window is **currently** asking is
+   * answered this way (D2902's one window asks two questions in turn): the entry
+   * form takes a submit, a launch or a diff takes a yes, and every phase takes a
+   * no. It is a check rather than a guess because the two questions have
+   * different consequences -- a yes spawns the write's argv, a submit only starts
+   * a dry run -- and because the subject the window holds is what says which one
+   * is on screen. */
+  function phaseTakes(subject: ConfirmSubject, answer: ConfirmAnswer): boolean {
+    if (answer.answer === 'no') return true
+    return (subject.kind === 'settings-entry') === (answer.answer === 'submit')
+  }
+
+  /** settleReply delivers a form's held answer, at most once: the window answers
+   * the document's OK when its own flow has put the diff in it (`settle`) or when
+   * the window goes away first, so the document never waits on a reply that will
+   * not come. */
+  function settleReply(entry: ConfirmEntry, reply: AnswerReply): void {
+    const waiting = entry.pending
+    entry.pending = null
+    if (waiting !== null) waiting(reply)
+  }
+
+  /** finish is the one path to a terminal answer, and it is reachable at most
+   * once per window: an answer already given is not given again, and the close
+   * that follows it is not a cancel.
    *
    * The close is the decision's *consequence*, so a window that is already gone
    * is not closed again: `close()` on a destroyed window throws, and the path
    * that reaches here with one is the `closed` listener's, whose decision has
    * already been given above. */
-  function finish(entry: ConfirmEntry, yes: boolean): void {
-    if (entry.answered) return
-    entry.answered = true
-    entry.decide(yes)
+  function finish(entry: ConfirmEntry, answer: SettingsEditorAnswer): void {
+    if (entry.state === 'answered') return
+    entry.state = 'answered'
+    settleReply(entry, { ok: false, reason: CONFIRM_NOT_SETTLED })
+    entry.decide(answer)
     if (!entry.window.isDestroyed()) entry.window.close()
+  }
+
+  /** takeBack is the operator's Cancel on a form whose OK is already with the
+   * flow: that window has delivered its submit, so nothing more is delivered to
+   * the flow (its own `settle` finds no window and the edit is cancelled with
+   * nothing written), and the document's held answer is refused so it can draw
+   * the sentence. It is rule 11's "cancel is the default" applied to the one
+   * state the operator would otherwise be stuck in for the length of a dry
+   * run. */
+  function takeBack(entry: ConfirmEntry): AnswerReply {
+    entry.state = 'answered'
+    settleReply(entry, { ok: false, reason: CONFIRM_NOT_SETTLED })
+    if (!entry.window.isDestroyed()) entry.window.close()
+    return { ok: true, data: { answered: true } }
   }
 
   deps.ipcMain.handle(confirmChannel('fields'), (event) => {
@@ -341,28 +495,51 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
     return { ok: true, data: entry.subject }
   })
 
-  deps.ipcMain.handle(confirmChannel('answer'), (event, raw, ticked) => {
+  deps.ipcMain.handle(confirmChannel('answer'), (event, raw) => {
     const entry = entryFor(event)
     if (entry === null) return { ok: false, reason: SENDER_REFUSAL }
-    if (typeof raw !== 'boolean' || (ticked !== undefined && typeof ticked !== 'boolean')) {
-      return { ok: false, reason: CONFIRM_ANSWER_REFUSAL }
+    const answer = readAnswer(raw)
+    if (answer === null) return { ok: false, reason: CONFIRM_ANSWER_REFUSAL }
+    if (entry.state === 'answered') return { ok: false, reason: CONFIRM_ALREADY_ANSWERED }
+    // A form whose OK has arrived is not answered again while its own flow runs
+    // the dry run: what the operator can still do is take it back, and that
+    // closes the window without the flow being told anything new.
+    if (entry.state === 'submitted') {
+      if (answer.answer !== 'no') return { ok: false, reason: CONFIRM_ALREADY_ANSWERED }
+      return takeBack(entry)
     }
-    if (entry.answered) return { ok: false, reason: CONFIRM_ALREADY_ANSWERED }
-    // The readiness delay is on the yes alone. A no is the window's own way out
-    // and is answered at the instant it is clicked, delay or no delay: what the
-    // delay protects is a spend, and an operator who wants out of a window that
-    // just appeared under their pointer must never have to wait for it.
-    if (raw && now() < entry.readyAt) return { ok: false, reason: CONFIRM_NOT_YET }
+    if (!phaseTakes(entry.subject, answer)) return { ok: false, reason: CONFIRM_PHASE_REFUSAL }
+    // The readiness delay is on the answers that move the edit on -- a yes and a
+    // submit -- and never on a no. A no is the window's own way out and is
+    // answered at the instant it is clicked, delay or no delay: what the delay
+    // protects is a spend, and an operator who wants out of a window that just
+    // appeared under their pointer must never have to wait for it.
+    if (answer.answer !== 'no' && now() < entry.readyAt) return { ok: false, reason: CONFIRM_NOT_YET }
     // The widening's tick, on the yes alone and for the delay's reason: a no is
     // the way out and needs no tick. It is checked here rather than only in the
     // document because a document that forgot to draw the tick would otherwise
     // raise a limit on one click -- the tick is D1109's own answer to a stray
     // click, and the main process is where it can be enforced whatever the
     // document does.
-    if (raw && entry.subject.kind === 'settings' && !settingsConfirmAnswerable(entry.subject, ticked === true)) {
-      return { ok: false, reason: CONFIRM_TICK_NEEDED }
+    if (answer.answer === 'yes' && entry.subject.kind === 'settings') {
+      if (!settingsConfirmAnswerable(entry.subject, answer.ticked === true)) {
+        return { ok: false, reason: CONFIRM_TICK_NEEDED }
+      }
     }
-    finish(entry, raw)
+    if (answer.answer === 'submit') {
+      // The window **stays open on the form** and the answer is held: the flow
+      // it is handed to runs the dry run and then either settles this same
+      // window on the diff (`settle`, which resolves this promise ok) or gives
+      // up (`close`, which resolves it refused). Holding it is what makes the
+      // document's one read of `fields()` after its OK show the dry run's own
+      // diff rather than a form the flow has not reached yet.
+      entry.state = 'submitted'
+      return new Promise<AnswerReply>((resolve) => {
+        entry.pending = resolve
+        entry.decide({ kind: 'submitted', value: answer.value })
+      })
+    }
+    finish(entry, answer.answer === 'yes' ? { kind: 'confirmed' } : { kind: 'declined' })
     return { ok: true, data: { answered: true } }
   })
 
@@ -375,8 +552,15 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
   // construction and the load (see `open`).
   denyEveryPermission(deps.session)
 
-  return Object.freeze({
-    open(subject: ConfirmSubject, decide: (yes: boolean, reason?: string) => void): void {
+  /**
+   * openWindow builds the window, installs every gate on it and returns: it is
+   * the one implementation behind both of the seams below, because the launch's
+   * one question and the settings editor's two are the **same window**
+   * (D1115, D2902). `decide` is this process's own delivery -- what the launch
+   * adapter and the settings flow each wrap -- and it is called with the answer
+   * the window's gates let through and with nothing else.
+   */
+  function openWindow(subject: ConfirmSubject, decide: (answer: SettingsEditorAnswer) => void): void {
       const window = new deps.BrowserWindow(
         confirmOptions(confirmPreloadPath(deps.appPath), deps.parent(), deps.session),
       )
@@ -389,7 +573,8 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
         decide,
         window,
         contents,
-        answered: false,
+        state: 'asking',
+        pending: null,
         readyAt: Number.POSITIVE_INFINITY,
       }
       entries.set(contents, entry)
@@ -424,13 +609,16 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
 
       // Cancel is the default, and this is where it is enforced: Enter and
       // Escape are the window's own two ways out, both declined, whatever
-      // modifiers they carry. Only a click on the confirming button -- which
-      // arrives as `answer(true)` on the channel above -- confirms.
+      // modifiers they carry. Only a click on the window's own confirming
+      // button -- which arrives as `answer({answer:'yes'})` on the channel above
+      // -- confirms, and only a deliberate click on the form's OK starts a dry
+      // run. A key press during a dry run is the cancel every other one is, and
+      // the flow finds no window to settle.
       contents.on('before-input-event', (event, input) => {
         if (input.type !== 'keyDown') return
         if (input.key !== 'Enter' && input.key !== 'Escape') return
         event.preventDefault()
-        finish(entry, false)
+        finish(entry, { kind: 'declined' })
       })
 
       // The served root answers a path it does not hold with a **404 text
@@ -442,7 +630,7 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // could not read -- is not a refusal: a document that loaded must not be
       // cancelled by a check that could not tell.
       contents.on('did-navigate', (_event, _url, code) => {
-        if (typeof code === 'number' && code >= 400) finish(entry, false)
+        if (typeof code === 'number' && code >= 400) finish(entry, { kind: 'declined' })
       })
 
       // `closed` is every path by which the window goes away -- the operator's
@@ -452,13 +640,13 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // and the getter would throw before either line below it.
       window.on('closed', () => {
         entries.delete(contents)
-        finish(entry, false)
+        finish(entry, { kind: 'declined' })
       })
 
       window.once('ready-to-show', () => {
         // A window already decided and closed does not get to show itself: the
         // 404 above can arrive before the first paint.
-        if (entry.answered) return
+        if (entry.state === 'answered') return
         window.show()
       })
 
@@ -470,8 +658,67 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
       // the process. The 404 is not this path; it is the `did-navigate` check
       // above.
       void window.loadURL(deps.entryUrl).catch(() => {
-        finish(entry, false)
+        finish(entry, { kind: 'declined' })
       })
+  }
+
+  return Object.freeze({
+    open(subject: ConfirmSubject, decide: (yes: boolean, reason?: string) => void): void {
+      // The launch's seam is one yes-or-no, and a launch window is only ever
+      // answered with one: a `submit` to it is refused above
+      // (`CONFIRM_PHASE_REFUSAL`), so `confirmed` is the only answer that means
+      // yes here. The launch passes no reason of its own -- a decline the
+      // operator made is the cancel sentence -- which is the seam's own contract.
+      openWindow(subject, (answer) => {
+        decide(answer.kind === 'confirmed')
+      })
+    },
+
+    /**
+     * ask is the settings editor's first phase (D2902): the window opens on the
+     * entry form, and `decide` is delivered the form's own answer -- the value or
+     * the reset the operator typed, or the decline. The window stays open on the
+     * form until the flow that called this either settles it on the dry run's
+     * diff (`settle`) or closes it.
+     */
+    ask(subject: SettingsEntryView, decide: (answer: SettingsEditorAnswer) => void): void {
+      openWindow(subject, decide)
+    },
+
+    /**
+     * settle is the settings editor's second phase, and it is what makes D2902's
+     * one modal true: the **same** window that took the value is given the dry
+     * run's diff, so the operator reads the diff, the two layers and the exact
+     * argv where they typed, without a second window and without a second answer
+     * being asked for in another one.
+     *
+     * It answers whether the window took it, and false is what tells the flow to
+     * cancel the edit rather than write: the window is gone (the operator
+     * declined or closed it), or its OK is still with the flow and it is not a
+     * form -- a window that has already been settled included, so one edit
+     * settles once. The document reads the diff through the same `fields()` it
+     * read the form through: the reply this delivers is what tells it to.
+     *
+     * The readiness delay **restarts here**, and that is not a second rule but
+     * the first one applied to the question that just appeared: the confirming
+     * button is drawn into a window that is already open, under the pointer that
+     * has just clicked OK, so the second click of one double-click would land on
+     * the button that appeared where the first one was. A yes still waits
+     * `CONFIRM_READY_DELAY_MS` after the question was put, which is what rule 12
+     * asks for; a no still waits for nothing.
+     */
+    settle(id: string, subject: SettingsConfirmView): boolean {
+      for (const entry of entries.values()) {
+        if (confirmSubjectID(entry.subject) !== id) continue
+        if (entry.state !== 'submitted' || entry.subject.kind !== 'settings-entry') return false
+        if (subject.project !== entry.subject.project) return false
+        entry.subject = subject
+        entry.state = 'asking'
+        entry.readyAt = now() + CONFIRM_READY_DELAY_MS
+        settleReply(entry, { ok: true, data: { settled: true } })
+        return true
+      }
+      return false
     },
 
     /**
@@ -486,11 +733,14 @@ export function createConfirmWindow(deps: ConfirmWindowDeps): LaunchConfirmer {
      * answer that has already arrived and a window that never opened are both
      * states where the caller is settled or on its way to being settled, and a
      * close that decided anyway would be a second decision on a spent subject.
+     * The settings flow calls it for the window it opened on the way out of every
+     * path, which is also how a form whose dry run refused is taken off the
+     * screen.
      */
     close(id: string): void {
       for (const entry of entries.values()) {
         if (confirmSubjectID(entry.subject) !== id) continue
-        finish(entry, false)
+        finish(entry, { kind: 'declined' })
         return
       }
     },

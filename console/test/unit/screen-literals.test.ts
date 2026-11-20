@@ -1489,6 +1489,7 @@ describe('a screen writes only its own vocabulary through literal', () => {
       '../../shared/rigor.ts',
       '../../shared/sanitize.ts',
       '../../shared/schema.ts',
+      '../../shared/settingsentry.ts',
       '../../shared/shortid.ts',
       '../../shared/stringify.ts',
       '../../shared/version.ts',

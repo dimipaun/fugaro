@@ -56,7 +56,9 @@ import {
   CONFIRM_CHANNEL_PREFIX,
   CONFIRM_ENTRY_PATH,
   CONFIRM_ENTRY_URL,
+  CONFIRM_NOT_SETTLED,
   CONFIRM_NOT_YET,
+  CONFIRM_PHASE_REFUSAL,
   CONFIRM_READY_DELAY_MS,
   CONFIRM_TICK_NEEDED,
   CONFIRM_WINDOW_TITLE,
@@ -64,6 +66,7 @@ import {
   confirmPreloadPath,
   createConfirmWindow,
 } from '../../src/main/confirm'
+import type { ConfirmWindowSeams } from '../../src/main/confirm'
 import { SENDER_REFUSAL } from '../../src/main/ipc'
 import type { ConsoleEventLike, IpcMainLike, ValidatedArguments } from '../../src/main/ipc'
 import { SETTINGS_EDIT_OPERATION, argvFor } from '../../src/main/spawn'
@@ -80,9 +83,11 @@ import {
   SETTINGS_EDIT_SHAPE,
   SETTINGS_EDIT_UNBUILT,
   createSettingsEdit,
+  createSettingsEditor,
   settingsConfirmID,
 } from '../../src/main/settingsedit'
 import type { SettingsEditDeps } from '../../src/main/settingsedit'
+import type { SettingsEntryView } from '../../src/main/settingsview'
 import { SETTINGS_EDIT_MOVED } from '../../src/source/source'
 import type { SettingsEditSpawn } from '../../src/source/source'
 import { displayTaskText } from '../../src/main/launchrules'
@@ -247,7 +252,7 @@ function fakeSession(): FakeSession {
 function confirmOver(
   options: { readonly parent?: () => FakeWindow | null; readonly now?: (() => number) | null } = {},
 ): {
-  readonly confirmer: LaunchConfirmer
+  readonly confirmer: ConfirmWindowSeams
   readonly ipcMain: ReturnType<typeof fakeIpcMain>
   readonly windows: FakeWindow[]
   readonly session: FakeSession
@@ -518,14 +523,14 @@ describe('the confirmation window’s sender gate', () => {
     // what refuses it is that this `webContents` is not one this module opened.
     const dashboard = fakeContents(CONFIRM_ENTRY_URL)
     expect(
-      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, true),
+      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, { answer: 'yes' }),
     ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
 
     // (2) A subframe of the confirmation window: the right `sender`, a frame that
     // is not its `mainFrame`.
     const subframe = { url: CONFIRM_ENTRY_URL }
     expect(
-      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: subframe }, true),
+      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: subframe }, { answer: 'yes' }),
     ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
 
     expect(spawner.calls).toStrictEqual([])
@@ -549,7 +554,7 @@ describe('the confirmation window’s sender gate', () => {
 
     const window = windows[0] as FakeWindow
     ready(window, clock)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -559,7 +564,7 @@ describe('the confirmation window’s sender gate', () => {
 
     // A second answer from the same window, before its `closed` arrives: refused
     // by name, and no second child.
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: false,
       reason: CONFIRM_ALREADY_ANSWERED,
     })
@@ -577,13 +582,33 @@ describe('the confirmation window’s sender gate', () => {
     expect(spawner.calls).toHaveLength(1)
   })
 
-  it('refuses an answer that is not a boolean, and decides nothing', async () => {
+  it('refuses an answer that is not one of the channel’s own three, and decides nothing', async () => {
     const { confirmer, ipcMain, windows } = confirmOver()
     const decider = recordingDecider()
     confirmer.open(viewFixture(), decider.decide)
 
     const window = windows[0] as FakeWindow
-    for (const raw of ['yes', 1, null, undefined, {}]) {
+    // Every one of these is a message the document could send and none of them is
+    // an answer: the shape is read strictly, member by member, so a `no` that
+    // carries a `value` and a `submit` that forgot one are refused rather than
+    // guessed at -- a null that spells "Reset to default" and a message that
+    // merely lost its member are different facts.
+    for (const raw of [
+      'yes',
+      1,
+      true,
+      null,
+      undefined,
+      {},
+      [],
+      { answer: true },
+      { answer: 'maybe' },
+      { answer: 'yes', ticked: 'yes' },
+      { answer: 'no', ticked: false },
+      { answer: 'submit' },
+      { answer: 'submit', value: 30 },
+      { answer: 'submit', value: '30', reset: true },
+    ]) {
       expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), raw)).toStrictEqual({
         ok: false,
         reason: CONFIRM_ANSWER_REFUSAL,
@@ -779,7 +804,7 @@ describe('the confirmation window, and how it is cancelled', () => {
     const window = windows[0] as FakeWindow
     ready(window, clock)
 
-    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })
     window.fire('closed')
     expect(decider.calls).toStrictEqual([[true, undefined]])
   })
@@ -845,7 +870,7 @@ describe('the confirmation window, and how it is cancelled', () => {
     expect(window.closeRequested()).toBe(false)
 
     // Nor is it a second decision once the operator has answered.
-    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })
     confirmer.close(RUN_ID)
     expect(decider.calls).toStrictEqual([[true, undefined]])
   })
@@ -955,14 +980,14 @@ describe('the delay before a yes is an answer', () => {
     const window = windows[0] as FakeWindow
 
     // Not yet: a window that has not appeared has no answer to give.
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: false,
       reason: CONFIRM_NOT_YET,
     })
 
     appears(window)
     // And the click already on its way lands the instant the window does.
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: false,
       reason: CONFIRM_NOT_YET,
     })
@@ -974,7 +999,7 @@ describe('the delay before a yes is an answer', () => {
     expect(window.shown()).toBe(1)
 
     clock.advance(CONFIRM_READY_DELAY_MS)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -995,21 +1020,21 @@ describe('the delay before a yes is an answer', () => {
     appears(window)
 
     clock.advance(CONFIRM_READY_DELAY_MS - 1)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: false,
       reason: CONFIRM_NOT_YET,
     })
 
     window.fire('focus')
     clock.advance(CONFIRM_READY_DELAY_MS - 1)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: false,
       reason: CONFIRM_NOT_YET,
     })
     expect(spawner.calls).toStrictEqual([])
 
     clock.advance(1)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1034,13 +1059,13 @@ describe('the delay before a yes is an answer', () => {
     window.fire('show')
 
     clock.advance(CONFIRM_READY_DELAY_MS - 1)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: false,
       reason: CONFIRM_NOT_YET,
     })
 
     clock.advance(1)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1061,7 +1086,7 @@ describe('the delay before a yes is an answer', () => {
     const window = windows[0] as FakeWindow
     appears(window)
 
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), false)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'no' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1097,7 +1122,7 @@ describe('the delay before a yes is an answer', () => {
 
       // An hour of wall clock, and the yes is still not an answer to this
       // window.
-      expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
         ok: false,
         reason: CONFIRM_NOT_YET,
       })
@@ -1108,7 +1133,7 @@ describe('the delay before a yes is an answer', () => {
       // above is the wall clock being ignored, not a window that can never be
       // answered.
       at += CONFIRM_READY_DELAY_MS
-      expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+      expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
         ok: true,
         data: { answered: true },
       })
@@ -1140,14 +1165,14 @@ describe('the launch, through the real confirmation window', () => {
     // window's `webContents`: each is refused, and none of them decides.
     const dashboard = fakeContents(CONFIRM_ENTRY_URL)
     expect(
-      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, true),
+      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, { answer: 'yes' }),
     ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
     expect(
-      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: { url: CONFIRM_ENTRY_URL } }, true),
+      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: { url: CONFIRM_ENTRY_URL } }, { answer: 'yes' }),
     ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
     const another = fakeContents(CONFIRM_ENTRY_URL)
     expect(
-      await ask(ipcMain, confirmChannel('answer'), { sender: another, senderFrame: another.mainFrame }, true),
+      await ask(ipcMain, confirmChannel('answer'), { sender: another, senderFrame: another.mainFrame }, { answer: 'yes' }),
     ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
     await untilSettled()
     expect(spawner.calls).toStrictEqual([])
@@ -1158,7 +1183,7 @@ describe('the launch, through the real confirmation window', () => {
     // refused by the delay rather than accepted -- the case below is that one.
     appears(window)
     clock.advance(CONFIRM_READY_DELAY_MS)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1173,7 +1198,7 @@ describe('the launch, through the real confirmation window', () => {
     await untilSettled()
 
     expect(
-      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[0] as FakeWindow), false),
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[0] as FakeWindow), { answer: 'no' }),
     ).toStrictEqual({ ok: true, data: { answered: true } })
     expect((await launched).reason).toBe(DECLINED_CANCELLED)
     expect(spawner.calls).toStrictEqual([])
@@ -1326,7 +1351,7 @@ describe('the launch, through the real confirmation window', () => {
     await untilSettled()
     ready(windows[0] as FakeWindow, clock)
     expect(
-      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[0] as FakeWindow), true),
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[0] as FakeWindow), { answer: 'yes' }),
     ).toStrictEqual({ ok: true, data: { answered: true } })
     expect((await launched).ok).toBe(true)
     expect(spawner.calls).toHaveLength(1)
@@ -1340,7 +1365,7 @@ describe('the launch, through the real confirmation window', () => {
     await untilSettled()
     ready(windows[1] as FakeWindow, clock)
     expect(
-      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[1] as FakeWindow), true),
+      await ask(ipcMain, confirmChannel('answer'), fromWindow(windows[1] as FakeWindow), { answer: 'yes' }),
     ).toStrictEqual({ ok: true, data: { answered: true } })
     expect((await later).ok).toBe(true)
     expect(spawner.calls).toHaveLength(2)
@@ -1364,7 +1389,12 @@ describe('the launch, through the real confirmation window', () => {
       if (way === 'closed') {
         window.fire('closed')
       } else {
-        await ask(ipcMain, confirmChannel('answer'), fromWindow(window), way === 'yes')
+        await ask(
+          ipcMain,
+          confirmChannel('answer'),
+          fromWindow(window),
+          way === 'yes' ? { answer: 'yes' } : { answer: 'no' },
+        )
         // Electron's own order: the decision closes the window, and the `closed`
         // that follows is what takes it out of the map.
         window.fire('closed')
@@ -1376,7 +1406,7 @@ describe('the launch, through the real confirmation window', () => {
         way,
       ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
       expect(
-        await ask(ipcMain, confirmChannel('answer'), { sender, senderFrame: sender.mainFrame }, true),
+        await ask(ipcMain, confirmChannel('answer'), { sender, senderFrame: sender.mainFrame }, { answer: 'yes' }),
         way,
       ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
 
@@ -1550,7 +1580,7 @@ describe('the settings edit behind the same window', () => {
     expect(shown.argv).toStrictEqual(settingsArgv('narrowing', set))
 
     ready(window, clock)
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1573,7 +1603,7 @@ describe('the settings edit behind the same window', () => {
 
       if (way === 'no') {
         ready(window, clock)
-        await ask(ipcMain, confirmChannel('answer'), fromWindow(window), false)
+        await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'no' })
       } else {
         window.fire('closed')
       }
@@ -1594,11 +1624,11 @@ describe('the settings edit behind the same window', () => {
 
     const dashboard = fakeContents(CONFIRM_ENTRY_URL)
     expect(
-      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, true),
+      await ask(ipcMain, confirmChannel('answer'), { sender: dashboard, senderFrame: dashboard.mainFrame }, { answer: 'yes' }),
     ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
     const subframe = { url: CONFIRM_ENTRY_URL }
     expect(
-      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: subframe }, true),
+      await ask(ipcMain, confirmChannel('answer'), { sender: window.webContents, senderFrame: subframe }, { answer: 'yes' }),
     ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
 
     // Two yeses that were not answers decided nothing, and the window is still
@@ -1607,7 +1637,7 @@ describe('the settings edit behind the same window', () => {
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
     expect(window.closeRequested()).toBe(false)
 
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1646,14 +1676,14 @@ describe('the settings edit behind the same window', () => {
     // disabled in the document: the tick is D1109's own answer to a stray click,
     // and a document that failed to disable anything still cannot write a
     // widening unticked.
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true, false)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: false })).toStrictEqual({
       ok: false,
       reason: CONFIRM_TICK_NEEDED,
     })
     await untilSettled()
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
 
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true, true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes', ticked: true })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1673,7 +1703,7 @@ describe('the settings edit behind the same window', () => {
     ready(lower, clock)
     expect((await settingsShownOf(ipcMain, lower)).confirmNeedsTick).toBe(false)
 
-    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(lower), true)).toStrictEqual({
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(lower), { answer: 'yes' })).toStrictEqual({
       ok: true,
       data: { answered: true },
     })
@@ -1858,7 +1888,7 @@ describe('the settings edit behind the same window', () => {
     const window = windows[0] as FakeWindow
 
     ready(window, clock)
-    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })
     expect(await edited).toStrictEqual({ ok: false, sentence: STALE_WRITE_REFUSAL })
     // D1112: the compare-and-swap refusal exists because another writer won, so
     // it is shown and never retried -- a third child here would be this console
@@ -1878,7 +1908,7 @@ describe('the settings edit behind the same window', () => {
     const window = windows[0] as FakeWindow
 
     ready(window, clock)
-    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })
     expect(await edited).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_MOVED })
     expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
   })
@@ -2011,7 +2041,7 @@ describe('the settings edit behind the same window', () => {
     expect(shown.argv).not.toContain('--')
 
     ready(window, clock)
-    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), true)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })
     expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
     expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
   })
@@ -2047,6 +2077,383 @@ describe('the settings edit behind the same window', () => {
     confirmer.close(settingsConfirmID(PROJECT))
     expect((windows[0] as FakeWindow).closeRequested()).toBe(false)
     expect((windows[1] as FakeWindow).closeRequested()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D2902's one modal: the entry form, the dry run's diff and the confirmation,
+// in the same window (SU1).
+//
+// `createSettingsEditor` is driven through the **real** window here, because
+// what this describe has to hold is a property of the window as much as of the
+// flow: the channel's answer is one typed object rather than a boolean
+// (`src/preload/confirm.ts`), the form's own `submit` is held by the main
+// process until the dry run has put the diff in that same window, and the
+// second `yes` writes. A mutation that let any frame but the window's own top
+// frame submit is caught below on `source.spawns` -- a dry run is a child, and
+// a child is observable where a reply a test could have got wrong is not.
+// ---------------------------------------------------------------------------
+
+describe('the entry form behind the same window', () => {
+  it('takes the value, runs the dry run, shows the diff in the same window and writes on the second yes', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+
+    // One window, opened on the entry form: the dry run has not run, so there
+    // is no diff to draw and no child has been started.
+    expect(windows).toHaveLength(1)
+    const window = windows[0] as FakeWindow
+    const form = await entryShownOf(ipcMain, window)
+    expect(form.project).toBe(PROJECT)
+    expect(form.key).toBe(SETTINGS_KEY)
+    expect(form.current).toBe('25')
+    expect(source.spawns).toStrictEqual([])
+
+    // The form's OK is an answer that moves the edit on, so rule 11's delay
+    // covers it exactly as it covers a yes: the value is refused until the
+    // window has been on screen for `CONFIRM_READY_DELAY_MS`.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '30' })).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_NOT_YET,
+    })
+    expect(source.spawns).toStrictEqual([])
+
+    ready(window, clock)
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '30' })
+    await untilSettled()
+
+    // The value the window's own top frame delivered is what the dry run is
+    // composed from -- `set` and that value, over the layer the read named.
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+    expect(source.spawns[0]?.layer).toBe('project')
+    expect(source.spawns[0]?.shown).toStrictEqual(
+      settingsArgv('dry-run', { op: 'set', key: SETTINGS_KEY, value: '30' }),
+    )
+
+    // The dry run's diff goes into **that** window: the submit's own reply is
+    // what tells the document its form has become the question, and no second
+    // window was opened to ask it.
+    expect(await submitted).toStrictEqual({ ok: true, data: { settled: true } })
+    expect(windows).toHaveLength(1)
+    const shown = await settingsShownOf(ipcMain, window)
+    expect(shown.project).toBe(PROJECT)
+    expect(shown.key).toBe(SETTINGS_KEY)
+    expect(shown.oldValue).toBe('25')
+    expect(shown.newValue).toBe('30')
+    expect(shown.widening).toBe(false)
+    expect(shown.argv).toStrictEqual(settingsArgv('narrowing', { op: 'set', key: SETTINGS_KEY, value: '30' }))
+
+    // The delay is the second question's own: the confirming button appeared
+    // under the pointer that clicked OK, so a yes at that instant is not an
+    // answer and nothing is written.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_NOT_YET,
+    })
+    await untilSettled()
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+
+    ready(window, clock)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+    // What the window showed is what is spawned: the source is handed the drawn
+    // argv, which is the one it refuses a plan for differing from.
+    expect(source.spawns[1]?.shown).toStrictEqual(shown.argv)
+  })
+
+  it('composes an unset with no value and no terminator when the form answers a reset', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // `null` is R6's Reset to default and not an empty string: the two are
+    // different edits -- an `unset` writes no value at all -- and the flow tells
+    // them apart from the answer's own `value` member.
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: null })
+    await untilSettled()
+    expect(source.spawns[0]?.shown).toStrictEqual(settingsArgv('dry-run', { op: 'unset', key: SETTINGS_KEY }))
+    expect(await submitted).toStrictEqual({ ok: true, data: { settled: true } })
+
+    ready(window, clock)
+    await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run', 'narrowing'])
+    expect(source.spawns[1]?.shown).toStrictEqual(settingsArgv('narrowing', { op: 'unset', key: SETTINGS_KEY }))
+  })
+
+  it('decides nothing for a submit from any frame but the window’s own top frame', async () => {
+    // The mutation check. The form's own value is a child spawn; drop the
+    // `mainFrame` identity check (or the "is this a window this module opened"
+    // one) and the subframe below is accepted, which fails this case on
+    // `source.spawns` -- one dry run where zero is required.
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    void editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    const dashboard = fakeContents(CONFIRM_ENTRY_URL)
+    expect(
+      await ask(
+        ipcMain,
+        confirmChannel('answer'),
+        { sender: dashboard, senderFrame: dashboard.mainFrame },
+        { answer: 'submit', value: '30' },
+      ),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+    const subframe = { url: CONFIRM_ENTRY_URL }
+    expect(
+      await ask(
+        ipcMain,
+        confirmChannel('answer'),
+        { sender: window.webContents, senderFrame: subframe },
+        { answer: 'submit', value: '30' },
+      ),
+    ).toStrictEqual({ ok: false, reason: SENDER_REFUSAL })
+
+    await untilSettled()
+    expect(source.spawns).toStrictEqual([])
+    expect(window.closeRequested()).toBe(false)
+    expect((await entryShownOf(ipcMain, window)).key).toBe(SETTINGS_KEY)
+
+    // And the operator's own click, on the value they typed, still goes
+    // through: what the gate refuses is the sender and not the form.
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '7' })
+    await untilSettled()
+    expect(source.spawns[0]?.shown).toStrictEqual(
+      settingsArgv('dry-run', { op: 'set', key: SETTINGS_KEY, value: '7' }),
+    )
+    expect(await submitted).toStrictEqual({ ok: true, data: { settled: true } })
+  })
+
+  it('takes a submit on the form and a yes on the diff, and neither on the other question', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // A yes on the form is the diff's own answer arriving a phase early: the two
+    // questions have different consequences -- a yes spawns the write, a submit
+    // only starts a dry run -- so it is refused by name rather than guessed at.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_PHASE_REFUSAL,
+    })
+    expect(source.spawns).toStrictEqual([])
+
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '30' })
+    await untilSettled()
+    expect(await submitted).toStrictEqual({ ok: true, data: { settled: true } })
+
+    // And once the diff is up, a submit is the form's answer a phase late.
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '40' })).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_PHASE_REFUSAL,
+    })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+
+    ready(window, clock)
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    expect(await edited).toStrictEqual({ ok: true, sentence: SETTINGS_WRITE_TEXT })
+  })
+
+  it('holds the form’s OK while the dry run is in flight, answers nothing else, and lets it be taken back', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const dry = deferred<SettingsEditSpawn>()
+    const source = settingsEditSource({ dryRun: () => dry.promise })
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // The OK is with the flow and the dry run is running: the window is neither
+    // form nor diff, so neither question can be answered again -- only the
+    // operator's Cancel is read, which is rule 11's "cancel is the default"
+    // applied to the one state that would otherwise hold them for the length of
+    // a child.
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '30' })
+    await untilSettled()
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '40' })).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_ALREADY_ANSWERED,
+    })
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'yes' })).toStrictEqual({
+      ok: false,
+      reason: CONFIRM_ALREADY_ANSWERED,
+    })
+
+    expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'no' })).toStrictEqual({
+      ok: true,
+      data: { answered: true },
+    })
+    // The held OK is answered **refused** rather than left pending, and the
+    // window goes away: the document can draw the sentence it was given.
+    expect(await submitted).toStrictEqual({ ok: false, reason: CONFIRM_NOT_SETTLED })
+    expect(window.closeRequested()).toBe(true)
+
+    // The dry run landing afterwards changes nothing: its diff has no window to
+    // settle and the edit was cancelled with nothing written.
+    dry.resolve({ refusal: null, document: settingsDryRun(), text: '' })
+    await untilSettled()
+    expect(await edited).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('cancels the edit, and writes nothing, for a no on the form and for a close of it', async () => {
+    for (const way of ['no', 'closed'] as const) {
+      const clock = aClock()
+      const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+      const source = settingsEditSource()
+      const editor = createSettingsEditor({ ...source.deps, confirmer })
+      const edited = editor.open({ key: SETTINGS_KEY })
+      await untilSettled()
+      const window = windows[0] as FakeWindow
+
+      if (way === 'no') {
+        // Cancel is the default, and a no is the window's own way out: it is
+        // answered at the instant it is clicked, with no delay to wait out.
+        expect(await ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'no' })).toStrictEqual({
+          ok: true,
+          data: { answered: true },
+        })
+      } else {
+        window.fire('closed')
+      }
+      expect(await edited, way).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+      expect(source.spawns, way).toStrictEqual([])
+    }
+  })
+
+  it('answers a refused dry run with the CLI’s own sentence, closes the form, and writes nothing', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource({ dryRun: { refusal: DRY_RUN_REFUSAL, document: null, text: '' } })
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '30' })
+    await untilSettled()
+    // The form's own OK is answered **refused** rather than left pending: the
+    // window never became the diff, so the document has nothing to draw and
+    // must not wait for a reply that will not come.
+    expect(await submitted).toStrictEqual({ ok: false, reason: CONFIRM_NOT_SETTLED })
+    expect(await edited).toStrictEqual({ ok: false, sentence: DRY_RUN_REFUSAL })
+    expect(window.closeRequested()).toBe(true)
+    expect(source.spawns.map((call) => call.phase)).toStrictEqual(['dry-run'])
+  })
+
+  it('refuses a submit for a key this console does not write, and writes nothing', async () => {
+    for (const row of [settingsRow({ writable: false }), settingsRow({ target_layer: '' })]) {
+      const clock = aClock()
+      const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+      const source = settingsEditSource({
+        read: (): Promise<{ readonly document: unknown }> =>
+          Promise.resolve({ document: settingsReadDocument([row]) }),
+      })
+      const editor = createSettingsEditor({ ...source.deps, confirmer })
+      const edited = editor.open({ key: SETTINGS_KEY })
+      await untilSettled()
+      const window = windows[0] as FakeWindow
+
+      // The form draws no control for such a key (R5): its read-only shape is
+      // the command that does write it, and its only answer is Cancel. A submit
+      // that arrives anyway is a document that did not follow the view it was
+      // shown, and it is refused before any argv is built.
+      expect((await entryShownOf(ipcMain, window)).control).toBeNull()
+      ready(window, clock)
+      const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), { answer: 'submit', value: '30' })
+      await untilSettled()
+      expect(await submitted).toStrictEqual({ ok: false, reason: CONFIRM_NOT_SETTLED })
+      expect(await edited).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_NOT_WRITABLE })
+      expect(source.spawns).toStrictEqual([])
+    }
+  })
+
+  it('refuses a value the operation’s own gate refuses, and spawns nothing at all', async () => {
+    const clock = aClock()
+    const { confirmer, ipcMain, windows } = confirmOver({ now: clock.now })
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+    ready(window, clock)
+
+    // U+202E, the right-to-left override: a value that reads as one string and
+    // is another. The entry form's own rule is a pre-check for its button -- text
+    // is text to it -- and `spawn.ts` holds a value only to being non-empty,
+    // NUL-free and bounded, so this is the value the operation's own gate is here
+    // for. Without it the dry run would be spawned, its diff shown, and the
+    // string written on the second click.
+    const submitted = ask(ipcMain, confirmChannel('answer'), fromWindow(window), {
+      answer: 'submit',
+      value: `30${'\u202e'}gnirts`,
+    })
+    await untilSettled()
+    expect(await submitted).toStrictEqual({ ok: false, reason: CONFIRM_NOT_SETTLED })
+    expect(await edited).toStrictEqual({
+      ok: false,
+      sentence: 'value carries an invisible format character (U+202E)',
+    })
+    expect(window.closeRequested()).toBe(true)
+    expect(source.spawns).toStrictEqual([])
+  })
+
+  it('closes the form, and writes nothing, when the installation moves while it is open', async () => {
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const edited = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+    const window = windows[0] as FakeWindow
+
+    editor.cancelFor(PROJECT)
+    expect(window.closeRequested()).toBe(true)
+    expect(await edited).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
+    expect(source.spawns).toStrictEqual([])
+  })
+
+  it('refuses a second edit of the same project while the first form is open', async () => {
+    const { confirmer, windows } = confirmOver()
+    const source = settingsEditSource()
+    const editor = createSettingsEditor({ ...source.deps, confirmer })
+    const first = editor.open({ key: SETTINGS_KEY })
+    await untilSettled()
+
+    expect(await editor.open({ key: SETTINGS_KEY })).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_BUSY })
+    expect(windows).toHaveLength(1)
+
+    ;(windows[0] as FakeWindow).fire('closed')
+    expect(await first).toStrictEqual({ ok: false, sentence: SETTINGS_EDIT_CANCELLED })
   })
 })
 
@@ -2288,6 +2695,19 @@ async function settingsShownOf(
   const subject = await subjectOf(ipcMain, window)
   expect(subject.kind).toBe('settings')
   if (subject.kind !== 'settings') throw new Error('the window was asked the launch’s question')
+  return subject
+}
+
+/** entryShownOf is `subjectOf` for the entry form: D2902's one modal opens on
+ * the form and is settled on the diff, so a case that read the diff here is a
+ * case that has already gone through the submit. */
+async function entryShownOf(
+  ipcMain: ReturnType<typeof fakeIpcMain>,
+  window: FakeWindow,
+): Promise<SettingsEntryView> {
+  const subject = await subjectOf(ipcMain, window)
+  expect(subject.kind).toBe('settings-entry')
+  if (subject.kind !== 'settings-entry') throw new Error('the window was not asked the entry form’s question')
   return subject
 }
 
